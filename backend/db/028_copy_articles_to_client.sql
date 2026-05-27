@@ -1,5 +1,5 @@
--- Copie le referentiel articles depuis gestion_rayons vers la base cliente courante.
--- A executer uniquement sur une base cliente dediee, jamais sur gestion_rayons.
+-- Copie le referentiel articles depuis gestion_commerciale vers la base cliente courante.
+-- A executer uniquement sur une base cliente dediee, jamais sur la base source gestion_commerciale.
 --
 -- Copie uniquement :
 --   - department_sectors
@@ -22,8 +22,8 @@ DECLARE
   missing_tables text[];
   missing_columns text[];
 BEGIN
-  IF current_database() = 'gestion_rayons' THEN
-    RAISE EXCEPTION 'Script refuse sur la base historique gestion_rayons';
+  IF current_database() = 'gestion_commerciale' THEN
+    RAISE EXCEPTION 'Script refuse sur la base source gestion_commerciale';
   END IF;
 
   SELECT array_agg(required.table_name)
@@ -142,7 +142,7 @@ CREATE TEMP TABLE _src_department_sectors (
 INSERT INTO _src_department_sectors
 SELECT *
 FROM dblink(
-  'dbname=gestion_rayons user=admin',
+  'dbname=gestion_commerciale user=admin',
   $SQL$
     SELECT
       d.code AS department_code,
@@ -181,7 +181,7 @@ CREATE TEMP TABLE _src_article_departments (
 INSERT INTO _src_article_departments
 SELECT *
 FROM dblink(
-  'dbname=gestion_rayons user=admin',
+  'dbname=gestion_commerciale user=admin',
   $SQL$
     SELECT DISTINCT ON (a.plu, d.code)
       a.plu,
@@ -225,7 +225,7 @@ CREATE TEMP TABLE _src_articles (
 INSERT INTO _src_articles
 SELECT *
 FROM dblink(
-  'dbname=gestion_rayons user=admin',
+  'dbname=gestion_commerciale user=admin',
   $SQL$
     SELECT DISTINCT ON (a.plu)
       a.plu,
@@ -270,7 +270,7 @@ CREATE TEMP TABLE _src_metadata (
 INSERT INTO _src_metadata
 SELECT *
 FROM dblink(
-  'dbname=gestion_rayons user=admin',
+  'dbname=gestion_commerciale user=admin',
   $SQL$
     SELECT DISTINCT ON (a.plu, d.code, adm.field_key)
       a.plu,

@@ -26,7 +26,7 @@ const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
 
-const TARGET_DB_NAME = process.env.TARGET_DB_NAME || process.env.DB_NAME || 'gestion_rayons';
+const TARGET_DB_NAME = process.env.TARGET_DB_NAME || process.env.DB_NAME || 'gestion_commerciale';
 const STORE_CODE = process.env.STORE_CODE || 'LEC001';
 const DEPARTMENT_CODE = process.env.DEPARTMENT_CODE || 'POIS';
 

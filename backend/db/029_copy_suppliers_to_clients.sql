@@ -4,8 +4,8 @@ CREATE EXTENSION IF NOT EXISTS dblink;
 
 DO $$
 BEGIN
-  IF current_database() = 'gestion_rayons' THEN
-    RAISE EXCEPTION 'Ne pas executer ce script sur gestion_rayons. Utiliser une base client.';
+  IF current_database() = 'gestion_commerciale' THEN
+    RAISE EXCEPTION 'Ne pas executer ce script sur gestion_commerciale. Utiliser une base client.';
   END IF;
 END $$;
 
@@ -33,7 +33,7 @@ SELECT
   s.is_active,
   COALESCE(s.created_at, NOW())
 FROM dblink(
-  'dbname=gestion_rayons user=admin',
+  'dbname=gestion_commerciale user=admin',
   'SELECT id, code, name, contact_name, phone, email, address, is_active, created_at FROM suppliers'
 ) AS s(
   id uuid,

@@ -26,7 +26,7 @@ const salesRoutes = require('./routes/sales');
 const transformationsRoutes = require('./routes/transformations');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3002;
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET manquant dans le fichier backend/.env');
@@ -37,7 +37,10 @@ app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
 const allowedCorsOrigins = new Set(
-  (process.env.CORS_ALLOWED_ORIGINS || 'https://app.rayonv2.fr,http://localhost:8080,http://127.0.0.1:8080')
+  (
+    process.env.CORS_ALLOWED_ORIGINS ||
+    'http://localhost,http://localhost:3002,http://localhost:8080,http://127.0.0.1:3002,http://127.0.0.1:8080,https://scorpaseafood.fr,https://www.scorpaseafood.fr,https://api.scorpaseafood.fr'
+  )
     .split(',')
     .map((origin) => origin.trim())
     .filter(Boolean)
@@ -89,7 +92,14 @@ app.use(helmet({
     useDefaults: true,
     directives: {
       defaultSrc: ["'self'"],
-      imgSrc: ["'self'", 'data:', 'blob:', 'https://app.rayonv2.fr'],
+      imgSrc: [
+        "'self'",
+        'data:',
+        'blob:',
+        'https://scorpaseafood.fr',
+        'https://www.scorpaseafood.fr',
+        'https://api.scorpaseafood.fr',
+      ],
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
       upgradeInsecureRequests: null,
@@ -132,7 +142,7 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
 }));
 
 app.get('/', (req, res) => {
-  res.send('API Gestion Rayons V2 fonctionne 🚀');
+  res.send('API Scorpa Seafood / Gestion Commerciale fonctionne');
 });
 
 // Articles routes have been moved to routes/articles.js

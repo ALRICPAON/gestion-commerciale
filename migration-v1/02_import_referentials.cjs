@@ -12,7 +12,7 @@ const pool = new Pool({
   port: 5432,
   user: "admin",
   password: "ChangeMoi_RayonV2_2026!",
-  database: process.env.TARGET_DB_NAME || "gestion_rayons",
+  database: process.env.TARGET_DB_NAME || "gestion_commerciale",
 });
 
 function uuid() {

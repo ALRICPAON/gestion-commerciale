@@ -3,12 +3,12 @@
 services:
   db:
     image: postgres:15
-    container_name: gestion-rayons-db
+    container_name: gestion-commerciale-db
     restart: always
     environment:
       POSTGRES_USER: admin
       POSTGRES_PASSWORD: password
-      POSTGRES_DB: gestion_rayons
+      POSTGRES_DB: gestion_commerciale
     ports:
       - "5432:5432"
     volumes:

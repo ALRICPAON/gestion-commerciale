@@ -3,7 +3,7 @@ const activeDepartment = JSON.parse(localStorage.getItem("grv2_active_department
 const token = localStorage.getItem("grv2_token");
 
 const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
-const FRONT_BASE_URL = window.APP_CONFIG.FRONT_BASE_URL || "https://app.rayonv2.fr";
+const FRONT_BASE_URL = window.APP_CONFIG.FRONT_BASE_URL || "https://scorpaseafood.fr";
 
 if (!sessionUser || !token) {
   window.location.href = "./login.html";

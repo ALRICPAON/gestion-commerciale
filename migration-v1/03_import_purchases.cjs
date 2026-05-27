@@ -11,7 +11,7 @@ const BACKUP_PATH = path.join(__dirname, "backup-v1.json");
 const pool = new Pool({
   host: process.env.DB_HOST || "localhost",
   port: Number(process.env.DB_PORT || 5432),
-  database: process.env.TARGET_DB_NAME || process.env.DB_NAME || "gestion_rayons",
+  database: process.env.TARGET_DB_NAME || process.env.DB_NAME || "gestion_commerciale",
   user: process.env.DB_USER || "admin",
   password: process.env.DB_PASSWORD || "admin",
 });

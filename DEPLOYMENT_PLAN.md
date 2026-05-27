@@ -1,55 +1,36 @@
-# Déploiement Rayon V2 — Plan Production SaaS
+# Deploiement temporaire Gestion Commerciale
+
+Ce plan concerne uniquement le projet `gestion-commerciale` pour le test sous `scorpaseafood.fr`.
 
 ## Architecture retenue
 
-- Frontend statique HTML/CSS/JS
-- Backend Node.js / Express
-- PostgreSQL managé
-- 1 base PostgreSQL par client
-- Stockage fichiers/photos séparé
-- Nginx en reverse proxy
-- HTTPS obligatoire
-- PM2 pour maintenir Node.js actif
+- Frontend statique HTML/CSS/JS dans `frontend`
+- Backend Node.js / Express dans `backend`
+- Backend expose sur le port `3002`
+- Process PM2 : `gestion-commerciale-api`
+- Base PostgreSQL dediee : `gestion_commerciale`
+- Frontend temporaire : `https://scorpaseafood.fr`
+- API temporaire : `https://api.scorpaseafood.fr`
 
-## Environnements
+## Separation obligatoire
 
-- Local : développement
-- Staging : test avant mise en production
-- Production : vrais clients
+Ne pas utiliser ni modifier les ressources Rayon V2 :
 
-## Sécurité obligatoire
+- `/var/www/rayon-v2`
+- `rayon-v2-api`
+- `gestion_rayons`
 
-- Aucune clé secrète dans GitHub
-- Variables dans .env
-- JWT_SECRET fort
-- SSH par clé
-- Firewall actif
-- HTTPS obligatoire
-- Sauvegardes automatiques
-- Logs serveur
+## Deploiement
 
-## Mises à jour
+Depuis `/var/www/gestion-commerciale` :
 
-Workflow :
-
-1. développement local
-2. test staging
-3. migration SQL
-4. déploiement production
-5. redémarrage backend
-
-Commande cible :
-
+```bash
 git pull
 npm install
-npm run migrate
-pm2 restart rayon-v2
+cd backend && npm install
+cd ..
+pm2 start infra/pm2/ecosystem.config.js
+pm2 restart gestion-commerciale-api
+```
 
-## Multi-clients
-
-Choix retenu :
-
-- 1 base de données par client
-- même code applicatif pour tous
-- mise à jour centralisée
-- isolation forte des données
+La configuration detaillee et un exemple Nginx optionnel sont dans `docs/DEPLOIEMENT_SCORPASEAFOOD.md`.

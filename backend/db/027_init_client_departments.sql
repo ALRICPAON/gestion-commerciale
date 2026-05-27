@@ -1,5 +1,5 @@
 -- Ajoute ou met a jour un rayon dans une base dediee client.
--- A executer uniquement sur une base cliente dediee, jamais sur gestion_rayons.
+-- A executer uniquement sur une base cliente dediee, jamais sur la base source gestion_commerciale.
 --
 -- Variables psql requises :
 --   store_code
@@ -37,8 +37,8 @@ DO $$
 DECLARE
   missing_tables text[];
 BEGIN
-  IF current_database() = 'gestion_rayons' THEN
-    RAISE EXCEPTION 'Script refuse sur la base historique gestion_rayons';
+  IF current_database() = 'gestion_commerciale' THEN
+    RAISE EXCEPTION 'Script refuse sur la base source gestion_commerciale';
   END IF;
 
   SELECT array_agg(required.table_name)

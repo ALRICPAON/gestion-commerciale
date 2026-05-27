@@ -1,7 +1,7 @@
 module.exports = {
   apps: [
     {
-      name: "rayon-v2-api",
+      name: "gestion-commerciale-api",
 
       script: "backend/server.js",
 
@@ -13,6 +13,8 @@ module.exports = {
 
       env: {
         NODE_ENV: "production",
+        PORT: 3002,
+        DB_NAME: "gestion_commerciale",
       },
 
       error_file: "./logs/api-error.log",

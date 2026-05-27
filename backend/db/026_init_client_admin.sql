@@ -1,5 +1,5 @@
 -- Initialise une base dediee client avec un magasin, un rayon et un admin.
--- A executer uniquement sur une base cliente dediee, jamais sur gestion_rayons.
+-- A executer uniquement sur une base cliente dediee, jamais sur la base source gestion_commerciale.
 --
 -- Variables psql requises :
 --   client_key
