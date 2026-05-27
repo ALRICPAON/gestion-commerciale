@@ -6,6 +6,24 @@ const { requireAdminOrManager, requireAdmin } = require('../middleware/authoriza
 const { normalizeBool, toNullableString } = require('../utils/valueHelpers');
 const { assertDepartmentBelongsToStore } = require('../utils/departmentHelpers');
 
+const DEFAULT_VAT_RATE = 5.5;
+
+function normalizeVatRate(value) {
+  if (value === undefined || value === null || value === '') {
+    return DEFAULT_VAT_RATE;
+  }
+
+  const normalized = Number(value);
+
+  if (!Number.isFinite(normalized) || normalized < 0 || normalized > 100) {
+    const err = new Error('TVA invalide');
+    err.status = 400;
+    throw err;
+  }
+
+  return Math.round(normalized * 100) / 100;
+}
+
 // GET /api/articles - List articles with filters
 router.get('/', authenticateToken, attachDbContext, async (req, res) => {
   try {
@@ -74,6 +92,7 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         ad.purchase_unit,
         ad.stock_unit,
         ad.sale_unit,
+        ad.vat_rate,
         ad.department_sector_id,
 
         ds.code AS sector_code,
@@ -132,6 +151,7 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
       purchase_unit,
       stock_unit,
       sale_unit,
+      vat_rate,
     } = req.body;
 
     if (!department_id || !plu || !designation) {
@@ -161,6 +181,8 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
       );
       sectorId = sectorResult.rows[0]?.id || null;
     }
+
+    const normalizedVatRate = normalizeVatRate(vat_rate);
 
     const articleInsert = await client.query(
       `
@@ -202,12 +224,13 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
         purchase_unit,
         stock_unit,
         sale_unit,
+        vat_rate,
         is_active,
         department_sector_id
       )
       VALUES (
         gen_random_uuid(),
-        $1, $2, $3, $4, $5, $6, $7, $8
+        $1, $2, $3, $4, $5, $6, $7, $8, $9
       )
       RETURNING id
       `,
@@ -218,6 +241,7 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
         toNullableString(purchase_unit),
         toNullableString(stock_unit),
         toNullableString(sale_unit),
+        normalizedVatRate,
         !!is_active,
         sectorId,
       ]
@@ -272,6 +296,10 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
 
     if (err.code === '23505') {
       return res.status(400).json({ error: 'PLU déjà existant pour ce magasin' });
+    }
+
+    if (err.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
     }
 
     res.status(500).json({ error: 'Erreur serveur' });
@@ -494,6 +522,7 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         ad.purchase_unit,
         ad.stock_unit,
         ad.sale_unit,
+        ad.vat_rate,
         ad.department_sector_id,
         adm.category,
         adm.latin_name,
@@ -547,10 +576,10 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
       `
       INSERT INTO article_departments (
         id, article_id, department_id, display_name,
-        purchase_unit, stock_unit, sale_unit, is_active, department_sector_id
+        purchase_unit, stock_unit, sale_unit, vat_rate, is_active, department_sector_id
       )
       VALUES (
-        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8
+        gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9
       )
       RETURNING id
       `,
@@ -561,6 +590,7 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         source.purchase_unit,
         source.stock_unit,
         source.sale_unit,
+        source.vat_rate ?? DEFAULT_VAT_RATE,
         source.is_active,
         source.department_sector_id,
       ]
@@ -711,6 +741,7 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         ad.purchase_unit,
         ad.stock_unit,
         ad.sale_unit,
+        ad.vat_rate,
         ad.department_sector_id,
 
         ds.code AS sector_code,
@@ -957,6 +988,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
       purchase_unit,
       stock_unit,
       sale_unit,
+      vat_rate,
     } = req.body;
 
     await client.query('BEGIN');
@@ -1003,6 +1035,9 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
       sectorId = sectorResult.rows[0]?.id || null;
     }
 
+    const hasVatRate = Object.prototype.hasOwnProperty.call(req.body, 'vat_rate');
+    const normalizedVatRate = hasVatRate ? normalizeVatRate(vat_rate) : null;
+
     await client.query(
       `
       UPDATE articles
@@ -1036,8 +1071,9 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
         stock_unit = $4,
         sale_unit = $5,
         is_active = COALESCE($6, is_active),
-        department_sector_id = $7
-      WHERE article_id = $8
+        department_sector_id = $7,
+        vat_rate = COALESCE($8, vat_rate)
+      WHERE article_id = $9
       `,
       [
         finalDepartmentId,
@@ -1047,6 +1083,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
         toNullableString(sale_unit),
         typeof is_active === 'boolean' ? is_active : null,
         sectorId,
+        normalizedVatRate,
         articleId,
       ]
     );
@@ -1102,6 +1139,10 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
 
     if (err.code === '23505') {
       return res.status(400).json({ error: 'PLU déjà existant pour ce magasin' });
+    }
+
+    if (err.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
     }
 
     res.status(500).json({ error: 'Erreur serveur' });

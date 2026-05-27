@@ -40,7 +40,8 @@ body.app-page.article-detail-page .card p {
   gap: 8px 20px;
 }
 
-body.app-page.article-detail-page input:disabled {
+body.app-page.article-detail-page input:disabled,
+body.app-page.article-detail-page select:disabled {
   background: #f8fafc;
   color: #111827;
   cursor: not-allowed;

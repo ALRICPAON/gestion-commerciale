@@ -32,6 +32,18 @@ const salesHistoryBody = document.getElementById('sales-history-body');
 let editMode = false;
 let currentArticle = null;
 
+function formatVatRate(value) {
+  const rate = Number(value ?? 5.5);
+  return `${Number.isInteger(rate) ? rate : rate.toFixed(1)}%`;
+}
+
+function vatSelectValue(value) {
+  const rate = Number(value ?? 5.5);
+  if (rate === 2.1) return '2.10';
+  if (rate === 5.5) return '5.50';
+  return String(rate);
+}
+
 function authHeaders() {
   return {
     Authorization: `Bearer ${token}`
@@ -86,12 +98,23 @@ async function loadArticle() {
   <p><strong>Unité</strong><br>
     <input ${!editMode ? 'disabled' : ''} id="edit-unit" value="${article.unit || ''}">
   </p>
+
+  <p><strong>TVA</strong><br>
+    <select ${!editMode ? 'disabled' : ''} id="edit-vat-rate">
+      <option value="5.50" ${vatSelectValue(article.vat_rate) === '5.50' ? 'selected' : ''}>5.5%</option>
+      <option value="10" ${vatSelectValue(article.vat_rate) === '10' ? 'selected' : ''}>10%</option>
+      <option value="20" ${vatSelectValue(article.vat_rate) === '20' ? 'selected' : ''}>20%</option>
+      <option value="2.10" ${vatSelectValue(article.vat_rate) === '2.10' ? 'selected' : ''}>2.1%</option>
+      <option value="0" ${vatSelectValue(article.vat_rate) === '0' ? 'selected' : ''}>0%</option>
+    </select>
+  </p>
 `;
 
   // 🔹 MÉTIER
   metaEl.innerHTML = `
     <p><strong>Rayon :</strong> ${article.department_name || '-'}</p>
     <p><strong>Secteur :</strong> ${article.sector_name || '-'}</p>
+    <p><strong>TVA :</strong> ${formatVatRate(article.vat_rate)}</p>
     <p><strong>Catégorie :</strong> ${article.category || '-'}</p>
     <p><strong>Nom latin :</strong> ${article.latin_name || '-'}</p>
     <p><strong>FAO :</strong> ${article.fao_zone || '-'}</p>
@@ -217,6 +240,20 @@ saveBtn.addEventListener('click', async () => {
       designation: document.getElementById('edit-designation').value,
       ean: document.getElementById('edit-ean').value,
       unit: document.getElementById('edit-unit').value,
+      vat_rate: document.getElementById('edit-vat-rate').value,
+      department_id: currentArticle.department_id,
+      sector_code: currentArticle.sector_code,
+      category: currentArticle.category || '',
+      latin_name: currentArticle.latin_name || '',
+      fao_zone: currentArticle.fao_zone || '',
+      sous_zone: currentArticle.sous_zone || '',
+      engin: currentArticle.engin || '',
+      allergenes: currentArticle.allergenes || '',
+      display_name: currentArticle.display_name || '',
+      purchase_unit: currentArticle.purchase_unit || '',
+      stock_unit: currentArticle.stock_unit || '',
+      sale_unit: currentArticle.sale_unit || '',
+      is_active: currentArticle.is_active,
     };
 
     const res = await fetch(`${API_BASE_URL}/api/articles/${articleId}`, {

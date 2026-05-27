@@ -35,6 +35,7 @@ const articlePluInput = document.getElementById('article-plu');
 const articleDesignationInput = document.getElementById('article-designation');
 const articleUnitInput = document.getElementById('article-unit');
 const articleEanInput = document.getElementById('article-ean');
+const articleVatRateInput = document.getElementById('article-vat-rate');
 const articleSectorInput = document.getElementById('article-sector');
 const articleCategoryInput = document.getElementById('article-category');
 const articleLatinNameInput = document.getElementById('article-latin-name');
@@ -49,6 +50,18 @@ const articleSaleUnitInput = document.getElementById('article-sale-unit');
 const articleActiveInput = document.getElementById('article-active');
 
 let articlesCache = [];
+
+function formatVatRate(value) {
+  const rate = Number(value ?? 5.5);
+  return `${Number.isInteger(rate) ? rate : rate.toFixed(1)}%`;
+}
+
+function vatSelectValue(value) {
+  const rate = Number(value ?? 5.5);
+  if (rate === 2.1) return '2.10';
+  if (rate === 5.5) return '5.50';
+  return String(rate);
+}
 
 function canManageArticle(article) {
   return article.department_id === activeDepartment.id;
@@ -123,6 +136,7 @@ function openModal(editMode = false, article = null) {
   articleDesignationInput.value = article?.designation || '';
   articleUnitInput.value = article?.unit || '';
   articleEanInput.value = article?.ean || '';
+  articleVatRateInput.value = vatSelectValue(article?.vat_rate);
   articleSectorInput.value = article?.sector_code || '';
   articleCategoryInput.value = article?.category || '';
   articleLatinNameInput.value = article?.latin_name || '';
@@ -141,6 +155,7 @@ function closeModal() {
   modal.classList.add('hidden');
   articleForm.reset();
   articleIdInput.value = '';
+  articleVatRateInput.value = '5.50';
   articleActiveInput.value = 'true';
 }
 
@@ -148,7 +163,7 @@ function renderArticles(rows) {
   if (!rows.length) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="7">Aucun article trouvé.</td>
+        <td colspan="9">Aucun article trouvé.</td>
       </tr>
     `;
     return;
@@ -161,6 +176,7 @@ function renderArticles(rows) {
 <td>${article.department_name || ''}</td> <!-- AJOUT -->
 <td>${article.sector_code || ''}</td>
 <td>${article.unit || ''}</td>
+<td>${formatVatRate(article.vat_rate)}</td>
 <td>${article.category || ''}</td>
 <td>${article.is_active ? 'Actif' : 'Inactif'}</td>
       <td>
@@ -194,7 +210,7 @@ async function loadArticles() {
     setFeedback('Chargement des articles...', '');
     tbody.innerHTML = `
       <tr>
-        <td colspan="7">Chargement des articles...</td>
+        <td colspan="9">Chargement des articles...</td>
       </tr>
     `;
 
@@ -235,7 +251,7 @@ if (selectedDepartmentId) {
     setFeedback(error.message, 'error');
     tbody.innerHTML = `
       <tr>
-        <td colspan="7">Erreur de chargement.</td>
+        <td colspan="9">Erreur de chargement.</td>
       </tr>
     `;
   }
@@ -254,6 +270,7 @@ async function saveArticle(event) {
       designation: articleDesignationInput.value.trim(),
       unit: articleUnitInput.value.trim(),
       ean: articleEanInput.value.trim(),
+      vat_rate: articleVatRateInput.value,
       sector_code: articleSectorInput.value,
       category: articleCategoryInput.value.trim(),
       latin_name: articleLatinNameInput.value.trim(),
