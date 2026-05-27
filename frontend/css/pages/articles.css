@@ -1,0 +1,51 @@
+/* ========================= */
+/* ARTICLES PAGE */
+/* ========================= */
+
+.filters-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(180px, 1fr));
+  gap: 16px;
+}
+
+.table-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feedback-box {
+  min-height: 24px;
+  margin-bottom: 16px;
+}
+
+.feedback-box.success {
+  color: #1b5e20;
+}
+
+.feedback-box.error {
+  color: #b71c1c;
+}
+
+.modal-form .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 16px;
+}
+
+.form-group-full {
+  grid-column: 1 / -1;
+}
+
+.article-modal-card {
+  max-width: 980px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+@media (max-width: 900px) {
+  .filters-grid,
+  .modal-form .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
