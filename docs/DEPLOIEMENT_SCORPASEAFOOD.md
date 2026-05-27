@@ -10,6 +10,8 @@ Ce projet `gestion-commerciale` est configure pour un test temporaire sous le do
 - Process PM2 backend : `gestion-commerciale-api`
 - Port backend dedie : `3002`
 - Base PostgreSQL dediee : `gestion_commerciale`
+- Client Gestion Commerciale actuel : `scorpa`
+- `client_key` actuel : `scorpa`
 - Domaine frontend temporaire : `https://scorpaseafood.fr`
 - Domaine API temporaire : `https://api.scorpaseafood.fr`
 
@@ -22,6 +24,18 @@ Ne pas utiliser, modifier ou redemarrer les ressources Rayon V2 depuis ce projet
 - Base interdite : `gestion_rayons`
 
 Les modules metier herites restent presents pour le moment, mais l'infrastructure de test doit rester separee.
+
+## Architecture multi-base Gestion Commerciale
+
+Gestion Commerciale conserve l'architecture multi-base :
+
+- `dbRegistry.js` reste la source des clients applicatifs disponibles.
+- Le login multi-DB scanne uniquement les clients declares dans `dbRegistry.js`.
+- Les clients actuels sont `scorpa` puis `default`.
+- `scorpa` pointe vers la base actuelle `gestion_commerciale`.
+- `default` pointe aussi vers `gestion_commerciale` pour garder un fallback local propre au projet.
+
+Le magasin Scorpa Seafood doit porter `stores.client_key = 'scorpa'`. Les ressources Rayon V2 restent totalement separees et ne doivent pas etre scannees par le login Gestion Commerciale.
 
 ## Backend
 

@@ -7,20 +7,19 @@ const { attachDbContext } = require('../middleware/dbContext');
 
 const router = express.Router();
 
-const LOGIN_CLIENT_PRIORITY = ['challans', 'petit_chantilly'];
+const LOGIN_CLIENT_PRIORITY = ['scorpa', 'default'];
 
 function getLoginClientKeys() {
   const configuredClientKeys = Object.keys(DB_CLIENTS);
   const configured = new Set(configuredClientKeys);
   const prioritized = LOGIN_CLIENT_PRIORITY.filter((clientKey) => configured.has(clientKey));
   const remaining = configuredClientKeys.filter(
-    (clientKey) => clientKey !== 'default' && !prioritized.includes(clientKey)
+    (clientKey) => !prioritized.includes(clientKey)
   );
 
   return [
     ...prioritized,
     ...remaining,
-    ...(configured.has('default') ? ['default'] : []),
   ];
 }
 
@@ -83,7 +82,8 @@ async function findLoginContext(email, password) {
 
       const store = storeResult.rows[0] || null;
       const clientKeyFromStore = (store && store.client_key) || user.client_key || null;
-      const effectiveClientKey = clientKeyFromStore || (clientKey === 'default' ? null : clientKey);
+      const effectiveClientKey =
+        clientKey === 'default' ? clientKeyFromStore || 'default' : clientKey;
 
       return {
         user: {
@@ -93,7 +93,7 @@ async function findLoginContext(email, password) {
         store: store
           ? {
               ...store,
-              client_key: store.client_key || effectiveClientKey,
+              client_key: effectiveClientKey,
             }
           : null,
         departments: departmentsResult.rows,

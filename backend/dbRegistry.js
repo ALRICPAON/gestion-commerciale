@@ -4,10 +4,8 @@ const { Pool } = require("pg");
 const pools = new Map();
 
 const DB_CLIENTS = {
+  scorpa: process.env.DB_NAME_SCORPA || process.env.DB_NAME || "gestion_commerciale",
   default: process.env.DB_NAME || "gestion_commerciale",
-  challans: process.env.DB_NAME_CHALLANS || "gestion_commerciale_challans",
-  petit_chantilly:
-    process.env.DB_NAME_PETIT_CHANTILLY || "gestion_commerciale_petit_chantilly",
 };
 
 function createPool(databaseName) {
