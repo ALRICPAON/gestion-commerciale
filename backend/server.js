@@ -94,7 +94,7 @@ app.use('/api/login', loginRateLimiter);
 app.use('/api', apiRateLimiter);
 app.use('/api', authRoutes);
 app.use('/api', usersRoutes);
-
+app.use('/api/articles', articlesRoutes);
 app.get('/', (req, res) => {
   res.send('API Scorpa Seafood / Gestion Commerciale fonctionne');
 });
