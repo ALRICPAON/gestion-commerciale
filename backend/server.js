@@ -11,6 +11,7 @@ const rateLimit = require('express-rate-limit');
 
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
+const articlesRoutes = require('./routes/articles');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
