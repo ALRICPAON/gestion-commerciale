@@ -1,0 +1,98 @@
+.compta-dashboard-filters {
+  display: grid;
+  grid-template-columns: 180px 180px 180px auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.print-title {
+  margin-bottom: 18px;
+}
+
+.print-title h2 {
+  margin: 0;
+}
+
+.print-title p {
+  margin: 6px 0 0;
+  color: #64748b;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 22px;
+}
+
+.kpi-card strong {
+  font-size: 1.7rem;
+}
+
+.dashboard-card h3 {
+  margin-top: 0;
+}
+
+.dashboard-table th,
+.dashboard-table td {
+  text-align: right;
+}
+
+.dashboard-table th:first-child,
+.dashboard-table td:first-child {
+  text-align: left;
+}
+
+@media (max-width: 900px) {
+  .compta-dashboard-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .compta-dashboard-page {
+    padding: 14px;
+  }
+
+  .compta-dashboard-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  .compta-dashboard-page {
+    padding: 0;
+    max-width: none;
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .kpi-card,
+  .dashboard-card {
+    box-shadow: none;
+    border: 1px solid #ccc;
+  }
+
+  .dashboard-table {
+    font-size: 0.75rem;
+  }
+
+  .dashboard-table th,
+  .dashboard-table td {
+    padding: 6px;
+  }
+}

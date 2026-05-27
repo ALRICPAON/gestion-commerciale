@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Anomalies inventaire</title>
+
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/compta-inventory-anomalies.css?v=2" />
+</head>
+
+<body class="app-page">
+<header class="topbar">
+  <div class="topbar-left">
+    <h1 class="app-title">Anomalies inventaire</h1>
+    <p class="app-subtitle" id="department-name">Suivi des anomalies caisse et stock</p>
+  </div>
+
+  <div class="topbar-right">
+    <button id="back-btn" class="btn btn-secondary">Comptabilité</button>
+    <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+  </div>
+</header>
+
+<main class="inventory-anomalies-page">
+  <section class="inventory-anomalies-card">
+    <div class="inventory-anomalies-filters">
+      <div class="inventory-anomalies-field">
+        <label for="start-date">Du</label>
+        <input type="date" id="start-date" />
+      </div>
+
+      <div class="inventory-anomalies-field">
+        <label for="end-date">Au</label>
+        <input type="date" id="end-date" />
+      </div>
+
+      <div class="inventory-anomalies-field">
+        <label for="anomaly-type">Type anomalie</label>
+        <select id="anomaly-type">
+          <option value="">Tous</option>
+          <option value="stock_alert">Stock nul</option>
+          <option value="missing_sale_price">PV manquant</option>
+          <option value="inventory_anomaly">Anomalie inventaire</option>
+        </select>
+      </div>
+
+      <button id="load-btn" class="btn btn-primary">Charger</button>
+    </div>
+
+    <div id="feedback" class="inventory-anomalies-feedback"></div>
+  </section>
+
+  <section class="inventory-anomalies-card">
+    <div class="inventory-anomalies-summary">
+      <h2>Liste des anomalies</h2>
+      <strong id="anomaly-count">0</strong>
+    </div>
+
+    <div class="table-wrapper">
+      <table class="inventory-anomalies-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>PLU</th>
+            <th>Article</th>
+            <th>EAN</th>
+            <th>Stock</th>
+            <th>Vendu</th>
+            <th>Unité</th>
+            <th>Total TTC</th>
+            <th>Motif</th>
+            <th>Document</th>
+            <th>Utilisateur</th>
+          </tr>
+        </thead>
+        <tbody id="anomalies-body">
+          <tr>
+            <td colspan="12">Charge une période.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script src="./js/config.js"></script>
+<script type="module" src="./js/compta-inventory-anomalies.js?v=2"></script>
+</body>
+</html>

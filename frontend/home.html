@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Accueil - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Rayons V2</h1>
+      <p class="app-subtitle" id="store-name">Magasin</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="topbar-department-box">
+        <label for="topbar-department-select" class="topbar-label">Rayon actif</label>
+        <select id="topbar-department-select" class="topbar-select"></select>
+      </div>
+
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+
+      <button id="users-btn" class="btn btn-secondary">Utilisateurs</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <h2>Bienvenue</h2>
+      <p>
+        Tu travailles actuellement sur le rayon
+        <strong id="current-department-name">-</strong>.
+      </p>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="module-card" data-module="articles">
+  <h3>Articles</h3>
+  <p>Gérer les fiches articles du rayon.</p>
+  <button id="articles-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</article>
+
+      <article class="module-card" data-module="suppliers">
+        <h3>Fournisseurs</h3>
+        <p>Suivre les fournisseurs liés au rayon actif.</p>
+        <button id="suppliers-btn" class="btn btn-primary btn-full">Ouvrir</button>
+      </article>
+
+      <div class="module-card" data-module="afmap">
+  <h3>AF_MAP</h3>
+  <p>Mapping fournisseur ↔ article</p>
+  <button id="afmap-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</div>
+
+      <article class="module-card" data-module="purchases">
+  <h3>Achats</h3>
+  <p>Créer et suivre les achats du rayon.</p>
+  <button id="purchases-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</article>
+
+      <article class="module-card" data-module="stock">
+  <h3>Stock</h3>
+  <p>Consulter les mouvements et niveaux de stock.</p>
+  <button id="stock-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</article>
+
+<article class="module-card" data-module="sales">
+  <h3>Ventes</h3>
+  <p>Créer et suivre les ventes / sorties du rayon.</p>
+  <button id="sales-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</article>
+
+      <article class="module-card" data-module="inventory">
+        <h3>Inventaire</h3>
+        <p>Préparer et valider les inventaires du rayon.</p>
+        <button id="inventory-btn" class="btn btn-primary btn-full">Ouvrir</button>
+      </article>
+
+      <article class="module-card" data-module="traceability">
+  <h3>Traçabilité</h3>
+  <p>Suivre les lots, FIFO et données qualité.</p>
+  <button id="traceability-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</article>
+
+      <article class="module-card" data-module="transformations">
+        <h3>Transformation</h3>
+        <p>Transformer un article en un autre avec choix FIFO ou lot manuel.</p>
+        <button id="transformations-btn" class="btn btn-primary btn-full">Ouvrir</button>
+      </article>
+
+      <article class="module-card" data-module="recipes">
+  <h3>Recettes</h3>
+  <p>Créer et gérer les recettes / compositions du rayon.</p>
+  <button id="recipes-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</article>
+
+<article class="module-card" data-module="fabrications">
+  <h3>Fabrications</h3>
+  <p>Préparer, suivre et valider les fabrications issues des recettes.</p>
+  <button id="fabrications-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</article>
+
+<article class="module-card" data-module="labels">
+  <h3>Étiquettes</h3>
+  <p>Exporter le fichier Evolis des étiquettes du rayon.</p>
+  <button id="labels-btn" class="btn btn-primary btn-full">Exporter</button>
+</article>
+
+<article class="module-card" data-module="compta">
+  <h3>Comptabilité</h3>
+  <p>Pilotage, marges, dashboard et lettrage fournisseurs.</p>
+  <button id="compta-btn" class="btn btn-primary btn-full">Ouvrir</button>
+</article>
+
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/home.js?v=7"></script>
+</body>
+</html>

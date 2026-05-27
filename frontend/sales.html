@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ventes - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Rayons V2</h1>
+      <p class="app-subtitle">Liste des ventes / sorties</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="topbar-department-box">
+        <label for="topbar-department-select" class="topbar-label">Rayon actif</label>
+        <select id="topbar-department-select" class="topbar-select"></select>
+      </div>
+
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Ventes / Sorties</h2>
+          <p>
+            Rayon actif :
+            <strong id="current-department-name">-</strong>
+          </p>
+        </div>
+
+        <div class="page-actions-right">
+          <button id="new-sale-btn" class="btn btn-primary">➕ Créer vente</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Filtres</h3>
+
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="sale-status-filter">Statut</label>
+          <select id="sale-status-filter">
+            <option value="">Tous</option>
+            <option value="draft">Brouillon</option>
+            <option value="validated">Validé</option>
+            <option value="cancelled">Annulé</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="sale-type-filter">Type</label>
+          <select id="sale-type-filter">
+            <option value="">Tous</option>
+            <option value="inventory_sale">Vente inventaire</option>
+            <option value="manual_sale">Vente manuelle</option>
+            <option value="transfer_out">Rétrocession</option>
+            <option value="waste">Casse / perte</option>
+          </select>
+        </div>
+
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <div class="page-actions-right">
+            <button id="refresh-sales-btn" class="btn btn-secondary">Rafraîchir</button>
+            <button id="reset-sales-filters-btn" class="btn btn-secondary">Réinitialiser</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Liste des documents</h3>
+      <div id="sales-feedback" class="page-feedback hidden"></div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Origine</th>
+              <th>Statut</th>
+              <th>Référence</th>
+              <th>Lignes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="sales-table-body">
+            <tr>
+              <td colspan="7">Chargement...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/sales.js?v=3"></script>
+</body>
+</html>

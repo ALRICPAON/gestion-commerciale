@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Utilisateurs - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/users.css?v=2" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Rayons V2</h1>
+      <p class="app-subtitle">
+        <span id="store-name">Magasin</span> • Gestion des utilisateurs
+      </p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="topbar-department-box">
+        <label for="topbar-department-select" class="topbar-label">Rayon actif</label>
+        <select id="topbar-department-select" class="topbar-select"></select>
+      </div>
+
+      <div class="user-box">
+        <span id="user-name">Admin</span>
+      </div>
+
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <h2>Ajouter un utilisateur</h2>
+      <div class="page-actions-right">
+        <button id="open-login-qr-btn" type="button" class="btn btn-secondary">QR connexion</button>
+      </div>
+      <p>Créer un compte et lui attribuer un rôle ainsi que ses rayons autorisés.</p>
+    </section>
+
+    <section class="form-section">
+      <form id="user-form" class="form-card white-card">
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" required />
+        </div>
+
+        <div class="form-group">
+          <label for="password">Mot de passe</label>
+          <input type="text" id="password" />
+        </div>
+
+        <div class="form-group">
+          <label for="role">Rôle</label>
+          <select id="role" required>
+            <option value="vendeur">Vendeur</option>
+            <option value="responsable">Responsable</option>
+            <option value="qualite">Qualité</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Rayons autorisés</label>
+          <div id="departments-checkboxes"></div>
+        </div>
+
+        <div class="form-group">
+          <label for="default-department">Rayon par défaut</label>
+          <select id="default-department">
+            <option value="">Choisir</option>
+          </select>
+        </div>
+
+        <button type="submit" id="submit-user-btn" class="btn btn-primary">
+          Créer l'utilisateur
+        </button>
+        <p id="form-message" class="error-text"></p>
+      </form>
+    </section>
+
+    <section class="welcome-card">
+      <h2>Liste des utilisateurs</h2>
+      <p>Comptes existants dans le magasin.</p>
+    </section>
+
+    <section class="white-card">
+      <div id="users-list"></div>
+    </section>
+  </main>
+
+  <div id="login-qr-modal" class="qr-modal hidden" role="dialog" aria-modal="true" aria-labelledby="login-qr-title">
+    <div class="qr-modal-card">
+      <div class="qr-modal-header">
+        <div>
+          <h3 id="login-qr-title">QR connexion</h3>
+          <p>Acces public a l'application, sans identifiant ni token.</p>
+        </div>
+        <button id="close-login-qr-btn" type="button" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="login-qr-print-area" class="login-qr-print-area">
+        <div id="login-qr-code" class="login-qr-code"></div>
+        <p class="login-qr-label">Scanner pour acceder a Rayon V2</p>
+        <p id="login-qr-url" class="login-qr-url"></p>
+      </div>
+
+      <div class="page-actions-right qr-modal-actions">
+        <button id="print-login-qr-btn" type="button" class="btn btn-primary">Imprimer</button>
+      </div>
+    </div>
+  </div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="./js/config.js"></script>
+<script src="./js/users.js?v=8"></script>
+</body>
+</html>

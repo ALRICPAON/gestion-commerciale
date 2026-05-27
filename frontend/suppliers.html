@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fournisseurs - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Rayons V2</h1>
+      <p class="app-subtitle">Fournisseurs</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <div class="section-header">
+        <div>
+          <h2>Liste des fournisseurs</h2>
+          <p>Consulte, ajoute et active/désactive les fournisseurs du magasin.</p>
+        </div>
+
+        <button id="add-supplier-btn" class="btn btn-primary">+ Nouveau fournisseur</button>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Nom</th>
+              <th>Contact</th>
+              <th>Téléphone</th>
+              <th>Email</th>
+              <th>Statut</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="suppliers-tbody">
+            <tr>
+              <td colspan="7">Chargement...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="supplier-modal" class="modal hidden">
+    <div class="modal-content">
+      <h3>Nouveau fournisseur</h3>
+
+      <div class="form-grid">
+        <input id="sup-code" placeholder="Code" />
+        <input id="sup-name" placeholder="Nom" />
+        <input id="sup-contact" placeholder="Contact" />
+        <input id="sup-phone" placeholder="Téléphone" />
+        <input id="sup-email" placeholder="Email" />
+        <input id="sup-address" placeholder="Adresse" />
+      </div>
+
+      <div class="modal-actions">
+        <button id="save-supplier-btn" class="btn btn-primary">Enregistrer</button>
+        <button id="close-modal-btn" class="btn btn-secondary">Annuler</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/suppliers.js?v=2"></script>
+</body>
+</html>

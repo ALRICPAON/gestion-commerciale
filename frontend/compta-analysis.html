@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Analyse des écarts</title>
+
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/compta-analysis.css?v=3" />
+</head>
+
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Analyse des écarts</h1>
+      <p class="app-subtitle">Articles, marges, prix et anomalies</p>
+    </div>
+
+    <div class="topbar-right">
+      <button id="back-compta-home-btn" class="btn btn-secondary">Comptabilité</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="compta-analysis-page">
+    <section class="analysis-card">
+      <h2>Filtres</h2>
+
+      <div class="analysis-filters">
+        <div class="analysis-field">
+          <label>Du</label>
+          <input id="start-date" type="date" />
+        </div>
+
+        <div class="analysis-field">
+          <label>Au</label>
+          <input id="end-date" type="date" />
+        </div>
+
+        <label class="analysis-checkbox">
+          <input id="anomalies-only" type="checkbox" />
+          Anomalies uniquement
+        </label>
+
+        <button id="load-analysis-btn" class="btn btn-primary">Charger</button>
+      </div>
+    </section>
+
+    <section class="analysis-kpi-grid">
+      <article class="analysis-kpi">
+        <span>CA théorique HT</span>
+        <strong id="kpi-ca">0,00 €</strong>
+      </article>
+
+      <article class="analysis-kpi">
+        <span>Coût théorique HT</span>
+        <strong id="kpi-cost">0,00 €</strong>
+      </article>
+
+      <article class="analysis-kpi">
+        <span>Marge théorique HT</span>
+        <strong id="kpi-margin">0,00 €</strong>
+      </article>
+
+      <article class="analysis-kpi">
+        <span>% marge théorique</span>
+        <strong id="kpi-margin-pct">0,00 %</strong>
+      </article>
+
+      <article class="analysis-kpi warning">
+        <span>PV manquants</span>
+        <strong id="kpi-pricing-issues">0</strong>
+      </article>
+
+      <article class="analysis-kpi warning">
+        <span>Coûts manquants</span>
+        <strong id="kpi-cost-issues">0</strong>
+      </article>
+
+      <article class="analysis-kpi danger">
+        <span>Marges négatives</span>
+        <strong id="kpi-negative-margins">0</strong>
+      </article>
+    </section>
+
+    <section class="analysis-card">
+      <h2>Détail articles</h2>
+
+      <div class="table-wrapper">
+        <table class="analysis-table">
+          <thead>
+            <tr>
+              <th>PLU</th>
+              <th>Désignation</th>
+              <th>Qté</th>
+              <th>Unité</th>
+              <th>CA HT</th>
+              <th>Coût HT</th>
+              <th>Marge HT</th>
+              <th>%</th>
+              <th>Anomalie</th>
+            </tr>
+          </thead>
+
+          <tbody id="articles-body">
+            <tr>
+              <td colspan="9">Charge une période.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="analysis-card">
+      <h2>Journées validées</h2>
+
+      <div class="table-wrapper">
+        <table class="analysis-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>CA réel HT</th>
+              <th>CA théorique HT</th>
+              <th>Écart CA</th>
+              <th>Marge réelle HT</th>
+              <th>Marge théorique HT</th>
+              <th>Écart marge</th>
+            </tr>
+          </thead>
+
+          <tbody id="days-body">
+            <tr>
+              <td colspan="7">Charge une période.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+
+  <script type="module" src="./js/compta-analysis.js?v=1"></script>
+</body>
+</html>

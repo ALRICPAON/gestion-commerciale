@@ -1,0 +1,243 @@
+/* ========================= */
+/* STOCK PAGE V2 */
+/* ========================= */
+
+body.app-page.stock-page .main-content {
+  max-width: none;
+  width: 100%;
+  margin: 0;
+  padding: 16px 18px 28px;
+}
+
+body.app-page.stock-page .welcome-card,
+body.app-page.stock-page .card {
+  width: 100%;
+  max-width: none;
+  margin-left: 0;
+  margin-right: 0;
+}
+
+body.app-page.stock-page .card h3 {
+  margin-top: 0;
+  margin-bottom: 14px;
+  color: var(--theme-main);
+  font-size: 18px;
+}
+
+/* zone paramètres */
+
+body.app-page.stock-page .filters-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+body.app-page.stock-page .form-group label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #475467;
+}
+
+body.app-page.stock-page .form-group input,
+body.app-page.stock-page .form-group select {
+  height: 42px;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  background: #fff;
+}
+
+/* cartes totaux */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+}
+
+.stat-card {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  border: 1px solid #e4e7ec;
+  border-left: 4px solid var(--theme-main);
+  border-radius: 14px;
+  padding: 16px 16px 14px;
+  box-shadow: 0 6px 14px rgba(16, 24, 40, 0.05);
+}
+
+.stat-card .stat-label {
+  display: inline-block;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: var(--theme-main);
+}
+
+.stat-card div {
+  margin: 5px 0;
+  font-size: 14px;
+  color: #344054;
+}
+
+.stat-card strong {
+  color: #111827;
+}
+
+/* wrapper tableau */
+
+body.app-page.stock-page .purchase-lines-wrap {
+  overflow-x: auto;
+  border: 1px solid #e4e7ec;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.6);
+}
+
+/* tableau stock */
+
+body.app-page.stock-page .data-table {
+  width: 100%;
+  min-width: 1280px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+body.app-page.stock-page .data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--theme-soft);
+  color: #111827;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  padding: 12px 10px;
+  border-bottom: 1px solid #dbe3ee;
+  white-space: nowrap;
+}
+
+body.app-page.stock-page .data-table tbody td {
+  padding: 10px 10px;
+  border-bottom: 1px solid #eef2f7;
+  vertical-align: middle;
+  background: #fff;
+  font-size: 13px;
+}
+
+body.app-page.stock-page .data-table tbody tr:nth-child(even) td {
+  background: #fafbfc;
+}
+
+body.app-page.stock-page .data-table tbody tr:hover td {
+  background: #f5f9ff;
+}
+
+/* largeurs colonnes stock */
+
+body.app-page.stock-page .data-table th:nth-child(1),
+body.app-page.stock-page .data-table td:nth-child(1) {
+  width: 110px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(2),
+body.app-page.stock-page .data-table td:nth-child(2) {
+  width: 280px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(3),
+body.app-page.stock-page .data-table td:nth-child(3) {
+  width: 110px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(4),
+body.app-page.stock-page .data-table td:nth-child(4) {
+  width: 130px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(5),
+body.app-page.stock-page .data-table td:nth-child(5) {
+  width: 140px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(6),
+body.app-page.stock-page .data-table td:nth-child(6) {
+  width: 140px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(7),
+body.app-page.stock-page .data-table td:nth-child(7) {
+  width: 130px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(8),
+body.app-page.stock-page .data-table td:nth-child(8) {
+  width: 130px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(9),
+body.app-page.stock-page .data-table td:nth-child(9) {
+  width: 120px;
+}
+
+body.app-page.stock-page .data-table th:nth-child(10),
+body.app-page.stock-page .data-table td:nth-child(10) {
+  width: 145px;
+}
+
+/* input PV */
+
+.stock-pv-input {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.stock-pv-input:focus {
+  outline: none;
+  border-color: var(--theme-main);
+  box-shadow: 0 0 0 3px rgba(0, 91, 170, 0.10);
+}
+
+/* alignement visuel des nombres */
+
+body.app-page.stock-page .data-table td:nth-child(3),
+body.app-page.stock-page .data-table td:nth-child(4),
+body.app-page.stock-page .data-table td:nth-child(5),
+body.app-page.stock-page .data-table td:nth-child(6),
+body.app-page.stock-page .data-table td:nth-child(8),
+body.app-page.stock-page .data-table td:nth-child(10) {
+  font-variant-numeric: tabular-nums;
+}
+
+/* meilleure hiérarchie des sections */
+
+body.app-page.stock-page .card + .card {
+  margin-top: 18px;
+}
+
+body.app-page.stock-page .page-feedback {
+  margin-bottom: 14px;
+}
+
+/* responsive stock */
+
+@media (max-width: 900px) {
+  body.app-page.stock-page .main-content {
+    padding: 14px 12px 22px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  body.app-page.stock-page .filters-row {
+    grid-template-columns: 1fr;
+  }
+}

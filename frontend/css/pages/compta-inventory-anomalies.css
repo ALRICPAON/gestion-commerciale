@@ -1,0 +1,191 @@
+.inventory-anomalies-page {
+  padding: 24px;
+}
+
+.inventory-anomalies-card {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 24px;
+  margin-bottom: 24px;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+}
+
+.inventory-anomalies-card:last-child {
+  margin-bottom: 0;
+}
+
+.inventory-anomalies-filters {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.inventory-anomalies-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+  flex: 1;
+}
+
+.inventory-anomalies-field label {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.inventory-anomalies-field input,
+.inventory-anomalies-field select {
+  min-height: 44px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-size: 0.95rem;
+}
+
+.inventory-anomalies-filters button#load-btn {
+  min-width: 140px;
+  padding: 0 24px;
+  height: 46px;
+}
+
+.inventory-anomalies-feedback {
+  min-height: 22px;
+  margin-top: 16px;
+  color: #166534;
+  font-weight: 700;
+}
+
+.inventory-anomalies-feedback.error {
+  color: #b91c1c;
+}
+
+.inventory-anomalies-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.inventory-anomalies-summary h2 {
+  margin: 0;
+  font-size: 1.25rem;
+}
+
+.inventory-anomalies-summary strong {
+  font-size: 1.6rem;
+  color: #0f172a;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+  margin: 0 -24px;
+  padding: 0 24px;
+}
+
+.inventory-anomalies-table {
+  width: 100%;
+  min-width: 1600px;
+  border-collapse: collapse;
+  background: #ffffff;
+}
+
+.inventory-anomalies-table th,
+.inventory-anomalies-table td {
+  padding: 14px 14px;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: left;
+}
+
+.inventory-anomalies-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f8fafc;
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.inventory-anomalies-table tbody tr:nth-child(odd) td {
+  background: #ffffff;
+}
+
+.inventory-anomalies-table tbody tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+.inventory-anomalies-table tbody tr:hover td {
+  background: #e2e8f0;
+}
+
+.inventory-anomalies-table td:nth-child(4),
+.inventory-anomalies-table td:nth-child(10) {
+  white-space: normal;
+  min-width: 260px;
+}
+
+.inventory-anomalies-table td:nth-child(6),
+.inventory-anomalies-table td:nth-child(7),
+.inventory-anomalies-table td:nth-child(9) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.anomaly-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.anomaly-badge.stock_alert {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.anomaly-badge.missing_sale_price {
+  background: #ffedd5;
+  color: #c2410c;
+}
+
+.anomaly-badge.inventory_anomaly {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+@media (max-width: 900px) {
+  .inventory-anomalies-page {
+    padding: 16px;
+  }
+
+  .inventory-anomalies-card {
+    padding: 18px;
+  }
+
+  .inventory-anomalies-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .inventory-anomalies-field {
+    min-width: 100%;
+  }
+
+  .table-wrapper {
+    margin: 0;
+    padding: 0;
+  }
+}

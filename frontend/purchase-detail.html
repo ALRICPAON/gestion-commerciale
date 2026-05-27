@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Détail achat - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/purchase-detail.css" />
+  <link rel="stylesheet" href="./css/pages/sanitary-sheet.css?v=5">
+</head>
+<body class="app-page purchase-detail-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Rayons V2</h1>
+      <p class="app-subtitle">Détail achat</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="topbar-department-box">
+        <label for="topbar-department-select" class="topbar-label">Rayon actif</label>
+        <select id="topbar-department-select" class="topbar-select"></select>
+      </div>
+
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+
+      <button id="back-purchases-btn" class="btn btn-secondary">← Retour achats</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Détail achat</h2>
+          <p>
+            Rayon actif :
+            <strong id="current-department-name">-</strong>
+          </p>
+        </div>
+
+        <div class="page-actions-right">
+  <button id="save-purchase-btn" class="btn btn-primary">💾 Enregistrer</button>
+  <button id="validate-reception-btn" class="btn btn-primary">✅ Valider réception</button>
+  <button id="add-line-btn" class="btn btn-secondary">➕ Ajouter ligne</button>
+  <button id="open-qr-modal-btn" class="btn btn-secondary">📱 Générer QR photo BL</button>
+</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>En-tête achat</h3>
+      <div id="purchase-header-feedback" class="page-feedback hidden"></div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="purchase-order-date">Date commande</label>
+          <input type="date" id="purchase-order-date" />
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-receipt-date">Date réception</label>
+          <input type="date" id="purchase-receipt-date" />
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-supplier-name">Fournisseur</label>
+          <input type="text" id="purchase-supplier-name" readonly />
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-type">Type</label>
+          <select id="purchase-type">
+            <option value="order">Commande</option>
+            <option value="direct_bl">BL direct</option>
+            <option value="invoice_only">Facture seule</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-status">Statut</label>
+          <select id="purchase-status">
+  <option value="ordered">Commandé</option>
+  <option value="cancelled">Annulé</option>
+</select>
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-bl-number">N° BL</label>
+          <input type="text" id="purchase-bl-number" />
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-invoice-number">N° facture</label>
+          <input type="text" id="purchase-invoice-number" />
+        </div>
+
+        <div class="form-group form-group-span-2">
+          <label for="purchase-notes">Notes</label>
+          <textarea id="purchase-notes" rows="3"></textarea>
+        </div>
+      </div>
+    </section>
+
+    <section class="card purchase-detail-card">
+      <div class="page-actions">
+        <div>
+          <h3>Lignes achat</h3>
+          <p class="helper-text">
+            PLU direct ou F9 pour rechercher • Entrée = enregistrer + nouvelle ligne
+          </p>
+          <p id="lines-mode-label" class="helper-text"></p>
+        </div>
+      </div>
+
+      <div id="purchase-lines-feedback" class="page-feedback hidden"></div>
+
+      <div class="purchase-lines-wrap">
+        <table class="data-table purchase-lines-table">
+          <thead>
+            <tr>
+              <th>PLU</th>
+              <th>Article</th>
+              <th>Colis</th>
+              <th>Pièces</th>
+              <th>Poids</th>
+              <th>Prix HT</th>
+              <th>Total ligne</th>
+              <th>Unité prix</th>
+              <th>Statut</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="purchase-lines-table-body">
+            <tr>
+              <td colspan="10">Chargement...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="article-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-xl">
+      <div class="modal-header">
+        <div>
+          <h3>Sélectionner un article</h3>
+          <p>Double clic pour choisir</p>
+        </div>
+        <button type="button" id="close-article-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="article-search-input">Recherche article</label>
+          <input type="text" id="article-search-input" placeholder="PLU, désignation, nom latin..." />
+        </div>
+
+        <div class="form-group">
+          <label for="article-sector-filter">Secteur</label>
+          <select id="article-sector-filter">
+            <option value="">Tous</option>
+            <option value="TRAD">TRAD</option>
+            <option value="LS">LS</option>
+            <option value="EMB">EMB</option>
+            <option value="SCE">SCE</option>
+            <option value="FE">FE</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="article-active-filter">Statut</label>
+          <select id="article-active-filter">
+            <option value="true">Actifs</option>
+            <option value="">Tous</option>
+            <option value="false">Inactifs</option>
+          </select>
+        </div>
+
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button type="button" id="refresh-article-modal-btn" class="btn btn-secondary">Rafraîchir</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table selectable-table">
+          <thead>
+            <tr>
+              <th>PLU</th>
+              <th>Désignation</th>
+              <th>Rayon</th>
+              <th>Secteur</th>
+              <th>Unité</th>
+            </tr>
+          </thead>
+          <tbody id="article-modal-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+    <div id="line-sheet-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div>
+          <h3>Fiche ligne achat</h3>
+          <p>Infos métier, DLC et photo sanitaire</p>
+        </div>
+        <button type="button" id="close-line-sheet-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="line-sheet-feedback" class="page-feedback hidden"></div>
+
+<div class="line-sheet-layout">
+  <div class="line-sheet-form-column">
+    <div class="form-grid">
+      <div class="form-group">
+        <label for="sheet-line-plu">PLU</label>
+        <input type="text" id="sheet-line-plu" readonly />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-article">Article</label>
+        <input type="text" id="sheet-line-article" readonly />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-dlc">DLC</label>
+        <input type="date" id="sheet-line-dlc" />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-lot-number">Lot fournisseur</label>
+        <input type="text" id="sheet-line-lot-number" />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-latin-name">Nom latin</label>
+        <input type="text" id="sheet-line-latin-name" />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-fao-zone">FAO</label>
+        <input type="text" id="sheet-line-fao-zone" />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-sous-zone">Sous-zone</label>
+        <input type="text" id="sheet-line-sous-zone" />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-fishing-gear">Engin</label>
+        <input type="text" id="sheet-line-fishing-gear" />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-origin-label">Origine / méthode</label>
+        <input type="text" id="sheet-line-origin-label" />
+      </div>
+
+      <div class="form-group">
+        <label for="sheet-line-allergens">Allergènes</label>
+        <input type="text" id="sheet-line-allergens" />
+      </div>
+
+      <div class="form-group form-group-span-2">
+        <label for="sheet-line-photo-url">Photo sanitaire</label>
+        <input type="text" id="sheet-line-photo-url" placeholder="URL photo sanitaire" />
+      </div>
+
+      <div class="form-group form-group-span-2">
+        <label for="sheet-line-notes">Notes qualité</label>
+        <textarea id="sheet-line-notes" rows="4"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="line-sheet-photo-column">
+    <label class="line-sheet-photo-title">Photo sanitaire</label>
+
+    <div id="sheet-line-photo-preview-wrap" class="line-sheet-photo-panel hidden">
+      <img
+        id="sheet-line-photo-preview"
+        src=""
+        alt="Photo sanitaire"
+        class="line-sheet-large-photo"
+      />
+      <div id="sheet-line-photo-count" class="line-photo-count hidden"></div>
+      <div id="sheet-line-photo-gallery" class="line-photo-gallery hidden"></div>
+    </div>
+
+    <div id="sheet-line-photo-empty" class="line-sheet-photo-empty">
+      Aucune photo renseignée
+    </div>
+  </div>
+</div>
+
+<div class="page-actions-right" style="margin-top: 16px;">
+  <button type="button" id="save-line-sheet-btn" class="btn btn-primary">💾 Enregistrer la fiche</button>
+</div>
+    </div>
+  </div>
+
+  <div id="qr-modal" class="modal-overlay hidden">
+  <div class="modal-card modal-large qr-modal-card">
+    <div class="modal-header">
+      <div>
+        <h3>QR code photo BL</h3>
+        <p>Scanne avec le téléphone pour ouvrir la page de prise de photo</p>
+      </div>
+      <button type="button" id="close-qr-modal-btn" class="btn btn-secondary">Fermer</button>
+    </div>
+
+    <div class="qr-print-area" id="qr-print-area">
+      <div class="qr-print-header">
+        <h2 id="qr-supplier-name">Fournisseur</h2>
+        <p id="qr-bl-number">BL -</p>
+      </div>
+
+      <div class="qr-box-wrap">
+        <div id="purchase-qr-code" class="purchase-qr-code"></div>
+      </div>
+
+      <div class="qr-link-wrap">
+        <input type="text" id="qr-target-url" readonly />
+      </div>
+    </div>
+
+    <div class="page-actions-right" style="margin-top:16px;">
+      <button type="button" id="print-qr-btn" class="btn btn-primary">🖨️ Imprimer</button>
+      <button type="button" id="copy-qr-link-btn" class="btn btn-secondary">🔗 Copier le lien</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="./js/config.js"></script>
+<script src="./js/purchase-detail.js?v=7"></script>
+
+</body>
+</html>

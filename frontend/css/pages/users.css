@@ -1,0 +1,173 @@
+/* ========================= */
+/* USERS PAGE */
+/* ========================= */
+
+.form-section {
+  margin-bottom: 24px;
+}
+
+#departments-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-left: 4px solid var(--theme-card-border);
+  border-radius: 10px;
+  background: #f9fafb;
+}
+
+.checkbox-row input {
+  width: auto;
+  margin: 0;
+}
+
+#users-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.user-card {
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-left: 4px solid var(--theme-main);
+  border-radius: 12px;
+  background: #f9fafb;
+}
+
+.user-card h3 {
+  margin-top: 0;
+  margin-bottom: 10px;
+  color: var(--theme-main);
+}
+
+.user-card p {
+  margin: 6px 0;
+}
+
+.user-card ul {
+  margin-top: 8px;
+  margin-bottom: 12px;
+  padding-left: 20px;
+}
+
+.user-card-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.qr-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.qr-modal-card {
+  width: min(460px, 100%);
+  padding: 20px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
+}
+
+.qr-modal-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.qr-modal-header h3 {
+  margin: 0 0 6px;
+  color: var(--theme-main);
+}
+
+.qr-modal-header p {
+  margin: 0;
+  color: #667085;
+}
+
+.login-qr-print-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  text-align: center;
+}
+
+.login-qr-code {
+  width: 280px;
+  min-height: 280px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-qr-label {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #111827;
+}
+
+.login-qr-url {
+  margin: 0;
+  color: #344054;
+  overflow-wrap: anywhere;
+}
+
+.qr-modal-actions {
+  margin-top: 16px;
+}
+
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+
+  #login-qr-print-area,
+  #login-qr-print-area * {
+    visibility: visible !important;
+  }
+
+  #login-qr-print-area {
+    position: fixed;
+    left: 50%;
+    top: 40px;
+    transform: translateX(-50%);
+    width: 360px;
+    border: 0;
+  }
+}
+
+.page-actions-right {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.qr-modal.hidden {
+  display: none !important;
+}
+
+.qr-modal {
+  display: flex;
+}

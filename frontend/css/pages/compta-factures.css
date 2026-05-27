@@ -1,0 +1,99 @@
+.factures-card h2 {
+  margin-top: 0;
+}
+
+.factures-grid {
+  display: grid;
+  grid-template-columns: 160px 160px 1.4fr 160px 1fr auto;
+  gap: 14px;
+  align-items: end;
+}
+
+.factures-status {
+  margin: 12px 0 0;
+  color: #64748b;
+  font-weight: 700;
+}
+
+.factures-table th,
+.factures-table td {
+  text-align: left;
+}
+
+.factures-modal {
+  position: fixed;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.55);
+  padding: 20px;
+  z-index: 9999;
+}
+
+.factures-modal-content {
+  background: #fff;
+  border-radius: 18px;
+  padding: 18px;
+  width: min(950px, 96vw);
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.35);
+}
+
+.factures-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.factures-modal-header h3 {
+  margin: 0;
+}
+
+.factures-modal-header p {
+  margin: 6px 0 0;
+  color: #64748b;
+}
+
+.factures-modal-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 8px 18px;
+  padding: 14px;
+  background: #f8fafc;
+  border-radius: 14px;
+  margin-bottom: 16px;
+}
+
+.factures-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+@media (max-width: 1000px) {
+  .factures-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .factures-modal-meta {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .compta-factures-page {
+    padding: 14px;
+  }
+
+  .factures-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .factures-actions .btn {
+    width: 100%;
+  }
+}

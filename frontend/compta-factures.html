@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Factures lettrées</title>
+
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/compta-factures.css?v=2" />
+</head>
+
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Factures lettrées</h1>
+      <p class="app-subtitle">Historique des factures fournisseurs rapprochées</p>
+    </div>
+
+    <div class="topbar-right">
+      <button id="back-compta-home-btn" class="btn btn-secondary">Comptabilité</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="compta-factures-page">
+    <section class="factures-card">
+      <h2>Filtres</h2>
+
+      <div class="factures-grid">
+        <div class="factures-field">
+          <label>Du</label>
+          <input id="date-start" type="date" />
+        </div>
+
+        <div class="factures-field">
+          <label>Au</label>
+          <input id="date-end" type="date" />
+        </div>
+
+        <div class="factures-field">
+          <label>Fournisseur</label>
+          <select id="supplier-select">
+            <option value="">Tous</option>
+          </select>
+        </div>
+
+        <div class="factures-field">
+          <label>Statut</label>
+          <select id="status-select">
+            <option value="">Tous</option>
+            <option value="validated">Validée</option>
+            <option value="cancelled">Annulée</option>
+          </select>
+        </div>
+
+        <div class="factures-field">
+          <label>Recherche n° facture</label>
+          <input id="search-invoice" type="text" placeholder="ex : F2026-001" />
+        </div>
+
+        <button id="load-invoices-btn" class="btn btn-primary">Charger</button>
+      </div>
+
+      <p id="status-message" class="factures-status"></p>
+    </section>
+
+    <section class="factures-card">
+      <h2>Résultats</h2>
+
+      <div class="table-wrapper">
+        <table class="factures-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>N° facture</th>
+              <th>Fournisseur</th>
+              <th>Montant facture HT</th>
+              <th>Montant validé HT</th>
+              <th>Écart HT</th>
+              <th>Statut</th>
+              <th>Note</th>
+              <th>Détails</th>
+            </tr>
+          </thead>
+
+          <tbody id="invoices-body">
+            <tr>
+              <td colspan="9">Choisis une période puis charge les factures.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="invoice-modal" class="factures-modal">
+    <div class="factures-modal-content">
+      <div class="factures-modal-header">
+        <div>
+          <h3 id="modal-title">Détail facture</h3>
+          <p id="modal-subtitle"></p>
+        </div>
+
+        <button id="modal-close-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="modal-meta" class="factures-modal-meta"></div>
+
+      <div class="table-wrapper">
+        <table class="factures-table">
+          <thead>
+            <tr>
+              <th>Achat / BL</th>
+              <th>Date achat</th>
+              <th>Mode</th>
+              <th>Ligne</th>
+              <th>Montant HT</th>
+            </tr>
+          </thead>
+
+          <tbody id="modal-links-body">
+            <tr>
+              <td colspan="5">Aucun détail.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="factures-actions">
+        <button id="go-lettrage-btn" class="btn btn-primary">
+          Modifier / relettrer
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script type="module" src="./js/compta-factures.js?v=1"></script>
+</body>
+</html>

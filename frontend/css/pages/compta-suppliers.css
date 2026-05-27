@@ -1,0 +1,37 @@
+.suppliers-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.supplier-kpi strong {
+  font-size: 1.4rem;
+}
+
+.suppliers-table {
+  min-width: 1200px;
+}
+
+.suppliers-table td:nth-child(3),
+.suppliers-table td:nth-child(4),
+.suppliers-table td:nth-child(5),
+.suppliers-table td:nth-child(6) {
+  text-align: right;
+}
+
+@media (max-width: 700px) {
+
+  .suppliers-page {
+    padding: 14px;
+  }
+
+  .suppliers-kpis {
+    grid-template-columns: 1fr;
+  }
+
+  .suppliers-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}

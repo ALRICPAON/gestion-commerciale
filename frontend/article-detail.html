@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Fiche Article</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/article-detail.css?v=1" />
+</head>
+
+<body class="app-page article-detail-page">
+
+<header class="topbar">
+  <div>
+    <h1 class="app-title">Fiche article</h1>
+  </div>
+
+  <div class="topbar-right">
+    <span id="user-name"></span>
+    <select id="department-select"></select>
+    <button id="back-btn" class="btn btn-secondary">Retour</button>
+    <button id="edit-btn" class="btn btn-primary">Modifier</button>
+<button id="save-btn" class="btn btn-success hidden">Enregistrer</button>
+  </div>
+</header>
+
+<main class="main-content">
+
+  <section class="card">
+    <h2>Identité</h2>
+    <div id="identity"></div>
+  </section>
+
+  <section class="card">
+    <h2>Métier</h2>
+    <div id="meta"></div>
+  </section>
+
+  <section class="card">
+    <h2>Unités</h2>
+    <div id="units"></div>
+  </section>
+
+  <section class="card">
+  <h2>Stock</h2>
+  <div id="stock-summary"></div>
+</section>
+
+<section class="card">
+  <h2>Lots disponibles</h2>
+
+  <div class="article-scroll-box">
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Lot</th>
+            <th>Qté restante</th>
+            <th>PA HT</th>
+            <th>DLC</th>
+            <th>Fournisseur</th>
+            <th>Type</th>
+          </tr>
+        </thead>
+        <tbody id="lots-body"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Mouvements stock</h2>
+
+  <div class="article-scroll-box">
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Quantité</th>
+            <th>PA HT</th>
+            <th>Lot</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="movements-body"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Historique ventes / sorties</h2>
+
+  <div class="article-scroll-box">
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Type</th>
+            <th>Référence</th>
+            <th>Qté</th>
+            <th>Unité</th>
+            <th>PV TTC</th>
+            <th>Motif</th>
+            <th>Statut</th>
+          </tr>
+        </thead>
+        <tbody id="sales-history-body"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Historique achats</h2>
+
+  <div class="article-scroll-box">
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Quantité</th>
+            <th>Prix HT</th>
+          </tr>
+        </thead>
+        <tbody id="history-body"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<script src="./js/config.js"></script>
+<script src="./js/article-detail.js?v=6"></script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Fabrications - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+</head>
+
+<body class="app-page">
+  <header class="topbar">
+    <div>
+      <h1>Fabrications</h1>
+      <p>Préparer et suivre les fabrications du rayon</p>
+    </div>
+
+    <a class="btn btn-secondary" href="./home.html">← Accueil</a>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <h2>Nouvelle fabrication</h2>
+
+      <div class="form-grid">
+        <label>
+          Recette
+          <select id="recipeSelect" class="input"></select>
+        </label>
+
+        <label>
+          Quantité à produire
+          <input id="plannedQuantity" class="input" type="number" step="0.001" value="1" />
+        </label>
+
+        <label>
+          Notes
+          <input id="fabricationNotes" class="input" placeholder="Optionnel" />
+        </label>
+      </div>
+
+      <button id="btnCreateFabrication" class="btn btn-primary">
+        Créer fabrication
+      </button>
+    </section>
+
+    <section class="card">
+      <h2>Fabrications existantes</h2>
+      <div id="fabricationsList">Chargement...</div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script type="module" src="./js/fabrications.js?v=2"></script>
+</body>
+</html>

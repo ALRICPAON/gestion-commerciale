@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>AF_MAP - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/af-map.css" />
+</head>
+
+<body class="app-page">
+
+<header class="topbar">
+  <h1>AF_MAP</h1>
+  <button id="back-home-btn">Accueil</button>
+</header>
+
+<main class="main-content">
+
+  <button id="add-afmap-btn" class="btn btn-primary">+ Nouveau mapping</button>
+
+  <table class="data-table afmap-table">
+    <thead>
+      <tr>
+        <th>Fournisseur</th>
+        <th>Réf fournisseur</th>
+        <th>Article</th>
+        <th>Statut</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody id="afmap-tbody">
+      <tr><td colspan="5">Chargement...</td></tr>
+    </tbody>
+  </table>
+
+</main>
+
+<div id="afmap-modal" class="modal hidden">
+  <div class="modal-content">
+    <h3>Nouveau mapping fournisseur ↔ article</h3>
+
+    <div class="form-grid">
+      <input id="afmap-supplier-code" placeholder="Code fournisseur" />
+      <input id="afmap-plu" placeholder="PLU article" />
+      <input id="afmap-supplier-ref" placeholder="Référence fournisseur" />
+      <input id="afmap-supplier-label" placeholder="Libellé fournisseur" />
+    </div>
+
+    <div class="modal-actions">
+      <button id="save-afmap-btn" class="btn btn-primary">Enregistrer</button>
+      <button id="close-afmap-modal-btn" class="btn btn-secondary">Annuler</button>
+    </div>
+  </div>
+</div>
+
+<script src="./js/config.js"></script>
+<script src="./js/af-map.js?v=2"></script>
+</body>
+</html>

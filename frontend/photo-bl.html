@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Photos BL - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/sanitary-sheet.css" />
+</head>
+<body class="app-page photo-bl-page">
+  <main class="main-content" style="padding-top: 20px;">
+    <section class="welcome-card">
+  <div class="mobile-photo-header">
+    <h1 class="mobile-photo-title">Photos sanitaires BL</h1>
+    <p id="mobile-purchase-header" class="mobile-photo-subtitle">Chargement...</p>
+  </div>
+  <div id="mobile-feedback" class="page-feedback hidden"></div>
+</section>
+
+    <section class="card mobile-token-card hidden">
+  <div class="form-group">
+    <label for="mobile-token-input">Token utilisateur</label>
+    <input type="text" id="mobile-token-input" placeholder="Colle le token si nécessaire" />
+  </div>
+</section>
+
+    <section class="card">
+      <h3>Lignes du BL</h3>
+      <div id="mobile-lines-list" class="mobile-lines-list"></div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/photo-bl.js?v=4"></script>
+</body>
+</html>

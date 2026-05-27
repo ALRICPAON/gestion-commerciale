@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transformations - Gestion Rayons V2</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/transformations.css?v=2" />
+</head>
+<body class="app-page transformations-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">Gestion Rayons V2</h1>
+      <p class="app-subtitle">Module Transformation</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <div class="card-header-row">
+        <div>
+          <h2>Transformations</h2>
+          <p id="department-label">Rayon actif</p>
+        </div>
+        <button id="create-transformation-btn" class="btn btn-primary">Nouvelle transformation</button>
+      </div>
+
+      <div class="filters-row">
+        <label>
+          Statut
+          <select id="status-filter" class="input">
+            <option value="">Tous</option>
+            <option value="draft">Brouillon</option>
+            <option value="validated">Validée</option>
+            <option value="cancelled">Annulée</option>
+          </select>
+        </label>
+
+        <label>
+          Limite
+          <select id="limit-filter" class="input">
+            <option value="20">20</option>
+            <option value="50" selected>50</option>
+            <option value="100">100</option>
+          </select>
+        </label>
+
+        <button id="refresh-btn" class="btn btn-secondary">Rafraîchir</button>
+      </div>
+
+      <div id="page-message" class="page-message"></div>
+
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Statut</th>
+              <th>Source</th>
+              <th>Cible</th>
+              <th>Réf</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="transformations-table-body">
+            <tr>
+              <td colspan="6">Chargement…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/transformations.js?v=3"></script>
+</body>
+</html>
