@@ -107,20 +107,20 @@ router.post('/users', authenticateToken, attachDbContext, requireAdmin, async (r
     }
 
     if (!Array.isArray(department_ids) || department_ids.length === 0) {
-      return res.status(400).json({ error: 'Au moins un rayon doit être sélectionné' });
+      return res.status(400).json({ error: 'Au moins un service doit être sélectionné' });
     }
 
     if (!default_department_id) {
-      return res.status(400).json({ error: 'Le rayon par défaut est obligatoire' });
+      return res.status(400).json({ error: 'Le service par défaut est obligatoire' });
     }
 
     if (!department_ids.includes(default_department_id)) {
       return res.status(400).json({
-        error: 'Le rayon par défaut doit faire partie des rayons autorisés',
+        error: 'Le service par défaut doit faire partie des services autorisés',
       });
     }
 
-    const allowedRoles = ['admin', 'responsable', 'vendeur', 'qualite'];
+    const allowedRoles = ['admin', 'responsable', 'commercial', 'qualite', 'vendeur'];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
@@ -146,7 +146,7 @@ router.post('/users', authenticateToken, attachDbContext, requireAdmin, async (r
     );
 
     if (departmentsCheck.rows.length !== department_ids.length) {
-      return res.status(400).json({ error: 'Rayons invalides pour ce magasin' });
+      return res.status(400).json({ error: 'Services invalides pour ce magasin' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -198,7 +198,7 @@ router.patch('/users/:id', authenticateToken, attachDbContext, requireAdmin, asy
     const userId = req.params.id;
     const { email, role, department_ids, default_department_id, password } = req.body;
 
-    const allowedRoles = ['admin', 'responsable', 'vendeur', 'qualite'];
+    const allowedRoles = ['admin', 'responsable', 'commercial', 'qualite', 'vendeur'];
     if (!allowedRoles.includes(role)) {
       return res.status(400).json({ error: 'Rôle invalide' });
     }
@@ -208,16 +208,16 @@ router.patch('/users/:id', authenticateToken, attachDbContext, requireAdmin, asy
     }
 
     if (!Array.isArray(department_ids) || department_ids.length === 0) {
-      return res.status(400).json({ error: 'Au moins un rayon doit être sélectionné' });
+      return res.status(400).json({ error: 'Au moins un service doit être sélectionné' });
     }
 
     if (!default_department_id) {
-      return res.status(400).json({ error: 'Le rayon par défaut est obligatoire' });
+      return res.status(400).json({ error: 'Le service par défaut est obligatoire' });
     }
 
     if (!department_ids.includes(default_department_id)) {
       return res.status(400).json({
-        error: 'Le rayon par défaut doit faire partie des rayons autorisés',
+        error: 'Le service par défaut doit faire partie des services autorisés',
       });
     }
 
@@ -251,7 +251,7 @@ router.patch('/users/:id', authenticateToken, attachDbContext, requireAdmin, asy
     );
 
     if (departmentsCheck.rows.length !== department_ids.length) {
-      return res.status(400).json({ error: 'Rayons invalides pour ce magasin' });
+      return res.status(400).json({ error: 'Services invalides pour ce magasin' });
     }
 
     await client.query('BEGIN');

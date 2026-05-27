@@ -104,38 +104,6 @@ function saveActiveDepartment(department) {
   localStorage.setItem("grv2_active_department", JSON.stringify(department));
 }
 
-function applyDepartmentTheme(department) {
-  document.body.classList.remove(
-    "theme-pois",
-    "theme-bouch",
-    "theme-fdl",
-    "theme-boul",
-    "theme-char",
-    "theme-trait",
-    "theme-from"
-  );
-
-  if (!department || !department.code) return;
-
-  const code = department.code.toUpperCase();
-
-  const map = {
-    POIS: "theme-pois",
-    BOUCH: "theme-bouch",
-    FDL: "theme-fdl",
-    BOUL: "theme-boul",
-    CHAR: "theme-char",
-    TRAIT: "theme-trait",
-    FROM: "theme-from"
-  };
-
-  const themeClass = map[code];
-
-  if (themeClass) {
-    document.body.classList.add(themeClass);
-  }
-}
-
 function getLoginQrUrl() {
   return `${FRONT_BASE_URL.replace(/\/+$/, "")}/login.html`;
 }
@@ -184,7 +152,7 @@ function renderTopbar() {
   if (departments.length === 0) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "Aucun rayon";
+    option.textContent = "Aucun service";
     departmentSelect.appendChild(option);
     departmentSelect.disabled = true;
     return;
@@ -200,7 +168,6 @@ function renderTopbar() {
     if (currentDepartment) {
     departmentSelect.value = currentDepartment.id;
     saveActiveDepartment(currentDepartment);
-    applyDepartmentTheme(currentDepartment);
   }
 
   departmentSelect.disabled = departments.length === 1;
@@ -212,7 +179,6 @@ function renderTopbar() {
     if (!selectedDepartment) return;
 
     saveActiveDepartment(selectedDepartment);
-    applyDepartmentTheme(selectedDepartment);
     window.location.reload();
   });
 }
@@ -224,11 +190,11 @@ async function loadDepartments() {
     const data = await response.json();
 
     if (!response.ok) {
-      throw new Error(data.error || "Impossible de charger les rayons");
+      throw new Error(data.error || "Impossible de charger les services");
     }
 
     if (!Array.isArray(data)) {
-      throw new Error("Format invalide pour les rayons");
+      throw new Error("Format invalide pour les services");
     }
 
     departmentsData = data;
@@ -245,7 +211,7 @@ function renderDepartments() {
   if (!departmentsContainer || !defaultDepartmentSelect) return;
 
   departmentsContainer.innerHTML = "";
-  defaultDepartmentSelect.innerHTML = `<option value="">Choisir un rayon</option>`;
+  defaultDepartmentSelect.innerHTML = `<option value="">Choisir un service</option>`;
 
   departmentsData.forEach((department) => {
     const row = document.createElement("div");
@@ -277,7 +243,7 @@ function updateDefaultDepartmentOptions() {
     document.querySelectorAll('input[name="department_ids"]:checked')
   ).map((checkbox) => checkbox.value);
 
-  defaultDepartmentSelect.innerHTML = `<option value="">Choisir un rayon</option>`;
+  defaultDepartmentSelect.innerHTML = `<option value="">Choisir un service</option>`;
 
   departmentsData
     .filter((department) => checkedIds.includes(department.id))
@@ -387,7 +353,7 @@ function renderUsers(users) {
             return `<li>${dep.department_name} - ${dep.department_code}${defaultText}</li>`;
           })
           .join("")
-      : "<li>Aucun rayon</li>";
+      : "<li>Aucun service</li>";
 
     const statusButton = user.is_active
       ? `<button class="btn btn-danger deactivate-btn" data-id="${user.id}">Désactiver</button>`
@@ -399,7 +365,7 @@ function renderUsers(users) {
       <p><strong>Actif :</strong> ${user.is_active ? "Oui" : "Non"}</p>
       <p><strong>Magasin :</strong> ${user.store_name || "-"}</p>
       <div>
-        <strong>Rayons :</strong>
+        <strong>Services :</strong>
         <ul>${departmentsHtml}</ul>
       </div>
       <div class="user-card-actions">
@@ -522,10 +488,7 @@ backHomeBtn?.addEventListener("click", () => {
 
 logoutBtn?.addEventListener("click", clearSessionAndRedirect);
 
-openLoginQrBtn?.addEventListener("click", () => {
-  alert("clic QR OK");
-  openLoginQrModal();
-});
+openLoginQrBtn?.addEventListener("click", openLoginQrModal);
 closeLoginQrBtn?.addEventListener("click", closeLoginQrModal);
 loginQrModal?.addEventListener("click", (event) => {
   if (event.target === loginQrModal) {
@@ -535,10 +498,6 @@ loginQrModal?.addEventListener("click", (event) => {
 printLoginQrBtn?.addEventListener("click", () => {
   window.print();
 });
-
-console.log("QR BTN =", openLoginQrBtn);
-console.log("QR MODAL =", loginQrModal);
-console.log("QRCode =", typeof QRCode);
 
 renderTopbar();
 loadDepartments();

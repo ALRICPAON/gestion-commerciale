@@ -18,7 +18,7 @@
 
     <div class="topbar-right">
       <div class="topbar-department-box">
-        <label for="topbar-department-select" class="topbar-label">Rayon actif</label>
+        <label for="topbar-department-select" class="topbar-label">Service actif</label>
         <select id="topbar-department-select" class="topbar-select"></select>
       </div>
 
@@ -37,7 +37,7 @@
       <div class="page-actions-right">
         <button id="open-login-qr-btn" type="button" class="btn btn-secondary">QR connexion</button>
       </div>
-      <p>Créer un compte et lui attribuer un rôle ainsi que ses rayons autorisés.</p>
+      <p>Creer un compte et lui attribuer un role ainsi que ses services autorises.</p>
     </section>
 
     <section class="form-section">
@@ -56,6 +56,7 @@
           <label for="role">Rôle</label>
           <select id="role" required>
             <option value="vendeur">Vendeur</option>
+            <option value="commercial">Commercial</option>
             <option value="responsable">Responsable</option>
             <option value="qualite">Qualité</option>
             <option value="admin">Admin</option>
@@ -63,12 +64,12 @@
         </div>
 
         <div class="form-group">
-          <label>Rayons autorisés</label>
+          <label>Services autorises</label>
           <div id="departments-checkboxes"></div>
         </div>
 
         <div class="form-group">
-          <label for="default-department">Rayon par défaut</label>
+          <label for="default-department">Service par defaut</label>
           <select id="default-department">
             <option value="">Choisir</option>
           </select>

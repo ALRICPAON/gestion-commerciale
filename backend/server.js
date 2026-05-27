@@ -11,19 +11,6 @@ const rateLimit = require('express-rate-limit');
 
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
-const suppliersRoutes = require('./routes/suppliers');
-const afMapRoutes = require('./routes/afMap');
-const purchasesRoutes = require('./routes/purchases');
-const articleRoutes = require('./routes/articles');
-const traceabilityRoutes = require('./routes/traceability');
-const recipesRoutes = require('./routes/recipes');
-const fabricationsRoutes = require('./routes/fabrications');
-const labelsRoutes = require('./routes/labels');
-const comptaRoutes = require('./routes/compta');
-const inventoryRoutes = require('./routes/inventory');
-const stockRoutes = require('./routes/stock');
-const salesRoutes = require('./routes/sales');
-const transformationsRoutes = require('./routes/transformations');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -78,15 +65,6 @@ const loginRateLimiter = rateLimit({
   message: { error: 'Trop de tentatives de connexion, reessaie plus tard' },
 });
 
-const uploadRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 80,
-  standardHeaders: true,
-  legacyHeaders: false,
-  skip: (req) => req.method === 'OPTIONS',
-  message: { error: 'Trop de televersements, reessaie plus tard' },
-});
-
 app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -112,42 +90,13 @@ app.use(helmet({
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use('/api/login', loginRateLimiter);
-app.use('/api/purchase-lines/:id/upload-photo', uploadRateLimiter);
-app.use('/api/purchases/import-document', uploadRateLimiter);
-app.use('/api/inventory/preview-import', uploadRateLimiter);
-app.use('/api/inventory/import-sales-document', uploadRateLimiter);
 app.use('/api', apiRateLimiter);
 app.use('/api', authRoutes);
 app.use('/api', usersRoutes);
-app.use('/api', suppliersRoutes);
-app.use('/api', afMapRoutes);
-app.use('/api', purchasesRoutes);
-app.use('/api/articles', articleRoutes);
-app.use('/api/traceability', traceabilityRoutes);
-app.use('/api/recipes', recipesRoutes);
-app.use('/api/fabrications', fabricationsRoutes);
-app.use('/api/labels', labelsRoutes);
-app.use('/api/compta', comptaRoutes);
-app.use('/api/inventory', inventoryRoutes);
-app.use('/api/stock', stockRoutes);
-app.use('/api/sales', salesRoutes);
-app.use('/api/transformations', transformationsRoutes);
-
-app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
-  dotfiles: 'deny',
-  index: false,
-  setHeaders: (res) => {
-    res.setHeader('X-Content-Type-Options', 'nosniff');
-  },
-}));
 
 app.get('/', (req, res) => {
   res.send('API Scorpa Seafood / Gestion Commerciale fonctionne');
 });
-
-// Articles routes have been moved to routes/articles.js
-
-// Purchases routes have been moved to routes/purchases.js
 
 app.use((err, req, res, next) => {
   if (res.headersSent) {
