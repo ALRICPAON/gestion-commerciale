@@ -1,7 +1,7 @@
 const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
 
-const sessionUser = JSON.parse(localStorage.getItem("grv2_user") || "null");
-const authToken = localStorage.getItem("grv2_token");
+const sessionUser = JSON.parse(localStorage.getItem("gc_user") || localStorage.getItem("grv2_user") || "null");
+const authToken = localStorage.getItem("gc_token") || localStorage.getItem("grv2_token");
 
 if (!sessionUser || !authToken) {
   window.location.href = "./login.html";
@@ -33,6 +33,9 @@ function escapeHtml(value) {
 }
 
 function logoutAndRedirect() {
+  localStorage.removeItem("gc_token");
+  localStorage.removeItem("gc_user");
+  localStorage.removeItem("gc_active_department");
   localStorage.removeItem("grv2_token");
   localStorage.removeItem("grv2_user");
   localStorage.removeItem("grv2_active_department");
@@ -43,10 +46,10 @@ function showFeedback(message, type = "success") {
   if (!pageFeedback) return;
 
   pageFeedback.textContent = message;
-  pageFeedback.className = `page-feedback ${type}`;
+  pageFeedback.className = `feedback-box ${type}`;
 
   window.setTimeout(() => {
-    pageFeedback.className = "page-feedback hidden";
+    pageFeedback.className = "feedback-box hidden";
     pageFeedback.textContent = "";
   }, 3500);
 }

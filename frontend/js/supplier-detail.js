@@ -1,7 +1,7 @@
 const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
 
-const sessionUser = JSON.parse(localStorage.getItem("grv2_user") || "null");
-const authToken = localStorage.getItem("grv2_token");
+const sessionUser = JSON.parse(localStorage.getItem("gc_user") || localStorage.getItem("grv2_user") || "null");
+const authToken = localStorage.getItem("gc_token") || localStorage.getItem("grv2_token");
 
 if (!sessionUser || !authToken) {
   window.location.href = "./login.html";
@@ -19,6 +19,7 @@ const formTitle = document.getElementById("form-title");
 const formDescription = document.getElementById("form-description");
 const pageSubtitle = document.getElementById("page-subtitle");
 const pageFeedback = document.getElementById("page-feedback");
+const supplierForm = document.getElementById("supplier-form");
 
 const saveSupplierBtn = document.getElementById("save-supplier-btn");
 const statusSupplierBtn = document.getElementById("status-supplier-btn");
@@ -48,6 +49,9 @@ const fields = [
 let currentSupplier = null;
 
 function logoutAndRedirect() {
+  localStorage.removeItem("gc_token");
+  localStorage.removeItem("gc_user");
+  localStorage.removeItem("gc_active_department");
   localStorage.removeItem("grv2_token");
   localStorage.removeItem("grv2_user");
   localStorage.removeItem("grv2_active_department");
@@ -303,6 +307,11 @@ function bindEvents() {
   logoutBtn?.addEventListener("click", logoutAndRedirect);
 
   saveSupplierBtn?.addEventListener("click", saveSupplier);
+
+  supplierForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveSupplier();
+  });
 
   statusSupplierBtn?.addEventListener("click", () => {
     const nextStatus = statusSupplierBtn.dataset.status || "inactive";

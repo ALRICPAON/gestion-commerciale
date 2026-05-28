@@ -7,10 +7,10 @@
   <title>Détail fournisseur - Gestion Commerciale</title>
 
   <link rel="stylesheet" href="./css/app.css" />
-<link rel="stylesheet" href="./css/pages/suppliers.css?v=2" />
+  <link rel="stylesheet" href="./css/pages/suppliers.css?v=3" />
 </head>
 
-<body class="app-page">
+<body class="app-page supplier-detail-page">
   <header class="topbar">
     <div class="topbar-left">
       <h1 class="app-title">Gestion Commerciale</h1>
@@ -22,13 +22,13 @@
         <span id="user-name">Utilisateur</span>
       </div>
 
-      <button id="back-list-btn" class="btn btn-secondary">Fournisseurs</button>
-      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+      <button type="button" id="back-list-btn" class="btn btn-secondary">Fournisseurs</button>
+      <button type="button" id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button type="button" id="logout-btn" class="btn btn-secondary">Déconnexion</button>
     </div>
   </header>
 
-  <main class="suppliers-page">
+  <main class="main-content">
     <section class="suppliers-card">
       <div class="page-actions">
         <div>
@@ -37,11 +37,11 @@
         </div>
 
         <div class="page-actions-right">
-          <button id="save-supplier-btn" class="btn btn-primary">
+          <button type="button" id="save-supplier-btn" class="btn btn-primary">
             Enregistrer
           </button>
 
-          <button id="status-supplier-btn" class="btn btn-secondary hidden">
+          <button type="button" id="status-supplier-btn" class="btn btn-secondary hidden">
             Désactiver
           </button>
         </div>
