@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Détail client - Gestion Commerciale</title>
+
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/clients.css?v=1" />
+</head>
+
+<body class="app-page client-detail-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle" id="page-subtitle">Détail client</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+
+      <button type="button" id="back-list-btn" class="btn btn-secondary">Clients</button>
+      <button type="button" id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button type="button" id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="clients-card">
+      <div class="page-actions">
+        <div>
+          <h2 id="form-title">Nouveau client</h2>
+          <p id="form-description">Crée ou modifie la fiche client.</p>
+        </div>
+
+        <div class="page-actions-right">
+          <button type="button" id="save-client-btn" class="btn btn-primary">
+            Enregistrer
+          </button>
+
+          <button type="button" id="status-client-btn" class="btn btn-secondary hidden">
+            Désactiver
+          </button>
+        </div>
+      </div>
+
+      <div id="page-feedback" class="page-feedback hidden"></div>
+    </section>
+
+    <form id="client-form">
+      <section class="clients-card">
+        <h3>Identité</h3>
+
+        <div class="form-grid">
+          <div class="clients-field">
+            <label for="code">Code client</label>
+            <input id="code" name="code" type="text" placeholder="Ex : CLI001" />
+          </div>
+
+          <div class="clients-field">
+            <label for="name">Nom *</label>
+            <input id="name" name="name" type="text" required placeholder="Nom client" />
+          </div>
+
+          <div class="clients-field">
+            <label for="legal_name">Raison sociale</label>
+            <input id="legal_name" name="legal_name" type="text" />
+          </div>
+
+          <div class="clients-field">
+            <label for="client_type">Type</label>
+            <select id="client_type" name="client_type">
+              <option value="standard">Standard</option>
+              <option value="grossiste">Grossiste</option>
+              <option value="gms">GMS</option>
+              <option value="restaurant">Restaurant</option>
+              <option value="poissonnerie">Poissonnerie</option>
+              <option value="export">Export</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+
+          <div class="clients-field">
+            <label for="status">Statut</label>
+            <select id="status" name="status">
+              <option value="active">Actif</option>
+              <option value="inactive">Inactif</option>
+              <option value="blocked">Bloqué</option>
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section class="clients-card">
+        <h3>Contact</h3>
+
+        <div class="form-grid">
+          <div class="clients-field">
+            <label for="contact_name">Contact principal</label>
+            <input id="contact_name" name="contact_name" type="text" />
+          </div>
+
+          <div class="clients-field">
+            <label for="phone">Téléphone</label>
+            <input id="phone" name="phone" type="tel" />
+          </div>
+
+          <div class="clients-field">
+            <label for="mobile">Mobile</label>
+            <input id="mobile" name="mobile" type="tel" />
+          </div>
+
+          <div class="clients-field">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" />
+          </div>
+        </div>
+      </section>
+
+      <section class="clients-card">
+        <h3>Adresse</h3>
+
+        <div class="form-grid">
+          <div class="clients-field form-group-span-2">
+            <label for="address_line1">Adresse</label>
+            <input id="address_line1" name="address_line1" type="text" />
+          </div>
+
+          <div class="clients-field form-group-span-2">
+            <label for="address_line2">Complément adresse</label>
+            <input id="address_line2" name="address_line2" type="text" />
+          </div>
+
+          <div class="clients-field">
+            <label for="postal_code">Code postal</label>
+            <input id="postal_code" name="postal_code" type="text" />
+          </div>
+
+          <div class="clients-field">
+            <label for="city">Ville</label>
+            <input id="city" name="city" type="text" />
+          </div>
+
+          <div class="clients-field">
+            <label for="country">Pays</label>
+            <input id="country" name="country" type="text" value="France" />
+          </div>
+        </div>
+      </section>
+
+      <section class="clients-card">
+        <h3>Administratif & conditions</h3>
+
+        <div class="form-grid">
+          <div class="clients-field">
+            <label for="vat_number">N° TVA</label>
+            <input id="vat_number" name="vat_number" type="text" />
+          </div>
+
+          <div class="clients-field">
+            <label for="siret">SIRET</label>
+            <input id="siret" name="siret" type="text" />
+          </div>
+
+          <div class="clients-field">
+            <label for="payment_terms">Conditions de paiement</label>
+            <input id="payment_terms" name="payment_terms" type="text" placeholder="Ex : 30 jours fin de mois" />
+          </div>
+
+          <div class="clients-field">
+            <label for="delivery_terms">Conditions de livraison</label>
+            <input id="delivery_terms" name="delivery_terms" type="text" placeholder="Ex : Franco, départ atelier..." />
+          </div>
+        </div>
+      </section>
+
+      <section class="clients-card">
+        <h3>Notes</h3>
+
+        <div class="clients-field">
+          <label for="notes">Notes internes</label>
+          <textarea id="notes" name="notes" rows="5"></textarea>
+        </div>
+      </section>
+    </form>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/client-detail.js?v=1"></script>
+</body>
+</html>

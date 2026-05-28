@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>Clients - Gestion Commerciale</title>
+
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/clients.css?v=1" />
+</head>
+
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Clients</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+
+      <button type="button" id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button type="button" id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content clients-page">
+    <section class="clients-card">
+      <div class="page-actions">
+        <div>
+          <h2>Clients</h2>
+          <p>Gère les clients, grossistes, restaurants, GMS et points de vente.</p>
+        </div>
+
+        <div class="page-actions-right">
+          <button type="button" id="add-client-btn" class="btn btn-primary">
+            + Nouveau client
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="clients-card">
+      <div class="clients-filters">
+        <div class="clients-field">
+          <label for="search-input">Recherche</label>
+          <input
+            id="search-input"
+            type="search"
+            placeholder="Nom, code, contact, ville..."
+          />
+        </div>
+
+        <div class="clients-field">
+          <label for="status-filter">Statut</label>
+          <select id="status-filter">
+            <option value="all">Tous</option>
+            <option value="active">Actifs</option>
+            <option value="inactive">Inactifs</option>
+            <option value="blocked">Bloqués</option>
+          </select>
+        </div>
+
+        <div class="clients-field">
+          <label for="type-filter">Type</label>
+          <select id="type-filter">
+            <option value="all">Tous</option>
+            <option value="standard">Standard</option>
+            <option value="grossiste">Grossiste</option>
+            <option value="gms">GMS</option>
+            <option value="restaurant">Restaurant</option>
+            <option value="poissonnerie">Poissonnerie</option>
+            <option value="export">Export</option>
+            <option value="autre">Autre</option>
+          </select>
+        </div>
+
+        <div class="clients-field">
+          <label>&nbsp;</label>
+          <button type="button" id="reset-filters-btn" class="btn btn-secondary">
+            Réinitialiser
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section class="clients-card">
+      <div id="page-feedback" class="page-feedback hidden"></div>
+
+      <div class="table-wrap">
+        <table class="clients-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Nom</th>
+              <th>Type</th>
+              <th>Contact</th>
+              <th>Téléphone</th>
+              <th>Email</th>
+              <th>Ville</th>
+              <th>Statut</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+
+          <tbody id="clients-tbody">
+            <tr>
+              <td colspan="9">Chargement...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/clients.js?v=1"></script>
+</body>
+</html>
