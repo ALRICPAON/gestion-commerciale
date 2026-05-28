@@ -226,21 +226,23 @@ function renderArticles(rows) {
       <td>${article.is_active ? 'Actif' : 'Inactif'}</td>
       <td>
         <div class="table-actions">
-  <button class="btn btn-secondary btn-sm" data-action="view" data-id="${article.id}">Voir</button>
+  <button class="btn btn-secondary btn-sm" data-action="view" data-id="${article.id}">
+    Voir
+  </button>
+
   ${
     canManageArticle(article)
       ? `
         <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${article.id}">Modifier</button>
-                <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${article.id}">Modifier</button>
-                <button class="btn btn-secondary btn-sm" data-action="duplicate" data-id="${article.id}">Dupliquer</button>
-                <button class="btn btn-secondary btn-sm" data-action="toggle" data-id="${article.id}">
-                  ${article.is_active ? 'Désactiver' : 'Activer'}
-                </button>
-                <button class="btn btn-danger btn-sm" data-action="delete" data-id="${article.id}">Supprimer</button>
-              `
-              : '<span style="font-size:12px;color:#999;">Lecture seule</span>'
-          }
-        </div>
+        <button class="btn btn-secondary btn-sm" data-action="duplicate" data-id="${article.id}">Dupliquer</button>
+        <button class="btn btn-secondary btn-sm" data-action="toggle" data-id="${article.id}">
+          ${article.is_active ? 'Désactiver' : 'Activer'}
+        </button>
+        <button class="btn btn-danger btn-sm" data-action="delete" data-id="${article.id}">Supprimer</button>
+      `
+      : '<span style="font-size:12px;color:#999;">Lecture seule</span>'
+  }
+</div>
       </td>
     </tr>
   `).join('');
