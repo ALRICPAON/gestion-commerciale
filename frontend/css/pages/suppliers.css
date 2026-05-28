@@ -1,0 +1,157 @@
+/* ========================= */
+/* PAGE FOURNISSEURS */
+/* ========================= */
+
+.suppliers-page {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.suppliers-card {
+  background: #ffffff;
+  border: 1px solid #e5eaf0;
+  border-top: 4px solid var(--theme-main, #005BAA);
+  border-radius: 16px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+}
+
+.suppliers-card h2,
+.suppliers-card h3 {
+  margin-top: 0;
+  color: #0f172a;
+}
+
+.suppliers-card p {
+  margin-bottom: 0;
+  color: #64748b;
+}
+
+.suppliers-filters {
+  display: grid;
+  grid-template-columns: minmax(260px, 2fr) repeat(3, minmax(160px, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
+.suppliers-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.suppliers-field label {
+  color: #334155;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.suppliers-field input,
+.suppliers-field select,
+.suppliers-field textarea {
+  width: 100%;
+  border: 1px solid #d5dbe3;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #ffffff;
+  color: #111827;
+  font-size: 0.95rem;
+  outline: none;
+}
+
+.suppliers-field textarea {
+  resize: vertical;
+  min-height: 110px;
+}
+
+.suppliers-field input:focus,
+.suppliers-field select:focus,
+.suppliers-field textarea:focus {
+  border-color: var(--theme-main, #005BAA);
+  box-shadow: 0 0 0 3px rgba(0, 91, 170, 0.12);
+}
+
+.suppliers-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  font-size: 0.9rem;
+}
+
+.suppliers-table th,
+.suppliers-table td {
+  padding: 11px 12px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.suppliers-table th {
+  background: #f8fafc;
+  color: #334155;
+  font-weight: 800;
+}
+
+.suppliers-table tbody tr:hover {
+  background: #f8fafc;
+}
+
+.suppliers-table td:nth-child(2) {
+  min-width: 220px;
+}
+
+.suppliers-table td:last-child {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+#supplier-form .suppliers-card {
+  margin-bottom: 18px;
+}
+
+#supplier-form .form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+#supplier-form .form-group-span-2 {
+  grid-column: span 2;
+}
+
+@media (max-width: 1000px) {
+  .suppliers-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  #supplier-form .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  #supplier-form .form-group-span-2 {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 700px) {
+  .suppliers-page {
+    padding: 14px;
+  }
+
+  .suppliers-card {
+    padding: 16px;
+  }
+
+  .suppliers-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .suppliers-table th,
+  .suppliers-table td {
+    padding: 9px 10px;
+  }
+}

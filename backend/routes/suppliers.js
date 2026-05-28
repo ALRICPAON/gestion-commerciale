@@ -4,7 +4,7 @@ const router = express.Router();
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
-const {
+
  const { requireAdminOrManager } = require('../middleware/authorization');
 
 function requireRole(allowedRoles = []) {
