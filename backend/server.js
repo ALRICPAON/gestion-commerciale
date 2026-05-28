@@ -12,6 +12,7 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const articlesRoutes = require('./routes/articles');
+const suppliersRoutes = require('./routes/suppliers');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -95,6 +96,7 @@ app.use('/api', apiRateLimiter);
 app.use('/api', authRoutes);
 app.use('/api', usersRoutes);
 app.use('/api/articles', articlesRoutes);
+app.use('/api/suppliers', suppliersRoutes);
 app.get('/', (req, res) => {
   res.send('API Scorpa Seafood / Gestion Commerciale fonctionne');
 });
