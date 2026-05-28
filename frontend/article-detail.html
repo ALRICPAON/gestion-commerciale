@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fiche Article - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/article-detail.css" />
+</head>
+
+<body class="app-page article-detail-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">Fiche article</h1>
+      <p class="app-subtitle" id="article-title">Chargement...</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+
+      <div class="department-switcher">
+        <label for="department-select">Service :</label>
+        <select id="department-select"></select>
+      </div>
+
+      <button id="back-btn" class="btn btn-secondary">Retour articles</button>
+      <button id="edit-btn" class="btn btn-primary">Modifier</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="card">
+      <h2>Identité</h2>
+      <div id="identity" class="article-info-grid"></div>
+    </section>
+
+    <section class="card">
+      <h2>Commercial</h2>
+      <div id="commercial" class="article-info-grid"></div>
+    </section>
+
+    <section class="card">
+      <h2>Métier / traçabilité</h2>
+      <div id="meta" class="article-info-grid"></div>
+    </section>
+
+    <section class="card">
+      <h2>Unités</h2>
+      <div id="units" class="article-info-grid"></div>
+    </section>
+
+    <section class="card">
+      <h2>Infos techniques</h2>
+      <div id="technical" class="article-info-grid"></div>
+    </section>
+
+    <section class="card muted-card">
+      <h2>Modules à venir</h2>
+      <p>
+        Les blocs stock, lots disponibles, mouvements, historique achats et historique ventes seront ajoutés
+        quand les modules Stock / Achats / Commandes seront branchés.
+      </p>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/article-detail.js?v=1"></script>
+</body>
+</html>

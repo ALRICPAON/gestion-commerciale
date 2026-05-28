@@ -226,9 +226,11 @@ function renderArticles(rows) {
       <td>${article.is_active ? 'Actif' : 'Inactif'}</td>
       <td>
         <div class="table-actions">
-          ${
-            canManageArticle(article)
-              ? `
+  <button class="btn btn-secondary btn-sm" data-action="view" data-id="${article.id}">Voir</button>
+  ${
+    canManageArticle(article)
+      ? `
+        <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${article.id}">Modifier</button>
                 <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${article.id}">Modifier</button>
                 <button class="btn btn-secondary btn-sm" data-action="duplicate" data-id="${article.id}">Dupliquer</button>
                 <button class="btn btn-secondary btn-sm" data-action="toggle" data-id="${article.id}">
@@ -462,6 +464,12 @@ tbody.addEventListener('click', async (event) => {
   const article = articlesCache.find((item) => item.id === articleId);
 
   if (!article) return;
+
+  if (action === 'view') {
+  window.location.href =
+    `./article-detail.html?id=${article.id}&department_id=${article.department_id}`;
+  return;
+}
 
   if (!canManageArticle(article)) {
     setFeedback("Article d'un autre service : lecture seule", 'error');

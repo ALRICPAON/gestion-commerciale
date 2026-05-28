@@ -436,6 +436,84 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
   }
 });
 
+// GET /api/articles/:id
+router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const { department_id = '' } = req.query;
+
+    const params = [req.params.id, req.user.store_id];
+    let departmentFilter = '';
+
+    if (department_id) {
+      params.push(department_id);
+      departmentFilter = `AND ad.department_id = $${params.length}`;
+    }
+
+    const result = await req.dbPool.query(
+      `
+      SELECT
+        a.id,
+        a.store_id,
+        a.plu,
+        a.designation,
+        a.ean,
+        a.unit,
+        a.is_active,
+        a.source_origin,
+        a.source_id,
+        a.created_at,
+        a.updated_at,
+
+        ad.id AS article_department_id,
+        ad.department_id,
+        d.name AS department_name,
+        d.code AS department_code,
+        ad.department_sector_id,
+        ad.display_name,
+        ad.purchase_unit,
+        ad.stock_unit,
+        ad.sale_unit,
+        ad.vat_rate,
+        ad.purchase_price_ex_vat,
+        ad.sale_price_ex_vat,
+        ad.sale_price_inc_vat,
+
+        ds.code AS family_code,
+        ds.name AS family_name,
+
+        adm.category,
+        adm.latin_name,
+        adm.fao_zone,
+        adm.sous_zone,
+        adm.engin,
+        adm.allergenes,
+        COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
+      FROM articles a
+      JOIN article_departments ad ON ad.article_id = a.id
+      JOIN departments d ON d.id = ad.department_id
+      LEFT JOIN department_sectors ds ON ds.id = ad.department_sector_id
+      LEFT JOIN article_department_metadata adm
+        ON adm.article_department_id = ad.id
+       AND adm.field_key = 'business_metadata'
+      WHERE a.id = $1
+        AND a.store_id = $2
+        ${departmentFilter}
+      LIMIT 1
+      `,
+      params
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Article introuvable' });
+    }
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur GET /api/articles/:id :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // PATCH /api/articles/:id
 router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   const client = await req.dbPool.connect();
