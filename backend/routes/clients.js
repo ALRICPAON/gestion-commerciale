@@ -45,12 +45,12 @@ function normalizeClientType(value) {
   return allowed.includes(clientType) ? clientType : 'standard';
 }
 
-function mapclientPayload(body) {
+function mapClientPayload(body) {
   return {
     code: normalizeText(body.code),
     name: normalizeText(body.name),
     legal_name: normalizeText(body.legal_name),
-    client_type: normalizeclientType(body.client_type),
+    client_type: normalizeClientType(body.client_type),
     status: normalizeStatus(body.status),
 
     contact_name: normalizeText(body.contact_name),
@@ -197,7 +197,7 @@ router.post(
   requireRole(['admin', 'responsable', 'commercial']),
   async (req, res) => {
     try {
-      const client = mapclientPayload(req.body);
+      const client = mapClientPayload(req.body);
 
       if (!client.name) {
         return res.status(400).json({ error: 'Le nom client est obligatoire' });
