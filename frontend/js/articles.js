@@ -106,7 +106,7 @@ function fillTopbar() {
     option.value = department.id;
     option.textContent = department.name;
 
-    if (department.id === activeDepartment.id) {
+      if (String(department.id) === String(activeDepartment.id)) {
       option.selected = true;
     }
 
@@ -124,7 +124,7 @@ function fillArticleDepartmentFilter() {
     option.value = department.id;
     option.textContent = department.name;
 
-    if (department.id === activeDepartment.id) {
+    if (String(department.id) === String(activeDepartment.id)) {
       option.selected = true;
     }
 
@@ -164,7 +164,7 @@ async function loadFamilies() {
 }
 
 function canManageArticle(article) {
-  return article.department_id === activeDepartment.id;
+  return String(article.department_id) === String(activeDepartment.id);
 }
 
 function openModal(editMode = false, article = null) {
@@ -463,7 +463,7 @@ tbody.addEventListener('click', async (event) => {
 
   const action = button.dataset.action;
   const articleId = button.dataset.id;
-  const article = articlesCache.find((item) => item.id === articleId);
+  const article = articlesCache.find((item) => String(item.id) === String(articleId));
 
   if (!article) return;
 

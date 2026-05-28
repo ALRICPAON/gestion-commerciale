@@ -1,8 +1,9 @@
 const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
 
-const sessionToken = localStorage.getItem('grv2_token');
-const sessionUserRaw = localStorage.getItem('grv2_user');
-const activeDepartmentRaw = localStorage.getItem('grv2_active_department');
+const sessionToken = localStorage.getItem('gc_token') || localStorage.getItem('grv2_token');
+const sessionUserRaw = localStorage.getItem('gc_user') || localStorage.getItem('grv2_user');
+const activeDepartmentRaw =
+  localStorage.getItem('gc_active_department') || localStorage.getItem('grv2_active_department');
 
 if (!sessionToken || !sessionUserRaw || !activeDepartmentRaw) {
   window.location.href = './login.html';
@@ -95,7 +96,7 @@ function fillTopbar() {
     option.value = department.id;
     option.textContent = department.name;
 
-    if (department.id === activeDepartment.id) {
+    if (String(department.id) === String(activeDepartment.id)) {
       option.selected = true;
     }
 
@@ -180,6 +181,7 @@ departmentSelectEl.addEventListener('change', async (event) => {
   if (!department) return;
 
   activeDepartment = department;
+  localStorage.setItem('gc_active_department', JSON.stringify(department));
   localStorage.setItem('grv2_active_department', JSON.stringify(department));
 
   window.location.href = `./article-detail.html?id=${articleId}&department_id=${department.id}`;
