@@ -89,7 +89,14 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
 
     if (familyCode) {
       params.push(familyCode);
-      where += ` AND ds.code = $${params.length}`;
+      where += ` AND (
+        ds.code = $${params.length}
+        OR NOT EXISTS (
+          SELECT 1
+          FROM article_departments ad_check
+          WHERE ad_check.article_id = a.id
+        )
+      )`;
     }
 
     if (activeValue !== null) {
@@ -152,8 +159,8 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         adm.allergenes,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
-      JOIN article_departments ad ON ad.article_id = a.id
-      JOIN departments d ON d.id = ad.department_id
+      LEFT JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN departments d ON d.id = ad.department_id
       LEFT JOIN department_sectors ds ON ds.id = ad.department_sector_id
       LEFT JOIN article_department_metadata adm
         ON adm.article_department_id = ad.id
@@ -218,19 +225,35 @@ router.get('/families', authenticateToken, attachDbContext, async (req, res) => 
 // GET /api/articles/search
 router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
   try {
-    const { q = '', department_id = '' } = req.query;
+    const { q = '', department_id = '', sector = '', family = '' } = req.query;
     const searchTerm = String(q).trim();
-
-    if (!department_id) {
-      return res.status(400).json({ error: 'department_id est obligatoire' });
-    }
 
     if (!searchTerm) {
       return res.json([]);
     }
 
+    const familyCode = family || sector;
     const likePattern = `%${searchTerm}%`;
     const startsWithPattern = `${searchTerm}%`;
+    const queryParams = [req.user.store_id, likePattern, searchTerm, startsWithPattern];
+    let extraFilters = '';
+
+    if (department_id) {
+      queryParams.push(department_id);
+      extraFilters += ` AND ad.department_id = $${queryParams.length}`;
+    }
+
+    if (familyCode) {
+      queryParams.push(familyCode);
+      extraFilters += ` AND (
+        ds.code = $${queryParams.length}
+        OR NOT EXISTS (
+          SELECT 1
+          FROM article_departments ad_check
+          WHERE ad_check.article_id = a.id
+        )
+      )`;
+    }
 
     const result = await req.dbPool.query(
       `
@@ -238,31 +261,46 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
         a.id,
         a.plu,
         a.designation,
-        ad.display_name,
         a.unit,
+        a.ean,
+        a.is_active,
+        ad.display_name,
+        ad.purchase_unit,
+        ad.stock_unit,
         ad.sale_unit,
         ad.vat_rate,
         ad.sale_price_ex_vat,
-        ad.sale_price_inc_vat
+        ad.sale_price_inc_vat,
+        adm.latin_name,
+        adm.category,
+        adm.fao_zone,
+        adm.sous_zone,
+        adm.engin,
+        adm.allergenes
       FROM articles a
-      JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN department_sectors ds ON ds.id = ad.department_sector_id
+      LEFT JOIN article_department_metadata adm
+        ON adm.article_department_id = ad.id
+       AND adm.field_key = 'business_metadata'
       WHERE a.store_id = $1
-        AND ad.department_id = $2
         AND a.is_active = true
-        AND ad.is_active = true
+        AND COALESCE(ad.is_active, true) = true
+        ${extraFilters}
         AND (
-          a.plu ILIKE $3
-          OR a.designation ILIKE $3
-          OR COALESCE(ad.display_name, '') ILIKE $3
-          OR COALESCE(a.ean, '') ILIKE $3
+          a.plu ILIKE $2
+          OR a.designation ILIKE $2
+          OR COALESCE(a.ean, '') ILIKE $2
+          OR COALESCE(ad.display_name, '') ILIKE $2
+          OR COALESCE(adm.latin_name, '') ILIKE $2
         )
       ORDER BY
-        CASE WHEN a.plu = $4 THEN 0 ELSE 1 END,
-        CASE WHEN a.plu ILIKE $5 THEN 0 ELSE 1 END,
+        CASE WHEN a.plu = $3 THEN 0 ELSE 1 END,
+        CASE WHEN a.plu ILIKE $4 THEN 0 ELSE 1 END,
         a.designation ASC
       LIMIT 50
       `,
-      [req.user.store_id, department_id, likePattern, searchTerm, startsWithPattern]
+      queryParams
     );
 
     res.json(result.rows);
@@ -287,7 +325,14 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
 
     if (department_id) {
       params.push(department_id);
-      departmentFilter = `AND ad.department_id = $${params.length}`;
+      departmentFilter = `AND (
+        ad.department_id = $${params.length}
+        OR NOT EXISTS (
+          SELECT 1
+          FROM article_departments ad_check
+          WHERE ad_check.article_id = a.id
+        )
+      )`;
     }
 
     const result = await req.dbPool.query(
@@ -306,14 +351,15 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
         COALESCE(ss.pma, 0) AS unit_cost_ex_vat,
         COALESCE(ss.stock_quantity, 0) AS stock_quantity
       FROM articles a
-      JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN article_departments ad ON ad.article_id = a.id
       LEFT JOIN article_department_metadata adm
         ON adm.article_department_id = ad.id
        AND adm.field_key = 'business_metadata'
       LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.store_id = $1
         AND a.is_active = true
-        AND ad.is_active = true
+        AND COALESCE(ad.is_active, true) = true
+        AND COALESCE(ss.stock_quantity, 0) > 0
         ${departmentFilter}
         AND (
           a.plu ILIKE $2

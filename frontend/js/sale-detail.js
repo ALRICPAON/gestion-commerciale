@@ -384,13 +384,8 @@ async function resolveArticleByPlu(row) {
     return;
   }
 
-  const currentDepartment = getSafeActiveDepartment();
   const params = new URLSearchParams();
   params.set("q", articlePlu);
-
-  if (currentDepartment?.id) {
-    params.set("department_id", currentDepartment.id);
-  }
 
   const results = await apiFetch(`/api/articles/search-in-stock?${params.toString()}`);
 
@@ -444,18 +439,15 @@ async function loadStockArticleModalItems() {
   const params = new URLSearchParams();
   params.set("q", stockArticleSearchInput?.value?.trim() || "");
 
-  const currentDepartment = getSafeActiveDepartment();
-  if (currentDepartment?.id) {
-    params.set("department_id", currentDepartment.id);
-  }
-
+  console.log("[ARTICLE MODAL PARAMS]", params.toString());
   stockArticleModalItems = await apiFetch(`/api/articles/search-in-stock?${params.toString()}`);
+  console.log("[ARTICLE RESULTS]", Array.isArray(stockArticleModalItems) ? stockArticleModalItems.length : 0);
   renderStockArticleModalTable();
 }
 
 function renderStockArticleModalTable() {
   if (!Array.isArray(stockArticleModalItems) || stockArticleModalItems.length === 0) {
-    stockArticleModalTableBody.innerHTML = `<tr><td colspan="6">Aucun article trouve</td></tr>`;
+    stockArticleModalTableBody.innerHTML = `<tr><td colspan="6">Aucun article en stock trouve pour cette recherche.</td></tr>`;
     return;
   }
 

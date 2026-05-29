@@ -724,16 +724,16 @@ async function saveLineSheet() {
 }
 
 async function loadArticleModalItems() {
-  const currentDepartment = getSafeActiveDepartment();
   const params = new URLSearchParams();
 
   params.set("limit", "200");
   if (articleSearchInput.value.trim()) params.set("search", articleSearchInput.value.trim());
   if (articleSectorFilter.value) params.set("sector", articleSectorFilter.value);
   if (articleActiveFilter.value !== "") params.set("active", articleActiveFilter.value);
-  if (currentDepartment?.id) params.set("department_id", currentDepartment.id);
 
+  console.log("[ARTICLE MODAL PARAMS]", params.toString());
   articleModalItems = await apiFetch(`/api/articles?${params.toString()}`);
+  console.log("[ARTICLE RESULTS]", Array.isArray(articleModalItems) ? articleModalItems.length : 0);
   renderArticleModalTable();
 }
 
@@ -821,14 +821,9 @@ async function resolveArticleByPlu(row) {
   }
 
   try {
-    const currentDepartment = getSafeActiveDepartment();
     const params = new URLSearchParams();
     params.set("search", articlePlu);
     params.set("limit", "50");
-
-    if (currentDepartment?.id) {
-      params.set("department_id", currentDepartment.id);
-    }
 
     const results = await apiFetch(`/api/articles?${params.toString()}`);
 
