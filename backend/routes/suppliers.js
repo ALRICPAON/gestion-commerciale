@@ -113,6 +113,11 @@ router.get('/suppliers', authenticateToken, attachDbContext, async (req, res) =>
         legal_name,
         supplier_type,
         status,
+        CASE
+          WHEN LOWER(COALESCE(status, 'active')) IN ('active', 'actif') THEN true
+          WHEN LOWER(COALESCE(status, 'active')) IN ('inactive', 'inactif', 'blocked') THEN false
+          ELSE true
+        END AS is_active,
         contact_name,
         phone,
         mobile,

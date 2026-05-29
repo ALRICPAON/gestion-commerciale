@@ -122,6 +122,21 @@ function clearFeedback(el) {
   el.classList.remove("error", "success");
 }
 
+function isSupplierActive(supplier) {
+  if (supplier.is_active === true) return true;
+  if (supplier.is_active === false) return false;
+  if (supplier.active === true) return true;
+  if (supplier.active === false) return false;
+  if (supplier.isActive === true) return true;
+  if (supplier.isActive === false) return false;
+
+  const status = String(supplier.status || "").toLowerCase();
+  if (status === "active" || status === "actif") return true;
+  if (status === "inactive" || status === "inactif") return false;
+
+  return true;
+}
+
 function formatDate(value) {
   if (!value) return "-";
   try {
@@ -307,7 +322,7 @@ function renderSupplierModalTable() {
       <td>${supplier.name || "-"}</td>
       <td>${supplier.contact_name || "-"}</td>
       <td>${supplier.phone || "-"}</td>
-      <td>${supplier.is_active ? "Actif" : "Inactif"}</td>
+      <td>${isSupplierActive(supplier) ? "Actif" : "Inactif"}</td>
     </tr>
   `).join("");
 }
@@ -341,9 +356,18 @@ function renderSelectableSupplierModalTable() {
       <td>${supplier.name || "-"}</td>
       <td>${supplier.contact_name || "-"}</td>
       <td>${supplier.phone || "-"}</td>
-      <td>${supplier.is_active ? "Actif" : "Inactif"}</td>
+      <td>${isSupplierActive(supplier) ? "Actif" : "Inactif"}</td>
     </tr>
   `).join("");
+}
+
+function updateSupplierSelectionStyles() {
+  supplierModalTableBody
+    ?.querySelectorAll("tr[data-supplier-id]")
+    .forEach((row) => {
+      const index = supplierModalFiltered.findIndex((item) => item.id === row.dataset.supplierId);
+      row.classList.toggle("is-selected", index === supplierModalSelectedIndex);
+    });
 }
 
 async function loadPurchases() {
@@ -433,6 +457,9 @@ async function createPurchaseFromSupplier(supplier) {
     purchase_type: createMode === "bl" ? "direct_bl" : "order",
   };
 
+  console.log("[SUPPLIER SELECT]", supplier);
+  console.log("[CREATE PURCHASE PAYLOAD]", payload);
+
   const data = await apiFetch("/api/purchases", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -491,8 +518,15 @@ async function handleQuickSupplierCreate(mode = "order") {
 }
 
 async function selectSupplierFromModal() {
-  const supplier = supplierModalFiltered[supplierModalSelectedIndex];
-  if (!supplier) return;
+  const supplier =
+    supplierModalFiltered[supplierModalSelectedIndex] ||
+    suppliers.find((item) => item.id === supplierModalTableBody?.querySelector("tr.is-selected")?.dataset.supplierId);
+
+  if (!supplier) {
+    showFeedback(purchasesFeedback, "Fournisseur introuvable dans la selection", true);
+    return;
+  }
+
   await createPurchaseFromSupplier(supplier);
 }
 
@@ -1020,7 +1054,7 @@ if (supplierModalTableBody) {
     const index = supplierModalFiltered.findIndex((item) => item.id === row.dataset.supplierId);
     if (index >= 0) {
       supplierModalSelectedIndex = index;
-      renderSelectableSupplierModalTable();
+      updateSupplierSelectionStyles();
     }
   });
 
@@ -1030,7 +1064,14 @@ if (supplierModalTableBody) {
 
     const index = supplierModalFiltered.findIndex((item) => item.id === row.dataset.supplierId);
     if (index >= 0) supplierModalSelectedIndex = index;
-    await selectSupplierFromModal();
+    const supplier = supplierModalFiltered[supplierModalSelectedIndex] || suppliers.find((item) => item.id === row.dataset.supplierId);
+
+    if (!supplier) {
+      showFeedback(purchasesFeedback, "Fournisseur introuvable", true);
+      return;
+    }
+
+    await createPurchaseFromSupplier(supplier);
   });
 }
 
