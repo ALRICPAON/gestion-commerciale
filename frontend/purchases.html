@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Achats - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/purchases.css?v=2" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Liste des achats</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="topbar-department-box">
+        <label for="topbar-department-select" class="topbar-label">Rayon actif</label>
+        <select id="topbar-department-select" class="topbar-select"></select>
+      </div>
+
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Achats</h2>
+          <p>
+            Rayon actif :
+            <strong id="current-department-name">-</strong>
+          </p>
+        </div>
+
+        <div class="page-actions-right">
+          <button id="new-order-btn" class="btn btn-primary">➕ Créer commande</button>
+          <button id="new-bl-btn" class="btn btn-secondary">➕ Créer BL</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Import document fournisseur</h3>
+
+      <div id="import-document-feedback" class="page-feedback hidden"></div>
+
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="import-supplier-select">Fournisseur import</label>
+          <select id="import-supplier-select">
+            <option value="">Choisir fournisseur</option>
+            <option value="SCAPMAREE">SCAPMAREE</option>
+            <option value="ROYALE_MAREE">ROYALE MAREE</option>
+            <option value="CRIEE_81268">CRIEE ST GILLES</option>
+            <option value="CRIEE_81269">CRIEE LES SABLES</option>
+            <option value="SCAOUEST">SCA OUEST</option>
+            <option value="SOGELMER">SOGELMER</option>
+            <option value="DISTRIMER">DISTRIMER</option>
+            <option value="LECRIMAREE">LECRI MAREE</option>
+            <option value="GCCRUSTACES">GC CRUSTACES</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="import-document-file">Fichier BL / fournisseur</label>
+          <input type="file" id="import-document-file" accept=".xlsx,.xls,.csv" />
+        </div>
+
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <div class="page-actions-right">
+            <button type="button" id="test-import-document-btn" class="btn btn-primary">
+              Importer document test
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <pre
+        id="import-document-result"
+        style="margin-top:16px; white-space:pre-wrap; background:#f7f7f7; padding:12px; border-radius:10px; font-size:13px;"
+      >Aucun test lancé</pre>
+    </section>
+
+    <section class="card">
+      <h3>Filtres</h3>
+
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="purchase-status-filter">Statut</label>
+          <select id="purchase-status-filter">
+            <option value="">Tous</option>
+            <option value="draft">Brouillon</option>
+            <option value="ordered">Commandé</option>
+            <option value="receiving">Réception en cours</option>
+            <option value="received">Reçu</option>
+            <option value="closed">Clôturé</option>
+            <option value="cancelled">Annulé</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-supplier-filter">Fournisseur</label>
+          <select id="purchase-supplier-filter">
+            <option value="">Tous</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-date-from-filter">Du</label>
+          <input type="date" id="purchase-date-from-filter" />
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-date-to-filter">Au</label>
+          <input type="date" id="purchase-date-to-filter" />
+        </div>
+
+        <div class="form-group">
+          <label for="purchase-search-input">Recherche</label>
+          <input type="text" id="purchase-search-input" placeholder="Fournisseur, BL..." />
+        </div>
+
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <div class="page-actions-right">
+            <button id="refresh-purchases-btn" class="btn btn-secondary">Rafraîchir</button>
+            <button id="reset-filters-btn" class="btn btn-secondary">Réinitialiser</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Liste des achats</h3>
+      <div id="purchases-feedback" class="page-feedback hidden"></div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Fournisseur</th>
+              <th>Type</th>
+              <th>Statut</th>
+              <th>BL</th>
+              <th>Total HT</th>
+              <th>Lignes</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="purchases-table-body">
+            <tr>
+              <td colspan="8">Chargement...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL FOURNISSEURS -->
+  <div id="supplier-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div>
+          <h3>Sélectionner un fournisseur</h3>
+          <p>Double clic pour créer l'achat</p>
+        </div>
+        <button type="button" id="close-supplier-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div class="form-group">
+        <label for="supplier-search-input">Recherche fournisseur</label>
+        <input type="text" id="supplier-search-input" placeholder="Code ou nom fournisseur" />
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table selectable-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Nom</th>
+              <th>Contact</th>
+              <th>Téléphone</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody id="supplier-modal-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL MAPPING IMPORT -->
+  <div id="import-mapping-panel" class="modal-overlay hidden">
+    <div class="modal-card modal-xl">
+      <div class="modal-header">
+        <div>
+          <h3>Mapper les références fournisseur</h3>
+          <p id="import-mapping-step-counter" style="font-size: 0.9em; color: #666;"></p>
+        </div>
+        <button type="button" id="close-import-mapping-modal" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="import-mapping-feedback" class="page-feedback hidden"></div>
+
+      <!-- Affichage de la référence fournisseur courante -->
+      <div id="import-mapping-current-item" style="margin-bottom: 16px; padding: 12px; background: #f9f9f9; border-left: 4px solid #2196F3; border-radius: 4px;">
+        <div style="margin-bottom: 8px;"><strong>Référence fournisseur:</strong> <span id="import-mapping-ref" style="font-family: monospace; font-weight: bold;"></span></div>
+        <div><strong>Désignation:</strong> <span id="import-mapping-designation"></span></div>
+      </div>
+
+      <!-- Zone de recherche article -->
+      <div class="search-section" style="margin-bottom: 16px;">
+        <div class="form-group">
+          <label for="import-mapping-search" class="search-label">Rechercher un article à relier :</label>
+          <input type="text" id="import-mapping-search" class="search-input" placeholder="PLU, désignation...">
+        </div>
+      </div>
+
+      <!-- Liste des articles filtrés -->
+      <div class="table-wrap" style="max-height: 300px; overflow-y: auto;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>PLU</th>
+              <th>Désignation</th>
+              <th>Nom affiché</th>
+            </tr>
+          </thead>
+          <tbody id="import-mapping-articles-list"></tbody>
+        </table>
+      </div>
+
+      <!-- Article sélectionné affiché -->
+      <div id="import-mapping-selected-article" style="margin-top: 16px; padding: 12px; background: #e8f5e9; border-radius: 4px; min-height: 40px; display: flex; align-items: center;">
+        <span style="color: #666;">Aucun article sélectionné</span>
+      </div>
+
+      <!-- Boutons de navigation et action -->
+      <div class="page-actions-right" style="margin-top: 16px; gap: 8px; display: flex; justify-content: flex-end;">
+        <button type="button" id="prev-import-mapping-btn" class="btn btn-secondary">← Précédent</button>
+        <button type="button" id="next-import-mapping-btn" class="btn btn-secondary">Suivant →</button>
+        <button type="button" id="save-import-mappings-btn" class="btn btn-primary">Enregistrer tout</button>
+        <button type="button" id="close-import-mapping-modal-2" class="btn btn-secondary">Fermer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/purchases.js?v=7"></script>
+</body>
+</html>

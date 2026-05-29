@@ -1,0 +1,27 @@
+/* Targeted styles for purchases list page — minimal and non-intrusive */
+.purchases-total-cell {
+  text-align: right;
+  width: 160px;
+  color: #222;
+}
+.purchases-total-cell strong {
+  font-weight: 600;
+  color: #111;
+}
+
+.purchase-status-badge {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 12px;
+  font-size: 0.85em;
+  color: #fff;
+}
+
+.status-ordered { background: #1976d2; }
+.status-received { background: #2e7d32; }
+.status-closed { background: #424242; }
+.status-cancelled { background: #b71c1c; }
+.status-draft { background: #757575; }
+.status-receiving { background: #0288d1; }
+
+/* Keep this file narrowly scoped — avoid generic selectors that override global styles. */
