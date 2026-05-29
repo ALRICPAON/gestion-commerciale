@@ -426,3 +426,253 @@ Gestion Commerciale et Rayon V2 doivent rester totalement separes :
 * routes separees
 * schemas SQL separes
 * frontend separes
+
+---
+
+# Mise a jour reprise - 2026-05-29
+
+## Etat modules Achats / Ventes / Imports BL
+
+Les modules Achats et Ventes ont ete ajoutes dans Gestion Commerciale, en reprenant l'ergonomie et une partie de l'architecture de Rayon V2, tout en gardant les projets separes.
+
+### Achats
+
+Fichiers ajoutes / branches :
+
+* `backend/routes/purchases.js`
+* `frontend/purchases.html`
+* `frontend/purchase-detail.html`
+* `frontend/js/purchases.js`
+* `frontend/js/purchase-detail.js`
+* `frontend/css/pages/purchases.css`
+* `frontend/css/pages/purchase-detail.css`
+
+Fonctions en place :
+
+* liste achats
+* creation commande / BL
+* detail achat
+* lignes achat
+* validation reception
+* lots
+* mouvements stock
+* stock summary
+* duplication / suppression selon statut
+* F9 fournisseur en cours de stabilisation
+* F9 article en cours de stabilisation
+
+### Imports BL fournisseurs
+
+Le bloc import BL fournisseur a ete conserve et importe depuis Rayon V2 :
+
+* `backend/services/imports/`
+* detection parser
+* lecture `.xlsx`, `.xls`, `.csv`, `.pdf`
+* parsers fournisseurs : Scapmaree, Royale Maree, Criee, Scaouest, Sogelmer, Distrimer, Lecri Maree, GC Crustaces, etc.
+
+Important : ne pas supprimer ce bloc. Il est indispensable pour les achats.
+
+### Ventes
+
+Fichiers ajoutes / branches :
+
+* `backend/routes/sales.js`
+* `frontend/sales.html`
+* `frontend/sale-detail.html`
+* `frontend/js/sales.js`
+* `frontend/js/sale-detail.js`
+* `frontend/css/pages/sale-detail.css`
+
+Fonctions en place :
+
+* liste ventes/sorties
+* creation vente
+* lignes vente
+* validation sortie avec consommation stock
+* annulation validation
+* recherche article en stock
+
+## SQL ajoute
+
+Scripts ajoutes/executés :
+
+* `backend/db/gestion-commerciale/purchases_sales_stock.sql`
+* `backend/db/gestion-commerciale/020_supplier_article_mappings.sql`
+* `backend/db/gestion-commerciale/migrate_from_rayon_v2.sql`
+* `backend/db/gestion-commerciale/030_enrich_articles_from_rayon_v2.sql`
+
+Tables principales creees / utilisees :
+
+* `purchases`
+* `purchase_lines`
+* `purchase_line_metadata`
+* `lots`
+* `stock_movements`
+* `stock_summary`
+* `sales_documents`
+* `sales_lines`
+* `sale_line_allocations`
+* `supplier_article_mappings`
+
+## Migration Rayon V2 vers Gestion Commerciale
+
+Migration reference effectuee depuis la base `gestion_rayons` vers `gestion_commerciale`, sans modifier Rayon V2.
+
+Resultats valides :
+
+* fournisseurs migrables : 21
+* articles TRAD migrables : 593
+* AF_MAP TRAD migrables : 1807
+* fournisseurs en cible : 22
+* articles en cible : 593
+* AF_MAP en cible : 1807
+
+Regle de migration validee :
+
+* utiliser uniquement les articles TRAD de Rayon V2
+* filtrer TRAD via `article_departments -> department_sectors.code = 'TRAD'`
+* ne pas reutiliser les UUID `store_id`, `department_id`, `department_sector_id` de Rayon V2
+* reconstruire les mappings AF_MAP avec `supplier.code + article.plu`
+* conserver `supplier_ref` en texte pour garder les zeros devant
+
+Patch d'enrichissement articles ajoute :
+
+* `030_enrich_articles_from_rayon_v2.sql`
+
+Objectif du patch : enrichir les articles TRAD avec :
+
+* nom latin
+* FAO
+* sous-zone
+* engin
+* methode / categorie
+* nom affiche
+* unites achat / stock / vente
+
+## Probleme actuel a reprendre demain : module Articles
+
+Le module Articles a encore une logique heritee Rayon V2 basee sur les services/rayons.
+
+Symptomes actuels :
+
+* en haut de la page Articles et de la fiche Article, un champ `Service` / `Service des articles` apparait encore ;
+* l'article cree manuellement dans Gestion Commerciale apparait dans le service actif et affiche les boutons Modifier / Supprimer / Dupliquer ;
+* les articles migres depuis Rayon V2 apparaissent dans `Tous les services` ;
+* les articles migres affichent seulement `Voir` + `Lecture seule` ;
+* apres certaines corrections, le detail article peut ne plus afficher correctement les champs.
+
+Cause identifiee :
+
+* `frontend/js/articles.js` utilise encore une logique du type :
+
+```js
+function canManageArticle(article) {
+  if (!activeDepartment?.id) return false;
+  return String(article.department_id) === String(activeDepartment.id);
+}
+```
+
+* les articles migres n'ont pas de rattachement `article_departments` dans Gestion Commerciale ;
+* donc ils sont consideres comme hors service et mis en lecture seule ;
+* `article-detail.html` et `article-detail.js` gardent aussi un select `Service` herite de Rayon V2.
+
+### Decision metier validee pour Gestion Commerciale
+
+Dans Gestion Commerciale, les articles doivent etre geres au niveau :
+
+```txt
+store_id -> articles
+```
+
+et non :
+
+```txt
+store_id -> department_id -> articles
+```
+
+Le concept de service/rayon ne doit plus bloquer la consultation, modification, duplication ou suppression des articles.
+
+### A corriger au prochain chat
+
+Priorite absolue : nettoyer le module Articles pour supprimer la dependance bloquante au service.
+
+Fichiers concernes :
+
+* `frontend/articles.html`
+* `frontend/article-detail.html`
+* `frontend/js/articles.js`
+* `frontend/js/article-detail.js`
+* `backend/routes/articles.js`
+
+Corrections a faire :
+
+1. Supprimer ou masquer le filtre `Service des articles` dans `articles.html`.
+2. Supprimer ou neutraliser le select `Service` dans `article-detail.html`.
+3. Dans `articles.js`, modifier `canManageArticle()` pour ne plus bloquer les articles sans `department_id`.
+4. Dans `loadArticles()`, ne plus envoyer `department_id` par defaut.
+5. Dans `saveArticle()`, autoriser la modification d'un article sans `department_id`.
+6. Dans `backend/routes/articles.js`, faire en sorte que `PATCH /api/articles/:id` accepte `department_id` absent et mette a jour directement la table `articles`.
+7. Ne plus retourner `Rattachement article/service introuvable` pour les articles migres sans rattachement.
+8. S'assurer que `GET /api/articles/:id` retourne bien les champs enrichis depuis `articles` :
+   * `latin_name`
+   * `fao_zone`
+   * `sous_zone`
+   * `fishing_gear`
+   * `allergens`
+   * `production_method`
+   * `display_name`
+   * `purchase_unit`
+   * `stock_unit`
+   * `sale_unit`
+9. Augmenter les versions cache dans les HTML :
+   * `articles.js?v=...`
+   * `article-detail.js?v=...`
+   * CSS si modifie.
+
+### Etat a ne pas casser
+
+Sont valides et a conserver :
+
+* separation Gestion Commerciale / Rayon V2
+* fournisseurs migres
+* AF_MAP migre
+* articles TRAD migres
+* imports BL fournisseurs
+* routes achats / ventes
+* base `gestion_commerciale`
+* API `gestion-commerciale-api`
+
+## Commandes utiles demain
+
+### Redemarrer API
+
+```bash
+cd /var/www/gestion-commerciale/backend
+pm2 restart gestion-commerciale-api
+pm2 logs gestion-commerciale-api --lines 80
+```
+
+### Verifier articles en base
+
+```bash
+docker exec -it gestion-rayons-db psql -U admin -d gestion_commerciale
+```
+
+```sql
+SELECT COUNT(*) FROM articles;
+SELECT COUNT(*) FROM supplier_article_mappings;
+SELECT plu, designation, latin_name, fao_zone, sous_zone, fishing_gear
+FROM articles
+WHERE latin_name IS NOT NULL OR fao_zone IS NOT NULL
+LIMIT 20;
+\q
+```
+
+### Tests apres correction articles
+
+* ouvrir `Articles`
+* verifier que les 593 articles migrés sont visibles
+* verifier que les boutons Modifier / Dupliquer / Desactiver apparaissent
+* ouvrir `Voir` sur un article migré
+* verifier que le detail affiche nom latin / FAO / engin / unites
+* modifier un article migré sans erreur `department_id`
