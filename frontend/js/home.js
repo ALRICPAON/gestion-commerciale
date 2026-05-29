@@ -11,6 +11,7 @@ const storeNameEl = document.getElementById("store-name");
 const userNameEl = document.getElementById("user-name");
 const usersBtn = document.getElementById("users-btn");
 const usersCardBtn = document.getElementById("users-card-btn");
+const afMapCardBtn = document.getElementById("af-map-card-btn");
 const logoutBtn = document.getElementById("logout-btn");
 const departmentSelect = document.getElementById("topbar-department-select");
 const currentDepartmentNameEl = document.getElementById("current-department-name");
@@ -41,6 +42,14 @@ function openUsers() {
   window.location.href = "./users.html";
 }
 
+function openAfMap() {
+  window.location.href = "./af-map.html";
+}
+
+function canManageAfMap() {
+  return ["admin", "responsable"].includes(sessionUser.role);
+}
+
 function renderTopbar() {
   if (storeNameEl) {
     storeNameEl.textContent = sessionUser.store_name || "Magasin";
@@ -64,6 +73,15 @@ function renderTopbar() {
     usersCardBtn.textContent = canManageUsers ? "Ouvrir" : "Reserve admin";
     if (canManageUsers) {
       usersCardBtn.addEventListener("click", openUsers);
+    }
+  }
+
+  if (afMapCardBtn) {
+    const allowed = canManageAfMap();
+    afMapCardBtn.disabled = !allowed;
+    afMapCardBtn.textContent = allowed ? "Ouvrir" : "Reserve responsable";
+    if (allowed) {
+      afMapCardBtn.addEventListener("click", openAfMap);
     }
   }
 }

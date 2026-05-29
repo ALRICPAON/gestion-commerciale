@@ -254,6 +254,16 @@ select:focus {
   color: var(--theme-main);
 }
 
+.module-subtitle {
+  min-height: 0 !important;
+  margin: -4px 0 10px !important;
+  color: #111827 !important;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .module-card p {
   margin-bottom: 16px;
   min-height: 42px;
