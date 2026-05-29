@@ -272,6 +272,68 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
   }
 });
 
+// GET /api/articles/search-in-stock
+router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const { q = '', department_id = '' } = req.query;
+    const searchTerm = String(q).trim();
+
+    if (!searchTerm) {
+      return res.json([]);
+    }
+
+    const params = [req.user.store_id, `%${searchTerm}%`, `${searchTerm}%`];
+    let departmentFilter = '';
+
+    if (department_id) {
+      params.push(department_id);
+      departmentFilter = `AND ad.department_id = $${params.length}`;
+    }
+
+    const result = await req.dbPool.query(
+      `
+      SELECT
+        a.id,
+        a.plu,
+        a.designation,
+        a.ean,
+        a.unit,
+        ad.sale_unit,
+        ad.sale_price_ex_vat,
+        ad.sale_price_inc_vat,
+        ad.sale_price_inc_vat AS pv_ttc_real,
+        COALESCE(ss.pma, 0) AS pma,
+        COALESCE(ss.pma, 0) AS unit_cost_ex_vat,
+        COALESCE(ss.stock_quantity, 0) AS stock_quantity
+      FROM articles a
+      JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
+      WHERE a.store_id = $1
+        AND a.is_active = true
+        AND ad.is_active = true
+        ${departmentFilter}
+        AND (
+          a.plu ILIKE $2
+          OR a.designation ILIKE $2
+          OR COALESCE(ad.display_name, '') ILIKE $2
+          OR COALESCE(a.ean, '') ILIKE $2
+        )
+      ORDER BY
+        CASE WHEN a.plu = $3 THEN 0 ELSE 1 END,
+        CASE WHEN a.plu ILIKE $3 THEN 0 ELSE 1 END,
+        a.designation ASC
+      LIMIT 50
+      `,
+      params
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur GET /api/articles/search-in-stock :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
 // POST /api/articles
 router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   const client = await req.dbPool.connect();

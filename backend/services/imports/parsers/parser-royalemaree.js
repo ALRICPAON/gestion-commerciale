@@ -7,9 +7,6 @@ function logStep(label, payload = null) {
   }
   console.log(`[ROYALE_MAREE] ${label}`, payload);
 }
-console.log("[ROYALE_MAREE] pdfParseModule type =", typeof pdfParseModule);
-console.log("[ROYALE_MAREE] pdfParse type =", typeof pdfParse);
-
 function parseNumber(raw) {
   if (raw === undefined || raw === null || raw === "") return 0;
   if (typeof raw === "number") return Number(raw);

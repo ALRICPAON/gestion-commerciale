@@ -10,9 +10,20 @@ const { recomputeArticleStock } = require('../services/stockService');
 
 const router = express.Router();
 const IMPORTS_ROOT = path.join(__dirname, '..', 'uploads', 'imports');
+const ALLOWED_IMPORT_EXTENSIONS = new Set(['.xlsx', '.xls', '.csv', '.pdf']);
 fs.mkdirSync(IMPORTS_ROOT, { recursive: true });
 
-const upload = multer({ dest: IMPORTS_ROOT, limits: { fileSize: 25 * 1024 * 1024 } });
+const upload = multer({
+  dest: IMPORTS_ROOT,
+  limits: { fileSize: 25 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    if (!ALLOWED_IMPORT_EXTENSIONS.has(ext)) {
+      return cb(Object.assign(new Error('Format de fichier non supporte'), { status: 400, expose: true }));
+    }
+    return cb(null, true);
+  },
+});
 
 function toNullableString(v) { const s = String(v ?? '').trim(); return s || null; }
 function normalizePriceUnit(v) { return ['kg','piece','colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg'; }
@@ -81,7 +92,7 @@ router.get('/purchases/:id', authenticateToken, attachDbContext, async (req,res)
   try{
     const p=await req.dbPool.query('SELECT p.*, s.name supplier_name FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id WHERE p.id=$1 AND p.store_id=$2 LIMIT 1',[req.params.id,req.user.store_id]);
     if(!p.rows.length) return res.status(404).json({error:'Achat introuvable'});
-    const l=await req.dbPool.query(`SELECT pl.*, a.plu article_plu, a.designation article_name, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number, plm.notes metadata_notes FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' WHERE pl.purchase_id=$1 ORDER BY pl.line_number`,[req.params.id]);
+    const l=await req.dbPool.query(`SELECT pl.*, a.plu article_plu, a.designation article_name, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number, plm.sanitary_photo_url, plm.sanitary_photo_urls, plm.notes metadata_notes FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' WHERE pl.purchase_id=$1 ORDER BY pl.line_number`,[req.params.id]);
     res.json({purchase:p.rows[0], lines:l.rows});
   }catch(e){console.error(e); res.status(500).json({error:'Erreur détail achat'});}
 });
@@ -129,7 +140,7 @@ router.patch('/purchase-lines/:id', authenticateToken, attachDbContext, requireA
     const merged={...chk.rows[0],...req.body, price_unit:normalizePriceUnit(req.body.price_unit||chk.rows[0].price_unit)};
     const amount=lineAmount(merged, chk.rows[0].purchase_status==='received');
     const r=await client.query(`UPDATE purchase_lines SET article_id=$1, ordered_colis=$2, ordered_pieces=$3, ordered_quantity=$4, received_colis=$5, received_pieces=$6, received_quantity=$7, unit_price_ex_vat=$8, price_unit=$9, line_amount_ex_vat=$10, updated_at=NOW() WHERE id=$11 RETURNING *`,[article.id,req.body.ordered_colis??chk.rows[0].ordered_colis,req.body.ordered_pieces??chk.rows[0].ordered_pieces,req.body.ordered_quantity??chk.rows[0].ordered_quantity,req.body.received_colis??chk.rows[0].received_colis,req.body.received_pieces??chk.rows[0].received_pieces,req.body.received_quantity??chk.rows[0].received_quantity,req.body.unit_price_ex_vat??chk.rows[0].unit_price_ex_vat,merged.price_unit,amount,req.params.id]);
-    await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,latin_name,fao_zone,sous_zone,fishing_gear,allergens,origin_label,supplier_lot_number,dlc,notes,updated_at) VALUES(gen_random_uuid(),$1,'gc_line','{}'::jsonb,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW()) ON CONFLICT(purchase_line_id,meta_key) DO UPDATE SET latin_name=EXCLUDED.latin_name,fao_zone=EXCLUDED.fao_zone,sous_zone=EXCLUDED.sous_zone,fishing_gear=EXCLUDED.fishing_gear,allergens=EXCLUDED.allergens,origin_label=EXCLUDED.origin_label,supplier_lot_number=EXCLUDED.supplier_lot_number,dlc=EXCLUDED.dlc,notes=EXCLUDED.notes,updated_at=NOW()`,[req.params.id,req.body.latin_name||null,req.body.fao_zone||null,req.body.sous_zone||null,req.body.fishing_gear||null,req.body.allergens||null,req.body.origin_label||null,req.body.supplier_lot_number||null,req.body.dlc||null,req.body.metadata_notes||null]);
+    await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,latin_name,fao_zone,sous_zone,fishing_gear,allergens,origin_label,supplier_lot_number,dlc,sanitary_photo_url,sanitary_photo_urls,notes,updated_at) VALUES(gen_random_uuid(),$1,'gc_line','{}'::jsonb,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::jsonb,'[]'::jsonb),$12,NOW()) ON CONFLICT(purchase_line_id,meta_key) DO UPDATE SET latin_name=EXCLUDED.latin_name,fao_zone=EXCLUDED.fao_zone,sous_zone=EXCLUDED.sous_zone,fishing_gear=EXCLUDED.fishing_gear,allergens=EXCLUDED.allergens,origin_label=EXCLUDED.origin_label,supplier_lot_number=EXCLUDED.supplier_lot_number,dlc=EXCLUDED.dlc,sanitary_photo_url=EXCLUDED.sanitary_photo_url,sanitary_photo_urls=EXCLUDED.sanitary_photo_urls,notes=EXCLUDED.notes,updated_at=NOW()`,[req.params.id,req.body.latin_name||null,req.body.fao_zone||null,req.body.sous_zone||null,req.body.fishing_gear||null,req.body.allergens||null,req.body.origin_label||null,req.body.supplier_lot_number||null,req.body.dlc||null,req.body.sanitary_photo_url||null,JSON.stringify(req.body.sanitary_photo_urls||[]),req.body.metadata_notes||null]);
     await recomputePurchaseTotals(client, chk.rows[0].purchase_id); await client.query('COMMIT'); res.json({ok:true,line:r.rows[0],article});
   }catch(e){await client.query('ROLLBACK'); console.error(e); res.status(500).json({error:'Erreur modification ligne achat'});} finally{client.release();}
 });
@@ -165,6 +176,68 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
     await client.query(`UPDATE purchases SET status='received', purchase_type=CASE WHEN purchase_type='order' THEN 'direct_bl' ELSE purchase_type END, receipt_date=COALESCE($1::date,CURRENT_DATE), updated_by=$2, updated_at=NOW() WHERE id=$3`,[req.body.receipt_date||null,req.user.id,purchase.id]);
     await recomputePurchaseTotals(client,purchase.id); await client.query('COMMIT'); res.json({ok:true,created_lots:createdLots,message:`Réception validée : ${createdLots} lot(s) créé(s)`});
   }catch(e){await client.query('ROLLBACK'); console.error(e); res.status(500).json({error:e.message});} finally{client.release();}
+});
+
+router.post('/purchases/:id/duplicate', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
+  const client=await req.dbPool.connect();
+  try{
+    await client.query('BEGIN');
+    const source=await client.query('SELECT * FROM purchases WHERE id=$1 AND store_id=$2 LIMIT 1',[req.params.id,req.user.store_id]);
+    if(!source.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Achat introuvable'});}
+    const p=source.rows[0];
+    const purchase=await client.query(`INSERT INTO purchases(id,store_id,client_key,supplier_id,purchase_date,status,purchase_type,order_date,bl_number,invoice_number,notes,created_by,updated_by) VALUES(gen_random_uuid(),$1,$2,$3,CURRENT_DATE,'ordered',$4,CURRENT_DATE,NULL,NULL,$5,$6,$6) RETURNING *`,[p.store_id,p.client_key,p.supplier_id,p.purchase_type,p.notes,req.user.id]);
+    const lines=await client.query('SELECT * FROM purchase_lines WHERE purchase_id=$1 ORDER BY line_number',[p.id]);
+    for(const line of lines.rows){
+      const ins=await client.query(`INSERT INTO purchase_lines(id,purchase_id,store_id,client_key,supplier_id,line_number,article_id,supplier_reference,supplier_label,ordered_colis,ordered_pieces,ordered_quantity,unit_price_ex_vat,line_amount_ex_vat,price_unit,line_status) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending') RETURNING id`,[purchase.rows[0].id,line.store_id,line.client_key,line.supplier_id,line.line_number,line.article_id,line.supplier_reference,line.supplier_label,line.ordered_colis,line.ordered_pieces,line.ordered_quantity,line.unit_price_ex_vat,line.line_amount_ex_vat,line.price_unit]);
+      await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,dlc,latin_name,fao_zone,sous_zone,fishing_gear,production_method,allergens,origin_label,supplier_lot_number,sanitary_photo_url,sanitary_photo_urls,notes) SELECT gen_random_uuid(),$1,meta_key,meta_value,dlc,latin_name,fao_zone,sous_zone,fishing_gear,production_method,allergens,origin_label,supplier_lot_number,sanitary_photo_url,sanitary_photo_urls,notes FROM purchase_line_metadata WHERE purchase_line_id=$2`,[ins.rows[0].id,line.id]);
+    }
+    await recomputePurchaseTotals(client,purchase.rows[0].id);
+    await client.query('COMMIT');
+    res.status(201).json({ok:true,purchase:purchase.rows[0]});
+  }catch(e){await client.query('ROLLBACK');console.error(e);res.status(500).json({error:'Erreur duplication achat'});}finally{client.release();}
+});
+
+router.post('/purchases/:id/apply-af-mappings', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
+  const client=await req.dbPool.connect();
+  try{
+    await client.query('BEGIN');
+    const p=await client.query('SELECT * FROM purchases WHERE id=$1 AND store_id=$2 LIMIT 1',[req.params.id,req.user.store_id]);
+    if(!p.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Achat introuvable'});}
+    const update=await client.query(`UPDATE purchase_lines pl SET article_id=m.article_id, updated_at=NOW() FROM supplier_article_mappings m WHERE pl.purchase_id=$1 AND pl.supplier_id=m.supplier_id AND pl.supplier_reference=m.supplier_ref AND COALESCE(m.is_active,true)=true AND pl.article_id IS NULL RETURNING pl.id`).catch((error)=>({rows:[],mappingError:error}));
+    if(update.mappingError){await client.query('ROLLBACK');return res.status(400).json({error:'Table de mappings fournisseur/article indisponible'});}
+    await client.query('COMMIT');
+    res.json({ok:true,updated_lines:update.rows.length});
+  }catch(e){await client.query('ROLLBACK');console.error(e);res.status(500).json({error:'Erreur application mappings'});}finally{client.release();}
+});
+
+router.post('/af-map', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
+  const client=await req.dbPool.connect();
+  try{
+    const { supplier_code, supplier_ref, supplier_label, plu }=req.body;
+    if(!supplier_code || !supplier_ref || !plu) return res.status(400).json({error:'supplier_code, supplier_ref et plu obligatoires'});
+    await client.query('BEGIN');
+    await client.query(`CREATE TABLE IF NOT EXISTS supplier_article_mappings (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), store_id uuid NOT NULL, client_key text, supplier_id uuid NOT NULL REFERENCES suppliers(id), article_id uuid NOT NULL REFERENCES articles(id), supplier_ref text NOT NULL, supplier_label text, is_active boolean NOT NULL DEFAULT true, created_by uuid, updated_by uuid, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(supplier_id, supplier_ref))`);
+    const supplier=await client.query('SELECT id FROM suppliers WHERE store_id=$1 AND (code=$2 OR name ILIKE $3) LIMIT 1',[req.user.store_id,String(supplier_code).trim(),`%${String(supplier_code).trim()}%`]);
+    if(!supplier.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Fournisseur introuvable'});}
+    const article=await client.query('SELECT id FROM articles WHERE store_id=$1 AND plu=$2 LIMIT 1',[req.user.store_id,String(plu).trim()]);
+    if(!article.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Article introuvable'});}
+    const r=await client.query(`INSERT INTO supplier_article_mappings(id,store_id,client_key,supplier_id,article_id,supplier_ref,supplier_label,is_active,created_by,updated_by) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,true,$7,$7) ON CONFLICT(supplier_id,supplier_ref) DO UPDATE SET article_id=EXCLUDED.article_id,supplier_label=EXCLUDED.supplier_label,is_active=true,updated_by=EXCLUDED.updated_by,updated_at=NOW() RETURNING *`,[req.user.store_id,req.user.client_key||null,supplier.rows[0].id,article.rows[0].id,String(supplier_ref).trim(),supplier_label||null,req.user.id]);
+    await client.query('COMMIT');
+    res.status(201).json({ok:true,mapping:r.rows[0]});
+  }catch(e){await client.query('ROLLBACK');console.error(e);res.status(500).json({error:'Erreur mapping fournisseur/article'});}finally{client.release();}
+});
+
+router.delete('/purchases/:id', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
+  const client=await req.dbPool.connect();
+  try{
+    await client.query('BEGIN');
+    const chk=await client.query('SELECT status FROM purchases WHERE id=$1 AND store_id=$2 LIMIT 1',[req.params.id,req.user.store_id]);
+    if(!chk.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Achat introuvable'});}
+    if(['received','closed'].includes(chk.rows[0].status)){await client.query('ROLLBACK');return res.status(400).json({error:'Impossible de supprimer un achat receptionne ou cloture'});}
+    await client.query('DELETE FROM purchases WHERE id=$1 AND store_id=$2',[req.params.id,req.user.store_id]);
+    await client.query('COMMIT');
+    res.json({ok:true});
+  }catch(e){await client.query('ROLLBACK');console.error(e);res.status(500).json({error:'Erreur suppression achat'});}finally{client.release();}
 });
 
 router.post('/purchases/import-document', authenticateToken, attachDbContext, requireAdminOrManager, upload.single('document'), async(req,res)=>{

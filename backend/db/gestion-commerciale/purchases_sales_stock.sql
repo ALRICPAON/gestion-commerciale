@@ -56,6 +56,25 @@ CREATE TABLE IF NOT EXISTS purchase_lines (
 CREATE INDEX IF NOT EXISTS idx_purchase_lines_purchase ON purchase_lines(purchase_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_lines_article ON purchase_lines(article_id);
 
+CREATE TABLE IF NOT EXISTS supplier_article_mappings (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  store_id uuid NOT NULL,
+  client_key text,
+  supplier_id uuid NOT NULL REFERENCES suppliers(id),
+  article_id uuid NOT NULL REFERENCES articles(id),
+  supplier_ref text NOT NULL,
+  supplier_label text,
+  is_active boolean NOT NULL DEFAULT true,
+  created_by uuid,
+  updated_by uuid,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE(supplier_id, supplier_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_article_mappings_supplier
+  ON supplier_article_mappings(supplier_id, supplier_ref);
+
 CREATE TABLE IF NOT EXISTS purchase_line_metadata (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   purchase_line_id uuid NOT NULL REFERENCES purchase_lines(id) ON DELETE CASCADE,

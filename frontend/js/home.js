@@ -1,5 +1,7 @@
-const sessionUser = JSON.parse(localStorage.getItem("grv2_user") || "null");
-const activeDepartment = JSON.parse(localStorage.getItem("grv2_active_department") || "null");
+const sessionUser = JSON.parse(localStorage.getItem("gc_user") || localStorage.getItem("grv2_user") || "null");
+const activeDepartment = JSON.parse(
+  localStorage.getItem("gc_active_department") || localStorage.getItem("grv2_active_department") || "null"
+);
 
 if (!sessionUser) {
   window.location.href = "./login.html";
@@ -30,6 +32,7 @@ function getSafeActiveDepartment() {
 
 function saveActiveDepartment(department) {
   if (department) {
+    localStorage.setItem("gc_active_department", JSON.stringify(department));
     localStorage.setItem("grv2_active_department", JSON.stringify(department));
   }
 }
@@ -118,6 +121,9 @@ if (logoutBtn) {
     localStorage.removeItem("grv2_token");
     localStorage.removeItem("grv2_user");
     localStorage.removeItem("grv2_active_department");
+    localStorage.removeItem("gc_token");
+    localStorage.removeItem("gc_user");
+    localStorage.removeItem("gc_active_department");
     window.location.href = "./login.html";
   });
 }

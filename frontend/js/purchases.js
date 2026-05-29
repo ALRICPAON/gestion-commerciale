@@ -1,7 +1,9 @@
 // Debug persistant et listeners globaux ajoutés plus bas
-const token = localStorage.getItem("gc_token");
-const sessionUser = JSON.parse(localStorage.getItem("gc_user") || "null");
-const activeDepartment = JSON.parse(localStorage.getItem("gc_active_department") || "null");
+const token = localStorage.getItem("gc_token") || localStorage.getItem("grv2_token");
+const sessionUser = JSON.parse(localStorage.getItem("gc_user") || localStorage.getItem("grv2_user") || "null");
+const activeDepartment = JSON.parse(
+  localStorage.getItem("gc_active_department") || localStorage.getItem("grv2_active_department") || "null"
+);
 
 if (!token || !sessionUser) {
   window.location.href = "./login.html";
@@ -95,33 +97,11 @@ function getSafeActiveDepartment() {
 
 function saveActiveDepartment(department) {
   localStorage.setItem("gc_active_department", JSON.stringify(department));
+  localStorage.setItem("grv2_active_department", JSON.stringify(department));
 }
 
 function applyDepartmentTheme(department) {
-  document.body.classList.remove(
-    "theme-pois",
-    "theme-bouch",
-    "theme-fdl",
-    "theme-boul",
-    "theme-char",
-    "theme-trait",
-    "theme-from"
-  );
-
-  if (!department || !department.code) return;
-
-  const map = {
-    POIS: "theme-pois",
-    BOUCH: "theme-bouch",
-    FDL: "theme-fdl",
-    BOUL: "theme-boul",
-    CHAR: "theme-char",
-    TRAIT: "theme-trait",
-    FROM: "theme-from",
-  };
-
-  const themeClass = map[String(department.code).toUpperCase()];
-  if (themeClass) document.body.classList.add(themeClass);
+  return department;
 }
 
 function showFeedback(el, message, isError = false) {
@@ -216,17 +196,15 @@ function renderTopbar() {
 
 function renderDepartmentSelector() {
   const departments = getUserDepartments();
-  const currentDepartment = getSafeActiveDepartment();
-
   departmentSelect.innerHTML = "";
 
   if (departments.length === 0) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "Aucun rayon";
+    option.textContent = "Aucun service";
     departmentSelect.appendChild(option);
     departmentSelect.disabled = true;
-    currentDepartmentNameEl.textContent = "Aucun rayon";
+    currentDepartmentNameEl.textContent = "Aucun service";
     return;
   }
 
@@ -403,16 +381,8 @@ function closeSupplierModal() {
 async function createPurchaseFromSupplier(supplier) {
   clearFeedback(purchasesFeedback);
 
-  const currentDepartment = getSafeActiveDepartment();
-
-  if (!currentDepartment?.id) {
-    showFeedback(purchasesFeedback, "Aucun rayon actif sélectionné", true);
-    return;
-  }
-
   const payload = {
     supplier_id: supplier.id,
-    department_id: currentDepartment.id,
     purchase_type: createMode === "bl" ? "direct_bl" : "order",
   };
 
@@ -481,16 +451,10 @@ async function testImportDocument(event) {
   clearFeedback(importDocumentFeedback);
 
   const file = importDocumentFileInput?.files?.[0];
-  const currentDepartment = getSafeActiveDepartment();
   const selectedSupplier = importSupplierSelect?.value;
 
   if (!file) {
     showFeedback(importDocumentFeedback, "Choisis un fichier à importer", true);
-    return;
-  }
-
-  if (!currentDepartment?.id) {
-    showFeedback(importDocumentFeedback, "Aucun rayon actif sélectionné", true);
     return;
   }
 
@@ -501,7 +465,6 @@ async function testImportDocument(event) {
 
   const formData = new FormData();
   formData.append("document", file);
-  formData.append("department_id", currentDepartment.id);
   formData.append("import_parser_id", selectedSupplier);
 
   // Pour les criées, ajouter supplier_code_override
@@ -576,22 +539,19 @@ async function loadArticlesForImportMapping() {
 }
 
 async function searchImportMappingArticles(searchTerm) {
-  const currentDepartment = getSafeActiveDepartment();
-  
-  if (!currentDepartment?.id) {
-    return [];
-  }
-
   if (!searchTerm || searchTerm.trim().length === 0) {
     return [];
   }
 
   try {
     const params = new URLSearchParams();
-    params.set("department_id", currentDepartment.id);
-    params.set("q", searchTerm.trim());
+    params.set("search", searchTerm.trim());
+    params.set("limit", "50");
 
-    const data = await apiFetch(`/api/articles/search?${params.toString()}`);
+    const currentDepartment = getSafeActiveDepartment();
+    if (currentDepartment?.id) params.set("department_id", currentDepartment.id);
+
+    const data = await apiFetch(`/api/articles?${params.toString()}`);
     return Array.isArray(data) ? data : [];
   } catch (error) {
     console.error("Erreur recherche articles mapping:", error);
@@ -851,6 +811,9 @@ if (logoutBtn) {
     localStorage.removeItem("gc_token");
     localStorage.removeItem("gc_user");
     localStorage.removeItem("gc_active_department");
+    localStorage.removeItem("grv2_token");
+    localStorage.removeItem("grv2_user");
+    localStorage.removeItem("grv2_active_department");
     window.location.href = "./login.html";
   });
 }

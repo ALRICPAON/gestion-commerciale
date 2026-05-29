@@ -1,6 +1,8 @@
-const token = localStorage.getItem("gc_token");
-const sessionUser = JSON.parse(localStorage.getItem("gc_user") || "null");
-const activeDepartment = JSON.parse(localStorage.getItem("gc_active_department") || "null");
+const token = localStorage.getItem("gc_token") || localStorage.getItem("grv2_token");
+const sessionUser = JSON.parse(localStorage.getItem("gc_user") || localStorage.getItem("grv2_user") || "null");
+const activeDepartment = JSON.parse(
+  localStorage.getItem("gc_active_department") || localStorage.getItem("grv2_active_department") || "null"
+);
 
 if (!token || !sessionUser) {
   window.location.href = "./login.html";
@@ -41,33 +43,11 @@ function getSafeActiveDepartment() {
 
 function saveActiveDepartment(department) {
   localStorage.setItem("gc_active_department", JSON.stringify(department));
+  localStorage.setItem("grv2_active_department", JSON.stringify(department));
 }
 
 function applyDepartmentTheme(department) {
-  document.body.classList.remove(
-    "theme-pois",
-    "theme-bouch",
-    "theme-fdl",
-    "theme-boul",
-    "theme-char",
-    "theme-trait",
-    "theme-from"
-  );
-
-  if (!department || !department.code) return;
-
-  const map = {
-    POIS: "theme-pois",
-    BOUCH: "theme-bouch",
-    FDL: "theme-fdl",
-    BOUL: "theme-boul",
-    CHAR: "theme-char",
-    TRAIT: "theme-trait",
-    FROM: "theme-from",
-  };
-
-  const themeClass = map[String(department.code).toUpperCase()];
-  if (themeClass) document.body.classList.add(themeClass);
+  return department;
 }
 
 function showFeedback(el, message, isError = false) {
@@ -162,10 +142,10 @@ function renderDepartmentSelector() {
   if (departments.length === 0) {
     const option = document.createElement("option");
     option.value = "";
-    option.textContent = "Aucun rayon";
+    option.textContent = "Aucun service";
     departmentSelect.appendChild(option);
     departmentSelect.disabled = true;
-    currentDepartmentNameEl.textContent = "Aucun rayon";
+    currentDepartmentNameEl.textContent = "Aucun service";
     return;
   }
 
@@ -197,16 +177,7 @@ function renderDepartmentSelector() {
 async function loadSales() {
   clearFeedback(salesFeedback);
 
-  const currentDepartment = getSafeActiveDepartment();
-
-  if (!currentDepartment?.id) {
-    sales = [];
-    renderSalesTable();
-    return;
-  }
-
   const params = new URLSearchParams();
-  params.set("department_id", currentDepartment.id);
 
   if (saleStatusFilter.value) params.set("status", saleStatusFilter.value);
   if (saleTypeFilter.value) params.set("document_type", saleTypeFilter.value);
@@ -252,17 +223,9 @@ function renderSalesTable() {
 async function createSale() {
   clearFeedback(salesFeedback);
 
-  const currentDepartment = getSafeActiveDepartment();
-
-  if (!currentDepartment?.id) {
-    showFeedback(salesFeedback, "Aucun rayon actif sélectionné", true);
-    return;
-  }
-
   const data = await apiFetch("/api/sales", {
     method: "POST",
     body: JSON.stringify({
-      department_id: currentDepartment.id,
       document_type: "manual_sale",
       origin: "manual",
       notes: null,
@@ -298,6 +261,9 @@ if (logoutBtn) {
     localStorage.removeItem("gc_token");
     localStorage.removeItem("gc_user");
     localStorage.removeItem("gc_active_department");
+    localStorage.removeItem("grv2_token");
+    localStorage.removeItem("grv2_user");
+    localStorage.removeItem("grv2_active_department");
     window.location.href = "./login.html";
   });
 }
