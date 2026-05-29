@@ -182,8 +182,7 @@ async function loadFamilies() {
 }
 
 function canManageArticle(article) {
-  if (!activeDepartment?.id) return false;
-  return String(article.department_id) === String(activeDepartment.id);
+  return true;
 }
 
 function openModal(editMode = false, article = null) {
@@ -277,11 +276,11 @@ async function loadArticles() {
     `;
 
     const params = new URLSearchParams();
-    const selectedDepartmentId = articleDepartmentFilter.value;
+    const selectedDepartmentId = articleDepartmentFilter?.value || '';
 
-    if (selectedDepartmentId) {
-      params.set('department_id', selectedDepartmentId);
-    }
+if (selectedDepartmentId) {
+  params.set('department_id', selectedDepartmentId);
+}
 
     if (searchInput.value.trim()) {
       params.set('search', searchInput.value.trim());
@@ -326,13 +325,8 @@ async function saveArticle(event) {
     const articleId = articleIdInput.value;
     const isEdit = !!articleId;
 
-    if (!activeDepartment?.id) {
-      setFeedback('Choisis un service actif pour creer ou modifier un article.', 'error');
-      return;
-    }
-
     const payload = {
-      department_id: activeDepartment.id,
+      department_id: activeDepartment?.id || null,
       plu: articlePluInput.value.trim(),
       designation: articleDesignationInput.value.trim(),
       unit: articleUnitInput.value,

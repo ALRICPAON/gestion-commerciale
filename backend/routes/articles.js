@@ -434,20 +434,24 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
       sale_price_inc_vat,
     } = req.body;
 
-    if (!department_id || !toNullableString(plu) || !toNullableString(designation)) {
-      return res.status(400).json({
-        error: 'department_id, plu et designation sont obligatoires',
-      });
-    }
+    if (!toNullableString(plu) || !toNullableString(designation)) {
+  return res.status(400).json({
+    error: 'plu et designation sont obligatoires',
+  });
+}
 
     await client.query('BEGIN');
 
-    const department = await assertDepartmentBelongsToStore(client, department_id, req.user.store_id);
+    let department = null;
 
-    if (!department) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Service invalide pour ce client' });
-    }
+if (department_id) {
+  department = await assertDepartmentBelongsToStore(client, department_id, req.user.store_id);
+
+  if (!department) {
+    await client.query('ROLLBACK');
+    return res.status(400).json({ error: 'Service invalide pour ce client' });
+  }
+}
 
     const selectedFamilyCode = family_code || sector_code;
     const sectorId = await getSectorId(client, department_id, selectedFamilyCode);
@@ -704,27 +708,48 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
     const articleUpdate = await client.query(
       `
       UPDATE articles
-      SET
-        plu = $1,
-        designation = $2,
-        ean = $3,
-        unit = $4,
-        is_active = $5,
-        updated_by = $6
-      WHERE id = $7
-        AND store_id = $8
-      RETURNING id
+SET
+  plu = $1,
+  designation = $2,
+  ean = $3,
+  unit = $4,
+  is_active = $5,
+  updated_by = $6,
+  latin_name = $9,
+  fao_zone = $10,
+  sous_zone = $11,
+  fishing_gear = $12,
+  allergens = $13,
+  production_method = $14,
+  display_name = $15,
+  purchase_unit = $16,
+  stock_unit = $17,
+  sale_unit = $18,
+  updated_at = NOW()
+WHERE id = $7
+  AND store_id = $8
+RETURNING id
       `,
-      [
-        toNullableString(plu),
-        toNullableString(designation),
-        toNullableString(ean),
-        toNullableString(unit) || 'kg',
-        !!is_active,
-        req.user.id,
-        articleId,
-        req.user.store_id,
-      ]
+     [
+  toNullableString(plu),
+  toNullableString(designation),
+  toNullableString(ean),
+  toNullableString(unit) || 'kg',
+  !!is_active,
+  req.user.id,
+  articleId,
+  req.user.store_id,
+  toNullableString(latin_name),
+  toNullableString(fao_zone),
+  toNullableString(sous_zone),
+  toNullableString(engin),
+  toNullableString(allergenes),
+  toNullableString(category),
+  toNullableString(display_name),
+  toNullableString(purchase_unit),
+  toNullableString(stock_unit),
+  toNullableString(sale_unit),
+]
     );
 
     if (articleUpdate.rows.length === 0) {
@@ -732,6 +757,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
       return res.status(404).json({ error: 'Article introuvable' });
     }
 
+    if (department_id) {
     const selectedFamilyCode = family_code || sector_code;
     const sectorId = await getSectorId(client, department_id, selectedFamilyCode);
 
@@ -812,6 +838,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
         toNullableString(allergenes),
       ]
     );
+    }
 
     await client.query('COMMIT');
 

@@ -198,7 +198,7 @@ departmentSelectEl.addEventListener('change', async (event) => {
   localStorage.setItem('gc_active_department', JSON.stringify(department));
   localStorage.setItem('grv2_active_department', JSON.stringify(department));
 
-  window.location.href = `./article-detail.html?id=${articleId}&department_id=${department.id}`;
+  window.location.href = `./article-detail.html?id=${articleId}`;
 });
 
 backBtn.addEventListener('click', () => {
