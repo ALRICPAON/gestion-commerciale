@@ -5,12 +5,12 @@ const sessionUserRaw = localStorage.getItem('gc_user') || localStorage.getItem('
 const activeDepartmentRaw =
   localStorage.getItem('gc_active_department') || localStorage.getItem('grv2_active_department');
 
-if (!sessionToken || !sessionUserRaw || !activeDepartmentRaw) {
+if (!sessionToken || !sessionUserRaw) {
   window.location.href = './login.html';
 }
 
 const sessionUser = JSON.parse(sessionUserRaw);
-let activeDepartment = JSON.parse(activeDepartmentRaw);
+let activeDepartment = activeDepartmentRaw ? JSON.parse(activeDepartmentRaw) : null;
 
 const userNameEl = document.getElementById('user-name');
 const departmentSelectEl = document.getElementById('department-select');
@@ -55,6 +55,11 @@ const articleActiveInput = document.getElementById('article-active');
 
 let articlesCache = [];
 let familiesCache = [];
+
+function isValidId(value) {
+  const id = String(value ?? '').trim();
+  return !!id && id !== 'null' && id !== 'undefined';
+}
 
 function setFeedback(message = '', type = '') {
   feedbackEl.textContent = message;
@@ -101,12 +106,21 @@ function fillTopbar() {
   const departments = sessionUser.departments || [];
   departmentSelectEl.innerHTML = '';
 
+  if (departments.length === 0) {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = 'Aucun service';
+    departmentSelectEl.appendChild(option);
+    departmentSelectEl.disabled = true;
+    return;
+  }
+
   departments.forEach((department) => {
     const option = document.createElement('option');
     option.value = department.id;
     option.textContent = department.name;
 
-      if (String(department.id) === String(activeDepartment.id)) {
+      if (activeDepartment && String(department.id) === String(activeDepartment.id)) {
       option.selected = true;
     }
 
@@ -124,7 +138,7 @@ function fillArticleDepartmentFilter() {
     option.value = department.id;
     option.textContent = department.name;
 
-    if (String(department.id) === String(activeDepartment.id)) {
+    if (activeDepartment && String(department.id) === String(activeDepartment.id)) {
       option.selected = true;
     }
 
@@ -133,9 +147,9 @@ function fillArticleDepartmentFilter() {
 }
 
 function fillFamilySelects() {
-  const activeDepartmentFamilies = familiesCache.filter(
-    (family) => family.department_id === activeDepartment.id
-  );
+  const activeDepartmentFamilies = activeDepartment
+    ? familiesCache.filter((family) => family.department_id === activeDepartment.id)
+    : familiesCache;
 
   const options = activeDepartmentFamilies
     .map((family) => `<option value="${family.code}">${family.name}</option>`)
@@ -146,12 +160,16 @@ function fillFamilySelects() {
 }
 
 async function loadFamilies() {
-  const response = await fetch(
-    `${API_BASE_URL}/api/articles/families?department_id=${encodeURIComponent(activeDepartment.id)}`,
-    {
-      headers: authHeaders(false),
-    }
-  );
+  const params = new URLSearchParams();
+
+  if (activeDepartment?.id) {
+    params.set('department_id', activeDepartment.id);
+  }
+
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  const response = await fetch(`${API_BASE_URL}/api/articles/families${suffix}`, {
+    headers: authHeaders(false),
+  });
 
   const data = await response.json();
 
@@ -164,6 +182,7 @@ async function loadFamilies() {
 }
 
 function canManageArticle(article) {
+  if (!activeDepartment?.id) return false;
   return String(article.department_id) === String(activeDepartment.id);
 }
 
@@ -306,6 +325,11 @@ async function saveArticle(event) {
   try {
     const articleId = articleIdInput.value;
     const isEdit = !!articleId;
+
+    if (!activeDepartment?.id) {
+      setFeedback('Choisis un service actif pour creer ou modifier un article.', 'error');
+      return;
+    }
 
     const payload = {
       department_id: activeDepartment.id,
@@ -465,13 +489,27 @@ tbody.addEventListener('click', async (event) => {
   const articleId = button.dataset.id;
   const article = articlesCache.find((item) => String(item.id) === String(articleId));
 
-  if (!article) return;
+  if (!article) {
+    setFeedback('Article introuvable dans la liste affichÃ©e.', 'error');
+    return;
+  }
 
   if (action === 'view') {
-  window.location.href =
-    `./article-detail.html?id=${article.id}&department_id=${article.department_id}`;
-  return;
-}
+    if (!isValidId(article.id)) {
+      setFeedback('Impossible d ouvrir la fiche : ID article invalide.', 'error');
+      return;
+    }
+
+    const detailParams = new URLSearchParams();
+    detailParams.set('id', article.id);
+
+    if (isValidId(article.department_id)) {
+      detailParams.set('department_id', article.department_id);
+    }
+
+    window.location.href = `./article-detail.html?${detailParams.toString()}`;
+    return;
+  }
 
   if (!canManageArticle(article)) {
     setFeedback("Article d'un autre service : lecture seule", 'error');

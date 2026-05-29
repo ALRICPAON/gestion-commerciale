@@ -5,18 +5,24 @@ const sessionUserRaw = localStorage.getItem('gc_user') || localStorage.getItem('
 const activeDepartmentRaw =
   localStorage.getItem('gc_active_department') || localStorage.getItem('grv2_active_department');
 
-if (!sessionToken || !sessionUserRaw || !activeDepartmentRaw) {
+if (!sessionToken || !sessionUserRaw) {
   window.location.href = './login.html';
 }
 
 const sessionUser = JSON.parse(sessionUserRaw);
-let activeDepartment = JSON.parse(activeDepartmentRaw);
+let activeDepartment = activeDepartmentRaw ? JSON.parse(activeDepartmentRaw) : null;
+
+function normalizeId(value) {
+  const id = String(value ?? '').trim();
+  if (!id || id === 'null' || id === 'undefined') return null;
+  return id;
+}
 
 const params = new URLSearchParams(window.location.search);
 const articleId = params.get('id');
-const queryDepartmentId = params.get('department_id');
+const queryDepartmentId = normalizeId(params.get('department_id'));
 
-if (!articleId) {
+if (!normalizeId(articleId)) {
   window.location.href = './articles.html';
 }
 
@@ -96,7 +102,7 @@ function fillTopbar() {
     option.value = department.id;
     option.textContent = department.name;
 
-    if (String(department.id) === String(activeDepartment.id)) {
+    if (activeDepartment && String(department.id) === String(activeDepartment.id)) {
       option.selected = true;
     }
 
@@ -131,8 +137,9 @@ function renderArticle(article) {
     field('Nom latin', article.latin_name),
     field('Zone FAO', article.fao_zone),
     field('Sous-zone', article.sous_zone),
-    field('Engin / méthode', article.engin),
-    field('Allergènes', article.allergenes),
+    field('Engin', article.fishing_gear || article.engin),
+    field('Methode production', article.production_method),
+    field('Allergenes', article.allergens || article.allergenes),
   ].join('');
 
   unitsEl.innerHTML = [
@@ -154,8 +161,15 @@ function renderArticle(article) {
 
 async function loadArticle() {
   try {
-    const departmentId = queryDepartmentId || activeDepartment.id;
-    const url = `${API_BASE_URL}/api/articles/${articleId}?department_id=${encodeURIComponent(departmentId)}`;
+    const departmentId = queryDepartmentId || normalizeId(activeDepartment?.id);
+    const detailParams = new URLSearchParams();
+
+    if (departmentId) {
+      detailParams.set('department_id', departmentId);
+    }
+
+    const suffix = detailParams.toString() ? `?${detailParams.toString()}` : '';
+    const url = `${API_BASE_URL}/api/articles/${encodeURIComponent(articleId)}${suffix}`;
 
     const response = await fetch(url, {
       headers: authHeaders(false),

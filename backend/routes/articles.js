@@ -12,6 +12,18 @@ function toNullableString(value) {
   return trimmed === '' ? null : trimmed;
 }
 
+function normalizeUuidParam(value) {
+  const s = String(value ?? '').trim();
+  if (!s || s === 'null' || s === 'undefined') return null;
+  return s;
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    String(value || '')
+  );
+}
+
 function normalizeBool(value) {
   if (value === undefined || value === null || value === '') return null;
   if (value === true || value === 'true' || value === '1') return true;
@@ -69,10 +81,10 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
       family = '',
       sector = '',
       active = '',
-      department_id = '',
       limit = '200',
       offset = '0',
     } = req.query;
+    const departmentId = normalizeUuidParam(req.query.department_id);
 
     const familyCode = family || sector;
     const activeValue = normalizeBool(active);
@@ -82,8 +94,8 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
     const params = [req.user.store_id];
     let where = 'WHERE a.store_id = $1';
 
-    if (department_id) {
-      params.push(department_id);
+    if (departmentId && isUuid(departmentId)) {
+      params.push(departmentId);
       where += ` AND ad.department_id = $${params.length}`;
     }
 
@@ -139,10 +151,10 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         ad.department_id,
         d.name AS department_name,
         ad.department_sector_id,
-        ad.display_name,
-        ad.purchase_unit,
-        ad.stock_unit,
-        ad.sale_unit,
+        COALESCE(a.display_name, ad.display_name) AS display_name,
+        COALESCE(a.purchase_unit, ad.purchase_unit) AS purchase_unit,
+        COALESCE(a.stock_unit, ad.stock_unit) AS stock_unit,
+        COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
         ad.vat_rate,
         ad.purchase_price_ex_vat,
         ad.sale_price_ex_vat,
@@ -151,12 +163,15 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         ds.code AS family_code,
         ds.name AS family_name,
 
-        adm.category,
-        adm.latin_name,
-        adm.fao_zone,
-        adm.sous_zone,
-        adm.engin,
-        adm.allergenes,
+        COALESCE(a.production_method, adm.category) AS category,
+        COALESCE(a.latin_name, adm.latin_name) AS latin_name,
+        COALESCE(a.fao_zone, adm.fao_zone) AS fao_zone,
+        COALESCE(a.sous_zone, adm.sous_zone) AS sous_zone,
+        COALESCE(a.fishing_gear, adm.engin) AS engin,
+        COALESCE(a.fishing_gear, adm.engin) AS fishing_gear,
+        COALESCE(a.allergens, adm.allergenes) AS allergenes,
+        COALESCE(a.allergens, adm.allergenes) AS allergens,
+        COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
       LEFT JOIN article_departments ad ON ad.article_id = a.id
@@ -183,13 +198,13 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
 // GET /api/articles/families
 router.get('/families', authenticateToken, attachDbContext, async (req, res) => {
   try {
-    const { department_id = '' } = req.query;
+    const departmentId = normalizeUuidParam(req.query.department_id);
 
     const params = [];
     let where = 'WHERE ds.is_active = true';
 
-    if (department_id) {
-      params.push(department_id);
+    if (departmentId && isUuid(departmentId)) {
+      params.push(departmentId);
       where += ` AND ds.department_id = $${params.length}`;
     } else {
       params.push(req.user.store_id);
@@ -225,7 +240,8 @@ router.get('/families', authenticateToken, attachDbContext, async (req, res) => 
 // GET /api/articles/search
 router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
   try {
-    const { q = '', department_id = '', sector = '', family = '' } = req.query;
+    const { q = '', sector = '', family = '' } = req.query;
+    const departmentId = normalizeUuidParam(req.query.department_id);
     const searchTerm = String(q).trim();
 
     if (!searchTerm) {
@@ -238,8 +254,8 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
     const queryParams = [req.user.store_id, likePattern, searchTerm, startsWithPattern];
     let extraFilters = '';
 
-    if (department_id) {
-      queryParams.push(department_id);
+    if (departmentId && isUuid(departmentId)) {
+      queryParams.push(departmentId);
       extraFilters += ` AND ad.department_id = $${queryParams.length}`;
     }
 
@@ -264,19 +280,22 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
         a.unit,
         a.ean,
         a.is_active,
-        ad.display_name,
-        ad.purchase_unit,
-        ad.stock_unit,
-        ad.sale_unit,
+        COALESCE(a.display_name, ad.display_name) AS display_name,
+        COALESCE(a.purchase_unit, ad.purchase_unit) AS purchase_unit,
+        COALESCE(a.stock_unit, ad.stock_unit) AS stock_unit,
+        COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
         ad.vat_rate,
         ad.sale_price_ex_vat,
         ad.sale_price_inc_vat,
-        adm.latin_name,
-        adm.category,
-        adm.fao_zone,
-        adm.sous_zone,
-        adm.engin,
-        adm.allergenes
+        COALESCE(a.latin_name, adm.latin_name) AS latin_name,
+        COALESCE(a.production_method, adm.category) AS category,
+        COALESCE(a.fao_zone, adm.fao_zone) AS fao_zone,
+        COALESCE(a.sous_zone, adm.sous_zone) AS sous_zone,
+        COALESCE(a.fishing_gear, adm.engin) AS engin,
+        COALESCE(a.fishing_gear, adm.engin) AS fishing_gear,
+        COALESCE(a.allergens, adm.allergenes) AS allergenes,
+        COALESCE(a.allergens, adm.allergenes) AS allergens,
+        COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method
       FROM articles a
       LEFT JOIN article_departments ad ON ad.article_id = a.id
       LEFT JOIN department_sectors ds ON ds.id = ad.department_sector_id
@@ -313,7 +332,8 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
 // GET /api/articles/search-in-stock
 router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, res) => {
   try {
-    const { q = '', department_id = '' } = req.query;
+    const { q = '' } = req.query;
+    const departmentId = normalizeUuidParam(req.query.department_id);
     const searchTerm = String(q).trim();
 
     if (!searchTerm) {
@@ -323,8 +343,8 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
     const params = [req.user.store_id, `%${searchTerm}%`, `${searchTerm}%`];
     let departmentFilter = '';
 
-    if (department_id) {
-      params.push(department_id);
+    if (departmentId && isUuid(departmentId)) {
+      params.push(departmentId);
       departmentFilter = `AND (
         ad.department_id = $${params.length}
         OR NOT EXISTS (
@@ -343,7 +363,7 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
         a.designation,
         a.ean,
         a.unit,
-        ad.sale_unit,
+        COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
         ad.sale_price_ex_vat,
         ad.sale_price_inc_vat,
         ad.sale_price_inc_vat AS pv_ttc_real,
@@ -551,13 +571,18 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
 // GET /api/articles/:id
 router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
   try {
-    const { department_id = '' } = req.query;
+    const articleId = normalizeUuidParam(req.params.id);
+    const departmentId = normalizeUuidParam(req.query.department_id);
 
-    const params = [req.params.id, req.user.store_id];
+    if (!articleId || !isUuid(articleId)) {
+      return res.status(400).json({ error: 'ID article invalide' });
+    }
+
+    const params = [articleId, req.user.store_id];
     let departmentFilter = '';
 
-    if (department_id) {
-      params.push(department_id);
+    if (departmentId && isUuid(departmentId)) {
+      params.push(departmentId);
       departmentFilter = `AND ad.department_id = $${params.length}`;
     }
 
@@ -581,10 +606,10 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         d.name AS department_name,
         d.code AS department_code,
         ad.department_sector_id,
-        ad.display_name,
-        ad.purchase_unit,
-        ad.stock_unit,
-        ad.sale_unit,
+        COALESCE(a.display_name, ad.display_name) AS display_name,
+        COALESCE(a.purchase_unit, ad.purchase_unit) AS purchase_unit,
+        COALESCE(a.stock_unit, ad.stock_unit) AS stock_unit,
+        COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
         ad.vat_rate,
         ad.purchase_price_ex_vat,
         ad.sale_price_ex_vat,
@@ -593,16 +618,19 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         ds.code AS family_code,
         ds.name AS family_name,
 
-        adm.category,
-        adm.latin_name,
-        adm.fao_zone,
-        adm.sous_zone,
-        adm.engin,
-        adm.allergenes,
+        COALESCE(a.production_method, adm.category) AS category,
+        COALESCE(a.latin_name, adm.latin_name) AS latin_name,
+        COALESCE(a.fao_zone, adm.fao_zone) AS fao_zone,
+        COALESCE(a.sous_zone, adm.sous_zone) AS sous_zone,
+        COALESCE(a.fishing_gear, adm.engin) AS engin,
+        COALESCE(a.fishing_gear, adm.engin) AS fishing_gear,
+        COALESCE(a.allergens, adm.allergenes) AS allergenes,
+        COALESCE(a.allergens, adm.allergenes) AS allergens,
+        COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
-      JOIN article_departments ad ON ad.article_id = a.id
-      JOIN departments d ON d.id = ad.department_id
+      LEFT JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN departments d ON d.id = ad.department_id
       LEFT JOIN department_sectors ds ON ds.id = ad.department_sector_id
       LEFT JOIN article_department_metadata adm
         ON adm.article_department_id = ad.id
