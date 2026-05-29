@@ -198,7 +198,11 @@ function renderTopbar() {
 }
 
 function renderDepartmentSelector() {
+  if (!departmentSelect) return;
+
   const departments = getUserDepartments();
+  const currentDepartment = getSafeActiveDepartment();
+
   departmentSelect.innerHTML = "";
 
   if (departments.length === 0) {
@@ -207,7 +211,9 @@ function renderDepartmentSelector() {
     option.textContent = "Aucun service";
     departmentSelect.appendChild(option);
     departmentSelect.disabled = true;
-    currentDepartmentNameEl.textContent = "Aucun service";
+    if (currentDepartmentNameEl) {
+      currentDepartmentNameEl.textContent = "Aucun service";
+    }
     return;
   }
 
@@ -220,7 +226,9 @@ function renderDepartmentSelector() {
 
   if (currentDepartment) {
     departmentSelect.value = currentDepartment.id;
-    currentDepartmentNameEl.textContent = currentDepartment.name || "-";
+    if (currentDepartmentNameEl) {
+      currentDepartmentNameEl.textContent = currentDepartment.name || "-";
+    }
     saveActiveDepartment(currentDepartment);
     applyDepartmentTheme(currentDepartment);
   }
@@ -879,8 +887,8 @@ async function init() {
   try {
     renderTopbar();
     renderDepartmentSelector();
-    setCurrentMonthPurchaseDates();
     await loadSuppliers();
+    setCurrentMonthPurchaseDates();
     await loadPurchases();
   } catch (error) {
     console.error("Erreur init achats :", error);
