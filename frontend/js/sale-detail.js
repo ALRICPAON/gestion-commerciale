@@ -39,9 +39,15 @@ const saleSourceInventoryDateInput = document.getElementById("sale-source-invent
 const saleNotesInput = document.getElementById("sale-notes");
 
 const saleLinesTableBody = document.getElementById("sale-lines-table-body");
+const stockArticleModal = document.getElementById("stock-article-modal");
+const closeStockArticleModalBtn = document.getElementById("close-stock-article-modal-btn");
+const stockArticleSearchInput = document.getElementById("stock-article-search-input");
+const stockArticleModalTableBody = document.getElementById("stock-article-modal-table-body");
 
 let sale = null;
 let lines = [];
+let stockArticleModalItems = [];
+let currentEditingLineId = null;
 
 function getUserDepartments() {
   return Array.isArray(sessionUser.departments) ? sessionUser.departments : [];
@@ -434,6 +440,79 @@ if (exact) {
 updateLineComputedValues(row);
 }
 
+async function loadStockArticleModalItems() {
+  const params = new URLSearchParams();
+  params.set("q", stockArticleSearchInput?.value?.trim() || "");
+
+  const currentDepartment = getSafeActiveDepartment();
+  if (currentDepartment?.id) {
+    params.set("department_id", currentDepartment.id);
+  }
+
+  stockArticleModalItems = await apiFetch(`/api/articles/search-in-stock?${params.toString()}`);
+  renderStockArticleModalTable();
+}
+
+function renderStockArticleModalTable() {
+  if (!Array.isArray(stockArticleModalItems) || stockArticleModalItems.length === 0) {
+    stockArticleModalTableBody.innerHTML = `<tr><td colspan="6">Aucun article trouve</td></tr>`;
+    return;
+  }
+
+  stockArticleModalTableBody.innerHTML = stockArticleModalItems.map((article) => `
+    <tr data-article-id="${article.id}">
+      <td>${article.plu || "-"}</td>
+      <td>${article.designation || "-"}</td>
+      <td>${Number(article.stock_quantity || 0).toFixed(3)}</td>
+      <td>${Number(article.pma || 0).toFixed(4)}</td>
+      <td>${Number(article.pv_ttc_real || article.sale_price_inc_vat || 0).toFixed(2)}</td>
+      <td>${article.sale_unit || article.unit || "kg"}</td>
+    </tr>
+  `).join("");
+}
+
+function openStockArticleModal(lineId) {
+  currentEditingLineId = lineId;
+  stockArticleModal.classList.remove("hidden");
+  stockArticleSearchInput.value = "";
+  stockArticleSearchInput.focus();
+  loadStockArticleModalItems().catch((error) => {
+    console.error("Erreur chargement articles stock :", error);
+    showFeedback(saleLinesFeedback, error.message || "Erreur recherche article", true);
+  });
+}
+
+function closeStockArticleModal() {
+  stockArticleModal.classList.add("hidden");
+}
+
+function selectStockArticle(article) {
+  if (!currentEditingLineId) return;
+
+  const row = saleLinesTableBody.querySelector(`tr[data-line-id="${currentEditingLineId}"]`);
+  if (!row) return;
+
+  row.dataset.selectedArticleId = article.id;
+  row.dataset.pvTtcReal = article.pv_ttc_real ?? article.sale_price_inc_vat ?? "";
+  row.dataset.pma = article.pma ?? "";
+  row.dataset.stockQuantity = article.stock_quantity ?? "";
+  row.dataset.saleUnit = article.sale_unit || article.unit || "";
+  row.dataset.unitCostExVat = article.unit_cost_ex_vat ?? article.pma ?? "";
+
+  row.querySelector(".line-plu").value = article.plu || "";
+  row.querySelector(".line-article-label").value = article.designation || "";
+
+  const saleUnitSelect = row.querySelector(".line-sale-unit");
+  if (saleUnitSelect) saleUnitSelect.value = normalizeSaleUnit(article.sale_unit || article.unit || "kg");
+
+  const unitCostInput = row.querySelector(".line-unit-cost");
+  if (unitCostInput) unitCostInput.value = Number(article.unit_cost_ex_vat ?? article.pma ?? 0).toFixed(4);
+
+  applyDefaultSalePriceToRow(row, saleDocumentTypeInput.value || "manual_sale");
+  updateLineComputedValues(row);
+  closeStockArticleModal();
+}
+
 async function saveSaleHeader() {
   clearFeedback(saleHeaderFeedback);
 
@@ -655,6 +734,15 @@ if (saleLinesTableBody) {
 
 if (saleLinesTableBody) {
   saleLinesTableBody.addEventListener("keydown", async (event) => {
+    if (event.key === "F9") {
+      const row = event.target.closest("tr[data-line-id]");
+      if (row && event.target.classList.contains("line-plu")) {
+        event.preventDefault();
+        openStockArticleModal(row.dataset.lineId);
+      }
+      return;
+    }
+
     if (event.key !== "Enter") return;
 
     const target = event.target;
@@ -682,6 +770,34 @@ if (saleLinesTableBody) {
 
     const lastRow = saleLinesTableBody.querySelector("tr[data-line-id]:last-child");
     lastRow?.querySelector(".line-plu")?.focus();
+  });
+}
+
+if (closeStockArticleModalBtn) {
+  closeStockArticleModalBtn.addEventListener("click", closeStockArticleModal);
+}
+
+if (stockArticleSearchInput) {
+  stockArticleSearchInput.addEventListener("input", () => {
+    loadStockArticleModalItems().catch((error) => {
+      console.error("Erreur recherche articles stock :", error);
+      showFeedback(saleLinesFeedback, error.message || "Erreur recherche article", true);
+    });
+  });
+}
+
+if (stockArticleModalTableBody) {
+  stockArticleModalTableBody.addEventListener("dblclick", (event) => {
+    const row = event.target.closest("tr[data-article-id]");
+    if (!row) return;
+    const article = stockArticleModalItems.find((item) => item.id === row.dataset.articleId);
+    if (article) selectStockArticle(article);
+  });
+}
+
+if (stockArticleModal) {
+  stockArticleModal.addEventListener("click", (event) => {
+    if (event.target === stockArticleModal) closeStockArticleModal();
   });
 }
 

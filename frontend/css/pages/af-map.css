@@ -1,0 +1,59 @@
+.af-map-page .main-content {
+  max-width: 1400px;
+}
+
+.mapping-editor-card {
+  border-top: 4px solid var(--theme-main);
+}
+
+.mapping-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+}
+
+.form-actions {
+  margin-top: 16px;
+}
+
+.quick-f9-input,
+.af-map-page input,
+.af-map-page select {
+  min-height: 42px;
+}
+
+.selectable-table tbody tr {
+  cursor: pointer;
+}
+
+.selectable-table tbody tr.is-selected td,
+.selectable-table tbody tr:hover td {
+  background: #eef6ff;
+}
+
+.mapping-status {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.mapping-status.active {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.mapping-status.inactive {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+@media (max-width: 760px) {
+  .af-map-page .page-actions {
+    align-items: stretch;
+  }
+
+  .af-map-page .page-actions-right,
+  .af-map-page .filters-row {
+    width: 100%;
+  }
+}

@@ -307,6 +307,9 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
         COALESCE(ss.stock_quantity, 0) AS stock_quantity
       FROM articles a
       JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN article_department_metadata adm
+        ON adm.article_department_id = ad.id
+       AND adm.field_key = 'business_metadata'
       LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.store_id = $1
         AND a.is_active = true
@@ -316,6 +319,7 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
           a.plu ILIKE $2
           OR a.designation ILIKE $2
           OR COALESCE(ad.display_name, '') ILIKE $2
+          OR COALESCE(adm.latin_name, '') ILIKE $2
           OR COALESCE(a.ean, '') ILIKE $2
         )
       ORDER BY

@@ -27,6 +27,7 @@ const upload = multer({
 
 function toNullableString(v) { const s = String(v ?? '').trim(); return s || null; }
 function normalizePriceUnit(v) { return ['kg','piece','colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg'; }
+function normalizeMappingUnit(v) { return ['kg','piece','colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg'; }
 function buildLotCode(plu, supplierId, lineId) {
   const p = String(plu || 'NOPLU').replace(/\s+/g,'').toUpperCase();
   const s = String(supplierId || '').replace(/-/g,'').slice(0,6).toUpperCase();
@@ -210,21 +211,68 @@ router.post('/purchases/:id/apply-af-mappings', authenticateToken, attachDbConte
   }catch(e){await client.query('ROLLBACK');console.error(e);res.status(500).json({error:'Erreur application mappings'});}finally{client.release();}
 });
 
+async function ensureSupplierArticleMappingsTable(client) {
+  await client.query(`CREATE TABLE IF NOT EXISTS supplier_article_mappings (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), store_id uuid NOT NULL, client_key text, supplier_id uuid NOT NULL REFERENCES suppliers(id), article_id uuid NOT NULL REFERENCES articles(id), supplier_ref text NOT NULL, supplier_label text, purchase_unit text DEFAULT 'kg', price_unit text DEFAULT 'kg', is_active boolean DEFAULT true, created_by uuid, updated_by uuid, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), UNIQUE(supplier_id, supplier_ref))`);
+  await client.query(`ALTER TABLE supplier_article_mappings ADD COLUMN IF NOT EXISTS purchase_unit text DEFAULT 'kg', ADD COLUMN IF NOT EXISTS price_unit text DEFAULT 'kg'`);
+}
+
+router.get('/af-map', authenticateToken, attachDbContext, async(req,res)=>{
+  try{
+    const { supplier_id='', search='', active='' }=req.query;
+    const params=[req.user.store_id]; let where='WHERE m.store_id=$1';
+    if(supplier_id){params.push(supplier_id); where+=` AND m.supplier_id=$${params.length}`;}
+    if(active==='true'||active==='false'){params.push(active==='true'); where+=` AND COALESCE(m.is_active,true)=$${params.length}`;}
+    if(search){params.push(`%${String(search).trim()}%`); const i=params.length; where+=` AND (m.supplier_ref ILIKE $${i} OR COALESCE(m.supplier_label,'') ILIKE $${i} OR s.name ILIKE $${i} OR COALESCE(s.code,'') ILIKE $${i} OR a.plu ILIKE $${i} OR a.designation ILIKE $${i})`;}
+    const r=await req.dbPool.query(`SELECT m.*, s.code supplier_code, s.name supplier_name, a.plu article_plu, a.designation article_name FROM supplier_article_mappings m JOIN suppliers s ON s.id=m.supplier_id JOIN articles a ON a.id=m.article_id ${where} ORDER BY s.name ASC, m.supplier_ref ASC LIMIT 1000`,params);
+    res.json(r.rows);
+  }catch(e){console.error(e);res.status(500).json({error:'Erreur liste AF_MAP'});}
+});
+
 router.post('/af-map', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
   const client=await req.dbPool.connect();
   try{
-    const { supplier_code, supplier_ref, supplier_label, plu }=req.body;
-    if(!supplier_code || !supplier_ref || !plu) return res.status(400).json({error:'supplier_code, supplier_ref et plu obligatoires'});
+    const { supplier_id, supplier_code, article_id, supplier_ref, supplier_label, plu, purchase_unit, price_unit }=req.body;
+    if((!supplier_id && !supplier_code) || !supplier_ref || (!article_id && !plu)) return res.status(400).json({error:'supplier_id/code, supplier_ref et article_id/plu obligatoires'});
     await client.query('BEGIN');
-    await client.query(`CREATE TABLE IF NOT EXISTS supplier_article_mappings (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), store_id uuid NOT NULL, client_key text, supplier_id uuid NOT NULL REFERENCES suppliers(id), article_id uuid NOT NULL REFERENCES articles(id), supplier_ref text NOT NULL, supplier_label text, is_active boolean NOT NULL DEFAULT true, created_by uuid, updated_by uuid, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(supplier_id, supplier_ref))`);
-    const supplier=await client.query('SELECT id FROM suppliers WHERE store_id=$1 AND (code=$2 OR name ILIKE $3) LIMIT 1',[req.user.store_id,String(supplier_code).trim(),`%${String(supplier_code).trim()}%`]);
+    await ensureSupplierArticleMappingsTable(client);
+    const supplier=supplier_id
+      ? await client.query('SELECT id FROM suppliers WHERE id=$1 AND store_id=$2 LIMIT 1',[supplier_id,req.user.store_id])
+      : await client.query('SELECT id FROM suppliers WHERE store_id=$1 AND (LOWER(code)=LOWER($2) OR name ILIKE $3) LIMIT 1',[req.user.store_id,String(supplier_code).trim(),`%${String(supplier_code).trim()}%`]);
     if(!supplier.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Fournisseur introuvable'});}
-    const article=await client.query('SELECT id FROM articles WHERE store_id=$1 AND plu=$2 LIMIT 1',[req.user.store_id,String(plu).trim()]);
+    const article=article_id
+      ? await client.query('SELECT id FROM articles WHERE id=$1 AND store_id=$2 LIMIT 1',[article_id,req.user.store_id])
+      : await client.query('SELECT id FROM articles WHERE store_id=$1 AND plu=$2 LIMIT 1',[req.user.store_id,String(plu).trim()]);
     if(!article.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Article introuvable'});}
-    const r=await client.query(`INSERT INTO supplier_article_mappings(id,store_id,client_key,supplier_id,article_id,supplier_ref,supplier_label,is_active,created_by,updated_by) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,true,$7,$7) ON CONFLICT(supplier_id,supplier_ref) DO UPDATE SET article_id=EXCLUDED.article_id,supplier_label=EXCLUDED.supplier_label,is_active=true,updated_by=EXCLUDED.updated_by,updated_at=NOW() RETURNING *`,[req.user.store_id,req.user.client_key||null,supplier.rows[0].id,article.rows[0].id,String(supplier_ref).trim(),supplier_label||null,req.user.id]);
+    const r=await client.query(`INSERT INTO supplier_article_mappings(id,store_id,client_key,supplier_id,article_id,supplier_ref,supplier_label,purchase_unit,price_unit,is_active,created_by,updated_by) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,true,$9,$9) ON CONFLICT(supplier_id,supplier_ref) DO UPDATE SET article_id=EXCLUDED.article_id,supplier_label=EXCLUDED.supplier_label,purchase_unit=EXCLUDED.purchase_unit,price_unit=EXCLUDED.price_unit,is_active=true,updated_by=EXCLUDED.updated_by,updated_at=NOW() RETURNING *`,[req.user.store_id,req.user.client_key||null,supplier.rows[0].id,article.rows[0].id,String(supplier_ref).trim(),supplier_label||null,normalizeMappingUnit(purchase_unit),normalizeMappingUnit(price_unit),req.user.id]);
     await client.query('COMMIT');
     res.status(201).json({ok:true,mapping:r.rows[0]});
   }catch(e){await client.query('ROLLBACK');console.error(e);res.status(500).json({error:'Erreur mapping fournisseur/article'});}finally{client.release();}
+});
+
+router.patch('/af-map/:id', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
+  const client=await req.dbPool.connect();
+  try{
+    const { supplier_id, article_id, supplier_ref, supplier_label, purchase_unit, price_unit }=req.body;
+    if(!supplier_id || !article_id || !supplier_ref) return res.status(400).json({error:'supplier_id, article_id et supplier_ref obligatoires'});
+    await client.query('BEGIN');
+    await ensureSupplierArticleMappingsTable(client);
+    const supplier=await client.query('SELECT id FROM suppliers WHERE id=$1 AND store_id=$2 LIMIT 1',[supplier_id,req.user.store_id]);
+    const article=await client.query('SELECT id FROM articles WHERE id=$1 AND store_id=$2 LIMIT 1',[article_id,req.user.store_id]);
+    if(!supplier.rows.length || !article.rows.length){await client.query('ROLLBACK');return res.status(400).json({error:'Fournisseur ou article invalide'});}
+    const r=await client.query(`UPDATE supplier_article_mappings SET supplier_id=$1,article_id=$2,supplier_ref=$3,supplier_label=$4,purchase_unit=$5,price_unit=$6,updated_by=$7,updated_at=NOW() WHERE id=$8 AND store_id=$9 RETURNING *`,[supplier_id,article_id,String(supplier_ref).trim(),supplier_label||null,normalizeMappingUnit(purchase_unit),normalizeMappingUnit(price_unit),req.user.id,req.params.id,req.user.store_id]);
+    if(!r.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Mapping introuvable'});}
+    await client.query('COMMIT');
+    res.json({ok:true,mapping:r.rows[0]});
+  }catch(e){await client.query('ROLLBACK');console.error(e);res.status(500).json({error:'Erreur modification mapping'});}finally{client.release();}
+});
+
+router.patch('/af-map/:id/status', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
+  try{
+    if(typeof req.body.is_active!=='boolean') return res.status(400).json({error:'is_active doit etre booleen'});
+    const r=await req.dbPool.query('UPDATE supplier_article_mappings SET is_active=$1,updated_by=$2,updated_at=NOW() WHERE id=$3 AND store_id=$4 RETURNING *',[req.body.is_active,req.user.id,req.params.id,req.user.store_id]);
+    if(!r.rows.length) return res.status(404).json({error:'Mapping introuvable'});
+    res.json({ok:true,mapping:r.rows[0]});
+  }catch(e){console.error(e);res.status(500).json({error:'Erreur statut mapping'});}
 });
 
 router.delete('/purchases/:id', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{

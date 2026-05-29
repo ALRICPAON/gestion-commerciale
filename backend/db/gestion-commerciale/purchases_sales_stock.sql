@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS supplier_article_mappings (
   article_id uuid NOT NULL REFERENCES articles(id),
   supplier_ref text NOT NULL,
   supplier_label text,
+  purchase_unit text DEFAULT 'kg',
+  price_unit text DEFAULT 'kg',
   is_active boolean NOT NULL DEFAULT true,
   created_by uuid,
   updated_by uuid,
@@ -72,8 +74,17 @@ CREATE TABLE IF NOT EXISTS supplier_article_mappings (
   UNIQUE(supplier_id, supplier_ref)
 );
 
-CREATE INDEX IF NOT EXISTS idx_supplier_article_mappings_supplier
+CREATE INDEX IF NOT EXISTS idx_supplier_article_mappings_supplier_ref
   ON supplier_article_mappings(supplier_id, supplier_ref);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_article_mappings_store
+  ON supplier_article_mappings(store_id);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_article_mappings_article
+  ON supplier_article_mappings(article_id);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_article_mappings_ref
+  ON supplier_article_mappings(supplier_ref);
 
 CREATE TABLE IF NOT EXISTS purchase_line_metadata (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),

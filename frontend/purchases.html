@@ -41,8 +41,14 @@
         </div>
 
         <div class="page-actions-right">
-          <button id="new-order-btn" class="btn btn-primary">➕ Créer commande</button>
-          <button id="new-bl-btn" class="btn btn-secondary">➕ Créer BL</button>
+          <input
+            type="text"
+            id="quick-supplier-code-input"
+            class="quick-f9-input"
+            placeholder="Code fournisseur ou F9"
+          />
+          <button id="new-order-btn" class="btn btn-primary">Creer commande</button>
+          <button id="new-bl-btn" class="btn btn-secondary">Creer BL</button>
         </div>
       </div>
     </section>
@@ -71,7 +77,7 @@
 
         <div class="form-group">
           <label for="import-document-file">Fichier BL / fournisseur</label>
-          <input type="file" id="import-document-file" accept=".xlsx,.xls,.csv" />
+          <input type="file" id="import-document-file" accept=".xlsx,.xls,.csv,.pdf" />
         </div>
 
         <div class="form-group filter-actions">
@@ -173,7 +179,7 @@
       <div class="modal-header">
         <div>
           <h3>Sélectionner un fournisseur</h3>
-          <p>Double clic pour créer l'achat</p>
+          <p>Double clic ou Entree pour creer l'achat</p>
         </div>
         <button type="button" id="close-supplier-modal-btn" class="btn btn-secondary">Fermer</button>
       </div>

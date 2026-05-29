@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Liaisons fournisseurs/articles - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/af-map.css" />
+</head>
+<body class="app-page af-map-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Liaisons fournisseurs / articles</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Liaisons fournisseurs/articles</h2>
+          <p>References fournisseurs reliees aux articles Gestion Commerciale.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="new-mapping-btn" class="btn btn-primary">Nouveau mapping</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Filtres</h3>
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="supplier-filter">Fournisseur</label>
+          <select id="supplier-filter">
+            <option value="">Tous</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mapping-search-input">Recherche</label>
+          <input id="mapping-search-input" type="text" placeholder="Reference, fournisseur, PLU, article" />
+        </div>
+        <div class="form-group">
+          <label for="active-filter">Statut</label>
+          <select id="active-filter">
+            <option value="">Tous</option>
+            <option value="true">Actifs</option>
+            <option value="false">Inactifs</option>
+          </select>
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="refresh-mappings-btn" class="btn btn-secondary">Rafraichir</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card mapping-editor-card">
+      <h3 id="mapping-form-title">Nouveau mapping</h3>
+      <div id="mapping-feedback" class="page-feedback hidden"></div>
+      <input type="hidden" id="mapping-id" />
+      <input type="hidden" id="mapping-supplier-id" />
+      <input type="hidden" id="mapping-article-id" />
+
+      <div class="form-grid mapping-form-grid">
+        <div class="form-group">
+          <label for="mapping-supplier-input">Fournisseur</label>
+          <input id="mapping-supplier-input" type="text" placeholder="F9 fournisseur" />
+        </div>
+        <div class="form-group">
+          <label for="mapping-supplier-ref-input">Reference fournisseur</label>
+          <input id="mapping-supplier-ref-input" type="text" />
+        </div>
+        <div class="form-group">
+          <label for="mapping-supplier-label-input">Libelle fournisseur</label>
+          <input id="mapping-supplier-label-input" type="text" />
+        </div>
+        <div class="form-group">
+          <label for="mapping-article-input">Article</label>
+          <input id="mapping-article-input" type="text" placeholder="F9 article" />
+        </div>
+        <div class="form-group">
+          <label for="mapping-purchase-unit-select">Unite achat</label>
+          <select id="mapping-purchase-unit-select">
+            <option value="kg">kg</option>
+            <option value="piece">piece</option>
+            <option value="colis">colis</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="mapping-price-unit-select">Unite prix</label>
+          <select id="mapping-price-unit-select">
+            <option value="kg">kg</option>
+            <option value="piece">piece</option>
+            <option value="colis">colis</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="page-actions-right form-actions">
+        <button id="save-mapping-btn" class="btn btn-primary">Enregistrer</button>
+        <button id="reset-mapping-form-btn" class="btn btn-secondary">Reinitialiser</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Mappings</h3>
+      <div class="table-wrap">
+        <table class="data-table selectable-table">
+          <thead>
+            <tr>
+              <th>Fournisseur</th>
+              <th>Ref fournisseur</th>
+              <th>Libelle fournisseur</th>
+              <th>PLU</th>
+              <th>Article</th>
+              <th>Unite achat</th>
+              <th>Unite prix</th>
+              <th>Statut</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="mappings-table-body">
+            <tr><td colspan="9">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="supplier-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div>
+          <h3>Selectionner un fournisseur</h3>
+          <p>Double clic pour choisir</p>
+        </div>
+        <button id="close-supplier-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+      <div class="form-group">
+        <label for="supplier-search-input">Recherche fournisseur</label>
+        <input id="supplier-search-input" type="text" placeholder="Code ou nom fournisseur" />
+      </div>
+      <div class="table-wrap">
+        <table class="data-table selectable-table">
+          <thead>
+            <tr><th>Code</th><th>Nom</th><th>Contact</th></tr>
+          </thead>
+          <tbody id="supplier-modal-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="article-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-xl">
+      <div class="modal-header">
+        <div>
+          <h3>Selectionner un article</h3>
+          <p>Double clic pour choisir</p>
+        </div>
+        <button id="close-article-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+      <div class="form-group">
+        <label for="article-search-input">Recherche article</label>
+        <input id="article-search-input" type="text" placeholder="PLU, designation, nom latin" />
+      </div>
+      <div class="table-wrap">
+        <table class="data-table selectable-table">
+          <thead>
+            <tr><th>PLU</th><th>Designation</th><th>Nom latin</th><th>Unite</th></tr>
+          </thead>
+          <tbody id="article-modal-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/af-map.js"></script>
+</body>
+</html>

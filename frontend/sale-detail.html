@@ -110,7 +110,7 @@
         <div>
           <h3>Lignes vente</h3>
           <p class="helper-text">
-            Saisie PLU puis quantité, prix TTC, motif
+            PLU direct ou F9 pour rechercher en stock. Entree enregistre et ajoute une ligne.
           </p>
         </div>
       </div>
@@ -143,6 +143,39 @@
       </div>
     </section>
   </main>
+
+  <div id="stock-article-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-xl">
+      <div class="modal-header">
+        <div>
+          <h3>Selectionner un article en stock</h3>
+          <p>Double clic pour choisir</p>
+        </div>
+        <button type="button" id="close-stock-article-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div class="form-group">
+        <label for="stock-article-search-input">Recherche article</label>
+        <input type="text" id="stock-article-search-input" placeholder="PLU, designation, nom latin..." />
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table selectable-table">
+          <thead>
+            <tr>
+              <th>PLU</th>
+              <th>Designation</th>
+              <th>Stock</th>
+              <th>PMA</th>
+              <th>PV TTC</th>
+              <th>Unite</th>
+            </tr>
+          </thead>
+          <tbody id="stock-article-modal-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
   <script src="./js/config.js"></script>
   <script src="./js/sale-detail.js?v=5"></script>

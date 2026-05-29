@@ -26,6 +26,7 @@ const refreshPurchasesBtn = document.getElementById("refresh-purchases-btn");
 const resetFiltersBtn = document.getElementById("reset-filters-btn");
 const newOrderBtn = document.getElementById("new-order-btn");
 const newBlBtn = document.getElementById("new-bl-btn");
+const quickSupplierCodeInput = document.getElementById("quick-supplier-code-input");
 
 const purchasesFeedback = document.getElementById("purchases-feedback");
 const purchasesTableBody = document.getElementById("purchases-table-body");
@@ -72,6 +73,8 @@ function getImportMappingDom() {
 let suppliers = [];
 let purchases = [];
 let createMode = "order";
+let supplierModalFiltered = [];
+let supplierModalSelectedIndex = 0;
 
 let pendingImportPurchaseId = null;
 let pendingImportSupplierCode = null;
@@ -268,7 +271,7 @@ async function loadSuppliers() {
     purchaseSupplierFilter.appendChild(option);
   });
 
-  renderSupplierModalTable();
+  renderSelectableSupplierModalTable();
 }
 
 function renderSupplierModalTable() {
@@ -292,6 +295,40 @@ function renderSupplierModalTable() {
 
   supplierModalTableBody.innerHTML = filtered.map((supplier) => `
     <tr data-supplier-id="${supplier.id}">
+      <td>${supplier.code || "-"}</td>
+      <td>${supplier.name || "-"}</td>
+      <td>${supplier.contact_name || "-"}</td>
+      <td>${supplier.phone || "-"}</td>
+      <td>${supplier.is_active ? "Actif" : "Inactif"}</td>
+    </tr>
+  `).join("");
+}
+
+function getFilteredSuppliers(searchValue = supplierSearchInput?.value || "") {
+  const search = String(searchValue || "").trim().toLowerCase();
+
+  return suppliers.filter((supplier) => {
+    if (!search) return true;
+    return (
+      String(supplier.code || "").toLowerCase().includes(search) ||
+      String(supplier.name || "").toLowerCase().includes(search) ||
+      String(supplier.contact_name || "").toLowerCase().includes(search)
+    );
+  });
+}
+
+function renderSelectableSupplierModalTable() {
+  supplierModalFiltered = getFilteredSuppliers();
+  if (supplierModalSelectedIndex >= supplierModalFiltered.length) supplierModalSelectedIndex = supplierModalFiltered.length - 1;
+  if (supplierModalSelectedIndex < 0) supplierModalSelectedIndex = 0;
+
+  if (!supplierModalFiltered.length) {
+    supplierModalTableBody.innerHTML = `<tr><td colspan="5">Aucun fournisseur trouve</td></tr>`;
+    return;
+  }
+
+  supplierModalTableBody.innerHTML = supplierModalFiltered.map((supplier, index) => `
+    <tr data-supplier-id="${supplier.id}" class="${index === supplierModalSelectedIndex ? "is-selected" : ""}">
       <td>${supplier.code || "-"}</td>
       <td>${supplier.name || "-"}</td>
       <td>${supplier.contact_name || "-"}</td>
@@ -366,12 +403,14 @@ function renderPurchasesTable() {
   `).join("");
 }
 
-function openSupplierModal(mode) {
+function openSupplierModal(mode, initialSearch = "") {
   createMode = mode;
   supplierModal.classList.remove("hidden");
-  supplierSearchInput.value = "";
-  renderSupplierModalTable();
+  supplierSearchInput.value = initialSearch || "";
+  supplierModalSelectedIndex = 0;
+  renderSelectableSupplierModalTable();
   supplierSearchInput.focus();
+  supplierSearchInput.select();
 }
 
 function closeSupplierModal() {
@@ -404,6 +443,49 @@ async function createPurchaseFromSupplier(supplier) {
   }
 
   await loadPurchases();
+}
+
+function findSuppliersForQuickInput(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+
+  const exactCode = suppliers.filter(
+    (supplier) => String(supplier.code || "").trim().toLowerCase() === raw.toLowerCase()
+  );
+  if (exactCode.length) return exactCode;
+
+  const needle = raw.toLowerCase();
+  return suppliers.filter((supplier) => String(supplier.name || "").toLowerCase().includes(needle));
+}
+
+async function handleQuickSupplierCreate(mode = "order") {
+  createMode = mode;
+  clearFeedback(purchasesFeedback);
+
+  const value = quickSupplierCodeInput?.value?.trim() || "";
+  if (!value) {
+    openSupplierModal(mode);
+    return;
+  }
+
+  const matches = findSuppliersForQuickInput(value);
+  if (matches.length === 1) {
+    await createPurchaseFromSupplier(matches[0]);
+    return;
+  }
+
+  if (matches.length > 1) {
+    openSupplierModal(mode, value);
+    return;
+  }
+
+  showFeedback(purchasesFeedback, "Fournisseur introuvable", true);
+}
+
+async function selectSupplierFromModal() {
+  const supplier = supplierModalFiltered[supplierModalSelectedIndex];
+  if (!supplier) return;
+  await createPurchaseFromSupplier(supplier);
 }
 
 async function duplicatePurchase(purchaseId) {
@@ -860,11 +942,26 @@ if (purchaseDateToFilter) {
 }
 
 if (newOrderBtn) {
-  newOrderBtn.addEventListener("click", () => openSupplierModal("order"));
+  newOrderBtn.addEventListener("click", () => handleQuickSupplierCreate("order"));
 }
 
 if (newBlBtn) {
-  newBlBtn.addEventListener("click", () => openSupplierModal("bl"));
+  newBlBtn.addEventListener("click", () => handleQuickSupplierCreate("bl"));
+}
+
+if (quickSupplierCodeInput) {
+  quickSupplierCodeInput.addEventListener("keydown", async (event) => {
+    if (event.key === "F9") {
+      event.preventDefault();
+      openSupplierModal(createMode || "order", quickSupplierCodeInput.value);
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      await handleQuickSupplierCreate(createMode || "order");
+    }
+  });
 }
 
 if (closeSupplierModalBtn) {
@@ -872,7 +969,25 @@ if (closeSupplierModalBtn) {
 }
 
 if (supplierSearchInput) {
-  supplierSearchInput.addEventListener("input", renderSupplierModalTable);
+  supplierSearchInput.addEventListener("input", () => {
+    supplierModalSelectedIndex = 0;
+    renderSelectableSupplierModalTable();
+  });
+
+  supplierSearchInput.addEventListener("keydown", async (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      supplierModalSelectedIndex = Math.min(supplierModalSelectedIndex + 1, supplierModalFiltered.length - 1);
+      renderSelectableSupplierModalTable();
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      supplierModalSelectedIndex = Math.max(supplierModalSelectedIndex - 1, 0);
+      renderSelectableSupplierModalTable();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      await selectSupplierFromModal();
+    }
+  });
 }
 if (closeImportMappingModalBtn) {
   closeImportMappingModalBtn.addEventListener("click", closeImportMappingModal);
@@ -891,14 +1006,23 @@ if (importMappingPanel) {
 }
 
 if (supplierModalTableBody) {
+  supplierModalTableBody.addEventListener("click", (event) => {
+    const row = event.target.closest("tr[data-supplier-id]");
+    if (!row) return;
+    const index = supplierModalFiltered.findIndex((item) => item.id === row.dataset.supplierId);
+    if (index >= 0) {
+      supplierModalSelectedIndex = index;
+      renderSelectableSupplierModalTable();
+    }
+  });
+
   supplierModalTableBody.addEventListener("dblclick", async (event) => {
     const row = event.target.closest("tr[data-supplier-id]");
     if (!row) return;
 
-    const supplier = suppliers.find((item) => item.id === row.dataset.supplierId);
-    if (!supplier) return;
-
-    await createPurchaseFromSupplier(supplier);
+    const index = supplierModalFiltered.findIndex((item) => item.id === row.dataset.supplierId);
+    if (index >= 0) supplierModalSelectedIndex = index;
+    await selectSupplierFromModal();
   });
 }
 
