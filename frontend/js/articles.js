@@ -13,7 +13,6 @@ const sessionUser = JSON.parse(sessionUserRaw);
 let activeDepartment = activeDepartmentRaw ? JSON.parse(activeDepartmentRaw) : null;
 
 const userNameEl = document.getElementById('user-name');
-const departmentSelectEl = document.getElementById('department-select');
 const backHomeBtn = document.getElementById('back-home-btn');
 const logoutBtn = document.getElementById('logout-btn');
 const articleDepartmentFilter = document.getElementById('article-department-filter');
@@ -102,30 +101,6 @@ function parseNumberInput(input) {
 
 function fillTopbar() {
   userNameEl.textContent = sessionUser.email || 'Utilisateur';
-
-  const departments = sessionUser.departments || [];
-  departmentSelectEl.innerHTML = '';
-
-  if (departments.length === 0) {
-    const option = document.createElement('option');
-    option.value = '';
-    option.textContent = 'Aucun service';
-    departmentSelectEl.appendChild(option);
-    departmentSelectEl.disabled = true;
-    return;
-  }
-
-  departments.forEach((department) => {
-    const option = document.createElement('option');
-    option.value = department.id;
-    option.textContent = department.name;
-
-      if (activeDepartment && String(department.id) === String(activeDepartment.id)) {
-      option.selected = true;
-    }
-
-    departmentSelectEl.appendChild(option);
-  });
 }
 
 function fillArticleDepartmentFilter() {
@@ -511,21 +486,6 @@ tbody.addEventListener('click', async (event) => {
   if (action === 'duplicate') await duplicateArticle(article);
 });
 
-departmentSelectEl.addEventListener('change', async (event) => {
-  const selectedId = event.target.value;
-  const department = (sessionUser.departments || []).find((item) => item.id === selectedId);
-
-  if (!department) return;
-
-  activeDepartment = department;
-
-  localStorage.setItem('gc_active_department', JSON.stringify(department));
-  localStorage.setItem('grv2_active_department', JSON.stringify(department));
-
-  await loadFamilies();
-  fillArticleDepartmentFilter();
-  await loadArticles();
-});
 
 backHomeBtn.addEventListener('click', () => {
   window.location.href = './home.html';

@@ -93,21 +93,6 @@ function field(label, value) {
 
 function fillTopbar() {
   userNameEl.textContent = sessionUser.email || 'Utilisateur';
-
-  const departments = sessionUser.departments || [];
-  departmentSelectEl.innerHTML = '';
-
-  departments.forEach((department) => {
-    const option = document.createElement('option');
-    option.value = department.id;
-    option.textContent = department.name;
-
-    if (activeDepartment && String(department.id) === String(activeDepartment.id)) {
-      option.selected = true;
-    }
-
-    departmentSelectEl.appendChild(option);
-  });
 }
 
 function renderArticle(article) {
@@ -179,18 +164,6 @@ async function loadArticle() {
   }
 }
 
-departmentSelectEl.addEventListener('change', async (event) => {
-  const selectedId = event.target.value;
-  const department = (sessionUser.departments || []).find((item) => item.id === selectedId);
-
-  if (!department) return;
-
-  activeDepartment = department;
-  localStorage.setItem('gc_active_department', JSON.stringify(department));
-  localStorage.setItem('grv2_active_department', JSON.stringify(department));
-
-  window.location.href = `./article-detail.html?id=${articleId}`;
-});
 
 backBtn.addEventListener('click', () => {
   window.location.href = './articles.html';
