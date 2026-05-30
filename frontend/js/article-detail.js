@@ -2,15 +2,12 @@ const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
 
 const sessionToken = localStorage.getItem('gc_token') || localStorage.getItem('grv2_token');
 const sessionUserRaw = localStorage.getItem('gc_user') || localStorage.getItem('grv2_user');
-const activeDepartmentRaw =
-  localStorage.getItem('gc_active_department') || localStorage.getItem('grv2_active_department');
 
 if (!sessionToken || !sessionUserRaw) {
   window.location.href = './login.html';
 }
 
 const sessionUser = JSON.parse(sessionUserRaw);
-let activeDepartment = activeDepartmentRaw ? JSON.parse(activeDepartmentRaw) : null;
 
 function normalizeId(value) {
   const id = String(value ?? '').trim();
@@ -20,14 +17,12 @@ function normalizeId(value) {
 
 const params = new URLSearchParams(window.location.search);
 const articleId = params.get('id');
-const queryDepartmentId = normalizeId(params.get('department_id'));
 
 if (!normalizeId(articleId)) {
   window.location.href = './articles.html';
 }
 
 const userNameEl = document.getElementById('user-name');
-const departmentSelectEl = document.getElementById('department-select');
 const backBtn = document.getElementById('back-btn');
 const editBtn = document.getElementById('edit-btn');
 const articleTitleEl = document.getElementById('article-title');

@@ -2,20 +2,16 @@ const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
 
 const sessionToken = localStorage.getItem('gc_token') || localStorage.getItem('grv2_token');
 const sessionUserRaw = localStorage.getItem('gc_user') || localStorage.getItem('grv2_user');
-const activeDepartmentRaw =
-  localStorage.getItem('gc_active_department') || localStorage.getItem('grv2_active_department');
 
 if (!sessionToken || !sessionUserRaw) {
   window.location.href = './login.html';
 }
 
 const sessionUser = JSON.parse(sessionUserRaw);
-let activeDepartment = activeDepartmentRaw ? JSON.parse(activeDepartmentRaw) : null;
 
 const userNameEl = document.getElementById('user-name');
 const backHomeBtn = document.getElementById('back-home-btn');
 const logoutBtn = document.getElementById('logout-btn');
-const articleDepartmentFilter = document.getElementById('article-department-filter');
 
 const searchInput = document.getElementById('search-input');
 const familyFilter = document.getElementById('family-filter');
@@ -103,30 +99,8 @@ function fillTopbar() {
   userNameEl.textContent = sessionUser.email || 'Utilisateur';
 }
 
-function fillArticleDepartmentFilter() {
-  const departments = sessionUser.departments || [];
-
-  articleDepartmentFilter.innerHTML = '<option value="">Tous les services</option>';
-
-  departments.forEach((department) => {
-    const option = document.createElement('option');
-    option.value = department.id;
-    option.textContent = department.name;
-
-    if (activeDepartment && String(department.id) === String(activeDepartment.id)) {
-      option.selected = true;
-    }
-
-    articleDepartmentFilter.appendChild(option);
-  });
-}
-
 function fillFamilySelects() {
-  const activeDepartmentFamilies = activeDepartment
-    ? familiesCache.filter((family) => family.department_id === activeDepartment.id)
-    : familiesCache;
-
-  const options = activeDepartmentFamilies
+  const options = familiesCache
     .map((family) => `<option value="${family.code}">${family.name}</option>`)
     .join('');
 
@@ -136,11 +110,6 @@ function fillFamilySelects() {
 
 async function loadFamilies() {
   const params = new URLSearchParams();
-
-  if (activeDepartment?.id) {
-    params.set('department_id', activeDepartment.id);
-  }
-
   const suffix = params.toString() ? `?${params.toString()}` : '';
   const response = await fetch(`${API_BASE_URL}/api/articles/families${suffix}`, {
     headers: authHeaders(false),
@@ -265,7 +234,8 @@ async function loadArticles() {
       params.set('active', statusFilter.value);
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/articles?${params.toString()}`, {
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const response = await fetch(`${API_BASE_URL}/api/articles${suffix}`, {
       headers: authHeaders(false),
     });
 
@@ -466,10 +436,6 @@ tbody.addEventListener('click', async (event) => {
 
     const detailParams = new URLSearchParams();
     detailParams.set('id', article.id);
-
-    if (isValidId(article.department_id)) {
-      detailParams.set('department_id', article.department_id);
-    }
 
     window.location.href = `./article-detail.html?${detailParams.toString()}`;
     return;

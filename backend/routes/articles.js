@@ -155,10 +155,10 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.purchase_unit, ad.purchase_unit) AS purchase_unit,
         COALESCE(a.stock_unit, ad.stock_unit) AS stock_unit,
         COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
-        COALESCE(ad.vat_rate, a.vat_rate) AS vat_rate,
-COALESCE(ad.purchase_price_ex_vat, a.purchase_price_ex_vat) AS purchase_price_ex_vat,
-COALESCE(ad.sale_price_ex_vat, a.sale_price_ex_vat) AS sale_price_ex_vat,
-COALESCE(ad.sale_price_inc_vat, a.sale_price_inc_vat) AS sale_price_inc_vat,
+        ad.vat_rate,
+        ad.purchase_price_ex_vat,
+        ad.sale_price_ex_vat,
+        ad.sale_price_inc_vat,
 
         ds.code AS family_code,
         ds.name AS family_name,
@@ -615,10 +615,9 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.stock_unit, ad.stock_unit) AS stock_unit,
         COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
         ad.vat_rate,
-        COALESCE(ad.vat_rate, a.vat_rate) AS vat_rate,
-COALESCE(ad.purchase_price_ex_vat, a.purchase_price_ex_vat) AS purchase_price_ex_vat,
-COALESCE(ad.sale_price_ex_vat, a.sale_price_ex_vat) AS sale_price_ex_vat,
-COALESCE(ad.sale_price_inc_vat, a.sale_price_inc_vat) AS sale_price_inc_vat,
+        ad.purchase_price_ex_vat,
+        ad.sale_price_ex_vat,
+        ad.sale_price_inc_vat,
 
         ds.code AS family_code,
         ds.name AS family_name,
@@ -768,87 +767,143 @@ RETURNING id
       return res.status(404).json({ error: 'Article introuvable' });
     }
 
-    if (department_id) {
     const selectedFamilyCode = family_code || sector_code;
-    const sectorId = await getSectorId(client, department_id, selectedFamilyCode);
+    let articleDepartmentId = null;
 
-    const articleDepartmentUpdate = await client.query(
-      `
-      UPDATE article_departments
-      SET
-        department_sector_id = $1,
-        display_name = $2,
-        purchase_unit = $3,
-        stock_unit = $4,
-        sale_unit = $5,
-        vat_rate = $6,
-        purchase_price_ex_vat = $7,
-        sale_price_ex_vat = $8,
-        sale_price_inc_vat = $9,
-        is_active = $10,
-        updated_by = $11
-      WHERE article_id = $12
-        AND department_id = $13
-      RETURNING id
-      `,
-      [
-        sectorId,
-        toNullableString(display_name),
-        toNullableString(purchase_unit),
-        toNullableString(stock_unit),
-        toNullableString(sale_unit),
-        toNullableNumber(vat_rate) ?? 5.5,
-        toNullableNumber(purchase_price_ex_vat),
-        toNullableNumber(sale_price_ex_vat),
-        toNullableNumber(sale_price_inc_vat),
-        !!is_active,
-        req.user.id,
-        articleId,
-        department_id,
-      ]
-    );
+    if (department_id) {
+      const sectorId = await getSectorId(client, department_id, selectedFamilyCode);
 
-    if (articleDepartmentUpdate.rows.length === 0) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Rattachement article/service introuvable' });
+      const articleDepartmentUpdate = await client.query(
+        `
+        UPDATE article_departments
+        SET
+          department_sector_id = $1,
+          display_name = $2,
+          purchase_unit = $3,
+          stock_unit = $4,
+          sale_unit = $5,
+          vat_rate = $6,
+          purchase_price_ex_vat = $7,
+          sale_price_ex_vat = $8,
+          sale_price_inc_vat = $9,
+          is_active = $10,
+          updated_by = $11
+        WHERE article_id = $12
+          AND department_id = $13
+        RETURNING id
+        `,
+        [
+          sectorId,
+          toNullableString(display_name),
+          toNullableString(purchase_unit),
+          toNullableString(stock_unit),
+          toNullableString(sale_unit),
+          toNullableNumber(vat_rate) ?? 5.5,
+          toNullableNumber(purchase_price_ex_vat),
+          toNullableNumber(sale_price_ex_vat),
+          toNullableNumber(sale_price_inc_vat),
+          !!is_active,
+          req.user.id,
+          articleId,
+          department_id,
+        ]
+      );
+
+      if (articleDepartmentUpdate.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Rattachement article/service introuvable' });
+      }
+
+      articleDepartmentId = articleDepartmentUpdate.rows[0].id;
+    } else {
+      const articleDepartmentUpdate = await client.query(
+        `
+        UPDATE article_departments ad
+        SET
+          department_sector_id = COALESCE((
+            SELECT ds.id
+            FROM department_sectors ds
+            WHERE ds.department_id = ad.department_id
+              AND ds.code = $1
+              AND ds.is_active = true
+            LIMIT 1
+          ), ad.department_sector_id),
+          display_name = $2,
+          purchase_unit = $3,
+          stock_unit = $4,
+          sale_unit = $5,
+          vat_rate = $6,
+          purchase_price_ex_vat = $7,
+          sale_price_ex_vat = $8,
+          sale_price_inc_vat = $9,
+          is_active = $10,
+          updated_by = $11
+        WHERE ad.id = (
+          SELECT ad_pick.id
+          FROM article_departments ad_pick
+          JOIN articles a_pick ON a_pick.id = ad_pick.article_id
+          WHERE ad_pick.article_id = $12
+            AND a_pick.store_id = $13
+          ORDER BY ad_pick.created_at ASC
+          LIMIT 1
+        )
+        RETURNING id
+        `,
+        [
+          toNullableString(selectedFamilyCode),
+          toNullableString(display_name),
+          toNullableString(purchase_unit),
+          toNullableString(stock_unit),
+          toNullableString(sale_unit),
+          toNullableNumber(vat_rate) ?? 5.5,
+          toNullableNumber(purchase_price_ex_vat),
+          toNullableNumber(sale_price_ex_vat),
+          toNullableNumber(sale_price_inc_vat),
+          !!is_active,
+          req.user.id,
+          articleId,
+          req.user.store_id,
+        ]
+      );
+
+      articleDepartmentId = articleDepartmentUpdate.rows[0]?.id || null;
     }
 
-    const articleDepartmentId = articleDepartmentUpdate.rows[0].id;
-
-    await client.query(
-      `
-      INSERT INTO article_department_metadata (
-        article_department_id,
-        field_key,
-        category,
-        latin_name,
-        fao_zone,
-        sous_zone,
-        engin,
-        allergenes,
-        raw_source
-      )
-      VALUES ($1, 'business_metadata', $2, $3, $4, $5, $6, $7, '{}'::jsonb)
-      ON CONFLICT (article_department_id, field_key)
-      DO UPDATE SET
-        category = EXCLUDED.category,
-        latin_name = EXCLUDED.latin_name,
-        fao_zone = EXCLUDED.fao_zone,
-        sous_zone = EXCLUDED.sous_zone,
-        engin = EXCLUDED.engin,
-        allergenes = EXCLUDED.allergenes,
-        updated_at = NOW()
-      `,
-      [
-        articleDepartmentId,
-        toNullableString(category),
-        toNullableString(latin_name),
-        toNullableString(fao_zone),
-        toNullableString(sous_zone),
-        toNullableString(engin),
-        toNullableString(allergenes),
-      ]
-    );
+    if (articleDepartmentId) {
+      await client.query(
+        `
+        INSERT INTO article_department_metadata (
+          article_department_id,
+          field_key,
+          category,
+          latin_name,
+          fao_zone,
+          sous_zone,
+          engin,
+          allergenes,
+          raw_source
+        )
+        VALUES ($1, 'business_metadata', $2, $3, $4, $5, $6, $7, '{}'::jsonb)
+        ON CONFLICT (article_department_id, field_key)
+        DO UPDATE SET
+          category = EXCLUDED.category,
+          latin_name = EXCLUDED.latin_name,
+          fao_zone = EXCLUDED.fao_zone,
+          sous_zone = EXCLUDED.sous_zone,
+          engin = EXCLUDED.engin,
+          allergenes = EXCLUDED.allergenes,
+          updated_at = NOW()
+        `,
+        [
+          articleDepartmentId,
+          toNullableString(category),
+          toNullableString(latin_name),
+          toNullableString(fao_zone),
+          toNullableString(sous_zone),
+          toNullableString(engin),
+          toNullableString(allergenes),
+        ]
+      );
     }
 
     await client.query('COMMIT');
@@ -950,10 +1005,10 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         ad.purchase_unit,
         ad.stock_unit,
         ad.sale_unit,
-        COALESCE(ad.vat_rate, a.vat_rate) AS vat_rate,
-COALESCE(ad.purchase_price_ex_vat, a.purchase_price_ex_vat) AS purchase_price_ex_vat,
-COALESCE(ad.sale_price_ex_vat, a.sale_price_ex_vat) AS sale_price_ex_vat,
-COALESCE(ad.sale_price_inc_vat, a.sale_price_inc_vat) AS sale_price_inc_vat,
+        ad.vat_rate,
+        ad.purchase_price_ex_vat,
+        ad.sale_price_ex_vat,
+        ad.sale_price_inc_vat,
         adm.category,
         adm.latin_name,
         adm.fao_zone,
