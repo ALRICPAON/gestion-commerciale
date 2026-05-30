@@ -583,11 +583,11 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
     }
 
     const params = [articleId, req.user.store_id];
-    let departmentFilter = '';
+    let articleDepartmentFilter = '';
 
     if (departmentId && isUuid(departmentId)) {
       params.push(departmentId);
-      departmentFilter = `AND ad.department_id = $${params.length}`;
+      articleDepartmentFilter = `AND ad_pick.department_id = $${params.length}`;
     }
 
     const result = await req.dbPool.query(
@@ -610,14 +610,14 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         d.name AS department_name,
         d.code AS department_code,
         ad.department_sector_id,
-        COALESCE(a.display_name, ad.display_name) AS display_name,
-        COALESCE(a.purchase_unit, ad.purchase_unit) AS purchase_unit,
-        COALESCE(a.stock_unit, ad.stock_unit) AS stock_unit,
-        COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
-        ad.vat_rate,
-        ad.purchase_price_ex_vat,
-        ad.sale_price_ex_vat,
-        ad.sale_price_inc_vat,
+        COALESCE(ad.display_name, a.display_name) AS display_name,
+        COALESCE(ad.purchase_unit, a.purchase_unit) AS purchase_unit,
+        COALESCE(ad.stock_unit, a.stock_unit) AS stock_unit,
+        COALESCE(ad.sale_unit, a.sale_unit) AS sale_unit,
+        ad.vat_rate AS vat_rate,
+        ad.purchase_price_ex_vat AS purchase_price_ex_vat,
+        ad.sale_price_ex_vat AS sale_price_ex_vat,
+        ad.sale_price_inc_vat AS sale_price_inc_vat,
 
         ds.code AS family_code,
         ds.name AS family_name,
@@ -633,7 +633,27 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
-      LEFT JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN article_departments ad
+        ON ad.article_id = a.id
+       AND ad.id = (
+        SELECT ad_pick.id
+        FROM article_departments ad_pick
+        WHERE ad_pick.article_id = a.id
+          ${articleDepartmentFilter}
+        ORDER BY
+          CASE WHEN ad_pick.is_active = true THEN 0 ELSE 1 END,
+          CASE
+            WHEN ad_pick.department_sector_id IS NOT NULL
+              OR ad_pick.vat_rate IS NOT NULL
+              OR ad_pick.purchase_price_ex_vat IS NOT NULL
+              OR ad_pick.sale_price_ex_vat IS NOT NULL
+              OR ad_pick.sale_price_inc_vat IS NOT NULL
+            THEN 0 ELSE 1
+          END,
+          ad_pick.updated_at DESC NULLS LAST,
+          ad_pick.created_at DESC NULLS LAST
+        LIMIT 1
+       )
       LEFT JOIN departments d ON d.id = ad.department_id
       LEFT JOIN department_sectors ds ON ds.id = ad.department_sector_id
       LEFT JOIN article_department_metadata adm
@@ -641,7 +661,6 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
        AND adm.field_key = 'business_metadata'
       WHERE a.id = $1
         AND a.store_id = $2
-        ${departmentFilter}
       LIMIT 1
       `,
       params
@@ -844,7 +863,18 @@ RETURNING id
           JOIN articles a_pick ON a_pick.id = ad_pick.article_id
           WHERE ad_pick.article_id = $12
             AND a_pick.store_id = $13
-          ORDER BY ad_pick.created_at ASC
+          ORDER BY
+            CASE WHEN ad_pick.is_active = true THEN 0 ELSE 1 END,
+            CASE
+              WHEN ad_pick.department_sector_id IS NOT NULL
+                OR ad_pick.vat_rate IS NOT NULL
+                OR ad_pick.purchase_price_ex_vat IS NOT NULL
+                OR ad_pick.sale_price_ex_vat IS NOT NULL
+                OR ad_pick.sale_price_inc_vat IS NOT NULL
+              THEN 0 ELSE 1
+            END,
+            ad_pick.updated_at DESC NULLS LAST,
+            ad_pick.created_at DESC NULLS LAST
           LIMIT 1
         )
         RETURNING id
