@@ -120,7 +120,6 @@ function renderArticle(article) {
     field('Désignation', article.designation),
     field('Nom affiché', article.display_name),
     field('EAN', article.ean),
-    field('Service', article.department_name),
     field('Famille', article.family_name),
     field('Actif', yesNo(article.is_active)),
   ].join('');
@@ -161,12 +160,8 @@ function renderArticle(article) {
 
 async function loadArticle() {
   try {
-    const departmentId = queryDepartmentId || normalizeId(activeDepartment?.id);
+    const url = `${API_BASE_URL}/api/articles/${encodeURIComponent(articleId)}`;
     const detailParams = new URLSearchParams();
-
-    if (departmentId) {
-      detailParams.set('department_id', departmentId);
-    }
 
     const suffix = detailParams.toString() ? `?${detailParams.toString()}` : '';
     const url = `${API_BASE_URL}/api/articles/${encodeURIComponent(articleId)}${suffix}`;

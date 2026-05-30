@@ -276,11 +276,7 @@ async function loadArticles() {
     `;
 
     const params = new URLSearchParams();
-    const selectedDepartmentId = articleDepartmentFilter?.value || '';
-
-if (selectedDepartmentId) {
-  params.set('department_id', selectedDepartmentId);
-}
+  
 
     if (searchInput.value.trim()) {
       params.set('search', searchInput.value.trim());
@@ -326,7 +322,6 @@ async function saveArticle(event) {
     const isEdit = !!articleId;
 
     const payload = {
-      department_id: activeDepartment?.id || null,
       plu: articlePluInput.value.trim(),
       designation: articleDesignationInput.value.trim(),
       unit: articleUnitInput.value,

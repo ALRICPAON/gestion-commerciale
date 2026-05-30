@@ -690,20 +690,30 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
       sale_price_inc_vat,
     } = req.body;
 
-    if (!department_id || !toNullableString(plu) || !toNullableString(designation)) {
-      return res.status(400).json({
-        error: 'department_id, plu et designation sont obligatoires',
-      });
-    }
+    if (!toNullableString(plu) || !toNullableString(designation)) {
+  return res.status(400).json({
+    error: 'plu et designation sont obligatoires',
+  });
+}
 
     await client.query('BEGIN');
 
-    const department = await assertDepartmentBelongsToStore(client, department_id, req.user.store_id);
+    let department = null;
 
-    if (!department) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Service invalide pour ce client' });
-    }
+if (department_id) {
+  department = await assertDepartmentBelongsToStore(
+    client,
+    department_id,
+    req.user.store_id
+  );
+
+  if (!department) {
+    await client.query('ROLLBACK');
+    return res.status(400).json({
+      error: 'Service invalide pour ce client',
+    });
+  }
+}
 
     const articleUpdate = await client.query(
       `
