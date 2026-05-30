@@ -194,7 +194,7 @@ function openModal(editMode = false, article = null) {
   articleDesignationInput.value = article?.designation || '';
   articleUnitInput.value = article?.unit || 'kg';
   articleEanInput.value = article?.ean || '';
-  articleFamilyInput.value = article?.family_code || '';
+  articleFamilyInput.value = article?.family_code || article?.category || '';
   articleCategoryInput.value = article?.category || '';
   articleLatinNameInput.value = article?.latin_name || '';
   articleFaoZoneInput.value = article?.fao_zone || '';
@@ -555,7 +555,6 @@ searchInput.addEventListener('keydown', (event) => {
 
 familyFilter.addEventListener('change', loadArticles);
 statusFilter.addEventListener('change', loadArticles);
-articleDepartmentFilter.addEventListener('change', loadArticles);
 
 articleSalePriceExVatInput.addEventListener('change', recalculatePriceFromExVat);
 articleSalePriceIncVatInput.addEventListener('change', recalculatePriceFromIncVat);
@@ -570,9 +569,8 @@ articleVatRateInput.addEventListener('change', () => {
 async function init() {
   try {
     fillTopbar();
-    fillArticleDepartmentFilter();
     await loadFamilies();
-    await loadArticles();
+await loadArticles();
   } catch (error) {
     console.error(error);
     setFeedback(error.message, 'error');
