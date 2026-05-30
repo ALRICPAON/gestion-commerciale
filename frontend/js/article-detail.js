@@ -161,10 +161,6 @@ function renderArticle(article) {
 async function loadArticle() {
   try {
     const url = `${API_BASE_URL}/api/articles/${encodeURIComponent(articleId)}`;
-    const detailParams = new URLSearchParams();
-
-    const suffix = detailParams.toString() ? `?${detailParams.toString()}` : '';
-    const url = `${API_BASE_URL}/api/articles/${encodeURIComponent(articleId)}${suffix}`;
 
     const response = await fetch(url, {
       headers: authHeaders(false),
