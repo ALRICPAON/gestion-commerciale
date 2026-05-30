@@ -464,19 +464,39 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
 
     await client.query('BEGIN');
 
-    let department = null;
+    let departmentIdFinal = normalizeUuidParam(department_id);
 
-if (department_id) {
-  department = await assertDepartmentBelongsToStore(client, department_id, req.user.store_id);
+if (departmentIdFinal) {
+  const department = await assertDepartmentBelongsToStore(client, departmentIdFinal, req.user.store_id);
 
   if (!department) {
     await client.query('ROLLBACK');
     return res.status(400).json({ error: 'Service invalide pour ce client' });
   }
+} else {
+  const defaultDepartmentResult = await client.query(
+    `
+    SELECT id
+    FROM departments
+    WHERE store_id = $1
+    ORDER BY created_at ASC
+    LIMIT 1
+    `,
+    [req.user.store_id]
+  );
+
+  departmentIdFinal = defaultDepartmentResult.rows[0]?.id || null;
+
+  if (!departmentIdFinal) {
+    await client.query('ROLLBACK');
+    return res.status(400).json({
+      error: 'Aucun service disponible pour créer le rattachement article',
+    });
+  }
 }
 
     const selectedFamilyCode = family_code || sector_code;
-    const sectorId = await getSectorId(client, department_id, selectedFamilyCode);
+    const sectorId = await getSectorId(client, departmentIdFinal, selectedFamilyCode);
 
     const articleInsert = await client.query(
       `
@@ -530,7 +550,7 @@ if (department_id) {
       `,
       [
         articleId,
-        department_id,
+        departmentIdFinal,
         sectorId,
         toNullableString(display_name),
         toNullableString(purchase_unit),
