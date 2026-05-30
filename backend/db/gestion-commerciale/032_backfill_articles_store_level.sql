@@ -54,10 +54,10 @@ SET
   purchase_unit = COALESCE(a.purchase_unit, article_source.purchase_unit, a.unit),
   stock_unit = COALESCE(a.stock_unit, article_source.stock_unit, a.unit),
   sale_unit = COALESCE(a.sale_unit, article_source.sale_unit, a.unit),
-  vat_rate = COALESCE(article_source.vat_rate, a.vat_rate, 5.50),
-  purchase_price_ex_vat = COALESCE(article_source.purchase_price_ex_vat, a.purchase_price_ex_vat),
-  sale_price_ex_vat = COALESCE(article_source.sale_price_ex_vat, a.sale_price_ex_vat),
-  sale_price_inc_vat = COALESCE(article_source.sale_price_inc_vat, a.sale_price_inc_vat),
+  vat_rate = COALESCE(a.vat_rate, article_source.vat_rate, 5.50),
+  purchase_price_ex_vat = COALESCE(a.purchase_price_ex_vat, article_source.purchase_price_ex_vat),
+  sale_price_ex_vat = COALESCE(a.sale_price_ex_vat, article_source.sale_price_ex_vat),
+  sale_price_inc_vat = COALESCE(a.sale_price_inc_vat, article_source.sale_price_inc_vat),
   production_method = COALESCE(a.production_method, article_source.category),
   latin_name = COALESCE(a.latin_name, article_source.latin_name),
   fao_zone = COALESCE(a.fao_zone, article_source.fao_zone),
@@ -66,7 +66,25 @@ SET
   allergens = COALESCE(a.allergens, article_source.allergenes),
   updated_at = NOW()
 FROM article_source
-WHERE article_source.article_id = a.id;
+WHERE article_source.article_id = a.id
+  AND (
+    a.family_code IS NULL
+    OR a.family_name IS NULL
+    OR a.display_name IS NULL
+    OR a.purchase_unit IS NULL
+    OR a.stock_unit IS NULL
+    OR a.sale_unit IS NULL
+    OR a.vat_rate IS NULL
+    OR a.purchase_price_ex_vat IS NULL
+    OR a.sale_price_ex_vat IS NULL
+    OR a.sale_price_inc_vat IS NULL
+    OR a.production_method IS NULL
+    OR a.latin_name IS NULL
+    OR a.fao_zone IS NULL
+    OR a.sous_zone IS NULL
+    OR a.fishing_gear IS NULL
+    OR a.allergens IS NULL
+  );
 
 UPDATE articles
 SET
