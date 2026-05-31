@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Stock / Lots - Gestion Commerciale</title>
+  <title>Stock / Tarifs - Gestion Commerciale</title>
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/stock.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/stock.css?v=2" />
 </head>
 <body class="app-page stock-page">
   <header class="topbar">
     <div>
       <h1 class="app-title">Gestion Commerciale</h1>
-      <p class="app-subtitle">Stock / Lots</p>
+      <p class="app-subtitle">Stock / Tarifs clients</p>
     </div>
 
     <div class="topbar-right">
@@ -28,8 +28,8 @@
     <section class="welcome-card">
       <div class="page-actions">
         <div>
-          <h2>Stock magasin</h2>
-          <p>Consultation des articles en stock, des lots disponibles et de la tracabilite.</p>
+          <h2>Stock magasin et tarifs HT</h2>
+          <p>Vue commerciale des stocks restants, du PMA et des trois niveaux de tarifs clients.</p>
         </div>
 
         <div class="page-actions-right">
@@ -61,7 +61,7 @@
       <div class="filters-row stock-filters">
         <div class="form-group">
           <label for="stock-search-input">Recherche</label>
-          <input id="stock-search-input" type="text" placeholder="PLU, designation, EAN, nom latin..." />
+          <input id="stock-search-input" type="text" placeholder="PLU, designation, EAN..." />
         </div>
 
         <div class="form-group">
@@ -88,22 +88,26 @@
       <div id="stock-feedback" class="page-feedback hidden"></div>
 
       <div class="table-wrap">
-        <table class="data-table stock-table">
+        <table class="data-table stock-table tariff-stock-table">
           <thead>
             <tr>
               <th>PLU</th>
-              <th>Article</th>
-              <th>Famille</th>
-              <th>Stock</th>
-              <th>PMA</th>
-              <th>Valeur HT</th>
+              <th>Designation</th>
+              <th>Stock restant</th>
+              <th>PMA HT</th>
+              <th>Tarif 1 HT</th>
+              <th>Marge T1</th>
+              <th>Tarif 2 HT</th>
+              <th>Marge T2</th>
+              <th>Tarif 3 HT</th>
+              <th>Marge T3</th>
               <th>DLC</th>
-              <th>Tracabilite FIFO</th>
-              <th>Actions</th>
+              <th>Valeur stock HT</th>
+              <th>Lots / Tracabilite</th>
             </tr>
           </thead>
           <tbody id="stock-tbody">
-            <tr><td colspan="9">Chargement du stock...</td></tr>
+            <tr><td colspan="13">Chargement du stock...</td></tr>
           </tbody>
         </table>
       </div>
@@ -149,6 +153,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/stock.js?v=1"></script>
+  <script src="./js/stock.js?v=2"></script>
 </body>
 </html>

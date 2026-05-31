@@ -5,8 +5,6 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 
-const { requireAdminOrManager } = require('../middleware/authorization');
-
 function requireRole(allowedRoles = []) {
   return (req, res, next) => {
     if (!req.user || !allowedRoles.includes(req.user.role)) {
@@ -45,6 +43,41 @@ function normalizeClientType(value) {
   return allowed.includes(clientType) ? clientType : 'standard';
 }
 
+function normalizeTariffLevel(value) {
+  const parsed = Number(value || 1);
+  return [1, 2, 3].includes(parsed) ? parsed : 1;
+}
+
+function clientSelectSql() {
+  return `
+    SELECT
+      id,
+      code,
+      name,
+      legal_name,
+      client_type,
+      status,
+      tariff_level,
+      contact_name,
+      phone,
+      mobile,
+      email,
+      address_line1,
+      address_line2,
+      postal_code,
+      city,
+      country,
+      vat_number,
+      siret,
+      payment_terms,
+      delivery_terms,
+      notes,
+      created_at,
+      updated_at
+    FROM clients
+  `;
+}
+
 function mapClientPayload(body) {
   return {
     code: normalizeText(body.code),
@@ -52,6 +85,7 @@ function mapClientPayload(body) {
     legal_name: normalizeText(body.legal_name),
     client_type: normalizeClientType(body.client_type),
     status: normalizeStatus(body.status),
+    tariff_level: normalizeTariffLevel(body.tariff_level ?? body.price_level),
 
     contact_name: normalizeText(body.contact_name),
     phone: normalizeText(body.phone),
@@ -108,30 +142,7 @@ router.get('/clients', authenticateToken, attachDbContext, async (req, res) => {
 
     const result = await req.dbPool.query(
       `
-      SELECT
-        id,
-        code,
-        name,
-        legal_name,
-        client_type,
-        status,
-        contact_name,
-        phone,
-        mobile,
-        email,
-        address_line1,
-        address_line2,
-        postal_code,
-        city,
-        country,
-        vat_number,
-        siret,
-        payment_terms,
-        delivery_terms,
-        notes,
-        created_at,
-        updated_at
-      FROM clients
+      ${clientSelectSql()}
       WHERE ${where.join(' AND ')}
       ORDER BY name ASC, code ASC
       `,
@@ -149,30 +160,7 @@ router.get('/clients/:id', authenticateToken, attachDbContext, async (req, res) 
   try {
     const result = await req.dbPool.query(
       `
-      SELECT
-        id,
-        code,
-        name,
-        legal_name,
-        client_type,
-        status,
-        contact_name,
-        phone,
-        mobile,
-        email,
-        address_line1,
-        address_line2,
-        postal_code,
-        city,
-        country,
-        vat_number,
-        siret,
-        payment_terms,
-        delivery_terms,
-        notes,
-        created_at,
-        updated_at
-      FROM clients
+      ${clientSelectSql()}
       WHERE id = $1
         AND store_id = $2
       `,
@@ -212,6 +200,7 @@ router.post(
           legal_name,
           client_type,
           status,
+          tariff_level,
           contact_name,
           phone,
           mobile,
@@ -230,11 +219,11 @@ router.post(
           updated_by
         )
         VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10,
-          $11, $12, $13, $14, $15,
-          $16, $17, $18, $19, $20,
-          $21, $22
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9, $10, $11,
+          $12, $13, $14, $15, $16,
+          $17, $18, $19, $20, $21,
+          $22, $23
         )
         RETURNING *
         `,
@@ -245,6 +234,7 @@ router.post(
           client.legal_name,
           client.client_type,
           client.status,
+          client.tariff_level,
           client.contact_name,
           client.phone,
           client.mobile,
@@ -299,23 +289,24 @@ router.put(
           legal_name = $3,
           client_type = $4,
           status = $5,
-          contact_name = $6,
-          phone = $7,
-          mobile = $8,
-          email = $9,
-          address_line1 = $10,
-          address_line2 = $11,
-          postal_code = $12,
-          city = $13,
-          country = $14,
-          vat_number = $15,
-          siret = $16,
-          payment_terms = $17,
-          delivery_terms = $18,
-          notes = $19,
-          updated_by = $20
-        WHERE id = $21
-          AND store_id = $22
+          tariff_level = $6,
+          contact_name = $7,
+          phone = $8,
+          mobile = $9,
+          email = $10,
+          address_line1 = $11,
+          address_line2 = $12,
+          postal_code = $13,
+          city = $14,
+          country = $15,
+          vat_number = $16,
+          siret = $17,
+          payment_terms = $18,
+          delivery_terms = $19,
+          notes = $20,
+          updated_by = $21
+        WHERE id = $22
+          AND store_id = $23
         RETURNING *
         `,
         [
@@ -324,6 +315,7 @@ router.put(
           client.legal_name,
           client.client_type,
           client.status,
+          client.tariff_level,
           client.contact_name,
           client.phone,
           client.mobile,

@@ -4,6 +4,7 @@ const router = express.Router();
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
+const { requireAdminOrManager } = require('../middleware/authorization');
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -28,6 +29,17 @@ function parsePositiveNumber(value) {
   if (value === undefined || value === null || value === '') return null;
   const parsed = Number(String(value).replace(',', '.'));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function parseNullablePrice(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace(',', '.'));
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    const error = new Error('Les tarifs doivent etre des nombres positifs ou vides');
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
 }
 
 function safeLimit(value, fallback = 250, max = 1000) {
@@ -96,6 +108,9 @@ function summarySelectSql() {
       a.ean,
       a.family_code,
       a.family_name,
+      a.sale_price_level_1_ht,
+      a.sale_price_level_2_ht,
+      a.sale_price_level_3_ht,
       ss.stock_quantity,
       ss.stock_value_ex_vat,
       ss.pma,
@@ -132,9 +147,7 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
     const availableOnly = parseBool(req.query.available_only, true);
     let where = 'WHERE ss.store_id = $1';
 
-    if (availableOnly) {
-      where += ' AND ss.stock_quantity > 0';
-    }
+    if (availableOnly) where += ' AND ss.stock_quantity > 0';
 
     if (clean(req.query.search)) {
       params.push(`%${clean(req.query.search)}%`);
@@ -178,9 +191,7 @@ router.get('/lots', authenticateToken, attachDbContext, async (req, res) => {
     const availableOnly = parseBool(req.query.available_only, true);
     let where = 'WHERE l.store_id = $1';
 
-    if (availableOnly) {
-      where += ' AND l.qty_remaining > 0';
-    }
+    if (availableOnly) where += ' AND l.qty_remaining > 0';
 
     if (clean(req.query.article_id)) {
       const articleId = clean(req.query.article_id);
@@ -217,6 +228,40 @@ router.get('/lots', authenticateToken, attachDbContext, async (req, res) => {
   } catch (err) {
     console.error('Erreur GET /api/stock/lots :', err);
     res.status(500).json({ error: 'Erreur serveur lots' });
+  }
+});
+
+router.patch('/articles/:articleId/prices', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const articleId = clean(req.params.articleId);
+    if (!articleId || !isUuid(articleId)) return res.status(400).json({ error: 'ID article invalide' });
+
+    const price1 = parseNullablePrice(req.body.sale_price_level_1_ht);
+    const price2 = parseNullablePrice(req.body.sale_price_level_2_ht);
+    const price3 = parseNullablePrice(req.body.sale_price_level_3_ht);
+
+    const result = await req.dbPool.query(
+      `
+      UPDATE articles
+      SET
+        sale_price_level_1_ht = $1,
+        sale_price_level_2_ht = $2,
+        sale_price_level_3_ht = $3,
+        updated_by = $4,
+        updated_at = NOW()
+      WHERE id = $5
+        AND store_id = $6
+      RETURNING id, sale_price_level_1_ht, sale_price_level_2_ht, sale_price_level_3_ht
+      `,
+      [price1, price2, price3, req.user.id, articleId, req.user.store_id]
+    );
+
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Article introuvable' });
+    res.json({ ok: true, prices: result.rows[0] });
+  } catch (err) {
+    console.error('Erreur PATCH /api/stock/articles/:articleId/prices :', err);
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    res.status(500).json({ error: 'Erreur serveur tarifs article' });
   }
 });
 

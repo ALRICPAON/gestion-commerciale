@@ -1,5 +1,5 @@
 .stock-layout {
-  max-width: 1440px;
+  max-width: 1600px;
 }
 
 .stock-kpis {
@@ -35,16 +35,51 @@
   grid-template-columns: minmax(260px, 2fr) minmax(160px, 1fr) minmax(180px, 1fr) auto;
 }
 
-.stock-table th:nth-child(2),
-.stock-table td:nth-child(2) {
-  min-width: 260px;
+.tariff-stock-table {
+  min-width: 1420px;
 }
 
-.trace-cell {
-  min-width: 260px;
-  max-width: 360px;
+.tariff-stock-table th,
+.tariff-stock-table td {
+  white-space: nowrap;
+}
+
+.tariff-stock-table th:nth-child(2),
+.tariff-stock-table td:nth-child(2) {
+  min-width: 220px;
   white-space: normal;
-  line-height: 1.35;
+}
+
+.tariff-input {
+  width: 96px;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font: inherit;
+  text-align: right;
+}
+
+.tariff-input:focus {
+  border-color: var(--theme-main);
+  outline: none;
+}
+
+.margin-cell {
+  min-width: 118px;
+  color: #166534;
+  font-weight: 700;
+}
+
+.margin-cell.error-text {
+  color: #dc2626;
+}
+
+.stock-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
 }
 
 .stock-muted {
