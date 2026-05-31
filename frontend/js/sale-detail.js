@@ -35,12 +35,14 @@ function priceFor(a) { return n(a?.[`sale_price_level_${tariffLevel()}_ht`] ?? a
 function trace(line) { return line.traceability_snapshot || {}; }
 function traceText(t) { const parts = [t?.lot_code || t?.supplier_lot_number, t?.latin_name, t?.fao_zone, t?.sous_zone, t?.fishing_gear || t?.engin, t?.production_method || t?.category, t?.allergens || t?.allergenes].filter(Boolean); return parts.length ? parts.join(' | ') : '-'; }
 function normalizeArticle(item) { return { ...item, article_id: item.article_id || item.id, designation: item.designation || item.display_name || '', sale_price_level_1_ht: item.sale_price_level_1_ht ?? item.sale_price_ex_vat ?? 0, stock_quantity: item.stock_quantity ?? 0, pma: item.pma ?? item.unit_cost_ex_vat ?? 0, sale_unit: item.sale_unit || item.unit || 'kg', fishing_gear: item.fishing_gear || item.engin, allergens: item.allergens || item.allergenes, production_method: item.production_method || item.category }; }
-function isNegoce() { return String(sale?.origin || '').toLowerCase() === 'negoce'; }
-function isFactured() { return String(sale?.status || '').toLowerCase() === 'invoiced' || !!sale?.invoice_id || !!sale?.invoice_reference || !!sale?.source_invoice_id || !!sale?.invoiced_at; }
-function isDeliveryNote() { return String(sale?.document_type || '').toUpperCase() === 'DELIVERY_NOTE'; }
+function normalizeKind(value) { return String(value || '').trim().toLowerCase(); }
+function isNegoce() { return normalizeKind(sale?.origin) === 'negoce'; }
+function isFactured() { return normalizeKind(sale?.status) === 'invoiced' || !!sale?.invoice_id || !!sale?.invoice_reference || !!sale?.source_invoice_id || !!sale?.invoiced_at; }
+function isNegoceDeliveryNoteShape() { return isNegoce() && ['delivered', 'delivery_note', 'validated'].includes(normalizeKind(sale?.status)); }
+function isDeliveryNote() { return String(sale?.document_type || '').toUpperCase() === 'DELIVERY_NOTE' || isNegoceDeliveryNoteShape(); }
 function editable() {
-  if (sale?.document_type === 'ORDER') return sale?.status === 'draft';
   if (isDeliveryNote()) return !isFactured();
+  if (sale?.document_type === 'ORDER') return sale?.status === 'draft';
   return false;
 }
 function canValidateInBl() { return sale?.document_type === 'ORDER' && sale?.status === 'draft'; }
