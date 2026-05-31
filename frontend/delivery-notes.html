@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bons de livraison - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/delivery-notes.css?v=1" />
+</head>
+<body class="app-page delivery-notes-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Bons de livraison</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button type="button" id="sales-btn" class="btn btn-secondary">Commandes</button>
+      <button type="button" id="home-btn" class="btn btn-secondary">Accueil</button>
+      <button type="button" id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content delivery-layout">
+    <section class="delivery-panel">
+      <div class="page-actions">
+        <div>
+          <h2>Commandes validées</h2>
+          <p>Générer un BL ne déstocke pas. Le stock sort à la validation du BL.</p>
+        </div>
+        <button type="button" id="refresh-btn" class="btn btn-secondary">Actualiser</button>
+      </div>
+      <div id="page-feedback" class="page-feedback hidden"></div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead><tr><th>Commande</th><th>Client livré</th><th>Date</th><th>Total HT</th><th></th></tr></thead>
+          <tbody id="orders-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="delivery-panel">
+      <div class="page-actions"><div><h2>BL</h2><p>Validation, impression BL et préparation étiquettes sanitaires.</p></div></div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead><tr><th>BL</th><th>Client livré</th><th>Client facturé</th><th>Statut</th><th></th></tr></thead>
+          <tbody id="delivery-notes-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="delivery-panel detail-panel">
+      <div class="page-actions">
+        <div><h2 id="detail-title">Sélectionner un BL</h2><p id="detail-subtitle">Les informations d’impression apparaîtront ici.</p></div>
+        <div class="page-actions-right">
+          <button type="button" id="validate-btn" class="btn btn-primary" disabled>Valider BL</button>
+          <button type="button" id="print-btn" class="btn btn-secondary" disabled>Imprimer BL</button>
+          <button type="button" id="labels-btn" class="btn btn-secondary" disabled>Étiquettes</button>
+        </div>
+      </div>
+      <div id="detail-content" class="detail-content empty-state">Aucun BL sélectionné.</div>
+    </section>
+
+    <section id="print-area" class="print-area"></section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/delivery-notes.js?v=1"></script>
+</body>
+</html>
