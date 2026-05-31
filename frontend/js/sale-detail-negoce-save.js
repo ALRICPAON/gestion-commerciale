@@ -1,5 +1,15 @@
 (() => {
-  if (!window || !document || !els?.body) return;
+  if (!window || !document || !els?.body) {
+    console.log('NEGOCE SAVE HELPER NOT INSTALLED', {
+      hasWindow: typeof window !== 'undefined',
+      hasDocument: typeof document !== 'undefined',
+      hasEls: typeof els !== 'undefined',
+      hasBody: typeof els !== 'undefined' && !!els?.body,
+    });
+    return;
+  }
+
+  console.log('NEGOCE SAVE HELPER LOADED', { version: 3, script: 'sale-detail-negoce-save.js' });
 
   const normalizeKind = (value) => String(value || '')
     .trim()
@@ -44,11 +54,31 @@
     return (Array.isArray(lines) ? lines : []).find((line) => String(line.id) === String(lineId)) || null;
   }
 
+  function saleDiagnostic() {
+    return {
+      sale_id: sale?.id,
+      sale_status: sale?.status,
+      sale_document_type: sale?.document_type,
+      sale_origin: sale?.origin,
+      sale_invoice_id: sale?.invoice_id,
+      sale_invoice_reference: sale?.invoice_reference,
+      sale_source_invoice_id: sale?.source_invoice_id,
+      sale_invoiced_at: sale?.invoiced_at,
+      is_negoce: isNegoce(),
+      is_delivery_note: isDeliveryNote(),
+      is_factured: isFactured(),
+      editable: editable(),
+    };
+  }
+
   async function saveNegoceLine(lineId) {
     clear(els.lf);
     await ensureHeader();
     const row = els.body.querySelector(`tr[data-line-id="${lineId}"]`);
-    if (!row) return false;
+    if (!row) {
+      console.log('NEGOCE SAVE HANDLER HIT', { ...saleDiagnostic(), line_id: lineId, row_found: false });
+      return false;
+    }
 
     window.clearTimeout(pluSearchTimers.get(lineId));
     if (!row.dataset.articleId) await searchNegocePlu(row, { applyFirst: true });
@@ -58,6 +88,12 @@
     const articleId = clean(row.dataset.articleId || pluInput?.dataset.articleId || line?.article_id);
     const label = clean(row.querySelector('.line-article-label')?.value || line?.article_label);
     if (!label) {
+      console.log('NEGOCE SAVE HANDLER HIT', {
+        ...saleDiagnostic(),
+        line_id: lineId,
+        article_id: articleId || null,
+        blocked_reason: 'missing_label',
+      });
       fb(els.lf, 'Saisis la désignation du produit négoce', true);
       return false;
     }
@@ -76,8 +112,17 @@
       unit_sale_price_ht: n(row.querySelector('.line-unit-price-ht')?.value),
       vat_rate: n(row.querySelector('.line-vat-rate')?.value, vatRate()),
     };
+    const url = `/api/sales/lines/${lineId}`;
 
-    await api(`/api/sales/lines/${lineId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+    console.log('NEGOCE SAVE HANDLER HIT', {
+      ...saleDiagnostic(),
+      line_id: lineId,
+      article_id: articleId || null,
+      payload,
+      url,
+    });
+
+    await api(url, { method: 'PATCH', body: JSON.stringify(payload) });
     fb(els.lf, isDeliveryNote() && normalizeKind(sale?.status) !== 'draft' ? 'Ligne enregistrée et stock réajusté' : 'Ligne enregistrée');
     await loadSale();
     return true;
@@ -91,12 +136,17 @@
 
   els.body.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action="save-line"]');
-    if (!button || !isNegoce()) return;
+    if (!button) return;
+    if (!isNegoce()) {
+      console.log('NEGOCE SAVE HANDLER SKIPPED', { ...saleDiagnostic(), line_id: button.dataset.id, reason: 'not_negoce' });
+      return;
+    }
     event.preventDefault();
     event.stopImmediatePropagation();
     try {
       await saveNegoceLine(button.dataset.id);
     } catch (err) {
+      console.log('NEGOCE SAVE HANDLER ERROR', { ...saleDiagnostic(), line_id: button.dataset.id, error: err.message });
       fb(els.lf, err.message || 'Erreur enregistrement ligne négoce', true);
     }
   }, true);
@@ -110,11 +160,13 @@
       const saved = await saveNegoceLine(row.dataset.lineId);
       if (saved) await addLine();
     } catch (err) {
+      console.log('NEGOCE SAVE HANDLER ERROR', { ...saleDiagnostic(), line_id: row.dataset.lineId, error: err.message });
       fb(els.lf, err.message || 'Erreur enregistrement ligne négoce', true);
     }
   }, true);
 
   window.setTimeout(() => {
+    console.log('NEGOCE SAVE HELPER SALE SNAPSHOT', saleDiagnostic());
     if (sale && isDeliveryNote()) loadSale().catch((err) => fb(els.lf, err.message || 'Erreur rechargement BL négoce', true));
   }, 0);
 })();
