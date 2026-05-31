@@ -13,6 +13,7 @@ let clients = [];
 let stockItems = [];
 let lotItems = [];
 let editingLineId = null;
+const pluSearchTimers = new Map();
 
 function n(v, f = 0) { const x = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(x) ? x : f; }
 function clean(v) { return String(v ?? '').trim(); }
@@ -117,6 +118,7 @@ function computeRow(row) {
 
 async function stockSearch(search = '') {
   if (isNegoce()) {
+    console.log('Recherche article négoce', search || 'liste');
     const data = search
       ? await api(`/api/articles/search?q=${encodeURIComponent(search)}`)
       : await api('/api/articles?active=true&limit=200');
@@ -172,6 +174,28 @@ async function resolvePlu(row) {
   applyArticle(item);
 }
 
+async function searchNegocePlu(row, { applyFirst = false } = {}) {
+  if (!isNegoce() || !row) return;
+  const plu = clean(row.querySelector('.line-plu')?.value);
+  if (!plu) return;
+  console.log('Recherche article négoce', plu);
+  const found = (await api(`/api/articles/search?q=${encodeURIComponent(plu)}`)).map(normalizeArticle);
+  const exact = found.find((a) => String(a.plu) === plu);
+  const item = exact || (applyFirst ? found[0] : null);
+  if (!item) return;
+  editingLineId = row.dataset.lineId;
+  applyArticle(item);
+}
+
+function scheduleNegocePluSearch(row) {
+  if (!isNegoce() || !row) return;
+  window.clearTimeout(pluSearchTimers.get(row.dataset.lineId));
+  const timer = window.setTimeout(() => {
+    searchNegocePlu(row).catch((err) => fb(els.lf, err.message, true));
+  }, 300);
+  pluSearchTimers.set(row.dataset.lineId, timer);
+}
+
 async function saveHeader(reload = true) {
   clear(els.hf);
   await api(`/api/sales/${saleId}`, { method: 'PATCH', body: JSON.stringify({ client_id: els.client.value || null, document_date: els.date.value || null, document_type: 'ORDER', status: els.status.value || 'draft', origin: isNegoce() ? 'negoce' : 'manual', reference_number: clean(els.ref.value) || null, notes: clean(els.notes.value) || null }) });
@@ -184,7 +208,7 @@ async function saveLine(lineId) {
   await ensureHeader();
   const row = els.body.querySelector(`tr[data-line-id="${lineId}"]`);
   if (!row) return;
-  if (!row.dataset.articleId) await resolvePlu(row);
+  if (!row.dataset.articleId) await (isNegoce() ? searchNegocePlu(row, { applyFirst: true }) : resolvePlu(row));
   if (!row.dataset.articleId) { fb(els.lf, isNegoce() ? 'Sélectionne un article référencé' : 'Sélectionne un article en stock', true); return; }
   const label = clean(row.querySelector('.line-article-label').value);
   if (isNegoce() && !label) { fb(els.lf, 'Saisis la désignation du produit négoce', true); return; }
@@ -220,8 +244,9 @@ els.stockSearch?.addEventListener('input', () => stockSearch(clean(els.stockSear
 els.stockBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-article-id]'); const item = stockItems.find((a) => a.article_id === row?.dataset.articleId); if (item) applyArticle(item); });
 els.lotBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-lot-id]'); const lot = lotItems.find((l) => l.id === row?.dataset.lotId); if (lot) applyLot(lot); });
 els.body?.addEventListener('click', async (e) => { const b = e.target.closest('[data-action]'); if (!b) return; if (b.dataset.action === 'save-line') await saveLine(b.dataset.id); if (b.dataset.action === 'delete-line') await deleteLine(b.dataset.id); if (b.dataset.action === 'choose-lot') await openLots(b.dataset.id); });
-els.body?.addEventListener('keydown', async (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.key === 'F9' && e.target.classList.contains('line-plu')) { e.preventDefault(); openStock(row.dataset.lineId); return; } if (e.key !== 'Enter' || !e.target.classList.contains('line-input')) return; e.preventDefault(); await saveLine(row.dataset.lineId); await addLine(); });
-els.body?.addEventListener('blur', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (row) await resolvePlu(row).catch((err) => fb(els.lf, err.message, true)); }, true);
-els.body?.addEventListener('input', (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (['line-package-count', 'line-weight-per-package', 'line-total-weight', 'line-unit-price-ht', 'line-vat-rate'].some((c) => e.target.classList.contains(c))) computeRow(row); });
+els.body?.addEventListener('keydown', async (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.key === 'F9' && e.target.classList.contains('line-plu')) { e.preventDefault(); if (isNegoce()) console.log('Recherche article négoce', 'F9'); openStock(row.dataset.lineId); return; } if (e.key !== 'Enter' || !e.target.classList.contains('line-input')) return; e.preventDefault(); await saveLine(row.dataset.lineId); await addLine(); });
+els.body?.addEventListener('blur', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row) return; await (isNegoce() ? searchNegocePlu(row, { applyFirst: true }) : resolvePlu(row)).catch((err) => fb(els.lf, err.message, true)); }, true);
+els.body?.addEventListener('change', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row || !isNegoce()) return; await searchNegocePlu(row, { applyFirst: true }).catch((err) => fb(els.lf, err.message, true)); });
+els.body?.addEventListener('input', (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.target.classList.contains('line-plu') && isNegoce()) { row.dataset.articleId = ''; row.dataset.selectedLotId = ''; scheduleNegocePluSearch(row); return; } if (['line-package-count', 'line-weight-per-package', 'line-total-weight', 'line-unit-price-ht', 'line-vat-rate'].some((c) => e.target.classList.contains(c))) computeRow(row); });
 async function init() { try { renderTopbar(); await loadClients(); await loadSale(); } catch (e) { console.error('Erreur init détail vente :', e); fb(els.lf, e.message || 'Erreur chargement vente', true); } }
 init();
