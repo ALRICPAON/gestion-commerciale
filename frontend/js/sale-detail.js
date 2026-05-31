@@ -29,14 +29,21 @@ function deps() { return Array.isArray(sessionUser.departments) ? sessionUser.de
 function currentDep() { return activeDepartment && deps().some((d) => d.id === activeDepartment.id) ? activeDepartment : deps()[0] || null; }
 function saveDep(dep) { localStorage.setItem('gc_active_department', JSON.stringify(dep)); localStorage.setItem('grv2_active_department', JSON.stringify(dep)); }
 function selectedClient() { return clients.find((c) => c.id === els.client.value) || null; }
-function tariffLevel() { return n(selectedClient()?.tariff_level || sale?.client_tariff_level || 1, 1); }
-function vatRate() { const c = selectedClient(); if (c?.is_vat_exempt || sale?.client_is_vat_exempt) return 0; return n(c?.vat_rate ?? sale?.client_vat_rate ?? 5.5, 5.5); }
+function tariffLevel() { return n(selectedClient()?.tariff_level || sale?.client_tariff_level || sale?.tariff_level_snapshot || 1, 1); }
+function vatRate() { const c = selectedClient(); if (c?.is_vat_exempt || sale?.client_is_vat_exempt || sale?.is_vat_exempt_snapshot) return 0; return n(c?.vat_rate ?? sale?.client_vat_rate ?? sale?.vat_rate_snapshot ?? 5.5, 5.5); }
 function priceFor(a) { return n(a?.[`sale_price_level_${tariffLevel()}_ht`] ?? a?.sale_price_ex_vat ?? 0, 0); }
 function trace(line) { return line.traceability_snapshot || {}; }
 function traceText(t) { const parts = [t?.lot_code || t?.supplier_lot_number, t?.latin_name, t?.fao_zone, t?.sous_zone, t?.fishing_gear || t?.engin, t?.production_method || t?.category, t?.allergens || t?.allergenes].filter(Boolean); return parts.length ? parts.join(' | ') : '-'; }
 function normalizeArticle(item) { return { ...item, article_id: item.article_id || item.id, designation: item.designation || item.display_name || '', sale_price_level_1_ht: item.sale_price_level_1_ht ?? item.sale_price_ex_vat ?? 0, stock_quantity: item.stock_quantity ?? 0, pma: item.pma ?? item.unit_cost_ex_vat ?? 0, sale_unit: item.sale_unit || item.unit || 'kg', fishing_gear: item.fishing_gear || item.engin, allergens: item.allergens || item.allergenes, production_method: item.production_method || item.category }; }
 function isNegoce() { return sale?.origin === 'negoce'; }
-function editable() { return sale?.status === 'draft' && sale?.document_type === 'ORDER'; }
+function isFactured() { return sale?.status === 'invoiced' || !!sale?.invoice_id || !!sale?.invoice_reference || !!sale?.invoiced_at; }
+function isDeliveryNote() { return sale?.document_type === 'DELIVERY_NOTE'; }
+function editable() {
+  if (sale?.document_type === 'ORDER') return sale?.status === 'draft';
+  if (isDeliveryNote()) return ['draft', 'validated'].includes(sale?.status) && !isFactured();
+  return false;
+}
+function canValidateInBl() { return sale?.document_type === 'ORDER' && sale?.status === 'draft'; }
 
 function renderTopbar() {
   if (els.user) els.user.textContent = sessionUser.email || 'Utilisateur';
@@ -54,9 +61,9 @@ async function loadSale() { clear(els.hf); clear(els.lf); const data = await api
 
 function renderClientContext() {
   const c = selectedClient();
-  const level = c?.tariff_level || sale?.client_tariff_level || 1;
-  const exempt = c?.is_vat_exempt || sale?.client_is_vat_exempt;
-  const vat = exempt ? 0 : n(c?.vat_rate ?? sale?.client_vat_rate ?? 5.5, 5.5);
+  const level = c?.tariff_level || sale?.client_tariff_level || sale?.tariff_level_snapshot || 1;
+  const exempt = c?.is_vat_exempt || sale?.client_is_vat_exempt || sale?.is_vat_exempt_snapshot;
+  const vat = exempt ? 0 : n(c?.vat_rate ?? sale?.client_vat_rate ?? sale?.vat_rate_snapshot ?? 5.5, 5.5);
   els.tariff.value = `Tarif ${level}`;
   els.vat.value = exempt ? 'Exonéré' : `${vat.toFixed(2)} %`;
 }
@@ -70,13 +77,15 @@ function renderHeader() {
   els.notes.value = sale.notes || '';
   renderClientContext();
   const locked = !editable();
-  [els.client, els.date, els.type, els.status, els.ref, els.notes].forEach((el) => { if (el) el.disabled = locked; });
+  [els.client, els.date, els.ref, els.notes].forEach((el) => { if (el) el.disabled = locked; });
   els.type.disabled = true;
+  els.status.disabled = true;
   els.save.disabled = locked;
   els.add.disabled = locked;
-  els.validateBl.disabled = !editable();
+  els.validateBl.disabled = !canValidateInBl();
   els.validateBl.textContent = isNegoce() ? 'Valider BL Négoce' : 'Valider en BL';
-  els.validateBl.classList.toggle('hidden', !editable());
+  els.validateBl.classList.toggle('hidden', !canValidateInBl());
+  if (isDeliveryNote() && editable()) fb(els.hf, 'BL modifiable tant qu il n est pas facturé. Les modifications d un BL validé réajustent le stock.', false);
 }
 
 function renderLines() {
@@ -88,7 +97,7 @@ function renderLines() {
     return `<tr data-line-id="${line.id}" data-article-id="${line.article_id || ''}" data-selected-lot-id="${line.selected_lot_id || ''}" data-sale-unit="${esc(line.sale_unit || 'kg')}">
       <td><input class="line-input line-plu" value="${esc(line.article_plu || '')}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-article-label" value="${esc(line.article_label || '')}" ${locked ? 'disabled' : ''}></td>
-      <td><button type="button" class="btn btn-secondary" data-action="choose-lot" data-id="${line.id}" ${locked || !line.article_id ? 'disabled' : ''}>${esc(t.lot_code || t.supplier_lot_number || (negoce ? 'Lot après réception' : 'Lot'))}</button></td>
+      <td><button type="button" class="btn btn-secondary" data-action="choose-lot" data-id="${line.id}" ${locked || !line.article_id || negoce ? 'disabled' : ''}>${esc(t.lot_code || t.supplier_lot_number || (negoce ? 'Négoce' : 'Lot'))}</button></td>
       <td><input class="line-input line-package-count" type="number" step="0.001" value="${n(line.package_count)}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-weight-per-package" type="number" step="0.001" value="${n(line.weight_per_package)}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-total-weight" type="number" step="0.001" value="${n(line.total_weight || line.sold_quantity)}" ${locked ? 'disabled' : ''}></td>
@@ -118,10 +127,7 @@ function computeRow(row) {
 
 async function stockSearch(search = '') {
   if (isNegoce()) {
-    console.log('Recherche article négoce', search || 'liste');
-    const data = search
-      ? await api(`/api/articles/search?q=${encodeURIComponent(search)}`)
-      : await api('/api/articles?active=true&limit=200');
+    const data = search ? await api(`/api/articles/search?q=${encodeURIComponent(search)}`) : await api('/api/articles?active=true&limit=200');
     stockItems = (Array.isArray(data) ? data : []).map(normalizeArticle);
   } else {
     const q = new URLSearchParams({ limit: '200', available_only: 'true' });
@@ -140,7 +146,7 @@ function applyArticle(item) {
   row.querySelector('.line-article-label').value = item.designation || '';
   row.querySelector('.line-unit-price-ht').value = priceFor(item).toFixed(4);
   row.querySelector('.line-vat-rate').value = vatRate().toFixed(2);
-  row.querySelector('[data-action="choose-lot"]').disabled = false;
+  row.querySelector('[data-action="choose-lot"]').disabled = isNegoce();
   row.querySelector('.trace-cell').textContent = traceText(item);
   els.stockModal.classList.add('hidden');
   computeRow(row);
@@ -149,7 +155,7 @@ async function openLots(lineId) {
   editingLineId = lineId;
   const row = els.body.querySelector(`tr[data-line-id="${lineId}"]`);
   const articleId = row?.dataset.articleId;
-  if (!articleId) return;
+  if (!articleId || isNegoce()) return;
   lotItems = await api(`/api/stock/lots?article_id=${encodeURIComponent(articleId)}&available_only=true&limit=200`);
   els.lotBody.innerHTML = lotItems.map((l) => `<tr data-lot-id="${l.id}"><td>${esc(l.lot_code || '')}</td><td>${esc(l.supplier_lot_number || '')}</td><td>${qty(l.qty_remaining)}</td><td>${sdate(l.dlc)}</td><td>${esc(l.latin_name || '')}</td><td>${esc(l.fao_zone || '')}</td><td>${esc(l.sous_zone || '')}</td><td>${esc(l.fishing_gear || '')}</td><td>${esc(l.production_method || '')}</td><td>${esc(l.allergens || '')}</td></tr>`).join('') || '<tr><td colspan="10">Aucun lot.</td></tr>';
   els.lotModal.classList.remove('hidden');
@@ -178,7 +184,6 @@ async function searchNegocePlu(row, { applyFirst = false } = {}) {
   if (!isNegoce() || !row) return;
   const plu = clean(row.querySelector('.line-plu')?.value);
   if (!plu) return;
-  console.log('Recherche article négoce', plu);
   const found = (await api(`/api/articles/search?q=${encodeURIComponent(plu)}`)).map(normalizeArticle);
   const exact = found.find((a) => String(a.plu) === plu);
   const item = exact || (applyFirst ? found[0] : null);
@@ -198,8 +203,19 @@ function scheduleNegocePluSearch(row) {
 
 async function saveHeader(reload = true) {
   clear(els.hf);
-  await api(`/api/sales/${saleId}`, { method: 'PATCH', body: JSON.stringify({ client_id: els.client.value || null, document_date: els.date.value || null, document_type: 'ORDER', status: els.status.value || 'draft', origin: isNegoce() ? 'negoce' : 'manual', reference_number: clean(els.ref.value) || null, notes: clean(els.notes.value) || null }) });
-  if (reload) { fb(els.hf, 'En-tête enregistré'); await loadSale(); }
+  await api(`/api/sales/${saleId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      client_id: els.client.value || null,
+      document_date: els.date.value || null,
+      document_type: sale?.document_type || 'ORDER',
+      status: sale?.status || 'draft',
+      origin: isNegoce() ? 'negoce' : (sale?.origin || 'manual'),
+      reference_number: clean(els.ref.value) || null,
+      notes: clean(els.notes.value) || null,
+    }),
+  });
+  if (reload) { fb(els.hf, isDeliveryNote() ? 'BL enregistré' : 'En-tête enregistré'); await loadSale(); }
 }
 async function ensureHeader() { if ((sale?.client_id || '') === (els.client.value || '')) return; await saveHeader(false); const data = await api(`/api/sales/${saleId}`); sale = data.sale; lines = Array.isArray(data.lines) ? data.lines : []; }
 async function addLine() { clear(els.lf); if (!editable()) return; if (!els.client.value) { fb(els.lf, "Sélectionne un client avant d'ajouter une ligne", true); return; } await ensureHeader(); await api(`/api/sales/${saleId}/lines`, { method: 'POST', body: JSON.stringify({}) }); await loadSale(); els.body.querySelector('tr[data-line-id]:last-child .line-plu')?.focus(); }
@@ -214,17 +230,17 @@ async function saveLine(lineId) {
   if (isNegoce() && !label) { fb(els.lf, 'Saisis la désignation du produit négoce', true); return; }
   const payload = { article_id: row.dataset.articleId, article_plu: clean(row.querySelector('.line-plu').value), article_label: label, selected_lot_id: row.dataset.selectedLotId || null, package_count: n(row.querySelector('.line-package-count').value), weight_per_package: n(row.querySelector('.line-weight-per-package').value), total_weight: n(row.querySelector('.line-total-weight').value), sale_unit: row.dataset.saleUnit || 'kg', unit_sale_price_ht: n(row.querySelector('.line-unit-price-ht').value), vat_rate: n(row.querySelector('.line-vat-rate').value, vatRate()) };
   await api(`/api/sales/lines/${lineId}`, { method: 'PATCH', body: JSON.stringify(payload) });
-  fb(els.lf, 'Ligne enregistrée');
+  fb(els.lf, isDeliveryNote() && sale?.status === 'validated' ? 'Ligne enregistrée et stock réajusté' : 'Ligne enregistrée');
   await loadSale();
 }
-async function deleteLine(lineId) { clear(els.lf); if (!confirm('Supprimer cette ligne ?')) return; await api(`/api/sales/lines/${lineId}`, { method: 'DELETE' }); fb(els.lf, 'Ligne supprimée'); await loadSale(); }
-async function validateInBl() { clear(els.lf); const text = isNegoce() ? 'Valider en BL négoce ? Les lots réceptionnés seront déstockés.' : 'Valider en BL ? Cette action génère le BL et déstocke les lots.'; if (!confirm(text)) return; await api(`/api/sales/${saleId}/validate-delivery-note`, { method: 'POST', body: JSON.stringify({}) }); fb(els.lf, isNegoce() ? 'Commande négoce validée en BL et stock déstocké' : 'Commande validée en BL et stock déstocké'); await loadSale(); }
+async function deleteLine(lineId) { clear(els.lf); if (!confirm('Supprimer cette ligne ?')) return; await api(`/api/sales/lines/${lineId}`, { method: 'DELETE' }); fb(els.lf, isDeliveryNote() && sale?.status === 'validated' ? 'Ligne supprimée et stock réajusté' : 'Ligne supprimée'); await loadSale(); }
+async function validateInBl() { clear(els.lf); if (!canValidateInBl()) return; const text = isNegoce() ? 'Valider en BL négoce ? Les lots réceptionnés seront déstockés.' : 'Valider en BL ? Cette action génère le BL et déstocke les lots.'; if (!confirm(text)) return; await api(`/api/sales/${saleId}/validate-delivery-note`, { method: 'POST', body: JSON.stringify({}) }); fb(els.lf, isNegoce() ? 'Commande négoce validée en BL' : 'Commande validée en BL et stock déstocké'); await loadSale(); }
 function printOrder() {
   const selected = selectedClient();
-  const client = selected?.name || sale?.client_name || '-';
+  const client = selected?.name || sale?.client_name || sale?.delivered_client_name_snapshot || '-';
   const storeIdentifier = selected?.store_identifier || sale?.client_store_identifier || sale?.delivered_client_store_identifier || '-';
   const rows = lines.map((line) => `<tr><td style="border-bottom:1px solid #ddd;padding:6px">${esc(line.article_plu || '')}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(line.article_label || '')}</td><td style="border-bottom:1px solid #ddd;padding:6px">${n(line.package_count)}</td><td style="border-bottom:1px solid #ddd;padding:6px">${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td style="border-bottom:1px solid #ddd;padding:6px">${esc(isNegoce() ? 'Produit négoce hors stock' : traceText(trace(line)))}</td></tr>`).join('');
-  const title = isNegoce() ? 'Commande Négoce' : 'Commande client';
+  const title = isDeliveryNote() ? (isNegoce() ? 'BL Négoce' : 'Bon de livraison') : (isNegoce() ? 'Commande Négoce' : 'Commande client');
   const html = `<section style="font-family:Arial,sans-serif;color:#111"><h1>${title}</h1><p><strong>${esc(sale?.reference_number || saleId)}</strong></p><p>Date : ${sdate(sale?.document_date)}</p><p>Client livré : ${esc(client)}</p><p>Identifiant magasin : ${esc(storeIdentifier)}</p><table style="width:100%;border-collapse:collapse;margin-top:18px"><thead><tr><th style="text-align:left;border-bottom:1px solid #111;padding:6px">PLU</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Désignation</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Colis</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Poids</th><th style="text-align:left;border-bottom:1px solid #111;padding:6px">Lot / traçabilité</th></tr></thead><tbody>${rows}</tbody></table></section>`;
   const win = window.open('', '_blank');
   win.document.write(`<!doctype html><html><head><title>${title}</title></head><body>${html}<script>window.print();<\/script></body></html>`);
@@ -244,7 +260,7 @@ els.stockSearch?.addEventListener('input', () => stockSearch(clean(els.stockSear
 els.stockBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-article-id]'); const item = stockItems.find((a) => a.article_id === row?.dataset.articleId); if (item) applyArticle(item); });
 els.lotBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-lot-id]'); const lot = lotItems.find((l) => l.id === row?.dataset.lotId); if (lot) applyLot(lot); });
 els.body?.addEventListener('click', async (e) => { const b = e.target.closest('[data-action]'); if (!b) return; if (b.dataset.action === 'save-line') await saveLine(b.dataset.id); if (b.dataset.action === 'delete-line') await deleteLine(b.dataset.id); if (b.dataset.action === 'choose-lot') await openLots(b.dataset.id); });
-els.body?.addEventListener('keydown', async (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.key === 'F9' && e.target.classList.contains('line-plu')) { e.preventDefault(); if (isNegoce()) console.log('Recherche article négoce', 'F9'); openStock(row.dataset.lineId); return; } if (e.key !== 'Enter' || !e.target.classList.contains('line-input')) return; e.preventDefault(); await saveLine(row.dataset.lineId); await addLine(); });
+els.body?.addEventListener('keydown', async (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.key === 'F9' && e.target.classList.contains('line-plu')) { e.preventDefault(); openStock(row.dataset.lineId); return; } if (e.key !== 'Enter' || !e.target.classList.contains('line-input')) return; e.preventDefault(); await saveLine(row.dataset.lineId); await addLine(); });
 els.body?.addEventListener('blur', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row) return; await (isNegoce() ? searchNegocePlu(row, { applyFirst: true }) : resolvePlu(row)).catch((err) => fb(els.lf, err.message, true)); }, true);
 els.body?.addEventListener('change', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row || !isNegoce()) return; await searchNegocePlu(row, { applyFirst: true }).catch((err) => fb(els.lf, err.message, true)); });
 els.body?.addEventListener('input', (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.target.classList.contains('line-plu') && isNegoce()) { row.dataset.articleId = ''; row.dataset.selectedLotId = ''; scheduleNegocePluSearch(row); return; } if (['line-package-count', 'line-weight-per-package', 'line-total-weight', 'line-unit-price-ht', 'line-vat-rate'].some((c) => e.target.classList.contains(c))) computeRow(row); });
