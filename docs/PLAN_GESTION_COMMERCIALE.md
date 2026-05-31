@@ -676,3 +676,141 @@ LIMIT 20;
 * ouvrir `Voir` sur un article migré
 * verifier que le detail affiche nom latin / FAO / engin / unites
 * modifier un article migré sans erreur `department_id`
+Décision métier : pas de module Devis pour l’instant
+
+Le projet ne démarre pas par un module Devis.
+
+Le fonctionnement commercial souhaité est :
+
+Commande / Vente
+↓
+Bon de livraison
+↓
+Facture
+
+Le module prioritaire à construire ensuite est donc :
+
+Stock / Lots
+Vente / Commande client
+Bon de livraison
+Facture
+Prochaine priorité : Module Stock / Lots
+
+Avant de finaliser le module Vente, il faut créer ou stabiliser un vrai module Stock / Lots, proche de la logique Rayon V2.
+
+Objectifs :
+
+consulter le stock par article
+consulter les lots disponibles
+afficher les quantités restantes
+afficher les informations de traçabilité
+gérer le FIFO par défaut
+permettre ensuite à la vente de choisir manuellement un lot à consommer
+
+Le stock doit rester basé sur :
+
+store_id
+article_id
+lots
+stock_movements
+stock_summary
+
+Le module Stock / Lots doit servir de base fiable au module Vente.
+
+Module Vente cible
+
+Le module Vente doit gérer une vente professionnelle B2B.
+
+Workflow
+Création commande / vente
+↓
+Ajout des lignes
+↓
+Choix automatique FIFO du lot
+↓
+Possibilité de choisir manuellement un lot
+↓
+Validation
+↓
+Génération BL
+↓
+Facturation
+Fiche client et TVA
+
+La fiche client devra permettre de gérer :
+
+client assujetti ou non à la TVA
+taux de TVA applicable
+informations de facturation
+informations de livraison
+
+Le module Vente doit calculer :
+
+total HT
+TVA
+total TTC
+total poids
+total colis
+Ligne de vente
+
+Chaque ligne de vente doit gérer :
+
+article
+lot consommé automatiquement en FIFO
+choix manuel possible du lot
+nombre de colis
+poids par colis
+poids total
+prix HT
+total HT
+TVA
+total TTC
+informations métier récupérées depuis l’achat / lot :
+nom latin
+FAO
+sous-zone
+engin
+méthode de production
+allergènes
+DLC si disponible
+Ergonomie ligne
+
+Fonctions souhaitées :
+
+bouton Enregistrer
+bouton Supprimer
+touche Entrée = enregistrer la ligne et passer à la ligne suivante
+interface rapide pour saisie commerciale
+Étiquettes sanitaires
+
+Le module Vente doit permettre de générer les étiquettes sanitaires.
+
+Par ligne :
+
+bouton “Générer étiquettes”
+génération selon le nombre de colis
+
+Exemple :
+
+10 colis x 3 kg de dos de cabillaud
+=
+10 étiquettes sanitaires
+
+Sur le bon complet :
+
+bouton général “Imprimer toutes les étiquettes”
+impression de toutes les étiquettes sanitaires du bon
+
+Les étiquettes doivent reprendre les informations métier du lot consommé.
+
+Priorités mises à jour
+
+Ordre actuel :
+
+Stock / Lots
+Vente / Commande client
+Bon de livraison
+Facture
+Tableau de bord commercial
+Audit / traçabilité utilisateur
+Assistant IA métier
