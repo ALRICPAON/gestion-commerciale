@@ -13,6 +13,8 @@ const num = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 const pos = (value, fallback = 0) => Math.max(num(value, fallback), 0);
+const norm = (value) => String(value || '').trim().toLowerCase();
+const isDestocked = (doc) => ['validated', 'delivery_note', 'delivered'].includes(norm(doc?.status));
 const unlocked = (doc) => doc?.document_type === 'DELIVERY_NOTE' && doc.status !== 'invoiced' && !doc.invoice_id && !doc.invoiced_at;
 
 async function documentById(db, id, storeId, lock = false) {
@@ -160,7 +162,7 @@ async function recalc(db, documentId, userId) {
 async function reverseStock(db, documentId, storeId, userId) {
   const doc = await documentById(db, documentId, storeId, true);
   const affected = new Set();
-  if (!doc || doc.status !== 'validated') return affected;
+  if (!doc || !isDestocked(doc)) return affected;
   const allocations = await db.query(
     `SELECT sla.lot_id, sla.quantity, sl.article_id
      FROM sale_line_allocations sla
@@ -219,17 +221,20 @@ async function validateStock(db, documentId, storeId, clientKey, userId) {
     }
     await db.query(`UPDATE sales_lines SET line_status = 'validated', updated_by = $1, updated_at = NOW() WHERE id = $2`, [userId, line.id]);
   }
-  await db.query(`UPDATE sales_documents SET status = 'validated', validated_at = COALESCE(validated_at, NOW()), updated_by = $1, updated_at = NOW() WHERE id = $2`, [userId, documentId]);
+  await db.query(`UPDATE sales_documents SET status = CASE WHEN status IN ('delivery_note', 'delivered') THEN status ELSE 'validated' END, validated_at = COALESCE(validated_at, NOW()), updated_by = $1, updated_at = NOW() WHERE id = $2`, [userId, documentId]);
   return affected;
 }
 
 async function withReallocation(db, doc, storeId, clientKey, userId, work) {
-  const wasValidated = doc.status === 'validated';
+  const wasDestocked = isDestocked(doc);
   const affected = new Set();
-  if (wasValidated) (await reverseStock(db, doc.id, storeId, userId)).forEach((id) => affected.add(id));
+  if (wasDestocked) {
+    (await reverseStock(db, doc.id, storeId, userId)).forEach((id) => affected.add(id));
+    for (const id of affected) await recomputeArticleStock(db, id, storeId);
+  }
   const result = await work();
   await recalc(db, doc.id, userId);
-  if (wasValidated) (await validateStock(db, doc.id, storeId, clientKey, userId)).forEach((id) => affected.add(id));
+  if (wasDestocked) (await validateStock(db, doc.id, storeId, clientKey, userId)).forEach((id) => affected.add(id));
   for (const id of affected) await recomputeArticleStock(db, id, storeId);
   return result;
 }
