@@ -120,6 +120,7 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
 
   const client = await getClientSnapshot(db, storeId, order.client_id);
   const reference = clean(referenceNumber) || `BL-${new Date().toISOString().slice(0, 10)}-${String(order.id).slice(0, 8)}`;
+  const origin = order.origin === 'negoce' ? 'negoce' : 'order';
   const created = await db.query(
     `INSERT INTO sales_documents (
       id, store_id, client_key, client_id, billed_client_id, source_order_id,
@@ -130,13 +131,13 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
       billed_client_name_snapshot, billed_client_code_snapshot, created_by, updated_by
     ) VALUES (
       gen_random_uuid(), $1, $2, $3, $4, $5,
-      CURRENT_DATE, 'draft', 'DELIVERY_NOTE', 'order', $6, $7,
-      $8, $9, $10, $11, $12, $13,
-      $14, $15, $16, $17, $18, $19, $19
+      CURRENT_DATE, 'draft', 'DELIVERY_NOTE', $6, $7, $8,
+      $9, $10, $11, $12, $13, $14,
+      $15, $16, $17, $18, $19, $20, $20
     ) RETURNING id`,
     [
       storeId, order.client_key || clientKey || null, order.client_id, client.billed_client_id || order.client_id,
-      order.id, reference, clean(notes) || order.notes, order.total_amount_ex_vat, order.total_vat_amount,
+      order.id, origin, reference, clean(notes) || order.notes, order.total_amount_ex_vat, order.total_vat_amount,
       order.total_amount_inc_vat, order.tariff_level_snapshot || client.tariff_level || 1,
       order.vat_rate_snapshot || client.vat_rate || 5.5, order.is_vat_exempt_snapshot || client.is_vat_exempt || false,
       client.name, client.code, client.store_identifier, client.billed_client_name || client.name,
@@ -192,43 +193,166 @@ async function validateDeliveryNoteStock(db, { deliveryNoteId, storeId, clientKe
 
   let allocated = 0;
   const articles = new Set();
+  const skipStock = deliveryNote.origin === 'negoce';
   for (const line of lines.rows) {
     let remaining = pos(line.sold_quantity || line.total_weight, 0);
-    if (!line.article_id || remaining <= 0) continue;
-    const lots = line.selected_lot_id
-      ? await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id])
-      : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
+    if (!skipStock && line.article_id && remaining > 0) {
+      const lots = line.selected_lot_id
+        ? await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id])
+        : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
 
-    for (const lot of lots.rows) {
-      if (remaining <= 0) break;
-      const quantity = Math.min(remaining, num(lot.qty_remaining));
-      if (quantity <= 0) continue;
-      await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2`, [quantity, lot.id]);
-      await db.query(`INSERT INTO sale_line_allocations(id, sales_line_id, lot_id, quantity, unit_cost_ex_vat) VALUES(gen_random_uuid(), $1, $2, $3, $4)`, [line.id, lot.id, quantity, num(lot.unit_cost_ex_vat)]);
-      await db.query(
-        `INSERT INTO stock_movements(id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by)
-         VALUES(gen_random_uuid(), $1, $2, $3, $4, 'sale_out', $5, $6, 'sales_documents', $7, $8, $9)`,
-        [storeId, deliveryNote.client_key || clientKey || null, line.article_id, lot.id, -quantity, num(lot.unit_cost_ex_vat), deliveryNote.id, `Validation BL ${deliveryNote.reference_number || deliveryNote.id}`, userId]
-      );
-      remaining = Number((remaining - quantity).toFixed(3));
-      allocated += 1;
-    }
-    if (remaining > 0) {
-      const error = new Error(`Stock insuffisant ligne ${line.line_number}`);
-      error.status = 400;
-      throw error;
+      for (const lot of lots.rows) {
+        if (remaining <= 0) break;
+        const quantity = Math.min(remaining, num(lot.qty_remaining));
+        if (quantity <= 0) continue;
+        await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2`, [quantity, lot.id]);
+        await db.query(`INSERT INTO sale_line_allocations(id, sales_line_id, lot_id, quantity, unit_cost_ex_vat) VALUES(gen_random_uuid(), $1, $2, $3, $4)`, [line.id, lot.id, quantity, num(lot.unit_cost_ex_vat)]);
+        await db.query(
+          `INSERT INTO stock_movements(id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by)
+           VALUES(gen_random_uuid(), $1, $2, $3, $4, 'sale_out', $5, $6, 'sales_documents', $7, $8, $9)`,
+          [storeId, deliveryNote.client_key || clientKey || null, line.article_id, lot.id, -quantity, num(lot.unit_cost_ex_vat), deliveryNote.id, `Validation BL ${deliveryNote.reference_number || deliveryNote.id}`, userId]
+        );
+        remaining = Number((remaining - quantity).toFixed(3));
+        allocated += 1;
+      }
+      if (remaining > 0) {
+        const error = new Error(`Stock insuffisant ligne ${line.line_number}`);
+        error.status = 400;
+        throw error;
+      }
+      articles.add(line.article_id);
     }
     await db.query(`UPDATE sales_lines SET line_status = 'validated', updated_by = $1, updated_at = NOW() WHERE id = $2`, [userId, line.id]);
-    articles.add(line.article_id);
   }
 
-  await db.query(`UPDATE sales_documents SET status = 'validated', locked_at = NOW(), validated_at = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2`, [userId, deliveryNote.id]);
+  await db.query(`UPDATE sales_documents SET status = 'validated', validated_at = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2`, [userId, deliveryNote.id]);
   if (deliveryNote.source_order_id) {
-    await db.query(`UPDATE sales_documents SET status = 'delivered', locked_at = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2 AND store_id = $3 AND document_type = 'ORDER'`, [userId, deliveryNote.source_order_id, storeId]);
+    await db.query(`UPDATE sales_documents SET status = 'delivered', updated_by = $1, updated_at = NOW() WHERE id = $2 AND store_id = $3 AND document_type = 'ORDER'`, [userId, deliveryNote.source_order_id, storeId]);
   }
   for (const articleId of articles) await recomputeArticleStock(db, articleId, storeId);
   return { allocated, alreadyValidated: false };
 }
+
+router.post('/sales/negoce', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const client = req.body?.client_id ? await getClientSnapshot(db, req.user.store_id, req.body.client_id) : null;
+    const result = await db.query(
+      `INSERT INTO sales_documents (
+        id, store_id, client_key, client_id, billed_client_id, document_date, status,
+        document_type, origin, reference_number, notes, tariff_level_snapshot,
+        vat_rate_snapshot, is_vat_exempt_snapshot, delivered_client_name_snapshot,
+        delivered_client_code_snapshot, delivered_client_store_identifier,
+        billed_client_name_snapshot, billed_client_code_snapshot, created_by, updated_by
+      ) VALUES (
+        gen_random_uuid(), $1, $2, $3, $4, COALESCE($5::date, CURRENT_DATE), 'draft',
+        'ORDER', 'negoce', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $16
+      ) RETURNING *`,
+      [
+        req.user.store_id,
+        req.user.client_key || null,
+        client?.id || null,
+        client?.billed_client_id || client?.id || null,
+        clean(req.body?.document_date),
+        clean(req.body?.reference_number),
+        clean(req.body?.notes),
+        client?.tariff_level || 1,
+        client?.vat_rate || 5.5,
+        client?.is_vat_exempt || false,
+        client?.name || null,
+        client?.code || null,
+        client?.store_identifier || null,
+        client?.billed_client_name || client?.name || null,
+        client?.billed_client_code || client?.code || null,
+        req.user.id,
+      ]
+    );
+    await db.query('COMMIT');
+    res.status(201).json({ ok: true, sale: result.rows[0] });
+  } catch (err) {
+    await db.query('ROLLBACK').catch(() => {});
+    console.error('Erreur creation commande negoce :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur creation commande negoce' });
+  } finally {
+    db.release();
+  }
+});
+
+router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res, next) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const lineResult = await db.query(
+      `SELECT sl.*, sd.origin, sd.status, sd.client_id, sd.tariff_level_snapshot, sd.vat_rate_snapshot, sd.is_vat_exempt_snapshot
+       FROM sales_lines sl
+       JOIN sales_documents sd ON sd.id = sl.sales_document_id AND sd.store_id = sl.store_id
+       WHERE sl.id = $1 AND sl.store_id = $2
+       FOR UPDATE`,
+      [req.params.id, req.user.store_id]
+    );
+    if (!lineResult.rows.length) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Ligne introuvable' });
+    }
+    const line = lineResult.rows[0];
+    if (line.origin !== 'negoce') {
+      await db.query('ROLLBACK');
+      return next();
+    }
+    if (line.status !== 'draft') {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'Ligne negoce non modifiable' });
+    }
+
+    const articleLabel = clean(req.body?.article_label);
+    if (!articleLabel) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'Designation article obligatoire pour une ligne negoce' });
+    }
+
+    const packageCount = pos(req.body?.package_count, line.package_count || 0);
+    const weightPerPackage = pos(req.body?.weight_per_package, line.weight_per_package || 0);
+    const totalWeight = req.body?.total_weight !== undefined ? pos(req.body.total_weight, 0) : Number((packageCount * weightPerPackage).toFixed(3));
+    const soldQuantity = totalWeight > 0 ? totalWeight : pos(req.body?.sold_quantity, line.sold_quantity || 0);
+    const vatRate = line.is_vat_exempt_snapshot ? 0 : pos(req.body?.vat_rate, num(line.vat_rate_snapshot, 5.5));
+    const unitPriceHt = pos(req.body?.unit_sale_price_ht, line.unit_sale_price_ht || 0);
+    const lineAmountHt = Number((soldQuantity * unitPriceHt).toFixed(2));
+    const lineVatAmount = Number((lineAmountHt * vatRate / 100).toFixed(2));
+    const lineAmountTtc = Number((lineAmountHt + lineVatAmount).toFixed(2));
+    const unitPriceTtc = soldQuantity > 0 ? Number((lineAmountTtc / soldQuantity).toFixed(4)) : Number((unitPriceHt * (1 + vatRate / 100)).toFixed(4));
+
+    const updated = await db.query(
+      `UPDATE sales_lines
+       SET article_id = NULL, article_plu = $1, article_label = $2,
+         package_count = $3, weight_per_package = $4, total_weight = $5,
+         sold_quantity = $6, sale_unit = $7, unit_sale_price_ht = $8,
+         unit_sale_price_ttc = $9, vat_rate = $10, line_amount_ht = $11,
+         line_vat_amount = $12, line_amount_ttc = $13, unit_cost_ex_vat = 0,
+         line_margin_ex_vat = $11, selected_lot_id = NULL, suggested_lot_id = NULL,
+         traceability_snapshot = '{}'::jsonb, updated_by = $14, updated_at = NOW()
+       WHERE id = $15 AND store_id = $16
+       RETURNING *`,
+      [clean(req.body?.article_plu), articleLabel, packageCount, weightPerPackage, totalWeight, soldQuantity, clean(req.body?.sale_unit) || 'kg', unitPriceHt, unitPriceTtc, vatRate, lineAmountHt, lineVatAmount, lineAmountTtc, req.user.id, req.params.id, req.user.store_id]
+    );
+    await db.query(
+      `UPDATE sales_documents sd
+       SET total_amount_ex_vat = COALESCE(x.ht, 0), total_vat_amount = COALESCE(x.vat, 0),
+         total_amount_inc_vat = COALESCE(x.ttc, 0), updated_by = $2, updated_at = NOW()
+       FROM (SELECT COALESCE(SUM(line_amount_ht), 0) ht, COALESCE(SUM(line_vat_amount), 0) vat, COALESCE(SUM(line_amount_ttc), 0) ttc FROM sales_lines WHERE sales_document_id = $1) x
+       WHERE sd.id = $1`,
+      [line.sales_document_id, req.user.id]
+    );
+    await db.query('COMMIT');
+    res.json({ ok: true, line: updated.rows[0] });
+  } catch (err) {
+    await db.query('ROLLBACK').catch(() => {});
+    console.error('Erreur maj ligne negoce :', err);
+    res.status(500).json({ error: err.message || 'Erreur maj ligne negoce' });
+  } finally {
+    db.release();
+  }
+});
 
 router.post('/sales/:id/validate', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   const db = await req.dbPool.connect();
@@ -250,7 +374,7 @@ router.post('/sales/:id/validate-delivery-note', authenticateToken, attachDbCont
   try {
     await db.query('BEGIN');
     await validateOrderWithoutStock(db, { orderId: req.params.id, storeId: req.user.store_id, userId: req.user.id });
-    const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body.notes, referenceNumber: req.body.reference_number });
+    const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number });
     const validation = await validateDeliveryNoteStock(db, { deliveryNoteId: deliveryNote.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id });
     await db.query('COMMIT');
     res.json({ ok: true, delivery_note_id: deliveryNote.id, allocated: validation.allocated, existing: deliveryNote.existing });
@@ -293,7 +417,7 @@ router.post('/sales/:id/delivery-note', authenticateToken, attachDbContext, requ
   const db = await req.dbPool.connect();
   try {
     await db.query('BEGIN');
-    const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body.notes, referenceNumber: req.body.reference_number });
+    const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number });
     await db.query('COMMIT');
     res.status(deliveryNote.existing ? 200 : 201).json({ ok: true, id: deliveryNote.id, existing: deliveryNote.existing });
   } catch (err) {
@@ -322,6 +446,7 @@ router.post('/delivery-notes/:id/validate', authenticateToken, attachDbContext, 
 
 router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   const db = await req.dbPool.connect();
+  const body = req.body || {};
   try {
     await db.query('BEGIN');
     const noteResult = await db.query(`SELECT * FROM sales_documents WHERE id = $1 AND store_id = $2 AND document_type = 'DELIVERY_NOTE' FOR UPDATE`, [req.params.id, req.user.store_id]);
@@ -330,18 +455,19 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
     if (!['validated', 'invoiced'].includes(note.status)) { await db.query('ROLLBACK'); return res.status(400).json({ error: 'Le BL doit etre valide avant facturation' }); }
     const existing = await db.query(`SELECT id FROM sales_documents WHERE store_id = $1 AND source_delivery_note_id = $2 AND document_type = 'INVOICE' LIMIT 1`, [req.user.store_id, note.id]);
     if (existing.rows.length) { await db.query('COMMIT'); return res.json({ ok: true, invoice_id: existing.rows[0].id, existing: true }); }
+    const invoiceRef = clean(body.reference_number) || `FAC-${new Date().toISOString().slice(0, 10)}-${String(note.id).slice(0, 8)}`;
     const invoice = await db.query(
-      `INSERT INTO sales_documents (id, store_id, client_key, client_id, billed_client_id, source_order_id, source_delivery_note_id, document_date, status, document_type, origin, reference_number, notes, total_amount_ex_vat, total_vat_amount, total_amount_inc_vat, tariff_level_snapshot, vat_rate_snapshot, is_vat_exempt_snapshot, delivered_client_name_snapshot, delivered_client_code_snapshot, delivered_client_store_identifier, billed_client_name_snapshot, billed_client_code_snapshot, created_by, updated_by)
-       VALUES (gen_random_uuid(), $1, $2, COALESCE($3, $4), COALESCE($3, $4), $5, $6, CURRENT_DATE, 'draft', 'INVOICE', 'delivery_note', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $20) RETURNING id`,
-      [req.user.store_id, note.client_key || req.user.client_key || null, note.billed_client_id, note.client_id, note.source_order_id, note.id, clean(req.body.reference_number), note.notes, note.total_amount_ex_vat, note.total_vat_amount, note.total_amount_inc_vat, note.tariff_level_snapshot, note.vat_rate_snapshot, note.is_vat_exempt_snapshot, note.delivered_client_name_snapshot, note.delivered_client_code_snapshot, note.delivered_client_store_identifier, note.billed_client_name_snapshot, note.billed_client_code_snapshot, req.user.id]
+      `INSERT INTO sales_documents (id, store_id, client_key, client_id, billed_client_id, source_order_id, source_delivery_note_id, document_date, status, document_type, origin, reference_number, notes, total_amount_ex_vat, total_vat_amount, total_amount_inc_vat, tariff_level_snapshot, vat_rate_snapshot, is_vat_exempt_snapshot, delivered_client_name_snapshot, delivered_client_code_snapshot, delivered_client_store_identifier, billed_client_name_snapshot, billed_client_code_snapshot, locked_at, created_by, updated_by)
+       VALUES (gen_random_uuid(), $1, $2, COALESCE($3, $4), COALESCE($3, $4), $5, $6, CURRENT_DATE, 'validated', 'INVOICE', 'delivery_note', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, NOW(), $20, $20) RETURNING id, reference_number`,
+      [req.user.store_id, note.client_key || req.user.client_key || null, note.billed_client_id, note.client_id, note.source_order_id, note.id, invoiceRef, note.notes, note.total_amount_ex_vat, note.total_vat_amount, note.total_amount_inc_vat, note.tariff_level_snapshot, note.vat_rate_snapshot, note.is_vat_exempt_snapshot, note.delivered_client_name_snapshot, note.delivered_client_code_snapshot, note.delivered_client_store_identifier, note.billed_client_name_snapshot, note.billed_client_code_snapshot, req.user.id]
     );
     const lines = await db.query(`SELECT * FROM sales_lines WHERE sales_document_id = $1 ORDER BY line_number`, [note.id]);
     for (const line of lines.rows) {
-      await db.query(`INSERT INTO sales_lines (id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label, package_count, weight_per_package, total_weight, sold_quantity, sale_unit, unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc, unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot, line_status, created_by, updated_by) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, 'pending', $24, $24)`, [req.user.store_id, line.client_key || note.client_key || req.user.client_key || null, invoice.rows[0].id, line.line_number, line.article_id, line.article_plu, line.article_label, line.package_count, line.weight_per_package, line.total_weight, line.sold_quantity, line.sale_unit, line.unit_sale_price_ht, line.unit_sale_price_ttc, line.vat_rate, line.line_amount_ht, line.line_vat_amount, line.line_amount_ttc, line.unit_cost_ex_vat, line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id, JSON.stringify(line.traceability_snapshot || {}), req.user.id]);
+      await db.query(`INSERT INTO sales_lines (id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label, package_count, weight_per_package, total_weight, sold_quantity, sale_unit, unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc, unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot, line_status, created_by, updated_by) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, 'invoiced', $24, $24)`, [req.user.store_id, line.client_key || note.client_key || req.user.client_key || null, invoice.rows[0].id, line.line_number, line.article_id, line.article_plu, line.article_label, line.package_count, line.weight_per_package, line.total_weight, line.sold_quantity, line.sale_unit, line.unit_sale_price_ht, line.unit_sale_price_ttc, line.vat_rate, line.line_amount_ht, line.line_vat_amount, line.line_amount_ttc, line.unit_cost_ex_vat, line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id, JSON.stringify(line.traceability_snapshot || {}), req.user.id]);
     }
-    await db.query(`UPDATE sales_documents SET status = 'invoiced', invoiced_at = NOW(), locked_at = COALESCE(locked_at, NOW()), updated_by = $1, updated_at = NOW() WHERE id = $2`, [req.user.id, note.id]);
+    await db.query(`UPDATE sales_documents SET status = 'invoiced', invoiced_at = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2`, [req.user.id, note.id]);
     await db.query('COMMIT');
-    res.json({ ok: true, invoice_id: invoice.rows[0].id, existing: false });
+    res.json({ ok: true, invoice_id: invoice.rows[0].id, invoice_reference: invoice.rows[0].reference_number, existing: false });
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur validation facture BL :', err);
