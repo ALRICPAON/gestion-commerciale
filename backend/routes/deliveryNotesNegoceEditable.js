@@ -13,18 +13,50 @@ const num = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 const pos = (value, fallback = 0) => Math.max(num(value, fallback), 0);
+const norm = (value) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '');
+
+function isNegoce(document) {
+  return norm(document?.origin) === 'negoce';
+}
+
+function isDeliveryNoteShape(document) {
+  return norm(document?.document_type) === 'delivery_note' || norm(document?.status) === 'delivery_note';
+}
+
+function isInvoiceLocked(document) {
+  return norm(document?.status) === 'invoiced'
+    || !!document?.invoice_id
+    || !!document?.invoice_reference
+    || !!document?.source_invoice_id
+    || !!document?.invoiced_at;
+}
 
 function isUnlockedNegoceDeliveryNote(document) {
-  return document?.document_type === 'DELIVERY_NOTE'
-    && document.origin === 'negoce'
-    && document.status !== 'invoiced'
-    && !document.invoice_id
-    && !document.invoiced_at;
+  return isNegoce(document) && isDeliveryNoteShape(document) && !isInvoiceLocked(document);
+}
+
+function logRouteHit(action, document, extra = {}) {
+  console.info('deliveryNotesNegoceEditable route hit', {
+    action,
+    document_id: document?.id,
+    document_type: document?.document_type,
+    origin: document?.origin,
+    status: document?.status,
+    invoice_id: document?.invoice_id,
+    invoice_reference: document?.invoice_reference,
+    source_invoice_id: document?.source_invoice_id,
+    invoiced_at: document?.invoiced_at,
+    ...extra,
+  });
 }
 
 async function getDocument(db, documentId, storeId, lock = false) {
   const result = await db.query(
-    `SELECT sd.*, invoice.id AS invoice_id
+    `SELECT sd.*, invoice.id AS invoice_id, invoice.reference_number AS invoice_reference
      FROM sales_documents sd
      LEFT JOIN sales_documents invoice
        ON invoice.source_delivery_note_id = sd.id
@@ -39,9 +71,18 @@ async function getDocument(db, documentId, storeId, lock = false) {
 
 async function getLineDocument(db, lineId, storeId) {
   const result = await db.query(
-    `SELECT sl.*, sd.document_type, sd.status AS document_status, sd.origin AS document_origin,
-      sd.client_key AS document_client_key, sd.vat_rate_snapshot, sd.is_vat_exempt_snapshot,
-      sd.invoiced_at, invoice.id AS invoice_id
+    `SELECT sl.*,
+       sd.id AS document_id,
+       sd.client_key AS document_client_key,
+       sd.document_type AS document_type,
+       sd.status AS document_status,
+       sd.origin AS document_origin,
+       sd.reference_number AS document_reference_number,
+       sd.vat_rate_snapshot,
+       sd.is_vat_exempt_snapshot,
+       sd.invoiced_at,
+       invoice.id AS invoice_id,
+       invoice.reference_number AS invoice_reference
      FROM sales_lines sl
      JOIN sales_documents sd ON sd.id = sl.sales_document_id AND sd.store_id = sl.store_id
      LEFT JOIN sales_documents invoice
@@ -55,9 +96,9 @@ async function getLineDocument(db, lineId, storeId) {
   return result.rows[0] || null;
 }
 
-async function getArticle(db, storeId, body = {}) {
-  const articleId = clean(body.article_id);
-  const plu = clean(body.article_plu);
+async function getArticle(db, storeId, body = {}, oldLine = {}) {
+  const articleId = clean(body.article_id) || clean(oldLine.article_id);
+  const plu = clean(body.article_plu) || clean(oldLine.article_plu);
   if (!articleId && !plu) return null;
   const params = [storeId];
   let where = 'a.store_id = $1 AND a.is_active = true';
@@ -93,6 +134,7 @@ async function getSelectedLot(db, storeId, articleId, lotId) {
 }
 
 async function getFifoLots(db, storeId, articleId, selectedLotId = null) {
+  if (!articleId) return [];
   if (selectedLotId) {
     const result = await db.query(
       `SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`,
@@ -146,7 +188,7 @@ function computeLine(body, article, document, oldLine = {}) {
     weightPerPackage,
     totalWeight,
     soldQuantity,
-    saleUnit: clean(body.sale_unit) || article?.sale_unit || article?.unit || 'kg',
+    saleUnit: clean(body.sale_unit) || article?.sale_unit || article?.unit || oldLine.sale_unit || 'kg',
     unitPriceHt,
     unitTtc,
     vatRate,
@@ -261,7 +303,9 @@ async function validateStock(db, document, storeId, clientKey, userId) {
   }
 
   await db.query(
-    `UPDATE sales_documents SET status = 'validated', validated_at = COALESCE(validated_at, NOW()), updated_by = $1, updated_at = NOW() WHERE id = $2`,
+    `UPDATE sales_documents SET status = CASE WHEN status = 'delivery_note' THEN status ELSE 'validated' END,
+      validated_at = COALESCE(validated_at, NOW()), updated_by = $1, updated_at = NOW()
+     WHERE id = $2`,
     [userId, document.id]
   );
   return affected;
@@ -269,15 +313,15 @@ async function validateStock(db, document, storeId, clientKey, userId) {
 
 async function withReallocation(db, document, storeId, clientKey, userId, work) {
   const affected = new Set();
-  const wasValidated = document.status === 'validated';
-  if (wasValidated) {
+  const wasDestocked = ['validated', 'delivery_note'].includes(norm(document.status));
+  if (wasDestocked) {
     (await reverseStock(db, document.id, storeId, userId)).forEach((articleId) => affected.add(articleId));
   }
 
   const result = await work();
   await recalcDocument(db, document.id, userId);
 
-  if (wasValidated) {
+  if (wasDestocked) {
     (await validateStock(db, document, storeId, clientKey, userId)).forEach((articleId) => affected.add(articleId));
   }
 
@@ -287,15 +331,68 @@ async function withReallocation(db, document, storeId, clientKey, userId, work) 
   return result;
 }
 
+function documentFromLine(line) {
+  return {
+    id: line.document_id || line.sales_document_id,
+    client_key: line.document_client_key,
+    document_type: line.document_type,
+    origin: line.document_origin,
+    status: line.document_status,
+    reference_number: line.document_reference_number,
+    invoice_id: line.invoice_id,
+    invoice_reference: line.invoice_reference,
+    source_invoice_id: line.source_invoice_id,
+    invoiced_at: line.invoiced_at,
+    vat_rate_snapshot: line.vat_rate_snapshot,
+    is_vat_exempt_snapshot: line.is_vat_exempt_snapshot,
+  };
+}
+
+router.patch('/sales/:id', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res, next) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const document = await getDocument(db, req.params.id, req.user.store_id, true);
+    if (!document || !isNegoce(document) || !isDeliveryNoteShape(document)) {
+      await db.query('ROLLBACK');
+      return next();
+    }
+    logRouteHit('header', document);
+    if (!isUnlockedNegoceDeliveryNote(document)) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'BL negoce facture ou lie a une facture : modification interdite' });
+    }
+    await db.query(
+      `UPDATE sales_documents
+       SET document_date = COALESCE($1::date, document_date),
+         reference_number = $2,
+         notes = $3,
+         updated_by = $4,
+         updated_at = NOW()
+       WHERE id = $5 AND store_id = $6`,
+      [clean(req.body?.document_date), clean(req.body?.reference_number), clean(req.body?.notes), req.user.id, document.id, req.user.store_id]
+    );
+    await db.query('COMMIT');
+    res.json({ ok: true, message: 'BL negoce mis a jour' });
+  } catch (err) {
+    await db.query('ROLLBACK').catch(() => {});
+    console.error('Erreur modification entete BL negoce :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur modification BL negoce' });
+  } finally {
+    db.release();
+  }
+});
+
 router.post('/sales/:id/lines', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res, next) => {
   const db = await req.dbPool.connect();
   try {
     await db.query('BEGIN');
     const document = await getDocument(db, req.params.id, req.user.store_id, true);
-    if (!document || document.document_type !== 'DELIVERY_NOTE' || document.origin !== 'negoce') {
+    if (!document || !isNegoce(document) || !isDeliveryNoteShape(document)) {
       await db.query('ROLLBACK');
       return next();
     }
+    logRouteHit('add-line', document);
     if (!isUnlockedNegoceDeliveryNote(document)) {
       await db.query('ROLLBACK');
       return res.status(400).json({ error: 'BL negoce facture ou lie a une facture : modification interdite' });
@@ -331,22 +428,12 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
   try {
     await db.query('BEGIN');
     const line = await getLineDocument(db, req.params.id, req.user.store_id);
-    if (!line || line.document_type !== 'DELIVERY_NOTE' || line.document_origin !== 'negoce') {
+    const document = line ? documentFromLine(line) : null;
+    if (!line || !isNegoce(document) || !isDeliveryNoteShape(document)) {
       await db.query('ROLLBACK');
       return next();
     }
-
-    const document = {
-      id: line.sales_document_id,
-      client_key: line.document_client_key,
-      document_type: line.document_type,
-      origin: line.document_origin,
-      status: line.document_status,
-      invoice_id: line.invoice_id,
-      invoiced_at: line.invoiced_at,
-      vat_rate_snapshot: line.vat_rate_snapshot,
-      is_vat_exempt_snapshot: line.is_vat_exempt_snapshot,
-    };
+    logRouteHit('patch-line', document, { line_id: req.params.id });
 
     if (!isUnlockedNegoceDeliveryNote(document)) {
       await db.query('ROLLBACK');
@@ -354,15 +441,16 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
     }
 
     const updated = await withReallocation(db, document, req.user.store_id, req.user.client_key, req.user.id, async () => {
-      const article = await getArticle(db, req.user.store_id, req.body || {});
-      if (!article) {
-        const error = new Error('Article reference introuvable pour ce magasin');
+      const article = await getArticle(db, req.user.store_id, req.body || {}, line);
+      const x = computeLine(req.body || {}, article, document, line);
+      const selectedLot = await getSelectedLot(db, req.user.store_id, article?.id, clean(req.body?.selected_lot_id || line.selected_lot_id));
+      const label = clean(req.body?.article_label) || article?.designation || line.article_label;
+      if (!label) {
+        const error = new Error('Designation article obligatoire pour une ligne negoce');
         error.status = 400;
         throw error;
       }
 
-      const selectedLot = await getSelectedLot(db, req.user.store_id, article.id, clean(req.body?.selected_lot_id));
-      const x = computeLine(req.body || {}, article, document, line);
       const result = await db.query(
         `UPDATE sales_lines
          SET article_id = $1,
@@ -389,9 +477,9 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
          WHERE id = $20 AND store_id = $21
          RETURNING *`,
         [
-          article.id,
-          clean(req.body?.article_plu) || article.plu,
-          clean(req.body?.article_label) || article.designation,
+          article?.id || line.article_id || null,
+          clean(req.body?.article_plu) || article?.plu || line.article_plu || null,
+          label,
           x.packageCount,
           x.weightPerPackage,
           x.totalWeight,
@@ -405,7 +493,7 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
           x.ttc,
           x.cost,
           x.margin,
-          selectedLot?.id || null,
+          selectedLot?.id || clean(req.body?.selected_lot_id) || line.selected_lot_id || null,
           JSON.stringify(traceability(selectedLot || article)),
           req.user.id,
           req.params.id,
@@ -431,22 +519,12 @@ router.delete('/sales/lines/:id', authenticateToken, attachDbContext, requireAdm
   try {
     await db.query('BEGIN');
     const line = await getLineDocument(db, req.params.id, req.user.store_id);
-    if (!line || line.document_type !== 'DELIVERY_NOTE' || line.document_origin !== 'negoce') {
+    const document = line ? documentFromLine(line) : null;
+    if (!line || !isNegoce(document) || !isDeliveryNoteShape(document)) {
       await db.query('ROLLBACK');
       return next();
     }
-
-    const document = {
-      id: line.sales_document_id,
-      client_key: line.document_client_key,
-      document_type: line.document_type,
-      origin: line.document_origin,
-      status: line.document_status,
-      invoice_id: line.invoice_id,
-      invoiced_at: line.invoiced_at,
-      vat_rate_snapshot: line.vat_rate_snapshot,
-      is_vat_exempt_snapshot: line.is_vat_exempt_snapshot,
-    };
+    logRouteHit('delete-line', document, { line_id: req.params.id });
 
     if (!isUnlockedNegoceDeliveryNote(document)) {
       await db.query('ROLLBACK');
