@@ -814,3 +814,232 @@ Facture
 Tableau de bord commercial
 Audit / traçabilité utilisateur
 Assistant IA métier
+
+---
+
+# Mise a jour reprise - 2026-05-31 - Stock / Lots et Tarifs clients valides
+
+## Workflow GitHub valide
+
+Le nouveau workflow avec agent GitHub est valide :
+
+* Alric definit le besoin metier.
+* L'agent GitHub analyse le depot.
+* L'agent travaille uniquement sur une branche dediee.
+* Une Pull Request est ouverte vers la bonne base.
+* Alric valide apres test metier.
+* La fusion dans `main` declenche GitHub Actions.
+* GitHub Actions deploie automatiquement sur le VPS.
+* Les migrations SQL sont executees manuellement si necessaire.
+* Les tests finaux se font sur `https://scorpaseafood.fr`.
+
+Regles confirmees :
+
+* jamais de modification directe sur `main` ;
+* jamais de fusion sans validation humaine ;
+* Rayon V2 peut etre consulte comme reference metier/technique, mais ne doit jamais etre modifie ;
+* ChatGPT sert d'architecte/relecteur et aide au diagnostic.
+
+## Module Stock / Lots valide
+
+Le module Stock / Lots est maintenant operationnel et valide sur le site.
+
+Pull Requests mergees :
+
+* PR #2 `feature/stock-lots` : creation/stabilisation du module Stock / Lots.
+* PR #3 `feature/stock-tarifs-clients` : ajout tarifs clients et niveaux tarifaires.
+* PR #4 `fix/stock-tarifs-lots-dlc` : correction DLC FIFO et pre-remplissage marges.
+* PR #5 `fix/stock-article-id-real-source` : correction source reelle `article_id`.
+* PR #6 `fix/stock-relax-uuid-validation` : validation UUID assouplie et cache `stock.js?v=5`.
+
+Fichiers principaux :
+
+* `backend/routes/stock.js`
+* `frontend/stock.html`
+* `frontend/js/stock.js`
+* `frontend/css/pages/stock.css`
+* `backend/db/gestion-commerciale/033_stock_lots_hardening.sql`
+* `backend/db/gestion-commerciale/034_stock_tarifs_clients.sql`
+
+Tables / structures confirmees :
+
+* `lots`
+* `stock_movements`
+* `stock_summary`
+* `articles.sale_price_level_1_ht`
+* `articles.sale_price_level_2_ht`
+* `articles.sale_price_level_3_ht`
+* `clients.tariff_level`
+
+Fonctions validees :
+
+* consultation du stock par article ;
+* affichage PLU, designation, stock restant, PMA HT, DLC FIFO, valeur stock HT ;
+* consultation des lots disponibles via bouton `Lots` ;
+* affichage de la tracabilite lot : nom latin, FAO, sous-zone, engin, methode, allergenes, DLC ;
+* FIFO par defaut : DLC la plus proche puis date de creation ;
+* affichage de la DLC du prochain lot disponible FIFO ;
+* preparation API FIFO : `GET /api/stock/articles/:articleId/fifo?quantity=...` ;
+* modification des tarifs HT 1, 2 et 3 par article ;
+* calcul des marges par tarif ;
+* parametres de marge globale en haut de page ;
+* pre-remplissage des tarifs vides selon marge cible ;
+* non-ecrasement des tarifs deja renseignes manuellement ;
+* enregistrement ligne par ligne ;
+* enregistrement global des tarifs pre-remplis ;
+* fiche client avec choix du tarif client : Tarif 1, Tarif 2 ou Tarif 3.
+
+## Regle metier tarifs clients
+
+Les tarifs sont portes par l'article, au niveau magasin :
+
+* `sale_price_level_1_ht`
+* `sale_price_level_2_ht`
+* `sale_price_level_3_ht`
+
+Le client possede un niveau tarifaire :
+
+* `tariff_level = 1`
+* `tariff_level = 2`
+* `tariff_level = 3`
+
+Objectif pour le module Vente :
+
+* si client Tarif 1 -> proposer `sale_price_level_1_ht` ;
+* si client Tarif 2 -> proposer `sale_price_level_2_ht` ;
+* si client Tarif 3 -> proposer `sale_price_level_3_ht`.
+
+Le prix article enregistre manuellement est prioritaire. Les marges globales servent seulement d'aide au pre-remplissage.
+
+Formule de pre-remplissage :
+
+```txt
+prix_vente_ht = PMA / (1 - marge / 100)
+```
+
+Formule marge affichee :
+
+```txt
+marge euro = prix_vente_ht - PMA
+marge % = ((prix_vente_ht - PMA) / prix_vente_ht) * 100
+```
+
+## Corrections importantes effectuees
+
+Probleme rencontre : les boutons `Lots`, `Enregistrer` et `Enregistrer tous` renvoyaient `ID article invalide`.
+
+Diagnostic valide :
+
+* la base etait correcte ;
+* `stock_summary.article_id` correspondait bien a `articles.id` ;
+* le probleme venait de la source `article_id` renvoyee/utilisee et d'une validation UUID trop stricte cote interface/API.
+
+Corrections finales :
+
+* `GET /api/stock` retourne explicitement `a.id::text AS article_id` ;
+* `lotsSelectSql()` retourne `l.article_id::text AS article_id` ;
+* le frontend utilise uniquement `row.article_id` pour les actions ;
+* les boutons utilisent `<tr data-article-id>` comme source fiable ;
+* la validation UUID accepte le format PostgreSQL standard : `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` ;
+* cache frontend pousse a `stock.js?v=5` ;
+* apres merge, test final valide : boutons Lots, Enregistrer, Enregistrer tous OK.
+
+## Etat actuel valide
+
+Modules valides / operationnels :
+
+* Authentification / utilisateurs ;
+* Articles au niveau `store_id` ;
+* Fournisseurs ;
+* Clients ;
+* Achats / import BL fournisseur conserve ;
+* Reception achat avec creation lots / mouvements stock ;
+* Stock / Lots ;
+* Tarifs clients par article ;
+* Niveau tarifaire sur fiche client.
+
+Le module Stock / Lots est maintenant considere comme base fiable pour construire la Vente / Commande client.
+
+## Priorite suivante
+
+La prochaine priorite metier est :
+
+```txt
+Vente / Commande client
+```
+
+Objectif : transformer le module Vente existant en flux commercial B2B complet :
+
+```txt
+Commande / Vente
+↓
+Bon de livraison
+↓
+Facture
+```
+
+Points obligatoires pour la prochaine etape :
+
+* selection client ;
+* recuperation automatique du `tariff_level` client ;
+* proposition automatique du bon tarif article HT selon Tarif 1/2/3 ;
+* ligne de vente avec article, colis, poids par colis, poids total, prix HT, total HT ;
+* TVA selon la fiche client ;
+* allocation FIFO automatique du lot ;
+* possibilite de choisir manuellement un lot ;
+* recuperation tracabilite depuis le lot consomme ;
+* validation sortie avec consommation effective des lots ;
+* preparation Bon de Livraison ;
+* preparation Facture ;
+* generation/impression des etiquettes sanitaires par ligne et pour tout le bon.
+
+## Commandes utiles apres merge/deploiement
+
+Remettre le VPS propre sur `main` :
+
+```bash
+cd /var/www/gestion-commerciale
+git fetch origin
+git checkout main
+git reset --hard origin/main
+
+cd backend
+npm install
+pm2 restart gestion-commerciale-api
+pm2 logs gestion-commerciale-api --lines 80
+```
+
+Mettre a jour le PC local :
+
+```powershell
+cd C:\Users\apaon\OneDrive\Bureau\gestion-commerciale
+
+git checkout main
+git pull origin main
+git status
+```
+
+Executer une migration SQL VPS si besoin :
+
+```bash
+cat backend/db/gestion-commerciale/NOM_DU_SCRIPT.sql | docker exec -i gestion-rayons-db psql -U admin -d gestion_commerciale
+```
+
+## Tests metier stock valides
+
+Tests finaux realises / a refaire si besoin :
+
+* ouvrir `Stock / Lots` ;
+* verifier affichage PLU / designation / stock / PMA / tarifs / marges / DLC / valeur stock ;
+* cliquer `Lots` ;
+* verifier la modale lots et tracabilite ;
+* renseigner marges globales ;
+* pre-remplir les tarifs ;
+* verifier que les tarifs deja saisis ne sont pas ecrases ;
+* enregistrer une ligne ;
+* enregistrer tous les tarifs pre-remplis ;
+* recharger la page avec `Ctrl + F5` ;
+* verifier que les tarifs restent ;
+* ouvrir une fiche client ;
+* choisir Tarif 1 / Tarif 2 / Tarif 3 ;
+* enregistrer et recharger la fiche client.
