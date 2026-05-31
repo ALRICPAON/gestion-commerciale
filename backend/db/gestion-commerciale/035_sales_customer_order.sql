@@ -49,6 +49,40 @@ ALTER TABLE sales_documents
   ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now(),
   ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'sales_documents'::regclass
+      AND conname = 'sales_documents_document_type_check'
+  ) THEN
+    ALTER TABLE sales_documents
+      DROP CONSTRAINT sales_documents_document_type_check;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'sales_documents'::regclass
+      AND conname = 'sales_documents_document_type_check'
+  ) THEN
+    ALTER TABLE sales_documents
+      ADD CONSTRAINT sales_documents_document_type_check
+      CHECK (
+        document_type IN (
+          'ORDER',
+          'DELIVERY_NOTE',
+          'INVOICE',
+          'manual_sale',
+          'inventory_sale',
+          'transfer_out',
+          'waste'
+        )
+      );
+  END IF;
+END $$;
+
 CREATE TABLE IF NOT EXISTS sales_lines (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   store_id uuid NOT NULL,
