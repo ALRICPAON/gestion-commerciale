@@ -30,6 +30,7 @@ const fields = [
   "legal_name",
   "client_type",
   "status",
+  "tariff_level",
   "contact_name",
   "phone",
   "mobile",
@@ -101,6 +102,10 @@ function fillForm(client) {
   if (!client.country) {
     setFieldValue("country", "France");
   }
+
+  if (!client.tariff_level) {
+    setFieldValue("tariff_level", "1");
+  }
 }
 
 function collectPayload() {
@@ -120,6 +125,10 @@ function collectPayload() {
 
   if (!payload.status) {
     payload.status = "active";
+  }
+
+  if (!["1", "2", "3"].includes(String(payload.tariff_level || ""))) {
+    payload.tariff_level = "1";
   }
 
   return payload;
