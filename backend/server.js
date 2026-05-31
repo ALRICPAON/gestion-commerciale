@@ -79,6 +79,24 @@ const loginRateLimiter = rateLimit({
   message: { error: 'Trop de tentatives de connexion, reessaie plus tard' },
 });
 
+function isSaleEditDiagnosticRequest(req) {
+  return ['PATCH', 'POST', 'DELETE'].includes(req.method)
+    && /^\/api\/sales(\/lines\/[^/]+|\/[^/]+(\/lines)?)?$/.test(req.originalUrl.split('?')[0]);
+}
+
+function logOldRouteFallthrough(label) {
+  return (req, res, next) => {
+    if (isSaleEditDiagnosticRequest(req)) {
+      console.info(label, {
+        method: req.method,
+        originalUrl: req.originalUrl,
+        body: req.body,
+      });
+    }
+    next();
+  };
+}
+
 app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -117,8 +135,11 @@ app.use('/api', purchasesRoutes);
 app.use('/api', saleUnitNormalizerRoutes);
 app.use('/api', deliveryNotesNegoceEditableRoutes);
 app.use('/api', deliveryNotesEditableRoutes);
+app.use('/api', logOldRouteFallthrough('OLD NEGOCE ROUTE HIT before negoceFixesRoutes'));
 app.use('/api', negoceFixesRoutes);
+app.use('/api', logOldRouteFallthrough('OLD NEGOCE ROUTE HIT before deliveryNotesRoutes'));
 app.use('/api', deliveryNotesRoutes);
+app.use('/api/sales', logOldRouteFallthrough('OLD SALES ROUTE HIT before salesRoutes'));
 app.use('/api/sales', salesRoutes);
 app.use('/api/stock', stockRoutes);
 app.get('/', (req, res) => {
