@@ -9,6 +9,9 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
+const { authenticateToken } = require('./middleware/auth');
+const { attachDbContext } = require('./middleware/dbContext');
+const { requireAdminOrManager } = require('./middleware/authorization');
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const articlesStoreLevelRoutes = require('./routes/articlesStoreLevel');
@@ -132,6 +135,40 @@ app.use('/api/articles', articlesRoutes);
 app.use('/api', suppliersRoutes);
 app.use('/api', clientsRoutes);
 app.use('/api', purchasesRoutes);
+app.get('/api/diagnostics/sales-documents/:id', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const result = await req.dbPool.query(
+      `SELECT sd.id,
+        sd.document_type,
+        sd.status,
+        sd.origin,
+        sd.source_type,
+        sd.source_order_id,
+        sd.source_delivery_note_id,
+        sd.invoice_id,
+        sd.invoice_reference,
+        sd.source_invoice_id,
+        sd.invoiced_at,
+        COUNT(invoice.id)::int AS linked_invoice_count,
+        ARRAY_REMOVE(ARRAY_AGG(invoice.id), NULL) AS linked_invoice_ids,
+        ARRAY_REMOVE(ARRAY_AGG(invoice.reference_number), NULL) AS linked_invoice_references
+       FROM sales_documents sd
+       LEFT JOIN sales_documents invoice
+         ON invoice.source_delivery_note_id = sd.id
+        AND invoice.store_id = sd.store_id
+        AND invoice.document_type = 'INVOICE'
+       WHERE sd.id = $1 AND sd.store_id = $2
+       GROUP BY sd.id`,
+      [req.params.id, req.user.store_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Document introuvable' });
+    console.info('SALES DOCUMENT DIAGNOSTIC', result.rows[0]);
+    return res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Erreur diagnostic document vente :', err);
+    return res.status(500).json({ error: err.message || 'Erreur diagnostic document vente' });
+  }
+});
 app.use('/api', saleUnitNormalizerRoutes);
 app.use('/api', deliveryNotesNegoceEditableRoutes);
 app.use('/api', deliveryNotesEditableRoutes);
