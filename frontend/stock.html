@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stock / Lots - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/stock.css?v=1" />
+</head>
+<body class="app-page stock-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Stock / Lots</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content stock-layout">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Stock magasin</h2>
+          <p>Consultation des articles en stock, des lots disponibles et de la tracabilite.</p>
+        </div>
+
+        <div class="page-actions-right">
+          <button id="refresh-stock-btn" class="btn btn-primary">Actualiser</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="stock-kpis" aria-label="Synthese stock">
+      <div class="stock-kpi">
+        <span>Articles en stock</span>
+        <strong id="kpi-articles">0</strong>
+      </div>
+      <div class="stock-kpi">
+        <span>Quantite totale</span>
+        <strong id="kpi-quantity">0</strong>
+      </div>
+      <div class="stock-kpi">
+        <span>Valeur HT</span>
+        <strong id="kpi-value">0,00 €</strong>
+      </div>
+      <div class="stock-kpi">
+        <span>Prochaine DLC</span>
+        <strong id="kpi-dlc">-</strong>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="filters-row stock-filters">
+        <div class="form-group">
+          <label for="stock-search-input">Recherche</label>
+          <input id="stock-search-input" type="text" placeholder="PLU, designation, EAN, nom latin..." />
+        </div>
+
+        <div class="form-group">
+          <label for="stock-family-filter">Famille</label>
+          <input id="stock-family-filter" type="text" placeholder="Code famille" />
+        </div>
+
+        <div class="form-group">
+          <label for="stock-available-filter">Disponibilite</label>
+          <select id="stock-available-filter">
+            <option value="true">Stock positif</option>
+            <option value="false">Tous les articles suivis</option>
+          </select>
+        </div>
+
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="stock-search-btn" class="btn btn-secondary">Filtrer</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div id="stock-feedback" class="page-feedback hidden"></div>
+
+      <div class="table-wrap">
+        <table class="data-table stock-table">
+          <thead>
+            <tr>
+              <th>PLU</th>
+              <th>Article</th>
+              <th>Famille</th>
+              <th>Stock</th>
+              <th>PMA</th>
+              <th>Valeur HT</th>
+              <th>DLC</th>
+              <th>Tracabilite FIFO</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="stock-tbody">
+            <tr><td colspan="9">Chargement du stock...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="lot-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-xl">
+      <div class="modal-header">
+        <div>
+          <h3 id="lot-modal-title">Lots disponibles</h3>
+          <p id="lot-modal-subtitle">FIFO par DLC puis date de creation.</p>
+        </div>
+        <button id="close-lot-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="lot-feedback" class="page-feedback hidden"></div>
+
+      <div class="table-wrap">
+        <table class="data-table lot-table">
+          <thead>
+            <tr>
+              <th>FIFO</th>
+              <th>Lot</th>
+              <th>Fournisseur</th>
+              <th>Restant</th>
+              <th>PMA</th>
+              <th>DLC</th>
+              <th>Nom latin</th>
+              <th>FAO</th>
+              <th>Sous-zone</th>
+              <th>Engin</th>
+              <th>Methode</th>
+              <th>Allergenes</th>
+            </tr>
+          </thead>
+          <tbody id="lots-tbody">
+            <tr><td colspan="12">Selectionne un article.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/stock.js?v=1"></script>
+</body>
+</html>
