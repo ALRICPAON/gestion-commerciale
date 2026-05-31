@@ -24,7 +24,9 @@ function isNegoce(document) {
 }
 
 function isDeliveryNoteShape(document) {
-  return norm(document?.document_type) === 'delivery_note' || norm(document?.status) === 'delivery_note';
+  return norm(document?.document_type) === 'delivery_note'
+    || norm(document?.status) === 'delivery_note'
+    || (isNegoce(document) && ['delivered', 'validated'].includes(norm(document?.status)));
 }
 
 function isInvoiceLocked(document) {
@@ -303,7 +305,7 @@ async function validateStock(db, document, storeId, clientKey, userId) {
   }
 
   await db.query(
-    `UPDATE sales_documents SET status = CASE WHEN status = 'delivery_note' THEN status ELSE 'validated' END,
+    `UPDATE sales_documents SET status = CASE WHEN status IN ('delivery_note', 'delivered') THEN status ELSE 'validated' END,
       validated_at = COALESCE(validated_at, NOW()), updated_by = $1, updated_at = NOW()
      WHERE id = $2`,
     [userId, document.id]
@@ -313,7 +315,7 @@ async function validateStock(db, document, storeId, clientKey, userId) {
 
 async function withReallocation(db, document, storeId, clientKey, userId, work) {
   const affected = new Set();
-  const wasDestocked = ['validated', 'delivery_note'].includes(norm(document.status));
+  const wasDestocked = ['validated', 'delivery_note', 'delivered'].includes(norm(document.status));
   if (wasDestocked) {
     (await reverseStock(db, document.id, storeId, userId)).forEach((articleId) => affected.add(articleId));
   }
