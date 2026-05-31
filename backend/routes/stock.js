@@ -52,7 +52,7 @@ function lotsSelectSql(extraColumns = '') {
     SELECT
       l.id,
       l.store_id,
-      l.article_id,
+      l.article_id::text AS article_id,
       a.plu,
       a.designation,
       a.unit,
@@ -101,7 +101,7 @@ function summarySelectSql() {
     SELECT
       ss.id,
       ss.store_id,
-      a.id AS article_id,
+      a.id::text AS article_id,
       a.plu,
       a.designation,
       a.unit,

@@ -70,8 +70,24 @@ function normalizeArticleId(value) {
   return id;
 }
 
-function getActionArticleId(button, rowEl) {
-  return normalizeArticleId(button?.dataset.articleId) || normalizeArticleId(rowEl?.dataset.articleId);
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+    String(value || '')
+  );
+}
+
+function warnInvalidArticleId(context, details = {}) {
+  console.warn('[Stock] ID article invalide cote interface', {
+    context,
+    ...details,
+  });
+}
+
+function validateArticleId(articleId, context, details = {}) {
+  if (isUuid(articleId)) return true;
+  showFeedback(stockFeedback, 'ID article invalide cote interface.', 'error');
+  warnInvalidArticleId(context, { articleId, ...details });
+  return false;
 }
 
 function getFifoDlc(row) {
@@ -203,11 +219,17 @@ function renderStock(rows) {
   }
 
   stockTbody.innerHTML = rows.map((row) => {
-    const articleId = normalizeArticleId(row.article_id);
-    const actionsDisabled = articleId ? '' : 'disabled';
+    const articleId = row.article_id;
+    const cleanArticleId = normalizeArticleId(articleId);
+    const hasValidArticleId = isUuid(cleanArticleId);
+    const actionsDisabled = hasValidArticleId ? '' : 'disabled';
+
+    if (!hasValidArticleId) {
+      warnInvalidArticleId('renderStock', { articleId, row });
+    }
 
     return `
-      <tr data-article-id="${escapeHtml(articleId)}" data-pma="${escapeHtml(row.pma || 0)}">
+      <tr data-article-id="${escapeHtml(cleanArticleId)}" data-pma="${escapeHtml(row.pma || 0)}">
         <td>${escapeHtml(row.plu)}</td>
         <td><strong>${escapeHtml(row.designation)}</strong></td>
         <td>${formatNumber(row.stock_quantity)} ${escapeHtml(row.unit || '')}</td>
@@ -222,8 +244,8 @@ function renderStock(rows) {
         <td>${formatMoney(row.stock_value_ex_vat)}</td>
         <td>
           <div class="stock-actions">
-            <button class="btn btn-secondary btn-sm" data-action="lots" data-article-id="${escapeHtml(articleId)}" ${actionsDisabled}>Lots</button>
-            <button class="btn btn-primary btn-sm" data-action="save-prices" data-article-id="${escapeHtml(articleId)}" ${actionsDisabled}>Enregistrer</button>
+            <button class="btn btn-secondary btn-sm" data-action="lots" data-article-id="${escapeHtml(cleanArticleId)}" ${actionsDisabled}>Lots</button>
+            <button class="btn btn-primary btn-sm" data-action="save-prices" data-article-id="${escapeHtml(cleanArticleId)}" ${actionsDisabled}>Enregistrer</button>
           </div>
         </td>
       </tr>
@@ -244,12 +266,11 @@ function updateRowMargins(rowEl) {
 }
 
 async function savePrices(rowEl, options = {}) {
-  const articleId = normalizeArticleId(options.articleId || rowEl.dataset.articleId);
+  const articleId = normalizeArticleId(rowEl.dataset.articleId);
   const inputs = Array.from(rowEl.querySelectorAll('.tariff-input'));
   const values = inputs.map((input) => parsePriceInput(input.value));
 
-  if (!articleId) {
-    showFeedback(stockFeedback, 'ID article introuvable pour cette ligne.', 'error');
+  if (!validateArticleId(articleId, 'savePrices', { rowEl, button: options.button })) {
     return false;
   }
 
@@ -363,6 +384,20 @@ async function savePrefilledPrices() {
   }
 }
 
+function warnInvalidStockRows(rows) {
+  rows.forEach((row) => {
+    const articleId = row.article_id;
+    if (!isUuid(normalizeArticleId(articleId))) {
+      warnInvalidArticleId('GET /api/stock', {
+        articleId,
+        rowId: row.id,
+        stockSummaryId: row.id,
+        row,
+      });
+    }
+  });
+}
+
 async function loadStock() {
   try {
     showFeedback(stockFeedback, 'Chargement du stock...');
@@ -376,6 +411,7 @@ async function loadStock() {
     if (stockFamilyFilter.value.trim()) params.set('family', stockFamilyFilter.value.trim());
 
     stockRows = await apiGet(`/api/stock?${params.toString()}`);
+    warnInvalidStockRows(stockRows);
     renderStock(stockRows);
     showFeedback(stockFeedback, `${stockRows.length} article(s) charge(s).`, 'success');
   } catch (error) {
@@ -413,10 +449,9 @@ function renderLots(lots) {
   `).join('');
 }
 
-async function openLotsModal(articleId) {
+async function openLotsModal(articleId, details = {}) {
   const cleanArticleId = normalizeArticleId(articleId);
-  if (!cleanArticleId) {
-    showFeedback(stockFeedback, 'ID article introuvable pour ouvrir les lots.', 'error');
+  if (!validateArticleId(cleanArticleId, 'openLotsModal', details)) {
     return;
   }
 
@@ -463,20 +498,19 @@ stockTbody.addEventListener('click', async (event) => {
   if (!button) return;
 
   const rowEl = button.closest('tr[data-article-id]');
-  const articleId = getActionArticleId(button, rowEl);
+  const articleId = normalizeArticleId(rowEl?.dataset.articleId);
 
-  if (!articleId) {
-    showFeedback(stockFeedback, 'ID article introuvable pour cette action.', 'error');
+  if (!validateArticleId(articleId, `click:${button.dataset.action}`, { button, rowEl })) {
     return;
   }
 
   if (button.dataset.action === 'lots') {
-    openLotsModal(articleId);
+    openLotsModal(articleId, { button, rowEl });
     return;
   }
 
   if (button.dataset.action === 'save-prices' && rowEl) {
-    await savePrices(rowEl, { articleId });
+    await savePrices(rowEl, { button });
   }
 });
 
