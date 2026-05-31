@@ -9,7 +9,7 @@
     return;
   }
 
-  console.log('NEGOCE SAVE HELPER LOADED', { version: 3, script: 'sale-detail-negoce-save.js' });
+  console.log('NEGOCE SAVE HELPER LOADED', { version: 4, script: 'sale-detail-negoce-save.js' });
 
   const normalizeKind = (value) => String(value || '')
     .trim()
@@ -17,26 +17,83 @@
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 
+  const documentIdFromUrl = () => new URLSearchParams(window.location.search).get('id');
+
+  function lexicalSale() {
+    try {
+      if (typeof sale !== 'undefined') return sale;
+    } catch (_) {}
+    return null;
+  }
+
+  function exposeSaleDocument(document, source = 'unknown') {
+    if (!document) return null;
+    window.currentSaleDocument = document;
+    window.currentSaleDocumentSource = source;
+    try {
+      if (typeof sale !== 'undefined') sale = document;
+    } catch (_) {}
+    window.dispatchEvent(new CustomEvent('sale-detail-loaded', { detail: document }));
+    return document;
+  }
+
+  function getCurrentSaleDocument() {
+    return window.currentSaleDocument || lexicalSale() || null;
+  }
+
+  async function ensureSaleDocument(reason = 'unknown') {
+    const current = getCurrentSaleDocument();
+    if (current?.id) return current;
+
+    const id = documentIdFromUrl();
+    if (!id) return current;
+
+    try {
+      const data = await api(`/api/sales/${encodeURIComponent(id)}`);
+      const loaded = data?.sale || data?.document || data;
+      if (loaded?.id) {
+        exposeSaleDocument(loaded, `api:${reason}`);
+        if (Array.isArray(data?.lines)) {
+          try { lines = data.lines; } catch (_) {}
+          window.currentSaleLines = data.lines;
+        }
+        return loaded;
+      }
+    } catch (err) {
+      console.log('NEGOCE SAVE DOCUMENT LOAD ERROR', { reason, id, error: err.message });
+    }
+
+    return getCurrentSaleDocument();
+  }
+
+  window.addEventListener('sale-detail-loaded', (event) => {
+    if (event?.detail?.id) exposeSaleDocument(event.detail, 'event');
+  });
+
   isNegoce = function patchedIsNegoce() {
-    return normalizeKind(sale?.origin) === 'negoce';
+    const document = getCurrentSaleDocument();
+    return normalizeKind(document?.origin || document?.source_type) === 'negoce';
   };
 
   isFactured = function patchedIsFactured() {
-    return normalizeKind(sale?.status) === 'invoiced'
-      || !!sale?.invoice_id
-      || !!sale?.invoice_reference
-      || !!sale?.source_invoice_id
-      || !!sale?.invoiced_at;
+    const document = getCurrentSaleDocument();
+    return normalizeKind(document?.status) === 'invoiced'
+      || !!document?.invoice_id
+      || !!document?.invoice_reference
+      || !!document?.source_invoice_id
+      || !!document?.invoiced_at;
   };
 
   isDeliveryNote = function patchedIsDeliveryNote() {
-    return normalizeKind(sale?.document_type) === 'delivery_note'
-      || normalizeKind(sale?.status) === 'delivery_note';
+    const document = getCurrentSaleDocument();
+    return normalizeKind(document?.document_type) === 'delivery_note'
+      || normalizeKind(document?.status) === 'delivery_note';
   };
 
   editable = function patchedEditable() {
+    const document = getCurrentSaleDocument();
     if (isDeliveryNote()) return !isFactured();
-    if (normalizeKind(sale?.document_type) === 'order') return normalizeKind(sale?.status) === 'draft';
+    if (normalizeKind(document?.document_type) === 'order') return normalizeKind(document?.status) === 'draft';
     return false;
   };
 
@@ -51,19 +108,23 @@
   };
 
   function currentLine(lineId) {
-    return (Array.isArray(lines) ? lines : []).find((line) => String(line.id) === String(lineId)) || null;
+    const knownLines = Array.isArray(window.currentSaleLines) ? window.currentSaleLines : (Array.isArray(lines) ? lines : []);
+    return knownLines.find((line) => String(line.id) === String(lineId)) || null;
   }
 
   function saleDiagnostic() {
+    const document = getCurrentSaleDocument();
     return {
-      sale_id: sale?.id,
-      sale_status: sale?.status,
-      sale_document_type: sale?.document_type,
-      sale_origin: sale?.origin,
-      sale_invoice_id: sale?.invoice_id,
-      sale_invoice_reference: sale?.invoice_reference,
-      sale_source_invoice_id: sale?.source_invoice_id,
-      sale_invoiced_at: sale?.invoiced_at,
+      sale_id: document?.id || documentIdFromUrl(),
+      sale_status: document?.status,
+      sale_document_type: document?.document_type,
+      sale_origin: document?.origin,
+      sale_source_type: document?.source_type,
+      sale_invoice_id: document?.invoice_id,
+      sale_invoice_reference: document?.invoice_reference,
+      sale_source_invoice_id: document?.source_invoice_id,
+      sale_invoiced_at: document?.invoiced_at,
+      source: window.currentSaleDocumentSource || (document ? 'lexical-or-window' : 'missing'),
       is_negoce: isNegoce(),
       is_delivery_note: isDeliveryNote(),
       is_factured: isFactured(),
@@ -72,8 +133,27 @@
   }
 
   async function saveNegoceLine(lineId) {
+    console.log('NEGOCE SAVE CLICK DETECTED', {
+      ...saleDiagnostic(),
+      line_id: lineId,
+    });
+
+    await ensureSaleDocument('click');
     clear(els.lf);
+    const document = getCurrentSaleDocument();
+
+    if (!document?.id) {
+      console.log('NEGOCE SAVE HANDLER HIT', {
+        ...saleDiagnostic(),
+        line_id: lineId,
+        blocked_reason: 'missing_sale_document',
+      });
+      fb(els.lf, 'Document BL négoce non chargé, recharge la page puis réessaie.', true);
+      return false;
+    }
+
     await ensureHeader();
+    await ensureSaleDocument('after-ensure-header');
     const row = els.body.querySelector(`tr[data-line-id="${lineId}"]`);
     if (!row) {
       console.log('NEGOCE SAVE HANDLER HIT', { ...saleDiagnostic(), line_id: lineId, row_found: false });
@@ -123,13 +203,16 @@
     });
 
     await api(url, { method: 'PATCH', body: JSON.stringify(payload) });
-    fb(els.lf, isDeliveryNote() && normalizeKind(sale?.status) !== 'draft' ? 'Ligne enregistrée et stock réajusté' : 'Ligne enregistrée');
+    fb(els.lf, isDeliveryNote() && normalizeKind(getCurrentSaleDocument()?.status) !== 'draft' ? 'Ligne enregistrée et stock réajusté' : 'Ligne enregistrée');
     await loadSale();
+    const refreshed = lexicalSale();
+    if (refreshed?.id) exposeSaleDocument(refreshed, 'loadSale-after-save');
     return true;
   }
 
   const originalSaveLine = saveLine;
   saveLine = async function patchedSaveLine(lineId) {
+    await ensureSaleDocument('saveLine');
     if (!isNegoce()) return originalSaveLine(lineId);
     return saveNegoceLine(lineId);
   };
@@ -137,6 +220,14 @@
   els.body.addEventListener('click', async (event) => {
     const button = event.target.closest('[data-action="save-line"]');
     if (!button) return;
+
+    console.log('NEGOCE SAVE CLICK DETECTED', {
+      ...saleDiagnostic(),
+      line_id: button.dataset.id,
+      phase: 'capture',
+    });
+
+    await ensureSaleDocument('click-capture');
     if (!isNegoce()) {
       console.log('NEGOCE SAVE HANDLER SKIPPED', { ...saleDiagnostic(), line_id: button.dataset.id, reason: 'not_negoce' });
       return;
@@ -153,7 +244,11 @@
 
   els.body.addEventListener('keydown', async (event) => {
     const row = event.target.closest('tr[data-line-id]');
-    if (!row || !isNegoce() || event.key !== 'Enter' || !event.target.classList.contains('line-input')) return;
+    if (!row || event.key !== 'Enter' || !event.target.classList.contains('line-input')) return;
+
+    await ensureSaleDocument('keydown');
+    if (!isNegoce()) return;
+
     event.preventDefault();
     event.stopImmediatePropagation();
     try {
@@ -165,8 +260,8 @@
     }
   }, true);
 
-  window.setTimeout(() => {
+  window.setTimeout(async () => {
+    await ensureSaleDocument('initial-snapshot');
     console.log('NEGOCE SAVE HELPER SALE SNAPSHOT', saleDiagnostic());
-    if (sale && isDeliveryNote()) loadSale().catch((err) => fb(els.lf, err.message || 'Erreur rechargement BL négoce', true));
   }, 0);
 })();
