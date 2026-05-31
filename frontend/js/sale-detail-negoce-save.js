@@ -9,7 +9,7 @@
     return;
   }
 
-  console.log('NEGOCE SAVE HELPER LOADED', { version: 5, script: 'sale-detail-negoce-save.js' });
+  console.log('NEGOCE SAVE HELPER LOADED', { version: 6, script: 'sale-detail-negoce-save.js' });
 
   const normalizeKind = (value) => String(value || '')
     .trim()
@@ -35,6 +35,11 @@
 
   function getCurrentSaleDocument() {
     return window.currentSaleDocument || lexicalSale() || null;
+  }
+
+  function isNegoceDeliveryNoteShape(document) {
+    return normalizeKind(document?.origin || document?.source_type) === 'negoce'
+      && ['delivered', 'delivery_note', 'validated'].includes(normalizeKind(document?.status));
   }
 
   async function ensureSaleDocument(reason = 'unknown') {
@@ -78,7 +83,8 @@
   isDeliveryNote = function patchedIsDeliveryNote() {
     const document = getCurrentSaleDocument();
     return normalizeKind(document?.document_type) === 'delivery_note'
-      || normalizeKind(document?.status) === 'delivery_note';
+      || normalizeKind(document?.status) === 'delivery_note'
+      || isNegoceDeliveryNoteShape(document);
   };
 
   editable = function patchedEditable() {
