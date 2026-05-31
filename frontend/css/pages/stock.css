@@ -35,6 +35,16 @@
   grid-template-columns: minmax(260px, 2fr) minmax(160px, 1fr) minmax(180px, 1fr) auto;
 }
 
+.margin-controls {
+  grid-template-columns: repeat(3, minmax(150px, 1fr)) auto auto;
+  align-items: end;
+}
+
+.margin-controls .filter-actions .btn {
+  width: 100%;
+  min-height: 40px;
+}
+
 .tariff-stock-table {
   min-width: 1420px;
 }
@@ -63,6 +73,11 @@
 .tariff-input:focus {
   border-color: var(--theme-main);
   outline: none;
+}
+
+.tariff-input[data-prefilled="true"] {
+  border-color: #f59e0b;
+  background: #fffbeb;
 }
 
 .margin-cell {
@@ -104,8 +119,15 @@
   min-width: 160px;
 }
 
+@media (max-width: 1100px) {
+  .margin-controls {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
-  .stock-filters {
+  .stock-filters,
+  .margin-controls {
     grid-template-columns: 1fr;
   }
 
