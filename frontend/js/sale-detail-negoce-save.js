@@ -9,7 +9,7 @@
     return;
   }
 
-  console.log('NEGOCE SAVE HELPER LOADED', { version: 4, script: 'sale-detail-negoce-save.js' });
+  console.log('NEGOCE SAVE HELPER LOADED', { version: 5, script: 'sale-detail-negoce-save.js' });
 
   const normalizeKind = (value) => String(value || '')
     .trim()
@@ -30,10 +30,6 @@
     if (!document) return null;
     window.currentSaleDocument = document;
     window.currentSaleDocumentSource = source;
-    try {
-      if (typeof sale !== 'undefined') sale = document;
-    } catch (_) {}
-    window.dispatchEvent(new CustomEvent('sale-detail-loaded', { detail: document }));
     return document;
   }
 
@@ -54,7 +50,6 @@
       if (loaded?.id) {
         exposeSaleDocument(loaded, `api:${reason}`);
         if (Array.isArray(data?.lines)) {
-          try { lines = data.lines; } catch (_) {}
           window.currentSaleLines = data.lines;
         }
         return loaded;
@@ -65,10 +60,6 @@
 
     return getCurrentSaleDocument();
   }
-
-  window.addEventListener('sale-detail-loaded', (event) => {
-    if (event?.detail?.id) exposeSaleDocument(event.detail, 'event');
-  });
 
   isNegoce = function patchedIsNegoce() {
     const document = getCurrentSaleDocument();
