@@ -34,10 +34,12 @@ const lotsTbody = document.getElementById('lots-tbody');
 
 let stockRows = [];
 
-function authHeaders() {
-  return {
+function authHeaders(json = false) {
+  const headers = {
     Authorization: `Bearer ${sessionToken}`,
   };
+  if (json) headers['Content-Type'] = 'application/json';
+  return headers;
 }
 
 function escapeHtml(value) {
@@ -82,26 +84,47 @@ function formatDate(value) {
   return date.toLocaleDateString('fr-FR');
 }
 
-function traceabilitySummary(row) {
-  const parts = [
-    row.latin_name,
-    row.fao_zone ? `FAO ${row.fao_zone}` : '',
-    row.sous_zone,
-    row.fishing_gear,
-    row.production_method,
-    row.allergens,
-  ].filter(Boolean);
+function parsePriceInput(value) {
+  const raw = String(value ?? '').trim().replace(',', '.');
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : NaN;
+}
 
-  return parts.length ? parts.join(' | ') : '-';
+function formatPriceInput(value) {
+  if (value === null || value === undefined || value === '') return '';
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : '';
+}
+
+function marginText(price, pma) {
+  const salePrice = Number(price);
+  const cost = Number(pma || 0);
+  if (!Number.isFinite(salePrice) || salePrice <= 0) return '';
+  const amount = salePrice - cost;
+  const rate = (amount / salePrice) * 100;
+  return `${formatMoney(amount)} / ${rate.toFixed(1).replace('.', ',')} %`;
 }
 
 async function apiGet(path) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: authHeaders(),
+    headers: authHeaders(false),
   });
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erreur API stock');
+  return data;
+}
+
+async function apiPatch(path, payload) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: authHeaders(true),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erreur sauvegarde tarifs');
   return data;
 }
 
@@ -119,30 +142,47 @@ function updateKpis(rows) {
   kpiDlc.textContent = dlcs.length ? formatDate(dlcs[0]) : '-';
 }
 
+function tariffCell(row, level) {
+  const field = `sale_price_level_${level}_ht`;
+  return `
+    <input
+      class="tariff-input"
+      type="number"
+      min="0"
+      step="0.01"
+      data-level="${level}"
+      value="${escapeHtml(formatPriceInput(row[field]))}"
+      aria-label="Tarif ${level} HT ${escapeHtml(row.designation)}"
+    />
+  `;
+}
+
 function renderStock(rows) {
   if (!rows.length) {
-    stockTbody.innerHTML = '<tr><td colspan="9">Aucun stock trouve.</td></tr>';
+    stockTbody.innerHTML = '<tr><td colspan="13">Aucun stock trouve.</td></tr>';
     updateKpis([]);
     return;
   }
 
   stockTbody.innerHTML = rows.map((row) => `
-    <tr>
+    <tr data-article-id="${escapeHtml(row.article_id)}" data-pma="${escapeHtml(row.pma || 0)}">
       <td>${escapeHtml(row.plu)}</td>
-      <td>
-        <strong>${escapeHtml(row.designation)}</strong>
-        <span class="stock-muted">${escapeHtml(row.ean || '')}</span>
-      </td>
-      <td>${escapeHtml(row.family_name || row.family_code || '-')}</td>
+      <td><strong>${escapeHtml(row.designation)}</strong></td>
       <td>${formatNumber(row.stock_quantity)} ${escapeHtml(row.unit || '')}</td>
       <td>${formatMoney(row.pma)}</td>
-      <td>${formatMoney(row.stock_value_ex_vat)}</td>
+      <td>${tariffCell(row, 1)}</td>
+      <td class="margin-cell" data-margin-level="1">${marginText(row.sale_price_level_1_ht, row.pma)}</td>
+      <td>${tariffCell(row, 2)}</td>
+      <td class="margin-cell" data-margin-level="2">${marginText(row.sale_price_level_2_ht, row.pma)}</td>
+      <td>${tariffCell(row, 3)}</td>
+      <td class="margin-cell" data-margin-level="3">${marginText(row.sale_price_level_3_ht, row.pma)}</td>
       <td>${formatDate(row.next_dlc || row.next_lot_dlc)}</td>
-      <td class="trace-cell">${escapeHtml(traceabilitySummary(row))}</td>
+      <td>${formatMoney(row.stock_value_ex_vat)}</td>
       <td>
-        <button class="btn btn-secondary btn-sm" data-action="lots" data-article-id="${escapeHtml(row.article_id)}">
-          Lots
-        </button>
+        <div class="stock-actions">
+          <button class="btn btn-secondary btn-sm" data-action="lots" data-article-id="${escapeHtml(row.article_id)}">Lots</button>
+          <button class="btn btn-primary btn-sm" data-action="save-prices" data-article-id="${escapeHtml(row.article_id)}">Enregistrer</button>
+        </div>
       </td>
     </tr>
   `).join('');
@@ -150,10 +190,63 @@ function renderStock(rows) {
   updateKpis(rows);
 }
 
+function updateRowMargins(rowEl) {
+  const pma = Number(rowEl.dataset.pma || 0);
+  rowEl.querySelectorAll('.tariff-input').forEach((input) => {
+    const marginEl = rowEl.querySelector(`[data-margin-level="${input.dataset.level}"]`);
+    const price = parsePriceInput(input.value);
+    marginEl.textContent = Number.isNaN(price) ? 'Prix invalide' : marginText(price, pma);
+    marginEl.classList.toggle('error-text', Number.isNaN(price));
+  });
+}
+
+async function savePrices(rowEl) {
+  const articleId = rowEl.dataset.articleId;
+  const inputs = Array.from(rowEl.querySelectorAll('.tariff-input'));
+  const values = inputs.map((input) => parsePriceInput(input.value));
+
+  if (values.some((value) => Number.isNaN(value))) {
+    showFeedback(stockFeedback, 'Un tarif doit etre positif ou vide.', 'error');
+    return;
+  }
+
+  const button = rowEl.querySelector('[data-action="save-prices"]');
+  if (button) button.disabled = true;
+
+  try {
+    const result = await apiPatch(`/api/stock/articles/${encodeURIComponent(articleId)}/prices`, {
+      sale_price_level_1_ht: values[0],
+      sale_price_level_2_ht: values[1],
+      sale_price_level_3_ht: values[2],
+    });
+
+    const index = stockRows.findIndex((row) => String(row.article_id) === String(articleId));
+    if (index >= 0) {
+      stockRows[index] = {
+        ...stockRows[index],
+        sale_price_level_1_ht: result.prices.sale_price_level_1_ht,
+        sale_price_level_2_ht: result.prices.sale_price_level_2_ht,
+        sale_price_level_3_ht: result.prices.sale_price_level_3_ht,
+      };
+    }
+
+    inputs.forEach((input, i) => {
+      input.value = formatPriceInput(values[i]);
+    });
+    updateRowMargins(rowEl);
+    showFeedback(stockFeedback, 'Tarifs enregistres.', 'success');
+  } catch (error) {
+    console.error(error);
+    showFeedback(stockFeedback, error.message, 'error');
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
 async function loadStock() {
   try {
     showFeedback(stockFeedback, 'Chargement du stock...');
-    stockTbody.innerHTML = '<tr><td colspan="9">Chargement du stock...</td></tr>';
+    stockTbody.innerHTML = '<tr><td colspan="13">Chargement du stock...</td></tr>';
 
     const params = new URLSearchParams();
     params.set('available_only', stockAvailableFilter.value || 'true');
@@ -168,7 +261,7 @@ async function loadStock() {
   } catch (error) {
     console.error(error);
     showFeedback(stockFeedback, error.message, 'error');
-    stockTbody.innerHTML = '<tr><td colspan="9">Erreur de chargement.</td></tr>';
+    stockTbody.innerHTML = '<tr><td colspan="13">Erreur de chargement.</td></tr>';
     updateKpis([]);
   }
 }
@@ -224,10 +317,33 @@ function closeLotsModal() {
   showFeedback(lotFeedback, '');
 }
 
-stockTbody.addEventListener('click', (event) => {
-  const button = event.target.closest('button[data-action="lots"]');
+stockTbody.addEventListener('input', (event) => {
+  const input = event.target.closest('.tariff-input');
+  if (!input) return;
+  const rowEl = input.closest('tr[data-article-id]');
+  if (rowEl) updateRowMargins(rowEl);
+});
+
+stockTbody.addEventListener('change', (event) => {
+  const input = event.target.closest('.tariff-input');
+  if (!input) return;
+  const price = parsePriceInput(input.value);
+  if (!Number.isNaN(price)) input.value = formatPriceInput(price);
+});
+
+stockTbody.addEventListener('click', async (event) => {
+  const button = event.target.closest('button[data-action]');
   if (!button) return;
-  openLotsModal(button.dataset.articleId);
+
+  if (button.dataset.action === 'lots') {
+    openLotsModal(button.dataset.articleId);
+    return;
+  }
+
+  if (button.dataset.action === 'save-prices') {
+    const rowEl = button.closest('tr[data-article-id]');
+    if (rowEl) await savePrices(rowEl);
+  }
 });
 
 stockSearchInput.addEventListener('keydown', (event) => {
