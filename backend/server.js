@@ -22,6 +22,7 @@ const suppliersRoutes = require('./routes/suppliers');
 const clientsRoutes = require('./routes/clients');
 const purchasesRoutes = require('./routes/purchases');
 const saleUnitNormalizerRoutes = require('./routes/saleUnitNormalizer');
+const deliveryNoteValidationForcedRoutes = require('./routes/deliveryNoteValidationForced');
 const deliveryNotesNegoceEditableRoutes = require('./routes/deliveryNotesNegoceEditable');
 const deliveryNotesEditableRoutes = require('./routes/deliveryNotesEditable');
 const negoceFixesRoutes = require('./routes/negoceFixes');
@@ -170,6 +171,7 @@ app.get('/api/diagnostics/sales-documents/:id', authenticateToken, attachDbConte
   }
 });
 app.use('/api', saleUnitNormalizerRoutes);
+app.use('/api', deliveryNoteValidationForcedRoutes);
 app.use('/api', deliveryNotesNegoceEditableRoutes);
 app.use('/api', deliveryNotesEditableRoutes);
 app.use('/api', logOldRouteFallthrough('OLD NEGOCE ROUTE HIT before negoceFixesRoutes'));
