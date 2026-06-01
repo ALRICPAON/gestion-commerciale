@@ -9,7 +9,7 @@
     return;
   }
 
-  console.log('NEGOCE SAVE HELPER LOADED', { version: 6, script: 'sale-detail-negoce-save.js' });
+  console.log('NEGOCE SAVE HELPER LOADED', { version: 7, script: 'sale-detail-negoce-save.js' });
 
   const normalizeKind = (value) => String(value || '')
     .trim()
@@ -18,6 +18,45 @@
     .replace(/[\u0300-\u036f]/g, '');
 
   const documentIdFromUrl = () => new URLSearchParams(window.location.search).get('id');
+
+  function apiOptionsWithForcedStock(options = {}) {
+    const next = { ...options };
+    const body = next.body ? JSON.parse(next.body) : {};
+    next.body = JSON.stringify({ ...body, allow_negative_stock: true, force_stock_exit: true });
+    return next;
+  }
+
+  api = async function patchedApi(path, options = {}) {
+    const call = async (nextOptions) => {
+      const response = await fetch(`${API_BASE}${path}`, {
+        ...nextOptions,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+          ...(nextOptions.headers || {}),
+        },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const error = new Error(data.error || 'Erreur API');
+        error.code = data.code;
+        error.details = data.details;
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    };
+
+    try {
+      return await call(options);
+    } catch (error) {
+      const method = String(options.method || 'GET').toUpperCase();
+      if (error.code !== 'STOCK_INSUFFICIENT' || method === 'GET') throw error;
+      const confirmed = window.confirm('Stock insuffisant. Voulez-vous forcer la sortie stock ?');
+      if (!confirmed) throw error;
+      return call(apiOptionsWithForcedStock(options));
+    }
+  };
 
   function lexicalSale() {
     try {
@@ -234,7 +273,7 @@
     try {
       await saveNegoceLine(button.dataset.id);
     } catch (err) {
-      console.log('NEGOCE SAVE HANDLER ERROR', { ...saleDiagnostic(), line_id: button.dataset.id, error: err.message });
+      console.log('NEGOCE SAVE HANDLER ERROR', { ...saleDiagnostic(), line_id: button.dataset.id, error: err.message, code: err.code });
       fb(els.lf, err.message || 'Erreur enregistrement ligne négoce', true);
     }
   }, true);
@@ -252,7 +291,7 @@
       const saved = await saveNegoceLine(row.dataset.lineId);
       if (saved) await addLine();
     } catch (err) {
-      console.log('NEGOCE SAVE HANDLER ERROR', { ...saleDiagnostic(), line_id: row.dataset.lineId, error: err.message });
+      console.log('NEGOCE SAVE HANDLER ERROR', { ...saleDiagnostic(), line_id: row.dataset.lineId, error: err.message, code: err.code });
       fb(els.lf, err.message || 'Erreur enregistrement ligne négoce', true);
     }
   }, true);
