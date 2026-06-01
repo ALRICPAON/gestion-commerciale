@@ -32,7 +32,12 @@
           <h2>Articles / Produits</h2>
           <p>Gestion des produits de négoce : familles, TVA, prix, unités et données de traçabilité.</p>
         </div>
-        <button id="create-article-btn" class="btn btn-primary">+ Créer un article</button>
+        <div class="table-actions">
+          <button id="export-articles-btn" class="btn btn-secondary">Exporter Excel</button>
+          <button id="import-articles-btn" class="btn btn-secondary">Importer Excel</button>
+          <input type="file" id="import-articles-file" accept=".xlsx,.xls" hidden />
+          <button id="create-article-btn" class="btn btn-primary">+ Créer un article</button>
+        </div>
       </div>
 
       <div class="filters-grid">
@@ -268,6 +273,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/articles.js?v=15"></script>
+  <script src="./js/articles.js?v=16"></script>
 </body>
 </html>
