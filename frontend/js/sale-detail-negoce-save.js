@@ -9,7 +9,7 @@
     return;
   }
 
-  console.log('NEGOCE SAVE HELPER LOADED', { version: 7, script: 'sale-detail-negoce-save.js' });
+  console.log('NEGOCE SAVE HELPER LOADED', { version: 8, script: 'sale-detail-negoce-save.js' });
 
   const normalizeKind = (value) => String(value || '')
     .trim()
@@ -19,10 +19,14 @@
 
   const documentIdFromUrl = () => new URLSearchParams(window.location.search).get('id');
 
-  function apiOptionsWithForcedStock(options = {}) {
+  function apiOptionsWithForcedStock(path, options = {}) {
     const next = { ...options };
     const body = next.body ? JSON.parse(next.body) : {};
     next.body = JSON.stringify({ ...body, allow_negative_stock: true, force_stock_exit: true });
+    console.log('FORCED VALIDATE DELIVERY NOTE RETRY', {
+      url: path,
+      body: JSON.parse(next.body),
+    });
     return next;
   }
 
@@ -38,7 +42,7 @@
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const error = new Error(data.error || 'Erreur API');
+        const error = new Error(data.message || data.error || 'Erreur API');
         error.code = data.code;
         error.details = data.details;
         error.status = response.status;
@@ -54,7 +58,7 @@
       if (error.code !== 'STOCK_INSUFFICIENT' || method === 'GET') throw error;
       const confirmed = window.confirm('Stock insuffisant. Voulez-vous forcer la sortie stock ?');
       if (!confirmed) throw error;
-      return call(apiOptionsWithForcedStock(options));
+      return call(apiOptionsWithForcedStock(path, options));
     }
   };
 
