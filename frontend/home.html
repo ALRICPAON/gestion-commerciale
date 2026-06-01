@@ -8,112 +8,27 @@
 </head>
 <body class="app-page">
   <header class="topbar">
-    <div class="topbar-left">
-      <h1 class="app-title">Scorpa Seafood / Gestion Commerciale</h1>
-      <p class="app-subtitle" id="store-name">Magasin</p>
-    </div>
-
-    <div class="topbar-right">
-      <div class="topbar-department-box">
-        <label for="topbar-department-select" class="topbar-label">Service actif</label>
-        <select id="topbar-department-select" class="topbar-select"></select>
-      </div>
-
-      <div class="user-box">
-        <span id="user-name">Utilisateur</span>
-      </div>
-
-      <button id="users-btn" class="btn btn-secondary">Utilisateurs</button>
-      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
-    </div>
+    <div class="topbar-left"><h1 class="app-title">Scorpa Seafood / Gestion Commerciale</h1><p class="app-subtitle" id="store-name">Magasin</p></div>
+    <div class="topbar-right"><div class="topbar-department-box"><label for="topbar-department-select" class="topbar-label">Service actif</label><select id="topbar-department-select" class="topbar-select"></select></div><div class="user-box"><span id="user-name">Utilisateur</span></div><button id="users-btn" class="btn btn-secondary">Utilisateurs</button><button id="logout-btn" class="btn btn-secondary">Deconnexion</button></div>
   </header>
-
   <main class="main-content">
-    <section class="welcome-card">
-      <h2>Tableau de bord</h2>
-      <p>
-        Service actif :
-        <strong id="current-department-name">-</strong>
-      </p>
-    </section>
-
+    <section class="welcome-card"><h2>Tableau de bord</h2><p>Service actif : <strong id="current-department-name">-</strong></p></section>
     <section class="dashboard-grid">
-  <a class="module-card" href="./clients.html">
-  <h3>Clients</h3>
-  <p>Créer et gérer les clients, grossistes, GMS et restaurants.</p>
-</a>
-
-  <a class="module-card" href="./articles.html">
-  <h3>Articles / Produits</h3>
-  <p>Créer et gérer les produits, familles, TVA et prix.</p>
-</a>
-
-<a class="module-card" href="./suppliers.html">
-  <h3>Fournisseurs</h3>
-  <p>Créer et gérer les fournisseurs, mareyeurs, criées et importateurs.</p>
-</a>
-
-<a class="module-card" href="./purchases.html">
-  <h3>Achats</h3>
-  <p>Creer les commandes fournisseurs, importer les BL et suivre les receptions.</p>
-</a>
-
-<a class="module-card" href="./sales.html">
-  <h3>Ventes</h3>
-  <p>Creer les sorties, valoriser les lignes et valider les mouvements de stock.</p>
-</a>
-
-<article class="module-card" data-module="af-map">
-  <h3>Liaisons fournisseurs / articles</h3>
-  <p class="module-subtitle">AF_MAP</p>
-  <p>Relier les références fournisseurs aux articles internes.</p>
-  <button id="af-map-card-btn" class="btn btn-primary btn-full">Ouvrir</button>
-</article>
-
-<a class="module-card" href="./stock.html" data-module="stocks">
-  <h3>Stock / Lots</h3>
-  <p>Consulter le stock magasin, les lots disponibles et la tracabilite FIFO.</p>
-</a>
-
-  <article class="module-card" data-module="quotes">
-    <h3>Devis</h3>
-    <p>Module a venir</p>
-    <button class="btn btn-secondary btn-full" disabled>Module a venir</button>
-  </article>
-
-  <article class="module-card" data-module="orders">
-    <h3>Commandes</h3>
-    <p>Module a venir</p>
-    <button class="btn btn-secondary btn-full" disabled>Module a venir</button>
-  </article>
-
-  <article class="module-card" data-module="delivery-notes">
-    <h3>Bons de livraison</h3>
-    <p>Module a venir</p>
-    <button class="btn btn-secondary btn-full" disabled>Module a venir</button>
-  </article>
-
-  <article class="module-card" data-module="invoices">
-    <h3>Factures</h3>
-    <p>Module a venir</p>
-    <button class="btn btn-secondary btn-full" disabled>Module a venir</button>
-  </article>
-
-  <article class="module-card" data-module="dashboard">
-    <h3>Tableau de bord</h3>
-    <p>Module a venir</p>
-    <button class="btn btn-secondary btn-full" disabled>Module a venir</button>
-  </article>
-
-  <article class="module-card" data-module="ai-assistant">
-    <h3>Assistant IA</h3>
-    <p>Module a venir</p>
-    <button class="btn btn-secondary btn-full" disabled>Module a venir</button>
-  </article>
-</section>
+      <a class="module-card" href="./clients.html"><h3>Clients</h3><p>Créer et gérer les clients, grossistes, GMS et restaurants.</p></a>
+      <a class="module-card" href="./articles.html"><h3>Articles / Produits</h3><p>Créer et gérer les produits, familles, TVA et prix.</p></a>
+      <a class="module-card" href="./suppliers.html"><h3>Fournisseurs</h3><p>Créer et gérer les fournisseurs, mareyeurs, criées et importateurs.</p></a>
+      <a class="module-card" href="./purchases.html"><h3>Achats</h3><p>Creer les commandes fournisseurs, importer les BL et suivre les receptions.</p></a>
+      <a class="module-card" href="./sales.html"><h3>Ventes / Commandes</h3><p>Creer les commandes client et préparer les lots sans destockage.</p></a>
+      <a class="module-card" href="./delivery-notes.html" data-module="delivery-notes"><h3>Bons de livraison</h3><p>Generer les BL, valider le destockage, imprimer et preparer les etiquettes.</p></a>
+      <article class="module-card" data-module="af-map"><h3>Liaisons fournisseurs / articles</h3><p class="module-subtitle">AF_MAP</p><p>Relier les références fournisseurs aux articles internes.</p><button id="af-map-card-btn" class="btn btn-primary btn-full">Ouvrir</button></article>
+      <a class="module-card" href="./stock.html" data-module="stocks"><h3>Stock / Lots</h3><p>Consulter le stock magasin, les lots disponibles et la tracabilite FIFO.</p></a>
+      <article class="module-card" data-module="quotes"><h3>Devis</h3><p>Module a venir</p><button class="btn btn-secondary btn-full" disabled>Module a venir</button></article>
+      <article class="module-card" data-module="invoices"><h3>Factures</h3><p>Module a venir</p><button class="btn btn-secondary btn-full" disabled>Module a venir</button></article>
+      <article class="module-card" data-module="dashboard"><h3>Tableau de bord</h3><p>Module a venir</p><button class="btn btn-secondary btn-full" disabled>Module a venir</button></article>
+      <article class="module-card" data-module="ai-assistant"><h3>Assistant IA</h3><p>Module a venir</p><button class="btn btn-secondary btn-full" disabled>Module a venir</button></article>
+    </section>
   </main>
-
   <script src="./js/config.js"></script>
-  <script src="./js/home.js?v=9"></script>
+  <script src="./js/home.js?v=10"></script>
 </body>
 </html>
