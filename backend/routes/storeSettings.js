@@ -266,26 +266,4 @@ router.put('/store-settings', authenticateToken, attachDbContext, requireAdminOr
   }
 });
 
-router.delete('/store-settings', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await req.dbPool.query(
-      `
-      DELETE FROM store_settings
-      WHERE store_id = $1
-      RETURNING id
-      `,
-      [req.user.store_id]
-    );
-
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Paramètres société introuvables' });
-    }
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('Erreur DELETE /api/store-settings :', err);
-    res.status(500).json({ error: 'Erreur serveur suppression paramètres société' });
-  }
-});
-
 module.exports = router;
