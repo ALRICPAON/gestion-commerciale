@@ -16,6 +16,30 @@ const pos = (value, fallback = 0) => Math.max(num(value, fallback), 0);
 const norm = (value) => String(value || '').trim().toLowerCase();
 const isDestocked = (doc) => ['validated', 'delivery_note', 'delivered'].includes(norm(doc?.status));
 const unlocked = (doc) => doc?.document_type === 'DELIVERY_NOTE' && doc.status !== 'invoiced' && !doc.invoice_id && !doc.invoiced_at;
+const forceRequested = (body = {}) => body.allow_negative_stock === true || body.force_stock_exit === true;
+
+function stockInsufficientError({ line, missingQuantity, articleId, lotId, documentId }) {
+  const error = new Error(`Stock insuffisant ligne ${line?.line_number || ''}`.trim());
+  error.status = 409;
+  error.code = 'STOCK_INSUFFICIENT';
+  error.details = {
+    stock_forced: false,
+    missing_quantity: Number(missingQuantity.toFixed(3)),
+    article_id: articleId || null,
+    lot_id: lotId || null,
+    document_id: documentId || null,
+    line_id: line?.id || null,
+  };
+  return error;
+}
+
+function errorBody(err, fallback) {
+  return {
+    error: err.message || fallback,
+    ...(err.code ? { code: err.code } : {}),
+    ...(err.details ? { details: err.details } : {}),
+  };
+}
 
 async function documentById(db, id, storeId, lock = false) {
   const result = await db.query(
@@ -159,6 +183,25 @@ async function recalc(db, documentId, userId) {
   );
 }
 
+async function recordForcedStockExit(db, { storeId, clientKey, articleId, lotId, documentId, line, missingQuantity, unitCost, userId, referenceNumber }) {
+  const notes = JSON.stringify({
+    forced_stock_exit: true,
+    stock_forced: true,
+    missing_quantity: Number(missingQuantity.toFixed(3)),
+    article_id: articleId || null,
+    lot_id: lotId || null,
+    document_id: documentId,
+    line_id: line?.id || null,
+    user_id: userId || null,
+    forced_at: new Date().toISOString(),
+  });
+  await db.query(
+    `INSERT INTO stock_movements(id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by)
+     VALUES(gen_random_uuid(), $1, $2, $3, $4, 'sale_out', $5, $6, 'sales_documents', $7, $8, $9)`,
+    [storeId, clientKey || null, articleId, lotId || null, -missingQuantity, num(unitCost), documentId, notes || `Sortie forcee BL ${referenceNumber || documentId}`, userId]
+  );
+}
+
 async function reverseStock(db, documentId, storeId, userId) {
   const doc = await documentById(db, documentId, storeId, true);
   const affected = new Set();
@@ -183,7 +226,7 @@ async function reverseStock(db, documentId, storeId, userId) {
   return affected;
 }
 
-async function validateStock(db, documentId, storeId, clientKey, userId) {
+async function validateStock(db, documentId, storeId, clientKey, userId, options = {}) {
   const doc = await documentById(db, documentId, storeId, true);
   if (!unlocked(doc)) {
     const error = new Error('BL facture ou lie a une facture : modification interdite');
@@ -213,9 +256,22 @@ async function validateStock(db, documentId, storeId, clientKey, userId) {
         remaining = Number((remaining - quantity).toFixed(3));
       }
       if (remaining > 0) {
-        const error = new Error(`Stock insuffisant ligne ${line.line_number}`);
-        error.status = 400;
-        throw error;
+        if (!options.forceStockExit) {
+          throw stockInsufficientError({ line, missingQuantity: remaining, articleId: line.article_id, lotId: line.selected_lot_id, documentId });
+        }
+        await recordForcedStockExit(db, {
+          storeId,
+          clientKey: doc.client_key || clientKey || null,
+          articleId: line.article_id,
+          lotId: line.selected_lot_id || null,
+          documentId,
+          line,
+          missingQuantity: remaining,
+          unitCost: line.unit_cost_ex_vat,
+          userId,
+          referenceNumber: doc.reference_number,
+        });
+        remaining = 0;
       }
       affected.add(line.article_id);
     }
@@ -225,7 +281,7 @@ async function validateStock(db, documentId, storeId, clientKey, userId) {
   return affected;
 }
 
-async function withReallocation(db, doc, storeId, clientKey, userId, work) {
+async function withReallocation(db, doc, storeId, clientKey, userId, options, work) {
   const wasDestocked = isDestocked(doc);
   const affected = new Set();
   if (wasDestocked) {
@@ -234,7 +290,7 @@ async function withReallocation(db, doc, storeId, clientKey, userId, work) {
   }
   const result = await work();
   await recalc(db, doc.id, userId);
-  if (wasDestocked) (await validateStock(db, doc.id, storeId, clientKey, userId)).forEach((id) => affected.add(id));
+  if (wasDestocked) (await validateStock(db, doc.id, storeId, clientKey, userId, options)).forEach((id) => affected.add(id));
   for (const id of affected) await recomputeArticleStock(db, id, storeId);
   return result;
 }
@@ -256,7 +312,7 @@ router.patch('/sales/:id', authenticateToken, attachDbContext, requireAdminOrMan
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur modification entete BL :', err);
-    res.status(err.status || 500).json({ error: err.message || 'Erreur modification BL' });
+    res.status(err.status || 500).json(errorBody(err, 'Erreur modification BL'));
   } finally {
     db.release();
   }
@@ -269,7 +325,7 @@ router.post('/sales/:id/lines', authenticateToken, attachDbContext, requireAdmin
     const doc = await documentById(db, req.params.id, req.user.store_id, true);
     if (!doc || doc.document_type !== 'DELIVERY_NOTE') { await db.query('ROLLBACK'); return next(); }
     if (!unlocked(doc)) { await db.query('ROLLBACK'); return res.status(400).json({ error: 'BL facture ou lie a une facture : modification interdite' }); }
-    const line = await withReallocation(db, doc, req.user.store_id, req.user.client_key, req.user.id, async () => {
+    const line = await withReallocation(db, doc, req.user.store_id, req.user.client_key, req.user.id, { forceStockExit: forceRequested(req.body) }, async () => {
       const numberResult = await db.query(`SELECT COALESCE(MAX(line_number), 0) + 1 AS line_number FROM sales_lines WHERE sales_document_id = $1`, [doc.id]);
       const inserted = await db.query(
         `INSERT INTO sales_lines(id, store_id, client_key, sales_document_id, line_number, sale_unit, vat_rate, line_status, created_by, updated_by) VALUES(gen_random_uuid(), $1, $2, $3, $4, 'kg', COALESCE($5, 5.5), 'pending', $6, $6) RETURNING *`,
@@ -282,7 +338,7 @@ router.post('/sales/:id/lines', authenticateToken, attachDbContext, requireAdmin
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur ajout ligne BL :', err);
-    res.status(err.status || 500).json({ error: err.message || 'Erreur ajout ligne BL' });
+    res.status(err.status || 500).json(errorBody(err, 'Erreur ajout ligne BL'));
   } finally {
     db.release();
   }
@@ -296,11 +352,11 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
     if (!line || line.document_type !== 'DELIVERY_NOTE') { await db.query('ROLLBACK'); return next(); }
     const doc = { id: line.sales_document_id, document_type: line.document_type, status: line.document_status, origin: line.document_origin, invoice_id: line.invoice_id, invoiced_at: line.invoiced_at, client_id: line.client_id, tariff_level_snapshot: line.tariff_level_snapshot, vat_rate_snapshot: line.vat_rate_snapshot, is_vat_exempt_snapshot: line.is_vat_exempt_snapshot };
     if (!unlocked(doc)) { await db.query('ROLLBACK'); return res.status(400).json({ error: 'BL facture ou lie a une facture : modification interdite' }); }
-    const updated = await withReallocation(db, doc, req.user.store_id, req.user.client_key, req.user.id, async () => {
+    const updated = await withReallocation(db, doc, req.user.store_id, req.user.client_key, req.user.id, { forceStockExit: forceRequested(req.body) }, async () => {
       const article = await articleByPayload(db, req.user.store_id, req.body || {});
       if (!article && line.document_origin !== 'negoce') { const error = new Error('Article obligatoire pour une ligne BL'); error.status = 400; throw error; }
       const selectedLot = await lotById(db, req.user.store_id, article?.id, clean(req.body?.selected_lot_id));
-      if (clean(req.body?.selected_lot_id) && !selectedLot && line.document_origin !== 'negoce') { const error = new Error('Lot selectionne introuvable ou sans stock'); error.status = 400; throw error; }
+      if (clean(req.body?.selected_lot_id) && !selectedLot && line.document_origin !== 'negoce' && !forceRequested(req.body)) { const error = new Error('Lot selectionne introuvable ou sans stock'); error.status = 400; throw error; }
       const suggestedLot = selectedLot || (line.document_origin === 'negoce' ? null : await fifoLot(db, req.user.store_id, article?.id));
       const x = compute(req.body || {}, article, doc, line);
       const result = await db.query(
@@ -314,7 +370,7 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur modification ligne BL :', err);
-    res.status(err.status || 500).json({ error: err.message || 'Erreur modification ligne BL' });
+    res.status(err.status || 500).json(errorBody(err, 'Erreur modification ligne BL'));
   } finally {
     db.release();
   }
@@ -328,7 +384,7 @@ router.delete('/sales/lines/:id', authenticateToken, attachDbContext, requireAdm
     if (!line || line.document_type !== 'DELIVERY_NOTE') { await db.query('ROLLBACK'); return next(); }
     const doc = { id: line.sales_document_id, document_type: line.document_type, status: line.document_status, origin: line.document_origin, invoice_id: line.invoice_id, invoiced_at: line.invoiced_at };
     if (!unlocked(doc)) { await db.query('ROLLBACK'); return res.status(400).json({ error: 'BL facture ou lie a une facture : modification interdite' }); }
-    await withReallocation(db, doc, req.user.store_id, req.user.client_key, req.user.id, async () => {
+    await withReallocation(db, doc, req.user.store_id, req.user.client_key, req.user.id, { forceStockExit: forceRequested(req.body) }, async () => {
       await db.query(`DELETE FROM sales_lines WHERE id = $1 AND store_id = $2`, [req.params.id, req.user.store_id]);
     });
     await db.query('COMMIT');
@@ -336,7 +392,7 @@ router.delete('/sales/lines/:id', authenticateToken, attachDbContext, requireAdm
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur suppression ligne BL :', err);
-    res.status(err.status || 500).json({ error: err.message || 'Erreur suppression ligne BL' });
+    res.status(err.status || 500).json(errorBody(err, 'Erreur suppression ligne BL'));
   } finally {
     db.release();
   }
