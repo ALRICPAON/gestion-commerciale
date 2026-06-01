@@ -17,6 +17,9 @@ const searchInput = document.getElementById('search-input');
 const familyFilter = document.getElementById('family-filter');
 const statusFilter = document.getElementById('status-filter');
 const refreshBtn = document.getElementById('refresh-btn');
+const exportArticlesBtn = document.getElementById('export-articles-btn');
+const importArticlesBtn = document.getElementById('import-articles-btn');
+const importArticlesFile = document.getElementById('import-articles-file');
 const createArticleBtn = document.getElementById('create-article-btn');
 const feedbackEl = document.getElementById('articles-feedback');
 const tbody = document.getElementById('articles-tbody');
@@ -63,35 +66,26 @@ function setFeedback(message = '', type = '') {
 }
 
 function authHeaders(json = true) {
-  const headers = {
-    Authorization: `Bearer ${sessionToken}`,
-  };
-
-  if (json) {
-    headers['Content-Type'] = 'application/json';
-  }
-
+  const headers = { Authorization: `Bearer ${sessionToken}` };
+  if (json) headers['Content-Type'] = 'application/json';
   return headers;
 }
 
 function formatPrice(value) {
   if (value === null || value === undefined || value === '') return '';
   const number = Number(value);
-  if (!Number.isFinite(number)) return '';
-  return number.toFixed(2);
+  return Number.isFinite(number) ? number.toFixed(2) : '';
 }
 
 function formatVat(value) {
   if (value === null || value === undefined || value === '') return '';
   const number = Number(value);
-  if (!Number.isFinite(number)) return '';
-  return `${number.toString().replace('.', ',')} %`;
+  return Number.isFinite(number) ? `${number.toString().replace('.', ',')} %` : '';
 }
 
 function parseNumberInput(input) {
   if (!input || input.value === '') return null;
-  const normalized = String(input.value).replace(',', '.');
-  const number = Number(normalized);
+  const number = Number(String(input.value).replace(',', '.'));
   return Number.isFinite(number) ? number : null;
 }
 
@@ -103,24 +97,14 @@ function fillFamilySelects() {
   const options = familiesCache
     .map((family) => `<option value="${family.code}">${family.name}</option>`)
     .join('');
-
   familyFilter.innerHTML = `<option value="">Toutes</option>${options}`;
   articleFamilyInput.innerHTML = `<option value="">-- Choisir --</option>${options}`;
 }
 
 async function loadFamilies() {
-  const params = new URLSearchParams();
-  const suffix = params.toString() ? `?${params.toString()}` : '';
-  const response = await fetch(`${API_BASE_URL}/api/articles/families${suffix}`, {
-    headers: authHeaders(false),
-  });
-
+  const response = await fetch(`${API_BASE_URL}/api/articles/families`, { headers: authHeaders(false) });
   const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(data.error || 'Erreur chargement familles');
-  }
-
+  if (!response.ok) throw new Error(data.error || 'Erreur chargement familles');
   familiesCache = data;
   fillFamilySelects();
 }
@@ -143,8 +127,8 @@ function openModal(editMode = false, article = null) {
   articleLatinNameInput.value = article?.latin_name || '';
   articleFaoZoneInput.value = article?.fao_zone || '';
   articleSousZoneInput.value = article?.sous_zone || '';
-  articleEnginInput.value = article?.engin || '';
-  articleAllergenesInput.value = article?.allergenes || '';
+  articleEnginInput.value = article?.engin || article?.fishing_gear || '';
+  articleAllergenesInput.value = article?.allergenes || article?.allergens || '';
   articleDisplayNameInput.value = article?.display_name || '';
   articlePurchaseUnitInput.value = article?.purchase_unit || '';
   articleStockUnitInput.value = article?.stock_unit || '';
@@ -167,11 +151,7 @@ function closeModal() {
 
 function renderArticles(rows) {
   if (!rows.length) {
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="10">Aucun article trouvé.</td>
-      </tr>
-    `;
+    tbody.innerHTML = '<tr><td colspan="10">Aucun article trouvé.</td></tr>';
     return;
   }
 
@@ -188,23 +168,14 @@ function renderArticles(rows) {
       <td>${article.is_active ? 'Actif' : 'Inactif'}</td>
       <td>
         <div class="table-actions">
-  <button class="btn btn-secondary btn-sm" data-action="view" data-id="${article.id}">
-    Voir
-  </button>
-
-  ${
-    canManageArticle(article)
-      ? `
-        <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${article.id}">Modifier</button>
-        <button class="btn btn-secondary btn-sm" data-action="duplicate" data-id="${article.id}">Dupliquer</button>
-        <button class="btn btn-secondary btn-sm" data-action="toggle" data-id="${article.id}">
-          ${article.is_active ? 'Désactiver' : 'Activer'}
-        </button>
-        <button class="btn btn-danger btn-sm" data-action="delete" data-id="${article.id}">Supprimer</button>
-      `
-      : '<span style="font-size:12px;color:#999;">Lecture seule</span>'
-  }
-</div>
+          <button class="btn btn-secondary btn-sm" data-action="view" data-id="${article.id}">Voir</button>
+          ${canManageArticle(article) ? `
+            <button class="btn btn-secondary btn-sm" data-action="edit" data-id="${article.id}">Modifier</button>
+            <button class="btn btn-secondary btn-sm" data-action="duplicate" data-id="${article.id}">Dupliquer</button>
+            <button class="btn btn-secondary btn-sm" data-action="toggle" data-id="${article.id}">${article.is_active ? 'Désactiver' : 'Activer'}</button>
+            <button class="btn btn-danger btn-sm" data-action="delete" data-id="${article.id}">Désactiver</button>
+          ` : '<span style="font-size:12px;color:#999;">Lecture seule</span>'}
+        </div>
       </td>
     </tr>
   `).join('');
@@ -213,37 +184,17 @@ function renderArticles(rows) {
 async function loadArticles() {
   try {
     setFeedback('Chargement des articles...', '');
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="10">Chargement des articles...</td>
-      </tr>
-    `;
+    tbody.innerHTML = '<tr><td colspan="10">Chargement des articles...</td></tr>';
 
     const params = new URLSearchParams();
-  
-
-    if (searchInput.value.trim()) {
-      params.set('search', searchInput.value.trim());
-    }
-
-    if (familyFilter.value) {
-      params.set('family', familyFilter.value);
-    }
-
-    if (statusFilter.value) {
-      params.set('active', statusFilter.value);
-    }
+    if (searchInput.value.trim()) params.set('search', searchInput.value.trim());
+    if (familyFilter.value) params.set('family', familyFilter.value);
+    if (statusFilter.value) params.set('active', statusFilter.value);
 
     const suffix = params.toString() ? `?${params.toString()}` : '';
-    const response = await fetch(`${API_BASE_URL}/api/articles${suffix}`, {
-      headers: authHeaders(false),
-    });
-
+    const response = await fetch(`${API_BASE_URL}/api/articles${suffix}`, { headers: authHeaders(false) });
     const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Erreur chargement articles');
-    }
+    if (!response.ok) throw new Error(data.error || 'Erreur chargement articles');
 
     articlesCache = data;
     renderArticles(data);
@@ -251,21 +202,15 @@ async function loadArticles() {
   } catch (error) {
     console.error(error);
     setFeedback(error.message, 'error');
-    tbody.innerHTML = `
-      <tr>
-        <td colspan="10">Erreur de chargement.</td>
-      </tr>
-    `;
+    tbody.innerHTML = '<tr><td colspan="10">Erreur de chargement.</td></tr>';
   }
 }
 
 async function saveArticle(event) {
   event.preventDefault();
-
   try {
     const articleId = articleIdInput.value;
     const isEdit = !!articleId;
-
     const payload = {
       plu: articlePluInput.value.trim(),
       designation: articleDesignationInput.value.trim(),
@@ -291,18 +236,10 @@ async function saveArticle(event) {
 
     const response = await fetch(
       isEdit ? `${API_BASE_URL}/api/articles/${articleId}` : `${API_BASE_URL}/api/articles`,
-      {
-        method: isEdit ? 'PATCH' : 'POST',
-        headers: authHeaders(true),
-        body: JSON.stringify(payload),
-      }
+      { method: isEdit ? 'PATCH' : 'POST', headers: authHeaders(true), body: JSON.stringify(payload) }
     );
-
     const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Erreur enregistrement article');
-    }
+    if (!response.ok) throw new Error(data.error || 'Erreur enregistrement article');
 
     closeModal();
     setFeedback(data.message || 'Article enregistré', 'success');
@@ -318,17 +255,10 @@ async function toggleArticle(article) {
     const response = await fetch(`${API_BASE_URL}/api/articles/${article.id}/status`, {
       method: 'PATCH',
       headers: authHeaders(true),
-      body: JSON.stringify({
-        is_active: !article.is_active,
-      }),
+      body: JSON.stringify({ is_active: !article.is_active }),
     });
-
     const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Erreur changement statut');
-    }
-
+    if (!response.ok) throw new Error(data.error || 'Erreur changement statut');
     setFeedback(data.message || 'Statut mis à jour.', 'success');
     await loadArticles();
   } catch (error) {
@@ -338,22 +268,16 @@ async function toggleArticle(article) {
 }
 
 async function deleteArticle(article) {
-  const confirmed = window.confirm(`Supprimer l'article "${article.designation}" ?`);
+  const confirmed = window.confirm(`Désactiver l'article "${article.designation}" ?`);
   if (!confirmed) return;
-
   try {
     const response = await fetch(`${API_BASE_URL}/api/articles/${article.id}`, {
       method: 'DELETE',
       headers: authHeaders(false),
     });
-
     const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Erreur suppression');
-    }
-
-    setFeedback(data.message || 'Article supprimé', 'success');
+    if (!response.ok) throw new Error(data.error || 'Erreur désactivation');
+    setFeedback(data.message || 'Article désactivé', 'success');
     await loadArticles();
   } catch (error) {
     console.error(error);
@@ -364,29 +288,18 @@ async function deleteArticle(article) {
 async function duplicateArticle(article) {
   const newPlu = window.prompt('Nouveau PLU :');
   if (!newPlu) return;
-
   const newDesignation = window.prompt('Nouvelle désignation :', `${article.designation} COPIE`);
   if (!newDesignation) return;
-
   const newEan = window.prompt('Nouvel EAN (optionnel) :', article.ean || '');
 
   try {
     const response = await fetch(`${API_BASE_URL}/api/articles/${article.id}/duplicate`, {
       method: 'POST',
       headers: authHeaders(true),
-      body: JSON.stringify({
-        new_plu: newPlu.trim(),
-        new_designation: newDesignation.trim(),
-        new_ean: (newEan || '').trim(),
-      }),
+      body: JSON.stringify({ new_plu: newPlu.trim(), new_designation: newDesignation.trim(), new_ean: (newEan || '').trim() }),
     });
-
     const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Erreur duplication');
-    }
-
+    if (!response.ok) throw new Error(data.error || 'Erreur duplication');
     setFeedback(data.message || 'Article dupliqué', 'success');
     await loadArticles();
   } catch (error) {
@@ -395,24 +308,69 @@ async function duplicateArticle(article) {
   }
 }
 
+async function exportArticlesExcel() {
+  try {
+    setFeedback('Préparation de l export Excel...', '');
+    const response = await fetch(`${API_BASE_URL}/api/articles/export.xlsx`, { headers: authHeaders(false) });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Erreur export Excel');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `articles-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    setFeedback('Export Excel généré.', 'success');
+  } catch (error) {
+    console.error(error);
+    setFeedback(error.message, 'error');
+  }
+}
+
+async function importArticlesExcel(file) {
+  if (!file) return;
+  try {
+    setFeedback('Import Excel en cours...', '');
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await fetch(`${API_BASE_URL}/api/articles/import.xlsx`, {
+      method: 'POST',
+      headers: authHeaders(false),
+      body: formData,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const details = data.summary?.errors?.slice(0, 5).map((err) => `Ligne ${err.line}: ${err.error}`).join(' | ');
+      throw new Error(details || data.error || 'Erreur import Excel');
+    }
+    const s = data.summary || {};
+    setFeedback(`Import terminé : ${s.created || 0} créé(s), ${s.updated || 0} modifié(s), ${s.disabled || 0} désactivé(s), ${s.ignored || 0} ignoré(s).`, 'success');
+    await loadArticles();
+  } catch (error) {
+    console.error(error);
+    setFeedback(error.message, 'error');
+  } finally {
+    importArticlesFile.value = '';
+  }
+}
+
 function recalculatePriceFromExVat() {
   const exVat = parseNumberInput(articleSalePriceExVatInput);
   const vatRate = parseNumberInput(articleVatRateInput);
-
   if (exVat === null || vatRate === null) return;
-
-  const incVat = exVat * (1 + vatRate / 100);
-  articleSalePriceIncVatInput.value = incVat.toFixed(4);
+  articleSalePriceIncVatInput.value = (exVat * (1 + vatRate / 100)).toFixed(4);
 }
 
 function recalculatePriceFromIncVat() {
   const incVat = parseNumberInput(articleSalePriceIncVatInput);
   const vatRate = parseNumberInput(articleVatRateInput);
-
   if (incVat === null || vatRate === null) return;
-
-  const exVat = incVat / (1 + vatRate / 100);
-  articleSalePriceExVatInput.value = exVat.toFixed(4);
+  articleSalePriceExVatInput.value = (incVat / (1 + vatRate / 100)).toFixed(4);
 }
 
 tbody.addEventListener('click', async (event) => {
@@ -422,9 +380,8 @@ tbody.addEventListener('click', async (event) => {
   const action = button.dataset.action;
   const articleId = button.dataset.id;
   const article = articlesCache.find((item) => String(item.id) === String(articleId));
-
   if (!article) {
-    setFeedback('Article introuvable dans la liste affichÃ©e.', 'error');
+    setFeedback('Article introuvable dans la liste affichée.', 'error');
     return;
   }
 
@@ -433,10 +390,8 @@ tbody.addEventListener('click', async (event) => {
       setFeedback('Impossible d ouvrir la fiche : ID article invalide.', 'error');
       return;
     }
-
     const detailParams = new URLSearchParams();
     detailParams.set('id', article.id);
-
     window.location.href = `./article-detail.html?${detailParams.toString()}`;
     return;
   }
@@ -452,11 +407,7 @@ tbody.addEventListener('click', async (event) => {
   if (action === 'duplicate') await duplicateArticle(article);
 });
 
-
-backHomeBtn.addEventListener('click', () => {
-  window.location.href = './home.html';
-});
-
+backHomeBtn.addEventListener('click', () => { window.location.href = './home.html'; });
 logoutBtn.addEventListener('click', () => {
   localStorage.removeItem('gc_token');
   localStorage.removeItem('gc_user');
@@ -468,6 +419,9 @@ logoutBtn.addEventListener('click', () => {
 });
 
 refreshBtn.addEventListener('click', loadArticles);
+exportArticlesBtn?.addEventListener('click', exportArticlesExcel);
+importArticlesBtn?.addEventListener('click', () => importArticlesFile?.click());
+importArticlesFile?.addEventListener('change', () => importArticlesExcel(importArticlesFile.files?.[0]));
 createArticleBtn.addEventListener('click', () => openModal(false));
 closeModalBtn.addEventListener('click', closeModal);
 articleForm.addEventListener('submit', saveArticle);
@@ -481,22 +435,18 @@ searchInput.addEventListener('keydown', (event) => {
 
 familyFilter.addEventListener('change', loadArticles);
 statusFilter.addEventListener('change', loadArticles);
-
 articleSalePriceExVatInput.addEventListener('change', recalculatePriceFromExVat);
 articleSalePriceIncVatInput.addEventListener('change', recalculatePriceFromIncVat);
 articleVatRateInput.addEventListener('change', () => {
-  if (articleSalePriceExVatInput.value) {
-    recalculatePriceFromExVat();
-  } else if (articleSalePriceIncVatInput.value) {
-    recalculatePriceFromIncVat();
-  }
+  if (articleSalePriceExVatInput.value) recalculatePriceFromExVat();
+  else if (articleSalePriceIncVatInput.value) recalculatePriceFromIncVat();
 });
 
 async function init() {
   try {
     fillTopbar();
     await loadFamilies();
-await loadArticles();
+    await loadArticles();
   } catch (error) {
     console.error(error);
     setFeedback(error.message, 'error');
