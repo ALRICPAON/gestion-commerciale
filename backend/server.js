@@ -16,6 +16,8 @@ const articlesRoutes = require('./routes/articles');
 const suppliersRoutes = require('./routes/suppliers');
 const clientsRoutes = require('./routes/clients');
 const purchasesRoutes = require('./routes/purchases');
+const negoceFixesRoutes = require('./routes/negoceFixes');
+const deliveryNotesRoutes = require('./routes/deliveryNotes');
 const salesRoutes = require('./routes/sales');
 const stockRoutes = require('./routes/stock');
 
@@ -105,6 +107,8 @@ app.use('/api/articles', articlesRoutes);
 app.use('/api', suppliersRoutes);
 app.use('/api', clientsRoutes);
 app.use('/api', purchasesRoutes);
+app.use('/api', negoceFixesRoutes);
+app.use('/api', deliveryNotesRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/stock', stockRoutes);
 app.get('/', (req, res) => {
