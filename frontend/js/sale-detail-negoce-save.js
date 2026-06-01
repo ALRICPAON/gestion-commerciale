@@ -1,15 +1,5 @@
 (() => {
-  if (!window || !document || !els?.body) {
-    console.log('NEGOCE SAVE HELPER NOT INSTALLED', {
-      hasWindow: typeof window !== 'undefined',
-      hasDocument: typeof document !== 'undefined',
-      hasEls: typeof els !== 'undefined',
-      hasBody: typeof els !== 'undefined' && !!els?.body,
-    });
-    return;
-  }
-
-  console.log('NEGOCE SAVE HELPER LOADED', { version: 8, script: 'sale-detail-negoce-save.js' });
+  if (!window || !document || typeof els === 'undefined' || !els?.body) return;
 
   const normalizeKind = (value) => String(value || '')
     .trim()
@@ -19,14 +9,10 @@
 
   const documentIdFromUrl = () => new URLSearchParams(window.location.search).get('id');
 
-  function apiOptionsWithForcedStock(path, options = {}) {
+  function apiOptionsWithForcedStock(options = {}) {
     const next = { ...options };
     const body = next.body ? JSON.parse(next.body) : {};
     next.body = JSON.stringify({ ...body, allow_negative_stock: true, force_stock_exit: true });
-    console.log('FORCED VALIDATE DELIVERY NOTE RETRY', {
-      url: path,
-      body: JSON.parse(next.body),
-    });
     return next;
   }
 
@@ -58,7 +44,7 @@
       if (error.code !== 'STOCK_INSUFFICIENT' || method === 'GET') throw error;
       const confirmed = window.confirm('Stock insuffisant. Voulez-vous forcer la sortie stock ?');
       if (!confirmed) throw error;
-      return call(apiOptionsWithForcedStock(path, options));
+      return call(apiOptionsWithForcedStock(options));
     }
   };
 
@@ -97,14 +83,10 @@
       const loaded = data?.sale || data?.document || data;
       if (loaded?.id) {
         exposeSaleDocument(loaded, `api:${reason}`);
-        if (Array.isArray(data?.lines)) {
-          window.currentSaleLines = data.lines;
-        }
+        if (Array.isArray(data?.lines)) window.currentSaleLines = data.lines;
         return loaded;
       }
-    } catch (err) {
-      console.log('NEGOCE SAVE DOCUMENT LOAD ERROR', { reason, id, error: err.message });
-    }
+    } catch (_) {}
 
     return getCurrentSaleDocument();
   }
@@ -152,42 +134,12 @@
     return knownLines.find((line) => String(line.id) === String(lineId)) || null;
   }
 
-  function saleDiagnostic() {
-    const document = getCurrentSaleDocument();
-    return {
-      sale_id: document?.id || documentIdFromUrl(),
-      sale_status: document?.status,
-      sale_document_type: document?.document_type,
-      sale_origin: document?.origin,
-      sale_source_type: document?.source_type,
-      sale_invoice_id: document?.invoice_id,
-      sale_invoice_reference: document?.invoice_reference,
-      sale_source_invoice_id: document?.source_invoice_id,
-      sale_invoiced_at: document?.invoiced_at,
-      source: window.currentSaleDocumentSource || (document ? 'lexical-or-window' : 'missing'),
-      is_negoce: isNegoce(),
-      is_delivery_note: isDeliveryNote(),
-      is_factured: isFactured(),
-      editable: editable(),
-    };
-  }
-
   async function saveNegoceLine(lineId) {
-    console.log('NEGOCE SAVE CLICK DETECTED', {
-      ...saleDiagnostic(),
-      line_id: lineId,
-    });
-
     await ensureSaleDocument('click');
     clear(els.lf);
     const document = getCurrentSaleDocument();
 
     if (!document?.id) {
-      console.log('NEGOCE SAVE HANDLER HIT', {
-        ...saleDiagnostic(),
-        line_id: lineId,
-        blocked_reason: 'missing_sale_document',
-      });
       fb(els.lf, 'Document BL négoce non chargé, recharge la page puis réessaie.', true);
       return false;
     }
@@ -195,10 +147,7 @@
     await ensureHeader();
     await ensureSaleDocument('after-ensure-header');
     const row = els.body.querySelector(`tr[data-line-id="${lineId}"]`);
-    if (!row) {
-      console.log('NEGOCE SAVE HANDLER HIT', { ...saleDiagnostic(), line_id: lineId, row_found: false });
-      return false;
-    }
+    if (!row) return false;
 
     window.clearTimeout(pluSearchTimers.get(lineId));
     if (!row.dataset.articleId) await searchNegocePlu(row, { applyFirst: true });
@@ -208,12 +157,6 @@
     const articleId = clean(row.dataset.articleId || pluInput?.dataset.articleId || line?.article_id);
     const label = clean(row.querySelector('.line-article-label')?.value || line?.article_label);
     if (!label) {
-      console.log('NEGOCE SAVE HANDLER HIT', {
-        ...saleDiagnostic(),
-        line_id: lineId,
-        article_id: articleId || null,
-        blocked_reason: 'missing_label',
-      });
       fb(els.lf, 'Saisis la désignation du produit négoce', true);
       return false;
     }
@@ -232,17 +175,8 @@
       unit_sale_price_ht: n(row.querySelector('.line-unit-price-ht')?.value),
       vat_rate: n(row.querySelector('.line-vat-rate')?.value, vatRate()),
     };
-    const url = `/api/sales/lines/${lineId}`;
 
-    console.log('NEGOCE SAVE HANDLER HIT', {
-      ...saleDiagnostic(),
-      line_id: lineId,
-      article_id: articleId || null,
-      payload,
-      url,
-    });
-
-    await api(url, { method: 'PATCH', body: JSON.stringify(payload) });
+    await api(`/api/sales/lines/${lineId}`, { method: 'PATCH', body: JSON.stringify(payload) });
     fb(els.lf, isDeliveryNote() && normalizeKind(getCurrentSaleDocument()?.status) !== 'draft' ? 'Ligne enregistrée et stock réajusté' : 'Ligne enregistrée');
     await loadSale();
     const refreshed = lexicalSale();
@@ -261,23 +195,14 @@
     const button = event.target.closest('[data-action="save-line"]');
     if (!button) return;
 
-    console.log('NEGOCE SAVE CLICK DETECTED', {
-      ...saleDiagnostic(),
-      line_id: button.dataset.id,
-      phase: 'capture',
-    });
-
     await ensureSaleDocument('click-capture');
-    if (!isNegoce()) {
-      console.log('NEGOCE SAVE HANDLER SKIPPED', { ...saleDiagnostic(), line_id: button.dataset.id, reason: 'not_negoce' });
-      return;
-    }
+    if (!isNegoce()) return;
+
     event.preventDefault();
     event.stopImmediatePropagation();
     try {
       await saveNegoceLine(button.dataset.id);
     } catch (err) {
-      console.log('NEGOCE SAVE HANDLER ERROR', { ...saleDiagnostic(), line_id: button.dataset.id, error: err.message, code: err.code });
       fb(els.lf, err.message || 'Erreur enregistrement ligne négoce', true);
     }
   }, true);
@@ -295,13 +220,9 @@
       const saved = await saveNegoceLine(row.dataset.lineId);
       if (saved) await addLine();
     } catch (err) {
-      console.log('NEGOCE SAVE HANDLER ERROR', { ...saleDiagnostic(), line_id: row.dataset.lineId, error: err.message, code: err.code });
       fb(els.lf, err.message || 'Erreur enregistrement ligne négoce', true);
     }
   }, true);
 
-  window.setTimeout(async () => {
-    await ensureSaleDocument('initial-snapshot');
-    console.log('NEGOCE SAVE HELPER SALE SNAPSHOT', saleDiagnostic());
-  }, 0);
+  window.setTimeout(() => ensureSaleDocument('initial-snapshot'), 0);
 })();
