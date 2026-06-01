@@ -69,7 +69,4 @@ BEGIN
   END IF;
 END $$;
 
-CREATE INDEX IF NOT EXISTS idx_store_settings_store
-  ON store_settings(store_id);
-
 COMMIT;
