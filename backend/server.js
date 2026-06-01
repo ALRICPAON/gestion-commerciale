@@ -9,9 +9,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 
-const { authenticateToken } = require('./middleware/auth');
-const { attachDbContext } = require('./middleware/dbContext');
-const { requireAdminOrManager } = require('./middleware/authorization');
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const articlesStoreLevelRoutes = require('./routes/articlesStoreLevel');
@@ -83,24 +80,6 @@ const loginRateLimiter = rateLimit({
   message: { error: 'Trop de tentatives de connexion, reessaie plus tard' },
 });
 
-function isSaleEditDiagnosticRequest(req) {
-  return ['PATCH', 'POST', 'DELETE'].includes(req.method)
-    && /^\/api\/sales(\/lines\/[^/]+|\/[^/]+(\/lines)?)?$/.test(req.originalUrl.split('?')[0]);
-}
-
-function logOldRouteFallthrough(label) {
-  return (req, res, next) => {
-    if (isSaleEditDiagnosticRequest(req)) {
-      console.info(label, {
-        method: req.method,
-        originalUrl: req.originalUrl,
-        body: req.body,
-      });
-    }
-    next();
-  };
-}
-
 app.use(helmet({
   contentSecurityPolicy: {
     useDefaults: true,
@@ -136,49 +115,12 @@ app.use('/api/articles', articlesRoutes);
 app.use('/api', suppliersRoutes);
 app.use('/api', clientsRoutes);
 app.use('/api', purchasesRoutes);
-app.get('/api/diagnostics/sales-documents/:id', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
-  try {
-    const result = await req.dbPool.query(
-      `SELECT sd.id,
-        sd.document_type,
-        sd.status,
-        sd.origin,
-        to_jsonb(sd)->>'source_type' AS source_type,
-        to_jsonb(sd)->>'source_order_id' AS source_order_id,
-        to_jsonb(sd)->>'source_delivery_note_id' AS source_delivery_note_id,
-        to_jsonb(sd)->>'invoice_id' AS invoice_id,
-        to_jsonb(sd)->>'invoice_reference' AS invoice_reference,
-        to_jsonb(sd)->>'source_invoice_id' AS source_invoice_id,
-        to_jsonb(sd)->>'invoiced_at' AS invoiced_at,
-        COUNT(invoice.id)::int AS linked_invoice_count,
-        ARRAY_REMOVE(ARRAY_AGG(invoice.id), NULL) AS linked_invoice_ids,
-        ARRAY_REMOVE(ARRAY_AGG(invoice.reference_number), NULL) AS linked_invoice_references
-       FROM sales_documents sd
-       LEFT JOIN sales_documents invoice
-         ON invoice.source_delivery_note_id = sd.id
-        AND invoice.store_id = sd.store_id
-        AND invoice.document_type = 'INVOICE'
-       WHERE sd.id = $1 AND sd.store_id = $2
-       GROUP BY sd.id`,
-      [req.params.id, req.user.store_id]
-    );
-    if (!result.rows.length) return res.status(404).json({ error: 'Document introuvable' });
-    console.info('SALES DOCUMENT DIAGNOSTIC', result.rows[0]);
-    return res.json(result.rows[0]);
-  } catch (err) {
-    console.error('Erreur diagnostic document vente :', err);
-    return res.status(500).json({ error: err.message || 'Erreur diagnostic document vente' });
-  }
-});
 app.use('/api', saleUnitNormalizerRoutes);
 app.use('/api', deliveryNoteValidationForcedRoutes);
 app.use('/api', deliveryNotesNegoceEditableRoutes);
 app.use('/api', deliveryNotesEditableRoutes);
-app.use('/api', logOldRouteFallthrough('OLD NEGOCE ROUTE HIT before negoceFixesRoutes'));
 app.use('/api', negoceFixesRoutes);
-app.use('/api', logOldRouteFallthrough('OLD NEGOCE ROUTE HIT before deliveryNotesRoutes'));
 app.use('/api', deliveryNotesRoutes);
-app.use('/api/sales', logOldRouteFallthrough('OLD SALES ROUTE HIT before salesRoutes'));
 app.use('/api/sales', salesRoutes);
 app.use('/api/stock', stockRoutes);
 app.get('/', (req, res) => {
@@ -215,4 +157,3 @@ app.use((err, req, res, next) => {
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`Serveur lancé sur http://0.0.0.0:${PORT}`);
 });
-    
