@@ -483,19 +483,31 @@ async function getPrintableDeliveryNote(req, res, withPrintedAt = false) {
     [req.params.id, req.user.store_id]
   );
   if (!document.rows.length) return res.status(404).json({ error: 'BL introuvable' });
-  const lines = await req.dbPool.query(
-    `SELECT sl.*, COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
-      jsonb_agg(jsonb_build_object('lot_id', sla.lot_id, 'quantity', sla.quantity, 'lot_code', l.lot_code, 'supplier_lot_number', l.supplier_lot_number, 'dlc', l.dlc)) FILTER (WHERE sla.id IS NOT NULL) AS allocations
-     FROM sales_lines sl
-     LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
-     LEFT JOIN lots l ON l.id = sla.lot_id
-     WHERE sl.sales_document_id = $1
-     GROUP BY sl.id
-     ORDER BY sl.line_number ASC`,
-    [req.params.id]
-  );
-  if (withPrintedAt) await req.dbPool.query(`UPDATE sales_documents SET printed_at = COALESCE(printed_at, NOW()) WHERE id = $1`, [req.params.id]);
-  return res.json({ document: document.rows[0], lines: lines.rows });
+  const [lines, storeSettings] = await Promise.all([
+    req.dbPool.query(
+      `SELECT sl.*, COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
+        jsonb_agg(jsonb_build_object('lot_id', sla.lot_id, 'quantity', sla.quantity, 'lot_code', l.lot_code, 'supplier_lot_number', l.supplier_lot_number, 'dlc', l.dlc)) FILTER (WHERE sla.id IS NOT NULL) AS allocations
+       FROM sales_lines sl
+       LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
+       LEFT JOIN lots l ON l.id = sla.lot_id
+       WHERE sl.sales_document_id = $1
+       GROUP BY sl.id
+       ORDER BY sl.line_number ASC`,
+      [req.params.id]
+    ),
+    req.dbPool.query(
+      `SELECT id, store_id, company_name, logo_url, address_line1, address_line2,
+        postal_code, city, country, phone, email, siret, vat_number,
+        sanitary_approval_number, payment_terms, legal_mentions,
+        terms_and_conditions, delivery_note_footer
+       FROM store_settings
+       WHERE store_id = $1
+       LIMIT 1`,
+      [req.user.store_id]
+    ),
+  ]);
+  if (withPrintedAt) await req.dbPool.query(`UPDATE sales_documents SET printed_at = COALESCE(printed_at, NOW()) WHERE id = $1 AND store_id = $2`, [req.params.id, req.user.store_id]);
+  return res.json({ document: document.rows[0], lines: lines.rows, store_settings: storeSettings.rows[0] || null });
 }
 
 router.get('/delivery-notes/:id/print-data', authenticateToken, attachDbContext, async (req, res) => {
