@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cours / Mercuriale client - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/customer-price-list.css?v=1" />
+</head>
+<body class="app-page customer-price-list-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Cours / Mercuriale client</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content customer-price-list-layout">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Preparation du cours professionnel</h2>
+          <p id="tariff-context">Aucun client selectionne : les prix restent a choisir.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="refresh-source-btn" class="btn btn-secondary">Actualiser le stock</button>
+          <button id="save-price-list-btn" class="btn btn-primary">Enregistrer</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card course-form-card">
+      <div class="course-form-grid">
+        <div class="form-group">
+          <label for="course-type-select">Type de cours</label>
+          <select id="course-type-select">
+            <option value="general">Cours general</option>
+            <option value="client">Cours client</option>
+            <option value="promotion">Offre promotionnelle</option>
+            <option value="daily_arrival">Arrivage du jour</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="client-select">Client</label>
+          <select id="client-select">
+            <option value="">Sans client</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="price-list-title-input">Titre</label>
+          <input id="price-list-title-input" type="text" placeholder="Cours du jour" />
+        </div>
+
+        <div class="form-group">
+          <label for="price-list-date-input">Date</label>
+          <input id="price-list-date-input" type="date" />
+        </div>
+
+        <div class="form-group">
+          <label for="valid-until-input">Valable jusqu'au</label>
+          <input id="valid-until-input" type="date" />
+        </div>
+
+        <div class="form-group">
+          <label for="status-select">Statut</label>
+          <select id="status-select">
+            <option value="draft">Brouillon</option>
+            <option value="ready">Pret a transmettre</option>
+            <option value="archived">Archive</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group course-notes-group">
+        <label for="notes-input">Notes internes</label>
+        <textarea id="notes-input" rows="3" placeholder="Commentaire interne, non obligatoire"></textarea>
+      </div>
+    </section>
+
+    <section class="card source-card">
+      <div class="section-title-row">
+        <div>
+          <h3>Produits disponibles</h3>
+          <p>Selection depuis le stock magasin, sans impact sur les lots ni les allocations.</p>
+        </div>
+        <span id="source-count" class="pill">0 produit</span>
+      </div>
+
+      <div class="filters-row source-filters">
+        <div class="form-group">
+          <label for="source-search-input">Recherche</label>
+          <input id="source-search-input" type="text" placeholder="PLU, designation, EAN..." />
+        </div>
+        <div class="form-group">
+          <label for="source-family-input">Famille</label>
+          <input id="source-family-input" type="text" placeholder="Code famille" />
+        </div>
+        <div class="form-group">
+          <label for="available-only-select">Disponibilite</label>
+          <select id="available-only-select">
+            <option value="true">Stock positif</option>
+            <option value="false">Tous les articles suivis</option>
+          </select>
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="source-search-btn" class="btn btn-secondary">Filtrer</button>
+        </div>
+      </div>
+
+      <div id="page-feedback" class="page-feedback hidden"></div>
+
+      <div class="table-wrap">
+        <table class="data-table source-table">
+          <thead>
+            <tr>
+              <th>Produit</th>
+              <th>Famille</th>
+              <th>Infos</th>
+              <th>Stock</th>
+              <th>Prix propose</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="source-tbody">
+            <tr><td colspan="6">Chargement des produits...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card selected-card">
+      <div class="section-title-row">
+        <div>
+          <h3>Cours en preparation</h3>
+          <p id="selected-summary">Aucun produit selectionne.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="preview-btn" class="btn btn-secondary">Previsualiser</button>
+          <button id="print-btn" class="btn btn-secondary">Imprimer</button>
+          <button class="btn btn-secondary" disabled>PDF a venir</button>
+          <button class="btn btn-secondary" disabled>Email a venir</button>
+          <button class="btn btn-secondary" disabled>WhatsApp a venir</button>
+        </div>
+      </div>
+
+      <div id="selected-lines" class="selected-lines-empty">Selectionne des produits depuis le stock.</div>
+    </section>
+
+    <section class="card preview-card">
+      <div class="section-title-row">
+        <div>
+          <h3>Presentation</h3>
+          <p>Les produits du moment apparaissent avant les familles.</p>
+        </div>
+      </div>
+      <div id="price-list-preview" class="print-preview-placeholder">Enregistre ou previsualise le cours.</div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/customer-price-list-print.js?v=1"></script>
+  <script src="./js/customer-price-list.js?v=1"></script>
+</body>
+</html>
