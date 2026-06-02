@@ -3,8 +3,12 @@ body.app-page.sale-detail-page .welcome-card,
 body.app-page.sale-detail-page .card,
 body.app-page.sale-detail-page .sale-detail-card { width: 100% !important; max-width: none !important; margin-left: 0 !important; margin-right: 0 !important; }
 body.app-page.sale-detail-page .sale-detail-card { padding: 12px !important; border-radius: 8px !important; box-shadow: none !important; }
+body.app-page.sale-detail-page .sale-flow-header { align-items: flex-start; gap: 18px; }
+body.app-page.sale-detail-page .sale-document-actions { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; max-width: 980px; }
+body.app-page.sale-detail-page .legacy-bl-action { display: none !important; }
+body.app-page.sale-detail-page .line-label-btn { margin-left: 6px; }
 body.app-page.sale-detail-page .sale-lines-wrap { width: 100% !important; overflow-x: auto !important; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
-body.app-page.sale-detail-page .sale-lines-table { min-width: 1980px !important; width: max-content !important; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+body.app-page.sale-detail-page .sale-lines-table { min-width: 2040px !important; width: max-content !important; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
 body.app-page.sale-detail-page .sale-lines-table th { position: sticky; top: 0; z-index: 2; background: var(--theme-soft); color: #111827; font-size: 12px; font-weight: 700; padding: 10px 8px; border-bottom: 1px solid #dbe3ee; white-space: nowrap; }
 body.app-page.sale-detail-page .sale-lines-table td { padding: 8px; border-bottom: 1px solid #eef2f7; vertical-align: middle; background: #fff; white-space: nowrap; }
 body.app-page.sale-detail-page .sale-lines-table tbody tr:nth-child(even) td { background: #fafbfc; }
@@ -33,6 +37,48 @@ body.app-page.sale-detail-page .sale-lines-table th:nth-child(9), body.app-page.
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(10), body.app-page.sale-detail-page .sale-lines-table td:nth-child(10) { width: 110px !important; }
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(11), body.app-page.sale-detail-page .sale-lines-table td:nth-child(11) { width: 340px !important; }
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(12), body.app-page.sale-detail-page .sale-lines-table td:nth-child(12) { width: 90px !important; }
-body.app-page.sale-detail-page .sale-lines-table th:nth-child(13), body.app-page.sale-detail-page .sale-lines-table td:nth-child(13) { width: 190px !important; }
+body.app-page.sale-detail-page .sale-lines-table th:nth-child(13), body.app-page.sale-detail-page .sale-lines-table td:nth-child(13) { width: 250px !important; }
 body.app-page.sale-detail-page .selectable-table tbody tr { cursor: pointer; }
 body.app-page.sale-detail-page .selectable-table tbody tr:hover td { background: #f3f8ff; }
+
+@media print {
+  @page { margin: 12mm; }
+  body > *:not(.main-content),
+  .main-content > *:not(#print-area) { display: none !important; }
+  body { background: #ffffff !important; }
+  #print-area { display: block !important; color: #17212b; font-family: Arial, sans-serif; font-size: 10.5px; line-height: 1.35; }
+  .bl-print-document { display: flex; flex-direction: column; min-height: 270mm; }
+  .bl-print-header { align-items: flex-start; border-bottom: 2px solid #17212b; display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) 72mm; padding-bottom: 14px; }
+  .bl-company { display: grid; gap: 12px; grid-template-columns: auto minmax(0, 1fr); }
+  .bl-logo { max-height: 34mm; max-width: 42mm; object-fit: contain; }
+  .bl-company h1, .bl-document-meta h2 { margin: 0; }
+  .bl-company h1 { font-size: 18px; }
+  .bl-company p, .bl-document-meta p, .bl-party-card p, .bl-notes p, .bl-totals p, .bl-signature p { margin: 2px 0; }
+  .bl-company-meta { margin-top: 7px; }
+  .bl-company-meta p span { color: #52616f; display: inline-block; min-width: 28mm; }
+  .bl-document-meta { border: 1px solid #8b98a5; padding: 10px 12px; }
+  .bl-label { color: #52616f; font-size: 10px; font-weight: 700; letter-spacing: 0; margin: 0 0 4px !important; text-transform: uppercase; }
+  .bl-document-meta h2 { font-size: 20px; margin-bottom: 8px; }
+  .bl-parties { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; margin: 14px 0; }
+  .bl-party-card { border: 1px solid #c6d0d8; min-height: 28mm; padding: 10px 12px; }
+  .bl-party-card h3, .bl-notes h3 { color: #52616f; font-size: 10px; margin: 0 0 6px; text-transform: uppercase; }
+  .bl-party-name { font-size: 13px; font-weight: 700; }
+  .print-table { border-collapse: collapse; width: 100%; }
+  .print-table th, .print-table td { border: 1px solid #c6d0d8; padding: 6px 5px; text-align: left; vertical-align: top; }
+  .print-table th { background: #eef2f5; color: #263746; font-size: 9.5px; text-transform: uppercase; }
+  .print-table td small { color: #52616f; display: block; margin-top: 2px; }
+  .num { text-align: right !important; white-space: nowrap; }
+  .bl-bottom { align-items: flex-start; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) 58mm; margin-top: 14px; }
+  .bl-notes { color: #263746; min-height: 24mm; }
+  .bl-totals { border: 1px solid #17212b; }
+  .bl-totals p { align-items: center; border-bottom: 1px solid #c6d0d8; display: flex; justify-content: space-between; padding: 6px 8px; }
+  .bl-totals p:last-child { border-bottom: 0; }
+  .bl-totals .grand-total { background: #eef2f5; font-size: 12px; }
+  .bl-signature { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); margin-top: auto; padding-top: 20px; }
+  .bl-signature div { border: 1px solid #8b98a5; height: 30mm; padding: 8px; }
+  .bl-signature p { color: #52616f; font-weight: 700; }
+  .health-label-print-sheet { display: grid; gap: 8mm; grid-template-columns: repeat(2, 1fr); }
+  .health-label-print-card { border: 1px dashed #17212b; min-height: 58mm; padding: 7mm; break-inside: avoid; }
+  .health-label-print-card h2 { font-size: 15px; margin: 0 0 5mm; }
+  .health-label-print-card p { margin: 2mm 0; }
+}

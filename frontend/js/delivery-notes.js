@@ -68,11 +68,91 @@ async function openDeliveryNote(id) { try { const response = await apiFetch(`${A
 async function validateDeliveryNote() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate`, { method: 'POST' }); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur validation BL'); showFeedback('BL validé et stock déstocké.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation BL :', err); showFeedback(err.message || 'Erreur validation BL', 'error'); } }
 async function validateInvoice() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate-invoice`, { method: 'POST' }); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur validation facture'); showFeedback(data.existing ? 'Facture déjà préparée.' : 'Facture préparée depuis le BL.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation facture :', err); showFeedback(err.message || 'Erreur validation facture', 'error'); } }
 
-function buildPrintHtml(document, lines) {
-  const rows = lines.map((line) => `<tr><td>${esc(line.article_plu || '')}</td><td>${esc(line.article_label || '')}</td><td>${Number(line.package_count || 0)}</td><td>${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${money(line.unit_sale_price_ht)}</td><td>${money(line.line_amount_ht)}</td><td>${Number(line.vat_rate || 0).toFixed(2)} %</td><td>${money(line.line_amount_ttc)}</td></tr>`).join('');
-  return `<div class="print-header"><div><h1>Bon de livraison</h1><p><strong>${esc(document.reference_number || document.id)}</strong></p><p>Date : ${fmtDate(document.document_date)}</p></div><div><p><strong>Client livré</strong></p><p>${esc(document.client_name || document.delivered_client_name_snapshot || '-')}</p><p>${esc(document.client_store_identifier || document.delivered_client_store_identifier || '')}</p><p>${esc([document.address_line1, document.address_line2, document.postal_code, document.city].filter(Boolean).join(' '))}</p><p><strong>Client facturé :</strong> ${esc(document.billed_client_name || document.billed_client_name_snapshot || '-')}</p></div></div><table class="print-table"><thead><tr><th>PLU</th><th>Désignation</th><th>Colis</th><th>Poids</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>TTC</th></tr></thead><tbody>${rows}</tbody></table><div style="margin-top:18px;text-align:right"><p>Total HT : <strong>${money(document.total_amount_ex_vat)}</strong></p><p>TVA : <strong>${money(document.total_vat_amount)}</strong></p><p>Total TTC : <strong>${money(document.total_amount_inc_vat)}</strong></p></div>`;
+function lineLots(line) {
+  return (line.allocations || [])
+    .map((lot) => [lot.lot_code, lot.supplier_lot_number, lot.dlc ? `DLC ${fmtDate(lot.dlc)}` : null, lot.quantity ? `${qty(lot.quantity)} kg` : null].filter(Boolean).join(' - '))
+    .filter(Boolean)
+    .join('<br>');
 }
-async function printDeliveryNote() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/print-data`); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur préparation impression'); printArea.innerHTML = buildPrintHtml(data.document, data.lines || []); window.print(); } catch (err) { console.error('Erreur impression BL :', err); showFeedback(err.message || 'Erreur impression BL', 'error'); } }
+
+function infoLine(label, value) {
+  return value ? `<p><span>${esc(label)}</span>${esc(value)}</p>` : '';
+}
+
+function addressBlock(parts) {
+  return parts.filter(Boolean).map((part) => `<p>${esc(part)}</p>`).join('');
+}
+
+function buildPrintHtml(document, lines, storeSettings = null) {
+  const settings = storeSettings || {};
+  const companyName = settings.company_name || 'Gestion Commerciale';
+  const deliveredStoreId = document.client_store_identifier || document.delivered_client_store_identifier || '';
+  const sourceOrder = document.source_order_reference || document.source_order_id || '';
+  const rows = lines.map((line) => `<tr><td>${esc(line.line_number || '')}</td><td><strong>${esc(line.article_label || '-')}</strong><small>${esc(line.article_plu || '')}</small></td><td class="num">${Number(line.package_count || 0)}</td><td class="num">${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${lineLots(line) || '-'}</td><td class="num">${money(line.unit_sale_price_ht)}</td><td class="num">${money(line.line_amount_ht)}</td><td class="num">${Number(line.vat_rate || 0).toFixed(2)} %</td><td class="num">${money(line.line_amount_ttc)}</td></tr>`).join('');
+
+  return `<article class="bl-print-document">
+    <header class="bl-print-header">
+      <div class="bl-company">
+        ${settings.logo_url ? `<img class="bl-logo" src="${esc(settings.logo_url)}" alt="Logo ${esc(companyName)}">` : ''}
+        <div>
+          <h1>${esc(companyName)}</h1>
+          ${addressBlock([settings.address_line1, settings.address_line2, [settings.postal_code, settings.city].filter(Boolean).join(' '), settings.country])}
+          <div class="bl-company-meta">
+            ${infoLine('Tél.', settings.phone)}
+            ${infoLine('Email', settings.email)}
+            ${infoLine('SIRET', settings.siret)}
+            ${infoLine('TVA', settings.vat_number)}
+            ${infoLine('Agrément sanitaire', settings.sanitary_approval_number)}
+          </div>
+        </div>
+      </div>
+      <div class="bl-document-meta">
+        <p class="bl-label">Bon de livraison</p>
+        <h2>${esc(document.reference_number || document.id)}</h2>
+        <p>Date : <strong>${fmtDate(document.document_date)}</strong></p>
+        ${sourceOrder ? `<p>Commande : <strong>${esc(sourceOrder)}</strong></p>` : ''}
+      </div>
+    </header>
+
+    <section class="bl-parties">
+      <div class="bl-party-card">
+        <h3>Client livré</h3>
+        <p class="bl-party-name">${esc(document.client_name || document.delivered_client_name_snapshot || '-')}</p>
+        ${deliveredStoreId ? `<p>Identifiant magasin : <strong>${esc(deliveredStoreId)}</strong></p>` : ''}
+        ${addressBlock([document.address_line1, document.address_line2, [document.postal_code, document.city].filter(Boolean).join(' ')])}
+      </div>
+      <div class="bl-party-card">
+        <h3>Client facturé</h3>
+        <p class="bl-party-name">${esc(document.billed_client_name || document.billed_client_name_snapshot || '-')}</p>
+        ${document.billed_client_code ? `<p>Code client : <strong>${esc(document.billed_client_code)}</strong></p>` : ''}
+      </div>
+    </section>
+
+    <table class="print-table bl-lines-table">
+      <thead><tr><th>Ligne</th><th>Désignation</th><th>Colis</th><th>Poids</th><th>Lots</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>TTC</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="9">Aucune ligne.</td></tr>'}</tbody>
+    </table>
+
+    <section class="bl-bottom">
+      <div class="bl-notes">
+        ${document.notes ? `<h3>Notes</h3><p>${esc(document.notes)}</p>` : ''}
+        ${settings.delivery_note_footer ? `<h3>Pied de bon de livraison</h3><p>${esc(settings.delivery_note_footer)}</p>` : ''}
+      </div>
+      <div class="bl-totals">
+        <p><span>Total HT</span><strong>${money(document.total_amount_ex_vat)}</strong></p>
+        <p><span>TVA</span><strong>${money(document.total_vat_amount)}</strong></p>
+        <p class="grand-total"><span>Total TTC</span><strong>${money(document.total_amount_inc_vat)}</strong></p>
+      </div>
+    </section>
+
+    <section class="bl-signature">
+      <div><p>Date de réception</p></div>
+      <div><p>Nom et signature du réceptionnaire</p></div>
+      <div><p>Cachet client</p></div>
+    </section>
+  </article>`;
+}
+async function printDeliveryNote() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/print-data`); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur préparation impression'); printArea.innerHTML = buildPrintHtml(data.document, data.lines || [], data.store_settings); window.print(); } catch (err) { console.error('Erreur impression BL :', err); showFeedback(err.message || 'Erreur impression BL', 'error'); } }
 async function loadLabels() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/health-labels`); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur préparation étiquettes'); detailContent.innerHTML = `<div class="label-preview">${(data.labels || []).map((label) => { const trace = label.traceability || {}; const lots = (label.lots || []).map((lot) => lot.lot_code || lot.supplier_lot_number).filter(Boolean).join(', '); return `<article class="health-label"><h4>${esc(label.article_label || 'Article')}</h4><p><strong>Client livré :</strong> ${esc(label.delivered_client_name || '-')}</p><p><strong>Identifiant magasin :</strong> ${esc(label.delivered_client_store_identifier || '-')}</p><p><strong>BL :</strong> ${esc(label.delivery_note_reference || '-')}</p><p><strong>Quantité :</strong> ${qty(label.quantity)} ${esc(label.unit || 'kg')}</p><p><strong>Lot :</strong> ${esc(lots || trace.lot_code || '-')}</p><p><strong>DLC :</strong> ${esc((label.lots || []).map((lot) => lot.dlc).filter(Boolean).join(', ') || trace.dlc || '-')}</p><p><strong>Zone FAO :</strong> ${esc(trace.fao_zone || '-')}</p><p><strong>Méthode :</strong> ${esc(trace.production_method || '-')}</p></article>`; }).join('')}</div>`; detailTitle.textContent = 'Étiquettes sanitaires'; detailSubtitle.textContent = `${(data.labels || []).length} étiquette(s) préparée(s)`; } catch (err) { console.error('Erreur étiquettes sanitaires :', err); showFeedback(err.message || 'Erreur étiquettes', 'error'); } }
 
 function bindEvents() {
