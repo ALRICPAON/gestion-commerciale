@@ -24,6 +24,7 @@ const deliveryNoteValidationForcedRoutes = require('./routes/deliveryNoteValidat
 const deliveryNotesNegoceEditableRoutes = require('./routes/deliveryNotesNegoceEditable');
 const deliveryNotesEditableRoutes = require('./routes/deliveryNotesEditable');
 const negoceFixesRoutes = require('./routes/negoceFixes');
+const deliveryNoteCommunicationsRoutes = require('./routes/deliveryNoteCommunications');
 const deliveryNotesRoutes = require('./routes/deliveryNotes');
 const salesRoutes = require('./routes/sales');
 const stockRoutes = require('./routes/stock');
@@ -122,6 +123,7 @@ app.use('/api', deliveryNoteValidationForcedRoutes);
 app.use('/api', deliveryNotesNegoceEditableRoutes);
 app.use('/api', deliveryNotesEditableRoutes);
 app.use('/api', negoceFixesRoutes);
+app.use('/api', deliveryNoteCommunicationsRoutes);
 app.use('/api', deliveryNotesRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/stock', stockRoutes);
