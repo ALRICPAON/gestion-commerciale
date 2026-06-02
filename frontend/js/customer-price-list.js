@@ -287,7 +287,15 @@ function removeLine(lineKey) {
 }
 
 function applyClientTariffToSelected() {
-  if (!clientSelect.value) return;
+  if (!clientSelect.value) {
+    selectedLines = selectedLines.map((line) => ({
+      ...line,
+      price_source: line.price_ht === '' || line.price_ht === null ? 'none' : 'manual',
+      tariff_level: null,
+    }));
+    return;
+  }
+
   selectedLines = selectedLines.map((line) => {
     const source = sourceProducts.find((row) => row.article_id === line.article_id);
     if (!source || source.suggested_price_ht === null || source.suggested_price_ht === undefined) return line;
