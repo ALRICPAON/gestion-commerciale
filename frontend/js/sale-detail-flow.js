@@ -15,6 +15,7 @@
   };
   let currentSale = null;
   let currentLines = [];
+  let communicationOptions = null;
 
   async function request(path, options = {}) {
     const response = await fetch(`${API_BASE}${path}`, {
@@ -73,6 +74,10 @@
     const data = await request(`/api/sales/${saleId}`);
     currentSale = data.sale || null;
     currentLines = Array.isArray(data.lines) ? data.lines : [];
+    communicationOptions = null;
+    if (isDeliveryNote() && currentSale?.id) {
+      communicationOptions = await request(`/api/delivery-notes/${currentSale.id}/communication-options`).catch(() => null);
+    }
     refreshButtons();
     enhanceLineActions();
   }
@@ -84,12 +89,20 @@
     show(flowEls.printBl, isBl);
     show(flowEls.labels, isBl);
     show(flowEls.invoice, isBl && !factured);
-    show(flowEls.mail, isBl || documentType() === 'INVOICE');
-    show(flowEls.whatsapp, isBl || documentType() === 'INVOICE');
+    show(flowEls.mail, isBl);
+    show(flowEls.whatsapp, isBl);
     if (flowEls.validateBl) flowEls.validateBl.disabled = !canValidateBl();
     if (flowEls.printBl) flowEls.printBl.disabled = !isBl;
     if (flowEls.labels) flowEls.labels.disabled = !isBl;
     if (flowEls.invoice) flowEls.invoice.disabled = !(isBl && !factured && currentSale?.status === 'validated');
+    if (flowEls.mail) {
+      flowEls.mail.disabled = !(isBl && communicationOptions?.can_send_email);
+      flowEls.mail.title = communicationOptions?.can_send_email ? `Envoyer à ${communicationOptions.email}` : 'Aucun email client disponible';
+    }
+    if (flowEls.whatsapp) {
+      flowEls.whatsapp.disabled = !(isBl && communicationOptions?.can_send_whatsapp);
+      flowEls.whatsapp.title = communicationOptions?.can_send_whatsapp ? `Envoyer à ${communicationOptions.whatsapp_phone}` : 'Aucun téléphone WhatsApp disponible';
+    }
   }
 
   async function validateBlFromSale() {
@@ -165,6 +178,28 @@
     window.location.reload();
   }
 
+  async function sendDeliveryNoteEmail() {
+    await refreshState();
+    if (!isDeliveryNote() || !communicationOptions?.can_send_email) return;
+    if (!confirm(`Envoyer le BL par email à ${communicationOptions.email} ?`)) return;
+    const data = await request(`/api/delivery-notes/${currentSale.id}/send-email`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    feedback(`Email BL envoyé à ${data.to}`);
+  }
+
+  async function sendDeliveryNoteWhatsapp() {
+    await refreshState();
+    if (!isDeliveryNote() || !communicationOptions?.can_send_whatsapp) return;
+    if (!confirm(`Envoyer le message WhatsApp du BL à ${communicationOptions.whatsapp_phone} ?`)) return;
+    const data = await request(`/api/delivery-notes/${currentSale.id}/send-whatsapp`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    feedback(`Message WhatsApp BL envoyé à ${data.to}`);
+  }
+
   function enhanceLineActions() {
     if (!flowEls.lineBody || !isDeliveryNote()) return;
     flowEls.lineBody.querySelectorAll('tr[data-line-id]').forEach((row) => {
@@ -186,6 +221,8 @@
   flowEls.printBl?.addEventListener('click', () => printDeliveryNote().catch((error) => feedback(error.message, true)));
   flowEls.labels?.addEventListener('click', () => printHealthLabels().catch((error) => feedback(error.message, true)));
   flowEls.invoice?.addEventListener('click', () => validateInvoiceFromBl().catch((error) => feedback(error.message, true)));
+  flowEls.mail?.addEventListener('click', () => sendDeliveryNoteEmail().catch((error) => feedback(error.message, true)));
+  flowEls.whatsapp?.addEventListener('click', () => sendDeliveryNoteWhatsapp().catch((error) => feedback(error.message, true)));
   flowEls.lineBody?.addEventListener('click', (event) => {
     const button = event.target.closest('[data-action="print-line-label-flow"]');
     if (!button) return;
