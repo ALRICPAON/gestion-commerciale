@@ -7,7 +7,7 @@ const router = express.Router();
 
 const COURSE_TYPES = new Set(['general', 'client', 'promotion', 'daily_arrival']);
 const STATUSES = new Set(['draft', 'ready', 'archived']);
-const PRICE_SOURCES = new Set(['client_tariff', 'manual', 'none']);
+const PRICE_SOURCES = new Set(['target_tariff', 'client_tariff', 'manual', 'none']);
 
 function requireCourseEditor(req, res, next) {
   const allowedRoles = ['admin', 'responsable', 'commercial'];
@@ -67,7 +67,13 @@ function parseTariffLevel(value) {
   return [1, 2, 3].includes(parsed) ? parsed : null;
 }
 
-function safeLimit(value, fallback = 250, max = 1000) {
+function normalizeTargetTariff(value) {
+  const text = clean(value || 'all');
+  if (!text || text === 'all') return null;
+  return parseTariffLevel(text);
+}
+
+function safeLimit(value, fallback = 1000, max = 2000) {
   const parsed = Number(value);
   return Math.min(Number.isFinite(parsed) && parsed > 0 ? parsed : fallback, max);
 }
@@ -125,6 +131,9 @@ function lineSelectSql() {
       sale_unit,
       stock_quantity_snapshot,
       price_ht,
+      price_level_1_ht,
+      price_level_2_ht,
+      price_level_3_ht,
       price_source,
       tariff_level,
       line_note,
@@ -134,7 +143,7 @@ function lineSelectSql() {
   `;
 }
 
-async function getClientTariffLevel(db, storeId, clientId) {
+async function getOptionalClient(db, storeId, clientId) {
   if (!clientId) return null;
   const result = await db.query(
     `
@@ -184,7 +193,7 @@ async function getLines(db, priceListId) {
   return result.rows;
 }
 
-async function replaceLines(db, storeId, priceListId, lines = [], defaultTariffLevel = null) {
+async function replaceLines(db, storeId, priceListId, lines = [], targetTariffLevel = null) {
   await db.query('DELETE FROM customer_price_list_lines WHERE price_list_id = $1 AND store_id = $2', [priceListId, storeId]);
 
   if (!Array.isArray(lines) || lines.length === 0) return;
@@ -195,9 +204,13 @@ async function replaceLines(db, storeId, priceListId, lines = [], defaultTariffL
     if (!designation) continue;
 
     const articleId = normalizeUuid(line.article_id);
-    const tariffLevel = parseTariffLevel(line.tariff_level) || defaultTariffLevel;
     const price = parseNumber(line.price_ht);
-    const priceSource = price === null ? 'none' : normalizePriceSource(line.price_source, tariffLevel ? 'client_tariff' : 'manual');
+    const priceLevel1 = parseNumber(line.price_level_1_ht);
+    const priceLevel2 = parseNumber(line.price_level_2_ht);
+    const priceLevel3 = parseNumber(line.price_level_3_ht);
+    const tariffLevel = parseTariffLevel(line.tariff_level) || targetTariffLevel;
+    const defaultSource = tariffLevel ? 'target_tariff' : 'none';
+    const priceSource = normalizePriceSource(line.price_source, defaultSource);
 
     await db.query(
       `
@@ -205,12 +218,14 @@ async function replaceLines(db, storeId, priceListId, lines = [], defaultTariffL
         store_id, price_list_id, article_id, family_code, family_name,
         display_order, is_featured, designation_snapshot, caliber_info,
         origin_label, fao_zone, sous_zone, sale_unit, stock_quantity_snapshot,
-        price_ht, price_source, tariff_level, line_note
+        price_ht, price_level_1_ht, price_level_2_ht, price_level_3_ht,
+        price_source, tariff_level, line_note
       ) VALUES (
         $1, $2, $3, $4, $5,
         $6, $7, $8, $9,
         $10, $11, $12, $13, $14,
-        $15, $16, $17, $18
+        $15, $16, $17, $18,
+        $19, $20, $21
       )
       `,
       [
@@ -229,6 +244,9 @@ async function replaceLines(db, storeId, priceListId, lines = [], defaultTariffL
         clean(line.sale_unit),
         parseNumber(line.stock_quantity_snapshot),
         price,
+        priceLevel1,
+        priceLevel2,
+        priceLevel3,
         priceSource,
         tariffLevel,
         clean(line.line_note),
@@ -240,8 +258,8 @@ async function replaceLines(db, storeId, priceListId, lines = [], defaultTariffL
 router.get('/source-products', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const clientId = normalizeUuid(req.query.client_id);
-    const client = await getClientTariffLevel(req.dbPool, req.user.store_id, clientId);
-    const tariffLevel = client ? parseTariffLevel(client.tariff_level) : null;
+    const client = await getOptionalClient(req.dbPool, req.user.store_id, clientId);
+    const targetTariffLevel = normalizeTargetTariff(req.query.target_tariff_level || req.query.tariff_level);
 
     const params = [req.user.store_id];
     const availableOnly = parseBool(req.query.available_only, true);
@@ -314,14 +332,17 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
 
     const rows = result.rows.map((row) => ({
       ...row,
-      selected_tariff_level: tariffLevel,
-      suggested_price_ht: tariffLevel ? priceForLevel(row, tariffLevel) : null,
-      suggested_price_source: tariffLevel ? 'client_tariff' : 'none',
+      target_tariff_level: targetTariffLevel,
+      suggested_price_ht: targetTariffLevel ? priceForLevel(row, targetTariffLevel) : null,
+      suggested_price_source: targetTariffLevel ? 'target_tariff' : 'none',
+      price_level_1_ht: priceForLevel(row, 1),
+      price_level_2_ht: priceForLevel(row, 2),
+      price_level_3_ht: priceForLevel(row, 3),
     }));
 
     res.json({
       client,
-      tariff_level: tariffLevel,
+      target_tariff_level: targetTariffLevel,
       products: rows,
     });
   } catch (err) {
@@ -343,6 +364,11 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
     if (clean(req.query.course_type) && clean(req.query.course_type) !== 'all') {
       params.push(normalizeCourseType(req.query.course_type));
       where.push(`cpl.course_type = $${params.length}`);
+    }
+
+    if (clean(req.query.target_tariff_level) && clean(req.query.target_tariff_level) !== 'all') {
+      params.push(normalizeTargetTariff(req.query.target_tariff_level));
+      where.push(`cpl.tariff_level = $${params.length}`);
     }
 
     const result = await req.dbPool.query(
@@ -367,8 +393,8 @@ router.post('/', authenticateToken, attachDbContext, requireCourseEditor, async 
 
   try {
     const clientId = normalizeUuid(req.body.client_id);
-    const selectedClient = await getClientTariffLevel(client, req.user.store_id, clientId);
-    const tariffLevel = selectedClient ? parseTariffLevel(selectedClient.tariff_level) : null;
+    await getOptionalClient(client, req.user.store_id, clientId);
+    const targetTariffLevel = normalizeTargetTariff(req.body.target_tariff_level || req.body.tariff_level);
 
     await client.query('BEGIN');
 
@@ -391,20 +417,20 @@ router.post('/', authenticateToken, attachDbContext, requireCourseEditor, async 
         clean(req.body.price_list_date),
         clean(req.body.valid_until),
         normalizeStatus(req.body.status),
-        tariffLevel,
+        targetTariffLevel,
         clean(req.body.notes),
         req.user.id,
       ]
     );
 
     const priceListId = created.rows[0].id;
-    await replaceLines(client, req.user.store_id, priceListId, req.body.lines, tariffLevel);
+    await replaceLines(client, req.user.store_id, priceListId, req.body.lines, targetTariffLevel);
 
     await client.query('COMMIT');
 
     const header = await getHeader(req.dbPool, req.user.store_id, priceListId);
     const lines = await getLines(req.dbPool, priceListId);
-    res.status(201).json({ ...header, lines });
+    res.status(201).json({ ...header, target_tariff_level: header.tariff_level, lines });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Erreur POST /api/customer-price-lists :', err);
@@ -423,7 +449,7 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
     if (!header) return res.status(404).json({ error: 'Mercuriale introuvable' });
 
     const lines = await getLines(req.dbPool, priceListId);
-    res.json({ ...header, lines });
+    res.json({ ...header, target_tariff_level: header.tariff_level, lines });
   } catch (err) {
     console.error('Erreur GET /api/customer-price-lists/:id :', err);
     res.status(500).json({ error: 'Erreur serveur mercuriale' });
@@ -453,7 +479,7 @@ router.get('/:id/presentation', authenticateToken, attachDbContext, async (req, 
     ]);
 
     const featured = lines.filter((line) => line.is_featured);
-    const families = lines.reduce((acc, line) => {
+    const families = lines.filter((line) => !line.is_featured).reduce((acc, line) => {
       const key = line.family_name || 'Autre';
       if (!acc[key]) acc[key] = [];
       acc[key].push(line);
@@ -461,7 +487,7 @@ router.get('/:id/presentation', authenticateToken, attachDbContext, async (req, 
     }, {});
 
     res.json({
-      price_list: header,
+      price_list: { ...header, target_tariff_level: header.tariff_level },
       store_settings: settingsResult.rows[0] || {},
       featured_lines: featured,
       families,
@@ -486,8 +512,8 @@ router.put('/:id', authenticateToken, attachDbContext, requireCourseEditor, asyn
     if (!priceListId) return res.status(400).json({ error: 'ID mercuriale invalide' });
 
     const clientId = normalizeUuid(req.body.client_id);
-    const selectedClient = await getClientTariffLevel(client, req.user.store_id, clientId);
-    const tariffLevel = selectedClient ? parseTariffLevel(selectedClient.tariff_level) : null;
+    await getOptionalClient(client, req.user.store_id, clientId);
+    const targetTariffLevel = normalizeTargetTariff(req.body.target_tariff_level || req.body.tariff_level);
 
     await client.query('BEGIN');
 
@@ -516,7 +542,7 @@ router.put('/:id', authenticateToken, attachDbContext, requireCourseEditor, asyn
         clean(req.body.price_list_date),
         clean(req.body.valid_until),
         normalizeStatus(req.body.status),
-        tariffLevel,
+        targetTariffLevel,
         clean(req.body.notes),
         req.user.id,
         priceListId,
@@ -529,12 +555,12 @@ router.put('/:id', authenticateToken, attachDbContext, requireCourseEditor, asyn
       return res.status(404).json({ error: 'Mercuriale introuvable' });
     }
 
-    await replaceLines(client, req.user.store_id, priceListId, req.body.lines, tariffLevel);
+    await replaceLines(client, req.user.store_id, priceListId, req.body.lines, targetTariffLevel);
     await client.query('COMMIT');
 
     const header = await getHeader(req.dbPool, req.user.store_id, priceListId);
     const lines = await getLines(req.dbPool, priceListId);
-    res.json({ ...header, lines });
+    res.json({ ...header, target_tariff_level: header.tariff_level, lines });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Erreur PUT /api/customer-price-lists/:id :', err);
