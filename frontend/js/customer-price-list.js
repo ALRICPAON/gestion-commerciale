@@ -16,11 +16,19 @@ const COURSE_TYPE_LABELS = {
   daily_arrival: 'Arrivage du jour',
 };
 
+const TARGET_LABELS = {
+  all: 'Cours general multi-tarifs',
+  1: 'Cours Tarif 1',
+  2: 'Cours Tarif 2',
+  3: 'Cours Tarif 3',
+};
+
 const userNameEl = document.getElementById('user-name');
 const backHomeBtn = document.getElementById('back-home-btn');
 const logoutBtn = document.getElementById('logout-btn');
 const refreshSourceBtn = document.getElementById('refresh-source-btn');
 const savePriceListBtn = document.getElementById('save-price-list-btn');
+const targetTariffSelect = document.getElementById('target-tariff-select');
 const courseTypeSelect = document.getElementById('course-type-select');
 const clientSelect = document.getElementById('client-select');
 const titleInput = document.getElementById('price-list-title-input');
@@ -34,17 +42,20 @@ const sourceFamilyInput = document.getElementById('source-family-input');
 const availableOnlySelect = document.getElementById('available-only-select');
 const sourceSearchBtn = document.getElementById('source-search-btn');
 const sourceCount = document.getElementById('source-count');
+const sourceThead = document.getElementById('source-thead');
 const sourceTbody = document.getElementById('source-tbody');
 const pageFeedback = document.getElementById('page-feedback');
 const selectedSummary = document.getElementById('selected-summary');
-const selectedLinesEl = document.getElementById('selected-lines');
+const selectAllBtn = document.getElementById('select-all-btn');
+const unselectAllBtn = document.getElementById('unselect-all-btn');
 const previewBtn = document.getElementById('preview-btn');
 const printBtn = document.getElementById('print-btn');
 const previewEl = document.getElementById('price-list-preview');
 
 let clients = [];
 let sourceProducts = [];
-let selectedLines = [];
+let selectedArticleIds = new Set();
+let featuredArticleIds = new Set();
 let savedPriceListId = null;
 let lastStoreSettings = {};
 
@@ -79,13 +90,6 @@ function formatMoney(value) {
   return window.CustomerPriceListPrint.money(value);
 }
 
-function parsePrice(value) {
-  const raw = String(value ?? '').trim().replace(',', '.');
-  if (!raw) return null;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : NaN;
-}
-
 async function apiGet(path) {
   const response = await fetch(`${API_BASE_URL}${path}`, { headers: authHeaders(false) });
   const data = await response.json().catch(() => ({}));
@@ -108,27 +112,36 @@ function selectedClient() {
   return clients.find((client) => String(client.id) === String(clientSelect.value)) || null;
 }
 
-function updateTariffContext(sourceContext = null) {
-  const client = selectedClient();
-  if (!client) {
-    tariffContext.textContent = 'Aucun client selectionne : les prix restent a choisir.';
-    return;
-  }
+function targetTariffValue() {
+  return targetTariffSelect.value || 'all';
+}
 
-  const level = sourceContext?.tariff_level || client.tariff_level || 1;
-  tariffContext.textContent = `Client selectionne : tarif ${level} applique automatiquement depuis la fiche client.`;
+function targetTariffLevel() {
+  const value = targetTariffValue();
+  return value === 'all' ? null : Number(value);
+}
+
+function isMultiTariff() {
+  return targetTariffValue() === 'all';
+}
+
+function updateTariffContext() {
+  const label = TARGET_LABELS[targetTariffValue()] || TARGET_LABELS.all;
+  const client = selectedClient();
+  tariffContext.textContent = client
+    ? `${label}. Client optionnel selectionne : ${client.name}.`
+    : `${label}. Aucun client requis pour preparer la mercuriale.`;
 }
 
 function defaultTitle() {
-  const typeLabel = COURSE_TYPE_LABELS[courseTypeSelect.value] || COURSE_TYPE_LABELS.general;
-  const client = selectedClient();
-  return client ? `${typeLabel} - ${client.name}` : typeLabel;
+  return TARGET_LABELS[targetTariffValue()] || COURSE_TYPE_LABELS[courseTypeSelect.value] || 'Mercuriale du jour';
 }
 
 function sourceQuery() {
   const params = new URLSearchParams();
   params.set('available_only', availableOnlySelect.value || 'true');
-  params.set('limit', '500');
+  params.set('limit', '1500');
+  params.set('target_tariff_level', targetTariffValue());
   if (clientSelect.value) params.set('client_id', clientSelect.value);
   if (sourceSearchInput.value.trim()) params.set('search', sourceSearchInput.value.trim());
   if (sourceFamilyInput.value.trim()) params.set('family', sourceFamilyInput.value.trim());
@@ -144,98 +157,81 @@ function usefulInfo(row) {
   ].filter(Boolean).join(' - ');
 }
 
+function priceLabel(row) {
+  if (isMultiTariff()) {
+    return [
+      formatMoney(row.price_level_1_ht),
+      formatMoney(row.price_level_2_ht),
+      formatMoney(row.price_level_3_ht),
+    ];
+  }
+  return [formatMoney(row.suggested_price_ht)];
+}
+
+function renderTableHead() {
+  sourceThead.innerHTML = isMultiTariff()
+    ? `<tr>
+        <th>Inclure</th>
+        <th>Moment</th>
+        <th>Produit</th>
+        <th>Famille</th>
+        <th>Infos</th>
+        <th>Stock</th>
+        <th>Tarif 1 HT</th>
+        <th>Tarif 2 HT</th>
+        <th>Tarif 3 HT</th>
+      </tr>`
+    : `<tr>
+        <th>Inclure</th>
+        <th>Moment</th>
+        <th>Produit</th>
+        <th>Famille</th>
+        <th>Infos</th>
+        <th>Stock</th>
+        <th>Prix HT</th>
+      </tr>`;
+}
+
 function renderSourceProducts() {
-  sourceCount.textContent = `${sourceProducts.length} produit${sourceProducts.length > 1 ? 's' : ''}`;
+  renderTableHead();
+  const selectedCount = sourceProducts.filter((row) => selectedArticleIds.has(row.article_id)).length;
+  sourceCount.textContent = `${sourceProducts.length} article${sourceProducts.length > 1 ? 's' : ''}`;
+  selectedSummary.textContent = `${selectedCount} article${selectedCount > 1 ? 's' : ''} inclus.`;
 
   if (!sourceProducts.length) {
-    sourceTbody.innerHTML = '<tr><td colspan="6">Aucun produit disponible.</td></tr>';
+    sourceTbody.innerHTML = `<tr><td colspan="${isMultiTariff() ? 9 : 7}">Aucun article disponible.</td></tr>`;
     return;
   }
 
   sourceTbody.innerHTML = sourceProducts.map((row) => {
-    const alreadySelected = selectedLines.some((line) => line.article_id === row.article_id);
-    const price = row.suggested_price_ht;
-    return `<tr>
+    const included = selectedArticleIds.has(row.article_id);
+    const featured = featuredArticleIds.has(row.article_id);
+    const prices = priceLabel(row);
+    const priceCells = isMultiTariff()
+      ? prices.map((price) => `<td class="num">${price}</td>`).join('')
+      : `<td class="num">${prices[0]}</td>`;
+
+    return `<tr class="${included ? '' : 'muted-row'}" data-article-id="${escapeHtml(row.article_id)}">
+      <td><input type="checkbox" data-action="toggle-include" ${included ? 'checked' : ''} aria-label="Inclure ${escapeHtml(row.display_name || row.designation)}" /></td>
+      <td><input type="checkbox" data-action="toggle-featured" ${featured ? 'checked' : ''} ${included ? '' : 'disabled'} aria-label="Produit du moment ${escapeHtml(row.display_name || row.designation)}" /></td>
       <td><strong>${escapeHtml(row.display_name || row.designation)}</strong><small>${escapeHtml(row.plu || '')}</small></td>
       <td>${escapeHtml(row.family_name || 'Autre')}</td>
       <td>${escapeHtml(usefulInfo(row) || '-')}</td>
       <td>${formatNumber(row.stock_quantity)} ${escapeHtml(row.sale_unit || row.unit || '')}</td>
-      <td>${price === null || price === undefined ? '-' : formatMoney(price)}</td>
-      <td><button class="btn btn-primary btn-sm" data-action="add-source" data-article-id="${escapeHtml(row.article_id)}" ${alreadySelected ? 'disabled' : ''}>${alreadySelected ? 'Ajoute' : 'Ajouter'}</button></td>
+      ${priceCells}
     </tr>`;
   }).join('');
 }
 
-function sortLines(lines) {
-  return [...lines].sort((a, b) => {
-    if (a.is_featured !== b.is_featured) return a.is_featured ? -1 : 1;
-    const familyCompare = String(a.family_name || 'Autre').localeCompare(String(b.family_name || 'Autre'), 'fr');
-    if (familyCompare !== 0) return familyCompare;
-    return Number(a.display_order || 0) - Number(b.display_order || 0);
-  });
-}
-
-function groupedSelectedLines() {
-  const sorted = sortLines(selectedLines);
-  const groups = [];
-  const featured = sorted.filter((line) => line.is_featured);
-  if (featured.length) groups.push({ title: 'Produits du moment', lines: featured, featured: true });
-
-  sorted.filter((line) => !line.is_featured).forEach((line) => {
-    const familyName = line.family_name || 'Autre';
-    let group = groups.find((item) => !item.featured && item.title === familyName);
-    if (!group) {
-      group = { title: familyName, lines: [], featured: false };
-      groups.push(group);
-    }
-    group.lines.push(line);
-  });
-
-  return groups;
-}
-
-function renderSelectedLines() {
-  selectedSummary.textContent = selectedLines.length
-    ? `${selectedLines.length} produit${selectedLines.length > 1 ? 's' : ''} selectionne${selectedLines.length > 1 ? 's' : ''}`
-    : 'Aucun produit selectionne.';
-
-  if (!selectedLines.length) {
-    selectedLinesEl.className = 'selected-lines-empty';
-    selectedLinesEl.innerHTML = 'Selectionne des produits depuis le stock.';
-    return;
-  }
-
-  selectedLinesEl.className = 'selected-lines';
-  selectedLinesEl.innerHTML = groupedSelectedLines().map((group) => `
-    <section class="selected-section">
-      <h4>${escapeHtml(group.title)}</h4>
-      ${group.lines.map((line) => `
-        <div class="selected-line" data-line-key="${escapeHtml(line.key)}">
-          <div>
-            <strong>${escapeHtml(line.designation_snapshot)}</strong>
-            <span class="selected-line-meta">${escapeHtml([line.caliber_info, line.origin_label, line.fao_zone ? `FAO ${line.fao_zone}` : null].filter(Boolean).join(' - ') || '-')}</span>
-            <span class="selected-family-label">${escapeHtml(line.family_name || 'Autre')}</span>
-          </div>
-          <input type="number" min="0" step="0.01" data-field="price_ht" value="${escapeHtml(line.price_ht ?? '')}" aria-label="Prix HT" />
-          <input type="text" data-field="line_note" value="${escapeHtml(line.line_note || '')}" placeholder="Note" aria-label="Note ligne" />
-          <input type="number" min="1" step="1" data-field="display_order" value="${escapeHtml(line.display_order || 1)}" aria-label="Ordre" />
-          <label class="featured-toggle"><input type="checkbox" data-field="is_featured" ${line.is_featured ? 'checked' : ''} /> Moment</label>
-          <button class="btn btn-danger remove-line-btn" data-action="remove-line" aria-label="Retirer">x</button>
-        </div>
-      `).join('')}
-    </section>
-  `).join('');
-}
-
-function buildLineFromSource(row) {
-  const price = row.suggested_price_ht;
+function buildLineFromSource(row, index) {
+  const tariffLevel = targetTariffLevel();
   return {
-    key: row.article_id || `manual-${Date.now()}`,
+    key: row.article_id,
     article_id: row.article_id,
     family_code: row.family_code,
     family_name: row.family_name || 'Autre',
-    display_order: selectedLines.length + 1,
-    is_featured: false,
+    display_order: index + 1,
+    is_featured: featuredArticleIds.has(row.article_id),
     designation_snapshot: row.display_name || row.designation,
     caliber_info: row.caliber_info,
     origin_label: row.origin_label,
@@ -243,69 +239,33 @@ function buildLineFromSource(row) {
     sous_zone: row.sous_zone,
     sale_unit: row.sale_unit || row.unit,
     stock_quantity_snapshot: row.stock_quantity,
-    price_ht: price ?? '',
-    price_source: price === null || price === undefined ? 'none' : row.suggested_price_source || 'client_tariff',
-    tariff_level: row.selected_tariff_level,
+    price_ht: tariffLevel ? row.suggested_price_ht : null,
+    price_level_1_ht: row.price_level_1_ht,
+    price_level_2_ht: row.price_level_2_ht,
+    price_level_3_ht: row.price_level_3_ht,
+    price_source: tariffLevel ? 'target_tariff' : 'none',
+    tariff_level: tariffLevel,
     line_note: '',
   };
 }
 
-function addSourceProduct(articleId) {
-  const row = sourceProducts.find((product) => product.article_id === articleId);
-  if (!row || selectedLines.some((line) => line.article_id === articleId)) return;
-  selectedLines.push(buildLineFromSource(row));
+function selectedLines() {
+  return sourceProducts
+    .filter((row) => selectedArticleIds.has(row.article_id))
+    .map((row, index) => buildLineFromSource(row, index));
+}
+
+function selectAll() {
+  selectedArticleIds = new Set(sourceProducts.map((row) => row.article_id));
   renderSourceProducts();
-  renderSelectedLines();
   renderPreview();
 }
 
-function updateLineFromInput(lineKey, field, value, checked = false) {
-  const line = selectedLines.find((item) => item.key === lineKey);
-  if (!line) return;
-
-  if (field === 'is_featured') {
-    line.is_featured = checked;
-  } else if (field === 'price_ht') {
-    const price = parsePrice(value);
-    line.price_ht = Number.isNaN(price) ? '' : price;
-    line.price_source = price === null ? 'none' : 'manual';
-  } else if (field === 'display_order') {
-    const order = Number(value);
-    line.display_order = Number.isFinite(order) && order > 0 ? order : 1;
-  } else if (field === 'line_note') {
-    line.line_note = value;
-  }
-
-  renderPreview();
-}
-
-function removeLine(lineKey) {
-  selectedLines = selectedLines.filter((line) => line.key !== lineKey);
+function unselectAll() {
+  selectedArticleIds = new Set();
+  featuredArticleIds = new Set();
   renderSourceProducts();
-  renderSelectedLines();
   renderPreview();
-}
-
-function applyClientTariffToSelected() {
-  if (!clientSelect.value) {
-    selectedLines = selectedLines.map((line) => ({
-      ...line,
-      price_source: line.price_ht === '' || line.price_ht === null ? 'none' : 'manual',
-      tariff_level: null,
-    }));
-    return;
-  }
-
-  selectedLines = selectedLines.map((line) => {
-    const source = sourceProducts.find((row) => row.article_id === line.article_id);
-    if (!source || source.suggested_price_ht === null || source.suggested_price_ht === undefined) return line;
-    return {
-      ...line,
-      price_ht: source.suggested_price_ht,
-      price_source: 'client_tariff',
-      tariff_level: source.selected_tariff_level,
-    };
-  });
 }
 
 async function loadClients() {
@@ -315,37 +275,45 @@ async function loadClients() {
   )).join('');
 }
 
-async function loadSourceProducts() {
-  sourceTbody.innerHTML = '<tr><td colspan="6">Chargement des produits...</td></tr>';
+async function loadSourceProducts(options = {}) {
+  sourceTbody.innerHTML = `<tr><td colspan="${isMultiTariff() ? 9 : 7}">Chargement des articles...</td></tr>`;
   const data = await apiGet(`/api/customer-price-lists/source-products?${sourceQuery()}`);
   sourceProducts = data.products || [];
-  updateTariffContext(data);
-  applyClientTariffToSelected();
+
+  if (options.keepSelection) {
+    const availableIds = new Set(sourceProducts.map((row) => row.article_id));
+    selectedArticleIds = new Set([...selectedArticleIds].filter((id) => availableIds.has(id)));
+    featuredArticleIds = new Set([...featuredArticleIds].filter((id) => availableIds.has(id) && selectedArticleIds.has(id)));
+  } else {
+    selectedArticleIds = new Set(sourceProducts.map((row) => row.article_id));
+    featuredArticleIds = new Set();
+  }
+
+  updateTariffContext();
   renderSourceProducts();
-  renderSelectedLines();
   renderPreview();
 }
 
 function payload() {
+  const tariffLevel = targetTariffLevel();
   return {
     client_id: clientSelect.value || null,
     course_type: courseTypeSelect.value,
+    target_tariff_level: tariffLevel,
+    tariff_level: tariffLevel,
     title: titleInput.value.trim() || defaultTitle(),
     price_list_date: priceListDateInput.value || todayIso(),
     valid_until: validUntilInput.value || null,
     status: statusSelect.value,
     notes: notesInput.value.trim() || null,
-    lines: selectedLines.map((line, index) => ({
-      ...line,
-      display_order: Number(line.display_order || index + 1),
-      price_ht: line.price_ht === '' ? null : line.price_ht,
-    })),
+    lines: selectedLines(),
   };
 }
 
 async function savePriceList() {
-  if (!selectedLines.length) {
-    showFeedback('Selectionne au moins un produit pour enregistrer le cours.', 'error');
+  const lines = selectedLines();
+  if (!lines.length) {
+    showFeedback('Garde au moins un article coche pour enregistrer la mercuriale.', 'error');
     return null;
   }
 
@@ -356,9 +324,7 @@ async function savePriceList() {
       ? await apiSend(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}`, 'PUT', body)
       : await apiSend('/api/customer-price-lists', 'POST', body);
     savedPriceListId = saved.id;
-    selectedLines = (saved.lines || []).map((line) => ({ ...line, key: line.article_id || line.id }));
-    showFeedback('Cours enregistre.', 'success');
-    renderSelectedLines();
+    showFeedback('Mercuriale enregistree.', 'success');
     await loadPresentation();
     return saved;
   } catch (error) {
@@ -375,7 +341,7 @@ function renderPreview(priceListOverride = null, linesOverride = null, settingsO
     ...payload(),
     client_name: selectedClient()?.name || '',
   };
-  const lines = linesOverride || payload().lines;
+  const lines = linesOverride || selectedLines();
   const settings = settingsOverride || lastStoreSettings || {};
   previewEl.className = 'print-preview';
   previewEl.innerHTML = window.CustomerPriceListPrint.buildHtml(priceList, lines, settings);
@@ -423,10 +389,22 @@ function bindEvents() {
   logoutBtn.addEventListener('click', logout);
   refreshSourceBtn.addEventListener('click', () => loadSourceProducts().catch((error) => showFeedback(error.message, 'error')));
   sourceSearchBtn.addEventListener('click', () => loadSourceProducts().catch((error) => showFeedback(error.message, 'error')));
+  selectAllBtn.addEventListener('click', selectAll);
+  unselectAllBtn.addEventListener('click', unselectAll);
   sourceSearchInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') loadSourceProducts().catch((error) => showFeedback(error.message, 'error'));
   });
-  clientSelect.addEventListener('change', () => loadSourceProducts().catch((error) => showFeedback(error.message, 'error')));
+  targetTariffSelect.addEventListener('change', () => {
+    savedPriceListId = null;
+    if (!titleInput.value.trim() || Object.values(TARGET_LABELS).includes(titleInput.value.trim())) {
+      titleInput.value = defaultTitle();
+    }
+    loadSourceProducts().catch((error) => showFeedback(error.message, 'error'));
+  });
+  clientSelect.addEventListener('change', () => {
+    updateTariffContext();
+    renderPreview();
+  });
   courseTypeSelect.addEventListener('change', () => {
     if (!titleInput.value.trim()) titleInput.value = defaultTitle();
     renderPreview();
@@ -438,32 +416,27 @@ function bindEvents() {
   });
   printBtn.addEventListener('click', printPreview);
 
-  sourceTbody.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-action="add-source"]');
-    if (!button) return;
-    addSourceProduct(button.dataset.articleId);
-  });
-
-  selectedLinesEl.addEventListener('input', (event) => {
-    const input = event.target.closest('[data-field]');
-    const row = event.target.closest('[data-line-key]');
+  sourceTbody.addEventListener('change', (event) => {
+    const input = event.target.closest('input[data-action]');
+    const row = event.target.closest('[data-article-id]');
     if (!input || !row) return;
-    updateLineFromInput(row.dataset.lineKey, input.dataset.field, input.value, input.checked);
-  });
+    const articleId = row.dataset.articleId;
 
-  selectedLinesEl.addEventListener('change', (event) => {
-    const input = event.target.closest('[data-field="is_featured"]');
-    const row = event.target.closest('[data-line-key]');
-    if (!input || !row) return;
-    updateLineFromInput(row.dataset.lineKey, input.dataset.field, input.value, input.checked);
-    renderSelectedLines();
-  });
+    if (input.dataset.action === 'toggle-include') {
+      if (input.checked) selectedArticleIds.add(articleId);
+      else {
+        selectedArticleIds.delete(articleId);
+        featuredArticleIds.delete(articleId);
+      }
+    }
 
-  selectedLinesEl.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-action="remove-line"]');
-    const row = event.target.closest('[data-line-key]');
-    if (!button || !row) return;
-    removeLine(row.dataset.lineKey);
+    if (input.dataset.action === 'toggle-featured') {
+      if (input.checked && selectedArticleIds.has(articleId)) featuredArticleIds.add(articleId);
+      else featuredArticleIds.delete(articleId);
+    }
+
+    renderSourceProducts();
+    renderPreview();
   });
 }
 
