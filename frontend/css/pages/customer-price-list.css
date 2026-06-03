@@ -21,7 +21,7 @@
 
 .course-form-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
   gap: 14px;
 }
 
@@ -38,6 +38,14 @@
   justify-content: flex-end;
 }
 
+.bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -51,12 +59,33 @@
 }
 
 .source-table {
-  min-width: 980px;
+  min-width: 1180px;
 }
 
 .source-table th:nth-child(1),
-.source-table td:nth-child(1) {
+.source-table th:nth-child(2),
+.source-table td:nth-child(1),
+.source-table td:nth-child(2) {
+  width: 72px;
+  text-align: center;
+}
+
+.source-table th:nth-child(3),
+.source-table td:nth-child(3) {
   min-width: 240px;
+}
+
+.source-table input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--theme-main);
+}
+
+.source-table .num,
+.cpl-print-table .num {
+  text-align: right;
+  white-space: nowrap;
+  font-weight: 700;
 }
 
 .source-table small,
@@ -66,6 +95,16 @@
   margin-top: 4px;
   color: #6b7280;
   font-size: 12px;
+}
+
+.muted-row {
+  color: #9ca3af;
+  background: #f9fafb;
+}
+
+.muted-row strong,
+.muted-row small {
+  color: #9ca3af;
 }
 
 .selected-lines-empty,
@@ -235,12 +274,6 @@
   color: #6b7280;
 }
 
-.cpl-print-table .num {
-  text-align: right;
-  white-space: nowrap;
-  font-weight: 700;
-}
-
 .cpl-footer {
   margin-top: 24px;
   padding-top: 12px;
@@ -290,7 +323,6 @@
   .welcome-card,
   .course-form-card,
   .source-card,
-  .selected-card,
   .preview-card > .section-title-row {
     display: none !important;
   }
