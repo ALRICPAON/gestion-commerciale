@@ -4,6 +4,8 @@
   const saleId = new URLSearchParams(window.location.search).get('id');
   const flowEls = {
     orderPdf: document.getElementById('download-order-pdf-btn'),
+    blPdf: document.getElementById('download-bl-pdf-btn'),
+    invoicePdf: document.getElementById('download-invoice-pdf-btn'),
     validateBl: document.getElementById('validate-bl-flow-btn'),
     printBl: document.getElementById('print-bl-btn'),
     labels: document.getElementById('print-health-labels-btn'),
@@ -106,8 +108,12 @@
   function refreshButtons() {
     const isOrder = documentType() === 'ORDER';
     const isBl = isDeliveryNote();
+    const isBlDocument = documentType() === 'DELIVERY_NOTE';
+    const isInvoice = documentType() === 'INVOICE';
     const factured = isFactured();
     show(flowEls.orderPdf, isOrder);
+    show(flowEls.blPdf, isBlDocument);
+    show(flowEls.invoicePdf, isInvoice);
     show(flowEls.validateBl, canValidateBl());
     show(flowEls.printBl, isBl);
     show(flowEls.labels, isBl);
@@ -115,6 +121,8 @@
     show(flowEls.mail, isBl);
     show(flowEls.whatsapp, isBl);
     if (flowEls.orderPdf) flowEls.orderPdf.disabled = !isOrder;
+    if (flowEls.blPdf) flowEls.blPdf.disabled = !isBlDocument;
+    if (flowEls.invoicePdf) flowEls.invoicePdf.disabled = true;
     if (flowEls.validateBl) flowEls.validateBl.disabled = !canValidateBl();
     if (flowEls.printBl) flowEls.printBl.disabled = !isBl;
     if (flowEls.labels) flowEls.labels.disabled = !isBl;
@@ -152,6 +160,18 @@
       feedback('PDF commande généré');
     } finally {
       flowEls.orderPdf.disabled = false;
+    }
+  }
+
+  async function downloadDeliveryNotePdf() {
+    await refreshState();
+    if (documentType() !== 'DELIVERY_NOTE') return;
+    flowEls.blPdf.disabled = true;
+    try {
+      await downloadPdf(`/api/delivery-notes/${currentSale.id}/pdf`, 'bon-de-livraison.pdf');
+      feedback('PDF BL généré');
+    } finally {
+      flowEls.blPdf.disabled = false;
     }
   }
 
@@ -254,6 +274,8 @@
   }
 
   flowEls.orderPdf?.addEventListener('click', () => downloadOrderPdf().catch((error) => feedback(error.message, true)));
+  flowEls.blPdf?.addEventListener('click', () => downloadDeliveryNotePdf().catch((error) => feedback(error.message, true)));
+  flowEls.invoicePdf?.addEventListener('click', () => feedback('PDF facture non disponible dans cette version', true));
   flowEls.validateBl?.addEventListener('click', () => validateBlFromSale().catch((error) => feedback(error.message, true)));
   flowEls.printBl?.addEventListener('click', () => printDeliveryNote().catch((error) => feedback(error.message, true)));
   flowEls.labels?.addEventListener('click', () => printHealthLabels().catch((error) => feedback(error.message, true)));
