@@ -19,10 +19,6 @@
     return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(number(value));
   }
 
-  function qty(value) {
-    return number(value).toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 3 });
-  }
-
   function formatDate(value) {
     if (!value) return '-';
     try { return new Intl.DateTimeFormat('fr-FR').format(new Date(value)); }
@@ -35,61 +31,37 @@
     return [1, 2, 3].includes(parsed) ? parsed : null;
   }
 
-  function documentLabel(priceList) {
-    const tariff = targetTariff(priceList);
-    return tariff ? `Cours Tarif ${tariff}` : 'Cours general';
-  }
-
-  function addressBlock(parts) {
-    return parts.filter(Boolean).map((part) => `<p>${escapeHtml(part)}</p>`).join('');
-  }
-
-  function companyMeta(settings) {
-    const parts = [
-      settings.phone ? `Tel. ${settings.phone}` : null,
-      settings.email,
-      settings.siret ? `SIRET ${settings.siret}` : null,
-      settings.vat_number ? `TVA ${settings.vat_number}` : null,
-      settings.sanitary_approval_number ? `Agrement ${settings.sanitary_approval_number}` : null,
-    ].filter(Boolean);
-
-    return parts.length ? `<p class="cpl-company-meta">${escapeHtml(parts.join(' | '))}</p>` : '';
-  }
-
-  function lineDetails(line) {
+  function addressLine(settings) {
     return [
-      line.caliber_info,
-      line.origin_label,
-      line.fao_zone ? `FAO ${line.fao_zone}` : null,
-      line.sous_zone,
-      line.line_note,
+      settings.address_line1,
+      settings.address_line2,
+      [settings.postal_code, settings.city].filter(Boolean).join(' '),
     ].filter(Boolean).join(' - ');
   }
 
-  function lineRow(line, priceList) {
-    const details = lineDetails(line);
-    const tariff = targetTariff(priceList);
-    const priceCells = tariff
-      ? `<td class="num">${money(line.price_ht)}</td>`
-      : `<td class="num">${money(line.price_level_1_ht)}</td><td class="num">${money(line.price_level_2_ht)}</td><td class="num">${money(line.price_level_3_ht)}</td>`;
-
-    return `<tr>
-      <td>
-        <strong>${escapeHtml(line.designation_snapshot || '-')}</strong>
-        ${details ? `<small>${escapeHtml(details)}</small>` : ''}
-      </td>
-      ${priceCells}
-      <td>${escapeHtml(line.sale_unit || '')}</td>
-    </tr>`;
+  function companyMeta(settings) {
+    return [
+      settings.phone ? `Tel. ${settings.phone}` : null,
+      settings.email,
+      settings.sanitary_approval_number ? `Agrement sanitaire ${settings.sanitary_approval_number}` : null,
+    ].filter(Boolean).join(' | ');
   }
 
-  function tableHead(priceList) {
-    return targetTariff(priceList)
-      ? '<thead><tr><th>Designation</th><th>Prix HT</th><th>Unite</th></tr></thead>'
-      : '<thead><tr><th>Designation</th><th>Tarif 1 HT</th><th>Tarif 2 HT</th><th>Tarif 3 HT</th><th>Unite</th></tr></thead>';
+  function priceForTariff(line, tariff) {
+    if (tariff === 1) return line.price_level_1_ht ?? line.price_ht;
+    if (tariff === 2) return line.price_level_2_ht ?? line.price_ht;
+    if (tariff === 3) return line.price_level_3_ht ?? line.price_ht;
+    return line.price_ht;
   }
 
-  function familySections(lines, priceList) {
+  function productRow(line, tariff) {
+    return `<div class="cpl-product-row">
+      <span>${escapeHtml(line.designation_snapshot || '-')}</span>
+      <strong>${money(priceForTariff(line, tariff))}</strong>
+    </div>`;
+  }
+
+  function familyBlocks(lines, tariff) {
     const regularLines = (lines || []).filter((line) => !line.is_featured);
     const grouped = regularLines.reduce((acc, line) => {
       const familyName = line.family_name || 'Autre';
@@ -101,32 +73,28 @@
     return Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'fr')).map((familyName) => `
       <section class="cpl-family-section">
         <h3>${escapeHtml(familyName)}</h3>
-        <table class="cpl-print-table">
-          ${tableHead(priceList)}
-          <tbody>${grouped[familyName].map((line) => lineRow(line, priceList)).join('')}</tbody>
-        </table>
+        ${grouped[familyName].map((line) => productRow(line, tariff)).join('')}
       </section>
     `).join('');
   }
 
-  function featuredSection(lines, priceList) {
+  function featuredBlock(lines, tariff) {
     const featured = (lines || []).filter((line) => line.is_featured);
     if (!featured.length) return '';
 
     return `<section class="cpl-featured-section">
       <h3>Produits du moment</h3>
-      <table class="cpl-print-table">
-        ${tableHead(priceList)}
-        <tbody>${featured.map((line) => lineRow(line, priceList)).join('')}</tbody>
-      </table>
+      ${featured.map((line) => productRow(line, tariff)).join('')}
     </section>`;
   }
 
-  function buildHtml(priceList, lines, storeSettings = {}) {
+  function documentTitle(tariff) {
+    return `Tarif ${tariff}`;
+  }
+
+  function singleSheetHtml(priceList, lines, storeSettings, tariff) {
     const settings = storeSettings || {};
     const companyName = settings.company_name || 'Gestion Commerciale';
-    const label = documentLabel(priceList);
-    const title = priceList.title || label;
     const clientName = priceList.client_name || '';
 
     return `<article class="cpl-print-document">
@@ -135,24 +103,30 @@
           ${settings.logo_url ? `<img class="cpl-logo" src="${escapeHtml(settings.logo_url)}" alt="Logo ${escapeHtml(companyName)}">` : ''}
           <div>
             <h1>${escapeHtml(companyName)}</h1>
-            ${addressBlock([settings.address_line1, settings.address_line2, [settings.postal_code, settings.city].filter(Boolean).join(' '), settings.country])}
-            ${companyMeta(settings)}
+            ${addressLine(settings) ? `<p>${escapeHtml(addressLine(settings))}</p>` : ''}
+            ${companyMeta(settings) ? `<p class="cpl-company-meta">${escapeHtml(companyMeta(settings))}</p>` : ''}
           </div>
         </div>
         <div class="cpl-document-meta">
-          <p class="cpl-label">${escapeHtml(label)}</p>
-          <h2>${escapeHtml(title)}</h2>
+          <p class="cpl-label">${escapeHtml(documentTitle(tariff))}</p>
+          <h2>Mercuriale / Cours du jour</h2>
           <p>Date : <strong>${formatDate(priceList.price_list_date)}</strong></p>
-          ${priceList.valid_until ? `<p>Valable jusqu'au : <strong>${formatDate(priceList.valid_until)}</strong></p>` : ''}
           ${clientName ? `<p>Client : <strong>${escapeHtml(clientName)}</strong></p>` : ''}
         </div>
       </header>
 
-      ${featuredSection(lines, priceList)}
-      ${familySections(lines, priceList) || '<p class="cpl-empty">Aucun produit selectionne.</p>'}
-
-      ${settings.legal_mentions ? `<footer class="cpl-footer">${escapeHtml(settings.legal_mentions)}</footer>` : ''}
+      ${featuredBlock(lines, tariff)}
+      <div class="cpl-course-columns">
+        ${familyBlocks(lines, tariff) || '<p class="cpl-empty">Aucun produit selectionne.</p>'}
+      </div>
     </article>`;
+  }
+
+  function buildHtml(priceList, lines, storeSettings = {}) {
+    const tariff = targetTariff(priceList);
+    const tariffs = tariff ? [tariff] : [1, 2, 3];
+
+    return tariffs.map((level) => singleSheetHtml(priceList, lines, storeSettings, level)).join('');
   }
 
   window.CustomerPriceListPrint = {
@@ -160,6 +134,5 @@
     escapeHtml,
     formatDate,
     money,
-    qty,
   };
 }());
