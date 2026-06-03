@@ -9,7 +9,6 @@ if (!sessionUser || !authToken) {
 
 const fields = [
   'company_name',
-  'logo_url',
   'address_line1',
   'address_line2',
   'postal_code',
@@ -29,10 +28,17 @@ const fields = [
   'invoice_footer',
 ];
 
+let currentSettings = {};
+
 const userNameEl = document.getElementById('user-name');
 const pageFeedback = document.getElementById('page-feedback');
 const saveSettingsBtn = document.getElementById('save-settings-btn');
 const settingsForm = document.getElementById('settings-form');
+const logoPreview = document.getElementById('logo-preview');
+const logoEmpty = document.getElementById('logo-empty');
+const logoFileInput = document.getElementById('logo_file');
+const uploadLogoBtn = document.getElementById('upload-logo-btn');
+const deleteLogoBtn = document.getElementById('delete-logo-btn');
 
 function canManageSettings() {
   return ['admin', 'responsable'].includes(sessionUser.role);
@@ -72,9 +78,28 @@ function getFieldValue(id) {
   return value === '' ? null : value;
 }
 
+function cacheBustedLogoUrl(url) {
+  if (!url) return '';
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${separator}v=${Date.now()}`;
+}
+
+function renderLogoPreview() {
+  const logoUrl = currentSettings.logo_url;
+  if (logoPreview) {
+    logoPreview.src = logoUrl ? cacheBustedLogoUrl(logoUrl) : '';
+    logoPreview.classList.toggle('hidden', !logoUrl);
+  }
+  if (logoEmpty) logoEmpty.classList.toggle('hidden', Boolean(logoUrl));
+  if (deleteLogoBtn) deleteLogoBtn.disabled = !canManageSettings() || !logoUrl;
+  if (uploadLogoBtn) uploadLogoBtn.textContent = logoUrl ? 'Changer le logo' : 'Télécharger le logo';
+}
+
 function fillForm(settings = {}) {
-  fields.forEach((field) => setFieldValue(field, settings[field]));
-  if (!settings.country) setFieldValue('country', 'France');
+  currentSettings = { ...(settings || {}) };
+  fields.forEach((field) => setFieldValue(field, currentSettings[field]));
+  if (!currentSettings.country) setFieldValue('country', 'France');
+  renderLogoPreview();
 }
 
 function collectPayload() {
@@ -83,6 +108,7 @@ function collectPayload() {
     payload[field] = getFieldValue(field);
   });
   if (!payload.country) payload.country = 'France';
+  payload.logo_url = currentSettings.logo_url || null;
   return payload;
 }
 
@@ -92,6 +118,9 @@ function lockForm() {
     if (input) input.disabled = true;
   });
   if (saveSettingsBtn) saveSettingsBtn.disabled = true;
+  if (uploadLogoBtn) uploadLogoBtn.disabled = true;
+  if (deleteLogoBtn) deleteLogoBtn.disabled = true;
+  if (logoFileInput) logoFileInput.disabled = true;
 }
 
 async function apiFetch(url, options = {}) {
@@ -158,6 +187,57 @@ async function saveSettings() {
   }
 }
 
+async function uploadLogo(file) {
+  if (!file || !canManageSettings()) return;
+
+  const formData = new FormData();
+  formData.append('logo', file);
+
+  if (uploadLogoBtn) uploadLogoBtn.disabled = true;
+  if (deleteLogoBtn) deleteLogoBtn.disabled = true;
+
+  try {
+    const response = await apiFetch(`${API_BASE_URL}/api/store-settings/logo`, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Erreur upload logo');
+    fillForm(data || {});
+    showFeedback('Logo société mis à jour.');
+  } catch (err) {
+    console.error('Erreur upload logo :', err);
+    showFeedback(err.message || 'Erreur upload logo', 'error');
+  } finally {
+    if (logoFileInput) logoFileInput.value = '';
+    if (uploadLogoBtn) uploadLogoBtn.disabled = !canManageSettings();
+    renderLogoPreview();
+  }
+}
+
+async function deleteLogo() {
+  if (!canManageSettings() || !currentSettings.logo_url) return;
+
+  if (uploadLogoBtn) uploadLogoBtn.disabled = true;
+  if (deleteLogoBtn) deleteLogoBtn.disabled = true;
+
+  try {
+    const response = await apiFetch(`${API_BASE_URL}/api/store-settings/logo`, { method: 'DELETE' });
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Erreur suppression logo');
+    fillForm(data || {});
+    showFeedback('Logo société supprimé.');
+  } catch (err) {
+    console.error('Erreur suppression logo :', err);
+    showFeedback(err.message || 'Erreur suppression logo', 'error');
+  } finally {
+    if (uploadLogoBtn) uploadLogoBtn.disabled = !canManageSettings();
+    renderLogoPreview();
+  }
+}
+
 function bindEvents() {
   if (userNameEl) userNameEl.textContent = sessionUser.email || 'Utilisateur';
   document.getElementById('back-home-btn')?.addEventListener('click', () => { window.location.href = './home.html'; });
@@ -167,6 +247,9 @@ function bindEvents() {
     event.preventDefault();
     saveSettings();
   });
+  uploadLogoBtn?.addEventListener('click', () => logoFileInput?.click());
+  logoFileInput?.addEventListener('change', () => uploadLogo(logoFileInput.files?.[0]));
+  deleteLogoBtn?.addEventListener('click', deleteLogo);
 }
 
 bindEvents();

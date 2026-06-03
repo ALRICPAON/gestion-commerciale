@@ -101,6 +101,51 @@
   color: #64748b;
 }
 
+.logo-upload-panel {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  min-height: 104px;
+}
+
+.logo-preview-box {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 10px;
+  display: flex;
+  height: 96px;
+  justify-content: center;
+  padding: 12px;
+  width: 168px;
+}
+
+.logo-preview {
+  display: block;
+  max-height: 72px;
+  max-width: 140px;
+  object-fit: contain;
+}
+
+.logo-preview.hidden,
+.logo-empty.hidden {
+  display: none;
+}
+
+.logo-empty {
+  color: #64748b;
+  font-size: 0.9rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.logo-upload-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .settings-page .page-feedback {
   margin-top: 16px;
   margin-bottom: 0;
@@ -142,5 +187,14 @@
 
   .settings-card {
     padding: 16px;
+  }
+
+  .logo-upload-panel {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .logo-preview-box {
+    width: 100%;
   }
 }

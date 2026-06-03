@@ -1,10 +1,24 @@
+const crypto = require('crypto');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
+
 const express = require('express');
+const multer = require('multer');
 
 const { authenticateToken } = require('../middleware/auth');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { attachDbContext } = require('../middleware/dbContext');
 
 const router = express.Router();
+
+const STORE_LOGOS_DIR = path.resolve(__dirname, '..', 'uploads', 'store-logos');
+const STORE_LOGOS_PUBLIC_PATH = '/uploads/store-logos';
+const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024;
+const ALLOWED_LOGO_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/svg+xml']);
+const ALLOWED_LOGO_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.svg']);
+
+fs.mkdirSync(STORE_LOGOS_DIR, { recursive: true });
 
 const STORE_SETTINGS_FIELDS = [
   'company_name',
@@ -89,6 +103,122 @@ async function findStoreSettings(req) {
   );
 
   return result.rows[0] || null;
+}
+
+function uploadError(message) {
+  const err = new Error(message);
+  err.status = 400;
+  err.expose = true;
+  return err;
+}
+
+function logoExtension(filename = '') {
+  return path.extname(filename).toLowerCase();
+}
+
+function validateLogoMetadata(file) {
+  if (!file) return uploadError('Fichier logo manquant');
+  const ext = logoExtension(file.originalname);
+  if (!ALLOWED_LOGO_EXTENSIONS.has(ext)) {
+    return uploadError('Extension logo non autorisee');
+  }
+  if (!ALLOWED_LOGO_MIME_TYPES.has(file.mimetype)) {
+    return uploadError('Type MIME logo non autorise');
+  }
+  return null;
+}
+
+function safeLogoFilename(req, file) {
+  const ext = logoExtension(file.originalname);
+  const storeId = String(req.user.store_id || 'store').replace(/[^a-zA-Z0-9-]/g, '');
+  return `${storeId}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
+}
+
+const logoUpload = multer({
+  storage: multer.diskStorage({
+    destination(req, file, cb) {
+      fs.mkdir(STORE_LOGOS_DIR, { recursive: true }, (err) => cb(err, STORE_LOGOS_DIR));
+    },
+    filename(req, file, cb) {
+      cb(null, safeLogoFilename(req, file));
+    },
+  }),
+  limits: { fileSize: MAX_LOGO_SIZE_BYTES },
+  fileFilter(req, file, cb) {
+    const err = validateLogoMetadata(file);
+    cb(err, !err);
+  },
+});
+
+function logoPublicUrl(req, filename) {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  return `${baseUrl}${STORE_LOGOS_PUBLIC_PATH}/${encodeURIComponent(filename)}`;
+}
+
+function localLogoPathFromUrl(logoUrl) {
+  if (!logoUrl) return null;
+
+  let pathname;
+  try {
+    pathname = new URL(logoUrl).pathname;
+  } catch {
+    pathname = String(logoUrl || '');
+  }
+
+  const expectedPrefix = `${STORE_LOGOS_PUBLIC_PATH}/`;
+  if (!pathname.startsWith(expectedPrefix)) return null;
+
+  const filename = path.basename(decodeURIComponent(pathname));
+  if (!filename) return null;
+
+  const candidatePath = path.resolve(STORE_LOGOS_DIR, filename);
+  const allowedRoot = `${STORE_LOGOS_DIR}${path.sep}`;
+  return candidatePath.startsWith(allowedRoot) ? candidatePath : null;
+}
+
+async function removeLocalLogoIfOwned(logoUrl) {
+  const localPath = localLogoPathFromUrl(logoUrl);
+  if (!localPath) return;
+
+  try {
+    await fsp.unlink(localPath);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('Erreur suppression ancien logo :', err);
+    }
+  }
+}
+
+async function removeUploadedFile(file) {
+  if (!file?.path) return;
+  try {
+    await fsp.unlink(file.path);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error('Erreur nettoyage logo uploadé :', err);
+    }
+  }
+}
+
+async function validateStoredLogoContent(file) {
+  const ext = logoExtension(file.originalname);
+  const buffer = await fsp.readFile(file.path);
+
+  if (ext === '.png') {
+    const pngSignature = '89504e470d0a1a0a';
+    return buffer.subarray(0, 8).toString('hex') === pngSignature;
+  }
+
+  if (ext === '.jpg' || ext === '.jpeg') {
+    return buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  }
+
+  if (ext === '.svg') {
+    const text = buffer.toString('utf8').trim().toLowerCase();
+    return text.includes('<svg') && !text.includes('<script') && !text.includes('javascript:');
+  }
+
+  return false;
 }
 
 router.get('/store-settings', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
@@ -263,6 +393,76 @@ router.put('/store-settings', authenticateToken, attachDbContext, requireAdminOr
   } catch (err) {
     console.error('Erreur PUT /api/store-settings :', err);
     res.status(500).json({ error: 'Erreur serveur mise à jour paramètres société' });
+  }
+});
+
+router.post(
+  '/store-settings/logo',
+  authenticateToken,
+  attachDbContext,
+  requireAdminOrManager,
+  logoUpload.single('logo'),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'Fichier logo manquant' });
+      }
+
+      const validContent = await validateStoredLogoContent(req.file);
+      if (!validContent) {
+        await removeUploadedFile(req.file);
+        return res.status(400).json({ error: 'Contenu du logo invalide' });
+      }
+
+      const previousSettings = await findStoreSettings(req);
+      const logoUrl = logoPublicUrl(req, req.file.filename);
+
+      await req.dbPool.query(
+        `
+        INSERT INTO store_settings (store_id, logo_url, created_by, updated_by)
+        VALUES ($1, $2, $3, $3)
+        ON CONFLICT (store_id) DO UPDATE
+        SET logo_url = EXCLUDED.logo_url,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = now()
+        `,
+        [req.user.store_id, logoUrl, req.user.id]
+      );
+
+      await removeLocalLogoIfOwned(previousSettings?.logo_url);
+      const updated = await findStoreSettings(req);
+      return res.json(updated);
+    } catch (err) {
+      await removeUploadedFile(req.file);
+      console.error('Erreur POST /api/store-settings/logo :', err);
+      return res.status(500).json({ error: 'Erreur serveur upload logo' });
+    }
+  }
+);
+
+router.delete('/store-settings/logo', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const previousSettings = await findStoreSettings(req);
+
+    if (previousSettings) {
+      await req.dbPool.query(
+        `
+        UPDATE store_settings
+        SET logo_url = NULL,
+          updated_by = $2,
+          updated_at = now()
+        WHERE store_id = $1
+        `,
+        [req.user.store_id, req.user.id]
+      );
+    }
+
+    await removeLocalLogoIfOwned(previousSettings?.logo_url);
+    const updated = await findStoreSettings(req);
+    return res.json(updated || { logo_url: null });
+  } catch (err) {
+    console.error('Erreur DELETE /api/store-settings/logo :', err);
+    return res.status(500).json({ error: 'Erreur serveur suppression logo' });
   }
 });
 

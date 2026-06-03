@@ -1,3 +1,4 @@
+const fs = require('fs');
 const path = require('path');
 
 require('dotenv').config({
@@ -33,6 +34,9 @@ const stockRoutes = require('./routes/stock');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
+const STORE_LOGOS_DIR = path.join(__dirname, 'uploads', 'store-logos');
+
+fs.mkdirSync(STORE_LOGOS_DIR, { recursive: true });
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET manquant dans le fichier backend/.env');
@@ -107,6 +111,11 @@ app.use(helmet({
 }));
 
 app.use(cors(corsOptions));
+app.use('/uploads/store-logos', express.static(STORE_LOGOS_DIR, {
+  fallthrough: false,
+  index: false,
+  maxAge: '7d',
+}));
 app.use(express.json());
 app.use('/api/login', loginRateLimiter);
 app.use('/api', apiRateLimiter);
