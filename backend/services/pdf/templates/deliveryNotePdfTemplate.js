@@ -13,6 +13,14 @@ function addressBlock(parts) {
   return parts.filter(Boolean).map((part) => `<p>${escapeHtml(part)}</p>`).join('');
 }
 
+function shortDocumentReference(value) {
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const uuidMatch = text.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  return uuidMatch ? text.slice(0, 8).toUpperCase() : text;
+}
+
 function lineLots(line) {
   return (line.allocations || [])
     .map((lot) => [
@@ -29,22 +37,23 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
   const doc = document || {};
   const settings = storeSettings || {};
   const deliveredStoreId = doc.client_store_identifier || doc.delivered_client_store_identifier || '';
-  const sourceOrder = doc.source_order_reference || doc.source_order_id || '';
+  const sourceOrder = doc.source_order_reference || shortDocumentReference(doc.source_order_id);
+  const documentReference = shortDocumentReference(doc.reference_number || doc.id) || 'Bon de livraison';
   const rows = (lines || []).map((line) => `<tr>
-    <td>${escapeHtml(line.line_number || '')}</td>
-    <td><strong>${escapeHtml(line.article_label || '-')}</strong><small>${escapeHtml(line.article_plu || '')}</small></td>
+    <td class="line-cell">${escapeHtml(line.line_number || '')}</td>
+    <td class="designation-cell"><strong>${escapeHtml(line.article_label || '-')}</strong><small>${escapeHtml(line.article_plu || '')}</small></td>
     <td class="num">${number(line.package_count)}</td>
-    <td class="num">${qty(line.total_weight || line.sold_quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td>
-    <td>${lineLots(line) || '-'}</td>
+    <td class="num weight-cell">${qty(line.total_weight || line.sold_quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td>
+    <td class="lots-cell">${lineLots(line) || '-'}</td>
     <td class="num">${money(line.unit_sale_price_ht)}</td>
     <td class="num">${money(line.line_amount_ht)}</td>
-    <td class="num">${number(line.vat_rate).toFixed(2)} %</td>
+    <td class="num vat-cell">${number(line.vat_rate).toFixed(2)} %</td>
     <td class="num">${money(line.line_amount_ttc)}</td>
   </tr>`).join('');
 
   const body = `<article class="pdf-document bl-document">
-    ${companyHeader(settings, doc.reference_number || doc.id || 'Bon de livraison', `Bon de livraison - ${formatDate(doc.document_date)}`)}
-    ${sourceOrder ? `<p class="source-order">Commande source : <strong>${escapeHtml(sourceOrder)}</strong></p>` : ''}
+    ${companyHeader(settings, documentReference, `Bon de livraison - ${formatDate(doc.document_date)}`)}
+    ${sourceOrder ? `<p class="source-order">Commande source : <strong>${escapeHtml(shortDocumentReference(sourceOrder))}</strong></p>` : ''}
     <section class="parties">
       <div class="party-card">
         <h3>Client livre</h3>
@@ -58,7 +67,18 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
         ${doc.billed_client_code ? `<p>Code client : <strong>${escapeHtml(doc.billed_client_code)}</strong></p>` : ''}
       </div>
     </section>
-    <table>
+    <table class="delivery-lines-table">
+      <colgroup>
+        <col class="col-line">
+        <col class="col-designation">
+        <col class="col-packages">
+        <col class="col-weight">
+        <col class="col-lots">
+        <col class="col-price">
+        <col class="col-total">
+        <col class="col-vat">
+        <col class="col-ttc">
+      </colgroup>
       <thead><tr><th>Ligne</th><th>Designation</th><th>Colis</th><th>Poids</th><th>Lots</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>TTC</th></tr></thead>
       <tbody>${rows || '<tr><td colspan="9">Aucune ligne.</td></tr>'}</tbody>
     </table>
@@ -78,10 +98,48 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
 
   const styles = `
     .bl-document { display: flex; flex-direction: column; min-height: 277mm; }
-    .source-order { margin: -4px 0 8px; }
-    .bottom { align-items: flex-start; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) 58mm; margin-top: 14px; }
-    .signature { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); margin-top: auto; padding-top: 18px; }
-    .signature div { border: 1px solid #8b98a5; color: #52616f; font-weight: 700; height: 28mm; padding: 8px; }
+    .bl-document .doc-header { gap: 10px; grid-template-columns: minmax(0, 1fr) 60mm; margin-bottom: 8px; padding-bottom: 8px; }
+    .bl-document .company-block { gap: 7px; }
+    .bl-document .company-logo { max-height: 18mm; max-width: 28mm; }
+    .bl-document .company-block h1 { font-size: 15px; }
+    .bl-document .company-block p { margin: 1px 0; }
+    .bl-document .company-meta { margin-top: 3px; }
+    .bl-document .document-title { padding: 7px 8px; }
+    .bl-document .document-title p { font-size: 8.8px; }
+    .bl-document .document-title h2 { font-size: 14px; line-height: 1.15; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .source-order { color: #52616f; font-size: 9.5px; margin: -2px 0 7px; text-align: right; }
+    .source-order strong { color: #17212b; }
+    .bl-document .parties { gap: 10px; margin: 8px 0 10px; }
+    .bl-document .party-card { min-height: 20mm; padding: 7px 9px; }
+    .bl-document .party-card h3 { margin-bottom: 4px; }
+    .bl-document .party-name { font-size: 12px; }
+    .delivery-lines-table { font-size: 9.5px; table-layout: fixed; }
+    .delivery-lines-table th, .delivery-lines-table td { padding: 4px 4px; }
+    .delivery-lines-table th { background: #e8eef4; border-color: #aebdcc; color: #17212b; font-size: 8.2px; letter-spacing: 0; }
+    .delivery-lines-table tbody tr:nth-child(even) { background: #f8fafc; }
+    .delivery-lines-table td { border-color: #d5dde5; line-height: 1.22; }
+    .delivery-lines-table td small { font-size: 8px; margin-top: 1px; }
+    .line-cell { text-align: center; }
+    .designation-cell strong { display: block; overflow-wrap: anywhere; }
+    .lots-cell { color: #334155; font-size: 8.4px; line-height: 1.16; overflow-wrap: anywhere; }
+    .weight-cell, .vat-cell { font-size: 8.8px; }
+    .col-line { width: 7%; }
+    .col-designation { width: 26%; }
+    .col-packages { width: 7%; }
+    .col-weight { width: 10%; }
+    .col-lots { width: 17%; }
+    .col-price { width: 9%; }
+    .col-total { width: 9%; }
+    .col-vat { width: 7%; }
+    .col-ttc { width: 8%; }
+    .bottom { align-items: flex-start; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 54mm; margin-top: 10px; }
+    .bottom .footer-note { margin-top: 0; }
+    .totals { justify-self: end; width: 54mm; }
+    .totals p { display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr) auto; padding: 5px 7px; }
+    .totals span { text-align: left; }
+    .totals strong { text-align: right; white-space: nowrap; }
+    .signature { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); margin-top: auto; padding-top: 14px; }
+    .signature div { border: 1px solid #8b98a5; color: #52616f; font-weight: 700; height: 24mm; padding: 7px; }
   `;
 
   return htmlDocument('Bon de livraison', body, styles);
