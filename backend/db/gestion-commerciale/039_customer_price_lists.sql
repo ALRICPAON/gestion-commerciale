@@ -42,13 +42,16 @@ CREATE TABLE IF NOT EXISTS customer_price_list_lines (
   sale_unit text,
   stock_quantity_snapshot numeric(14,4),
   price_ht numeric(14,4),
+  price_level_1_ht numeric(14,4),
+  price_level_2_ht numeric(14,4),
+  price_level_3_ht numeric(14,4),
   price_source text NOT NULL DEFAULT 'manual',
   tariff_level integer,
   line_note text,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT chk_customer_price_list_lines_price_source
-    CHECK (price_source IN ('client_tariff', 'manual', 'none')),
+    CHECK (price_source IN ('target_tariff', 'client_tariff', 'manual', 'none')),
   CONSTRAINT chk_customer_price_list_lines_tariff_level
     CHECK (tariff_level IS NULL OR tariff_level IN (1, 2, 3))
 );
@@ -61,6 +64,9 @@ CREATE INDEX IF NOT EXISTS idx_customer_price_lists_store_client
 
 CREATE INDEX IF NOT EXISTS idx_customer_price_lists_store_status
   ON customer_price_lists(store_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_customer_price_lists_store_tariff_level
+  ON customer_price_lists(store_id, tariff_level);
 
 CREATE INDEX IF NOT EXISTS idx_customer_price_list_lines_list_order
   ON customer_price_list_lines(price_list_id, is_featured DESC, family_name, display_order, designation_snapshot);
