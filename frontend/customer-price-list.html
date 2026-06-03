@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Cours / Mercuriale client - Gestion Commerciale</title>
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/customer-price-list.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/customer-price-list.css?v=2" />
 </head>
 <body class="app-page customer-price-list-page">
   <header class="topbar">
@@ -25,8 +25,8 @@
     <section class="welcome-card">
       <div class="page-actions">
         <div>
-          <h2>Preparation du cours professionnel</h2>
-          <p id="tariff-context">Aucun client selectionne : les prix restent a choisir.</p>
+          <h2>Mercuriale rapide du jour</h2>
+          <p id="tariff-context">Tous les articles disponibles sont inclus par defaut.</p>
         </div>
         <div class="page-actions-right">
           <button id="refresh-source-btn" class="btn btn-secondary">Actualiser le stock</button>
@@ -38,6 +38,16 @@
     <section class="card course-form-card">
       <div class="course-form-grid">
         <div class="form-group">
+          <label for="target-tariff-select">Tarif cible</label>
+          <select id="target-tariff-select">
+            <option value="all">Tous les tarifs</option>
+            <option value="1">Tarif 1</option>
+            <option value="2">Tarif 2</option>
+            <option value="3">Tarif 3</option>
+          </select>
+        </div>
+
+        <div class="form-group">
           <label for="course-type-select">Type de cours</label>
           <select id="course-type-select">
             <option value="general">Cours general</option>
@@ -48,7 +58,7 @@
         </div>
 
         <div class="form-group">
-          <label for="client-select">Client</label>
+          <label for="client-select">Client optionnel</label>
           <select id="client-select">
             <option value="">Sans client</option>
           </select>
@@ -56,7 +66,7 @@
 
         <div class="form-group">
           <label for="price-list-title-input">Titre</label>
-          <input id="price-list-title-input" type="text" placeholder="Cours du jour" />
+          <input id="price-list-title-input" type="text" placeholder="Mercuriale du jour" />
         </div>
 
         <div class="form-group">
@@ -88,10 +98,10 @@
     <section class="card source-card">
       <div class="section-title-row">
         <div>
-          <h3>Produits disponibles</h3>
-          <p>Selection depuis le stock magasin, sans impact sur les lots ni les allocations.</p>
+          <h3>Articles disponibles du stock</h3>
+          <p>Tout est coche par defaut. Decoche uniquement les articles a retirer du cours.</p>
         </div>
-        <span id="source-count" class="pill">0 produit</span>
+        <span id="source-count" class="pill">0 article</span>
       </div>
 
       <div class="filters-row source-filters">
@@ -118,30 +128,27 @@
 
       <div id="page-feedback" class="page-feedback hidden"></div>
 
+      <div class="bulk-actions">
+        <button id="select-all-btn" class="btn btn-secondary">Tout cocher</button>
+        <button id="unselect-all-btn" class="btn btn-secondary">Tout decocher</button>
+        <strong id="selected-summary">0 article inclus.</strong>
+      </div>
+
       <div class="table-wrap">
-        <table class="data-table source-table">
-          <thead>
-            <tr>
-              <th>Produit</th>
-              <th>Famille</th>
-              <th>Infos</th>
-              <th>Stock</th>
-              <th>Prix propose</th>
-              <th>Action</th>
-            </tr>
-          </thead>
+        <table class="data-table source-table" id="source-table">
+          <thead id="source-thead"></thead>
           <tbody id="source-tbody">
-            <tr><td colspan="6">Chargement des produits...</td></tr>
+            <tr><td colspan="8">Chargement des produits...</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
-    <section class="card selected-card">
+    <section class="card preview-card">
       <div class="section-title-row">
         <div>
-          <h3>Cours en preparation</h3>
-          <p id="selected-summary">Aucun produit selectionne.</p>
+          <h3>Presentation</h3>
+          <p>Les produits du moment apparaissent avant les familles.</p>
         </div>
         <div class="page-actions-right">
           <button id="preview-btn" class="btn btn-secondary">Previsualiser</button>
@@ -151,23 +158,12 @@
           <button class="btn btn-secondary" disabled>WhatsApp a venir</button>
         </div>
       </div>
-
-      <div id="selected-lines" class="selected-lines-empty">Selectionne des produits depuis le stock.</div>
-    </section>
-
-    <section class="card preview-card">
-      <div class="section-title-row">
-        <div>
-          <h3>Presentation</h3>
-          <p>Les produits du moment apparaissent avant les familles.</p>
-        </div>
-      </div>
       <div id="price-list-preview" class="print-preview-placeholder">Enregistre ou previsualise le cours.</div>
     </section>
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/customer-price-list-print.js?v=1"></script>
-  <script src="./js/customer-price-list.js?v=1"></script>
+  <script src="./js/customer-price-list-print.js?v=2"></script>
+  <script src="./js/customer-price-list.js?v=2"></script>
 </body>
 </html>
