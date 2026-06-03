@@ -14,6 +14,7 @@ const detailContent = $('detail-content');
 const validateBtn = $('validate-btn');
 const invoiceBtn = $('invoice-btn');
 const printBtn = $('print-btn');
+const downloadPdfBtn = $('download-pdf-btn');
 const labelsBtn = $('labels-btn');
 const printArea = $('print-area');
 let selectedDeliveryNote = null;
@@ -21,6 +22,7 @@ let selectedDeliveryNote = null;
 function logoutAndRedirect() { ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key)); window.location.href = './login.html'; }
 function showFeedback(message, type = 'success') { if (!pageFeedback) return; pageFeedback.textContent = message; pageFeedback.className = `page-feedback ${type}`; setTimeout(() => { pageFeedback.className = 'page-feedback hidden'; pageFeedback.textContent = ''; }, 3500); }
 async function apiFetch(url, options = {}) { const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${authToken}` } }); if (response.status === 401) { logoutAndRedirect(); return null; } return response; }
+async function downloadPdf(url, fallbackName) { const response = await apiFetch(url); if (!response) return; if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || 'Erreur generation PDF'); } const disposition = response.headers.get('Content-Disposition') || ''; const match = disposition.match(/filename="?([^";]+)"?/i); const filename = match?.[1] || fallbackName; const blob = await response.blob(); const objectUrl = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = objectUrl; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(objectUrl); }
 const money = (value) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(Number(value || 0));
 const qty = (value) => Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 const fmtDate = (value) => (value ? new Intl.DateTimeFormat('fr-FR').format(new Date(value)) : '-');
@@ -54,6 +56,7 @@ function renderDetail(note) {
   validateBtn.disabled = note.status !== 'draft';
   invoiceBtn.disabled = note.status !== 'validated';
   printBtn.disabled = false;
+  downloadPdfBtn.disabled = false;
   labelsBtn.disabled = false;
   detailContent.classList.remove('empty-state');
   const rows = (note.lines || []).map((line) => `<tr><td>${line.line_number}</td><td>${esc(line.article_plu || '')} ${esc(line.article_label || '')}</td><td>${Number(line.package_count || 0)}</td><td>${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${money(line.unit_sale_price_ht)}</td><td>${money(line.line_amount_ht)}</td><td>${Number(line.vat_rate || 0).toFixed(2)} %</td><td>${money(line.line_amount_ttc)}</td></tr>`).join('');
@@ -67,6 +70,7 @@ async function generateDeliveryNote(orderId) { try { const response = await apiF
 async function openDeliveryNote(id) { try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${id}`); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Impossible de charger le BL'); renderDetail(data); } catch (err) { console.error('Erreur ouverture BL :', err); showFeedback(err.message || 'Erreur ouverture BL', 'error'); } }
 async function validateDeliveryNote() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate`, { method: 'POST' }); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur validation BL'); showFeedback('BL validé et stock déstocké.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation BL :', err); showFeedback(err.message || 'Erreur validation BL', 'error'); } }
 async function validateInvoice() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate-invoice`, { method: 'POST' }); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur validation facture'); showFeedback(data.existing ? 'Facture déjà préparée.' : 'Facture préparée depuis le BL.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation facture :', err); showFeedback(err.message || 'Erreur validation facture', 'error'); } }
+async function downloadDeliveryNotePdf() { if (!selectedDeliveryNote) return; downloadPdfBtn.disabled = true; try { await downloadPdf(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/pdf`, 'bon-de-livraison.pdf'); showFeedback('PDF bon de livraison généré.'); } catch (err) { console.error('Erreur PDF BL :', err); showFeedback(err.message || 'Erreur PDF BL', 'error'); } finally { downloadPdfBtn.disabled = false; } }
 
 function lineLots(line) {
   return (line.allocations || [])
@@ -164,6 +168,7 @@ function bindEvents() {
   validateBtn?.addEventListener('click', validateDeliveryNote);
   invoiceBtn?.addEventListener('click', validateInvoice);
   printBtn?.addEventListener('click', printDeliveryNote);
+  downloadPdfBtn?.addEventListener('click', downloadDeliveryNotePdf);
   labelsBtn?.addEventListener('click', loadLabels);
   ordersBody?.addEventListener('click', (event) => { const btn = event.target.closest('[data-generate]'); if (btn) generateDeliveryNote(btn.dataset.generate); });
   deliveryNotesBody?.addEventListener('click', (event) => { const btn = event.target.closest('[data-open]'); if (btn) openDeliveryNote(btn.dataset.open); });

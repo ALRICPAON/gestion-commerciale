@@ -3,6 +3,7 @@
   const API_BASE = window.APP_CONFIG.API_BASE_URL;
   const saleId = new URLSearchParams(window.location.search).get('id');
   const flowEls = {
+    orderPdf: document.getElementById('download-order-pdf-btn'),
     validateBl: document.getElementById('validate-bl-flow-btn'),
     printBl: document.getElementById('print-bl-btn'),
     labels: document.getElementById('print-health-labels-btn'),
@@ -29,6 +30,26 @@
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'Erreur API');
     return data;
+  }
+
+  async function downloadPdf(path, fallbackName) {
+    const response = await fetch(`${API_BASE}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Erreur generation PDF');
+    }
+    const disposition = response.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/i);
+    const filename = match?.[1] || fallbackName;
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   }
 
   function feedback(message, isError = false) {
@@ -83,14 +104,17 @@
   }
 
   function refreshButtons() {
+    const isOrder = documentType() === 'ORDER';
     const isBl = isDeliveryNote();
     const factured = isFactured();
+    show(flowEls.orderPdf, isOrder);
     show(flowEls.validateBl, canValidateBl());
     show(flowEls.printBl, isBl);
     show(flowEls.labels, isBl);
     show(flowEls.invoice, isBl && !factured);
     show(flowEls.mail, isBl);
     show(flowEls.whatsapp, isBl);
+    if (flowEls.orderPdf) flowEls.orderPdf.disabled = !isOrder;
     if (flowEls.validateBl) flowEls.validateBl.disabled = !canValidateBl();
     if (flowEls.printBl) flowEls.printBl.disabled = !isBl;
     if (flowEls.labels) flowEls.labels.disabled = !isBl;
@@ -117,6 +141,18 @@
     feedback('Commande validée en BL');
     if (nextId) window.location.href = `./sale-detail.html?id=${encodeURIComponent(nextId)}`;
     else window.location.reload();
+  }
+
+  async function downloadOrderPdf() {
+    await refreshState();
+    if (documentType() !== 'ORDER') return;
+    flowEls.orderPdf.disabled = true;
+    try {
+      await downloadPdf(`/api/sales/${currentSale.id}/pdf`, 'commande-client.pdf');
+      feedback('PDF commande généré');
+    } finally {
+      flowEls.orderPdf.disabled = false;
+    }
   }
 
   async function printDeliveryNote() {
@@ -217,6 +253,7 @@
     });
   }
 
+  flowEls.orderPdf?.addEventListener('click', () => downloadOrderPdf().catch((error) => feedback(error.message, true)));
   flowEls.validateBl?.addEventListener('click', () => validateBlFromSale().catch((error) => feedback(error.message, true)));
   flowEls.printBl?.addEventListener('click', () => printDeliveryNote().catch((error) => feedback(error.message, true)));
   flowEls.labels?.addEventListener('click', () => printHealthLabels().catch((error) => feedback(error.message, true)));

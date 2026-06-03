@@ -50,6 +50,7 @@ const selectAllBtn = document.getElementById('select-all-btn');
 const unselectAllBtn = document.getElementById('unselect-all-btn');
 const previewBtn = document.getElementById('preview-btn');
 const printBtn = document.getElementById('print-btn');
+const downloadPdfBtn = document.getElementById('download-pdf-btn');
 const previewEl = document.getElementById('price-list-preview');
 
 let clients = [];
@@ -106,6 +107,26 @@ async function apiSend(path, method, payload) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erreur API');
   return data;
+}
+
+async function downloadPdf(path, fallbackName) {
+  const response = await fetch(`${API_BASE_URL}${path}`, { headers: authHeaders(false) });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Erreur generation PDF');
+  }
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = match?.[1] || fallbackName;
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 function selectedClient() {
@@ -374,6 +395,24 @@ function printPreview() {
   printWindow.print();
 }
 
+async function downloadPriceListPdf() {
+  showFeedback('', '');
+  downloadPdfBtn.disabled = true;
+  try {
+    if (!savedPriceListId) {
+      const saved = await savePriceList();
+      if (!saved?.id && !savedPriceListId) return;
+    }
+    await downloadPdf(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}/pdf`, 'mercuriale.pdf');
+    showFeedback('PDF mercuriale genere.', 'success');
+  } catch (error) {
+    console.error(error);
+    showFeedback(error.message, 'error');
+  } finally {
+    downloadPdfBtn.disabled = false;
+  }
+}
+
 function logout() {
   localStorage.removeItem('grv2_token');
   localStorage.removeItem('grv2_user');
@@ -415,6 +454,7 @@ function bindEvents() {
     renderPreview();
   });
   printBtn.addEventListener('click', printPreview);
+  downloadPdfBtn.addEventListener('click', downloadPriceListPdf);
 
   sourceTbody.addEventListener('change', (event) => {
     const input = event.target.closest('input[data-action]');
