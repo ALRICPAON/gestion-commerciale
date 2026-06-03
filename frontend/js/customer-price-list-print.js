@@ -1,11 +1,4 @@
 (function () {
-  const TYPE_LABELS = {
-    general: 'Cours general',
-    client: 'Cours client',
-    promotion: 'Offre promotionnelle',
-    daily_arrival: 'Arrivage du jour',
-  };
-
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
       '&': '&amp;',
@@ -36,6 +29,17 @@
     catch { return String(value); }
   }
 
+  function targetTariff(priceList) {
+    const value = priceList.target_tariff_level ?? priceList.tariff_level;
+    const parsed = Number(value);
+    return [1, 2, 3].includes(parsed) ? parsed : null;
+  }
+
+  function documentLabel(priceList) {
+    const tariff = targetTariff(priceList);
+    return tariff ? `Cours Tarif ${tariff}` : 'Cours general';
+  }
+
   function addressBlock(parts) {
     return parts.filter(Boolean).map((part) => `<p>${escapeHtml(part)}</p>`).join('');
   }
@@ -62,19 +66,30 @@
     ].filter(Boolean).join(' - ');
   }
 
-  function lineRow(line) {
+  function lineRow(line, priceList) {
     const details = lineDetails(line);
+    const tariff = targetTariff(priceList);
+    const priceCells = tariff
+      ? `<td class="num">${money(line.price_ht)}</td>`
+      : `<td class="num">${money(line.price_level_1_ht)}</td><td class="num">${money(line.price_level_2_ht)}</td><td class="num">${money(line.price_level_3_ht)}</td>`;
+
     return `<tr>
       <td>
         <strong>${escapeHtml(line.designation_snapshot || '-')}</strong>
         ${details ? `<small>${escapeHtml(details)}</small>` : ''}
       </td>
-      <td class="num">${money(line.price_ht)}</td>
+      ${priceCells}
       <td>${escapeHtml(line.sale_unit || '')}</td>
     </tr>`;
   }
 
-  function familySections(lines) {
+  function tableHead(priceList) {
+    return targetTariff(priceList)
+      ? '<thead><tr><th>Designation</th><th>Prix HT</th><th>Unite</th></tr></thead>'
+      : '<thead><tr><th>Designation</th><th>Tarif 1 HT</th><th>Tarif 2 HT</th><th>Tarif 3 HT</th><th>Unite</th></tr></thead>';
+  }
+
+  function familySections(lines, priceList) {
     const regularLines = (lines || []).filter((line) => !line.is_featured);
     const grouped = regularLines.reduce((acc, line) => {
       const familyName = line.family_name || 'Autre';
@@ -87,22 +102,22 @@
       <section class="cpl-family-section">
         <h3>${escapeHtml(familyName)}</h3>
         <table class="cpl-print-table">
-          <thead><tr><th>Designation</th><th>Prix HT</th><th>Unite</th></tr></thead>
-          <tbody>${grouped[familyName].map(lineRow).join('')}</tbody>
+          ${tableHead(priceList)}
+          <tbody>${grouped[familyName].map((line) => lineRow(line, priceList)).join('')}</tbody>
         </table>
       </section>
     `).join('');
   }
 
-  function featuredSection(lines) {
+  function featuredSection(lines, priceList) {
     const featured = (lines || []).filter((line) => line.is_featured);
     if (!featured.length) return '';
 
     return `<section class="cpl-featured-section">
       <h3>Produits du moment</h3>
       <table class="cpl-print-table">
-        <thead><tr><th>Designation</th><th>Prix HT</th><th>Unite</th></tr></thead>
-        <tbody>${featured.map(lineRow).join('')}</tbody>
+        ${tableHead(priceList)}
+        <tbody>${featured.map((line) => lineRow(line, priceList)).join('')}</tbody>
       </table>
     </section>`;
   }
@@ -110,8 +125,8 @@
   function buildHtml(priceList, lines, storeSettings = {}) {
     const settings = storeSettings || {};
     const companyName = settings.company_name || 'Gestion Commerciale';
-    const typeLabel = TYPE_LABELS[priceList.course_type] || TYPE_LABELS.general;
-    const title = priceList.title || typeLabel;
+    const label = documentLabel(priceList);
+    const title = priceList.title || label;
     const clientName = priceList.client_name || '';
 
     return `<article class="cpl-print-document">
@@ -125,7 +140,7 @@
           </div>
         </div>
         <div class="cpl-document-meta">
-          <p class="cpl-label">${escapeHtml(typeLabel)}</p>
+          <p class="cpl-label">${escapeHtml(label)}</p>
           <h2>${escapeHtml(title)}</h2>
           <p>Date : <strong>${formatDate(priceList.price_list_date)}</strong></p>
           ${priceList.valid_until ? `<p>Valable jusqu'au : <strong>${formatDate(priceList.valid_until)}</strong></p>` : ''}
@@ -133,8 +148,8 @@
         </div>
       </header>
 
-      ${featuredSection(lines)}
-      ${familySections(lines) || '<p class="cpl-empty">Aucun produit selectionne.</p>'}
+      ${featuredSection(lines, priceList)}
+      ${familySections(lines, priceList) || '<p class="cpl-empty">Aucun produit selectionne.</p>'}
 
       ${settings.legal_mentions ? `<footer class="cpl-footer">${escapeHtml(settings.legal_mentions)}</footer>` : ''}
     </article>`;
