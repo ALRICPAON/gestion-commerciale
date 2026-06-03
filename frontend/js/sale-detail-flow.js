@@ -108,10 +108,11 @@
   function refreshButtons() {
     const isOrder = documentType() === 'ORDER';
     const isBl = isDeliveryNote();
+    const isBlDocument = documentType() === 'DELIVERY_NOTE';
     const isInvoice = documentType() === 'INVOICE';
     const factured = isFactured();
     show(flowEls.orderPdf, isOrder);
-    show(flowEls.blPdf, isBl);
+    show(flowEls.blPdf, isBlDocument);
     show(flowEls.invoicePdf, isInvoice);
     show(flowEls.validateBl, canValidateBl());
     show(flowEls.printBl, isBl);
@@ -120,7 +121,7 @@
     show(flowEls.mail, isBl);
     show(flowEls.whatsapp, isBl);
     if (flowEls.orderPdf) flowEls.orderPdf.disabled = !isOrder;
-    if (flowEls.blPdf) flowEls.blPdf.disabled = !isBl;
+    if (flowEls.blPdf) flowEls.blPdf.disabled = !isBlDocument;
     if (flowEls.invoicePdf) flowEls.invoicePdf.disabled = true;
     if (flowEls.validateBl) flowEls.validateBl.disabled = !canValidateBl();
     if (flowEls.printBl) flowEls.printBl.disabled = !isBl;
@@ -164,7 +165,7 @@
 
   async function downloadDeliveryNotePdf() {
     await refreshState();
-    if (!isDeliveryNote()) return;
+    if (documentType() !== 'DELIVERY_NOTE') return;
     flowEls.blPdf.disabled = true;
     try {
       await downloadPdf(`/api/delivery-notes/${currentSale.id}/pdf`, 'bon-de-livraison.pdf');
