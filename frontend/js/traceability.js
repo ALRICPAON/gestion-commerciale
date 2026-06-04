@@ -107,6 +107,10 @@ function sourceLabel(value) {
   return value || 'Lot';
 }
 
+function lotIdentifier(lot) {
+  return lot?.lot_id || lot?.id || lot?.uuid || '';
+}
+
 function movementLabel(value) {
   const labels = {
     purchase_in: 'Entrée achat',
@@ -170,7 +174,8 @@ function photoGallery(urls = []) {
 
 function renderLotCard(lot) {
   const trace = lot.traceability || {};
-  return `<article class="trace-card" data-lot-id="${escapeHtml(lot.lot_id)}">
+  const lotId = lotIdentifier(lot);
+  return `<article class="trace-card" data-lot-id="${escapeHtml(lotId)}">
     <div class="trace-card-header">
       <div><h3>${escapeHtml(lot.article_plu || '-')} - ${escapeHtml(lot.article_label || '-')}</h3><p>Lot ${escapeHtml(lot.lot_code || '-')} · ${escapeHtml(sourceLabel(lot.source_type))}</p></div>
       ${statusBadge(lot.status)}
@@ -184,7 +189,7 @@ function renderLotCard(lot) {
       <div><span>Engin</span><strong>${escapeHtml(trace.fishing_gear || '-')}</strong></div>
     </div>
     <section class="trace-card-clients"><h4>Clients livrés</h4>${deliveredClientsPreview(lot)}</section>
-    <div class="trace-card-actions"><button type="button" class="btn btn-primary btn-detail" data-lot-id="${escapeHtml(lot.lot_id)}">Détail lot</button>${lot.purchase_id ? `<a class="btn btn-secondary" href="./purchase-detail.html?id=${encodeURIComponent(lot.purchase_id)}">Achat source</a>` : ''}</div>
+    <div class="trace-card-actions"><button type="button" class="btn btn-primary btn-detail" data-lot-id="${escapeHtml(lotId)}">Détail lot</button>${lot.purchase_id ? `<a class="btn btn-secondary" href="./purchase-detail.html?id=${encodeURIComponent(lot.purchase_id)}">Achat source</a>` : ''}</div>
   </article>`;
 }
 
