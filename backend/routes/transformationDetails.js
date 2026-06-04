@@ -35,23 +35,6 @@ async function getTransformation(client, storeId, transformationId) {
   return result.rows[0] || null;
 }
 
-async function canAccessDepartment(client, { userId, storeId, departmentId }) {
-  if (!departmentId) return false;
-  const result = await client.query(
-    `
-    SELECT 1
-    FROM user_departments ud
-    JOIN departments d ON d.id = ud.department_id
-    WHERE ud.user_id = $1
-      AND ud.department_id = $2
-      AND d.store_id = $3
-    LIMIT 1
-    `,
-    [userId, departmentId, storeId]
-  );
-  return result.rows.length > 0;
-}
-
 async function getInputs(client, storeId, transformationId) {
   const result = await client.query(
     `
@@ -168,13 +151,6 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
 
     const transformationRow = await getTransformation(req.dbPool, req.user.store_id, transformationId);
     if (!transformationRow) return res.status(404).json({ error: 'Transformation introuvable' });
-
-    const canAccess = await canAccessDepartment(req.dbPool, {
-      userId: req.user.id,
-      storeId: req.user.store_id,
-      departmentId: transformationRow.department_id,
-    });
-    if (!canAccess) return res.status(403).json({ error: 'Accès interdit à ce rayon' });
 
     const [inputRows, outputRows, metadata] = await Promise.all([
       getInputs(req.dbPool, req.user.store_id, transformationId),
