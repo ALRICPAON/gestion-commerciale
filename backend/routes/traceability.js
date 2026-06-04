@@ -71,9 +71,9 @@ function mapTraceability(row) {
     latin_name: row.latin_name || null,
     fao_zone: row.fao_zone || null,
     sous_zone: row.sous_zone || null,
-    fishing_gear: row.fishing_gear || row.engin || null,
+    fishing_gear: row.fishing_gear || null,
     production_method: row.production_method || null,
-    origin_label: row.origin_label || row.origin || null,
+    origin_label: row.origin_label || null,
     allergens: row.allergens || null,
   };
 }
@@ -110,10 +110,10 @@ function lotSelectSql(extraColumns = '') {
       COALESCE(plm.latin_name, l.traceability_data->>'latin_name', a.latin_name) AS latin_name,
       COALESCE(plm.fao_zone, l.traceability_data->>'fao_zone', a.fao_zone) AS fao_zone,
       COALESCE(plm.sous_zone, l.traceability_data->>'sous_zone', a.sous_zone) AS sous_zone,
-      COALESCE(plm.fishing_gear, l.traceability_data->>'fishing_gear', a.fishing_gear, a.engin) AS fishing_gear,
+      COALESCE(plm.fishing_gear, l.traceability_data->>'fishing_gear', a.fishing_gear) AS fishing_gear,
       COALESCE(plm.production_method, l.traceability_data->>'production_method', a.production_method) AS production_method,
-      COALESCE(plm.origin_label, l.traceability_data->>'origin_label', a.origin) AS origin_label,
-      COALESCE(plm.allergens, l.traceability_data->>'allergens', a.allergens, a.allergenes) AS allergens,
+      COALESCE(plm.origin_label, l.traceability_data->>'origin_label') AS origin_label,
+      COALESCE(plm.allergens, l.traceability_data->>'allergens', a.allergens) AS allergens,
       plm.sanitary_photo_url,
       COALESCE(plm.sanitary_photo_urls, '[]'::jsonb) AS sanitary_photo_urls,
       ${lotStatusSql()} AS status
@@ -141,7 +141,7 @@ function lotSelectSql(extraColumns = '') {
   `;
 }
 
-function deliveredClientsSql(limitClause = '') {
+function deliveredClientsSql(lotCondition, limitClause = '') {
   return `
     SELECT
       sd.id AS delivery_note_id,
@@ -162,7 +162,7 @@ function deliveredClientsSql(limitClause = '') {
     JOIN sales_documents sd ON sd.id = sl.sales_document_id AND sd.store_id = sl.store_id
     LEFT JOIN clients delivered ON delivered.id = sd.client_id AND delivered.store_id = sd.store_id
     LEFT JOIN clients billed ON billed.id = COALESCE(sd.billed_client_id, delivered.billed_client_id, sd.client_id) AND billed.store_id = sd.store_id
-    WHERE sla.lot_id = l.id
+    WHERE ${lotCondition}
     GROUP BY
       sd.id,
       sd.reference_number,
@@ -201,6 +201,7 @@ function mapDeliveredClient(row) {
 
 function mapLot(row) {
   const deliveredClients = Array.isArray(row.delivered_clients) ? row.delivered_clients : [];
+  const photos = normalizePhotos(row);
   return {
     lot_id: row.lot_id,
     lot_code: row.lot_code,
@@ -229,8 +230,8 @@ function mapLot(row) {
     purchase_line_number: row.purchase_line_number,
     supplier_reference: row.supplier_reference,
     supplier_label: row.supplier_label,
-    sanitary_photo_url: normalizePhotos(row)[0] || null,
-    sanitary_photo_urls: normalizePhotos(row),
+    sanitary_photo_url: photos[0] || null,
+    sanitary_photo_urls: photos,
     traceability: mapTraceability(row),
     delivered_clients: deliveredClients.map(mapDeliveredClient),
     delivered_clients_count: Number(row.delivered_clients_count || deliveredClients.length || 0),
@@ -363,7 +364,7 @@ router.get('/lots', authenticateToken, attachDbContext, async (req, res) => {
         SELECT
           COALESCE(JSONB_AGG(TO_JSONB(dc) ORDER BY dc.delivery_note_date DESC, dc.delivery_note_reference DESC NULLS LAST), '[]'::jsonb) AS delivered_clients,
           COUNT(*)::int AS delivered_clients_count
-        FROM (${deliveredClientsSql('LIMIT 5')}) dc
+        FROM (${deliveredClientsSql('sla.lot_id = l.id', 'LIMIT 5')}) dc
       ) delivered_preview ON true
       ${where}
       ORDER BY l.created_at DESC, l.id DESC
@@ -419,9 +420,9 @@ router.get('/lots/:lotId', authenticateToken, attachDbContext, async (req, res) 
     const deliveredResult = await req.dbPool.query(
       `
       SELECT *
-      FROM (${deliveredClientsSql('')}) delivered_clients
+      FROM (${deliveredClientsSql('sla.lot_id = $2', '')}) delivered_clients
       `,
-      [req.user.store_id]
+      [req.user.store_id, lotId]
     );
 
     const lot = mapLot({ ...lotResult.rows[0], delivered_clients: deliveredResult.rows, delivered_clients_count: deliveredResult.rows.length });
