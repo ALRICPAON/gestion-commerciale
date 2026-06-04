@@ -31,6 +31,7 @@ const deliveryNoteCommunicationsRoutes = require('./routes/deliveryNoteCommunica
 const deliveryNotesRoutes = require('./routes/deliveryNotes');
 const salesRoutes = require('./routes/sales');
 const stockRoutes = require('./routes/stock');
+const traceabilityRoutes = require('./routes/traceability');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -140,6 +141,7 @@ app.use('/api', deliveryNoteCommunicationsRoutes);
 app.use('/api', deliveryNotesRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api/stock', stockRoutes);
+app.use('/api/traceability', traceabilityRoutes);
 app.get('/', (req, res) => {
   res.send('API Scorpa Seafood / Gestion Commerciale fonctionne');
 });
