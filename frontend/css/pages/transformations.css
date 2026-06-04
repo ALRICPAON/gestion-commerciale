@@ -1,0 +1,243 @@
+.transformations-content {
+  margin: 0 auto;
+  max-width: 1360px;
+  padding: 24px 20px 42px;
+  width: 100%;
+}
+
+.transformations-panel,
+.detail-card {
+  background: #fff;
+  border: 1px solid #d8e0e8;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+  padding: 18px;
+}
+
+.card-header-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.card-header-row h2,
+.detail-card h3 {
+  color: #0f172a;
+  margin: 0 0 6px;
+}
+
+.card-header-row p {
+  color: #64748b;
+  margin: 0;
+}
+
+.filters-row {
+  align-items: end;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(150px, 220px));
+  margin: 18px 0 12px;
+}
+
+.filters-row label,
+.detail-card label {
+  color: #334155;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.86rem;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.input,
+.detail-card textarea,
+.detail-card select {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #111827;
+  font: inherit;
+  min-height: 42px;
+  padding: 9px 11px;
+}
+
+.table-wrapper {
+  border: 1px solid #d8e0e8;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.data-table {
+  border-collapse: collapse;
+  min-width: 840px;
+  width: 100%;
+}
+
+.data-table th {
+  background: #eef2f5;
+  color: #334155;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 11px 12px;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.data-table td {
+  border-top: 1px solid #edf1f5;
+  color: #17212b;
+  padding: 10px 12px;
+  vertical-align: middle;
+}
+
+.data-table tr:nth-child(even) td {
+  background: #f8fafc;
+}
+
+.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.page-message {
+  color: #475467;
+  font-size: 0.92rem;
+  font-weight: 800;
+  min-height: 22px;
+  margin: 10px 0 14px;
+}
+
+.page-message.success { color: #067647; }
+.page-message.error { color: #b42318; }
+.page-message.info { color: #475467; }
+
+.detail-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 1.05fr 1fr 1fr;
+  margin-top: 16px;
+}
+
+.detail-card {
+  box-shadow: none;
+}
+
+.detail-card label {
+  margin-top: 10px;
+}
+
+.search-row {
+  display: grid;
+  gap: 8px;
+}
+
+.detail-actions-top,
+.validation-choice-row,
+.modal-actions,
+.mini-actions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.detail-table-card {
+  margin-top: 16px;
+}
+
+.computed-box {
+  background: #f8fafc;
+  border: 1px solid #edf1f5;
+  border-radius: 8px;
+  margin-top: 10px;
+  padding: 12px;
+}
+
+.transfo-status-badge {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 5px 9px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.transfo-status-draft { background: #fffaeb; color: #b54708; }
+.transfo-status-validated { background: #ecfdf3; color: #067647; }
+.transfo-status-cancelled { background: #fef3f2; color: #b42318; }
+
+.modal-overlay {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.42);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  padding: 20px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 1000;
+}
+
+.modal-card {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.22);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 18px;
+  width: min(1040px, 100%);
+}
+
+.modal-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.modal-header h3 {
+  margin: 0;
+}
+
+.manual-section {
+  margin-top: 18px;
+}
+
+.manual-lot-qty {
+  min-width: 110px;
+  text-align: right;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media (max-width: 1100px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .transformations-content {
+    padding: 16px 12px 28px;
+  }
+
+  .card-header-row,
+  .modal-header {
+    flex-direction: column;
+  }
+
+  .filters-row {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-actions-top .btn {
+    width: 100%;
+  }
+
+  .num {
+    text-align: left;
+  }
+}
