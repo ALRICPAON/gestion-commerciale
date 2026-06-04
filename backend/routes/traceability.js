@@ -12,7 +12,7 @@ function clean(value) {
 }
 
 function isUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(String(value || ''));
 }
 
 function safeLimit(value, fallback = 30, max = 100) {
@@ -168,6 +168,11 @@ function deliveredClientsSql(lotCondition, limitClause = '') {
       sd.reference_number,
       sd.document_date,
       sd.document_type,
+      sd.delivered_client_name_snapshot,
+      sd.delivered_client_code_snapshot,
+      sd.delivered_client_store_identifier,
+      sd.billed_client_name_snapshot,
+      sd.billed_client_code_snapshot,
       delivered.id,
       delivered.name,
       delivered.code,
@@ -242,7 +247,7 @@ router.get('/clients', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const search = clean(req.query.search);
     const params = [req.user.store_id];
-    let where = 'WHERE c.store_id = $1 AND c.status <> \'inactive\'';
+    let where = "WHERE c.store_id = $1 AND COALESCE(c.status, 'active') <> 'inactive'";
 
     if (search) {
       params.push(`%${search}%`);
