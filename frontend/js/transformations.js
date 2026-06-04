@@ -59,6 +59,10 @@ function formatNumber(value, decimals = 3) {
   return number.toLocaleString('fr-FR', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
 function setMessage(elementId, message, type = 'info') {
   const el = document.getElementById(elementId);
   if (!el) return;
@@ -124,11 +128,16 @@ const detailState = {
 async function createTransformation() {
   try {
     clearMessage('page-message');
-    const created = await apiFetch('/api/transformations', {
+    const result = await apiFetch('/api/transformations', {
       method: 'POST',
       body: JSON.stringify({ transformation_date: new Date().toISOString().slice(0, 10) }),
     });
-    window.location.href = `./transformation-detail.html?id=${created.transformation.id}`;
+    const transformationId = result?.transformation?.id || result?.id || result?.transformation_id;
+    if (!isUuid(transformationId)) {
+      console.log('Réponse création transformation sans id valide:', result);
+      throw new Error('ID transformation invalide');
+    }
+    window.location.href = `./transformation-detail.html?id=${encodeURIComponent(transformationId)}`;
   } catch (error) {
     console.error(error);
     setMessage('page-message', error.message, 'error');
