@@ -16,6 +16,10 @@ function quoteIdentifier(value) {
   return `"${String(value).replaceAll('"', '""')}"`;
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
 async function getTableColumns(client, tableName) {
   const result = await client.query(
     `
@@ -40,6 +44,68 @@ async function ensureTransformationTables(client) {
     `
   );
   return result.rows[0] || {};
+}
+
+async function resolveDepartmentId(client, { bodyDepartmentId, userId, userDepartmentId, storeId }) {
+  const requestedDepartmentId = clean(bodyDepartmentId);
+  if (requestedDepartmentId && !isUuid(requestedDepartmentId)) {
+    const error = new Error('department_id invalide');
+    error.status = 400;
+    throw error;
+  }
+
+  const tokenDepartmentId = clean(userDepartmentId);
+  const candidateDepartmentIds = [
+    requestedDepartmentId,
+    tokenDepartmentId && isUuid(tokenDepartmentId) ? tokenDepartmentId : null,
+  ].filter(Boolean);
+
+  if (candidateDepartmentIds.length) {
+    const result = await client.query(
+      `
+      SELECT d.id
+      FROM departments d
+      LEFT JOIN user_departments ud
+        ON ud.department_id = d.id
+       AND ud.user_id = $2
+      WHERE d.store_id = $1
+        AND d.id = ANY($3::uuid[])
+        AND (ud.user_id IS NOT NULL OR $2 IS NULL)
+      ORDER BY
+        CASE WHEN d.id = $4::uuid THEN 0 ELSE 1 END,
+        COALESCE(ud.is_default, false) DESC,
+        d.name ASC
+      LIMIT 1
+      `,
+      [storeId, userId || null, candidateDepartmentIds, requestedDepartmentId || null]
+    );
+
+    if (result.rows.length) return result.rows[0].id;
+    if (requestedDepartmentId) {
+      const error = new Error('department_id non autorisé pour cet utilisateur');
+      error.status = 400;
+      throw error;
+    }
+  }
+
+  const fallback = await client.query(
+    `
+    SELECT d.id
+    FROM user_departments ud
+    JOIN departments d ON d.id = ud.department_id
+    WHERE ud.user_id = $1
+      AND d.store_id = $2
+    ORDER BY ud.is_default DESC, d.name ASC
+    LIMIT 1
+    `,
+    [userId, storeId]
+  );
+
+  if (fallback.rows.length) return fallback.rows[0].id;
+
+  const error = new Error('department_id obligatoire');
+  error.status = 400;
+  throw error;
 }
 
 function buildInsert(tableName, columns, candidates) {
@@ -76,6 +142,7 @@ function mapCreatedTransformation(row) {
   return {
     id: row.id,
     store_id: row.store_id,
+    department_id: row.department_id || null,
     transformation_date: row.transformation_date || row.document_date || row.date || null,
     status: row.status || 'draft',
     transformation_type: row.transformation_type || row.type || 'simple',
@@ -94,6 +161,7 @@ async function createTransformationMetadata(client, { tableStatus, transformatio
     source_type: 'transformation',
     status: 'draft',
     transformation_date: transformation.transformation_date || transformation.document_date || body.transformation_date || null,
+    department_id: transformation.department_id || null,
     created_from: 'api',
   };
 
@@ -125,10 +193,18 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
       throw new Error('Table transformations introuvable');
     }
 
+    const departmentId = await resolveDepartmentId(client, {
+      bodyDepartmentId: req.body.department_id,
+      userId: req.user.id,
+      userDepartmentId: req.user.department_id,
+      storeId: req.user.store_id,
+    });
+
     const columns = await getTableColumns(client, 'transformations');
     const insert = buildInsert('transformations', columns, [
       { column: 'id', raw: 'gen_random_uuid()' },
       { column: 'store_id', value: req.user.store_id },
+      { column: 'department_id', value: departmentId },
       { column: 'client_key', value: req.user.client_key || null },
       { column: 'transformation_date', value: clean(req.body.transformation_date), cast: 'date' },
       { column: 'document_date', value: clean(req.body.transformation_date), cast: 'date' },
@@ -163,7 +239,7 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Erreur POST /api/transformations :', err);
-    res.status(500).json({ error: err.message || 'Erreur création transformation' });
+    res.status(err.status || 500).json({ error: err.message || 'Erreur création transformation' });
   } finally {
     client.release();
   }
