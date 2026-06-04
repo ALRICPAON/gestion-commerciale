@@ -202,10 +202,16 @@ async function loadTransformationDetail() {
   if (!session) return;
   document.getElementById('detail-user-name').textContent = session.user.email || 'Utilisateur';
 
-  const transformationId = new URLSearchParams(window.location.search).get('id');
-  if (!transformationId) {
-    setMessage('detail-message', 'ID transformation manquant', 'error');
-    return;
+  const params = new URLSearchParams(window.location.search);
+  const transformationId = params.get('id');
+  if (!isUuid(transformationId)) {
+    console.error('ID transformation invalide', {
+      href: window.location.href,
+      search: window.location.search,
+      transformationId,
+    });
+    setMessage('detail-message', 'ID transformation invalide', 'error');
+    throw new Error('ID transformation invalide');
   }
   detailState.transformationId = transformationId;
 
