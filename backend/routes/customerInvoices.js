@@ -107,11 +107,40 @@ async function getInvoiceDocument(db, { invoiceId, storeId }) {
 async function getInvoiceLines(db, { invoiceId, storeId }) {
   const result = await db.query(
     `
-    SELECT *
-    FROM sales_lines
-    WHERE sales_document_id = $1
-      AND store_id = $2
-    ORDER BY line_number ASC
+    SELECT il.*, COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
+      jsonb_agg(jsonb_build_object(
+        'lot_id', sla.lot_id,
+        'quantity', sla.quantity,
+        'lot_code', l.lot_code,
+        'supplier_lot_number', l.supplier_lot_number,
+        'dlc', l.dlc,
+        'latin_name', COALESCE(l.traceability_data->>'latin_name', a.latin_name),
+        'fao_zone', COALESCE(l.traceability_data->>'fao_zone', a.fao_zone),
+        'sous_zone', COALESCE(l.traceability_data->>'sous_zone', a.sous_zone),
+        'fishing_gear', COALESCE(l.traceability_data->>'fishing_gear', a.fishing_gear),
+        'production_method', COALESCE(l.traceability_data->>'production_method', a.production_method)
+      )) FILTER (WHERE sla.id IS NOT NULL) AS allocations
+    FROM sales_documents inv
+    JOIN sales_lines il
+      ON il.sales_document_id = inv.id
+     AND il.store_id = inv.store_id
+    LEFT JOIN sales_lines bl
+      ON bl.sales_document_id = inv.source_delivery_note_id
+     AND bl.store_id = inv.store_id
+     AND bl.line_number = il.line_number
+     AND (bl.article_id IS NOT DISTINCT FROM il.article_id)
+    LEFT JOIN sale_line_allocations sla
+      ON sla.sales_line_id = bl.id
+    LEFT JOIN lots l
+      ON l.id = sla.lot_id
+    LEFT JOIN articles a
+      ON a.id = COALESCE(bl.article_id, il.article_id)
+     AND a.store_id = il.store_id
+    WHERE inv.id = $1
+      AND inv.store_id = $2
+      AND inv.document_type = 'INVOICE'
+    GROUP BY il.id
+    ORDER BY il.line_number ASC
     `,
     [invoiceId, storeId]
   );

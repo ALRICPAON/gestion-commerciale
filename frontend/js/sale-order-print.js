@@ -28,12 +28,19 @@
     catch { return String(value); }
   }
 
-  function shortReference(value) {
-    const text = String(value || '').trim();
-    if (!text) return '';
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text)
-      ? text.slice(0, 8).toUpperCase()
-      : text;
+  function documentYear(value) {
+    const date = value ? new Date(value) : new Date();
+    return Number.isFinite(date.getTime()) ? date.getFullYear() : new Date().getFullYear();
+  }
+
+  function displayReference(document, prefix) {
+    const reference = String(document?.reference_number || '').trim();
+    const normalizedPrefix = String(prefix || '').toUpperCase();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(reference);
+    const isLegacyLong = new RegExp(`^${normalizedPrefix}-[0-9]{4}-[0-9]{2}-[0-9]{2}-`, 'i').test(reference);
+    if (reference && !isUuid && !isLegacyLong) return reference;
+    const shortId = String(document?.id || reference || '').replace(/-/g, '').slice(0, 8).toUpperCase();
+    return `${normalizedPrefix}-${documentYear(document?.document_date || document?.created_at)}-${shortId || 'ANCIEN'}`;
   }
 
   function addressBlock(parts) {
@@ -54,7 +61,7 @@
   function buildHtml(sale, lines, storeSettings = null) {
     const settings = storeSettings || {};
     const companyName = settings.company_name || 'Gestion Commerciale';
-    const reference = shortReference(sale.reference_number || sale.id) || 'Commande';
+    const reference = displayReference(sale, 'CMD') || 'Commande';
     const deliveredStoreId = sale.client_store_identifier || sale.delivered_client_store_identifier || '';
     const rows = (lines || []).map((line) => `<tr>
       <td class="prep-check-cell"><span class="prep-check"></span></td>
