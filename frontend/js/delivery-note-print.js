@@ -35,10 +35,12 @@
 
   function displayReference(document, prefix) {
     const reference = String(document?.reference_number || '').trim();
+    const normalizedPrefix = String(prefix || '').toUpperCase();
     const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(reference);
-    if (reference && !isUuid) return reference;
+    const isLegacyLong = new RegExp(`^${normalizedPrefix}-[0-9]{4}-[0-9]{2}-[0-9]{2}-`, 'i').test(reference);
+    if (reference && !isUuid && !isLegacyLong) return reference;
     const shortId = String(document?.id || reference || '').replace(/-/g, '').slice(0, 8).toUpperCase();
-    return `${prefix}-${documentYear(document?.document_date || document?.created_at)}-${shortId || 'ANCIEN'}`;
+    return `${normalizedPrefix}-${documentYear(document?.document_date || document?.created_at)}-${shortId || 'ANCIEN'}`;
   }
 
   function sourceOrderReference(document) {
