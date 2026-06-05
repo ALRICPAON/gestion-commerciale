@@ -7,13 +7,7 @@ const {
   number,
   qty,
 } = require('../pdfLayout');
-
-function shortDocumentReference(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-  const uuidMatch = text.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-  return uuidMatch ? text.slice(0, 8).toUpperCase() : text;
-}
+const { displaySalesDocumentReference } = require('../../salesReferenceService');
 
 function addressBlock(parts) {
   return parts.filter(Boolean).map((part) => `<p>${escapeHtml(part)}</p>`).join('');
@@ -22,7 +16,7 @@ function addressBlock(parts) {
 function renderSaleOrderPdf({ sale, lines, storeSettings }) {
   const doc = sale || {};
   const settings = storeSettings || {};
-  const documentReference = shortDocumentReference(doc.reference_number || doc.id) || 'Commande';
+  const documentReference = displaySalesDocumentReference(doc, 'CMD') || 'Commande';
   const deliveredStoreId = doc.client_store_identifier || doc.delivered_client_store_identifier || '';
   const rows = (lines || []).map((line) => `<tr>
     <td class="check-cell"><span class="prep-check"></span></td>
@@ -100,7 +94,7 @@ function renderSaleOrderPdf({ sale, lines, storeSettings }) {
 }
 
 function saleOrderFilename(sale = {}) {
-  return `${fileSafe(sale.reference_number || sale.id || 'commande-preparation')}.pdf`;
+  return `${fileSafe(displaySalesDocumentReference(sale, 'CMD') || 'commande-preparation')}.pdf`;
 }
 
 module.exports = {
