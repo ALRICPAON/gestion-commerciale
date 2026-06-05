@@ -26,16 +26,24 @@
   <main class="main-content">
     <section class="welcome-card">
       <div class="page-actions">
-        <div><h2>Commandes client</h2><p>Service actif : <strong id="current-department-name">-</strong></p></div>
+        <div><h2>Vente</h2><p>Service actif : <strong id="current-department-name">-</strong></p></div>
         <div class="page-actions-right"><button id="new-negoce-sale-btn" class="btn btn-secondary">Commande Négoce</button><button id="new-sale-btn" class="btn btn-primary">Créer commande</button></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div id="sale-document-tabs" class="page-actions-right" role="tablist" aria-label="Sections vente">
+        <button type="button" class="btn btn-primary" data-section="orders">Commandes</button>
+        <button type="button" class="btn btn-secondary" data-section="delivery_notes">Bons de livraison</button>
+        <button type="button" class="btn btn-secondary" data-section="invoices">Factures</button>
+        <button type="button" class="btn btn-secondary" data-section="credit_notes">Avoirs</button>
       </div>
     </section>
 
     <section class="card">
       <h3>Filtres</h3>
       <div class="filters-row">
-        <div class="form-group"><label for="sale-status-filter">Statut</label><select id="sale-status-filter"><option value="">Tous</option><option value="draft">Brouillon</option><option value="validated">Validé</option><option value="cancelled">Annulé</option></select></div>
-        <div class="form-group"><label for="sale-type-filter">Type</label><select id="sale-type-filter"><option value="">Tous</option><option value="ORDER">Commande</option><option value="DELIVERY_NOTE">Bon de livraison</option><option value="INVOICE">Facture</option><option value="CREDIT_NOTE">Avoir client</option></select></div>
+        <div class="form-group"><label for="sale-status-filter">Statut</label><select id="sale-status-filter"><option value="">Tous</option><option value="draft">Brouillon</option><option value="validated">Validé</option><option value="delivered">Livré</option><option value="invoiced">Facturé</option><option value="cancelled">Annulé</option></select></div>
         <div class="form-group"><label for="sale-date-from-filter">Du</label><input id="sale-date-from-filter" type="date" /></div>
         <div class="form-group"><label for="sale-date-to-filter">Au</label><input id="sale-date-to-filter" type="date" /></div>
         <div class="form-group filter-actions"><label>&nbsp;</label><div class="page-actions-right"><button id="refresh-sales-btn" class="btn btn-secondary">Rafraîchir</button><button id="reset-sales-filters-btn" class="btn btn-secondary">Réinitialiser</button></div></div>
@@ -43,11 +51,12 @@
     </section>
 
     <section class="card">
-      <h3>Liste des documents</h3>
+      <h3 id="sales-section-title">Commandes actives</h3>
+      <p id="sales-section-helper" class="helper-text">Commandes brouillon ou en cours, avant passage en bon de livraison.</p>
       <div id="sales-feedback" class="page-feedback hidden"></div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Date</th><th>Client</th><th>Type</th><th>Statut</th><th>Référence</th><th>Lignes</th><th>Total HT</th><th>Total TTC</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Date</th><th>Client</th><th>Type</th><th>Statut</th><th>Référence / lien</th><th>Lignes</th><th>Total HT</th><th>Total TTC</th><th>Actions</th></tr></thead>
           <tbody id="sales-table-body"><tr><td colspan="9">Chargement...</td></tr></tbody>
         </table>
       </div>
@@ -55,6 +64,6 @@
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/sales.js?v=8"></script>
+  <script src="./js/sales.js?v=9"></script>
 </body>
 </html>
