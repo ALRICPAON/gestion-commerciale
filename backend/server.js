@@ -34,6 +34,7 @@ const stockRoutes = require('./routes/stock');
 const traceabilityRoutes = require('./routes/traceability');
 const transformationCreationRoutes = require('./routes/transformationCreation');
 const transformationDetailsRoutes = require('./routes/transformationDetails');
+const transformationUpdateRoutes = require('./routes/transformationUpdate');
 const transformationValidationRoutes = require('./routes/transformationValidation');
 const transformationsRoutes = require('./routes/transformations');
 
@@ -148,6 +149,7 @@ app.use('/api/stock', stockRoutes);
 app.use('/api/traceability', traceabilityRoutes);
 app.use('/api/transformations', transformationCreationRoutes);
 app.use('/api/transformations', transformationDetailsRoutes);
+app.use('/api/transformations', transformationUpdateRoutes);
 app.use('/api/transformations', transformationValidationRoutes);
 app.use('/api/transformations', transformationsRoutes);
 app.get('/', (req, res) => {
