@@ -6,7 +6,7 @@ const API_BASE = window.APP_CONFIG.API_BASE_URL;
 const saleId = new URLSearchParams(window.location.search).get('id');
 if (!saleId) window.location.href = './sales.html';
 const $ = (id) => document.getElementById(id);
-const els = { user: $('user-name'), logout: $('logout-btn'), back: $('back-sales-btn'), dep: $('topbar-department-select'), depName: $('current-department-name'), save: $('save-sale-btn'), validateBl: $('validate-bl-btn'), printOrder: $('print-order-btn'), add: $('add-line-btn'), hf: $('sale-header-feedback'), lf: $('sale-lines-feedback'), client: $('sale-client-id'), tariff: $('sale-tariff-level'), vat: $('sale-vat-context'), date: $('sale-document-date'), type: $('sale-document-type'), status: $('sale-status'), ref: $('sale-reference-number'), notes: $('sale-notes'), body: $('sale-lines-table-body'), stockModal: $('stock-article-modal'), closeStock: $('close-stock-article-modal-btn'), stockSearch: $('stock-article-search-input'), stockBody: $('stock-article-modal-table-body'), lotModal: $('lot-modal'), closeLot: $('close-lot-modal-btn'), lotBody: $('lot-modal-table-body') };
+const els = { user: $('user-name'), logout: $('logout-btn'), back: $('back-sales-btn'), dep: $('topbar-department-select'), depName: $('current-department-name'), save: $('save-sale-btn'), validateBl: $('validate-bl-btn'), printOrder: $('print-order-btn'), add: $('add-line-btn'), hf: $('sale-header-feedback'), lf: $('sale-lines-feedback'), client: $('sale-client-id'), tariff: $('sale-tariff-level'), vat: $('sale-vat-context'), date: $('sale-document-date'), type: $('sale-document-type'), status: $('sale-status'), ref: $('sale-reference-number'), notes: $('sale-notes'), body: $('sale-lines-table-body'), stockModal: $('stock-article-modal'), stockTitle: $('stock-article-modal-title'), stockSubtitle: $('stock-article-modal-subtitle'), closeStock: $('close-stock-article-modal-btn'), stockSearch: $('stock-article-search-input'), stockHead: $('stock-article-modal-table-head'), stockBody: $('stock-article-modal-table-body'), lotModal: $('lot-modal'), closeLot: $('close-lot-modal-btn'), lotBody: $('lot-modal-table-body') };
 let sale = null;
 let lines = [];
 let clients = [];
@@ -34,7 +34,7 @@ function vatRate() { const c = selectedClient(); if (c?.is_vat_exempt || sale?.c
 function priceFor(a) { return n(a?.[`sale_price_level_${tariffLevel()}_ht`] ?? a?.sale_price_ex_vat ?? 0, 0); }
 function trace(line) { return line.traceability_snapshot || {}; }
 function traceText(t) { const parts = [t?.lot_code || t?.supplier_lot_number, t?.latin_name, t?.fao_zone, t?.sous_zone, t?.fishing_gear || t?.engin, t?.production_method || t?.category, t?.allergens || t?.allergenes].filter(Boolean); return parts.length ? parts.join(' | ') : '-'; }
-function normalizeArticle(item) { return { ...item, article_id: item.article_id || item.id, designation: item.designation || item.display_name || '', sale_price_level_1_ht: item.sale_price_level_1_ht ?? item.sale_price_ex_vat ?? 0, stock_quantity: item.stock_quantity ?? 0, pma: item.pma ?? item.unit_cost_ex_vat ?? 0, sale_unit: item.sale_unit || item.unit || 'kg', fishing_gear: item.fishing_gear || item.engin, allergens: item.allergens || item.allergenes, production_method: item.production_method || item.category }; }
+function normalizeArticle(item) { return { ...item, article_id: item.article_id || item.id, plu: item.plu || item.code || '', designation: item.designation || item.display_name || '', family_name: item.family_name || item.family || item.category || '', sale_price_level_1_ht: item.sale_price_level_1_ht ?? item.sale_price_ex_vat ?? 0, sale_price_level_2_ht: item.sale_price_level_2_ht ?? 0, sale_price_level_3_ht: item.sale_price_level_3_ht ?? 0, stock_quantity: item.stock_quantity ?? 0, pma: item.pma ?? item.unit_cost_ex_vat ?? 0, sale_unit: item.sale_unit || item.unit || 'kg', lot_code: item.lot_code || item.next_lot_code || '', supplier_lot_number: item.supplier_lot_number || item.next_supplier_lot_number || '', next_dlc: item.next_dlc || item.next_lot_dlc || null, fishing_gear: item.fishing_gear || item.engin, allergens: item.allergens || item.allergenes, production_method: item.production_method || item.category }; }
 function normalizeKind(value) { return String(value || '').trim().toLowerCase(); }
 function isNegoce() { return normalizeKind(sale?.origin) === 'negoce'; }
 function isFactured() { return normalizeKind(sale?.status) === 'invoiced' || !!sale?.invoice_id || !!sale?.invoice_reference || !!sale?.source_invoice_id || !!sale?.invoiced_at; }
@@ -127,6 +127,24 @@ function computeRow(row) {
   row.querySelector('.line-total-ttc').textContent = money(ht * (1 + vat / 100));
 }
 
+function renderStockSearchTable() {
+  const negoce = isNegoce();
+  if (els.stockTitle) els.stockTitle.textContent = negoce ? 'Rechercher un article négoce' : 'Sélectionner un article en stock';
+  if (els.stockSubtitle) els.stockSubtitle.textContent = negoce ? 'Articles actifs du magasin, stock non bloquant' : 'Articles disponibles en stock, double clic pour choisir';
+  if (els.stockSearch) els.stockSearch.placeholder = negoce ? 'PLU, désignation, référence' : 'PLU, désignation, référence, nom latin';
+  if (els.stockHead) {
+    els.stockHead.innerHTML = negoce
+      ? '<tr><th>PLU</th><th>Désignation</th><th>Famille</th><th>Tarif client</th><th>Tarif 1</th><th>Tarif 2</th><th>Tarif 3</th><th>Unité</th></tr>'
+      : '<tr><th>PLU</th><th>Désignation</th><th>Stock</th><th>Lot FIFO</th><th>DLC FIFO</th><th>Tarif client</th><th>Tarif 1</th><th>Tarif 2</th></tr>';
+  }
+  els.stockBody.innerHTML = stockItems.map((a) => {
+    if (negoce) {
+      return `<tr data-article-id="${a.article_id}"><td>${esc(a.plu)}</td><td>${esc(a.designation)}</td><td>${esc(a.family_name || a.family_code || '-')}</td><td>${money(priceFor(a))}</td><td>${money(a.sale_price_level_1_ht)}</td><td>${money(a.sale_price_level_2_ht)}</td><td>${money(a.sale_price_level_3_ht)}</td><td>${esc(a.sale_unit || a.unit || 'kg')}</td></tr>`;
+    }
+    return `<tr data-article-id="${a.article_id}"><td>${esc(a.plu)}</td><td>${esc(a.designation)}</td><td>${qty(a.stock_quantity)}</td><td>${esc(a.lot_code || a.supplier_lot_number || '-')}</td><td>${sdate(a.next_dlc || a.next_lot_dlc)}</td><td>${money(priceFor(a))}</td><td>${money(a.sale_price_level_1_ht)}</td><td>${money(a.sale_price_level_2_ht)}</td></tr>`;
+  }).join('') || '<tr><td colspan="8">Aucun article.</td></tr>';
+}
+
 async function stockSearch(search = '') {
   if (isNegoce()) {
     const data = search ? await api(`/api/articles/search?q=${encodeURIComponent(search)}`) : await api('/api/articles?active=true&limit=200');
@@ -134,11 +152,11 @@ async function stockSearch(search = '') {
   } else {
     const q = new URLSearchParams({ limit: '200', available_only: 'true' });
     if (search) q.set('search', search);
-    stockItems = await api(`/api/stock?${q.toString()}`);
+    stockItems = (await api(`/api/stock?${q.toString()}`)).map(normalizeArticle);
   }
-  els.stockBody.innerHTML = stockItems.map((a) => `<tr data-article-id="${a.article_id}"><td>${esc(a.plu)}</td><td>${esc(a.designation)}</td><td>${qty(a.stock_quantity)}</td><td>${money(a.pma)}</td><td>${money(a.sale_price_level_1_ht)}</td><td>${money(a.sale_price_level_2_ht)}</td><td>${money(a.sale_price_level_3_ht)}</td><td>${sdate(a.next_dlc || a.next_lot_dlc)}</td></tr>`).join('') || '<tr><td colspan="8">Aucun article.</td></tr>';
+  renderStockSearchTable();
 }
-function openStock(lineId) { editingLineId = lineId; els.stockModal.classList.remove('hidden'); stockSearch('').catch((e) => fb(els.lf, e.message, true)); setTimeout(() => els.stockSearch?.focus(), 50); }
+function openStock(lineId, initialSearch = '') { editingLineId = lineId; if (els.stockSearch) els.stockSearch.value = clean(initialSearch); els.stockModal.classList.remove('hidden'); stockSearch(clean(initialSearch)).catch((e) => fb(els.lf, e.message, true)); setTimeout(() => els.stockSearch?.focus(), 50); }
 function applyArticle(item) {
   const row = els.body.querySelector(`tr[data-line-id="${editingLineId}"]`);
   if (!row) return;
@@ -175,7 +193,7 @@ async function resolvePlu(row) {
   if (!plu || row.dataset.articleId) return;
   const found = isNegoce()
     ? (await api(`/api/articles/search?q=${encodeURIComponent(plu)}`)).map(normalizeArticle)
-    : await api(`/api/stock?search=${encodeURIComponent(plu)}&available_only=true&limit=20`);
+    : (await api(`/api/stock?search=${encodeURIComponent(plu)}&available_only=true&limit=20`)).map(normalizeArticle);
   const item = found.find((a) => String(a.plu) === plu) || found[0];
   if (!item) throw new Error(`Article introuvable pour le PLU ${plu}`);
   editingLineId = row.dataset.lineId;
@@ -262,7 +280,21 @@ els.stockSearch?.addEventListener('input', () => stockSearch(clean(els.stockSear
 els.stockBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-article-id]'); const item = stockItems.find((a) => a.article_id === row?.dataset.articleId); if (item) applyArticle(item); });
 els.lotBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-lot-id]'); const lot = lotItems.find((l) => l.id === row?.dataset.lotId); if (lot) applyLot(lot); });
 els.body?.addEventListener('click', async (e) => { const b = e.target.closest('[data-action]'); if (!b) return; if (b.dataset.action === 'save-line') await saveLine(b.dataset.id); if (b.dataset.action === 'delete-line') await deleteLine(b.dataset.id); if (b.dataset.action === 'choose-lot') await openLots(b.dataset.id); });
-els.body?.addEventListener('keydown', async (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.key === 'F9' && e.target.classList.contains('line-plu')) { e.preventDefault(); openStock(row.dataset.lineId); return; } if (e.key !== 'Enter' || !e.target.classList.contains('line-input')) return; e.preventDefault(); await saveLine(row.dataset.lineId); await addLine(); });
+els.body?.addEventListener('keydown', async (e) => {
+  const row = e.target.closest('tr[data-line-id]');
+  if (!row) return;
+  const isArticleField = e.target.classList.contains('line-plu') || e.target.classList.contains('line-article-label');
+  if (e.key === 'F9' && isArticleField) {
+    e.preventDefault();
+    const initialSearch = clean(e.target.value) || clean(row.querySelector('.line-plu')?.value) || clean(row.querySelector('.line-article-label')?.value);
+    openStock(row.dataset.lineId, initialSearch);
+    return;
+  }
+  if (e.key !== 'Enter' || !e.target.classList.contains('line-input')) return;
+  e.preventDefault();
+  await saveLine(row.dataset.lineId);
+  await addLine();
+});
 els.body?.addEventListener('blur', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row) return; await (isNegoce() ? searchNegocePlu(row, { applyFirst: true }) : resolvePlu(row)).catch((err) => fb(els.lf, err.message, true)); }, true);
 els.body?.addEventListener('change', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row || !isNegoce()) return; await searchNegocePlu(row, { applyFirst: true }).catch((err) => fb(els.lf, err.message, true)); });
 els.body?.addEventListener('input', (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.target.classList.contains('line-plu') && isNegoce()) { row.dataset.articleId = ''; row.dataset.selectedLotId = ''; scheduleNegocePluSearch(row); return; } if (['line-package-count', 'line-weight-per-package', 'line-total-weight', 'line-unit-price-ht', 'line-vat-rate'].some((c) => e.target.classList.contains(c))) computeRow(row); });
