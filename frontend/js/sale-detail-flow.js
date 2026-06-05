@@ -18,6 +18,7 @@
   };
   let currentSale = null;
   let currentLines = [];
+  let currentInvoice = null;
   let communicationOptions = null;
 
   async function request(path, options = {}) {
@@ -75,8 +76,13 @@
       || (isNegoce() && ['delivered', 'delivery_note', 'validated'].includes(String(currentSale?.status || '').toLowerCase()));
   }
 
+  function invoiceId() {
+    return currentSale?.document_type === 'INVOICE' ? currentSale.id : currentInvoice?.id;
+  }
+
   function isFactured() {
     return String(currentSale?.status || '').toLowerCase() === 'invoiced'
+      || !!currentInvoice?.id
       || !!currentSale?.invoice_id
       || !!currentSale?.invoice_reference
       || !!currentSale?.source_invoice_id
@@ -97,9 +103,12 @@
     const data = await request(`/api/sales/${saleId}`);
     currentSale = data.sale || null;
     currentLines = Array.isArray(data.lines) ? data.lines : [];
+    currentInvoice = null;
     communicationOptions = null;
     if (isDeliveryNote() && currentSale?.id) {
       communicationOptions = await request(`/api/delivery-notes/${currentSale.id}/communication-options`).catch(() => null);
+      const invoiceData = await request(`/api/delivery-notes/${currentSale.id}/invoice`).catch(() => null);
+      currentInvoice = invoiceData?.invoice || null;
     }
     refreshButtons();
     enhanceLineActions();
@@ -111,9 +120,10 @@
     const isBlDocument = documentType() === 'DELIVERY_NOTE';
     const isInvoice = documentType() === 'INVOICE';
     const factured = isFactured();
+    const hasInvoicePdf = isInvoice || !!invoiceId();
     show(flowEls.orderPdf, isOrder);
     show(flowEls.blPdf, isBlDocument);
-    show(flowEls.invoicePdf, isInvoice);
+    show(flowEls.invoicePdf, hasInvoicePdf);
     show(flowEls.validateBl, canValidateBl());
     show(flowEls.printBl, isBl);
     show(flowEls.labels, isBl);
@@ -122,7 +132,10 @@
     show(flowEls.whatsapp, isBl);
     if (flowEls.orderPdf) flowEls.orderPdf.disabled = !isOrder;
     if (flowEls.blPdf) flowEls.blPdf.disabled = !isBlDocument;
-    if (flowEls.invoicePdf) flowEls.invoicePdf.disabled = true;
+    if (flowEls.invoicePdf) {
+      flowEls.invoicePdf.disabled = !hasInvoicePdf;
+      flowEls.invoicePdf.textContent = 'Télécharger PDF facture';
+    }
     if (flowEls.validateBl) flowEls.validateBl.disabled = !canValidateBl();
     if (flowEls.printBl) flowEls.printBl.disabled = !isBl;
     if (flowEls.labels) flowEls.labels.disabled = !isBl;
@@ -172,6 +185,19 @@
       feedback('PDF BL généré');
     } finally {
       flowEls.blPdf.disabled = false;
+    }
+  }
+
+  async function downloadInvoicePdf() {
+    await refreshState();
+    const id = invoiceId();
+    if (!id) return;
+    flowEls.invoicePdf.disabled = true;
+    try {
+      await downloadPdf(`/api/invoices/${id}/pdf`, 'facture-client.pdf');
+      feedback('PDF facture généré');
+    } finally {
+      flowEls.invoicePdf.disabled = false;
     }
   }
 
@@ -231,7 +257,7 @@
     if (!confirm('Valider ce BL en facture ?')) return;
     const data = await request(`/api/delivery-notes/${currentSale.id}/validate-invoice`, { method: 'POST', body: JSON.stringify({}) });
     feedback(data.existing ? 'Facture déjà préparée' : `Facture préparée : ${data.invoice_reference || data.invoice_id || ''}`);
-    window.location.reload();
+    await refreshState();
   }
 
   async function sendDeliveryNoteEmail() {
@@ -275,7 +301,7 @@
 
   flowEls.orderPdf?.addEventListener('click', () => downloadOrderPdf().catch((error) => feedback(error.message, true)));
   flowEls.blPdf?.addEventListener('click', () => downloadDeliveryNotePdf().catch((error) => feedback(error.message, true)));
-  flowEls.invoicePdf?.addEventListener('click', () => feedback('PDF facture non disponible dans cette version', true));
+  flowEls.invoicePdf?.addEventListener('click', () => downloadInvoicePdf().catch((error) => feedback(error.message, true)));
   flowEls.validateBl?.addEventListener('click', () => validateBlFromSale().catch((error) => feedback(error.message, true)));
   flowEls.printBl?.addEventListener('click', () => printDeliveryNote().catch((error) => feedback(error.message, true)));
   flowEls.labels?.addEventListener('click', () => printHealthLabels().catch((error) => feedback(error.message, true)));
