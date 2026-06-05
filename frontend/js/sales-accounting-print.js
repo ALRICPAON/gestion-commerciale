@@ -38,6 +38,33 @@
     catch { return String(value); }
   }
 
+  function lotTraceDetails(lot) {
+    return [
+      lot.lot_code || lot.supplier_lot_number ? `Lot ${lot.lot_code || lot.supplier_lot_number}` : null,
+      lot.dlc ? `DLC ${formatDate(lot.dlc)}` : null,
+      lot.latin_name,
+      lot.fao_zone ? `FAO ${lot.fao_zone}` : null,
+      lot.sous_zone,
+      lot.fishing_gear,
+      lot.production_method,
+    ].filter(Boolean).map(escapeHtml).join(' - ');
+  }
+
+  function lineTrace(line) {
+    const allocationDetails = (line.allocations || []).map(lotTraceDetails).filter(Boolean);
+    if (allocationDetails.length) return allocationDetails.join('<br>');
+    const trace = line.traceability_snapshot || {};
+    return [
+      trace.lot_code || trace.supplier_lot_number ? `Lot ${trace.lot_code || trace.supplier_lot_number}` : null,
+      trace.dlc ? `DLC ${formatDate(trace.dlc)}` : null,
+      trace.latin_name,
+      trace.fao_zone ? `FAO ${trace.fao_zone}` : null,
+      trace.sous_zone,
+      trace.fishing_gear || trace.engin,
+      trace.production_method || trace.category,
+    ].filter(Boolean).map(escapeHtml).join(' - ');
+  }
+
   function addressBlock(parts) {
     return parts.filter(Boolean).map((part) => `<p>${escapeHtml(part)}</p>`).join('');
   }
@@ -80,9 +107,11 @@
     const sourceInvoice = doc.source_invoice_reference || doc.source_invoice_id || '';
     const sourceDeliveryNote = doc.source_delivery_note_reference || doc.source_delivery_note_id || '';
     const sourceOrder = doc.source_order_reference || doc.source_order_id || '';
-    const rows = (lines || []).map((line) => `<tr>
+    const rows = (lines || []).map((line) => {
+      const details = [escapeHtml(line.article_plu || ''), lineTrace(line)].filter(Boolean).join('<br>');
+      return `<tr>
       <td>${escapeHtml(line.line_number || '')}</td>
-      <td><strong>${escapeHtml(line.article_label || '-')}</strong><small>${escapeHtml(line.article_plu || '')}</small></td>
+      <td><strong>${escapeHtml(line.article_label || '-')}</strong><small>${details || '-'}</small></td>
       <td class="num">${number(line.package_count)}</td>
       <td class="num">${qty(line.weight_per_package)} ${escapeHtml(line.sale_unit || 'kg')}</td>
       <td class="num">${qty(line.total_weight || line.sold_quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td>
@@ -91,7 +120,8 @@
       <td class="num">${number(line.vat_rate).toFixed(2)} %</td>
       <td class="num">${money(line.line_vat_amount)}</td>
       <td class="num">${money(line.line_amount_ttc)}</td>
-    </tr>`).join('');
+    </tr>`;
+    }).join('');
 
     return `<article class="accounting-print-document">
       <header class="sales-print-header">
