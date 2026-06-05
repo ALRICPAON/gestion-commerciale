@@ -48,10 +48,11 @@ async function nextSalesDocumentReference(db, { storeId, documentType, prefix, d
 function displaySalesDocumentReference(document = {}, prefix = 'DOC') {
   const normalizedPrefix = String(prefix).toUpperCase();
   const reference = cleanReference(document.reference_number);
+  const shortId = cleanReference(document.id || reference).replace(/-/g, '').slice(0, 8).toUpperCase();
+  if (!reference && !shortId) return '';
   if (reference && !isUuid(reference) && !isLegacyLongReference(reference, normalizedPrefix)) return reference;
 
   const year = documentYear(document.document_date || document.created_at || new Date());
-  const shortId = cleanReference(document.id || reference).replace(/-/g, '').slice(0, 8).toUpperCase();
   if (isCleanSequenceReference(reference, normalizedPrefix)) return reference;
   return `${normalizedPrefix}-${year}-${shortId || 'ANCIEN'}`;
 }
