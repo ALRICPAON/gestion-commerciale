@@ -42,41 +42,92 @@ body.app-page.sale-detail-page .selectable-table tbody tr { cursor: pointer; }
 body.app-page.sale-detail-page .selectable-table tbody tr:hover td { background: #f3f8ff; }
 
 @media print {
-  @page { margin: 12mm; }
+  @page { margin: 10mm; }
   body > *:not(.main-content),
   .main-content > *:not(#print-area) { display: none !important; }
   body { background: #ffffff !important; }
-  #print-area { display: block !important; color: #17212b; font-family: Arial, sans-serif; font-size: 10.5px; line-height: 1.35; }
-  .bl-print-document { display: flex; flex-direction: column; min-height: 270mm; }
-  .bl-print-header { align-items: flex-start; border-bottom: 2px solid #17212b; display: grid; gap: 18px; grid-template-columns: minmax(0, 1fr) 72mm; padding-bottom: 14px; }
-  .bl-company { display: grid; gap: 12px; grid-template-columns: auto minmax(0, 1fr); }
-  .bl-logo { max-height: 34mm; max-width: 42mm; object-fit: contain; }
-  .bl-company h1, .bl-document-meta h2 { margin: 0; }
-  .bl-company h1 { font-size: 18px; }
-  .bl-company p, .bl-document-meta p, .bl-party-card p, .bl-notes p, .bl-totals p, .bl-signature p { margin: 2px 0; }
-  .bl-company-meta { margin-top: 7px; }
-  .bl-company-meta p span { color: #52616f; display: inline-block; min-width: 28mm; }
-  .bl-document-meta { border: 1px solid #8b98a5; padding: 10px 12px; }
-  .bl-label { color: #52616f; font-size: 10px; font-weight: 700; letter-spacing: 0; margin: 0 0 4px !important; text-transform: uppercase; }
-  .bl-document-meta h2 { font-size: 20px; margin-bottom: 8px; }
-  .bl-parties { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; margin: 14px 0; }
-  .bl-party-card { border: 1px solid #c6d0d8; min-height: 28mm; padding: 10px 12px; }
-  .bl-party-card h3, .bl-notes h3 { color: #52616f; font-size: 10px; margin: 0 0 6px; text-transform: uppercase; }
-  .bl-party-name { font-size: 13px; font-weight: 700; }
-  .print-table { border-collapse: collapse; width: 100%; }
-  .print-table th, .print-table td { border: 1px solid #c6d0d8; padding: 6px 5px; text-align: left; vertical-align: top; }
-  .print-table th { background: #eef2f5; color: #263746; font-size: 9.5px; text-transform: uppercase; }
-  .print-table td small { color: #52616f; display: block; margin-top: 2px; }
+  #print-area { display: block !important; color: #17212b; font-family: Arial, sans-serif; font-size: 10px; line-height: 1.32; }
+  .bl-print-document,
+  .order-print-document { display: flex; flex-direction: column; min-height: 277mm; }
+  .bl-print-header,
+  .sales-print-header { align-items: flex-start; border-bottom: 2px solid #17212b; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 62mm; padding-bottom: 9px; margin-bottom: 10px; }
+  .bl-company,
+  .sales-print-company { display: grid; gap: 8px; grid-template-columns: auto minmax(0, 1fr); }
+  .bl-logo,
+  .sales-print-logo { max-height: 18mm; max-width: 28mm; object-fit: contain; }
+  .bl-company h1,
+  .sales-print-company h1,
+  .bl-document-meta h2,
+  .sales-print-document-meta h2 { margin: 0; }
+  .bl-company h1,
+  .sales-print-company h1 { font-size: 16px; }
+  .bl-company p,
+  .sales-print-company p,
+  .bl-document-meta p,
+  .sales-print-document-meta p,
+  .bl-party-card p,
+  .sales-print-party-card p,
+  .bl-notes p,
+  .bl-totals p,
+  .bl-signature p { margin: 2px 0; }
+  .bl-company-meta,
+  .sales-print-company-meta { display: flex; flex-wrap: wrap; gap: 0 8px; margin-top: 4px; }
+  .bl-company-meta p span,
+  .sales-print-company-meta p span { color: #52616f; display: inline-block; margin-right: 4px; }
+  .bl-document-meta,
+  .sales-print-document-meta { border: 1px solid #8b98a5; padding: 8px 10px; text-align: right; }
+  .bl-label,
+  .sales-print-label { color: #52616f; font-size: 9.5px; font-weight: 700; letter-spacing: 0; margin: 0 0 4px !important; text-transform: uppercase; }
+  .bl-document-meta h2,
+  .sales-print-document-meta h2 { font-size: 16px; line-height: 1.2; overflow-wrap: anywhere; }
+  .bl-parties,
+  .sales-print-parties { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; margin: 10px 0; }
+  .bl-party-card,
+  .sales-print-party-card { border: 1px solid #c6d0d8; min-height: 22mm; padding: 8px 10px; }
+  .bl-party-card h3,
+  .sales-print-party-card h3,
+  .bl-notes h3,
+  .order-print-footer h3 { color: #52616f; font-size: 10px; margin: 0 0 6px; text-transform: uppercase; }
+  .bl-party-name,
+  .sales-print-party-name { font-size: 12px; font-weight: 700; }
+  .print-table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+  .print-table th, .print-table td { border: 1px solid #c6d0d8; padding: 4px 4px; text-align: left; vertical-align: top; }
+  .print-table th { background: #eef2f5; color: #263746; font-size: 8px; text-transform: uppercase; }
+  .print-table td { line-height: 1.2; }
+  .print-table td small { color: #52616f; display: block; font-size: 7.6px; margin-top: 2px; overflow-wrap: anywhere; }
   .num { text-align: right !important; white-space: nowrap; }
-  .bl-bottom { align-items: flex-start; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) 58mm; margin-top: 14px; }
-  .bl-notes { color: #263746; min-height: 24mm; }
+  .bl-lines-table th:nth-child(1), .bl-lines-table td:nth-child(1) { width: 6%; }
+  .bl-lines-table th:nth-child(2), .bl-lines-table td:nth-child(2) { width: 9%; }
+  .bl-lines-table th:nth-child(3), .bl-lines-table td:nth-child(3) { width: 29%; }
+  .bl-lines-table th:nth-child(4), .bl-lines-table td:nth-child(4) { width: 7%; }
+  .bl-lines-table th:nth-child(5), .bl-lines-table td:nth-child(5) { width: 10%; }
+  .bl-lines-table th:nth-child(6), .bl-lines-table td:nth-child(6) { width: 10%; }
+  .bl-lines-table th:nth-child(7), .bl-lines-table td:nth-child(7) { width: 8%; }
+  .bl-lines-table th:nth-child(8), .bl-lines-table td:nth-child(8) { width: 8%; }
+  .bl-lines-table th:nth-child(9), .bl-lines-table td:nth-child(9) { width: 6%; }
+  .bl-lines-table th:nth-child(10), .bl-lines-table td:nth-child(10) { width: 7%; }
+  .order-prep-lines-table th:nth-child(1), .order-prep-lines-table td:nth-child(1) { width: 8%; }
+  .order-prep-lines-table th:nth-child(2), .order-prep-lines-table td:nth-child(2) { width: 12%; }
+  .order-prep-lines-table th:nth-child(3), .order-prep-lines-table td:nth-child(3) { width: 32%; }
+  .order-prep-lines-table th:nth-child(4), .order-prep-lines-table td:nth-child(4) { width: 9%; }
+  .order-prep-lines-table th:nth-child(5), .order-prep-lines-table td:nth-child(5) { width: 13%; }
+  .order-prep-lines-table th:nth-child(6), .order-prep-lines-table td:nth-child(6) { width: 13%; }
+  .order-prep-lines-table th:nth-child(7), .order-prep-lines-table td:nth-child(7) { width: 13%; }
+  .prep-check-cell { text-align: center; }
+  .prep-check { border: 1px solid #17212b; display: inline-block; height: 4.5mm; width: 4.5mm; }
+  .prep-comment-cell { height: 10mm; }
+  .bl-bottom { align-items: flex-start; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 54mm; margin-top: 10px; }
+  .bl-notes { color: #263746; min-height: 22mm; }
   .bl-totals { border: 1px solid #17212b; }
-  .bl-totals p { align-items: center; border-bottom: 1px solid #c6d0d8; display: flex; justify-content: space-between; padding: 6px 8px; }
+  .bl-totals p { align-items: center; border-bottom: 1px solid #c6d0d8; display: flex; justify-content: space-between; padding: 5px 7px; }
   .bl-totals p:last-child { border-bottom: 0; }
   .bl-totals .grand-total { background: #eef2f5; font-size: 12px; }
-  .bl-signature { display: grid; gap: 12px; grid-template-columns: repeat(3, 1fr); margin-top: auto; padding-top: 20px; }
-  .bl-signature div { border: 1px solid #8b98a5; height: 30mm; padding: 8px; }
+  .bl-signature { display: grid; gap: 10px; grid-template-columns: repeat(3, 1fr); margin-top: auto; padding-top: 14px; }
+  .bl-signature div { border: 1px solid #8b98a5; height: 24mm; padding: 7px; }
   .bl-signature p { color: #52616f; font-weight: 700; }
+  .order-print-footer { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 38mm 38mm; margin-top: 14px; }
+  .order-print-footer div:not(:first-child) { border: 1px solid #8b98a5; color: #52616f; font-weight: 700; height: 20mm; padding: 7px; }
+  .order-print-footer p { margin: 0; }
   .health-label-print-sheet { display: grid; gap: 8mm; grid-template-columns: repeat(2, 1fr); }
   .health-label-print-card { border: 1px dashed #17212b; min-height: 58mm; padding: 7mm; break-inside: avoid; }
   .health-label-print-card h2 { font-size: 15px; margin: 0 0 5mm; }

@@ -486,14 +486,26 @@ async function getPrintableDeliveryNote(req, res, withPrintedAt = false) {
   const [lines, storeSettings] = await Promise.all([
     req.dbPool.query(
       `SELECT sl.*, COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
-        jsonb_agg(jsonb_build_object('lot_id', sla.lot_id, 'quantity', sla.quantity, 'lot_code', l.lot_code, 'supplier_lot_number', l.supplier_lot_number, 'dlc', l.dlc)) FILTER (WHERE sla.id IS NOT NULL) AS allocations
+        jsonb_agg(jsonb_build_object(
+          'lot_id', sla.lot_id,
+          'quantity', sla.quantity,
+          'lot_code', l.lot_code,
+          'supplier_lot_number', l.supplier_lot_number,
+          'dlc', l.dlc,
+          'latin_name', COALESCE(l.traceability_data->>'latin_name', a.latin_name),
+          'fao_zone', COALESCE(l.traceability_data->>'fao_zone', a.fao_zone),
+          'sous_zone', COALESCE(l.traceability_data->>'sous_zone', a.sous_zone),
+          'fishing_gear', COALESCE(l.traceability_data->>'fishing_gear', a.fishing_gear),
+          'production_method', COALESCE(l.traceability_data->>'production_method', a.production_method)
+        )) FILTER (WHERE sla.id IS NOT NULL) AS allocations
        FROM sales_lines sl
        LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
        LEFT JOIN lots l ON l.id = sla.lot_id
-       WHERE sl.sales_document_id = $1
+       LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
+       WHERE sl.sales_document_id = $1 AND sl.store_id = $2
        GROUP BY sl.id
        ORDER BY sl.line_number ASC`,
-      [req.params.id]
+      [req.params.id, req.user.store_id]
     ),
     req.dbPool.query(
       `SELECT id, store_id, company_name, logo_url, address_line1, address_line2,
@@ -519,12 +531,103 @@ router.get('/delivery-notes/:id/health-labels', authenticateToken, attachDbConte
   try {
     const note = await req.dbPool.query(`SELECT dn.id, dn.reference_number, dn.document_date, COALESCE(dn.delivered_client_name_snapshot, c.name) AS delivered_client_name, COALESCE(dn.delivered_client_code_snapshot, c.code) AS delivered_client_code, COALESCE(dn.delivered_client_store_identifier, c.store_identifier) AS delivered_client_store_identifier FROM sales_documents dn LEFT JOIN clients c ON c.id = dn.client_id AND c.store_id = dn.store_id WHERE dn.id = $1 AND dn.store_id = $2 AND dn.document_type = 'DELIVERY_NOTE' LIMIT 1`, [req.params.id, req.user.store_id]);
     if (!note.rows.length) return res.status(404).json({ error: 'BL introuvable' });
-    const lines = await req.dbPool.query(`SELECT sl.line_number, sl.article_plu, sl.article_label, sl.package_count, sl.total_weight, sl.sale_unit, sl.traceability_snapshot, COALESCE(SUM(sla.quantity), sl.sold_quantity, sl.total_weight) AS label_quantity, jsonb_agg(jsonb_build_object('lot_code', l.lot_code, 'supplier_lot_number', l.supplier_lot_number, 'dlc', l.dlc, 'quantity', sla.quantity)) FILTER (WHERE sla.id IS NOT NULL) AS lots FROM sales_lines sl LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id LEFT JOIN lots l ON l.id = sla.lot_id WHERE sl.sales_document_id = $1 GROUP BY sl.id ORDER BY sl.line_number ASC`, [req.params.id]);
-    const labels = lines.rows.map((line) => ({ delivery_note_id: note.rows[0].id, delivery_note_reference: note.rows[0].reference_number, delivery_date: note.rows[0].document_date, delivered_client_name: note.rows[0].delivered_client_name, delivered_client_code: note.rows[0].delivered_client_code, delivered_client_store_identifier: note.rows[0].delivered_client_store_identifier, line_number: line.line_number, article_plu: line.article_plu, article_label: line.article_label, quantity: num(line.label_quantity), unit: line.sale_unit || 'kg', package_count: num(line.package_count), traceability: line.traceability_snapshot || {}, lots: line.lots || [] }));
-    res.json({ delivery_note: note.rows[0], labels });
+    const lines = await req.dbPool.query(
+      `SELECT sl.id, sl.line_number, sl.article_label, sl.article_plu, sl.sale_unit, sl.traceability_snapshot,
+        jsonb_agg(jsonb_build_object('lot_id', l.id, 'lot_code', l.lot_code, 'supplier_lot_number', l.supplier_lot_number, 'dlc', l.dlc, 'quantity', sla.quantity)) FILTER (WHERE sla.id IS NOT NULL) AS lots,
+        COALESCE(SUM(sla.quantity), COALESCE(sl.sold_quantity, sl.total_weight, 0)) AS label_quantity
+       FROM sales_lines sl
+       LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
+       LEFT JOIN lots l ON l.id = sla.lot_id
+       WHERE sl.sales_document_id = $1 AND sl.store_id = $2
+       GROUP BY sl.id
+       ORDER BY sl.line_number ASC`,
+      [req.params.id, req.user.store_id]
+    );
+    const labels = lines.rows.map((line) => ({
+      delivery_note_id: note.rows[0].id,
+      delivery_note_reference: note.rows[0].reference_number,
+      document_date: note.rows[0].document_date,
+      delivered_client_name: note.rows[0].delivered_client_name,
+      delivered_client_code: note.rows[0].delivered_client_code,
+      delivered_client_store_identifier: note.rows[0].delivered_client_store_identifier,
+      line_number: line.line_number,
+      article_label: line.article_label,
+      article_plu: line.article_plu,
+      unit: line.sale_unit || 'kg',
+      quantity: line.label_quantity,
+      traceability: line.traceability_snapshot || {},
+      lots: line.lots || [],
+    }));
+    res.json({ labels });
   } catch (err) {
     console.error('Erreur etiquettes sanitaires BL :', err);
-    res.status(500).json({ error: 'Erreur preparation etiquettes sanitaires' });
+    res.status(500).json({ error: 'Erreur generation etiquettes sanitaires' });
+  }
+});
+
+router.get('/delivery-notes/:id/communication-options', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const result = await req.dbPool.query(
+      `SELECT dn.id, dn.reference_number, c.email, c.phone, c.mobile_phone, c.whatsapp_phone
+       FROM sales_documents dn
+       LEFT JOIN clients c ON c.id = dn.client_id AND c.store_id = dn.store_id
+       WHERE dn.id = $1 AND dn.store_id = $2 AND dn.document_type = 'DELIVERY_NOTE'
+       LIMIT 1`,
+      [req.params.id, req.user.store_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'BL introuvable' });
+    const row = result.rows[0];
+    const whatsapp = clean(row.whatsapp_phone) || clean(row.mobile_phone) || clean(row.phone);
+    res.json({
+      can_send_email: Boolean(clean(row.email)),
+      email: clean(row.email),
+      can_send_whatsapp: Boolean(whatsapp),
+      whatsapp_phone: whatsapp,
+      reference_number: row.reference_number,
+    });
+  } catch (err) {
+    console.error('Erreur options communication BL :', err);
+    res.status(500).json({ error: 'Erreur options communication BL' });
+  }
+});
+
+router.post('/delivery-notes/:id/send-email', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const result = await req.dbPool.query(
+      `SELECT dn.id, dn.reference_number, c.email
+       FROM sales_documents dn
+       LEFT JOIN clients c ON c.id = dn.client_id AND c.store_id = dn.store_id
+       WHERE dn.id = $1 AND dn.store_id = $2 AND dn.document_type = 'DELIVERY_NOTE'
+       LIMIT 1`,
+      [req.params.id, req.user.store_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'BL introuvable' });
+    if (!clean(result.rows[0].email)) return res.status(400).json({ error: 'Client sans email renseigne' });
+    res.json({ ok: true, to: clean(result.rows[0].email), subject: `Bon de livraison ${result.rows[0].reference_number || result.rows[0].id}` });
+  } catch (err) {
+    console.error('Erreur envoi email BL :', err);
+    res.status(500).json({ error: 'Erreur envoi email BL' });
+  }
+});
+
+router.post('/delivery-notes/:id/send-whatsapp', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const result = await req.dbPool.query(
+      `SELECT dn.id, dn.reference_number, c.phone, c.mobile_phone, c.whatsapp_phone
+       FROM sales_documents dn
+       LEFT JOIN clients c ON c.id = dn.client_id AND c.store_id = dn.store_id
+       WHERE dn.id = $1 AND dn.store_id = $2 AND dn.document_type = 'DELIVERY_NOTE'
+       LIMIT 1`,
+      [req.params.id, req.user.store_id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'BL introuvable' });
+    const phone = clean(result.rows[0].whatsapp_phone) || clean(result.rows[0].mobile_phone) || clean(result.rows[0].phone);
+    if (!phone) return res.status(400).json({ error: 'Client sans telephone WhatsApp renseigne' });
+    const ref = result.rows[0].reference_number || result.rows[0].id;
+    res.json({ ok: true, to: phone, message: `Bonjour, votre bon de livraison ${ref} est disponible.` });
+  } catch (err) {
+    console.error('Erreur envoi WhatsApp BL :', err);
+    res.status(500).json({ error: 'Erreur envoi WhatsApp BL' });
   }
 });
 

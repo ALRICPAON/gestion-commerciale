@@ -28,16 +28,31 @@
     catch { return String(value); }
   }
 
-  function lineLots(line) {
-    return (line.allocations || [])
-      .map((lot) => [
-        lot.lot_code,
-        lot.supplier_lot_number,
-        lot.dlc ? `DLC ${formatDate(lot.dlc)}` : null,
-        lot.quantity ? `${qty(lot.quantity)} ${escapeHtml(line.sale_unit || 'kg')}` : null,
-      ].filter(Boolean).join(' - '))
-      .filter(Boolean)
-      .join('<br>');
+  function lotTraceDetails(lot) {
+    return [
+      lot.lot_code || lot.supplier_lot_number ? `Lot ${lot.lot_code || lot.supplier_lot_number}` : null,
+      lot.dlc ? `DLC ${formatDate(lot.dlc)}` : null,
+      lot.latin_name,
+      lot.fao_zone ? `FAO ${lot.fao_zone}` : null,
+      lot.sous_zone,
+      lot.fishing_gear,
+      lot.production_method,
+    ].filter(Boolean).map(escapeHtml).join(' - ');
+  }
+
+  function lineTrace(line) {
+    const allocationDetails = (line.allocations || []).map(lotTraceDetails).filter(Boolean);
+    if (allocationDetails.length) return allocationDetails.join('<br>');
+    const trace = line.traceability_snapshot || {};
+    return [
+      trace.lot_code || trace.supplier_lot_number ? `Lot ${trace.lot_code || trace.supplier_lot_number}` : null,
+      trace.dlc ? `DLC ${formatDate(trace.dlc)}` : null,
+      trace.latin_name,
+      trace.fao_zone ? `FAO ${trace.fao_zone}` : null,
+      trace.sous_zone,
+      trace.fishing_gear || trace.engin,
+      trace.production_method || trace.category,
+    ].filter(Boolean).map(escapeHtml).join(' - ');
   }
 
   function infoLine(label, value) {
@@ -53,7 +68,7 @@
     const companyName = settings.company_name || 'Gestion Commerciale';
     const deliveredStoreId = document.client_store_identifier || document.delivered_client_store_identifier || '';
     const sourceOrder = document.source_order_reference || document.source_order_id || '';
-    const rows = (lines || []).map((line) => `<tr><td>${escapeHtml(line.line_number || '')}</td><td><strong>${escapeHtml(line.article_label || '-')}</strong><small>${escapeHtml(line.article_plu || '')}</small></td><td class="num">${number(line.package_count)}</td><td class="num">${qty(line.total_weight || line.sold_quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td><td>${lineLots(line) || '-'}</td><td class="num">${money(line.unit_sale_price_ht)}</td><td class="num">${money(line.line_amount_ht)}</td><td class="num">${number(line.vat_rate).toFixed(2)} %</td><td class="num">${money(line.line_amount_ttc)}</td></tr>`).join('');
+    const rows = (lines || []).map((line) => `<tr><td>${escapeHtml(line.line_number || '')}</td><td>${escapeHtml(line.article_plu || '')}</td><td><strong>${escapeHtml(line.article_label || '-')}</strong><small>${lineTrace(line) || '-'}</small></td><td class="num">${number(line.package_count)}</td><td class="num">${qty(line.weight_per_package)} ${escapeHtml(line.sale_unit || 'kg')}</td><td class="num">${qty(line.total_weight || line.sold_quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td><td class="num">${money(line.unit_sale_price_ht)}</td><td class="num">${money(line.line_amount_ht)}</td><td class="num">${number(line.vat_rate).toFixed(2)} %</td><td class="num">${money(line.line_amount_ttc)}</td></tr>`).join('');
 
     return `<article class="bl-print-document">
       <header class="bl-print-header">
@@ -94,8 +109,8 @@
       </section>
 
       <table class="print-table bl-lines-table">
-        <thead><tr><th>Ligne</th><th>Désignation</th><th>Colis</th><th>Poids</th><th>Lots</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>TTC</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="9">Aucune ligne.</td></tr>'}</tbody>
+        <thead><tr><th>Ligne</th><th>PLU</th><th>Désignation</th><th>Colis</th><th>Poids/colis</th><th>Poids total</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>TTC</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="10">Aucune ligne.</td></tr>'}</tbody>
       </table>
 
       <section class="bl-bottom">

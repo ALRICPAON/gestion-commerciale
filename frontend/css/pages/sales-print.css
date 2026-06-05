@@ -1,0 +1,22 @@
+@media print {
+  .accounting-print-document { display: flex; flex-direction: column; min-height: 277mm; }
+  .accounting-print-links { color: #52616f; display: flex; gap: 12px; justify-content: flex-end; margin: -2px 0 8px; }
+  .accounting-print-links p { margin: 0; }
+  .accounting-lines-table { font-size: 8.7px; }
+  .accounting-lines-table th { font-size: 7.4px; }
+  .accounting-lines-table th:nth-child(1), .accounting-lines-table td:nth-child(1) { width: 6%; }
+  .accounting-lines-table th:nth-child(2), .accounting-lines-table td:nth-child(2) { width: 27%; }
+  .accounting-lines-table th:nth-child(3), .accounting-lines-table td:nth-child(3) { width: 6%; }
+  .accounting-lines-table th:nth-child(4), .accounting-lines-table td:nth-child(4) { width: 9%; }
+  .accounting-lines-table th:nth-child(5), .accounting-lines-table td:nth-child(5) { width: 10%; }
+  .accounting-lines-table th:nth-child(6), .accounting-lines-table td:nth-child(6) { width: 9%; }
+  .accounting-lines-table th:nth-child(7), .accounting-lines-table td:nth-child(7) { width: 9%; }
+  .accounting-lines-table th:nth-child(8), .accounting-lines-table td:nth-child(8) { width: 6%; }
+  .accounting-lines-table th:nth-child(9), .accounting-lines-table td:nth-child(9) { width: 8%; }
+  .accounting-lines-table th:nth-child(10), .accounting-lines-table td:nth-child(10) { width: 10%; }
+  .accounting-print-bottom { align-items: flex-start; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 58mm; margin-top: 12px; }
+  .accounting-print-footer-note h3 { color: #52616f; font-size: 10px; margin: 8px 0 6px; text-transform: uppercase; }
+  .accounting-print-footer-note h3:first-child { margin-top: 0; }
+  .accounting-print-footer-note p { margin: 2px 0; }
+  .accounting-print-pennylane { color: #64748b; font-size: 9px; margin-top: auto; text-align: right; }
+}
