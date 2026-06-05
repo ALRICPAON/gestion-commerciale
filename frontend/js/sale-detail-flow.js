@@ -6,10 +6,19 @@
     orderPdf: document.getElementById('download-order-pdf-btn'),
     blPdf: document.getElementById('download-bl-pdf-btn'),
     invoicePdf: document.getElementById('download-invoice-pdf-btn'),
+    creditNotePdf: document.getElementById('download-credit-note-pdf-btn'),
     validateBl: document.getElementById('validate-bl-flow-btn'),
     printBl: document.getElementById('print-bl-btn'),
     labels: document.getElementById('print-health-labels-btn'),
     invoice: document.getElementById('validate-invoice-btn'),
+    creditNote: document.getElementById('create-credit-note-btn'),
+    creditNoteModal: document.getElementById('customer-credit-note-modal'),
+    closeCreditNoteModal: document.getElementById('close-credit-note-modal-btn'),
+    creditNoteType: document.getElementById('credit-note-type-select'),
+    creditNoteReturnStock: document.getElementById('credit-note-return-stock-select'),
+    creditNoteNotes: document.getElementById('credit-note-notes-input'),
+    creditNoteLinesBody: document.getElementById('credit-note-lines-table-body'),
+    confirmCreditNote: document.getElementById('confirm-credit-note-btn'),
     mail: document.getElementById('send-mail-btn'),
     whatsapp: document.getElementById('send-whatsapp-btn'),
     printArea: document.getElementById('print-area'),
@@ -19,6 +28,7 @@
   let currentSale = null;
   let currentLines = [];
   let currentInvoice = null;
+  let currentCreditNotes = [];
   let communicationOptions = null;
 
   async function request(path, options = {}) {
@@ -63,6 +73,25 @@
     flowEls.feedback.classList.toggle('success', !isError);
   }
 
+  function number(value) {
+    const parsed = Number(String(value ?? '').replace(',', '.'));
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  function qty(value) {
+    return number(value).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      "'": '&#39;',
+      '"': '&quot;',
+    }[char]));
+  }
+
   function documentType() {
     return String(currentSale?.document_type || '').toUpperCase();
   }
@@ -78,6 +107,10 @@
 
   function invoiceId() {
     return currentSale?.document_type === 'INVOICE' ? currentSale.id : currentInvoice?.id;
+  }
+
+  function creditNoteId() {
+    return documentType() === 'CREDIT_NOTE' ? currentSale.id : currentCreditNotes[0]?.id;
   }
 
   function isFactured() {
@@ -104,11 +137,16 @@
     currentSale = data.sale || null;
     currentLines = Array.isArray(data.lines) ? data.lines : [];
     currentInvoice = null;
+    currentCreditNotes = [];
     communicationOptions = null;
     if (isDeliveryNote() && currentSale?.id) {
       communicationOptions = await request(`/api/delivery-notes/${currentSale.id}/communication-options`).catch(() => null);
       const invoiceData = await request(`/api/delivery-notes/${currentSale.id}/invoice`).catch(() => null);
       currentInvoice = invoiceData?.invoice || null;
+    }
+    if (documentType() === 'INVOICE' && currentSale?.id) {
+      const creditNotesData = await request(`/api/invoices/${currentSale.id}/credit-notes`).catch(() => null);
+      currentCreditNotes = Array.isArray(creditNotesData?.credit_notes) ? creditNotesData.credit_notes : [];
     }
     refreshButtons();
     enhanceLineActions();
@@ -119,15 +157,19 @@
     const isBl = isDeliveryNote();
     const isBlDocument = documentType() === 'DELIVERY_NOTE';
     const isInvoice = documentType() === 'INVOICE';
+    const isCreditNote = documentType() === 'CREDIT_NOTE';
     const factured = isFactured();
     const hasInvoicePdf = isInvoice || !!invoiceId();
+    const hasCreditNotePdf = isCreditNote || !!creditNoteId();
     show(flowEls.orderPdf, isOrder);
     show(flowEls.blPdf, isBlDocument);
     show(flowEls.invoicePdf, hasInvoicePdf);
+    show(flowEls.creditNotePdf, hasCreditNotePdf);
     show(flowEls.validateBl, canValidateBl());
     show(flowEls.printBl, isBl);
     show(flowEls.labels, isBl);
     show(flowEls.invoice, isBl && !factured);
+    show(flowEls.creditNote, isInvoice);
     show(flowEls.mail, isBl);
     show(flowEls.whatsapp, isBl);
     if (flowEls.orderPdf) flowEls.orderPdf.disabled = !isOrder;
@@ -136,10 +178,12 @@
       flowEls.invoicePdf.disabled = !hasInvoicePdf;
       flowEls.invoicePdf.textContent = 'Télécharger PDF facture';
     }
+    if (flowEls.creditNotePdf) flowEls.creditNotePdf.disabled = !hasCreditNotePdf;
     if (flowEls.validateBl) flowEls.validateBl.disabled = !canValidateBl();
     if (flowEls.printBl) flowEls.printBl.disabled = !isBl;
     if (flowEls.labels) flowEls.labels.disabled = !isBl;
     if (flowEls.invoice) flowEls.invoice.disabled = !(isBl && !factured && currentSale?.status === 'validated');
+    if (flowEls.creditNote) flowEls.creditNote.disabled = !isInvoice;
     if (flowEls.mail) {
       flowEls.mail.disabled = !(isBl && communicationOptions?.can_send_email);
       flowEls.mail.title = communicationOptions?.can_send_email ? `Envoyer à ${communicationOptions.email}` : 'Aucun email client disponible';
@@ -201,12 +245,77 @@
     }
   }
 
+  async function downloadCreditNotePdf() {
+    await refreshState();
+    const id = creditNoteId();
+    if (!id) return;
+    flowEls.creditNotePdf.disabled = true;
+    try {
+      await downloadPdf(`/api/credit-notes/${id}/pdf`, 'avoir-client.pdf');
+      feedback('PDF avoir généré');
+    } finally {
+      flowEls.creditNotePdf.disabled = false;
+    }
+  }
+
   async function printDeliveryNote() {
     await refreshState();
     if (!isDeliveryNote()) return;
     const data = await request(`/api/delivery-notes/${currentSale.id}/print-data`);
     flowEls.printArea.innerHTML = window.DeliveryNotePrint.buildHtml(data.document, data.lines || [], data.store_settings);
     window.print();
+  }
+
+  function renderCreditNoteLines() {
+    if (!flowEls.creditNoteLinesBody) return;
+    const isTotal = flowEls.creditNoteType?.value !== 'partial';
+    flowEls.creditNoteLinesBody.innerHTML = currentLines.map((line) => {
+      const quantity = number(line.sold_quantity || line.total_weight);
+      return `<tr data-line-id="${line.id}">
+        <td>${escapeHtml(line.line_number || '')}</td>
+        <td>${escapeHtml(line.article_label || '-')}<br><small>${escapeHtml(line.article_plu || '')}</small></td>
+        <td>${qty(quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td>
+        <td><input class="line-input credit-note-line-quantity" type="number" min="0" step="0.001" max="${quantity}" value="${quantity}" ${isTotal ? 'disabled' : ''}></td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="4">Aucune ligne facturée.</td></tr>';
+  }
+
+  async function openCreditNoteModal() {
+    await refreshState();
+    if (documentType() !== 'INVOICE') return;
+    if (flowEls.creditNoteType) flowEls.creditNoteType.value = 'total';
+    if (flowEls.creditNoteReturnStock) flowEls.creditNoteReturnStock.value = 'false';
+    if (flowEls.creditNoteNotes) flowEls.creditNoteNotes.value = '';
+    renderCreditNoteLines();
+    flowEls.creditNoteModal?.classList.remove('hidden');
+  }
+
+  async function createCreditNote() {
+    await refreshState();
+    if (documentType() !== 'INVOICE') return;
+    const creditType = flowEls.creditNoteType?.value || 'total';
+    const lines = creditType === 'partial'
+      ? Array.from(flowEls.creditNoteLinesBody?.querySelectorAll('tr[data-line-id]') || []).map((row) => ({
+        source_invoice_line_id: row.dataset.lineId,
+        quantity: number(row.querySelector('.credit-note-line-quantity')?.value),
+      })).filter((line) => line.quantity > 0)
+      : [];
+    if (creditType === 'partial' && !lines.length) {
+      feedback('Sélectionne au moins une quantité à créditer', true);
+      return;
+    }
+    const data = await request(`/api/invoices/${currentSale.id}/credit-notes`, {
+      method: 'POST',
+      body: JSON.stringify({
+        type: creditType,
+        return_stock: flowEls.creditNoteReturnStock?.value === 'true',
+        notes: flowEls.creditNoteNotes?.value || null,
+        lines,
+      }),
+    });
+    flowEls.creditNoteModal?.classList.add('hidden');
+    feedback(`Avoir créé : ${data.credit_note_reference || data.credit_note_id || ''}`);
+    await refreshState();
   }
 
   function labelTrace(label) {
@@ -220,7 +329,7 @@
 
   function buildLabelsHtml(labels) {
     const esc = window.DeliveryNotePrint.escapeHtml;
-    const qty = window.DeliveryNotePrint.qty;
+    const labelQty = window.DeliveryNotePrint.qty;
     return `<section class="health-label-print-sheet">${(labels || []).map((label) => {
       const trace = label.traceability || {};
       return `<article class="health-label-print-card">
@@ -229,7 +338,7 @@
         <p><strong>Identifiant magasin :</strong> ${esc(label.delivered_client_store_identifier || '-')}</p>
         <p><strong>BL :</strong> ${esc(label.delivery_note_reference || '-')}</p>
         <p><strong>Ligne :</strong> ${esc(label.line_number || '-')}</p>
-        <p><strong>Quantité :</strong> ${qty(label.quantity)} ${esc(label.unit || 'kg')}</p>
+        <p><strong>Quantité :</strong> ${labelQty(label.quantity)} ${esc(label.unit || 'kg')}</p>
         <p><strong>Lot :</strong> ${esc(labelTrace(label))}</p>
         <p><strong>Zone FAO :</strong> ${esc(trace.fao_zone || '-')}</p>
         <p><strong>Méthode :</strong> ${esc(trace.production_method || '-')}</p>
@@ -302,10 +411,15 @@
   flowEls.orderPdf?.addEventListener('click', () => downloadOrderPdf().catch((error) => feedback(error.message, true)));
   flowEls.blPdf?.addEventListener('click', () => downloadDeliveryNotePdf().catch((error) => feedback(error.message, true)));
   flowEls.invoicePdf?.addEventListener('click', () => downloadInvoicePdf().catch((error) => feedback(error.message, true)));
+  flowEls.creditNotePdf?.addEventListener('click', () => downloadCreditNotePdf().catch((error) => feedback(error.message, true)));
   flowEls.validateBl?.addEventListener('click', () => validateBlFromSale().catch((error) => feedback(error.message, true)));
   flowEls.printBl?.addEventListener('click', () => printDeliveryNote().catch((error) => feedback(error.message, true)));
   flowEls.labels?.addEventListener('click', () => printHealthLabels().catch((error) => feedback(error.message, true)));
   flowEls.invoice?.addEventListener('click', () => validateInvoiceFromBl().catch((error) => feedback(error.message, true)));
+  flowEls.creditNote?.addEventListener('click', () => openCreditNoteModal().catch((error) => feedback(error.message, true)));
+  flowEls.closeCreditNoteModal?.addEventListener('click', () => flowEls.creditNoteModal?.classList.add('hidden'));
+  flowEls.creditNoteType?.addEventListener('change', renderCreditNoteLines);
+  flowEls.confirmCreditNote?.addEventListener('click', () => createCreditNote().catch((error) => feedback(error.message, true)));
   flowEls.mail?.addEventListener('click', () => sendDeliveryNoteEmail().catch((error) => feedback(error.message, true)));
   flowEls.whatsapp?.addEventListener('click', () => sendDeliveryNoteWhatsapp().catch((error) => feedback(error.message, true)));
   flowEls.lineBody?.addEventListener('click', (event) => {
