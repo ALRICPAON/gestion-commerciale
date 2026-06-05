@@ -41,6 +41,41 @@ async function getStoreSettings(db, storeId) {
   return result.rows[0] || {};
 }
 
+async function getSaleOrderPayload(db, { saleId, storeId }) {
+  const saleResult = await db.query(
+    `
+    SELECT sd.*, c.name AS client_name, c.code AS client_code,
+      c.store_identifier AS client_store_identifier,
+      c.address_line1, c.address_line2, c.postal_code, c.city,
+      COALESCE(c.tariff_level, sd.tariff_level_snapshot, 1) AS client_tariff_level
+    FROM sales_documents sd
+    LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
+    WHERE sd.id = $1 AND sd.store_id = $2
+    LIMIT 1
+    `,
+    [saleId, storeId]
+  );
+  if (!saleResult.rows.length) return null;
+
+  const sale = saleResult.rows[0];
+  if (sale.document_type !== 'ORDER') return { sale, unsupported: true };
+
+  const [linesResult, storeSettings] = await Promise.all([
+    db.query(
+      `
+      SELECT *
+      FROM sales_lines
+      WHERE sales_document_id = $1 AND store_id = $2
+      ORDER BY line_number ASC
+      `,
+      [saleId, storeId]
+    ),
+    getStoreSettings(db, storeId),
+  ]);
+
+  return { sale, lines: linesResult.rows, storeSettings };
+}
+
 async function renderAndSend(res, html, filename) {
   const pdf = await renderHtmlToPdf(html);
   sendPdf(res, pdf, filename);
@@ -143,48 +178,34 @@ router.get('/delivery-notes/:id/pdf', authenticateToken, attachDbContext, async 
   }
 });
 
+router.get('/sales/:id/print-data', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) return badId(res);
+    const payload = await getSaleOrderPayload(req.dbPool, { saleId: req.params.id, storeId: req.user.store_id });
+    if (!payload) return res.status(404).json({ error: 'Document de vente introuvable' });
+    if (payload.unsupported) return res.status(400).json({ error: 'Cette impression est limitee aux commandes client' });
+    return res.json({ sale: payload.sale, lines: payload.lines, store_settings: payload.storeSettings });
+  } catch (err) {
+    console.error('Erreur print-data commande :', err);
+    return res.status(500).json({ error: 'Erreur preparation impression commande' });
+  }
+});
+
 router.get('/sales/:id/pdf', authenticateToken, attachDbContext, async (req, res) => {
   try {
     if (!isUuid(req.params.id)) return badId(res);
 
-    const saleResult = await req.dbPool.query(
-      `
-      SELECT sd.*, c.name AS client_name, c.code AS client_code,
-        c.store_identifier AS client_store_identifier,
-        c.address_line1, c.address_line2, c.postal_code, c.city,
-        COALESCE(c.tariff_level, sd.tariff_level_snapshot, 1) AS client_tariff_level
-      FROM sales_documents sd
-      LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
-      WHERE sd.id = $1 AND sd.store_id = $2
-      LIMIT 1
-      `,
-      [req.params.id, req.user.store_id]
-    );
-    if (!saleResult.rows.length) return res.status(404).json({ error: 'Document de vente introuvable' });
-
-    const sale = saleResult.rows[0];
-    if (sale.document_type === 'INVOICE') {
+    const payload = await getSaleOrderPayload(req.dbPool, { saleId: req.params.id, storeId: req.user.store_id });
+    if (!payload) return res.status(404).json({ error: 'Document de vente introuvable' });
+    if (payload.sale.document_type === 'INVOICE') {
       return res.status(501).json({ error: 'PDF facture non disponible dans cette version' });
     }
-    if (sale.document_type !== 'ORDER') {
+    if (payload.unsupported) {
       return res.status(400).json({ error: 'Cette route PDF est limitee aux commandes client' });
     }
 
-    const [linesResult, storeSettings] = await Promise.all([
-      req.dbPool.query(
-        `
-        SELECT *
-        FROM sales_lines
-        WHERE sales_document_id = $1 AND store_id = $2
-        ORDER BY line_number ASC
-        `,
-        [req.params.id, req.user.store_id]
-      ),
-      getStoreSettings(req.dbPool, req.user.store_id),
-    ]);
-
-    const html = renderSaleOrderPdf({ sale, lines: linesResult.rows, storeSettings });
-    return renderAndSend(res, html, saleOrderFilename(sale));
+    const html = renderSaleOrderPdf({ sale: payload.sale, lines: payload.lines, storeSettings: payload.storeSettings });
+    return renderAndSend(res, html, saleOrderFilename(payload.sale));
   } catch (err) {
     console.error('Erreur PDF commande :', err);
     return res.status(500).json({ error: 'Erreur generation PDF commande client' });
