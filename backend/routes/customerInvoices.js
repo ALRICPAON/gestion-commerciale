@@ -28,20 +28,22 @@ function badId(res) {
 async function nextInvoiceReference(db, storeId, invoiceDate = new Date()) {
   const year = new Date(invoiceDate).getFullYear();
   const prefix = `FAC-${year}-`;
+  const suffixPattern = `^FAC-${year}-(\\d+)$`;
+
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`customer-invoice:${storeId}:${year}`]);
+
   const result = await db.query(
     `
-    SELECT reference_number
+    SELECT COALESCE(MAX((substring(reference_number FROM $2))::integer), 0) + 1 AS next_number
     FROM sales_documents
     WHERE store_id = $1
-      AND document_type = 'INVOICE'
-      AND reference_number LIKE $2
-    ORDER BY reference_number DESC
-    LIMIT 1
+      AND UPPER(document_type) = 'INVOICE'
+      AND reference_number LIKE $3
+      AND substring(reference_number FROM $2) IS NOT NULL
     `,
-    [storeId, `${prefix}%`]
+    [storeId, suffixPattern, `${prefix}%`]
   );
-  const lastNumber = result.rows[0]?.reference_number?.match(/^(?:FAC)-\d{4}-(\d+)$/)?.[1];
-  const nextNumber = String((Number(lastNumber) || 0) + 1).padStart(5, '0');
+  const nextNumber = String(Number(result.rows[0]?.next_number || 1)).padStart(5, '0');
   return `${prefix}${nextNumber}`;
 }
 
