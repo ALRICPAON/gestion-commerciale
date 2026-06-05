@@ -172,6 +172,8 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
 
     const invoiceDate = clean(body.document_date) || new Date().toISOString().slice(0, 10);
     const invoiceRef = clean(body.reference_number) || await nextInvoiceReference(db, req.user.store_id, invoiceDate);
+    const deliveredClientId = note.client_id || null;
+    const billedClientId = note.billed_client_id || note.client_id || null;
     const invoice = await db.query(
       `
       INSERT INTO sales_documents (
@@ -183,7 +185,7 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
         billed_client_name_snapshot, billed_client_code_snapshot,
         locked_at, validated_at, pennylane_status, created_by, updated_by
       ) VALUES (
-        gen_random_uuid(), $1, $2, COALESCE($3, $4), COALESCE($3, $4), $5, $6,
+        gen_random_uuid(), $1, $2, $3::uuid, $4::uuid, $5, $6,
         $7::date, 'validated', 'INVOICE', 'delivery_note', $8, $9,
         $10, $11, $12, $13, $14, $15,
         $16, $17, $18, $19, $20,
@@ -194,8 +196,8 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
       [
         req.user.store_id,
         note.client_key || req.user.client_key || null,
-        note.billed_client_id,
-        note.client_id,
+        deliveredClientId,
+        billedClientId,
         note.source_order_id,
         note.id,
         invoiceDate,
