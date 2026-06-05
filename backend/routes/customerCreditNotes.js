@@ -173,6 +173,92 @@ function computeCreditLine(line, quantity) {
   };
 }
 
+async function buildReturnStockPlan(db, { invoice, line, quantity, storeId, unitCost }) {
+  const candidates = [];
+
+  if (invoice.source_delivery_note_id && line.article_id) {
+    const allocationResult = await db.query(
+      `
+      WITH original_allocations AS (
+        SELECT sla.lot_id,
+          SUM(sla.quantity)::numeric AS original_quantity,
+          COALESCE(MAX(sla.unit_cost_ex_vat), MAX(l.unit_cost_ex_vat), $7)::numeric AS unit_cost_ex_vat,
+          MIN(COALESCE(l.dlc, DATE '9999-12-31')) AS sort_dlc,
+          MIN(l.created_at) AS sort_created_at
+        FROM sales_lines bl
+        JOIN sale_line_allocations sla ON sla.sales_line_id = bl.id
+        JOIN lots l ON l.id = sla.lot_id
+          AND l.store_id = bl.store_id
+          AND l.article_id = bl.article_id
+        WHERE bl.sales_document_id = $1
+          AND bl.store_id = $2
+          AND bl.line_number = $3
+          AND bl.article_id = $4
+        GROUP BY sla.lot_id
+      ), returned AS (
+        SELECT sm.lot_id, SUM(GREATEST(sm.quantity, 0))::numeric AS returned_quantity
+        FROM sales_documents cn
+        JOIN sales_lines cl ON cl.sales_document_id = cn.id
+          AND cl.store_id = cn.store_id
+          AND cl.source_invoice_line_id = $6
+        JOIN stock_movements sm ON sm.store_id = cn.store_id
+          AND sm.movement_type = 'customer_return'
+          AND sm.article_id = cl.article_id
+          AND sm.lot_id IS NOT NULL
+          AND (
+            (sm.source_table = 'sales_lines' AND sm.source_id = cl.id)
+            OR (sm.source_table = 'sales_documents' AND sm.source_id = cn.id)
+          )
+        WHERE cn.store_id = $2
+          AND cn.document_type = 'CREDIT_NOTE'
+          AND cn.source_invoice_id = $5
+        GROUP BY sm.lot_id
+      )
+      SELECT oa.lot_id, oa.unit_cost_ex_vat,
+        GREATEST(oa.original_quantity - COALESCE(r.returned_quantity, 0), 0) AS remaining_quantity
+      FROM original_allocations oa
+      LEFT JOIN returned r ON r.lot_id = oa.lot_id
+      WHERE GREATEST(oa.original_quantity - COALESCE(r.returned_quantity, 0), 0) > 0
+      ORDER BY oa.sort_dlc, oa.sort_created_at, oa.lot_id
+      `,
+      [invoice.source_delivery_note_id, storeId, line.line_number, line.article_id, invoice.id, line.id, unitCost]
+    );
+    candidates.push(...allocationResult.rows);
+  }
+
+  if (!candidates.length && line.article_id && line.selected_lot_id) {
+    const selectedLot = await db.query(
+      `
+      SELECT id AS lot_id, unit_cost_ex_vat, $4::numeric AS remaining_quantity
+      FROM lots
+      WHERE id = $1
+        AND store_id = $2
+        AND article_id = $3
+      LIMIT 1
+      `,
+      [line.selected_lot_id, storeId, line.article_id, quantity]
+    );
+    candidates.push(...selectedLot.rows);
+  }
+
+  let remaining = pos(quantity, 0);
+  const plan = [];
+  for (const candidate of candidates) {
+    if (remaining <= 0) break;
+    const available = pos(candidate.remaining_quantity, 0);
+    const qtyToReturn = Math.min(remaining, available);
+    if (qtyToReturn <= 0) continue;
+    plan.push({
+      lotId: candidate.lot_id,
+      quantity: Number(qtyToReturn.toFixed(3)),
+      unitCost: num(candidate.unit_cost_ex_vat, unitCost),
+    });
+    remaining = Number((remaining - qtyToReturn).toFixed(3));
+  }
+
+  return { plan, missingQuantity: remaining };
+}
+
 router.get('/invoices/:id/credit-notes', authenticateToken, attachDbContext, async (req, res) => {
   try {
     if (!isUuid(req.params.id)) return badId(res);
@@ -258,21 +344,30 @@ router.post('/invoices/:id/credit-notes', authenticateToken, attachDbContext, re
         await db.query('ROLLBACK');
         return res.status(400).json({ error: `Quantite d'avoir trop elevee ligne ${line.line_number}` });
       }
-      selectedLines.push({ source: line, quantity, amounts: computeCreditLine(line, quantity) });
+      selectedLines.push({ source: line, quantity, amounts: computeCreditLine(line, quantity), returnPlan: [] });
     }
     if (!selectedLines.length) {
       await db.query('ROLLBACK');
       return res.status(400).json({ error: 'Aucune ligne a crediter' });
     }
+
     if (returnStock) {
-      const missingStockSource = selectedLines.find(({ source, quantity }) => (
-        quantity > 0 && (!source.article_id || !source.selected_lot_id)
-      ));
-      if (missingStockSource) {
-        await db.query('ROLLBACK');
-        return res.status(400).json({
-          error: `Retour stock impossible ligne ${missingStockSource.source.line_number} : article ou lot source introuvable`,
+      for (const item of selectedLines) {
+        const { source, quantity, amounts } = item;
+        const { plan, missingQuantity } = await buildReturnStockPlan(db, {
+          invoice,
+          line: source,
+          quantity,
+          storeId: req.user.store_id,
+          unitCost: amounts.unitCost,
         });
+        if (missingQuantity > 0) {
+          await db.query('ROLLBACK');
+          return res.status(400).json({
+            error: `Retour stock impossible ligne ${source.line_number} : lot source introuvable ou quantite deja retournee`,
+          });
+        }
+        item.returnPlan = plan;
       }
     }
 
@@ -333,7 +428,8 @@ router.post('/invoices/:id/credit-notes', authenticateToken, attachDbContext, re
     for (const item of selectedLines) {
       const line = item.source;
       const x = item.amounts;
-      await db.query(
+      const creditSelectedLotId = returnStock && item.returnPlan.length === 1 ? item.returnPlan[0].lotId : line.selected_lot_id;
+      const creditLine = await db.query(
         `
         INSERT INTO sales_lines (
           id, store_id, client_key, sales_document_id, source_invoice_line_id, line_number, article_id, article_plu, article_label,
@@ -348,6 +444,7 @@ router.post('/invoices/:id/credit-notes', authenticateToken, attachDbContext, re
           $20, $21, $22, $23, $24::jsonb,
           'credited', $25, $25
         )
+        RETURNING id
         `,
         [
           req.user.store_id,
@@ -371,39 +468,44 @@ router.post('/invoices/:id/credit-notes', authenticateToken, attachDbContext, re
           x.lineTtc,
           x.unitCost,
           x.margin,
-          line.selected_lot_id,
+          creditSelectedLotId,
           line.suggested_lot_id,
           JSON.stringify(line.traceability_snapshot || {}),
           req.user.id,
         ]
       );
 
-      if (returnStock && line.article_id && line.selected_lot_id && item.quantity > 0) {
-        const lot = await db.query(
-          `SELECT id, unit_cost_ex_vat FROM lots WHERE id = $1 AND store_id = $2 AND article_id = $3 FOR UPDATE`,
-          [line.selected_lot_id, req.user.store_id, line.article_id]
-        );
-        if (!lot.rows.length) {
-          await db.query('ROLLBACK');
-          return res.status(400).json({ error: `Lot introuvable pour retour stock ligne ${line.line_number}` });
+      if (returnStock && item.quantity > 0) {
+        for (const stockReturn of item.returnPlan) {
+          const lot = await db.query(
+            `SELECT id, unit_cost_ex_vat FROM lots WHERE id = $1 AND store_id = $2 AND article_id = $3 FOR UPDATE`,
+            [stockReturn.lotId, req.user.store_id, line.article_id]
+          );
+          if (!lot.rows.length) {
+            await db.query('ROLLBACK');
+            return res.status(400).json({ error: `Lot introuvable pour retour stock ligne ${line.line_number}` });
+          }
+          await db.query(
+            `UPDATE lots SET qty_remaining = qty_remaining + $1, updated_at = NOW() WHERE id = $2`,
+            [stockReturn.quantity, stockReturn.lotId]
+          );
+          await db.query(
+            `INSERT INTO stock_movements(id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by)
+             VALUES(gen_random_uuid(), $1, $2, $3, $4, 'customer_return', $5, $6, 'sales_lines', $7, $8, $9)`,
+            [
+              req.user.store_id,
+              invoice.client_key || req.user.client_key || null,
+              line.article_id,
+              stockReturn.lotId,
+              stockReturn.quantity,
+              num(lot.rows[0].unit_cost_ex_vat, stockReturn.unitCost),
+              creditLine.rows[0].id,
+              `Retour client avoir ${reference}`,
+              req.user.id,
+            ]
+          );
+          articlesToRecompute.add(line.article_id);
         }
-        await db.query(`UPDATE lots SET qty_remaining = qty_remaining + $1, updated_at = NOW() WHERE id = $2`, [item.quantity, line.selected_lot_id]);
-        await db.query(
-          `INSERT INTO stock_movements(id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by)
-           VALUES(gen_random_uuid(), $1, $2, $3, $4, 'customer_return', $5, $6, 'sales_documents', $7, $8, $9)`,
-          [
-            req.user.store_id,
-            invoice.client_key || req.user.client_key || null,
-            line.article_id,
-            line.selected_lot_id,
-            item.quantity,
-            num(lot.rows[0].unit_cost_ex_vat, x.unitCost),
-            creditNoteId,
-            `Retour client avoir ${reference}`,
-            req.user.id,
-          ]
-        );
-        articlesToRecompute.add(line.article_id);
       }
     }
 
@@ -423,6 +525,7 @@ router.post('/invoices/:id/credit-notes', authenticateToken, attachDbContext, re
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur creation avoir client :', err);
     if (err.code === '23505') return res.status(409).json({ error: 'Numero avoir deja utilise, reessaie la creation' });
+    if (err.status) return res.status(err.status).json({ error: err.message || 'Erreur creation avoir client' });
     return res.status(500).json({ error: err.message || 'Erreur creation avoir client' });
   } finally {
     db.release();
