@@ -28,9 +28,9 @@ function badId(res) {
 async function nextInvoiceReference(db, storeId, invoiceDate = new Date()) {
   const year = new Date(invoiceDate).getFullYear();
   const prefix = `FAC-${year}-`;
-  const suffixPattern = `^FAC-${year}-(\\d+)$`;
+  const suffixPattern = `^FAC-${year}-([0-9]+)$`;
 
-  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`customer-invoice:${storeId}:${year}`]);
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [`customer-invoice:${storeId}:${year}`]);
 
   const result = await db.query(
     `
