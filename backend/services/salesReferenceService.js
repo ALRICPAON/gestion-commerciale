@@ -12,6 +12,14 @@ function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
 
+function isCleanSequenceReference(value, prefix) {
+  return new RegExp(`^${String(prefix).toUpperCase()}-[0-9]{4}-[0-9]{5}$`).test(String(value || '').toUpperCase());
+}
+
+function isLegacyLongReference(value, prefix) {
+  return new RegExp(`^${String(prefix).toUpperCase()}-[0-9]{4}-[0-9]{2}-[0-9]{2}-`, 'i').test(String(value || ''));
+}
+
 async function nextSalesDocumentReference(db, { storeId, documentType, prefix, documentDate = new Date() }) {
   const year = documentYear(documentDate);
   const normalizedType = String(documentType || '').toUpperCase();
@@ -38,12 +46,14 @@ async function nextSalesDocumentReference(db, { storeId, documentType, prefix, d
 }
 
 function displaySalesDocumentReference(document = {}, prefix = 'DOC') {
+  const normalizedPrefix = String(prefix).toUpperCase();
   const reference = cleanReference(document.reference_number);
-  if (reference && !isUuid(reference)) return reference;
+  if (reference && !isUuid(reference) && !isLegacyLongReference(reference, normalizedPrefix)) return reference;
 
   const year = documentYear(document.document_date || document.created_at || new Date());
   const shortId = cleanReference(document.id || reference).replace(/-/g, '').slice(0, 8).toUpperCase();
-  return `${String(prefix).toUpperCase()}-${year}-${shortId || 'ANCIEN'}`;
+  if (isCleanSequenceReference(reference, normalizedPrefix)) return reference;
+  return `${normalizedPrefix}-${year}-${shortId || 'ANCIEN'}`;
 }
 
 module.exports = {
