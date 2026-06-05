@@ -28,6 +28,25 @@
     catch { return String(value); }
   }
 
+  function documentYear(value) {
+    const date = value ? new Date(value) : new Date();
+    return Number.isFinite(date.getTime()) ? date.getFullYear() : new Date().getFullYear();
+  }
+
+  function displayReference(document, prefix) {
+    const reference = String(document?.reference_number || '').trim();
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(reference);
+    if (reference && !isUuid) return reference;
+    const shortId = String(document?.id || reference || '').replace(/-/g, '').slice(0, 8).toUpperCase();
+    return `${prefix}-${documentYear(document?.document_date || document?.created_at)}-${shortId || 'ANCIEN'}`;
+  }
+
+  function sourceOrderReference(document) {
+    if (document.source_order_reference) return document.source_order_reference;
+    if (!document.source_order_id) return '';
+    return displayReference({ id: document.source_order_id, document_date: document.document_date }, 'CMD');
+  }
+
   function lotTraceDetails(lot) {
     return [
       lot.lot_code || lot.supplier_lot_number ? `Lot ${lot.lot_code || lot.supplier_lot_number}` : null,
@@ -67,7 +86,8 @@
     const settings = storeSettings || {};
     const companyName = settings.company_name || 'Gestion Commerciale';
     const deliveredStoreId = document.client_store_identifier || document.delivered_client_store_identifier || '';
-    const sourceOrder = document.source_order_reference || document.source_order_id || '';
+    const sourceOrder = sourceOrderReference(document);
+    const documentReference = displayReference(document, 'BL');
     const rows = (lines || []).map((line) => `<tr><td>${escapeHtml(line.line_number || '')}</td><td>${escapeHtml(line.article_plu || '')}</td><td><strong>${escapeHtml(line.article_label || '-')}</strong><small>${lineTrace(line) || '-'}</small></td><td class="num">${number(line.package_count)}</td><td class="num">${qty(line.weight_per_package)} ${escapeHtml(line.sale_unit || 'kg')}</td><td class="num">${qty(line.total_weight || line.sold_quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td><td class="num">${money(line.unit_sale_price_ht)}</td><td class="num">${money(line.line_amount_ht)}</td><td class="num">${number(line.vat_rate).toFixed(2)} %</td><td class="num">${money(line.line_amount_ttc)}</td></tr>`).join('');
 
     return `<article class="bl-print-document">
@@ -88,7 +108,7 @@
         </div>
         <div class="bl-document-meta">
           <p class="bl-label">Bon de livraison</p>
-          <h2>${escapeHtml(document.reference_number || document.id)}</h2>
+          <h2>${escapeHtml(documentReference)}</h2>
           <p>Date : <strong>${formatDate(document.document_date)}</strong></p>
           ${sourceOrder ? `<p>Commande : <strong>${escapeHtml(sourceOrder)}</strong></p>` : ''}
         </div>
