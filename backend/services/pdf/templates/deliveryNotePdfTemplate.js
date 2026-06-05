@@ -30,7 +30,7 @@ function lotTraceDetails(lot) {
     lot.sous_zone,
     lot.fishing_gear,
     lot.production_method,
-  ].filter(Boolean).join(' - ');
+  ].filter(Boolean).map(escapeHtml).join(' - ');
 }
 
 function lineTrace(line) {
