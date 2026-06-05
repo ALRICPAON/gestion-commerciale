@@ -71,16 +71,16 @@ function baseStyles(extra = '') {
     body { margin: 0; color: #17212b; font-family: Arial, sans-serif; font-size: 11px; line-height: 1.35; }
     .pdf-document { page-break-after: always; }
     .pdf-document:last-child { page-break-after: auto; }
-    .doc-header { align-items: flex-start; border-bottom: 2px solid #17212b; display: grid; gap: 16px; grid-template-columns: minmax(0, 1fr) 70mm; padding-bottom: 12px; margin-bottom: 12px; }
-    .company-block { display: grid; gap: 10px; grid-template-columns: auto minmax(0, 1fr); }
-    .company-logo { max-height: 28mm; max-width: 38mm; object-fit: contain; }
+    .doc-header { align-items: flex-start; border-bottom: 2px solid #17212b; display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) 62mm; padding-bottom: 9px; margin-bottom: 10px; }
+    .company-block { display: grid; gap: 8px; grid-template-columns: auto minmax(0, 1fr); }
+    .company-logo { max-height: 18mm; max-width: 28mm; object-fit: contain; }
     .company-block h1, .document-title h2 { margin: 0; }
-    .company-block h1 { font-size: 18px; }
+    .company-block h1 { font-size: 16px; }
     .company-block p, .document-title p, .party-card p, .footer-note p { margin: 2px 0; }
-    .company-meta { margin-top: 6px; }
-    .document-title { border: 1px solid #8b98a5; padding: 9px 11px; text-align: right; }
-    .document-title p { color: #52616f; font-size: 10px; font-weight: 700; text-transform: uppercase; }
-    .document-title h2 { font-size: 18px; }
+    .company-meta { display: flex; flex-wrap: wrap; gap: 0 8px; margin-top: 4px; }
+    .document-title { border: 1px solid #8b98a5; padding: 8px 10px; text-align: right; }
+    .document-title p { color: #52616f; font-size: 9.5px; font-weight: 700; text-transform: uppercase; }
+    .document-title h2 { font-size: 16px; line-height: 1.2; overflow-wrap: anywhere; }
     .parties { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; margin: 12px 0; }
     .party-card { border: 1px solid #c6d0d8; min-height: 24mm; padding: 9px 11px; }
     .party-card h3, .footer-note h3 { color: #52616f; font-size: 10px; margin: 0 0 6px; text-transform: uppercase; }
