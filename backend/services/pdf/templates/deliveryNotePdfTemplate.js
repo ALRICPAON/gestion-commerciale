@@ -8,17 +8,10 @@ const {
   number,
   qty,
 } = require('../pdfLayout');
+const { displaySalesDocumentReference } = require('../../salesReferenceService');
 
 function addressBlock(parts) {
   return parts.filter(Boolean).map((part) => `<p>${escapeHtml(part)}</p>`).join('');
-}
-
-function shortDocumentReference(value) {
-  const text = String(value || '').trim();
-  if (!text) return '';
-
-  const uuidMatch = text.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
-  return uuidMatch ? text.slice(0, 8).toUpperCase() : text;
 }
 
 function lotTraceDetails(lot) {
@@ -55,8 +48,8 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
   const doc = document || {};
   const settings = storeSettings || {};
   const deliveredStoreId = doc.client_store_identifier || doc.delivered_client_store_identifier || '';
-  const sourceOrder = doc.source_order_reference || shortDocumentReference(doc.source_order_id);
-  const documentReference = shortDocumentReference(doc.reference_number || doc.id) || 'Bon de livraison';
+  const sourceOrder = doc.source_order_reference || displaySalesDocumentReference({ id: doc.source_order_id, document_date: doc.document_date }, 'CMD');
+  const documentReference = displaySalesDocumentReference(doc, 'BL') || 'Bon de livraison';
   const rows = (lines || []).map((line) => `<tr>
     <td class="line-cell">${escapeHtml(line.line_number || '')}</td>
     <td>${escapeHtml(line.article_plu || '')}</td>
@@ -72,7 +65,7 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
 
   const body = `<article class="pdf-document bl-document">
     ${companyHeader(settings, documentReference, `Bon de livraison - ${formatDate(doc.document_date)}`)}
-    ${sourceOrder ? `<p class="source-order">Commande source : <strong>${escapeHtml(shortDocumentReference(sourceOrder))}</strong></p>` : ''}
+    ${sourceOrder ? `<p class="source-order">Commande source : <strong>${escapeHtml(sourceOrder)}</strong></p>` : ''}
     <section class="parties">
       <div class="party-card">
         <h3>Client livre</h3>
@@ -157,7 +150,7 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
 }
 
 function deliveryNoteFilename(document = {}) {
-  return `${fileSafe(document.reference_number || document.id || 'bon-de-livraison')}.pdf`;
+  return `${fileSafe(displaySalesDocumentReference(document, 'BL') || 'bon-de-livraison')}.pdf`;
 }
 
 module.exports = {
