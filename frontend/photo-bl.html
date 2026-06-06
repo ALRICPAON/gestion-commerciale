@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Photo sanitaire BL</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <style>
+    body { background: #f7f8fb; }
+    .photo-page { max-width: 720px; margin: 0 auto; padding: 16px; }
+    .photo-header { margin-bottom: 16px; }
+    .line-photo-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+    .line-photo-card h3 { margin: 0 0 4px; font-size: 16px; }
+    .line-photo-card p { margin: 0 0 10px; color: #6b7280; }
+    .line-photo-card input { width: 100%; margin-bottom: 10px; }
+  </style>
+</head>
+<body>
+  <main class="photo-page">
+    <section class="photo-header">
+      <h1>Photo sanitaire réception</h1>
+      <p id="purchase-label">Chargement...</p>
+      <div id="photo-feedback" class="page-feedback hidden"></div>
+    </section>
+    <section id="lines-container"></section>
+  </main>
+  <script src="./js/config.js"></script>
+  <script src="./js/photo-bl.js?v=1"></script>
+</body>
+</html>
