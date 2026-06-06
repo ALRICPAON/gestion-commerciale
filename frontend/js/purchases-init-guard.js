@@ -191,7 +191,19 @@
     }
   }
 
+  function attachFallbackRowActions() {
+    const tableBody = document.getElementById("purchases-table-body");
+    if (!tableBody || tableBody.dataset.initGuardActions === "1") return;
+    tableBody.dataset.initGuardActions = "1";
+    tableBody.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-action='open-purchase']");
+      if (!button?.dataset?.id) return;
+      window.location.href = `./purchase-detail.html?id=${encodeURIComponent(button.dataset.id)}`;
+    });
+  }
+
   function scheduleCheck() {
+    attachFallbackRowActions();
     window.setTimeout(() => {
       ensurePurchasesInitialized().catch((error) => {
         console.error("[Achats] Erreur inattendue garde init :", error);
