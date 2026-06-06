@@ -28,7 +28,10 @@ async function apiFetch(path, options = {}) {
   if (!(options.body instanceof FormData)) headers["Content-Type"] = "application/json";
   const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Erreur API");
+  if (!response.ok) {
+    const message = data.error || (response.status >= 500 ? "Erreur serveur pendant l'upload" : "Erreur API");
+    throw new Error(message);
+  }
   return data;
 }
 
@@ -52,19 +55,35 @@ function renderLines(data) {
   `).join("");
 }
 
-async function uploadPhoto(lineId, input) {
-  const file = input.files?.[0];
+async function uploadPhoto(lineId, input, button) {
+  const file = input?.files?.[0];
   if (!file) {
     showFeedback("Choisis une photo avant l'envoi", true);
     return;
   }
-  const form = new FormData();
-  form.append("photo", file);
-  await apiFetch(`/api/purchase-lines/${encodeURIComponent(lineId)}/sanitary-photos`, {
-    method: "POST",
-    body: form,
-  });
-  showFeedback("Photo sanitaire enregistrée");
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Envoi en cours...";
+  }
+
+  try {
+    const form = new FormData();
+    form.append("photo", file);
+    await apiFetch(`/api/purchase-lines/${encodeURIComponent(lineId)}/sanitary-photos`, {
+      method: "POST",
+      body: form,
+    });
+    input.value = "";
+    showFeedback("Photo sanitaire enregistrée. Elle sera visible dans la fiche ligne achat/réception.");
+  } catch (error) {
+    showFeedback(`${error.message || "Upload impossible"}. Réessaie ou contacte un administrateur.`, true);
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Envoyer photo sanitaire";
+    }
+  }
 }
 
 async function init() {
@@ -81,7 +100,7 @@ linesContainer.addEventListener("click", (event) => {
   if (!button) return;
   const card = button.closest(".line-photo-card");
   const input = card?.querySelector("input[type='file']");
-  uploadPhoto(button.dataset.id, input).catch((error) => showFeedback(error.message, true));
+  uploadPhoto(button.dataset.id, input, button);
 });
 
 init();

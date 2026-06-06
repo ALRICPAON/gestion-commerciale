@@ -195,11 +195,11 @@ router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbCo
       `INSERT INTO purchase_line_metadata(
         id, purchase_line_id, meta_key, meta_value, sanitary_photo_url, sanitary_photo_urls, updated_at
        )
-       VALUES(gen_random_uuid(), $1, 'gc_line', '{}'::jsonb, $2, jsonb_build_array($2), NOW())
+       VALUES(gen_random_uuid(), $1, 'gc_line', '{}'::jsonb, $2::text, jsonb_build_array($2::text), NOW())
        ON CONFLICT(purchase_line_id, meta_key)
        DO UPDATE SET
          sanitary_photo_url = EXCLUDED.sanitary_photo_url,
-         sanitary_photo_urls = COALESCE(purchase_line_metadata.sanitary_photo_urls, '[]'::jsonb) || jsonb_build_array($2),
+         sanitary_photo_urls = COALESCE(purchase_line_metadata.sanitary_photo_urls, '[]'::jsonb) || jsonb_build_array($2::text),
          updated_at = NOW()`,
       [req.params.id, url]
     );
