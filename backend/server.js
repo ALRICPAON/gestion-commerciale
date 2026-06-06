@@ -23,6 +23,8 @@ const customerInvoicesRoutes = require('./routes/customerInvoices');
 const customerCreditNotesRoutes = require('./routes/customerCreditNotes');
 const pdfDocumentsRoutes = require('./routes/pdfDocuments');
 const customerPriceListsRoutes = require('./routes/customerPriceLists');
+const purchaseReceptionUpgradeRoutes = require('./routes/purchaseReceptionUpgrade');
+const supplierInvoicesRoutes = require('./routes/supplierInvoices');
 const purchasesRoutes = require('./routes/purchases');
 const saleUnitNormalizerRoutes = require('./routes/saleUnitNormalizer');
 const deliveryNoteValidationForcedRoutes = require('./routes/deliveryNoteValidationForced');
@@ -44,8 +46,10 @@ const transformationsRoutes = require('./routes/transformations');
 const app = express();
 const PORT = process.env.PORT || 3002;
 const STORE_LOGOS_DIR = path.join(__dirname, 'uploads', 'store-logos');
+const SANITARY_PHOTOS_DIR = path.join(__dirname, 'uploads', 'sanitary-photos');
 
 fs.mkdirSync(STORE_LOGOS_DIR, { recursive: true });
+fs.mkdirSync(SANITARY_PHOTOS_DIR, { recursive: true });
 
 if (!process.env.JWT_SECRET) {
   console.error('JWT_SECRET manquant dans le fichier backend/.env');
@@ -125,6 +129,11 @@ app.use('/uploads/store-logos', express.static(STORE_LOGOS_DIR, {
   index: false,
   maxAge: '7d',
 }));
+app.use('/uploads/sanitary-photos', express.static(SANITARY_PHOTOS_DIR, {
+  fallthrough: false,
+  index: false,
+  maxAge: '7d',
+}));
 app.use(express.json());
 app.use('/api/login', loginRateLimiter);
 app.use('/api', apiRateLimiter);
@@ -141,6 +150,8 @@ app.use('/api', customerInvoicesRoutes);
 app.use('/api', customerCreditNotesRoutes);
 app.use('/api', pdfDocumentsRoutes);
 app.use('/api/customer-price-lists', customerPriceListsRoutes);
+app.use('/api', purchaseReceptionUpgradeRoutes);
+app.use('/api', supplierInvoicesRoutes);
 app.use('/api', purchasesRoutes);
 app.use('/api', saleUnitNormalizerRoutes);
 app.use('/api', deliveryNoteValidationForcedRoutes);
