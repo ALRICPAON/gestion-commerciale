@@ -10,6 +10,25 @@ ALTER TABLE purchases
   ADD COLUMN IF NOT EXISTS source_document_uploaded_at timestamptz,
   ADD COLUMN IF NOT EXISTS source_document_uploaded_by uuid;
 
+ALTER TABLE purchase_line_metadata
+  ADD COLUMN IF NOT EXISTS meta_value jsonb NOT NULL DEFAULT '{}'::jsonb,
+  ADD COLUMN IF NOT EXISTS latin_name text,
+  ADD COLUMN IF NOT EXISTS fao_zone text,
+  ADD COLUMN IF NOT EXISTS sous_zone text,
+  ADD COLUMN IF NOT EXISTS fishing_gear text,
+  ADD COLUMN IF NOT EXISTS production_method text,
+  ADD COLUMN IF NOT EXISTS allergens text,
+  ADD COLUMN IF NOT EXISTS origin_label text,
+  ADD COLUMN IF NOT EXISTS supplier_lot_number text,
+  ADD COLUMN IF NOT EXISTS dlc date,
+  ADD COLUMN IF NOT EXISTS sanitary_photo_url text,
+  ADD COLUMN IF NOT EXISTS sanitary_photo_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS notes text,
+  ADD COLUMN IF NOT EXISTS updated_at timestamptz NOT NULL DEFAULT now();
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_purchase_line_metadata_line_key
+  ON purchase_line_metadata(purchase_line_id, meta_key);
+
 DO $$
 DECLARE
   constraint_record record;
