@@ -31,8 +31,20 @@ const documentUpload = multer({
   },
 });
 
+const sanitaryPhotoStorage = multer.diskStorage({
+  destination(req, file, cb) {
+    cb(null, SANITARY_PHOTOS_ROOT);
+  },
+  filename(req, file, cb) {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const safeExt = ALLOWED_IMAGE_EXTENSIONS.has(ext) ? ext : '.jpg';
+    const unique = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
+    cb(null, `sanitary-${unique}${safeExt}`);
+  },
+});
+
 const sanitaryPhotoUpload = multer({
-  dest: SANITARY_PHOTOS_ROOT,
+  storage: sanitaryPhotoStorage,
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter(req, file, cb) {
     const ext = path.extname(file.originalname || '').toLowerCase();
@@ -42,6 +54,13 @@ const sanitaryPhotoUpload = multer({
     return cb(null, true);
   },
 });
+
+function removeUploadedFile(file) {
+  if (!file?.path) return;
+  fs.unlink(file.path, (error) => {
+    if (error) console.warn('Impossible de supprimer le fichier upload orphelin :', file.path, error.message);
+  });
+}
 
 function normalizePriceUnit(v) {
   return ['kg', 'piece', 'colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg';
@@ -138,11 +157,13 @@ router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbCo
 
     if (!line.rows.length) {
       await client.query('ROLLBACK');
+      removeUploadedFile(req.file);
       return res.status(404).json({ error: 'Ligne achat introuvable' });
     }
 
     if (['closed', 'cancelled'].includes(line.rows[0].status)) {
       await client.query('ROLLBACK');
+      removeUploadedFile(req.file);
       return res.status(400).json({ error: 'Achat verrouille' });
     }
 
@@ -164,7 +185,14 @@ router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbCo
     return res.status(201).json({ ok: true, url });
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('Erreur upload photo sanitaire :', error);
+    removeUploadedFile(req.file);
+    console.error('Erreur upload photo sanitaire :', {
+      purchase_line_id: req.params.id,
+      store_id: req.user?.store_id,
+      uploaded_file: req.file?.path,
+      message: error.message,
+      stack: error.stack,
+    });
     return res.status(500).json({ error: 'Erreur upload photo sanitaire' });
   } finally {
     client.release();
