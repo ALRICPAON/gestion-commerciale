@@ -13,10 +13,10 @@
     viewer.className = "purchase-photo-viewer hidden";
     viewer.innerHTML = `
       <div class="purchase-photo-viewer-dialog" role="dialog" aria-modal="true" aria-label="Photo sanitaire agrandie">
-        <button type="button" class="purchase-photo-viewer-close" data-action="close" aria-label="Fermer">×</button>
-        <button type="button" class="purchase-photo-viewer-nav purchase-photo-viewer-prev" data-action="prev" aria-label="Photo précédente">‹</button>
+        <button type="button" class="purchase-photo-viewer-close" data-action="close" aria-label="Fermer">&times;</button>
+        <button type="button" class="purchase-photo-viewer-nav purchase-photo-viewer-prev" data-action="prev" aria-label="Photo precedente">&lsaquo;</button>
         <img class="purchase-photo-viewer-img" src="" alt="Photo sanitaire agrandie" />
-        <button type="button" class="purchase-photo-viewer-nav purchase-photo-viewer-next" data-action="next" aria-label="Photo suivante">›</button>
+        <button type="button" class="purchase-photo-viewer-nav purchase-photo-viewer-next" data-action="next" aria-label="Photo suivante">&rsaquo;</button>
         <div class="purchase-photo-viewer-counter"></div>
       </div>
     `;
