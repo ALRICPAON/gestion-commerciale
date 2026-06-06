@@ -6,12 +6,30 @@
 
   if (!token || !API_BASE || !purchaseId) return;
 
+  const MIME_EXTENSIONS = {
+    "application/pdf": ".pdf",
+    "application/vnd.ms-excel": ".xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+    "text/csv": ".csv",
+  };
+
   function filenameFromContentDisposition(header) {
     if (!header) return "document-fournisseur";
     const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
     if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
     const classicMatch = header.match(/filename="?([^";]+)"?/i);
     return classicMatch?.[1] || "document-fournisseur";
+  }
+
+  function extensionFromMime(contentType) {
+    const mime = String(contentType || "").split(";")[0].trim().toLowerCase();
+    return MIME_EXTENSIONS[mime] || "";
+  }
+
+  function ensureFilenameExtension(fileName, contentType) {
+    const cleanName = fileName || "document-fournisseur";
+    if (/\.[a-z0-9]{2,5}$/i.test(cleanName)) return cleanName;
+    return `${cleanName}${extensionFromMime(contentType) || ".pdf"}`;
   }
 
   function revokeLater(url) {
@@ -32,9 +50,14 @@
         throw new Error(data.error || "Document fournisseur indisponible");
       }
 
-      const blob = await response.blob();
-      const blobUrl = URL.createObjectURL(blob);
-      const fileName = filenameFromContentDisposition(response.headers.get("Content-Disposition"));
+      const contentType = response.headers.get("Content-Type") || "application/octet-stream";
+      const fileName = ensureFilenameExtension(
+        filenameFromContentDisposition(response.headers.get("Content-Disposition")),
+        contentType
+      );
+      const rawBlob = await response.blob();
+      const typedBlob = rawBlob.type === contentType ? rawBlob : new Blob([rawBlob], { type: contentType });
+      const blobUrl = URL.createObjectURL(typedBlob);
 
       if (blankWindow) {
         blankWindow.document.title = fileName;
