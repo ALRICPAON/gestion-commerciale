@@ -15,6 +15,12 @@ const PURCHASE_DOCUMENTS_ROOT = path.join(__dirname, '..', 'uploads', 'purchase-
 const SANITARY_PHOTOS_ROOT = path.join(__dirname, '..', 'uploads', 'sanitary-photos');
 const ALLOWED_IMPORT_EXTENSIONS = new Set(['.xlsx', '.xls', '.csv', '.pdf']);
 const ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const DOCUMENT_MIME_TYPES = {
+  '.csv': 'text/csv; charset=utf-8',
+  '.pdf': 'application/pdf',
+  '.xls': 'application/vnd.ms-excel',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
 
 fs.mkdirSync(PURCHASE_DOCUMENTS_ROOT, { recursive: true });
 fs.mkdirSync(SANITARY_PHOTOS_ROOT, { recursive: true });
@@ -60,6 +66,17 @@ function removeUploadedFile(file) {
   fs.unlink(file.path, (error) => {
     if (error) console.warn('Impossible de supprimer le fichier upload orphelin :', file.path, error.message);
   });
+}
+
+function supplierDocumentDownloadName(originalName) {
+  const ext = path.extname(originalName || '').toLowerCase();
+  const safeExt = ALLOWED_IMPORT_EXTENSIONS.has(ext) ? ext : '.pdf';
+  return `document-fournisseur${safeExt}`;
+}
+
+function supplierDocumentMimeType(originalName, storedMimeType) {
+  const ext = path.extname(originalName || '').toLowerCase();
+  return DOCUMENT_MIME_TYPES[ext] || storedMimeType || 'application/octet-stream';
 }
 
 function normalizePriceUnit(v) {
@@ -120,7 +137,7 @@ function sanitaryPhotoUrl(fileName) {
 router.get('/purchases/:id/document', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const result = await req.dbPool.query(
-      `SELECT source_document_storage_path, source_document_original_name
+      `SELECT source_document_storage_path, source_document_original_name, source_document_mime_type
        FROM purchases
        WHERE id = $1 AND store_id = $2
        LIMIT 1`,
@@ -131,9 +148,15 @@ router.get('/purchases/:id/document', authenticateToken, attachDbContext, async 
       return res.status(404).json({ error: 'Document achat introuvable' });
     }
 
-    const storagePath = result.rows[0].source_document_storage_path;
+    const document = result.rows[0];
+    const storagePath = document.source_document_storage_path;
     if (!fs.existsSync(storagePath)) return res.status(404).json({ error: 'Fichier achat introuvable' });
-    return res.download(storagePath, result.rows[0].source_document_original_name || 'document-fournisseur');
+
+    const downloadName = supplierDocumentDownloadName(document.source_document_original_name);
+    const contentType = supplierDocumentMimeType(document.source_document_original_name, document.source_document_mime_type);
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
+    return res.sendFile(storagePath);
   } catch (error) {
     console.error('Erreur document achat :', error);
     return res.status(500).json({ error: 'Erreur serveur document achat' });
