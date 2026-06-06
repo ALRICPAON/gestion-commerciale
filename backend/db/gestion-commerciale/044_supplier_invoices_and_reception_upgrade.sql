@@ -10,6 +10,27 @@ ALTER TABLE purchases
   ADD COLUMN IF NOT EXISTS source_document_uploaded_at timestamptz,
   ADD COLUMN IF NOT EXISTS source_document_uploaded_by uuid;
 
+CREATE TABLE IF NOT EXISTS purchase_line_metadata (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  purchase_line_id uuid NOT NULL REFERENCES purchase_lines(id) ON DELETE CASCADE,
+  meta_key text NOT NULL DEFAULT 'gc_line',
+  meta_value jsonb NOT NULL DEFAULT '{}'::jsonb,
+  latin_name text,
+  fao_zone text,
+  sous_zone text,
+  fishing_gear text,
+  production_method text,
+  allergens text,
+  origin_label text,
+  supplier_lot_number text,
+  dlc date,
+  sanitary_photo_url text,
+  sanitary_photo_urls jsonb NOT NULL DEFAULT '[]'::jsonb,
+  notes text,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
 ALTER TABLE purchase_line_metadata
   ADD COLUMN IF NOT EXISTS meta_value jsonb NOT NULL DEFAULT '{}'::jsonb,
   ADD COLUMN IF NOT EXISTS latin_name text,
