@@ -49,16 +49,37 @@ function renderLines(data) {
     <article class="line-photo-card" data-line-id="${line.id}">
       <h3>${line.article_plu || ""} ${line.article_name || line.supplier_label || "Ligne achat"}</h3>
       <p>Lot fournisseur : ${line.supplier_lot_number || "-"} • DLC : ${line.dlc ? new Date(line.dlc).toLocaleDateString("fr-FR") : "-"}</p>
-      <input type="file" accept="image/*" capture="environment" />
-      <button class="btn btn-primary" data-action="upload" data-id="${line.id}">Envoyer photo sanitaire</button>
+      <div class="photo-input-group">
+        <label>
+          Prendre une photo
+          <input type="file" accept="image/*" capture="environment" data-role="camera-photo" />
+        </label>
+        <label>
+          Choisir des photos
+          <input type="file" accept="image/*" multiple data-role="gallery-photos" />
+        </label>
+      </div>
+      <button class="btn btn-primary" data-action="upload" data-id="${line.id}">Envoyer photo(s) sanitaire(s)</button>
     </article>
   `).join("");
 }
 
-async function uploadPhoto(lineId, input, button) {
-  const file = input?.files?.[0];
-  if (!file) {
-    showFeedback("Choisis une photo avant l'envoi", true);
+function selectedFilesForCard(card) {
+  return Array.from(card?.querySelectorAll("input[type='file']") || [])
+    .flatMap((input) => Array.from(input.files || []))
+    .filter(Boolean);
+}
+
+function resetFileInputs(card) {
+  card?.querySelectorAll("input[type='file']").forEach((input) => {
+    input.value = "";
+  });
+}
+
+async function uploadPhoto(lineId, card, button) {
+  const files = selectedFilesForCard(card);
+  if (!files.length) {
+    showFeedback("Choisis ou prends au moins une photo avant l'envoi", true);
     return;
   }
 
@@ -69,19 +90,20 @@ async function uploadPhoto(lineId, input, button) {
 
   try {
     const form = new FormData();
-    form.append("photo", file);
-    await apiFetch(`/api/purchase-lines/${encodeURIComponent(lineId)}/sanitary-photos`, {
+    files.forEach((file) => form.append("photos", file));
+    const result = await apiFetch(`/api/purchase-lines/${encodeURIComponent(lineId)}/sanitary-photos`, {
       method: "POST",
       body: form,
     });
-    input.value = "";
-    showFeedback("Photo sanitaire enregistrée. Elle sera visible dans la fiche ligne achat/réception.");
+    resetFileInputs(card);
+    const uploadedCount = Array.isArray(result.urls) ? result.urls.length : files.length;
+    showFeedback(`${uploadedCount} photo(s) sanitaire(s) enregistrée(s). Elles seront visibles dans la fiche ligne achat/réception.`);
   } catch (error) {
-    showFeedback(`${error.message || "Upload impossible"}. Réessaie ou contacte un administrateur.`, true);
+    showFeedback(`${error.message || "Upload impossible"}. Vérifie la photo puis réessaie ou contacte un administrateur.`, true);
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = "Envoyer photo sanitaire";
+      button.textContent = "Envoyer photo(s) sanitaire(s)";
     }
   }
 }
@@ -99,8 +121,7 @@ linesContainer.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action='upload']");
   if (!button) return;
   const card = button.closest(".line-photo-card");
-  const input = card?.querySelector("input[type='file']");
-  uploadPhoto(button.dataset.id, input, button);
+  uploadPhoto(button.dataset.id, card, button);
 });
 
 init();
