@@ -1,0 +1,105 @@
+.supplier-invoices-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.supplier-invoices-page .form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.supplier-invoices-page .form-group-span-2 {
+  grid-column: span 2;
+}
+
+.supplier-invoices-page .detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.supplier-invoices-page .detail-grid div {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+
+.supplier-invoices-page .detail-grid span {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.supplier-invoices-page .invoice-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.supplier-invoices-page .status-invoice_difference,
+.supplier-invoices-page .status-pennylane_error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.supplier-invoices-page .status-matched,
+.supplier-invoices-page .status-invoice_validated,
+.supplier-invoices-page .status-cost_adjusted,
+.supplier-invoices-page .status-sent_to_pennylane {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.supplier-invoices-page tr.is-selected {
+  background: #eff6ff;
+}
+
+.supplier-invoices-page .detail-actions {
+  margin-top: 16px;
+}
+
+.supplier-invoices-page .payload-preview {
+  margin-top: 16px;
+  max-height: 320px;
+  overflow: auto;
+  background: #111827;
+  color: #f9fafb;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 12px;
+}
+
+.supplier-invoices-page .empty-state {
+  padding: 18px;
+  color: #6b7280;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+@media (max-width: 900px) {
+  .supplier-invoices-toolbar,
+  .supplier-invoices-page .page-actions-right {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .supplier-invoices-page .form-grid,
+  .supplier-invoices-page .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .supplier-invoices-page .form-group-span-2 {
+    grid-column: span 1;
+  }
+}
