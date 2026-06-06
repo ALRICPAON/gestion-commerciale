@@ -171,6 +171,57 @@ function sanitaryPhotoUrl(fileName) {
   return `/uploads/sanitary-photos/${fileName}`;
 }
 
+function isValidSanitaryPhotoUrl(value) {
+  const url = String(value || '').trim();
+  return Boolean(url) && (
+    url.startsWith('/uploads/sanitary-photos/') ||
+    url.startsWith('http://') ||
+    url.startsWith('https://')
+  );
+}
+
+function normalizeSanitaryPhotoUrls(rawUrls, primaryUrl = null, context = {}) {
+  const urls = [];
+  const addUrl = (value) => {
+    const url = String(value || '').trim();
+    if (!url) return;
+    if (!isValidSanitaryPhotoUrl(url)) {
+      console.error('Photo sanitaire ignoree: URL invalide', { ...context, url });
+      return;
+    }
+    if (!urls.includes(url)) urls.push(url);
+  };
+
+  addUrl(primaryUrl);
+
+  if (Array.isArray(rawUrls)) {
+    rawUrls.forEach(addUrl);
+    return urls;
+  }
+
+  if (typeof rawUrls === 'string') {
+    const trimmed = rawUrls.trim();
+    if (!trimmed) return urls;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        parsed.forEach(addUrl);
+      } else {
+        console.error('Photo sanitaire ignoree: sanitary_photo_urls JSON non-array', { ...context, value: rawUrls });
+      }
+    } catch (error) {
+      addUrl(trimmed);
+    }
+    return urls;
+  }
+
+  if (rawUrls !== null && rawUrls !== undefined) {
+    console.error('Photo sanitaire ignoree: sanitary_photo_urls non-array', { ...context, type: typeof rawUrls });
+  }
+
+  return urls;
+}
+
 router.get('/purchases/:id/document', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const result = await req.dbPool.query(
@@ -231,19 +282,36 @@ router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbCo
       return res.status(400).json({ error: 'Achat verrouille' });
     }
 
-    const urls = files.map((file) => sanitaryPhotoUrl(file.filename));
+    const urls = normalizeSanitaryPhotoUrls(
+      files.map((file) => sanitaryPhotoUrl(file.filename)),
+      null,
+      { purchase_line_id: req.params.id, store_id: req.user.store_id }
+    );
+
+    if (!urls.length) {
+      await client.query('ROLLBACK');
+      removeUploadedFiles(files);
+      return res.status(400).json({ error: 'Aucune photo valide' });
+    }
+
     const primaryUrl = urls[0];
     await client.query(
       `INSERT INTO purchase_line_metadata(
         id, purchase_line_id, meta_key, meta_value, sanitary_photo_url, sanitary_photo_urls, updated_at
        )
-       VALUES(gen_random_uuid(), $1, 'gc_line', '{}'::jsonb, $2::text, to_jsonb($3::text[]), NOW())
+       VALUES(gen_random_uuid(), $1, 'gc_line', '{}'::jsonb, $2::text, $3::jsonb, NOW())
        ON CONFLICT(purchase_line_id, meta_key)
        DO UPDATE SET
          sanitary_photo_url = COALESCE(purchase_line_metadata.sanitary_photo_url, EXCLUDED.sanitary_photo_url),
-         sanitary_photo_urls = COALESCE(purchase_line_metadata.sanitary_photo_urls, '[]'::jsonb) || to_jsonb($3::text[]),
+         sanitary_photo_urls = (
+           CASE
+             WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls) = 'array' THEN purchase_line_metadata.sanitary_photo_urls
+             WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url)
+             ELSE '[]'::jsonb
+           END
+         ) || EXCLUDED.sanitary_photo_urls,
          updated_at = NOW()`,
-      [req.params.id, primaryUrl, urls]
+      [req.params.id, primaryUrl, JSON.stringify(urls)]
     );
 
     await client.query('COMMIT');
@@ -490,7 +558,10 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
             allergens: line.allergens,
             origin_label: line.origin_label,
             sanitary_photo_url: line.sanitary_photo_url,
-            sanitary_photo_urls: line.sanitary_photo_urls || [],
+            sanitary_photo_urls: normalizeSanitaryPhotoUrls(line.sanitary_photo_urls, line.sanitary_photo_url, {
+              purchase_id: purchase.id,
+              purchase_line_id: line.id,
+            }),
           }),
         ]
       );
