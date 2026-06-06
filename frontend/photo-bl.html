@@ -12,7 +12,13 @@
     .line-photo-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
     .line-photo-card h3 { margin: 0 0 4px; font-size: 16px; }
     .line-photo-card p { margin: 0 0 10px; color: #6b7280; }
-    .line-photo-card input { width: 100%; margin-bottom: 10px; }
+    .photo-input-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 10px; }
+    .photo-input-group label { display: flex; flex-direction: column; gap: 6px; padding: 10px; border: 1px solid #dbe3ee; border-radius: 8px; font-size: 13px; font-weight: 600; background: #f8fafc; }
+    .line-photo-card input { width: 100%; font-size: 13px; }
+    .line-photo-card button { width: 100%; }
+    @media (max-width: 560px) {
+      .photo-input-group { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -25,6 +31,6 @@
     <section id="lines-container"></section>
   </main>
   <script src="./js/config.js"></script>
-  <script src="./js/photo-bl.js?v=2"></script>
+  <script src="./js/photo-bl.js?v=3"></script>
 </body>
 </html>
