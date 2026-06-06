@@ -21,6 +21,12 @@ const DOCUMENT_MIME_TYPES = {
   '.xls': 'application/vnd.ms-excel',
   '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 };
+const DOCUMENT_EXTENSIONS_BY_MIME = {
+  'application/pdf': '.pdf',
+  'application/vnd.ms-excel': '.xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
+  'text/csv': '.csv',
+};
 
 fs.mkdirSync(PURCHASE_DOCUMENTS_ROOT, { recursive: true });
 fs.mkdirSync(SANITARY_PHOTOS_ROOT, { recursive: true });
@@ -68,10 +74,41 @@ function removeUploadedFile(file) {
   });
 }
 
-function supplierDocumentDownloadName(originalName) {
-  const ext = path.extname(originalName || '').toLowerCase();
-  const safeExt = ALLOWED_IMPORT_EXTENSIONS.has(ext) ? ext : '.pdf';
-  return `document-fournisseur${safeExt}`;
+function removeUploadedFiles(files) {
+  files.forEach(removeUploadedFile);
+}
+
+function uploadedSanitaryFiles(req) {
+  if (Array.isArray(req.files)) return req.files;
+  if (req.files && typeof req.files === 'object') {
+    return Object.values(req.files).flat().filter(Boolean);
+  }
+  return req.file ? [req.file] : [];
+}
+
+function normalizeMimeType(mimeType) {
+  return String(mimeType || '').split(';')[0].trim().toLowerCase();
+}
+
+function extensionFromMimeType(mimeType) {
+  return DOCUMENT_EXTENSIONS_BY_MIME[normalizeMimeType(mimeType)] || '';
+}
+
+function sanitizeDownloadFilename(fileName) {
+  return String(fileName || '')
+    .replace(/[\\/\r\n\t]/g, ' ')
+    .replace(/"/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function supplierDocumentDownloadName(originalName, storedMimeType) {
+  const cleanOriginal = sanitizeDownloadFilename(originalName);
+  const originalExt = path.extname(cleanOriginal).toLowerCase();
+  if (cleanOriginal && ALLOWED_IMPORT_EXTENSIONS.has(originalExt)) return cleanOriginal;
+
+  const fallbackExt = extensionFromMimeType(storedMimeType) || '.pdf';
+  return `document-fournisseur${fallbackExt}`;
 }
 
 function supplierDocumentMimeType(originalName, storedMimeType) {
@@ -152,7 +189,7 @@ router.get('/purchases/:id/document', authenticateToken, attachDbContext, async 
     const storagePath = document.source_document_storage_path;
     if (!fs.existsSync(storagePath)) return res.status(404).json({ error: 'Fichier achat introuvable' });
 
-    const downloadName = supplierDocumentDownloadName(document.source_document_original_name);
+    const downloadName = supplierDocumentDownloadName(document.source_document_original_name, document.source_document_mime_type);
     const contentType = supplierDocumentMimeType(document.source_document_original_name, document.source_document_mime_type);
     res.setHeader('Content-Type', contentType);
     res.setHeader('Content-Disposition', `attachment; filename="${downloadName}"`);
@@ -163,10 +200,14 @@ router.get('/purchases/:id/document', authenticateToken, attachDbContext, async 
   }
 });
 
-router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbContext, requireAdminOrManager, sanitaryPhotoUpload.single('photo'), async (req, res) => {
+router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbContext, requireAdminOrManager, sanitaryPhotoUpload.fields([
+  { name: 'photo', maxCount: 1 },
+  { name: 'photos', maxCount: 12 },
+]), async (req, res) => {
   const client = await req.dbPool.connect();
+  const files = uploadedSanitaryFiles(req);
   try {
-    if (!req.file) return res.status(400).json({ error: 'Photo obligatoire' });
+    if (!files.length) return res.status(400).json({ error: 'Photo obligatoire' });
 
     await client.query('BEGIN');
     const line = await client.query(
@@ -180,39 +221,40 @@ router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbCo
 
     if (!line.rows.length) {
       await client.query('ROLLBACK');
-      removeUploadedFile(req.file);
+      removeUploadedFiles(files);
       return res.status(404).json({ error: 'Ligne achat introuvable' });
     }
 
     if (['closed', 'cancelled'].includes(line.rows[0].status)) {
       await client.query('ROLLBACK');
-      removeUploadedFile(req.file);
+      removeUploadedFiles(files);
       return res.status(400).json({ error: 'Achat verrouille' });
     }
 
-    const url = sanitaryPhotoUrl(req.file.filename);
+    const urls = files.map((file) => sanitaryPhotoUrl(file.filename));
+    const primaryUrl = urls[0];
     await client.query(
       `INSERT INTO purchase_line_metadata(
         id, purchase_line_id, meta_key, meta_value, sanitary_photo_url, sanitary_photo_urls, updated_at
        )
-       VALUES(gen_random_uuid(), $1, 'gc_line', '{}'::jsonb, $2::text, jsonb_build_array($2::text), NOW())
+       VALUES(gen_random_uuid(), $1, 'gc_line', '{}'::jsonb, $2::text, to_jsonb($3::text[]), NOW())
        ON CONFLICT(purchase_line_id, meta_key)
        DO UPDATE SET
-         sanitary_photo_url = EXCLUDED.sanitary_photo_url,
-         sanitary_photo_urls = COALESCE(purchase_line_metadata.sanitary_photo_urls, '[]'::jsonb) || jsonb_build_array($2::text),
+         sanitary_photo_url = COALESCE(purchase_line_metadata.sanitary_photo_url, EXCLUDED.sanitary_photo_url),
+         sanitary_photo_urls = COALESCE(purchase_line_metadata.sanitary_photo_urls, '[]'::jsonb) || to_jsonb($3::text[]),
          updated_at = NOW()`,
-      [req.params.id, url]
+      [req.params.id, primaryUrl, urls]
     );
 
     await client.query('COMMIT');
-    return res.status(201).json({ ok: true, url });
+    return res.status(201).json({ ok: true, url: primaryUrl, urls });
   } catch (error) {
     await client.query('ROLLBACK');
-    removeUploadedFile(req.file);
+    removeUploadedFiles(files);
     console.error('Erreur upload photo sanitaire :', {
       purchase_line_id: req.params.id,
       store_id: req.user?.store_id,
-      uploaded_file: req.file?.path,
+      uploaded_files: files.map((file) => file.path),
       message: error.message,
       stack: error.stack,
     });
