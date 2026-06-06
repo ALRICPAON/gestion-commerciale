@@ -61,6 +61,49 @@ async function resolveArticle(client, storeId, { article_id, article_plu }) {
   }
   return null;
 }
+function isValidSanitaryPhotoUrl(value) {
+  const url = String(value || '').trim();
+  return Boolean(url) && (url.startsWith('/uploads/sanitary-photos/') || url.startsWith('http://') || url.startsWith('https://'));
+}
+function normalizeSanitaryPhotoUrls(rawUrls, primaryUrl = null, context = {}) {
+  const urls = [];
+  const addUrl = (value) => {
+    const url = String(value || '').trim();
+    if (!url) return;
+    if (!isValidSanitaryPhotoUrl(url)) {
+      console.error('Photo sanitaire ignoree: URL invalide', { ...context, url });
+      return;
+    }
+    if (!urls.includes(url)) urls.push(url);
+  };
+  addUrl(primaryUrl);
+  if (Array.isArray(rawUrls)) { rawUrls.forEach(addUrl); return urls; }
+  if (typeof rawUrls === 'string') {
+    const trimmed = rawUrls.trim();
+    if (!trimmed) return urls;
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) parsed.forEach(addUrl);
+      else console.error('Photo sanitaire ignoree: sanitary_photo_urls JSON non-array', { ...context, value: rawUrls });
+    } catch (error) {
+      addUrl(trimmed);
+    }
+    return urls;
+  }
+  if (rawUrls !== null && rawUrls !== undefined) {
+    console.error('Photo sanitaire ignoree: sanitary_photo_urls non-array', { ...context, type: typeof rawUrls });
+  }
+  return urls;
+}
+function sanitizePurchaseLine(line) {
+  return {
+    ...line,
+    sanitary_photo_urls: normalizeSanitaryPhotoUrls(line.sanitary_photo_urls, line.sanitary_photo_url, {
+      purchase_id: line.purchase_id,
+      purchase_line_id: line.id,
+    }),
+  };
+}
 
 router.get('/purchases', authenticateToken, attachDbContext, async (req,res)=>{
   try {
@@ -72,8 +115,8 @@ router.get('/purchases', authenticateToken, attachDbContext, async (req,res)=>{
     if(date_to){params.push(date_to); where+=` AND p.purchase_date <= $${params.length}::date`;}
     params.push(Math.min(Number(limit)||500,2000));
     const r=await req.dbPool.query(`SELECT p.*, s.name supplier_name, COUNT(pl.id) line_count FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id LEFT JOIN purchase_lines pl ON pl.purchase_id=p.id ${where} GROUP BY p.id,s.name ORDER BY p.created_at DESC LIMIT $${params.length}`, params);
-    res.json(r.rows);
-  } catch(e){ console.error(e); res.status(500).json({error:'Erreur serveur achats'}); }
+    res.json(Array.isArray(r.rows) ? r.rows : []);
+  } catch(e){ console.error('Erreur liste achats :', e); res.status(500).json({error:'Erreur serveur achats'}); }
 });
 
 router.post('/purchases', authenticateToken, attachDbContext, requireAdminOrManager, async (req,res)=>{
@@ -93,9 +136,9 @@ router.get('/purchases/:id', authenticateToken, attachDbContext, async (req,res)
   try{
     const p=await req.dbPool.query('SELECT p.*, s.name supplier_name FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id WHERE p.id=$1 AND p.store_id=$2 LIMIT 1',[req.params.id,req.user.store_id]);
     if(!p.rows.length) return res.status(404).json({error:'Achat introuvable'});
-    const l=await req.dbPool.query(`SELECT pl.*, a.plu article_plu, a.designation article_name, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number, plm.sanitary_photo_url, plm.sanitary_photo_urls, plm.notes metadata_notes FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' WHERE pl.purchase_id=$1 ORDER BY pl.line_number`,[req.params.id]);
-    res.json({purchase:p.rows[0], lines:l.rows});
-  }catch(e){console.error(e); res.status(500).json({error:'Erreur détail achat'});}
+    const l=await req.dbPool.query(`SELECT pl.*, a.plu article_plu, a.designation article_name, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number, plm.sanitary_photo_url, CASE WHEN jsonb_typeof(plm.sanitary_photo_urls) = 'array' THEN plm.sanitary_photo_urls WHEN plm.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(plm.sanitary_photo_url) ELSE '[]'::jsonb END AS sanitary_photo_urls, plm.notes metadata_notes FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' WHERE pl.purchase_id=$1 AND pl.store_id=$2 ORDER BY pl.line_number`,[req.params.id,req.user.store_id]);
+    res.json({purchase:p.rows[0], lines:l.rows.map(sanitizePurchaseLine)});
+  }catch(e){console.error('Erreur détail achat :', e); res.status(500).json({error:'Erreur détail achat'});}
 });
 
 router.patch('/purchases/:id', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
@@ -141,9 +184,12 @@ router.patch('/purchase-lines/:id', authenticateToken, attachDbContext, requireA
     const merged={...chk.rows[0],...req.body, price_unit:normalizePriceUnit(req.body.price_unit||chk.rows[0].price_unit)};
     const amount=lineAmount(merged, chk.rows[0].purchase_status==='received');
     const r=await client.query(`UPDATE purchase_lines SET article_id=$1, ordered_colis=$2, ordered_pieces=$3, ordered_quantity=$4, received_colis=$5, received_pieces=$6, received_quantity=$7, unit_price_ex_vat=$8, price_unit=$9, line_amount_ex_vat=$10, updated_at=NOW() WHERE id=$11 RETURNING *`,[article.id,req.body.ordered_colis??chk.rows[0].ordered_colis,req.body.ordered_pieces??chk.rows[0].ordered_pieces,req.body.ordered_quantity??chk.rows[0].ordered_quantity,req.body.received_colis??chk.rows[0].received_colis,req.body.received_pieces??chk.rows[0].received_pieces,req.body.received_quantity??chk.rows[0].received_quantity,req.body.unit_price_ex_vat??chk.rows[0].unit_price_ex_vat,merged.price_unit,amount,req.params.id]);
-    await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,latin_name,fao_zone,sous_zone,fishing_gear,allergens,origin_label,supplier_lot_number,dlc,sanitary_photo_url,sanitary_photo_urls,notes,updated_at) VALUES(gen_random_uuid(),$1,'gc_line','{}'::jsonb,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::jsonb,'[]'::jsonb),$12,NOW()) ON CONFLICT(purchase_line_id,meta_key) DO UPDATE SET latin_name=EXCLUDED.latin_name,fao_zone=EXCLUDED.fao_zone,sous_zone=EXCLUDED.sous_zone,fishing_gear=EXCLUDED.fishing_gear,allergens=EXCLUDED.allergens,origin_label=EXCLUDED.origin_label,supplier_lot_number=EXCLUDED.supplier_lot_number,dlc=EXCLUDED.dlc,sanitary_photo_url=EXCLUDED.sanitary_photo_url,sanitary_photo_urls=EXCLUDED.sanitary_photo_urls,notes=EXCLUDED.notes,updated_at=NOW()`,[req.params.id,req.body.latin_name||null,req.body.fao_zone||null,req.body.sous_zone||null,req.body.fishing_gear||null,req.body.allergens||null,req.body.origin_label||null,req.body.supplier_lot_number||null,req.body.dlc||null,req.body.sanitary_photo_url||null,JSON.stringify(req.body.sanitary_photo_urls||[]),req.body.metadata_notes||null]);
+    const hasPhotoUrls = Object.prototype.hasOwnProperty.call(req.body, 'sanitary_photo_urls');
+    const hasPrimaryPhoto = Boolean(toNullableString(req.body.sanitary_photo_url));
+    const normalizedPhotoUrls = hasPhotoUrls || hasPrimaryPhoto ? normalizeSanitaryPhotoUrls(req.body.sanitary_photo_urls, req.body.sanitary_photo_url, { purchase_line_id: req.params.id }) : null;
+    await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,latin_name,fao_zone,sous_zone,fishing_gear,allergens,origin_label,supplier_lot_number,dlc,sanitary_photo_url,sanitary_photo_urls,notes,updated_at) VALUES(gen_random_uuid(),$1,'gc_line','{}'::jsonb,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,NOW()) ON CONFLICT(purchase_line_id,meta_key) DO UPDATE SET latin_name=EXCLUDED.latin_name,fao_zone=EXCLUDED.fao_zone,sous_zone=EXCLUDED.sous_zone,fishing_gear=EXCLUDED.fishing_gear,allergens=EXCLUDED.allergens,origin_label=EXCLUDED.origin_label,supplier_lot_number=EXCLUDED.supplier_lot_number,dlc=EXCLUDED.dlc,sanitary_photo_url=COALESCE(EXCLUDED.sanitary_photo_url,purchase_line_metadata.sanitary_photo_url),sanitary_photo_urls=COALESCE(EXCLUDED.sanitary_photo_urls,CASE WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls)='array' THEN purchase_line_metadata.sanitary_photo_urls WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url) ELSE '[]'::jsonb END),notes=EXCLUDED.notes,updated_at=NOW()`,[req.params.id,req.body.latin_name||null,req.body.fao_zone||null,req.body.sous_zone||null,req.body.fishing_gear||null,req.body.allergens||null,req.body.origin_label||null,req.body.supplier_lot_number||null,req.body.dlc||null,toNullableString(req.body.sanitary_photo_url),normalizedPhotoUrls ? JSON.stringify(normalizedPhotoUrls) : null,req.body.metadata_notes||null]);
     await recomputePurchaseTotals(client, chk.rows[0].purchase_id); await client.query('COMMIT'); res.json({ok:true,line:r.rows[0],article});
-  }catch(e){await client.query('ROLLBACK'); console.error(e); res.status(500).json({error:'Erreur modification ligne achat'});} finally{client.release();}
+  }catch(e){await client.query('ROLLBACK'); console.error('Erreur modification ligne achat :', e); res.status(500).json({error:'Erreur modification ligne achat'});} finally{client.release();}
 });
 
 router.delete('/purchase-lines/:id', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
@@ -190,7 +236,7 @@ router.post('/purchases/:id/duplicate', authenticateToken, attachDbContext, requ
     const lines=await client.query('SELECT * FROM purchase_lines WHERE purchase_id=$1 ORDER BY line_number',[p.id]);
     for(const line of lines.rows){
       const ins=await client.query(`INSERT INTO purchase_lines(id,purchase_id,store_id,client_key,supplier_id,line_number,article_id,supplier_reference,supplier_label,ordered_colis,ordered_pieces,ordered_quantity,unit_price_ex_vat,line_amount_ex_vat,price_unit,line_status) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'pending') RETURNING id`,[purchase.rows[0].id,line.store_id,line.client_key,line.supplier_id,line.line_number,line.article_id,line.supplier_reference,line.supplier_label,line.ordered_colis,line.ordered_pieces,line.ordered_quantity,line.unit_price_ex_vat,line.line_amount_ex_vat,line.price_unit]);
-      await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,dlc,latin_name,fao_zone,sous_zone,fishing_gear,production_method,allergens,origin_label,supplier_lot_number,sanitary_photo_url,sanitary_photo_urls,notes) SELECT gen_random_uuid(),$1,meta_key,meta_value,dlc,latin_name,fao_zone,sous_zone,fishing_gear,production_method,allergens,origin_label,supplier_lot_number,sanitary_photo_url,sanitary_photo_urls,notes FROM purchase_line_metadata WHERE purchase_line_id=$2`,[ins.rows[0].id,line.id]);
+      await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,dlc,latin_name,fao_zone,sous_zone,fishing_gear,production_method,allergens,origin_label,supplier_lot_number,sanitary_photo_url,sanitary_photo_urls,notes) SELECT gen_random_uuid(),$1,meta_key,meta_value,dlc,latin_name,fao_zone,sous_zone,fishing_gear,production_method,allergens,origin_label,supplier_lot_number,sanitary_photo_url,CASE WHEN jsonb_typeof(sanitary_photo_urls)='array' THEN sanitary_photo_urls WHEN sanitary_photo_url IS NOT NULL THEN jsonb_build_array(sanitary_photo_url) ELSE '[]'::jsonb END,notes FROM purchase_line_metadata WHERE purchase_line_id=$2`,[ins.rows[0].id,line.id]);
     }
     await recomputePurchaseTotals(client,purchase.rows[0].id);
     await client.query('COMMIT');
