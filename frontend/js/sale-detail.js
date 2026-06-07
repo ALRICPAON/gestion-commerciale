@@ -14,6 +14,7 @@ let stockItems = [];
 let lotItems = [];
 let editingLineId = null;
 const pluSearchTimers = new Map();
+const stockOnlyToggleId = 'stock-article-available-only-toggle';
 
 function n(v, f = 0) { const x = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(x) ? x : f; }
 function clean(v) { return String(v ?? '').trim(); }
@@ -46,6 +47,49 @@ function editable() {
   return false;
 }
 function canValidateInBl() { return sale?.document_type === 'ORDER' && sale?.status === 'draft'; }
+function stockOnlyArticles() { return els.stockOnly ? els.stockOnly.checked : true; }
+
+function ensureStockSearchToggle() {
+  if (!els.stockSearch || els.stockOnly) return;
+  const existing = document.getElementById(stockOnlyToggleId);
+  if (existing) {
+    els.stockOnly = existing;
+    return;
+  }
+  const wrapper = document.createElement('label');
+  wrapper.className = 'helper-text';
+  wrapper.style.display = 'inline-flex';
+  wrapper.style.alignItems = 'center';
+  wrapper.style.gap = '8px';
+  wrapper.style.marginTop = '8px';
+  wrapper.innerHTML = `<input type="checkbox" id="${stockOnlyToggleId}" checked> Articles en stock uniquement`;
+  els.stockSearch.closest('.form-group')?.appendChild(wrapper);
+  els.stockOnly = wrapper.querySelector('input');
+  els.stockOnly?.addEventListener('change', () => stockSearch(clean(els.stockSearch.value)).catch((e) => fb(els.lf, e.message, true)));
+}
+
+async function fetchStockArticles(search = '', availableOnly = true) {
+  const q = new URLSearchParams({ limit: '1000', available_only: availableOnly ? 'true' : 'false' });
+  if (search) q.set('search', search);
+  const data = await api(`/api/stock?${q.toString()}`).catch(() => []);
+  return (Array.isArray(data) ? data : []).map(normalizeArticle);
+}
+
+async function fetchActiveArticles(search = '') {
+  const data = search
+    ? await api(`/api/articles/search?q=${encodeURIComponent(search)}`).catch(() => [])
+    : await api('/api/articles?active=true&limit=200').catch(() => []);
+  return (Array.isArray(data) ? data : []).map(normalizeArticle);
+}
+
+async function fetchActiveArticlesWithStock(search = '') {
+  const [articles, stockRows] = await Promise.all([
+    fetchActiveArticles(search),
+    fetchStockArticles(search, false),
+  ]);
+  const stockByArticle = new Map(stockRows.map((item) => [String(item.article_id), item]));
+  return articles.map((article) => ({ ...article, ...(stockByArticle.get(String(article.article_id)) || {}) }));
+}
 
 function renderTopbar() {
   if (els.user) els.user.textContent = sessionUser.email || 'Utilisateur';
@@ -128,35 +172,29 @@ function computeRow(row) {
 }
 
 function renderStockSearchTable() {
-  const negoce = isNegoce();
-  if (els.stockTitle) els.stockTitle.textContent = negoce ? 'Rechercher un article négoce' : 'Sélectionner un article en stock';
-  if (els.stockSubtitle) els.stockSubtitle.textContent = negoce ? 'Articles actifs du magasin, stock non bloquant' : 'Articles disponibles en stock, double clic pour choisir';
-  if (els.stockSearch) els.stockSearch.placeholder = negoce ? 'PLU, désignation, référence' : 'PLU, désignation, référence, nom latin';
+  ensureStockSearchToggle();
+  const onlyStock = stockOnlyArticles();
+  if (els.stockTitle) els.stockTitle.textContent = 'Rechercher un article';
+  if (els.stockSubtitle) els.stockSubtitle.textContent = onlyStock ? 'Articles avec stock positif, double clic pour choisir' : 'Tous les articles actifs, y compris hors stock';
+  if (els.stockSearch) els.stockSearch.placeholder = 'PLU, désignation, référence, nom latin';
   if (els.stockHead) {
-    els.stockHead.innerHTML = negoce
-      ? '<tr><th>PLU</th><th>Désignation</th><th>Famille</th><th>Tarif client</th><th>Tarif 1</th><th>Tarif 2</th><th>Tarif 3</th><th>Unité</th></tr>'
-      : '<tr><th>PLU</th><th>Désignation</th><th>Stock</th><th>Lot FIFO</th><th>DLC FIFO</th><th>Tarif client</th><th>Tarif 1</th><th>Tarif 2</th></tr>';
+    els.stockHead.innerHTML = '<tr><th>PLU</th><th>Désignation</th><th>Stock</th><th>Statut</th><th>Lot FIFO</th><th>DLC FIFO</th><th>Tarif client</th><th>Tarif 1</th></tr>';
   }
   els.stockBody.innerHTML = stockItems.map((a) => {
-    if (negoce) {
-      return `<tr data-article-id="${a.article_id}"><td>${esc(a.plu)}</td><td>${esc(a.designation)}</td><td>${esc(a.family_name || a.family_code || '-')}</td><td>${money(priceFor(a))}</td><td>${money(a.sale_price_level_1_ht)}</td><td>${money(a.sale_price_level_2_ht)}</td><td>${money(a.sale_price_level_3_ht)}</td><td>${esc(a.sale_unit || a.unit || 'kg')}</td></tr>`;
-    }
-    return `<tr data-article-id="${a.article_id}"><td>${esc(a.plu)}</td><td>${esc(a.designation)}</td><td>${qty(a.stock_quantity)}</td><td>${esc(a.lot_code || a.supplier_lot_number || '-')}</td><td>${sdate(a.next_dlc || a.next_lot_dlc)}</td><td>${money(priceFor(a))}</td><td>${money(a.sale_price_level_1_ht)}</td><td>${money(a.sale_price_level_2_ht)}</td></tr>`;
+    const hasStock = n(a.stock_quantity) > 0;
+    return `<tr data-article-id="${a.article_id}"><td>${esc(a.plu)}</td><td>${esc(a.designation)}</td><td>${hasStock ? qty(a.stock_quantity) : '0,000'}</td><td>${hasStock ? 'En stock' : 'Hors stock'}</td><td>${esc(a.lot_code || a.supplier_lot_number || '-')}</td><td>${sdate(a.next_dlc || a.next_lot_dlc)}</td><td>${money(priceFor(a))}</td><td>${money(a.sale_price_level_1_ht ?? a.sale_price_ex_vat)}</td></tr>`;
   }).join('') || '<tr><td colspan="8">Aucun article.</td></tr>';
 }
 
 async function stockSearch(search = '') {
-  if (isNegoce()) {
-    const data = search ? await api(`/api/articles/search?q=${encodeURIComponent(search)}`) : await api('/api/articles?active=true&limit=200');
-    stockItems = (Array.isArray(data) ? data : []).map(normalizeArticle);
-  } else {
-    const q = new URLSearchParams({ limit: '200', available_only: 'true' });
-    if (search) q.set('search', search);
-    stockItems = (await api(`/api/stock?${q.toString()}`)).map(normalizeArticle);
-  }
+  ensureStockSearchToggle();
+  const term = clean(search);
+  stockItems = stockOnlyArticles()
+    ? await fetchStockArticles(term, true)
+    : await fetchActiveArticlesWithStock(term);
   renderStockSearchTable();
 }
-function openStock(lineId, initialSearch = '') { editingLineId = lineId; if (els.stockSearch) els.stockSearch.value = clean(initialSearch); els.stockModal.classList.remove('hidden'); stockSearch(clean(initialSearch)).catch((e) => fb(els.lf, e.message, true)); setTimeout(() => els.stockSearch?.focus(), 50); }
+function openStock(lineId, initialSearch = '') { editingLineId = lineId; ensureStockSearchToggle(); if (els.stockSearch) els.stockSearch.value = clean(initialSearch); els.stockModal.classList.remove('hidden'); stockSearch(clean(initialSearch)).catch((e) => fb(els.lf, e.message, true)); setTimeout(() => els.stockSearch?.focus(), 50); }
 function applyArticle(item) {
   const row = els.body.querySelector(`tr[data-line-id="${editingLineId}"]`);
   if (!row) return;
@@ -191,9 +229,7 @@ function applyLot(lot) {
 async function resolvePlu(row) {
   const plu = clean(row.querySelector('.line-plu')?.value);
   if (!plu || row.dataset.articleId) return;
-  const found = isNegoce()
-    ? (await api(`/api/articles/search?q=${encodeURIComponent(plu)}`)).map(normalizeArticle)
-    : (await api(`/api/stock?search=${encodeURIComponent(plu)}&available_only=true&limit=20`)).map(normalizeArticle);
+  const found = await fetchActiveArticles(plu);
   const item = found.find((a) => String(a.plu) === plu) || found[0];
   if (!item) throw new Error(`Article introuvable pour le PLU ${plu}`);
   editingLineId = row.dataset.lineId;
@@ -204,7 +240,7 @@ async function searchNegocePlu(row, { applyFirst = false } = {}) {
   if (!isNegoce() || !row) return;
   const plu = clean(row.querySelector('.line-plu')?.value);
   if (!plu) return;
-  const found = (await api(`/api/articles/search?q=${encodeURIComponent(plu)}`)).map(normalizeArticle);
+  const found = await fetchActiveArticles(plu);
   const exact = found.find((a) => String(a.plu) === plu);
   const item = exact || (applyFirst ? found[0] : null);
   if (!item) return;
@@ -245,7 +281,7 @@ async function saveLine(lineId) {
   const row = els.body.querySelector(`tr[data-line-id="${lineId}"]`);
   if (!row) return;
   if (!row.dataset.articleId) await (isNegoce() ? searchNegocePlu(row, { applyFirst: true }) : resolvePlu(row));
-  if (!row.dataset.articleId) { fb(els.lf, isNegoce() ? 'Sélectionne un article référencé' : 'Sélectionne un article en stock', true); return; }
+  if (!row.dataset.articleId) { fb(els.lf, 'Sélectionne un article', true); return; }
   const label = clean(row.querySelector('.line-article-label').value);
   if (isNegoce() && !label) { fb(els.lf, 'Saisis la désignation du produit négoce', true); return; }
   const payload = { article_id: row.dataset.articleId, article_plu: clean(row.querySelector('.line-plu').value), article_label: label, selected_lot_id: row.dataset.selectedLotId || null, package_count: n(row.querySelector('.line-package-count').value), weight_per_package: n(row.querySelector('.line-weight-per-package').value), total_weight: n(row.querySelector('.line-total-weight').value), sale_unit: row.dataset.saleUnit || 'kg', unit_sale_price_ht: n(row.querySelector('.line-unit-price-ht').value), vat_rate: n(row.querySelector('.line-vat-rate').value, vatRate()) };
@@ -277,7 +313,7 @@ els.client?.addEventListener('change', renderClientContext);
 els.closeStock?.addEventListener('click', () => els.stockModal.classList.add('hidden'));
 els.closeLot?.addEventListener('click', () => els.lotModal.classList.add('hidden'));
 els.stockSearch?.addEventListener('input', () => stockSearch(clean(els.stockSearch.value)).catch((e) => fb(els.lf, e.message, true)));
-els.stockBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-article-id]'); const item = stockItems.find((a) => a.article_id === row?.dataset.articleId); if (item) applyArticle(item); });
+els.stockBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-article-id]'); const item = stockItems.find((a) => String(a.article_id) === String(row?.dataset.articleId)); if (item) applyArticle(item); });
 els.lotBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-lot-id]'); const lot = lotItems.find((l) => l.id === row?.dataset.lotId); if (lot) applyLot(lot); });
 els.body?.addEventListener('click', async (e) => { const b = e.target.closest('[data-action]'); if (!b) return; if (b.dataset.action === 'save-line') await saveLine(b.dataset.id); if (b.dataset.action === 'delete-line') await deleteLine(b.dataset.id); if (b.dataset.action === 'choose-lot') await openLots(b.dataset.id); });
 els.body?.addEventListener('keydown', async (e) => {
@@ -298,5 +334,5 @@ els.body?.addEventListener('keydown', async (e) => {
 els.body?.addEventListener('blur', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row) return; await (isNegoce() ? searchNegocePlu(row, { applyFirst: true }) : resolvePlu(row)).catch((err) => fb(els.lf, err.message, true)); }, true);
 els.body?.addEventListener('change', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row || !isNegoce()) return; await searchNegocePlu(row, { applyFirst: true }).catch((err) => fb(els.lf, err.message, true)); });
 els.body?.addEventListener('input', (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.target.classList.contains('line-plu') && isNegoce()) { row.dataset.articleId = ''; row.dataset.selectedLotId = ''; scheduleNegocePluSearch(row); return; } if (['line-package-count', 'line-weight-per-package', 'line-total-weight', 'line-unit-price-ht', 'line-vat-rate'].some((c) => e.target.classList.contains(c))) computeRow(row); });
-async function init() { try { renderTopbar(); await loadClients(); await loadSale(); } catch (e) { console.error('Erreur init détail vente :', e); fb(els.lf, e.message || 'Erreur chargement vente', true); } }
+async function init() { try { renderTopbar(); ensureStockSearchToggle(); await loadClients(); await loadSale(); } catch (e) { console.error('Erreur init détail vente :', e); fb(els.lf, e.message || 'Erreur chargement vente', true); } }
 init();
