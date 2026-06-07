@@ -20,8 +20,8 @@ const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024;
 const MAX_FAVICON_SIZE_BYTES = 512 * 1024;
 const ALLOWED_LOGO_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/svg+xml']);
 const ALLOWED_LOGO_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.svg']);
-const ALLOWED_FAVICON_MIME_TYPES = new Set(['image/x-icon', 'image/vnd.microsoft.icon', 'image/png', 'image/svg+xml']);
-const ALLOWED_FAVICON_EXTENSIONS = new Set(['.ico', '.png', '.svg']);
+const ALLOWED_FAVICON_MIME_TYPES = new Set(['image/png', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml']);
+const ALLOWED_FAVICON_EXTENSIONS = new Set(['.png', '.ico', '.svg']);
 
 fs.mkdirSync(STORE_LOGOS_DIR, { recursive: true });
 fs.mkdirSync(STORE_FAVICONS_DIR, { recursive: true });
