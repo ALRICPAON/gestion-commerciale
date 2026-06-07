@@ -92,7 +92,6 @@
           <select id="status-filter">
             <option value="">Tous</option>
             <option value="draft">Brouillon</option>
-            <option value="match_review">À contrôler</option>
             <option value="matched">Rapprochée</option>
             <option value="invoice_difference">Écart</option>
             <option value="invoice_validated">Validée</option>
@@ -150,6 +149,7 @@
         <div class="page-actions-right detail-actions">
           <a id="invoice-document-link" class="btn btn-secondary" href="#" target="_blank">Voir document</a>
           <button id="auto-match-btn" class="btn btn-secondary">Rapprocher automatiquement</button>
+          <button id="confirm-match-btn" class="btn btn-primary">Confirmer rapprochement</button>
           <button id="validate-btn" class="btn btn-primary">Valider</button>
           <button id="validate-adjust-btn" class="btn btn-primary">Valider + ajuster coûts</button>
           <button id="payload-btn" class="btn btn-secondary">Payload Pennylane</button>
@@ -161,6 +161,6 @@
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/supplier-invoices.js?v=3"></script>
+  <script src="./js/supplier-invoices.js?v=4"></script>
 </body>
 </html>
