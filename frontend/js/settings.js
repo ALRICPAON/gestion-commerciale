@@ -39,6 +39,11 @@ const logoEmpty = document.getElementById('logo-empty');
 const logoFileInput = document.getElementById('logo_file');
 const uploadLogoBtn = document.getElementById('upload-logo-btn');
 const deleteLogoBtn = document.getElementById('delete-logo-btn');
+const faviconPreview = document.getElementById('favicon-preview');
+const faviconEmpty = document.getElementById('favicon-empty');
+const faviconFileInput = document.getElementById('favicon_file');
+const uploadFaviconBtn = document.getElementById('upload-favicon-btn');
+const deleteFaviconBtn = document.getElementById('delete-favicon-btn');
 
 function canManageSettings() {
   return ['admin', 'responsable'].includes(sessionUser.role);
@@ -78,7 +83,7 @@ function getFieldValue(id) {
   return value === '' ? null : value;
 }
 
-function cacheBustedLogoUrl(url) {
+function cacheBustedUrl(url) {
   if (!url) return '';
   const separator = url.includes('?') ? '&' : '?';
   return `${url}${separator}v=${Date.now()}`;
@@ -87,7 +92,7 @@ function cacheBustedLogoUrl(url) {
 function renderLogoPreview() {
   const logoUrl = currentSettings.logo_url;
   if (logoPreview) {
-    logoPreview.src = logoUrl ? cacheBustedLogoUrl(logoUrl) : '';
+    logoPreview.src = logoUrl ? cacheBustedUrl(logoUrl) : '';
     logoPreview.classList.toggle('hidden', !logoUrl);
   }
   if (logoEmpty) logoEmpty.classList.toggle('hidden', Boolean(logoUrl));
@@ -95,11 +100,27 @@ function renderLogoPreview() {
   if (uploadLogoBtn) uploadLogoBtn.textContent = logoUrl ? 'Changer le logo' : 'Télécharger le logo';
 }
 
+function renderFaviconPreview() {
+  const faviconUrl = currentSettings.favicon_url;
+  if (faviconPreview) {
+    faviconPreview.src = faviconUrl ? cacheBustedUrl(faviconUrl) : '';
+    faviconPreview.classList.toggle('hidden', !faviconUrl);
+  }
+  if (faviconEmpty) faviconEmpty.classList.toggle('hidden', Boolean(faviconUrl));
+  if (deleteFaviconBtn) deleteFaviconBtn.disabled = !canManageSettings() || !faviconUrl;
+  if (uploadFaviconBtn) uploadFaviconBtn.textContent = faviconUrl ? 'Changer le favicon' : 'Télécharger le favicon';
+}
+
+function renderBrandingPreviews() {
+  renderLogoPreview();
+  renderFaviconPreview();
+}
+
 function fillForm(settings = {}) {
   currentSettings = { ...(settings || {}) };
   fields.forEach((field) => setFieldValue(field, currentSettings[field]));
   if (!currentSettings.country) setFieldValue('country', 'France');
-  renderLogoPreview();
+  renderBrandingPreviews();
 }
 
 function collectPayload() {
@@ -109,6 +130,7 @@ function collectPayload() {
   });
   if (!payload.country) payload.country = 'France';
   payload.logo_url = currentSettings.logo_url || null;
+  payload.favicon_url = currentSettings.favicon_url || null;
   return payload;
 }
 
@@ -121,6 +143,9 @@ function lockForm() {
   if (uploadLogoBtn) uploadLogoBtn.disabled = true;
   if (deleteLogoBtn) deleteLogoBtn.disabled = true;
   if (logoFileInput) logoFileInput.disabled = true;
+  if (uploadFaviconBtn) uploadFaviconBtn.disabled = true;
+  if (deleteFaviconBtn) deleteFaviconBtn.disabled = true;
+  if (faviconFileInput) faviconFileInput.disabled = true;
 }
 
 async function apiFetch(url, options = {}) {
@@ -187,55 +212,105 @@ async function saveSettings() {
   }
 }
 
-async function uploadLogo(file) {
+async function uploadBrandingFile(file, options) {
   if (!file || !canManageSettings()) return;
 
   const formData = new FormData();
-  formData.append('logo', file);
+  formData.append(options.fieldName, file);
 
-  if (uploadLogoBtn) uploadLogoBtn.disabled = true;
-  if (deleteLogoBtn) deleteLogoBtn.disabled = true;
+  options.setBusy(true);
 
   try {
-    const response = await apiFetch(`${API_BASE_URL}/api/store-settings/logo`, {
+    const response = await apiFetch(`${API_BASE_URL}/api/store-settings/${options.kind}`, {
       method: 'POST',
       body: formData,
     });
     if (!response) return;
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Erreur upload logo');
+    if (!response.ok) throw new Error(data.error || `Erreur upload ${options.label}`);
     fillForm(data || {});
-    showFeedback('Logo société mis à jour.');
+    showFeedback(`${options.labelTitle} société mis à jour.`);
   } catch (err) {
-    console.error('Erreur upload logo :', err);
-    showFeedback(err.message || 'Erreur upload logo', 'error');
+    console.error(`Erreur upload ${options.label} :`, err);
+    showFeedback(err.message || `Erreur upload ${options.label}`, 'error');
   } finally {
-    if (logoFileInput) logoFileInput.value = '';
-    if (uploadLogoBtn) uploadLogoBtn.disabled = !canManageSettings();
-    renderLogoPreview();
+    if (options.input) options.input.value = '';
+    options.setBusy(false);
+    renderBrandingPreviews();
   }
 }
 
-async function deleteLogo() {
-  if (!canManageSettings() || !currentSettings.logo_url) return;
+async function deleteBrandingFile(options) {
+  if (!canManageSettings() || !currentSettings[options.settingKey]) return;
 
-  if (uploadLogoBtn) uploadLogoBtn.disabled = true;
-  if (deleteLogoBtn) deleteLogoBtn.disabled = true;
+  options.setBusy(true);
 
   try {
-    const response = await apiFetch(`${API_BASE_URL}/api/store-settings/logo`, { method: 'DELETE' });
+    const response = await apiFetch(`${API_BASE_URL}/api/store-settings/${options.kind}`, { method: 'DELETE' });
     if (!response) return;
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Erreur suppression logo');
+    if (!response.ok) throw new Error(data.error || `Erreur suppression ${options.label}`);
     fillForm(data || {});
-    showFeedback('Logo société supprimé.');
+    showFeedback(`${options.labelTitle} société supprimé.`);
   } catch (err) {
-    console.error('Erreur suppression logo :', err);
-    showFeedback(err.message || 'Erreur suppression logo', 'error');
+    console.error(`Erreur suppression ${options.label} :`, err);
+    showFeedback(err.message || `Erreur suppression ${options.label}`, 'error');
   } finally {
-    if (uploadLogoBtn) uploadLogoBtn.disabled = !canManageSettings();
-    renderLogoPreview();
+    options.setBusy(false);
+    renderBrandingPreviews();
   }
+}
+
+function setLogoBusy(isBusy) {
+  if (uploadLogoBtn) uploadLogoBtn.disabled = isBusy || !canManageSettings();
+  if (deleteLogoBtn) deleteLogoBtn.disabled = isBusy || !canManageSettings() || !currentSettings.logo_url;
+}
+
+function setFaviconBusy(isBusy) {
+  if (uploadFaviconBtn) uploadFaviconBtn.disabled = isBusy || !canManageSettings();
+  if (deleteFaviconBtn) deleteFaviconBtn.disabled = isBusy || !canManageSettings() || !currentSettings.favicon_url;
+}
+
+function uploadLogo(file) {
+  return uploadBrandingFile(file, {
+    kind: 'logo',
+    fieldName: 'logo',
+    label: 'logo',
+    labelTitle: 'Logo',
+    input: logoFileInput,
+    setBusy: setLogoBusy,
+  });
+}
+
+function uploadFavicon(file) {
+  return uploadBrandingFile(file, {
+    kind: 'favicon',
+    fieldName: 'favicon',
+    label: 'favicon',
+    labelTitle: 'Favicon',
+    input: faviconFileInput,
+    setBusy: setFaviconBusy,
+  });
+}
+
+function deleteLogo() {
+  return deleteBrandingFile({
+    kind: 'logo',
+    label: 'logo',
+    labelTitle: 'Logo',
+    settingKey: 'logo_url',
+    setBusy: setLogoBusy,
+  });
+}
+
+function deleteFavicon() {
+  return deleteBrandingFile({
+    kind: 'favicon',
+    label: 'favicon',
+    labelTitle: 'Favicon',
+    settingKey: 'favicon_url',
+    setBusy: setFaviconBusy,
+  });
 }
 
 function bindEvents() {
@@ -250,6 +325,9 @@ function bindEvents() {
   uploadLogoBtn?.addEventListener('click', () => logoFileInput?.click());
   logoFileInput?.addEventListener('change', () => uploadLogo(logoFileInput.files?.[0]));
   deleteLogoBtn?.addEventListener('click', deleteLogo);
+  uploadFaviconBtn?.addEventListener('click', () => faviconFileInput?.click());
+  faviconFileInput?.addEventListener('change', () => uploadFavicon(faviconFileInput.files?.[0]));
+  deleteFaviconBtn?.addEventListener('click', deleteFavicon);
 }
 
 bindEvents();
