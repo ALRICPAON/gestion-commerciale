@@ -15,7 +15,8 @@ const num = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 const pos = (value, fallback = 0) => Math.max(num(value, fallback), 0);
-const forceRequested = (body = {}) => body.allow_negative_stock === true || body.force_stock_exit === true;
+const truthy = (value) => value === true || value === 1 || value === 'true' || value === '1' || value === 'on';
+const forceRequested = (body = {}) => truthy(body.allow_negative_stock) || truthy(body.force_stock_exit);
 
 function stockInsufficientError({ line, missingQuantity, articleId, lotId, documentId }) {
   const error = new Error(`Stock insuffisant ligne ${line?.line_number || ''}`.trim());
@@ -315,6 +316,16 @@ async function validateDeliveryNoteStock(db, { deliveryNoteId, storeId, clientKe
         allocated += 1;
       }
       if (remaining > 0) {
+        console.info('Validation BL stock insuffisant détectée', {
+          store_id: storeId,
+          document_id: deliveryNote.id,
+          line_id: line.id,
+          line_number: line.line_number,
+          article_id: line.article_id,
+          selected_lot_id: line.selected_lot_id || null,
+          missing_quantity: Number(remaining.toFixed(3)),
+          allow_negative_stock: Boolean(allowNegativeStock),
+        });
         if (!allowNegativeStock) {
           throw stockInsufficientError({ line, missingQuantity: remaining, articleId: line.article_id, lotId: line.selected_lot_id, documentId: deliveryNote.id });
         }
@@ -350,6 +361,14 @@ router.post('/sales/:id/validate-delivery-note', authenticateToken, attachDbCont
   try {
     await db.query('BEGIN');
     const allowNegativeStock = forceRequested(req.body || {});
+    console.info('Validation commande en BL: payload stock forcé reçu', {
+      order_id: req.params.id,
+      store_id: req.user.store_id,
+      body_keys: Object.keys(req.body || {}),
+      allow_negative_stock_payload: req.body?.allow_negative_stock,
+      force_stock_exit_payload: req.body?.force_stock_exit,
+      allow_negative_stock_resolved: allowNegativeStock,
+    });
     await validateOrderWithoutStock(db, { orderId: req.params.id, storeId: req.user.store_id, userId: req.user.id });
     const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number });
     const validation = await validateDeliveryNoteStock(db, { deliveryNoteId: deliveryNote.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, allowNegativeStock });
@@ -369,6 +388,14 @@ router.post('/delivery-notes/:id/validate', authenticateToken, attachDbContext, 
   try {
     await db.query('BEGIN');
     const allowNegativeStock = forceRequested(req.body || {});
+    console.info('Validation BL: payload stock forcé reçu', {
+      delivery_note_id: req.params.id,
+      store_id: req.user.store_id,
+      body_keys: Object.keys(req.body || {}),
+      allow_negative_stock_payload: req.body?.allow_negative_stock,
+      force_stock_exit_payload: req.body?.force_stock_exit,
+      allow_negative_stock_resolved: allowNegativeStock,
+    });
     const validation = await validateDeliveryNoteStock(db, { deliveryNoteId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, allowNegativeStock });
     await db.query('COMMIT');
     res.json({ ok: true, allocated: validation.allocated, already_validated: validation.alreadyValidated, forced_stock_exit: allowNegativeStock });
