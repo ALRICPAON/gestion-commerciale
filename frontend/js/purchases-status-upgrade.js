@@ -9,16 +9,33 @@
   };
 
   function refreshStatusLabels() {
-    document.querySelectorAll(".purchase-status-badge").forEach((badge) => {
-      const statusClass = Array.from(badge.classList).find((className) => className.startsWith("status-"));
-      const status = statusClass ? statusClass.replace("status-", "") : "";
-      if (labels[status]) badge.textContent = labels[status];
-    });
+    try {
+      document.querySelectorAll(".purchase-status-badge").forEach((badge) => {
+        try {
+          const statusClass = Array.from(badge.classList || [])
+            .find((className) => String(className || "").startsWith("status-"));
+          const status = statusClass ? statusClass.replace("status-", "") : "";
+          const label = labels[status];
+          if (label && badge.textContent !== label) {
+            badge.textContent = label;
+          }
+        } catch (error) {
+          console.error("Erreur badge statut achat ignoree :", error);
+        }
+      });
+    } catch (error) {
+      console.error("Erreur refresh statuts achats ignoree :", error);
+    }
   }
 
   const table = document.getElementById("purchases-table-body");
-  if (!table) return;
-  const observer = new MutationObserver(refreshStatusLabels);
-  observer.observe(table, { childList: true, subtree: true });
-  refreshStatusLabels();
+  if (!table || typeof MutationObserver === "undefined") return;
+
+  try {
+    const observer = new MutationObserver(refreshStatusLabels);
+    observer.observe(table, { childList: true, subtree: true, characterData: true });
+    refreshStatusLabels();
+  } catch (error) {
+    console.error("Erreur observer statuts achats ignoree :", error);
+  }
 })();
