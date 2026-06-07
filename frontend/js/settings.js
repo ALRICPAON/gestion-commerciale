@@ -39,11 +39,6 @@ const logoEmpty = document.getElementById('logo-empty');
 const logoFileInput = document.getElementById('logo_file');
 const uploadLogoBtn = document.getElementById('upload-logo-btn');
 const deleteLogoBtn = document.getElementById('delete-logo-btn');
-const faviconPreview = document.getElementById('favicon-preview');
-const faviconEmpty = document.getElementById('favicon-empty');
-const faviconFileInput = document.getElementById('favicon_file');
-const uploadFaviconBtn = document.getElementById('upload-favicon-btn');
-const deleteFaviconBtn = document.getElementById('delete-favicon-btn');
 
 function canManageSettings() {
   return ['admin', 'responsable'].includes(sessionUser.role);
@@ -106,27 +101,11 @@ function renderLogoPreview() {
   if (uploadLogoBtn) uploadLogoBtn.textContent = logoUrl ? 'Changer le logo' : 'Télécharger le logo';
 }
 
-function renderFaviconPreview() {
-  const faviconUrl = currentSettings.favicon_url;
-  if (faviconPreview) {
-    faviconPreview.src = faviconUrl ? cacheBustedUrl(faviconUrl) : '';
-    faviconPreview.classList.toggle('hidden', !faviconUrl);
-  }
-  if (faviconEmpty) faviconEmpty.classList.toggle('hidden', Boolean(faviconUrl));
-  if (deleteFaviconBtn) deleteFaviconBtn.disabled = !canManageSettings() || !faviconUrl;
-  if (uploadFaviconBtn) uploadFaviconBtn.textContent = faviconUrl ? 'Changer le favicon' : 'Télécharger le favicon';
-}
-
-function renderBrandingPreviews() {
-  renderLogoPreview();
-  renderFaviconPreview();
-}
-
 function fillForm(settings = {}) {
   currentSettings = { ...(settings || {}) };
   fields.forEach((field) => setFieldValue(field, currentSettings[field]));
   if (!currentSettings.country) setFieldValue('country', 'France');
-  renderBrandingPreviews();
+  renderLogoPreview();
 }
 
 function collectPayload() {
@@ -136,7 +115,6 @@ function collectPayload() {
   });
   if (!payload.country) payload.country = 'France';
   payload.logo_url = currentSettings.logo_url || null;
-  payload.favicon_url = currentSettings.favicon_url || null;
   return payload;
 }
 
@@ -149,9 +127,6 @@ function lockForm() {
   if (uploadLogoBtn) uploadLogoBtn.disabled = true;
   if (deleteLogoBtn) deleteLogoBtn.disabled = true;
   if (logoFileInput) logoFileInput.disabled = true;
-  if (uploadFaviconBtn) uploadFaviconBtn.disabled = true;
-  if (deleteFaviconBtn) deleteFaviconBtn.disabled = true;
-  if (faviconFileInput) faviconFileInput.disabled = true;
 }
 
 async function apiFetch(url, options = {}) {
@@ -244,7 +219,7 @@ async function uploadBrandingFile(file, options) {
   } finally {
     if (options.input) options.input.value = '';
     options.setBusy(false);
-    renderBrandingPreviews();
+    renderLogoPreview();
   }
 }
 
@@ -266,18 +241,13 @@ async function deleteBrandingFile(options) {
     showFeedback(err.message || `Erreur suppression ${options.label}`, 'error');
   } finally {
     options.setBusy(false);
-    renderBrandingPreviews();
+    renderLogoPreview();
   }
 }
 
 function setLogoBusy(isBusy) {
   if (uploadLogoBtn) uploadLogoBtn.disabled = isBusy || !canManageSettings();
   if (deleteLogoBtn) deleteLogoBtn.disabled = isBusy || !canManageSettings() || !currentSettings.logo_url;
-}
-
-function setFaviconBusy(isBusy) {
-  if (uploadFaviconBtn) uploadFaviconBtn.disabled = isBusy || !canManageSettings();
-  if (deleteFaviconBtn) deleteFaviconBtn.disabled = isBusy || !canManageSettings() || !currentSettings.favicon_url;
 }
 
 function uploadLogo(file) {
@@ -291,17 +261,6 @@ function uploadLogo(file) {
   });
 }
 
-function uploadFavicon(file) {
-  return uploadBrandingFile(file, {
-    kind: 'favicon',
-    fieldName: 'favicon',
-    label: 'favicon',
-    labelTitle: 'Favicon',
-    input: faviconFileInput,
-    setBusy: setFaviconBusy,
-  });
-}
-
 function deleteLogo() {
   return deleteBrandingFile({
     kind: 'logo',
@@ -309,16 +268,6 @@ function deleteLogo() {
     labelTitle: 'Logo',
     settingKey: 'logo_url',
     setBusy: setLogoBusy,
-  });
-}
-
-function deleteFavicon() {
-  return deleteBrandingFile({
-    kind: 'favicon',
-    label: 'favicon',
-    labelTitle: 'Favicon',
-    settingKey: 'favicon_url',
-    setBusy: setFaviconBusy,
   });
 }
 
@@ -334,9 +283,6 @@ function bindEvents() {
   uploadLogoBtn?.addEventListener('click', () => logoFileInput?.click());
   logoFileInput?.addEventListener('change', () => uploadLogo(logoFileInput.files?.[0]));
   deleteLogoBtn?.addEventListener('click', deleteLogo);
-  uploadFaviconBtn?.addEventListener('click', () => faviconFileInput?.click());
-  faviconFileInput?.addEventListener('change', () => uploadFavicon(faviconFileInput.files?.[0]));
-  deleteFaviconBtn?.addEventListener('click', deleteFavicon);
 }
 
 bindEvents();

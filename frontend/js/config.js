@@ -9,7 +9,7 @@
   };
 
   const script = document.createElement("script");
-  script.src = "./js/branding.js?v=2";
+  script.src = "./js/branding.js?v=3";
   script.defer = true;
   document.head.appendChild(script);
 })();
