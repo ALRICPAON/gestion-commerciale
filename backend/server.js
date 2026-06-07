@@ -67,7 +67,7 @@ app.set('trust proxy', 1);
 const allowedCorsOrigins = new Set(
   (
     process.env.CORS_ALLOWED_ORIGINS ||
-    'http://localhost,http://localhost:3002,http://localhost:8080,http://127.0.0.1:3002,http://127.0.0.1:8080,https://scorpaseafood.fr,https://www.scorpaseafood.fr,https://api.scorpaseafood.fr'
+    'http://localhost,http://localhost:3002,http://localhost:8080,http://127.0.0.1:3002,http://127.0.0.1:8080,https://altamaree.fr,https://www.altamaree.fr,https://api.altamaree.fr'
   )
     .split(',')
     .map((origin) => origin.trim())
@@ -115,9 +115,9 @@ app.use(helmet({
         "'self'",
         'data:',
         'blob:',
-        'https://scorpaseafood.fr',
-        'https://www.scorpaseafood.fr',
-        'https://api.scorpaseafood.fr',
+        'https://altamaree.fr',
+        'https://www.altamaree.fr',
+        'https://api.altamaree.fr',
       ],
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
@@ -180,7 +180,7 @@ app.use('/api/transformations', transformationUpdateRoutes);
 app.use('/api/transformations', transformationValidationRoutes);
 app.use('/api/transformations', transformationsRoutes);
 app.get('/', (req, res) => {
-  res.send('API Scorpa Seafood / Gestion Commerciale fonctionne');
+  res.send('API ALTA MARÉE / Gestion Commerciale fonctionne');
 });
 
 app.use((err, req, res, next) => {
