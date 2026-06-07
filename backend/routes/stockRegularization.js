@@ -6,7 +6,7 @@ const { requireAdminOrManager } = require('../middleware/authorization');
 const { recomputeArticleStock } = require('../services/stockService');
 
 const router = express.Router();
-const REGULARIZATION_NOTE = 'Regularisation stock negatif suite sortie forcee';
+const REGULARIZATION_NOTE = 'Régularisation stock négatif suite sortie forcée';
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -105,7 +105,7 @@ router.get('/negative-lots', authenticateToken, attachDbContext, async (req, res
       params
     );
 
-    console.info('Regularisation stock: lots negatifs listes', {
+    console.info('Régularisation stock: lots négatifs listés', {
       store_id: req.user.store_id,
       count: result.rows.length,
     });
@@ -118,7 +118,7 @@ router.get('/negative-lots', authenticateToken, attachDbContext, async (req, res
     })));
   } catch (error) {
     console.error('Erreur GET /api/stock/negative-lots :', error);
-    return res.status(500).json({ error: 'Erreur serveur stocks negatifs' });
+    return res.status(500).json({ error: 'Erreur serveur stocks négatifs' });
   }
 });
 
@@ -127,19 +127,20 @@ router.post('/negative-lots/:lotId/regularize', authenticateToken, attachDbConte
   try {
     const lotId = clean(req.params.lotId);
     if (!isUuid(lotId)) return res.status(400).json({ error: 'lot_id invalide' });
+    if (req.body?.confirm !== true) return res.status(400).json({ error: 'Confirmation utilisateur obligatoire' });
 
     await client.query('BEGIN');
     const lot = await getNegativeLot(client, lotId, req.user.store_id);
     if (!lot) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Lot negatif introuvable ou deja regularise' });
+      return res.status(404).json({ error: 'Lot négatif introuvable ou déjà régularisé' });
     }
 
     const currentQty = Number(lot.qty_remaining || 0);
     const regularizationQty = Number(Math.abs(currentQty).toFixed(3));
     if (regularizationQty <= 0) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Le lot ne necessite pas de regularisation' });
+      return res.status(409).json({ error: 'Le lot ne nécessite pas de régularisation' });
     }
 
     await client.query(
@@ -153,7 +154,7 @@ router.post('/negative-lots/:lotId/regularize', authenticateToken, attachDbConte
       [lot.id, req.user.store_id, lot.qty_remaining]
     ).then((updated) => {
       if (!updated.rows.length) {
-        const error = new Error('Le stock du lot a change, recharge la liste avant de regulariser');
+        const error = new Error('Le stock du lot a changé, recharge la liste avant de régulariser');
         error.status = 409;
         throw error;
       }
@@ -180,7 +181,7 @@ router.post('/negative-lots/:lotId/regularize', authenticateToken, attachDbConte
     await recomputeArticleStock(client, lot.article_id, req.user.store_id);
     await client.query('COMMIT');
 
-    console.info('Regularisation stock negatif confirmee', {
+    console.info('Régularisation stock négatif confirmée', {
       store_id: req.user.store_id,
       lot_id: lot.id,
       article_id: lot.article_id,
@@ -197,13 +198,13 @@ router.post('/negative-lots/:lotId/regularize', authenticateToken, attachDbConte
       regularization_qty: regularizationQty,
       new_qty_remaining: 0,
       movement: movement.rows[0],
-      message: 'Lot regularise a 0',
+      message: 'Lot régularisé à 0',
     });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erreur POST /api/stock/negative-lots/:lotId/regularize :', error);
     if (error.status) return res.status(error.status).json({ error: error.message });
-    return res.status(500).json({ error: error.message || 'Erreur regularisation stock' });
+    return res.status(500).json({ error: error.message || 'Erreur régularisation stock' });
   } finally {
     client.release();
   }
