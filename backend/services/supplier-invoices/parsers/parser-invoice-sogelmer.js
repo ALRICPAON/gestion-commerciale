@@ -31,6 +31,11 @@ function parseDate(raw) {
   return `${match[3]}-${match[2]}-${match[1]}`;
 }
 
+function lastEuroAmount(text) {
+  const amounts = [...String(text || '').matchAll(/([0-9]+[,.][0-9]{2})\s*€/g)];
+  return amounts.length ? amounts[amounts.length - 1][1] : null;
+}
+
 function parseHeader(text) {
   const normalized = normalizeText(text);
   const invoiceNumber = normalized.match(/\b(511\d{9})\b/)?.[1] || null;
@@ -42,7 +47,10 @@ function parseHeader(text) {
   const dueDate = parseDate(normalized.match(/30\s+Jours\s+Date\s+Facture\s+(\d{2}\/\d{2}\/\d{4})/i)?.[1]);
   const productTotal = parseNumber(normalized.match(/TOTAL\s+\d+\s+colis\s+pour\s+[\d,.]+\s+([\d,.]+)\s*€/i)?.[1]);
   const vat = normalized.match(/\b(5,5|5\.5)\s+([\d,.]+)\s*€\s+([\d,.]+)\s*€/i);
-  const totalIncVat = parseNumber(normalized.match(/Montant\s+TTC\s+([\d,.]+)\s*€/i)?.[1]);
+  const totalIncVat = parseNumber(
+    normalized.match(/Montant\s+TTC\b.*?([0-9]+[,.][0-9]{2})\s*€/i)?.[1] ||
+    lastEuroAmount(normalized)
+  );
 
   return {
     invoice_number: invoiceNumber,
@@ -62,7 +70,7 @@ function parseHeader(text) {
 
 function parseLines(text) {
   const normalized = normalizeText(text);
-  const lineRegex = /\b([A-Z0-9/]{4,20})\s+(.+?)\s+(\d+)\s+(\d+[,.]\d{2})\s+(\d+[,.]\d{2})\s+KG\s+(\d{8,})\s+([\d,.]+)\s*€\s+([\d,.]+)\s*€\s+1\b/g;
+  const lineRegex = /\b([A-Z][A-Z0-9/]{3,19})\s+(.+?)\s+(\d+)\s+(\d+[,.]\d{2})\s+(\d+[,.]\d{2})\s+KG\s+(\d{8,})\s+([\d,.]+)\s*€\s+([\d,.]+)\s*€\s+1\b/g;
   const rows = [];
   let match;
 
