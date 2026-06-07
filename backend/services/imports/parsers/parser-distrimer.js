@@ -58,6 +58,19 @@ function weightPerColisKg(totalWeightKg, colisCount, parsedWeightPerColisKg = 0)
   return parsed > 0 ? parsed : null;
 }
 
+function extractBlNumber(text, context = {}) {
+  const normalized = normalizeText(text);
+  const directMatch =
+    normalized.match(/N[°º]?\s*BL\s+Date\s+Client\s+([0-9]{3}-[0-9]{8})/i) ||
+    normalized.match(/N[°º]?\s*BL\s+([0-9]{3}-[0-9]{8})/i) ||
+    normalized.match(/\b([0-9]{3}-[0-9]{8})\b/);
+
+  if (directMatch) return directMatch[1];
+
+  const fileMatch = String(context.originalname || context.filename || '').match(/([0-9]{3}-[0-9]{8})/);
+  return fileMatch ? fileMatch[1] : null;
+}
+
 function extractFAOs(bio) {
   if (!bio) return [];
 
@@ -239,33 +252,40 @@ module.exports = {
     try {
       text = await extractPdfText(context);
     } catch (error) {
+      const blNumber = extractBlNumber("", context);
       return {
         supplier_code: "10002",
         supplier_name: "DISTRIMER",
         purchase_type: "order",
         document_type: "supplier_bl",
+        bl_number: blNumber,
         lines: [],
         warnings: [`Impossible de lire le PDF DISTRIMER: ${error.message}`],
         meta: {
+          bl_number: blNumber,
           detected_from_filename: context.originalname || null,
         },
       };
     }
 
     if (!text) {
+      const blNumber = extractBlNumber("", context);
       return {
         supplier_code: "10002",
         supplier_name: "DISTRIMER",
         purchase_type: "order",
         document_type: "supplier_bl",
+        bl_number: blNumber,
         lines: [],
         warnings: ["Texte PDF vide ou non extrait"],
         meta: {
+          bl_number: blNumber,
           detected_from_filename: context.originalname || null,
         },
       };
     }
 
+    const blNumber = extractBlNumber(text, context);
     const parsedRows = parseDistrimerText(text);
 
     const lines = parsedRows.map((L) => {
@@ -330,9 +350,11 @@ module.exports = {
       supplier_name: "DISTRIMER",
       purchase_type: "order",
       document_type: "supplier_bl",
+      bl_number: blNumber,
       lines,
       warnings,
       meta: {
+        bl_number: blNumber,
         detected_from_filename: context.originalname || null,
         parsed_line_count: lines.length,
         total_weight: Number(totalWeight.toFixed(3)),

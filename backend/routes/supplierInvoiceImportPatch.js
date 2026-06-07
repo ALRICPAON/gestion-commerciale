@@ -12,6 +12,9 @@ const router = express.Router();
 const DOCUMENTS_ROOT = path.join(__dirname, '..', 'uploads', 'supplier-invoices');
 const ALLOWED_EXTENSIONS = new Set(['.pdf', '.xlsx', '.xls', '.csv']);
 const MATCHABLE_PURCHASE_STATUSES = ['received', 'received_pending_invoice', 'invoice_difference', 'invoice_matched'];
+const QUANTITY_TOLERANCE = 0.001;
+const PRICE_TOLERANCE = 0.001;
+const AMOUNT_TOLERANCE = 0.05;
 
 fs.mkdirSync(DOCUMENTS_ROOT, { recursive: true });
 
@@ -63,6 +66,10 @@ function jsonLines(value) {
 
 function normalizeSupplierReference(value) {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+function almostEqual(left, right, tolerance) {
+  return Math.abs(Number(left || 0) - Number(right || 0)) <= tolerance;
 }
 
 function invoiceDocumentUrl(invoiceId) {
@@ -216,7 +223,8 @@ async function findPurchaseCandidates(client, invoice, storeId, dateWindowDays) 
 
 async function loadPurchaseLineCandidates(client, invoice, storeId, purchaseId = null) {
   const result = await client.query(
-    `SELECT pl.*, p.id purchase_id, p.bl_number, p.receipt_date, l.id lot_id, plm.meta_value
+    `SELECT pl.*, p.id purchase_id, p.bl_number, p.receipt_date, l.id lot_id,
+            plm.meta_value, plm.supplier_lot_number purchase_supplier_lot_number
      FROM purchase_lines pl
      JOIN purchases p ON p.id = pl.purchase_id
      LEFT JOIN lots l ON l.purchase_line_id = pl.id
@@ -249,18 +257,67 @@ function metaValue(row) {
   return row?.meta_value && typeof row.meta_value === 'object' ? row.meta_value : {};
 }
 
+function invoiceLinePayload(line) {
+  return line?.parsed_payload && typeof line.parsed_payload === 'object' ? line.parsed_payload : {};
+}
+
+function invoiceLotNumber(line) {
+  const payload = invoiceLinePayload(line);
+  return clean(line.supplier_lot_number) || clean(payload.supplier_lot_number) || clean(payload.lot) || clean(payload.lot_number);
+}
+
+function purchaseLotNumber(line) {
+  const meta = metaValue(line);
+  return clean(line.purchase_supplier_lot_number) || clean(line.supplier_lot_number) || clean(meta.supplier_lot_number) || clean(meta.lot) || clean(meta.lot_number);
+}
+
+function purchaseLineTotalQuantity(line) {
+  const unit = String(line.price_unit || 'kg').toLowerCase();
+  const receivedColis = Number(line.received_colis || line.ordered_colis || 0);
+  const receivedPieces = Number(line.received_pieces || line.ordered_pieces || 0);
+  const receivedQuantity = Number(line.received_quantity || line.ordered_quantity || 0);
+
+  if (unit === 'colis') return receivedColis;
+  if (unit === 'piece') return receivedColis > 0 && receivedPieces > 0 ? receivedColis * receivedPieces : receivedPieces;
+  return receivedColis > 0 && receivedQuantity > 0 ? receivedColis * receivedQuantity : receivedQuantity;
+}
+
 function purchaseLineMatchRank(invoiceLine, purchaseLine, mappedArticleId) {
   const invoiceRef = normalizeSupplierReference(invoiceLine.supplier_reference);
   const meta = metaValue(purchaseLine);
   const directRef = normalizeSupplierReference(purchaseLine.supplier_reference);
   const metaSupplierRef = normalizeSupplierReference(meta.supplier_reference);
   const metaLegacyRef = normalizeSupplierReference(meta.refFournisseur);
+  const invoiceLot = invoiceLotNumber(invoiceLine);
+  const purchaseLot = purchaseLotNumber(purchaseLine);
+  const invoiceQuantity = Number(invoiceLine.quantity || 0);
+  const purchaseQuantity = purchaseLineTotalQuantity(purchaseLine);
+  const quantityGap = Math.abs(invoiceQuantity - purchaseQuantity);
+  const priceGap = Math.abs(Number(invoiceLine.unit_price_ex_vat || 0) - Number(purchaseLine.unit_price_ex_vat || 0));
+  const amountGap = Math.abs(Number(invoiceLine.line_amount_ex_vat || 0) - Number(purchaseLine.line_amount_ex_vat || 0));
+  const numericMatches = [
+    quantityGap <= QUANTITY_TOLERANCE,
+    priceGap <= PRICE_TOLERANCE,
+    amountGap <= AMOUNT_TOLERANCE,
+  ].filter(Boolean).length;
+  const base = {
+    invoice_lot: invoiceLot,
+    purchase_lot: purchaseLot,
+    quantity_gap: quantityGap,
+    price_gap: priceGap,
+    amount_gap: amountGap,
+    numeric_matches: numericMatches,
+  };
 
-  if (invoiceRef && directRef === invoiceRef) return { rank: 0, reason: 'supplier_reference' };
-  if (invoiceRef && metaSupplierRef === invoiceRef) return { rank: 1, reason: 'metadata_supplier_reference' };
-  if (invoiceRef && metaLegacyRef === invoiceRef) return { rank: 1, reason: 'metadata_ref_fournisseur' };
-  if (mappedArticleId && purchaseLine.article_id && String(purchaseLine.article_id) === String(mappedArticleId)) return { rank: 2, reason: 'supplier_article_mapping' };
-  if (invoiceLine.article_id && purchaseLine.article_id && String(purchaseLine.article_id) === String(invoiceLine.article_id)) return { rank: 3, reason: 'article_id' };
+  if (invoiceLot && purchaseLot && invoiceLot === purchaseLot) return { ...base, rank: 0, reason: 'supplier_lot_number' };
+  if (quantityGap <= QUANTITY_TOLERANCE) return { ...base, rank: 1, reason: 'quantity_kg' };
+  if (priceGap <= PRICE_TOLERANCE) return { ...base, rank: 2, reason: 'unit_price_ex_vat' };
+  if (amountGap <= AMOUNT_TOLERANCE) return { ...base, rank: 3, reason: 'line_amount_ex_vat' };
+  if (mappedArticleId && purchaseLine.article_id && String(purchaseLine.article_id) === String(mappedArticleId)) return { ...base, rank: 4, reason: 'supplier_article_mapping' };
+  if (invoiceLine.article_id && purchaseLine.article_id && String(purchaseLine.article_id) === String(invoiceLine.article_id)) return { ...base, rank: 4, reason: 'article_id' };
+  if (invoiceRef && directRef === invoiceRef) return { ...base, rank: 5, reason: 'supplier_reference_fallback' };
+  if (invoiceRef && metaSupplierRef === invoiceRef) return { ...base, rank: 5, reason: 'metadata_supplier_reference_fallback' };
+  if (invoiceRef && metaLegacyRef === invoiceRef) return { ...base, rank: 5, reason: 'metadata_ref_fournisseur_fallback' };
   return null;
 }
 
@@ -279,17 +336,33 @@ async function findPurchaseLineCandidate(client, line, invoice, storeId, purchas
         ...candidate,
         match_reason: match.reason,
         match_rank: match.rank,
-        amount_gap: Math.abs(Number(candidate.line_amount_ex_vat || 0) - Number(line.line_amount_ex_vat || 0)),
+        invoice_lot: match.invoice_lot,
+        purchase_lot: match.purchase_lot,
+        quantity_gap: match.quantity_gap,
+        price_gap: match.price_gap,
+        amount_gap: match.amount_gap,
+        numeric_matches: match.numeric_matches,
       };
     })
     .filter(Boolean)
-    .sort((a, b) => a.match_rank - b.match_rank || a.amount_gap - b.amount_gap || Number(a.line_number || 0) - Number(b.line_number || 0));
+    .sort((a, b) => (
+      a.match_rank - b.match_rank ||
+      b.numeric_matches - a.numeric_matches ||
+      a.amount_gap - b.amount_gap ||
+      a.price_gap - b.price_gap ||
+      a.quantity_gap - b.quantity_gap ||
+      Number(a.line_number || 0) - Number(b.line_number || 0)
+    ));
 
   console.info('Auto-match facture fournisseur: candidats ligne', {
     invoice_id: invoice.id,
     invoice_line_id: line.id,
     supplier_reference: line.supplier_reference,
     normalized_supplier_reference: normalizedRef,
+    invoice_lot: invoiceLotNumber(line),
+    invoice_quantity_kg: Number(line.quantity || 0),
+    invoice_unit_price_ex_vat: Number(line.unit_price_ex_vat || 0),
+    invoice_line_amount_ex_vat: Number(line.line_amount_ex_vat || 0),
     purchase_id: purchaseId,
     loaded_purchase_lines: candidates.length,
     candidate_count: ranked.length,
@@ -297,24 +370,36 @@ async function findPurchaseLineCandidate(client, line, invoice, storeId, purchas
       purchase_line_id: row.id,
       supplier_reference: row.supplier_reference,
       article_id: row.article_id,
+      purchase_lot: row.purchase_lot,
+      purchase_quantity_kg: purchaseLineTotalQuantity(row),
+      unit_price_ex_vat: row.unit_price_ex_vat,
       line_amount_ex_vat: row.line_amount_ex_vat,
       match_reason: row.match_reason,
       match_rank: row.match_rank,
+      quantity_gap: row.quantity_gap,
+      price_gap: row.price_gap,
+      amount_gap: row.amount_gap,
     })),
   });
 
+  if (!ranked.length) {
+    console.info('Auto-match facture fournisseur: aucune ligne candidate', {
+      invoice_id: invoice.id,
+      invoice_line_id: line.id,
+      supplier_reference: line.supplier_reference,
+      invoice_lot: invoiceLotNumber(line),
+      loaded_purchase_lines: candidates.map((candidate) => ({
+        purchase_line_id: candidate.id,
+        supplier_reference: candidate.supplier_reference,
+        purchase_lot: purchaseLotNumber(candidate),
+        purchase_quantity_kg: purchaseLineTotalQuantity(candidate),
+        unit_price_ex_vat: candidate.unit_price_ex_vat,
+        line_amount_ex_vat: candidate.line_amount_ex_vat,
+      })),
+    });
+  }
+
   return ranked[0] || null;
-}
-
-function purchaseLineTotalQuantity(line) {
-  const unit = String(line.price_unit || 'kg').toLowerCase();
-  const receivedColis = Number(line.received_colis || line.ordered_colis || 0);
-  const receivedPieces = Number(line.received_pieces || line.ordered_pieces || 0);
-  const receivedQuantity = Number(line.received_quantity || line.ordered_quantity || 0);
-
-  if (unit === 'colis') return receivedColis;
-  if (unit === 'piece') return receivedColis > 0 && receivedPieces > 0 ? receivedColis * receivedPieces : receivedPieces;
-  return receivedColis > 0 && receivedQuantity > 0 ? receivedColis * receivedQuantity : receivedQuantity;
 }
 
 async function createPurchaseLevelMatch(client, invoice, purchase, storeId, notePrefix) {
@@ -371,6 +456,19 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
   let candidates = { rows: [] };
   if (!blPurchase) candidates = await findPurchaseCandidates(client, invoice, storeId, dateWindowDays);
 
+  console.info('Auto-match facture fournisseur: lignes facture chargees', {
+    invoice_id: invoice.id,
+    line_count: lines.length,
+    lines: lines.map((line) => ({
+      supplier_invoice_line_id: line.id,
+      supplier_reference: line.supplier_reference,
+      supplier_lot_number: invoiceLotNumber(line),
+      quantity_kg: Number(line.quantity || 0),
+      unit_price_ex_vat: Number(line.unit_price_ex_vat || 0),
+      line_amount_ex_vat: Number(line.line_amount_ex_vat || 0),
+    })),
+  });
+
   console.info('Auto-match facture fournisseur: candidats fallback', {
     invoice_id: invoice.id,
     bl_purchase_found: Boolean(blPurchase),
@@ -420,12 +518,15 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
 
     if (!purchaseLine) {
       differences += 1;
-      await client.query('UPDATE supplier_invoice_lines SET match_status = $1, match_error = $2 WHERE id = $3', ['missing_purchase_line', 'Aucune ligne reception rapprochable par reference fournisseur, mapping ou article', line.id]);
+      await client.query('UPDATE supplier_invoice_lines SET match_status = $1, match_error = $2 WHERE id = $3', ['missing_purchase_line', 'Aucune ligne reception rapprochable par lot, quantite, prix, montant, article ou reference fournisseur', line.id]);
       console.info('Auto-match facture fournisseur: ligne sans candidat', {
         invoice_id: invoice.id,
         invoice_line_id: line.id,
         supplier_reference: line.supplier_reference,
+        supplier_lot_number: invoiceLotNumber(line),
         article_id: line.article_id,
+        quantity_kg: Number(line.quantity || 0),
+        unit_price_ex_vat: Number(line.unit_price_ex_vat || 0),
         line_amount_ex_vat: line.line_amount_ex_vat,
       });
       continue;
@@ -437,7 +538,7 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
     const qtyDifference = Number((Number(line.quantity || 0) - purchaseQuantity).toFixed(3));
     const priceDifference = Number((Number(line.unit_price_ex_vat || 0) - Number(purchaseLine.unit_price_ex_vat || 0)).toFixed(4));
     const amountDifference = Number((Number(line.line_amount_ex_vat || 0) - Number(purchaseLine.line_amount_ex_vat || 0)).toFixed(4));
-    const hasDifference = Math.abs(qtyDifference) > 0.001 || Math.abs(priceDifference) > 0.001 || Math.abs(amountDifference) > 0.05;
+    const hasDifference = Math.abs(qtyDifference) > QUANTITY_TOLERANCE || Math.abs(priceDifference) > PRICE_TOLERANCE || Math.abs(amountDifference) > AMOUNT_TOLERANCE;
     const matchStatus = hasDifference ? 'difference' : 'matched';
     if (hasDifference) differences += 1;
     matches += 1;
@@ -464,6 +565,19 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
         hasDifference ? `Ecart detecte automatiquement (${purchaseLine.match_reason || 'matching'})` : `Rapprochement automatique OK (${purchaseLine.match_reason || 'matching'})`,
       ]
     );
+
+    console.info('Auto-match facture fournisseur: ligne rapprochee', {
+      invoice_id: invoice.id,
+      supplier_invoice_line_id: line.id,
+      purchase_line_id: purchaseLine.id,
+      match_status: matchStatus,
+      match_reason: purchaseLine.match_reason,
+      invoice_lot: invoiceLotNumber(line),
+      purchase_lot: purchaseLotNumber(purchaseLine),
+      qty_difference: qtyDifference,
+      price_difference: priceDifference,
+      amount_difference: amountDifference,
+    });
 
     await client.query(
       'UPDATE supplier_invoice_lines SET match_status = $1, match_error = $2 WHERE id = $3',
