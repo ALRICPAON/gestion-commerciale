@@ -3,17 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Utilisateurs - Scorpa Seafood / Gestion Commerciale</title>
+  <title>Utilisateurs - ALTA MARÉE</title>
+  <link rel="icon" href="assets/favicon.ico">
   <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/home-branding.css?v=1" />
   <link rel="stylesheet" href="./css/pages/users.css?v=2" />
 </head>
 <body class="app-page">
   <header class="topbar">
-    <div class="topbar-left">
-      <h1 class="app-title">Scorpa Seafood / Gestion Commerciale</h1>
-      <p class="app-subtitle">
-        <span id="store-name">Magasin</span> • Gestion des utilisateurs
-      </p>
+    <div class="topbar-left brand-lockup">
+      <img class="brand-logo" src="assets/logo-alta-maree.svg" alt="ALTA MARÉE" />
+      <div class="brand-copy">
+        <h1 class="app-title home-brand-title">ALTA MARÉE</h1>
+        <p class="app-subtitle">
+          <span id="store-name">Magasin</span> • Gestion des utilisateurs
+        </p>
+      </div>
     </div>
 
     <div class="topbar-right">
@@ -37,7 +42,7 @@
       <div class="page-actions-right">
         <button id="open-login-qr-btn" type="button" class="btn btn-secondary">QR connexion</button>
       </div>
-      <p>Creer un compte et lui attribuer un role ainsi que ses services autorises.</p>
+      <p>Créer un compte et lui attribuer un rôle ainsi que ses services autorisés.</p>
     </section>
 
     <section class="form-section">
@@ -64,12 +69,12 @@
         </div>
 
         <div class="form-group">
-          <label>Services autorises</label>
+          <label>Services autorisés</label>
           <div id="departments-checkboxes"></div>
         </div>
 
         <div class="form-group">
-          <label for="default-department">Service par defaut</label>
+          <label for="default-department">Service par défaut</label>
           <select id="default-department">
             <option value="">Choisir</option>
           </select>
@@ -97,14 +102,14 @@
       <div class="qr-modal-header">
         <div>
           <h3 id="login-qr-title">QR connexion</h3>
-          <p>Acces public a l'application, sans identifiant ni token.</p>
+          <p>Accès public à l'application, sans identifiant ni token.</p>
         </div>
         <button id="close-login-qr-btn" type="button" class="btn btn-secondary">Fermer</button>
       </div>
 
       <div id="login-qr-print-area" class="login-qr-print-area">
         <div id="login-qr-code" class="login-qr-code"></div>
-        <p class="login-qr-label">Scanner pour acceder a Gestion Commerciale</p>
+        <p class="login-qr-label">Scanner pour accéder à ALTA MARÉE</p>
         <p id="login-qr-url" class="login-qr-url"></p>
       </div>
 
@@ -116,6 +121,6 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="./js/config.js"></script>
-<script src="./js/users.js?v=8"></script>
+<script src="./js/users.js?v=9"></script>
 </body>
 </html>
