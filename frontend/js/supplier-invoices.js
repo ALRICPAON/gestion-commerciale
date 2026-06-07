@@ -39,6 +39,15 @@ const invoiceDetailEmpty = document.getElementById("invoice-detail-empty");
 const invoiceDetail = document.getElementById("invoice-detail");
 const invoiceSummary = document.getElementById("invoice-summary");
 const matchesTableBody = document.getElementById("matches-table-body");
+const manualMatchBtn = document.getElementById("manual-match-btn");
+const manualMatchPanel = document.getElementById("manual-match-panel");
+const reloadManualCandidatesBtn = document.getElementById("reload-manual-candidates-btn");
+const manualMatchFeedback = document.getElementById("manual-match-feedback");
+const manualInvoiceTotal = document.getElementById("manual-invoice-total");
+const manualSelectedTotal = document.getElementById("manual-selected-total");
+const manualDifferenceTotal = document.getElementById("manual-difference-total");
+const manualCandidatesBody = document.getElementById("manual-candidates-body");
+const confirmManualMatchBtn = document.getElementById("confirm-manual-match-btn");
 const invoiceDocumentLink = document.getElementById("invoice-document-link");
 const autoMatchBtn = document.getElementById("auto-match-btn");
 const confirmMatchBtn = document.getElementById("confirm-match-btn");
@@ -52,6 +61,9 @@ let suppliers = [];
 let invoices = [];
 let selectedInvoiceId = null;
 let selectedInvoice = null;
+let manualInvoice = null;
+let manualCandidates = [];
+let selectedManualPurchaseIds = new Set();
 
 function showFeedback(el, message, isError = false) {
   if (!el) return;
@@ -79,6 +91,15 @@ async function apiFetch(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Erreur API");
   return data;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function filenameFromContentDisposition(header) {
@@ -121,7 +142,10 @@ function formatCurrency(value) {
 function statusLabel(status) {
   const map = {
     draft: "Brouillon",
+    received: "Réceptionné",
+    received_pending_invoice: "Attente facture",
     matched: "Rapprochée",
+    invoice_matched: "Facture rapprochée",
     invoice_difference: "Écart",
     invoice_validated: "Validée",
     cost_adjusted: "Coût ajusté",
@@ -176,9 +200,9 @@ function renderInvoices() {
   invoicesTableBody.innerHTML = invoices.map((invoice) => `
     <tr data-id="${invoice.id}" class="${invoice.id === selectedInvoiceId ? "is-selected" : ""}">
       <td>${formatDate(invoice.invoice_date)}</td>
-      <td>${invoice.supplier_name || "-"}</td>
-      <td>${invoice.invoice_number || "-"}</td>
-      <td><span class="invoice-status status-${invoice.status}">${statusLabel(invoice.status)}</span></td>
+      <td>${escapeHtml(invoice.supplier_name || "-")}</td>
+      <td>${escapeHtml(invoice.invoice_number || "-")}</td>
+      <td><span class="invoice-status status-${escapeHtml(invoice.status)}">${statusLabel(invoice.status)}</span></td>
       <td>${matchLabel(invoice.match_status)}</td>
       <td>${formatCurrency(invoice.total_ex_vat)}</td>
       <td>${formatCurrency(invoice.total_inc_vat)}</td>
@@ -264,6 +288,22 @@ async function openInvoice(invoiceId) {
   renderDetail(data);
 }
 
+function resetManualMatchPanel(hide = true) {
+  manualInvoice = null;
+  manualCandidates = [];
+  selectedManualPurchaseIds = new Set();
+  if (hide) manualMatchPanel?.classList.add("hidden");
+  clearFeedback(manualMatchFeedback);
+  if (manualCandidatesBody) manualCandidatesBody.innerHTML = `<tr><td colspan="7">Clique sur “Rapprocher manuellement”.</td></tr>`;
+  if (manualInvoiceTotal) manualInvoiceTotal.textContent = "-";
+  if (manualSelectedTotal) manualSelectedTotal.textContent = "-";
+  if (manualDifferenceTotal) {
+    manualDifferenceTotal.textContent = "-";
+    manualDifferenceTotal.classList.remove("is-difference");
+  }
+  if (confirmManualMatchBtn) confirmManualMatchBtn.disabled = true;
+}
+
 function resetDetailPanel() {
   selectedInvoiceId = null;
   selectedInvoice = null;
@@ -273,6 +313,7 @@ function resetDetailPanel() {
   invoiceSummary.innerHTML = "";
   payloadPreview.classList.add("hidden");
   payloadPreview.textContent = "";
+  resetManualMatchPanel(true);
 }
 
 function renderDetail(data) {
@@ -280,11 +321,12 @@ function renderDetail(data) {
   invoiceDetail.classList.remove("hidden");
   payloadPreview.classList.add("hidden");
   payloadPreview.textContent = "";
+  resetManualMatchPanel(true);
 
   const invoice = data.invoice;
   invoiceSummary.innerHTML = `
-    <div><span>Fournisseur</span><strong>${invoice.supplier_name || "-"}</strong></div>
-    <div><span>Facture</span><strong>${invoice.invoice_number || "-"}</strong></div>
+    <div><span>Fournisseur</span><strong>${escapeHtml(invoice.supplier_name || "-")}</strong></div>
+    <div><span>Facture</span><strong>${escapeHtml(invoice.invoice_number || "-")}</strong></div>
     <div><span>Statut</span><strong>${statusLabel(invoice.status)}</strong></div>
     <div><span>Rapprochement</span><strong>${matchLabel(invoice.match_status)}</strong></div>
     <div><span>Produits HT</span><strong>${formatCurrency(invoice.product_total_ex_vat)}</strong></div>
@@ -303,16 +345,125 @@ function renderDetail(data) {
   } else {
     matchesTableBody.innerHTML = data.matches.map((match) => `
       <tr>
-        <td>${match.bl_number || match.purchase_id || "-"}</td>
-        <td>${match.purchase_line_number || "-"}</td>
-        <td>${match.article_plu || ""} ${match.article_name || ""}</td>
-        <td>${match.match_status || "-"}</td>
+        <td>${escapeHtml(match.bl_number || match.purchase_id || "-")}</td>
+        <td>${escapeHtml(match.purchase_line_number || "-")}</td>
+        <td>${escapeHtml(`${match.article_plu || ""} ${match.article_name || ""}`.trim())}</td>
+        <td>${escapeHtml(match.match_status || "-")}</td>
         <td>${Number(match.quantity_difference || 0).toFixed(3)}</td>
         <td>${Number(match.price_difference || 0).toFixed(4)}</td>
         <td>${formatCurrency(match.amount_difference)}</td>
       </tr>
     `).join("");
   }
+}
+
+function manualInvoiceComparableTotal() {
+  return Number(manualInvoice?.comparable_total_ex_vat || selectedInvoice?.product_total_ex_vat || selectedInvoice?.total_ex_vat || 0);
+}
+
+function selectedManualTotalValue() {
+  return manualCandidates
+    .filter((candidate) => selectedManualPurchaseIds.has(String(candidate.purchase_id)))
+    .reduce((sum, candidate) => sum + Number(candidate.total_ex_vat || 0), 0);
+}
+
+function renderManualTotals() {
+  const invoiceTotal = manualInvoiceComparableTotal();
+  const selectedTotal = selectedManualTotalValue();
+  const difference = Number((invoiceTotal - selectedTotal).toFixed(4));
+  manualInvoiceTotal.textContent = formatCurrency(invoiceTotal);
+  manualSelectedTotal.textContent = formatCurrency(selectedTotal);
+  manualDifferenceTotal.textContent = formatCurrency(difference);
+  manualDifferenceTotal.classList.toggle("is-difference", Math.abs(difference) > 0.05);
+  confirmManualMatchBtn.disabled = selectedManualPurchaseIds.size === 0;
+}
+
+function renderManualLines(candidate) {
+  if (!candidate.lines?.length) return `<div class="manual-lines-list"><div class="manual-line-item"><span>Aucune ligne BL disponible</span></div></div>`;
+  return `
+    <div class="manual-lines-list">
+      ${candidate.lines.map((line) => `
+        <div class="manual-line-item">
+          <span>Ligne ${escapeHtml(line.line_number || "-")}</span>
+          <span>${escapeHtml(line.supplier_label || line.article_name || line.supplier_reference || "-")}</span>
+          <span>${Number(line.quantity || 0).toLocaleString("fr-FR")} ${escapeHtml(line.price_unit || "kg")}</span>
+          <span>${formatCurrency(line.unit_price_ex_vat)}</span>
+          <span>${formatCurrency(line.line_amount_ex_vat)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderManualCandidates() {
+  if (!manualCandidates.length) {
+    manualCandidatesBody.innerHTML = `<tr><td colspan="7">Aucun BL candidat pour ce fournisseur.</td></tr>`;
+    renderManualTotals();
+    return;
+  }
+
+  manualCandidatesBody.innerHTML = manualCandidates.map((candidate) => {
+    const id = String(candidate.purchase_id);
+    const checked = selectedManualPurchaseIds.has(id) ? "checked" : "";
+    const blLabel = candidate.bl_number || candidate.source_document_original_name || candidate.purchase_id;
+    return `
+      <tr>
+        <td><input class="manual-candidate-checkbox" type="checkbox" data-action="toggle-manual-purchase" data-id="${escapeHtml(id)}" ${checked} /></td>
+        <td>${formatDate(candidate.receipt_date)}</td>
+        <td>${escapeHtml(blLabel || "-")}</td>
+        <td>${formatCurrency(candidate.total_ex_vat)}</td>
+        <td>${statusLabel(candidate.status)}</td>
+        <td>${formatCurrency(candidate.amount_difference)}</td>
+        <td><button class="btn btn-secondary btn-sm" data-action="toggle-manual-lines" data-id="${escapeHtml(id)}">Voir lignes</button></td>
+      </tr>
+      <tr class="manual-lines-row hidden" data-lines-for="${escapeHtml(id)}">
+        <td colspan="7">${renderManualLines(candidate)}</td>
+      </tr>
+    `;
+  }).join("");
+  renderManualTotals();
+}
+
+async function loadManualCandidates() {
+  if (!selectedInvoiceId) return;
+  clearFeedback(manualMatchFeedback);
+  manualMatchPanel.classList.remove("hidden");
+  manualCandidatesBody.innerHTML = `<tr><td colspan="7">Chargement des BL candidats...</td></tr>`;
+  confirmManualMatchBtn.disabled = true;
+  const data = await apiFetch(`/api/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}/manual-match-candidates?date_window_days=30`);
+  manualInvoice = data.invoice;
+  manualCandidates = data.candidates || [];
+  selectedManualPurchaseIds = new Set();
+  renderManualCandidates();
+  showFeedback(manualMatchFeedback, `${manualCandidates.length} BL candidat(s) trouvé(s). Sélectionne un ou plusieurs BL puis confirme.`);
+}
+
+function toggleManualPurchase(purchaseId, checked) {
+  if (checked) selectedManualPurchaseIds.add(String(purchaseId));
+  else selectedManualPurchaseIds.delete(String(purchaseId));
+  renderManualTotals();
+}
+
+function toggleManualLines(purchaseId) {
+  const row = manualCandidatesBody.querySelector(`[data-lines-for="${CSS.escape(String(purchaseId))}"]`);
+  row?.classList.toggle("hidden");
+}
+
+async function confirmManualMatchSelected() {
+  if (!selectedInvoiceId || !selectedManualPurchaseIds.size) return;
+  clearFeedback(manualMatchFeedback);
+  const selectedTotal = selectedManualTotalValue();
+  const difference = Number((manualInvoiceComparableTotal() - selectedTotal).toFixed(4));
+  const confirmed = confirm(`Confirmer le rapprochement manuel avec ${selectedManualPurchaseIds.size} BL sélectionné(s) ?\n\nTotal BL : ${formatCurrency(selectedTotal)}\nÉcart facture / BL : ${formatCurrency(difference)}`);
+  if (!confirmed) return;
+
+  const data = await apiFetch(`/api/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}/manual-match`, {
+    method: "POST",
+    body: JSON.stringify({ purchase_ids: Array.from(selectedManualPurchaseIds) }),
+  });
+  showFeedback(detailFeedback, `Rapprochement manuel confirmé : ${matchLabel(data.match_status)}, écart ${formatCurrency(data.amount_difference)}`);
+  await loadInvoices();
+  await openInvoice(selectedInvoiceId);
 }
 
 async function openInvoiceDocument(event) {
@@ -459,12 +610,26 @@ searchInput?.addEventListener("input", () => { window.clearTimeout(searchInput._
 createManualBtn?.addEventListener("click", () => createManualInvoice().catch((error) => showFeedback(createFeedback, error.message, true)));
 importInvoiceBtn?.addEventListener("click", () => importInvoice().catch((error) => showFeedback(createFeedback, error.message, true)));
 invoiceDocumentLink?.addEventListener("click", (event) => openInvoiceDocument(event));
+manualMatchBtn?.addEventListener("click", () => loadManualCandidates().catch((error) => showFeedback(manualMatchFeedback || detailFeedback, error.message, true)));
+reloadManualCandidatesBtn?.addEventListener("click", () => loadManualCandidates().catch((error) => showFeedback(manualMatchFeedback || detailFeedback, error.message, true)));
+confirmManualMatchBtn?.addEventListener("click", () => confirmManualMatchSelected().catch((error) => showFeedback(manualMatchFeedback || detailFeedback, error.message, true)));
 autoMatchBtn?.addEventListener("click", () => autoMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
 confirmMatchBtn?.addEventListener("click", () => confirmMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateBtn?.addEventListener("click", () => validateSelected(false).catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateAdjustBtn?.addEventListener("click", () => validateSelected(true).catch((error) => showFeedback(detailFeedback, error.message, true)));
 payloadBtn?.addEventListener("click", () => showPayload().catch((error) => showFeedback(detailFeedback, error.message, true)));
 deleteInvoiceBtn?.addEventListener("click", () => deleteSelectedInvoice().catch((error) => showFeedback(detailFeedback, error.message, true)));
+
+manualCandidatesBody?.addEventListener("click", (event) => {
+  const lineButton = event.target.closest("[data-action='toggle-manual-lines']");
+  if (lineButton) toggleManualLines(lineButton.dataset.id);
+});
+
+manualCandidatesBody?.addEventListener("change", (event) => {
+  const checkbox = event.target.closest("[data-action='toggle-manual-purchase']");
+  if (!checkbox) return;
+  toggleManualPurchase(checkbox.dataset.id, checkbox.checked);
+});
 
 invoicesTableBody?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action='open']");
