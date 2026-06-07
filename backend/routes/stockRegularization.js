@@ -137,7 +137,7 @@ router.post('/negative-lots/:lotId/regularize', authenticateToken, attachDbConte
     }
 
     const currentQty = Number(lot.qty_remaining || 0);
-    const regularizationQty = Number(Math.abs(currentQty).toFixed(3));
+    const regularizationQty = Math.abs(currentQty);
     if (regularizationQty <= 0) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Le lot ne nécessite pas de régularisation' });
