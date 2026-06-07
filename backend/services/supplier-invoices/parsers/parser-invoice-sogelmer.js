@@ -68,13 +68,19 @@ function parseHeader(text) {
   };
 }
 
-function parseLines(text) {
+function articleSection(text) {
   const normalized = normalizeText(text);
+  const afterOrder = normalized.split(/N[°º]?\s*Cde/i).pop() || normalized;
+  return afterOrder.split(/TOTAL\s+\d+\s+colis/i)[0] || afterOrder;
+}
+
+function parseLines(text) {
+  const section = articleSection(text);
   const lineRegex = /\b([A-Z][A-Z0-9/]{3,19})\s+(.+?)\s+(\d+)\s+(\d+[,.]\d{2})\s+(\d+[,.]\d{2})\s+KG\s+(\d{8,})\s+([\d,.]+)\s*€\s+([\d,.]+)\s*€\s+1\b/g;
   const rows = [];
   let match;
 
-  while ((match = lineRegex.exec(normalized)) !== null) {
+  while ((match = lineRegex.exec(section)) !== null) {
     const orderedColis = parseNumber(match[3]);
     const unitWeight = parseNumber(match[4]);
     const quantityKg = parseNumber(match[5]);
