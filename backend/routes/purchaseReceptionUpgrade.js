@@ -103,6 +103,19 @@ function sanitizeDownloadFilename(fileName) {
     .trim();
 }
 
+function blNumberFromFilename(fileName) {
+  const safeName = sanitizeDownloadFilename(fileName);
+  const stem = path.parse(safeName).name;
+  const match = stem.match(/([0-9]{3}-[0-9]{8})/);
+  return match ? match[1] : null;
+}
+
+function cleanBlNumber(value) {
+  const direct = String(value || '').trim();
+  const match = direct.match(/([0-9]{3}-[0-9]{8})/);
+  return match ? match[1] : (direct || null);
+}
+
 function supplierDocumentDownloadName(originalName, storedMimeType) {
   const cleanOriginal = sanitizeDownloadFilename(originalName);
   const originalExt = path.extname(cleanOriginal).toLowerCase();
@@ -413,6 +426,7 @@ router.post('/purchases/import-document', authenticateToken, attachDbContext, re
     if (!parsed.ok) return res.status(400).json(parsed);
 
     const result = parsed.result;
+    const blNumber = cleanBlNumber(result.bl_number || result.meta?.bl_number) || blNumberFromFilename(req.file.originalname || req.file.filename);
     await client.query('BEGIN');
 
     let supplier = null;
@@ -431,17 +445,18 @@ router.post('/purchases/import-document', authenticateToken, attachDbContext, re
 
     const purchase = await client.query(
       `INSERT INTO purchases(
-        id, store_id, client_key, supplier_id, purchase_date, status, purchase_type, order_date,
+        id, store_id, client_key, supplier_id, bl_number, purchase_date, status, purchase_type, order_date,
         notes, created_by, updated_by, source_document_url, source_document_storage_path,
         source_document_original_name, source_document_mime_type, source_document_uploaded_at, source_document_uploaded_by
        )
-       VALUES(gen_random_uuid(), $1, $2, $3, CURRENT_DATE, 'ordered', $4, CURRENT_DATE,
-        $5, $6, $6, NULL, $7, $8, $9, NOW(), $6)
+       VALUES(gen_random_uuid(), $1, $2, $3, $4, CURRENT_DATE, 'ordered', $5, CURRENT_DATE,
+        $6, $7, $7, NULL, $8, $9, $10, NOW(), $7)
        RETURNING *`,
       [
         req.user.store_id,
         req.user.client_key || null,
         supplier.id,
+        blNumber,
         result.purchase_type || 'direct_bl',
         `Import ${parsed.detected_label}`,
         req.user.id,
