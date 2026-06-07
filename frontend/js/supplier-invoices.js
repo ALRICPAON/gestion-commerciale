@@ -41,6 +41,7 @@ const invoiceSummary = document.getElementById("invoice-summary");
 const matchesTableBody = document.getElementById("matches-table-body");
 const invoiceDocumentLink = document.getElementById("invoice-document-link");
 const autoMatchBtn = document.getElementById("auto-match-btn");
+const confirmMatchBtn = document.getElementById("confirm-match-btn");
 const validateBtn = document.getElementById("validate-btn");
 const validateAdjustBtn = document.getElementById("validate-adjust-btn");
 const payloadBtn = document.getElementById("payload-btn");
@@ -120,7 +121,6 @@ function formatCurrency(value) {
 function statusLabel(status) {
   const map = {
     draft: "Brouillon",
-    match_review: "À contrôler",
     matched: "Rapprochée",
     invoice_difference: "Écart",
     invoice_validated: "Validée",
@@ -375,8 +375,23 @@ async function autoMatchSelected() {
     showFeedback(detailFeedback, "Rapprochement ignoré : total facture à 0", true);
   } else {
     const confidence = data.confidence ? `, confiance ${data.confidence}` : "";
-    showFeedback(detailFeedback, `Proposition de rapprochement : ${data.matches} match(s), ${data.differences} écart(s)${confidence}`);
+    showFeedback(detailFeedback, `Proposition de rapprochement : ${data.matches} match(s), ${data.differences} écart(s)${confidence}. Confirme le rapprochement avant validation.`);
   }
+  await loadInvoices();
+  await openInvoice(selectedInvoiceId);
+}
+
+async function confirmMatchSelected() {
+  if (!selectedInvoiceId || !selectedInvoice) return;
+  clearFeedback(detailFeedback);
+  const confirmed = confirm("Confirmer le rapprochement proposé pour cette facture fournisseur ?");
+  if (!confirmed) return;
+
+  const data = await apiFetch(`/api/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}/confirm-match`, {
+    method: "POST",
+    body: JSON.stringify({ confirm_difference: true }),
+  });
+  showFeedback(detailFeedback, `Rapprochement confirmé : ${matchLabel(data.match_status)}`);
   await loadInvoices();
   await openInvoice(selectedInvoiceId);
 }
@@ -445,6 +460,7 @@ createManualBtn?.addEventListener("click", () => createManualInvoice().catch((er
 importInvoiceBtn?.addEventListener("click", () => importInvoice().catch((error) => showFeedback(createFeedback, error.message, true)));
 invoiceDocumentLink?.addEventListener("click", (event) => openInvoiceDocument(event));
 autoMatchBtn?.addEventListener("click", () => autoMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
+confirmMatchBtn?.addEventListener("click", () => confirmMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateBtn?.addEventListener("click", () => validateSelected(false).catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateAdjustBtn?.addEventListener("click", () => validateSelected(true).catch((error) => showFeedback(detailFeedback, error.message, true)));
 payloadBtn?.addEventListener("click", () => showPayload().catch((error) => showFeedback(detailFeedback, error.message, true)));
