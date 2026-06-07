@@ -37,6 +37,7 @@ const deliveryNoteCommunicationsRoutes = require('./routes/deliveryNoteCommunica
 const deliveryNotesRoutes = require('./routes/deliveryNotes');
 const salesRoutes = require('./routes/sales');
 const dashboardRoutes = require('./routes/dashboard');
+const statisticsRoutes = require('./routes/statistics');
 const stockRegularizationRoutes = require('./routes/stockRegularization');
 const stockRoutes = require('./routes/stock');
 const traceabilityRoutes = require('./routes/traceability');
@@ -168,6 +169,7 @@ app.use('/api', deliveryNoteCommunicationsRoutes);
 app.use('/api', deliveryNotesRoutes);
 app.use('/api/sales', salesRoutes);
 app.use('/api', dashboardRoutes);
+app.use('/api', statisticsRoutes);
 app.use('/api/stock', stockRegularizationRoutes);
 app.use('/api/stock', stockRoutes);
 app.use('/api/traceability', traceabilityRoutes);
