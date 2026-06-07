@@ -972,6 +972,10 @@ async function saveLine(lineId) {
   metadata_notes: row.dataset.metadataNotes || null,
 };
 
+  if (Object.prototype.hasOwnProperty.call(row.dataset, 'sanitaryPhotoUrls')) {
+    payload.sanitary_photo_urls = getSanitaryPhotoUrlsForLine(row);
+  }
+
   if (apiQuantityFieldBase() === "received") {
     payload.received_colis = qtyColis;
     payload.received_pieces = qtyPieces;
@@ -1065,10 +1069,6 @@ async function validateReception() {
   showFeedback(purchaseLinesFeedback, "Validation réception en cours...");
 
   try {
-    for (const line of lines) {
-      await saveLine(line.id);
-    }
-
     const data = await apiFetch(`/api/purchases/${purchaseId}/validate-reception`, {
       method: "POST",
       body: JSON.stringify({
