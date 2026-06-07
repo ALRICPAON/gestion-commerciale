@@ -232,7 +232,7 @@ router.post('/supplier-invoices/:id/manual-match', authenticateToken, attachDbCo
           invoice.id,
           purchase.id,
           matchStatus,
-          hasDifference ? 'manual_amount' : null,
+          hasDifference ? 'amount' : null,
           index === 0 ? amountDifference : 0,
           notes,
         ]
