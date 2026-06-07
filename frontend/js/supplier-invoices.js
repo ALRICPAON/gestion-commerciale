@@ -6,6 +6,12 @@ if (!token || !sessionUser) {
 }
 
 const API_BASE = window.APP_CONFIG.API_BASE_URL;
+const MIME_EXTENSIONS = {
+  "application/pdf": ".pdf",
+  "application/vnd.ms-excel": ".xls",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "text/csv": ".csv",
+};
 
 const userNameEl = document.getElementById("user-name");
 const backHomeBtn = document.getElementById("back-home-btn");
@@ -71,6 +77,29 @@ async function apiFetch(path, options = {}) {
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || "Erreur API");
   return data;
+}
+
+function filenameFromContentDisposition(header) {
+  if (!header) return "facture-fournisseur";
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+  const classicMatch = header.match(/filename="?([^";]+)"?/i);
+  return classicMatch?.[1] || "facture-fournisseur";
+}
+
+function extensionFromMime(contentType) {
+  const mime = String(contentType || "").split(";")[0].trim().toLowerCase();
+  return MIME_EXTENSIONS[mime] || "";
+}
+
+function ensureFilenameExtension(fileName, contentType) {
+  const cleanName = fileName || "facture-fournisseur";
+  if (/\.[a-z0-9]{2,5}$/i.test(cleanName)) return cleanName;
+  return `${cleanName}${extensionFromMime(contentType) || ".pdf"}`;
+}
+
+function revokeLater(url) {
+  window.setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
 }
 
 function formatDate(value) {
@@ -187,6 +216,21 @@ async function createManualInvoice() {
   await openInvoice(data.invoice.id);
 }
 
+function importSuccessMessage(data) {
+  const messages = [];
+  if (data.parser?.detected) {
+    messages.push(data.parser.message || "Facture Distrimer lue automatiquement");
+  } else {
+    messages.push(data.parser?.message || "Document importé mais aucun parser disponible");
+  }
+  if (data.auto_match?.matches > 0) {
+    messages.push(`Rapprochement automatique : ${data.auto_match.matches} match(s), ${data.auto_match.differences || 0} écart(s)`);
+  } else {
+    messages.push("Facture importée mais aucun BL rapproché automatiquement");
+  }
+  return messages.join(". ");
+}
+
 async function importInvoice() {
   clearFeedback(createFeedback);
   const payload = formPayload();
@@ -204,7 +248,7 @@ async function importInvoice() {
     method: "POST",
     body: form,
   });
-  showFeedback(createFeedback, "Facture fournisseur importée");
+  showFeedback(createFeedback, importSuccessMessage(data));
   await loadInvoices();
   await openInvoice(data.invoice.id);
 }
@@ -236,8 +280,10 @@ function renderDetail(data) {
     <div><span>Total TTC</span><strong>${formatCurrency(invoice.total_inc_vat)}</strong></div>
   `;
 
-  invoiceDocumentLink.href = invoice.document_url ? `${API_BASE}${invoice.document_url}` : "#";
+  invoiceDocumentLink.href = "#";
+  invoiceDocumentLink.dataset.documentUrl = invoice.document_url || "";
   invoiceDocumentLink.classList.toggle("disabled", !invoice.document_url);
+  invoiceDocumentLink.setAttribute("aria-disabled", invoice.document_url ? "false" : "true");
 
   if (!data.matches.length) {
     matchesTableBody.innerHTML = `<tr><td colspan="7">Aucun rapprochement lancé</td></tr>`;
@@ -256,6 +302,55 @@ function renderDetail(data) {
   }
 }
 
+async function openInvoiceDocument(event) {
+  event?.preventDefault();
+  const documentUrl = invoiceDocumentLink?.dataset.documentUrl;
+  if (!documentUrl) return;
+
+  const blankWindow = window.open("about:blank", "_blank", "noopener");
+  invoiceDocumentLink.classList.add("disabled");
+
+  try {
+    const response = await fetch(`${API_BASE}${documentUrl}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Document facture indisponible");
+    }
+
+    const contentType = response.headers.get("Content-Type") || "application/octet-stream";
+    const fileName = ensureFilenameExtension(
+      filenameFromContentDisposition(response.headers.get("Content-Disposition")),
+      contentType
+    );
+    const rawBlob = await response.blob();
+    const typedBlob = rawBlob.type === contentType ? rawBlob : new Blob([rawBlob], { type: contentType });
+    const blobUrl = URL.createObjectURL(typedBlob);
+
+    if (blankWindow) {
+      blankWindow.document.title = fileName;
+      blankWindow.location.href = blobUrl;
+    } else {
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.target = "_blank";
+      link.rel = "noopener";
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+
+    revokeLater(blobUrl);
+  } catch (error) {
+    if (blankWindow) blankWindow.close();
+    showFeedback(detailFeedback, error.message || "Document facture indisponible", true);
+  } finally {
+    invoiceDocumentLink.classList.toggle("disabled", !invoiceDocumentLink.dataset.documentUrl);
+  }
+}
+
 async function autoMatchSelected() {
   if (!selectedInvoiceId) return;
   clearFeedback(detailFeedback);
@@ -263,7 +358,11 @@ async function autoMatchSelected() {
     method: "POST",
     body: JSON.stringify({ date_window_days: 7 }),
   });
-  showFeedback(detailFeedback, `Rapprochement terminé : ${data.matches} match(s), ${data.differences} écart(s)`);
+  if (data.skipped && data.reason === "zero_total") {
+    showFeedback(detailFeedback, "Rapprochement ignoré : total facture à 0", true);
+  } else {
+    showFeedback(detailFeedback, `Rapprochement terminé : ${data.matches} match(s), ${data.differences} écart(s)`);
+  }
   await loadInvoices();
   await openInvoice(selectedInvoiceId);
 }
@@ -317,6 +416,7 @@ statusFilter?.addEventListener("change", loadInvoices);
 searchInput?.addEventListener("input", () => { window.clearTimeout(searchInput._timer); searchInput._timer = window.setTimeout(loadInvoices, 250); });
 createManualBtn?.addEventListener("click", () => createManualInvoice().catch((error) => showFeedback(createFeedback, error.message, true)));
 importInvoiceBtn?.addEventListener("click", () => importInvoice().catch((error) => showFeedback(createFeedback, error.message, true)));
+invoiceDocumentLink?.addEventListener("click", (event) => openInvoiceDocument(event));
 autoMatchBtn?.addEventListener("click", () => autoMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateBtn?.addEventListener("click", () => validateSelected(false).catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateAdjustBtn?.addEventListener("click", () => validateSelected(true).catch((error) => showFeedback(detailFeedback, error.message, true)));
