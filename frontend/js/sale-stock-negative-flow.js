@@ -198,13 +198,24 @@
     lotModal?.classList.add('hidden');
   }
 
-  if (typeof window !== 'undefined') {
-    window.isNegoce = () => false;
+  if (typeof isNegoce !== 'undefined') {
+    isNegoce = function patchedIsNegoce() { return false; };
   }
 
   if (typeof api !== 'undefined') {
     api = async function patchedApi(path, options = {}) {
-      return request(path, options);
+      try {
+        return await request(path, options);
+      } catch (error) {
+        const method = String(options.method || 'GET').toUpperCase();
+        if (method === 'GET' || error.status !== 409 || error.code !== 'STOCK_INSUFFICIENT') throw error;
+        const confirmed = window.confirm('Stock insuffisant. Voulez-vous valider quand même en sortie forcée ?');
+        if (!confirmed) throw error;
+        const body = options.body ? JSON.parse(options.body) : {};
+        const forcedBody = { ...body, allow_negative_stock: true };
+        console.info('Validation BL payload envoyé après confirmation', { path, payload: forcedBody });
+        return request(path, { ...options, body: JSON.stringify(forcedBody) });
+      }
     };
   }
 
