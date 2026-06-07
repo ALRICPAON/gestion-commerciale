@@ -79,7 +79,7 @@ async function getPositiveLots(client, { storeId, articleId, excludeLotId, lotId
        AND l.qty_remaining > 0
        ${filter}
      ORDER BY COALESCE(l.dlc, DATE '9999-12-31'), l.created_at, l.id
-     ${lock ? 'FOR UPDATE' : ''}`,
+     ${lock ? 'FOR UPDATE OF l' : ''}`,
     params
   );
   return result.rows;
