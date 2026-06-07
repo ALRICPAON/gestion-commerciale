@@ -179,19 +179,21 @@ function findArticleByDesignation(articles, designation) {
   return articles.find((a) => normalizeCompareText(a.designation) === wanted) || null;
 }
 
-function getAfMapLookupRefs(ref) {
-  const refs = [ref, cleanRef(ref)];
+function getAfMapLookupRefs(rawRef, cleanRefValue) {
+  const refs = [rawRef, cleanRefValue, cleanRef(rawRef)];
   return [...new Set(refs.map((value) => String(value || "").trim()).filter(Boolean))];
 }
 
 function getAfMapSupplierCodes(supplierCode) {
   const code = String(supplierCode || "").trim();
-  return code === "81269" ? ["81269", "81268"] : [code];
+  if (code === "81269") return ["81269", "81268"];
+  if (code === "81268") return ["81268", "81269"];
+  return [code];
 }
 
-function getAfMapRecord(afMap, supplierCode, ref) {
+function getAfMapRecord(afMap, supplierCode, rawRef, cleanRefValue) {
   const supplierCodes = getAfMapSupplierCodes(supplierCode);
-  const refs = getAfMapLookupRefs(ref);
+  const refs = getAfMapLookupRefs(rawRef, cleanRefValue);
 
   for (const code of supplierCodes) {
     for (const candidateRef of refs) {
@@ -201,6 +203,14 @@ function getAfMapRecord(afMap, supplierCode, ref) {
   }
 
   return null;
+}
+
+function getAfRecordArticleId(record) {
+  return record?.article_id || record?.articleId || record?.id || null;
+}
+
+function getAfRecordArticlePlu(record) {
+  return cleanPlu(record?.plu || record?.article_plu || record?.articlePlu || "");
 }
 
 function parseWithLayout(rows, layout, supplierCode, afMap, articles) {
@@ -216,7 +226,8 @@ function parseWithLayout(rows, layout, supplierCode, afMap, articles) {
     const r = rows[i];
     if (!r || !r.length) continue;
 
-    const ref = cleanRef(r[layout.colPLU]);
+    const rawRef = normalizeText(r[layout.colPLU]);
+    const ref = cleanRef(rawRef);
     let designation = normalizeText(r[layout.colDesignation]);
     const nomLatin = normalizeText(r[layout.colNomLatin]);
 
@@ -266,15 +277,17 @@ function parseWithLayout(rows, layout, supplierCode, afMap, articles) {
     let finalSousZone = extractSousZoneRomanOrNum(sousZoneRaw) || sousZoneRaw || null;
     let fao = buildFao(finalZone, finalSousZone);
 
-    const afRecord = getAfMapRecord(afMap, supplierCode, ref);
-    let articlePlu = cleanPlu(afRecord?.plu || "");
-    let designationInterne = normalizeText(afRecord?.designationInterne || "");
-    let allergens = normalizeText(afRecord?.allergenes || "");
+    const afRecord = getAfMapRecord(afMap, supplierCode, rawRef, ref);
+    let articleId = getAfRecordArticleId(afRecord);
+    let articlePlu = getAfRecordArticlePlu(afRecord);
+    let designationInterne = normalizeText(afRecord?.designationInterne || afRecord?.internal_designation || "");
+    let allergens = normalizeText(afRecord?.allergenes || afRecord?.allergens || "");
 
-    if (!articlePlu) {
+    if (!articleId && !articlePlu) {
       const articleFallback = findArticleByDesignation(articles, fournisseurDesignation);
       if (articleFallback) {
-        articlePlu = cleanPlu(articleFallback.id || articleFallback.plu || "");
+        articleId = articleFallback.id || null;
+        articlePlu = cleanPlu(articleFallback.plu || "");
         fallbackArticleCount++;
 
         if (articleFallback.zone) finalZone = normalizeText(articleFallback.zone);
@@ -292,13 +305,14 @@ function parseWithLayout(rows, layout, supplierCode, afMap, articles) {
 
     const finalDesignation = fournisseurDesignation || null;
     const finalInternalDesignation = designationInterne || finalDesignation;
-    const needsMapping = !articlePlu;
+    const needsMapping = !articleId && !articlePlu;
     if (needsMapping) missingMappingCount++;
     else mappedCount++;
 
     lines.push({
       supplier_reference: ref,
       supplier_label: finalDesignation,
+      article_id: articleId || null,
       article_plu: articlePlu || null,
       designation: finalDesignation,
       internal_designation: finalInternalDesignation || null,
@@ -308,6 +322,7 @@ function parseWithLayout(rows, layout, supplierCode, afMap, articles) {
       fao: fao || null,
       fishing_gear: engin || null,
       allergens: allergens || null,
+      ordered_colis: null,
       ordered_quantity: poidsKg || null,
       received_quantity: 0,
       unit_price_ex_vat: prixMajore || null,
