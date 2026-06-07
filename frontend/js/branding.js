@@ -42,7 +42,8 @@
         max-width: 176px;
         object-fit: contain;
       }
-      .brand-logo.hidden {
+      .brand-logo.hidden,
+      .brand-logo:not([src]) {
         display: none !important;
       }
       .brand-copy {
@@ -72,10 +73,11 @@
     return String(text || "")
       .replace(/Scorpa Seafood/gi, activeBrandName)
       .replace(/SCORPA SEAFOOD/g, activeBrandName)
+      .replace(/\bScorpa\b/gi, activeBrandName)
       .replace(/scorpaseafood/gi, "altamaree")
       .replace(/\s*\/\s*Gestion Commerciale/gi, "")
-      .replace(/Gestion Commerciale/gi, activeBrandName)
       .replace(/Service Gestion Commerciale/gi, activeBrandName)
+      .replace(/Gestion Commerciale/gi, activeBrandName)
       .trim();
   }
 
@@ -84,6 +86,13 @@
     document.querySelectorAll(".app-title, .brand-block h1").forEach((el) => {
       el.textContent = activeBrandName;
       el.classList.add("brand-title");
+    });
+  }
+
+  function normalizeLegacyText() {
+    document.querySelectorAll(".app-subtitle, .brand-block p, #store-name").forEach((el) => {
+      const cleaned = cleanText(el.textContent);
+      if (cleaned) el.textContent = cleaned;
     });
   }
 
@@ -121,20 +130,29 @@
     return logo;
   }
 
+  function hideLogo(clearSrc = false) {
+    const logo = ensureBrandMarkup();
+    if (!logo) return;
+    logo.classList.add("hidden");
+    if (clearSrc) logo.removeAttribute("src");
+  }
+
   function applyLogo(src) {
     const logo = ensureBrandMarkup();
     if (!logo) return;
 
+    if (!src) {
+      hideLogo(true);
+      return;
+    }
+
+    logo.classList.add("hidden");
     logo.onload = () => logo.classList.remove("hidden");
     logo.onerror = () => {
-      if (logo.src.endsWith(FALLBACK_LOGO_HREF)) {
-        logo.removeAttribute("src");
-        logo.classList.add("hidden");
-        return;
-      }
-      logo.src = FALLBACK_LOGO_HREF;
+      logo.removeAttribute("src");
+      logo.classList.add("hidden");
     };
-    logo.src = src || FALLBACK_LOGO_HREF;
+    logo.src = src;
   }
 
   async function fetchBranding() {
@@ -158,16 +176,27 @@
     activeBrandName = branding?.company_name || DEFAULT_BRAND_NAME;
     setFavicon(branding?.favicon_url || FALLBACK_FAVICON_HREF);
     normalizeTitles();
-    applyLogo(branding?.logo_url || FALLBACK_LOGO_HREF);
+    normalizeLegacyText();
+
+    if (!branding) {
+      hideLogo(true);
+      return;
+    }
+
+    applyLogo(branding.logo_url || FALLBACK_LOGO_HREF);
   }
 
   function applyBranding() {
     injectStyles();
-    setFavicon(FALLBACK_FAVICON_HREF);
     normalizeTitles();
-    ensureBrandMarkup();
+    normalizeLegacyText();
+    hideLogo(true);
     loadBranding();
   }
+
+  window.AltaMareeBranding = {
+    refresh: loadBranding,
+  };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", applyBranding);
