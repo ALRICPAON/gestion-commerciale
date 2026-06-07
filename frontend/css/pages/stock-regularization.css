@@ -75,6 +75,38 @@
   align-items: center;
 }
 
+.regularization-positive-lots {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.regularization-positive-lot {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 1fr) 92px;
+  gap: 8px;
+  align-items: center;
+  color: #111827;
+  font-size: 13px;
+}
+
+.regularization-positive-lot strong,
+.regularization-positive-lot small {
+  display: block;
+}
+
+.regularization-positive-lot small {
+  margin-top: 2px;
+  color: #6b7280;
+}
+
+.regularization-positive-qty {
+  width: 92px;
+  min-width: 0;
+}
+
 @media (max-width: 900px) {
   .stock-regularization-filters {
     grid-template-columns: 1fr;
@@ -82,5 +114,13 @@
 
   .stock-regularization-kpi strong {
     font-size: 20px;
+  }
+
+  .regularization-positive-lot {
+    grid-template-columns: auto 1fr;
+  }
+
+  .regularization-positive-qty {
+    grid-column: 2;
   }
 }
