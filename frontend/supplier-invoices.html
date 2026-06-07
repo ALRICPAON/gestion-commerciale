@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Factures fournisseurs - Gestion Commerciale</title>
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/supplier-invoices.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/supplier-invoices.css?v=2" />
 </head>
 <body class="app-page supplier-invoices-page">
   <header class="topbar">
@@ -146,8 +146,43 @@
             <tbody id="matches-table-body"></tbody>
           </table>
         </div>
+        <div id="manual-match-panel" class="manual-match-panel hidden">
+          <div class="manual-match-header">
+            <div>
+              <h4>Rapprochement manuel</h4>
+              <p>BL candidats du même fournisseur. La confirmation est toujours déclenchée par clic utilisateur.</p>
+            </div>
+            <button id="reload-manual-candidates-btn" class="btn btn-secondary btn-sm">Recharger les BL</button>
+          </div>
+          <div class="manual-match-summary">
+            <div><span>Total facture HT</span><strong id="manual-invoice-total">-</strong></div>
+            <div><span>Total BL sélectionnés HT</span><strong id="manual-selected-total">-</strong></div>
+            <div><span>Écart facture / BL</span><strong id="manual-difference-total">-</strong></div>
+          </div>
+          <div id="manual-match-feedback" class="page-feedback hidden"></div>
+          <div class="table-wrap">
+            <table class="data-table manual-candidates-table">
+              <thead>
+                <tr>
+                  <th>Sélection</th>
+                  <th>Date</th>
+                  <th>N° BL</th>
+                  <th>Total HT réceptionné</th>
+                  <th>Statut</th>
+                  <th>Écart potentiel</th>
+                  <th>Lignes</th>
+                </tr>
+              </thead>
+              <tbody id="manual-candidates-body"><tr><td colspan="7">Clique sur “Rapprocher manuellement”.</td></tr></tbody>
+            </table>
+          </div>
+          <div class="page-actions-right manual-match-actions">
+            <button id="confirm-manual-match-btn" class="btn btn-primary" disabled>Confirmer le rapprochement manuel</button>
+          </div>
+        </div>
         <div class="page-actions-right detail-actions">
           <a id="invoice-document-link" class="btn btn-secondary" href="#" target="_blank">Voir document</a>
+          <button id="manual-match-btn" class="btn btn-secondary">Rapprocher manuellement</button>
           <button id="auto-match-btn" class="btn btn-secondary">Rapprocher automatiquement</button>
           <button id="confirm-match-btn" class="btn btn-primary">Confirmer rapprochement</button>
           <button id="validate-btn" class="btn btn-primary">Valider</button>
@@ -161,6 +196,6 @@
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/supplier-invoices.js?v=4"></script>
+  <script src="./js/supplier-invoices.js?v=5"></script>
 </body>
 </html>

@@ -22,14 +22,16 @@
   margin-bottom: 18px;
 }
 
-.supplier-invoices-page .detail-grid div {
+.supplier-invoices-page .detail-grid div,
+.supplier-invoices-page .manual-match-summary div {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   padding: 10px;
   background: #fff;
 }
 
-.supplier-invoices-page .detail-grid span {
+.supplier-invoices-page .detail-grid span,
+.supplier-invoices-page .manual-match-summary span {
   display: block;
   color: #6b7280;
   font-size: 12px;
@@ -69,6 +71,72 @@
   margin-top: 16px;
 }
 
+.supplier-invoices-page .manual-match-panel {
+  margin-top: 18px;
+  border-top: 1px solid #e5e7eb;
+  padding-top: 18px;
+}
+
+.supplier-invoices-page .manual-match-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.supplier-invoices-page .manual-match-header h4 {
+  margin: 0 0 4px;
+}
+
+.supplier-invoices-page .manual-match-header p {
+  margin: 0;
+  color: #6b7280;
+}
+
+.supplier-invoices-page .manual-match-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.supplier-invoices-page .manual-match-summary .is-difference {
+  color: #991b1b;
+}
+
+.supplier-invoices-page .manual-candidate-checkbox {
+  width: 18px;
+  height: 18px;
+}
+
+.supplier-invoices-page .manual-lines-row td {
+  background: #f9fafb;
+}
+
+.supplier-invoices-page .manual-lines-list {
+  display: grid;
+  gap: 6px;
+  padding: 4px 0;
+}
+
+.supplier-invoices-page .manual-line-item {
+  display: grid;
+  grid-template-columns: 72px 1fr 120px 120px 120px;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+}
+
+.supplier-invoices-page .manual-line-item span {
+  color: #374151;
+  overflow-wrap: anywhere;
+}
+
+.supplier-invoices-page .manual-match-actions {
+  margin-top: 12px;
+}
+
 .supplier-invoices-page .payload-preview {
   margin-top: 16px;
   max-height: 320px;
@@ -89,17 +157,23 @@
 
 @media (max-width: 900px) {
   .supplier-invoices-toolbar,
-  .supplier-invoices-page .page-actions-right {
+  .supplier-invoices-page .page-actions-right,
+  .supplier-invoices-page .manual-match-header {
     align-items: stretch;
     flex-direction: column;
   }
 
   .supplier-invoices-page .form-grid,
-  .supplier-invoices-page .detail-grid {
+  .supplier-invoices-page .detail-grid,
+  .supplier-invoices-page .manual-match-summary {
     grid-template-columns: 1fr;
   }
 
   .supplier-invoices-page .form-group-span-2 {
     grid-column: span 1;
+  }
+
+  .supplier-invoices-page .manual-line-item {
+    grid-template-columns: 1fr;
   }
 }
