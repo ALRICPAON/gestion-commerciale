@@ -152,7 +152,8 @@ async function findPurchaseByInvoiceBl(client, invoice, storeId) {
     `SELECT p.*, COALESCE(SUM(pl.line_amount_ex_vat), 0) received_total_ex_vat,
             CASE
               WHEN UPPER(regexp_replace(COALESCE(p.bl_number, ''), '\\s+', '', 'g')) = $4 THEN 'bl_number'
-              ELSE 'source_document_original_name'
+              WHEN UPPER(regexp_replace(regexp_replace(COALESCE(p.source_document_original_name, ''), '[.][^.]*$', ''), '\\s+', '', 'g')) = $4 THEN 'source_document_original_name_stem'
+              ELSE 'source_document_original_name_contains'
             END AS match_reason
      FROM purchases p
      LEFT JOIN purchase_lines pl ON pl.purchase_id = p.id
@@ -162,13 +163,38 @@ async function findPurchaseByInvoiceBl(client, invoice, storeId) {
        AND (
          UPPER(regexp_replace(COALESCE(p.bl_number, ''), '\\s+', '', 'g')) = $4
          OR UPPER(regexp_replace(regexp_replace(COALESCE(p.source_document_original_name, ''), '[.][^.]*$', ''), '\\s+', '', 'g')) = $4
+         OR UPPER(regexp_replace(COALESCE(p.source_document_original_name, ''), '\\s+', '', 'g')) LIKE '%' || $4 || '%'
        )
      GROUP BY p.id
-     ORDER BY CASE WHEN UPPER(regexp_replace(COALESCE(p.bl_number, ''), '\\s+', '', 'g')) = $4 THEN 0 ELSE 1 END,
-              p.receipt_date DESC NULLS LAST
-     LIMIT 1`,
+     ORDER BY
+       CASE
+         WHEN UPPER(regexp_replace(COALESCE(p.bl_number, ''), '\\s+', '', 'g')) = $4 THEN 0
+         WHEN UPPER(regexp_replace(regexp_replace(COALESCE(p.source_document_original_name, ''), '[.][^.]*$', ''), '\\s+', '', 'g')) = $4 THEN 1
+         ELSE 2
+       END,
+       p.receipt_date DESC NULLS LAST
+     LIMIT 5`,
     [storeId, invoice.supplier_id, MATCHABLE_PURCHASE_STATUSES, normalized]
   );
+
+  console.info('Auto-match facture fournisseur: recherche BL', {
+    invoice_id: invoice.id,
+    supplier_invoice_bl_number: blNumber,
+    normalized_bl_number: normalized,
+    supplier_id: invoice.supplier_id,
+    store_id: storeId,
+    candidate_count: result.rows.length,
+    candidates: result.rows.map((row) => ({
+      purchase_id: row.id,
+      bl_number: row.bl_number,
+      source_document_original_name: row.source_document_original_name,
+      status: row.status,
+      total_amount_ex_vat: row.total_amount_ex_vat,
+      received_total_ex_vat: row.received_total_ex_vat,
+      match_reason: row.match_reason,
+    })),
+  });
+
   return result.rows[0] || null;
 }
 
@@ -255,12 +281,50 @@ function purchaseLineTotalQuantity(line) {
   return receivedColis > 0 && receivedQuantity > 0 ? receivedColis * receivedQuantity : receivedQuantity;
 }
 
+async function createPurchaseLevelMatch(client, invoice, purchase, storeId, notePrefix) {
+  const invoiceTotal = Number(invoice.product_total_ex_vat || invoice.total_ex_vat || 0);
+  const purchaseTotal = Number(purchase.received_total_ex_vat || purchase.total_amount_ex_vat || 0);
+  const amountDifference = Number((invoiceTotal - purchaseTotal).toFixed(4));
+  const matchStatus = Math.abs(amountDifference) <= 0.05 ? 'matched' : 'difference';
+
+  await client.query(
+    `INSERT INTO supplier_invoice_matches(id, store_id, supplier_invoice_id, purchase_id, match_status, difference_type, amount_difference, notes)
+     VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)`,
+    [
+      storeId,
+      invoice.id,
+      purchase.id,
+      matchStatus,
+      matchStatus === 'difference' ? 'amount' : null,
+      amountDifference,
+      `${notePrefix}${purchase.match_reason ? ` (${purchase.match_reason})` : ''}`,
+    ]
+  );
+
+  return {
+    amountDifference,
+    matchStatus,
+    hasDifference: matchStatus === 'difference',
+  };
+}
+
 async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) {
   const invoice = await getInvoice(client, invoiceId, storeId);
   if (!invoice) return { ok: false, reason: 'invoice_not_found', matches: 0, differences: 0 };
 
   const invoiceTotal = Number(invoice.product_total_ex_vat || invoice.total_ex_vat || 0);
+  console.info('Auto-match facture fournisseur: debut', {
+    invoice_id: invoice.id,
+    supplier_invoice_bl_number: invoice.supplier_invoice_bl_number,
+    supplier_id: invoice.supplier_id,
+    store_id: storeId,
+    invoice_total_ex_vat: invoiceTotal,
+    status: invoice.status,
+    match_status: invoice.match_status,
+  });
+
   if (invoiceTotal <= 0) {
+    console.info('Auto-match facture fournisseur: ignore total nul', { invoice_id: invoice.id });
     return { ok: true, skipped: true, reason: 'zero_total', matches: 0, differences: 0 };
   }
 
@@ -271,23 +335,45 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
   let candidates = { rows: [] };
   if (!blPurchase) candidates = await findPurchaseCandidates(client, invoice, storeId, dateWindowDays);
 
+  console.info('Auto-match facture fournisseur: candidats fallback', {
+    invoice_id: invoice.id,
+    bl_purchase_found: Boolean(blPurchase),
+    fallback_candidate_count: candidates.rows.length,
+    fallback_candidates: candidates.rows.map((row) => ({
+      purchase_id: row.id,
+      bl_number: row.bl_number,
+      source_document_original_name: row.source_document_original_name,
+      status: row.status,
+      total_amount_ex_vat: row.total_amount_ex_vat,
+      received_total_ex_vat: row.received_total_ex_vat,
+    })),
+  });
+
   let differences = 0;
   let matches = 0;
   const usedPurchaseLineIds = [];
 
-  if (!lines.length) {
-    const purchase = blPurchase || candidates.rows[0];
+  if (blPurchase) {
+    const purchaseMatch = await createPurchaseLevelMatch(client, invoice, blPurchase, storeId, 'Rapprochement automatique par numero BL facture');
+    matches += 1;
+    if (purchaseMatch.hasDifference) differences += 1;
+  } else if (!lines.length) {
+    const purchase = candidates.rows[0];
     if (purchase) {
-      const amountDifference = Number((invoiceTotal - Number(purchase.received_total_ex_vat || purchase.total_amount_ex_vat || 0)).toFixed(4));
-      const matchStatus = Math.abs(amountDifference) <= 0.05 ? 'matched' : 'difference';
-      if (matchStatus === 'difference') differences += 1;
+      const purchaseMatch = await createPurchaseLevelMatch(client, invoice, purchase, storeId, 'Rapprochement automatique par fournisseur/date/total');
       matches += 1;
-      await client.query(
-        `INSERT INTO supplier_invoice_matches(id, store_id, supplier_invoice_id, purchase_id, match_status, difference_type, amount_difference, notes)
-         VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)`,
-        [storeId, invoice.id, purchase.id, matchStatus, matchStatus === 'difference' ? 'amount' : null, amountDifference, blPurchase ? `Rapprochement automatique par numero BL facture (${blPurchase.match_reason || 'bl'})` : 'Rapprochement automatique par fournisseur/date/total']
-      );
+      if (purchaseMatch.hasDifference) differences += 1;
     }
+  }
+
+  if (!blPurchase && !candidates.rows.length) {
+    console.info('Auto-match facture fournisseur: aucun purchase candidat', {
+      invoice_id: invoice.id,
+      supplier_invoice_bl_number: invoice.supplier_invoice_bl_number,
+      supplier_id: invoice.supplier_id,
+      store_id: storeId,
+      status_filter: MATCHABLE_PURCHASE_STATUSES,
+    });
   }
 
   for (const line of lines) {
@@ -299,6 +385,13 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
     if (!purchaseLine) {
       differences += 1;
       await client.query('UPDATE supplier_invoice_lines SET match_status = $1, match_error = $2 WHERE id = $3', ['missing_purchase_line', 'Aucune ligne reception rapprochable par reference fournisseur, mapping ou article', line.id]);
+      console.info('Auto-match facture fournisseur: ligne sans candidat', {
+        invoice_id: invoice.id,
+        invoice_line_id: line.id,
+        supplier_reference: line.supplier_reference,
+        article_id: line.article_id,
+        line_amount_ex_vat: line.line_amount_ex_vat,
+      });
       continue;
     }
 
@@ -353,9 +446,18 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
        WHERE p.id IN (SELECT DISTINCT purchase_id FROM supplier_invoice_matches WHERE supplier_invoice_id = $2 AND purchase_id IS NOT NULL)`,
       [differences, invoice.id]
     );
+    console.info('Auto-match facture fournisseur: resultat', {
+      invoice_id: invoice.id,
+      status,
+      match_status: matchStatus,
+      matches,
+      differences,
+      matched_by_bl: Boolean(blPurchase),
+    });
     return { ok: true, status, match_status: matchStatus, matches, differences, matched_by_bl: Boolean(blPurchase) };
   }
 
+  console.info('Auto-match facture fournisseur: aucun match cree', { invoice_id: invoice.id });
   return { ok: true, status: invoice.status, match_status: invoice.match_status, matches, differences, matched_by_bl: false };
 }
 
