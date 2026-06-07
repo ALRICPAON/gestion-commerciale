@@ -46,6 +46,18 @@ function isArticleCode(s) {
   );
 }
 
+function weightPerColisKg(totalWeightKg, colisCount, parsedWeightPerColisKg = 0) {
+  const total = Number(totalWeightKg || 0);
+  const colis = Number(colisCount || 0);
+  const parsed = Number(parsedWeightPerColisKg || 0);
+
+  if (total > 0 && colis > 0) {
+    return Number((total / colis).toFixed(3));
+  }
+
+  return parsed > 0 ? parsed : null;
+}
+
 function extractFAOs(bio) {
   if (!bio) return [];
 
@@ -257,45 +269,50 @@ module.exports = {
 
     const parsedRows = parseSogelmerText(text);
 
-    const lines = parsedRows.map((L) => ({
-      supplier_reference: L.refFournisseur || null,
-      supplier_label: L.designation || null,
+    const lines = parsedRows.map((L) => {
+      const poidsParColisKg = weightPerColisKg(L.poidsTotalKg, L.colis, L.poidsColisKg);
 
-      article_plu: null,
-      designation: L.designation || null,
-      internal_designation: L.designation || null,
-      latin_name: L.nomLatin || null,
+      return {
+        supplier_reference: L.refFournisseur || null,
+        supplier_label: L.designation || null,
 
-      fao_zone: L.zone || null,
-      sous_zone: L.sousZone || null,
-      fao: L.fao || null,
-      fishing_gear: L.engin || null,
+        article_plu: null,
+        designation: L.designation || null,
+        internal_designation: L.designation || null,
+        latin_name: L.nomLatin || null,
 
-      origin_label: "SOGELMER",
-      allergens: null,
+        fao_zone: L.zone || null,
+        sous_zone: L.sousZone || null,
+        fao: L.fao || null,
+        fishing_gear: L.engin || null,
 
-      ordered_colis: L.colis || null,
-      ordered_pieces: null,
-      ordered_quantity: L.poidsTotalKg || null,
+        origin_label: "SOGELMER",
+        allergens: null,
 
-      received_colis: 0,
-      received_pieces: 0,
-      received_quantity: 0,
+        ordered_colis: L.colis || null,
+        ordered_pieces: null,
+        ordered_quantity: poidsParColisKg,
 
-      unit_price_ex_vat: L.prixKg || null,
-      supplier_unit_price_ex_vat: L.prixKg || null,
-      price_unit: "kg",
-      line_amount_ex_vat: L.montantHT || null,
+        received_colis: 0,
+        received_pieces: 0,
+        received_quantity: 0,
 
-      supplier_lot_number: L.lot || null,
-      dlc: null,
+        unit_price_ex_vat: L.prixKg || null,
+        supplier_unit_price_ex_vat: L.prixKg || null,
+        price_unit: "kg",
+        line_amount_ex_vat: L.montantHT || null,
 
-      line_kind: "TRAD",
-      needs_mapping: true,
-    }));
+        supplier_lot_number: L.lot || null,
+        dlc: null,
 
-    const totalWeight = lines.reduce(
-      (sum, line) => sum + Number(line.ordered_quantity || 0),
+        line_kind: "TRAD",
+        needs_mapping: true,
+        total_weight_kg: L.poidsTotalKg || null,
+      };
+    });
+
+    const totalWeight = parsedRows.reduce(
+      (sum, line) => sum + Number(line.poidsTotalKg || 0),
       0
     );
 

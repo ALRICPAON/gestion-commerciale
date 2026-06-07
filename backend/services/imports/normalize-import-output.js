@@ -24,6 +24,7 @@ function normalizeLine(line) {
     unit_price_ex_vat: toNumberOrNull(line.unit_price_ex_vat),
     price_unit: line.price_unit || "kg",
     line_amount_ex_vat: toNumberOrNull(line.line_amount_ex_vat),
+    total_weight_kg: toNumberOrNull(line.total_weight_kg),
     supplier_lot_number: line.supplier_lot_number || null,
     dlc: line.dlc || null,
   };
