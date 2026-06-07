@@ -13,6 +13,7 @@ const rateLimit = require('express-rate-limit');
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
 const storeSettingsRoutes = require('./routes/storeSettings');
+const storeBrandingRoutes = require('./routes/storeBranding');
 const articlesStoreLevelRoutes = require('./routes/articlesStoreLevel');
 const articlesExcelDetailRoutes = require('./routes/articlesExcelDetail');
 const articlesExcelRoutes = require('./routes/articlesExcel');
@@ -51,9 +52,11 @@ const transformationsRoutes = require('./routes/transformations');
 const app = express();
 const PORT = process.env.PORT || 3002;
 const STORE_LOGOS_DIR = path.join(__dirname, 'uploads', 'store-logos');
+const STORE_FAVICONS_DIR = path.join(__dirname, 'uploads', 'store-favicons');
 const SANITARY_PHOTOS_DIR = path.join(__dirname, 'uploads', 'sanitary-photos');
 
 fs.mkdirSync(STORE_LOGOS_DIR, { recursive: true });
+fs.mkdirSync(STORE_FAVICONS_DIR, { recursive: true });
 fs.mkdirSync(SANITARY_PHOTOS_DIR, { recursive: true });
 
 if (!process.env.JWT_SECRET) {
@@ -134,6 +137,11 @@ app.use('/uploads/store-logos', express.static(STORE_LOGOS_DIR, {
   index: false,
   maxAge: '7d',
 }));
+app.use('/uploads/store-favicons', express.static(STORE_FAVICONS_DIR, {
+  fallthrough: false,
+  index: false,
+  maxAge: '7d',
+}));
 app.use('/uploads/sanitary-photos', express.static(SANITARY_PHOTOS_DIR, {
   fallthrough: false,
   index: false,
@@ -145,6 +153,7 @@ app.use('/api', apiRateLimiter);
 app.use('/api', authRoutes);
 app.use('/api', usersRoutes);
 app.use('/api', storeSettingsRoutes);
+app.use('/api', storeBrandingRoutes);
 app.use('/api/articles', articlesExcelDetailRoutes);
 app.use('/api/articles', articlesExcelRoutes);
 app.use('/api/articles', articlesStoreLevelRoutes);
@@ -180,7 +189,7 @@ app.use('/api/transformations', transformationUpdateRoutes);
 app.use('/api/transformations', transformationValidationRoutes);
 app.use('/api/transformations', transformationsRoutes);
 app.get('/', (req, res) => {
-  res.send('API ALTA MARÉE / Gestion Commerciale fonctionne');
+  res.send('API ALTA MARÉE fonctionne');
 });
 
 app.use((err, req, res, next) => {
