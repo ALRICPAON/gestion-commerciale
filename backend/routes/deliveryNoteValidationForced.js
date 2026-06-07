@@ -7,6 +7,7 @@ const { recomputeArticleStock } = require('../services/stockService');
 
 const router = express.Router();
 
+const FORCED_STOCK_NOTE = 'Sortie forcée BL client — stock insuffisant';
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
 const num = (value, fallback = 0) => {
   if (value === undefined || value === null || value === '') return fallback;
@@ -186,24 +187,88 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
   return { id: deliveryNoteId, existing: false };
 }
 
+async function findSelectedLot(db, { storeId, articleId, lotId }) {
+  if (!lotId) return null;
+  const result = await db.query(
+    `SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 FOR UPDATE`,
+    [storeId, articleId, lotId]
+  );
+  return result.rows[0] || null;
+}
+
+async function createForcedNegativeLot(db, { storeId, clientKey, articleId, documentId, line, missingQuantity, unitCost }) {
+  const lot = await db.query(
+    `INSERT INTO lots(
+      id, store_id, client_key, article_id, purchase_id, purchase_line_id, supplier_id,
+      lot_code, supplier_lot_number, source_type, qty_initial, qty_remaining,
+      unit_cost_ex_vat, dlc, traceability_data
+     )
+     VALUES(
+      gen_random_uuid(), $1, $2, $3, NULL, NULL, NULL,
+      CONCAT('FORCE-', to_char(NOW(), 'YYDDD'), '-', LEFT(gen_random_uuid()::text, 8)), NULL, 'forced_sale',
+      0, $4, $5, NULL, $6::jsonb
+     )
+     RETURNING *`,
+    [
+      storeId,
+      clientKey || null,
+      articleId,
+      -missingQuantity,
+      num(unitCost),
+      JSON.stringify({
+        forced_stock_exit: true,
+        note: FORCED_STOCK_NOTE,
+        source_table: 'sales_documents',
+        source_id: documentId,
+        sales_line_id: line?.id || null,
+        line_number: line?.line_number || null,
+      }),
+    ]
+  );
+  return lot.rows[0];
+}
+
 async function recordForcedStockExit(db, { storeId, clientKey, articleId, lotId, documentId, line, missingQuantity, unitCost, userId }) {
-  const notes = JSON.stringify({
-    forced_stock_exit: true,
-    stock_forced: true,
-    missing_quantity: Number(missingQuantity.toFixed(3)),
-    article_id: articleId || null,
-    lot_id: lotId || null,
-    document_id: documentId,
-    line_id: line?.id || null,
-    user_id: userId || null,
-    created_at: new Date().toISOString(),
-    forced_at: new Date().toISOString(),
-  });
+  const selectedLot = await findSelectedLot(db, { storeId, articleId, lotId });
+  let forcedLot = selectedLot;
+
+  if (forcedLot) {
+    await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2`, [missingQuantity, forcedLot.id]);
+    forcedLot = { ...forcedLot, qty_remaining: num(forcedLot.qty_remaining) - missingQuantity };
+  } else {
+    forcedLot = await createForcedNegativeLot(db, {
+      storeId,
+      clientKey,
+      articleId,
+      documentId,
+      line,
+      missingQuantity,
+      unitCost,
+    });
+  }
+
+  await db.query(
+    `INSERT INTO sale_line_allocations(id, sales_line_id, lot_id, quantity, unit_cost_ex_vat)
+     VALUES(gen_random_uuid(), $1, $2, $3, $4)`,
+    [line.id, forcedLot.id, missingQuantity, num(forcedLot.unit_cost_ex_vat, unitCost)]
+  );
+
   await db.query(
     `INSERT INTO stock_movements(id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by)
      VALUES(gen_random_uuid(), $1, $2, $3, $4, 'sale_out', $5, $6, 'sales_documents', $7, $8, $9)`,
-    [storeId, clientKey || null, articleId, lotId || null, -missingQuantity, num(unitCost), documentId, notes, userId]
+    [storeId, clientKey || null, articleId, forcedLot.id, -missingQuantity, num(forcedLot.unit_cost_ex_vat, unitCost), documentId, FORCED_STOCK_NOTE, userId]
   );
+
+  console.info('Sortie forcée BL client créée', {
+    store_id: storeId,
+    article_id: articleId,
+    lot_id: forcedLot.id,
+    document_id: documentId,
+    line_id: line?.id || null,
+    missing_quantity: missingQuantity,
+  });
+
+  return forcedLot;
 }
 
 async function validateDeliveryNoteStock(db, { deliveryNoteId, storeId, clientKey, userId, allowNegativeStock = false }) {
@@ -228,10 +293,9 @@ async function validateDeliveryNoteStock(db, { deliveryNoteId, storeId, clientKe
 
   let allocated = 0;
   const articles = new Set();
-  const skipStock = deliveryNote.origin === 'negoce';
   for (const line of lines.rows) {
     let remaining = pos(line.sold_quantity || line.total_weight, 0);
-    if (!skipStock && line.article_id && remaining > 0) {
+    if (line.article_id && remaining > 0) {
       const lots = line.selected_lot_id
         ? await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id])
         : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
