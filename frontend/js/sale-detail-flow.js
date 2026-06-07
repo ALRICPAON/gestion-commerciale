@@ -41,8 +41,31 @@
       },
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || 'Erreur API');
+    if (!response.ok) {
+      const error = new Error(data.message || data.error || 'Erreur API');
+      error.status = response.status;
+      error.code = data.code;
+      error.details = data.details || {};
+      error.payload = data;
+      throw error;
+    }
     return data;
+  }
+
+  async function postWithStockConfirmation(path, payload = {}) {
+    const firstPayload = { ...payload };
+    console.info('Validation BL payload envoyé', { path, payload: firstPayload });
+    try {
+      return await request(path, { method: 'POST', body: JSON.stringify(firstPayload) });
+    } catch (error) {
+      if (error.status !== 409 || error.code !== 'STOCK_INSUFFICIENT') throw error;
+      const missing = error.details?.missing_quantity ? `\nManque : ${qty(error.details.missing_quantity)}` : '';
+      const confirmed = confirm(`Stock insuffisant. Voulez-vous valider quand même en sortie forcée ?${missing}`);
+      if (!confirmed) throw error;
+      const forcedPayload = { ...payload, allow_negative_stock: true };
+      console.info('Validation BL payload envoyé après confirmation', { path, payload: forcedPayload });
+      return request(path, { method: 'POST', body: JSON.stringify(forcedPayload) });
+    }
   }
 
   async function downloadPdf(path, fallbackName) {
@@ -197,13 +220,10 @@
   async function validateBlFromSale() {
     await refreshState();
     if (!canValidateBl()) return;
-    const text = isNegoce()
-      ? 'Valider en BL négoce ? Les lots réceptionnés seront déstockés.'
-      : 'Valider en BL ? Cette action génère le BL et déstocke les lots.';
-    if (!confirm(text)) return;
-    const data = await request(`/api/sales/${currentSale.id}/validate-delivery-note`, { method: 'POST', body: JSON.stringify({}) });
+    if (!confirm('Valider en BL ? Cette action génère le BL et déstocke les lots disponibles.')) return;
+    const data = await postWithStockConfirmation(`/api/sales/${currentSale.id}/validate-delivery-note`, {});
     const nextId = data.delivery_note_id || data.id;
-    feedback('Commande validée en BL');
+    feedback(data.forced_stock_exit ? 'Commande validée en BL avec sortie forcée tracée' : 'Commande validée en BL');
     if (nextId) window.location.href = `./sale-detail.html?id=${encodeURIComponent(nextId)}`;
     else window.location.reload();
   }
