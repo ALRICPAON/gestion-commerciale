@@ -1,4 +1,4 @@
-﻿function parseNumber(raw) {
+function parseNumber(raw) {
   if (raw === undefined || raw === null || raw === "") return 0;
   if (typeof raw === "number") return Number(raw);
 
@@ -179,16 +179,28 @@ function findArticleByDesignation(articles, designation) {
   return articles.find((a) => normalizeCompareText(a.designation) === wanted) || null;
 }
 
-function getAfMapRecord(afMap, supplierCode, ref) {
-  const keyMain = `${supplierCode}__${ref}`.toUpperCase();
-  const keyAlt =
-    supplierCode === "81268"
-      ? `81269__${ref}`.toUpperCase()
-      : supplierCode === "81269"
-      ? `81268__${ref}`.toUpperCase()
-      : null;
+function getAfMapLookupRefs(ref) {
+  const refs = [ref, cleanRef(ref)];
+  return [...new Set(refs.map((value) => String(value || "").trim()).filter(Boolean))];
+}
 
-  return afMap[keyMain] || (keyAlt ? afMap[keyAlt] : null) || null;
+function getAfMapSupplierCodes(supplierCode) {
+  const code = String(supplierCode || "").trim();
+  return code === "81269" ? ["81269", "81268"] : [code];
+}
+
+function getAfMapRecord(afMap, supplierCode, ref) {
+  const supplierCodes = getAfMapSupplierCodes(supplierCode);
+  const refs = getAfMapLookupRefs(ref);
+
+  for (const code of supplierCodes) {
+    for (const candidateRef of refs) {
+      const key = `${code}__${candidateRef}`.toUpperCase();
+      if (afMap[key]) return afMap[key];
+    }
+  }
+
+  return null;
 }
 
 function parseWithLayout(rows, layout, supplierCode, afMap, articles) {
