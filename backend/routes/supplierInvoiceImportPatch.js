@@ -61,6 +61,10 @@ function jsonLines(value) {
   }
 }
 
+function normalizeSupplierReference(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
 function invoiceDocumentUrl(invoiceId) {
   return `/api/supplier-invoices/${encodeURIComponent(invoiceId)}/document`;
 }
@@ -176,23 +180,71 @@ async function findPurchaseCandidates(client, invoice, storeId, dateWindowDays) 
   );
 }
 
-async function findPurchaseLineCandidate(client, line, invoice, storeId, purchaseId = null) {
-  const params = [storeId, invoice.supplier_id, line.article_id || null, Number(line.line_amount_ex_vat || 0), purchaseId];
+async function findPurchaseLineCandidate(client, line, invoice, storeId, purchaseId = null, usedPurchaseLineIds = []) {
+  const normalizedRef = normalizeSupplierReference(line.supplier_reference);
+  const articleId = line.article_id || null;
+  const lineAmount = Number(line.line_amount_ex_vat || 0);
   const result = await client.query(
-    `SELECT pl.*, p.id purchase_id, p.bl_number, p.receipt_date, l.id lot_id
+    `SELECT pl.*, p.id purchase_id, p.bl_number, p.receipt_date, l.id lot_id,
+            CASE
+              WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(pl.supplier_reference, '')), '[^A-Z0-9]', '', 'g') = $6 THEN 'supplier_reference'
+              WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'supplier_reference', '')), '[^A-Z0-9]', '', 'g') = $6 THEN 'metadata_supplier_reference'
+              WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'refFournisseur', '')), '[^A-Z0-9]', '', 'g') = $6 THEN 'metadata_ref_fournisseur'
+              WHEN mapped.article_id IS NOT NULL AND pl.article_id = mapped.article_id THEN 'supplier_article_mapping'
+              WHEN $3::uuid IS NOT NULL AND pl.article_id = $3::uuid THEN 'article_id'
+              ELSE NULL
+            END AS match_reason
      FROM purchase_lines pl
      JOIN purchases p ON p.id = pl.purchase_id
      LEFT JOIN lots l ON l.purchase_line_id = pl.id
+     LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id = pl.id AND plm.meta_key = 'gc_line'
+     LEFT JOIN LATERAL (
+       SELECT m.article_id
+       FROM supplier_article_mappings m
+       WHERE m.supplier_id = $2
+         AND COALESCE(m.is_active, true) = true
+         AND $6 <> ''
+         AND regexp_replace(UPPER(COALESCE(m.supplier_ref, '')), '[^A-Z0-9]', '', 'g') = $6
+       LIMIT 1
+     ) mapped ON true
      WHERE pl.store_id = $1
        AND pl.supplier_id = $2
-       AND p.status = ANY($6::text[])
-       AND ($3::uuid IS NULL OR pl.article_id = $3::uuid)
+       AND p.status = ANY($8::text[])
        AND ($5::uuid IS NULL OR p.id = $5::uuid)
-     ORDER BY ABS(COALESCE(pl.line_amount_ex_vat, 0) - $4::numeric) ASC, p.receipt_date DESC NULLS LAST
+       AND NOT (pl.id = ANY($7::uuid[]))
+       AND (
+         ($6 <> '' AND regexp_replace(UPPER(COALESCE(pl.supplier_reference, '')), '[^A-Z0-9]', '', 'g') = $6)
+         OR ($6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'supplier_reference', '')), '[^A-Z0-9]', '', 'g') = $6)
+         OR ($6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'refFournisseur', '')), '[^A-Z0-9]', '', 'g') = $6)
+         OR (mapped.article_id IS NOT NULL AND pl.article_id = mapped.article_id)
+         OR ($3::uuid IS NOT NULL AND pl.article_id = $3::uuid)
+       )
+     ORDER BY
+       CASE
+         WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(pl.supplier_reference, '')), '[^A-Z0-9]', '', 'g') = $6 THEN 0
+         WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'supplier_reference', '')), '[^A-Z0-9]', '', 'g') = $6 THEN 1
+         WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'refFournisseur', '')), '[^A-Z0-9]', '', 'g') = $6 THEN 1
+         WHEN mapped.article_id IS NOT NULL AND pl.article_id = mapped.article_id THEN 2
+         WHEN $3::uuid IS NOT NULL AND pl.article_id = $3::uuid THEN 3
+         ELSE 9
+       END,
+       ABS(COALESCE(pl.line_amount_ex_vat, 0) - $4::numeric) ASC,
+       p.receipt_date DESC NULLS LAST
      LIMIT 1`,
-    [...params, MATCHABLE_PURCHASE_STATUSES]
+    [storeId, invoice.supplier_id, articleId, lineAmount, purchaseId, normalizedRef, usedPurchaseLineIds, MATCHABLE_PURCHASE_STATUSES]
   );
   return result.rows[0] || null;
+}
+
+function purchaseLineTotalQuantity(line) {
+  const unit = String(line.price_unit || 'kg').toLowerCase();
+  const receivedColis = Number(line.received_colis || line.ordered_colis || 0);
+  const receivedPieces = Number(line.received_pieces || line.ordered_pieces || 0);
+  const receivedQuantity = Number(line.received_quantity || line.ordered_quantity || 0);
+
+  if (unit === 'colis') return receivedColis;
+  if (unit === 'piece') return receivedColis > 0 && receivedPieces > 0 ? receivedColis * receivedPieces : receivedPieces;
+  return receivedColis > 0 && receivedQuantity > 0 ? receivedColis * receivedQuantity : receivedQuantity;
 }
 
 async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) {
@@ -213,6 +265,7 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
 
   let differences = 0;
   let matches = 0;
+  const usedPurchaseLineIds = [];
 
   if (!lines.length) {
     const purchase = blPurchase || candidates.rows[0];
@@ -230,18 +283,21 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
   }
 
   for (const line of lines) {
-    let purchaseLine = await findPurchaseLineCandidate(client, line, invoice, storeId, blPurchase?.id || null);
+    let purchaseLine = await findPurchaseLineCandidate(client, line, invoice, storeId, blPurchase?.id || null, usedPurchaseLineIds);
     if (!purchaseLine && blPurchase?.id) {
-      purchaseLine = await findPurchaseLineCandidate(client, line, invoice, storeId, null);
+      purchaseLine = await findPurchaseLineCandidate(client, line, invoice, storeId, null, usedPurchaseLineIds);
     }
 
     if (!purchaseLine) {
       differences += 1;
-      await client.query('UPDATE supplier_invoice_lines SET match_status = $1, match_error = $2 WHERE id = $3', ['missing_purchase_line', 'Aucune ligne reception rapprochable', line.id]);
+      await client.query('UPDATE supplier_invoice_lines SET match_status = $1, match_error = $2 WHERE id = $3', ['missing_purchase_line', 'Aucune ligne reception rapprochable par reference fournisseur, mapping ou article', line.id]);
       continue;
     }
 
-    const qtyDifference = Number((Number(line.quantity || 0) - Number(purchaseLine.received_quantity || purchaseLine.ordered_quantity || 0)).toFixed(3));
+    usedPurchaseLineIds.push(purchaseLine.id);
+
+    const purchaseQuantity = purchaseLineTotalQuantity(purchaseLine);
+    const qtyDifference = Number((Number(line.quantity || 0) - purchaseQuantity).toFixed(3));
     const priceDifference = Number((Number(line.unit_price_ex_vat || 0) - Number(purchaseLine.unit_price_ex_vat || 0)).toFixed(4));
     const amountDifference = Number((Number(line.line_amount_ex_vat || 0) - Number(purchaseLine.line_amount_ex_vat || 0)).toFixed(4));
     const hasDifference = Math.abs(qtyDifference) > 0.001 || Math.abs(priceDifference) > 0.001 || Math.abs(amountDifference) > 0.05;
@@ -268,7 +324,7 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
         qtyDifference,
         priceDifference,
         amountDifference,
-        hasDifference ? 'Ecart detecte automatiquement' : 'Rapprochement automatique OK',
+        hasDifference ? `Ecart detecte automatiquement (${purchaseLine.match_reason || 'matching'})` : `Rapprochement automatique OK (${purchaseLine.match_reason || 'matching'})`,
       ]
     );
 
