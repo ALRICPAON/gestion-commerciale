@@ -149,15 +149,23 @@ async function findPurchaseByInvoiceBl(client, invoice, storeId) {
   if (!blNumber) return null;
   const normalized = blNumber.replace(/\s+/g, '').toUpperCase();
   const result = await client.query(
-    `SELECT p.*, COALESCE(SUM(pl.line_amount_ex_vat), 0) received_total_ex_vat
+    `SELECT p.*, COALESCE(SUM(pl.line_amount_ex_vat), 0) received_total_ex_vat,
+            CASE
+              WHEN UPPER(regexp_replace(COALESCE(p.bl_number, ''), '\\s+', '', 'g')) = $4 THEN 'bl_number'
+              ELSE 'source_document_original_name'
+            END AS match_reason
      FROM purchases p
      LEFT JOIN purchase_lines pl ON pl.purchase_id = p.id
      WHERE p.store_id = $1
        AND p.supplier_id = $2
        AND p.status = ANY($3::text[])
-       AND UPPER(regexp_replace(COALESCE(p.bl_number, ''), '\\s+', '', 'g')) = $4
+       AND (
+         UPPER(regexp_replace(COALESCE(p.bl_number, ''), '\\s+', '', 'g')) = $4
+         OR UPPER(regexp_replace(regexp_replace(COALESCE(p.source_document_original_name, ''), '[.][^.]*$', ''), '\\s+', '', 'g')) = $4
+       )
      GROUP BY p.id
-     ORDER BY p.receipt_date DESC NULLS LAST
+     ORDER BY CASE WHEN UPPER(regexp_replace(COALESCE(p.bl_number, ''), '\\s+', '', 'g')) = $4 THEN 0 ELSE 1 END,
+              p.receipt_date DESC NULLS LAST
      LIMIT 1`,
     [storeId, invoice.supplier_id, MATCHABLE_PURCHASE_STATUSES, normalized]
   );
@@ -277,7 +285,7 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
       await client.query(
         `INSERT INTO supplier_invoice_matches(id, store_id, supplier_invoice_id, purchase_id, match_status, difference_type, amount_difference, notes)
          VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7)`,
-        [storeId, invoice.id, purchase.id, matchStatus, matchStatus === 'difference' ? 'amount' : null, amountDifference, blPurchase ? 'Rapprochement automatique par numero BL facture' : 'Rapprochement automatique par fournisseur/date/total']
+        [storeId, invoice.id, purchase.id, matchStatus, matchStatus === 'difference' ? 'amount' : null, amountDifference, blPurchase ? `Rapprochement automatique par numero BL facture (${blPurchase.match_reason || 'bl'})` : 'Rapprochement automatique par fournisseur/date/total']
       );
     }
   }
