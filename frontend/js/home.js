@@ -47,7 +47,7 @@ function canManageSettings() {
 
 function renderTopbar() {
   if (storeNameEl) {
-    storeNameEl.textContent = sessionUser.store_name || "Magasin";
+    storeNameEl.textContent = "Espace de gestion";
   }
 
   if (userNameEl) {
