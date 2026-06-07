@@ -15,6 +15,7 @@ const PURCHASE_DOCUMENTS_ROOT = path.join(__dirname, '..', 'uploads', 'purchase-
 const SANITARY_PHOTOS_ROOT = path.join(__dirname, '..', 'uploads', 'sanitary-photos');
 const ALLOWED_IMPORT_EXTENSIONS = new Set(['.xlsx', '.xls', '.csv', '.pdf']);
 const ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const MAX_SANITARY_PHOTOS_PER_LINE = 20;
 const DOCUMENT_MIME_TYPES = {
   '.csv': 'text/csv; charset=utf-8',
   '.pdf': 'application/pdf',
@@ -189,7 +190,7 @@ function normalizeSanitaryPhotoUrls(rawUrls, primaryUrl = null, context = {}) {
       console.error('Photo sanitaire ignoree: URL invalide', { ...context, url });
       return;
     }
-    if (!urls.includes(url)) urls.push(url);
+    if (!urls.includes(url) && urls.length < MAX_SANITARY_PHOTOS_PER_LINE) urls.push(url);
   };
 
   addUrl(primaryUrl);
@@ -295,7 +296,7 @@ router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbCo
     }
 
     const primaryUrl = urls[0];
-    await client.query(
+    const stored = await client.query(
       `INSERT INTO purchase_line_metadata(
         id, purchase_line_id, meta_key, meta_value, sanitary_photo_url, sanitary_photo_urls, updated_at
        )
@@ -304,18 +305,43 @@ router.post('/purchase-lines/:id/sanitary-photos', authenticateToken, attachDbCo
        DO UPDATE SET
          sanitary_photo_url = COALESCE(purchase_line_metadata.sanitary_photo_url, EXCLUDED.sanitary_photo_url),
          sanitary_photo_urls = (
-           CASE
-             WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls) = 'array' THEN purchase_line_metadata.sanitary_photo_urls
-             WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url)
-             ELSE '[]'::jsonb
-           END
-         ) || EXCLUDED.sanitary_photo_urls,
-         updated_at = NOW()`,
+           SELECT COALESCE(jsonb_agg(to_jsonb(url) ORDER BY first_ord), '[]'::jsonb)
+           FROM (
+             SELECT url, MIN(ord) AS first_ord
+             FROM (
+               SELECT value AS url, ord
+               FROM jsonb_array_elements_text(
+                 CASE
+                   WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls) = 'array' THEN purchase_line_metadata.sanitary_photo_urls
+                   WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url)
+                   ELSE '[]'::jsonb
+                 END
+               ) WITH ORDINALITY AS existing(value, ord)
+               UNION ALL
+               SELECT value AS url, ${100000} + ord
+               FROM jsonb_array_elements_text(EXCLUDED.sanitary_photo_urls) WITH ORDINALITY AS incoming(value, ord)
+             ) all_urls
+             WHERE url ~ '^(https?://|/uploads/sanitary-photos/)'
+             GROUP BY url
+             ORDER BY first_ord
+             LIMIT ${MAX_SANITARY_PHOTOS_PER_LINE}
+           ) limited_urls
+         ),
+         updated_at = NOW()
+       RETURNING sanitary_photo_url, sanitary_photo_urls`,
       [req.params.id, primaryUrl, JSON.stringify(urls)]
     );
 
     await client.query('COMMIT');
-    return res.status(201).json({ ok: true, url: primaryUrl, urls });
+    const saved = stored.rows[0] || {};
+    return res.status(201).json({
+      ok: true,
+      url: saved.sanitary_photo_url || primaryUrl,
+      urls: normalizeSanitaryPhotoUrls(saved.sanitary_photo_urls, saved.sanitary_photo_url, {
+        purchase_line_id: req.params.id,
+        store_id: req.user.store_id,
+      }),
+    });
   } catch (error) {
     await client.query('ROLLBACK');
     removeUploadedFiles(files);

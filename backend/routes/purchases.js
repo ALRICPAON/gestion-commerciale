@@ -197,34 +197,6 @@ router.delete('/purchase-lines/:id', authenticateToken, attachDbContext, require
   try{await client.query('BEGIN'); const chk=await client.query('SELECT pl.purchase_id,p.status FROM purchase_lines pl JOIN purchases p ON p.id=pl.purchase_id WHERE pl.id=$1 AND pl.store_id=$2',[req.params.id,req.user.store_id]); if(!chk.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Ligne introuvable'});} if(chk.rows[0].status!=='ordered'){await client.query('ROLLBACK');return res.status(400).json({error:'Suppression impossible'});} await client.query('DELETE FROM purchase_lines WHERE id=$1',[req.params.id]); await recomputePurchaseTotals(client,chk.rows[0].purchase_id); await client.query('COMMIT'); res.json({ok:true});}catch(e){await client.query('ROLLBACK');res.status(500).json({error:'Erreur suppression ligne'});}finally{client.release();}
 });
 
-router.post('/purchases/:id/validate-reception', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
-  const client=await req.dbPool.connect();
-  try{
-    await client.query('BEGIN');
-    const p=await client.query('SELECT * FROM purchases WHERE id=$1 AND store_id=$2 FOR UPDATE',[req.params.id,req.user.store_id]);
-    if(!p.rows.length){await client.query('ROLLBACK'); return res.status(404).json({error:'Achat introuvable'});}
-    const purchase=p.rows[0]; if(purchase.status!=='ordered'){await client.query('ROLLBACK'); return res.status(409).json({error:'Document déjà validé ou non modifiable'});}
-    const lines=await client.query(`SELECT pl.*, a.plu, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' WHERE pl.purchase_id=$1 ORDER BY pl.line_number FOR UPDATE OF pl`,[purchase.id]);
-    let createdLots=0;
-    for(const line of lines.rows){
-      if(!line.article_id){await client.query('ROLLBACK'); return res.status(400).json({error:`Ligne ${line.line_number} sans article`});}
-      const unit=normalizePriceUnit(line.price_unit); let rc=Number(line.received_colis||0), rp=Number(line.received_pieces||0), rq=Number(line.received_quantity||0); const oc=Number(line.ordered_colis||0), op=Number(line.ordered_pieces||0), oq=Number(line.ordered_quantity||0);
-      if(rc<=0 && oc>0) rc=oc; if(rp<=0 && op>0) rp=op; if(rq<=0 && oq>0) rq=oq;
-      const qty=unit==='colis'?rc:unit==='piece'?(rc>0&&rp>0?rc*rp:rp):(rc>0&&rq>0?rc*rq:rq);
-      if(qty<=0) continue;
-      const lotCode=buildLotCode(line.plu,purchase.supplier_id,line.id);
-      const lot=await client.query(`INSERT INTO lots(id,store_id,client_key,article_id,purchase_id,purchase_line_id,supplier_id,lot_code,supplier_lot_number,source_type,qty_initial,qty_remaining,unit_cost_ex_vat,dlc,traceability_data) VALUES(gen_random_uuid(),$1,$2,$3,$4,$5,$6,$7,$8,'purchase',$9,$9,$10,$11,$12::jsonb) RETURNING id`,[purchase.store_id,purchase.client_key,line.article_id,purchase.id,line.id,purchase.supplier_id,lotCode,line.supplier_lot_number||null,qty,Number(line.unit_price_ex_vat||0),line.dlc||null,JSON.stringify({latin_name:line.latin_name,fao_zone:line.fao_zone,sous_zone:line.sous_zone,fishing_gear:line.fishing_gear,production_method:line.production_method,allergens:line.allergens,origin_label:line.origin_label})]);
-      await client.query(`INSERT INTO stock_movements(id,store_id,client_key,article_id,lot_id,movement_type,quantity,unit_cost_ex_vat,source_table,source_id,notes,created_by) VALUES(gen_random_uuid(),$1,$2,$3,$4,'purchase_in',$5,$6,'purchase_lines',$7,$8,$9)`,[purchase.store_id,purchase.client_key,line.article_id,lot.rows[0].id,qty,Number(line.unit_price_ex_vat||0),line.id,`Réception achat ${purchase.id}`,req.user.id]);
-      const finalAmount=lineAmount({...line,received_colis:rc,received_pieces:rp,received_quantity:rq},true);
-      await client.query(`UPDATE purchase_lines SET received_colis=$1,received_pieces=$2,received_quantity=$3,lot_id=$4,line_amount_ex_vat=$5,line_status='received',received_at=NOW(),updated_at=NOW() WHERE id=$6`,[rc,rp,rq,lot.rows[0].id,finalAmount,line.id]);
-      await recomputeArticleStock(client,line.article_id,purchase.store_id); createdLots++;
-    }
-    if(createdLots===0){await client.query('ROLLBACK'); return res.status(400).json({error:'Aucune quantité réceptionnée'});}
-    await client.query(`UPDATE purchases SET status='received', purchase_type=CASE WHEN purchase_type='order' THEN 'direct_bl' ELSE purchase_type END, receipt_date=COALESCE($1::date,CURRENT_DATE), updated_by=$2, updated_at=NOW() WHERE id=$3`,[req.body.receipt_date||null,req.user.id,purchase.id]);
-    await recomputePurchaseTotals(client,purchase.id); await client.query('COMMIT'); res.json({ok:true,created_lots:createdLots,message:`Réception validée : ${createdLots} lot(s) créé(s)`});
-  }catch(e){await client.query('ROLLBACK'); console.error(e); res.status(500).json({error:e.message});} finally{client.release();}
-});
-
 router.post('/purchases/:id/duplicate', authenticateToken, attachDbContext, requireAdminOrManager, async(req,res)=>{
   const client=await req.dbPool.connect();
   try{
