@@ -97,7 +97,6 @@ router.get('/supplier-invoices/:id/manual-match-candidates', authenticateToken, 
     if (!invoice) return res.status(404).json({ error: 'Facture fournisseur introuvable' });
 
     const dateWindowDays = Math.max(1, Math.min(Number(req.query.date_window_days || 30), 120));
-    const invoiceDate = clean(invoice.invoice_date);
     const invoiceTotal = invoiceComparableTotal(invoice);
     const purchases = await req.dbPool.query(
       `SELECT p.id, p.bl_number, p.source_document_original_name, p.receipt_date, p.status,
@@ -114,7 +113,7 @@ router.get('/supplier-invoices/:id/manual-match-candidates', authenticateToken, 
        ORDER BY ABS(COALESCE(SUM(pl.line_amount_ex_vat), p.total_amount_ex_vat, 0) - $6::numeric) ASC,
                 p.receipt_date DESC NULLS LAST
        LIMIT 50`,
-      [req.user.store_id, invoice.supplier_id, MATCHABLE_PURCHASE_STATUSES, invoiceDate, dateWindowDays, invoiceTotal]
+      [req.user.store_id, invoice.supplier_id, MATCHABLE_PURCHASE_STATUSES, invoice.invoice_date || null, dateWindowDays, invoiceTotal]
     );
 
     const purchaseIds = purchases.rows.map((purchase) => purchase.id);
