@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 72" role="img" aria-labelledby="title desc">
+  <title id="title">ALTA MARÉE</title>
+  <desc id="desc">Logo ALTA MARÉE</desc>
+  <rect width="280" height="72" rx="12" fill="#ffffff"/>
+  <path d="M24 42c18-18 34-18 52 0 18 18 34 18 52 0" fill="none" stroke="#005baa" stroke-width="7" stroke-linecap="round"/>
+  <path d="M24 51c18-12 34-12 52 0 18 12 34 12 52 0" fill="none" stroke="#16a3c7" stroke-width="5" stroke-linecap="round" opacity="0.85"/>
+  <text x="146" y="34" fill="#003f7f" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="800" letter-spacing="1">ALTA</text>
+  <text x="146" y="57" fill="#005baa" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="800" letter-spacing="1">MARÉE</text>
+</svg>
