@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS store_settings (
   store_id uuid NOT NULL REFERENCES stores(id) ON DELETE CASCADE,
   company_name text,
   logo_url text,
+  favicon_url text,
   address_line1 text,
   address_line2 text,
   postal_code text,
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS store_settings (
 ALTER TABLE store_settings
   ADD COLUMN IF NOT EXISTS company_name text,
   ADD COLUMN IF NOT EXISTS logo_url text,
+  ADD COLUMN IF NOT EXISTS favicon_url text,
   ADD COLUMN IF NOT EXISTS address_line1 text,
   ADD COLUMN IF NOT EXISTS address_line2 text,
   ADD COLUMN IF NOT EXISTS postal_code text,
