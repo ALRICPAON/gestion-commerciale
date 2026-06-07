@@ -40,6 +40,24 @@ function addDays(date, days) {
   return new Date(date.getTime() + days * DAY_MS);
 }
 
+function parisClock(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('fr-FR', {
+    timeZone: 'Europe/Paris',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false,
+  }).formatToParts(date).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return {
+    hour: Number(parts.hour),
+    runKey: `${parts.year}-${parts.month}-${parts.day}-${parts.hour}`,
+  };
+}
+
 function periodRange(query = {}) {
   const today = new Date();
   const utcToday = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
@@ -242,6 +260,7 @@ router.post('/stock-snapshots', authenticateToken, attachDbContext, requireAdmin
   try {
     const type = clean(req.body?.snapshot_type) === 'automatic' ? 'automatic' : 'manual';
     const snapshotDate = clean(req.body?.snapshot_date) ? new Date(req.body.snapshot_date) : new Date();
+    if (Number.isNaN(snapshotDate.getTime())) return res.status(400).json({ error: 'Date de capture invalide' });
     const result = await createStockSnapshot(req.dbPool, {
       storeId: req.user.store_id,
       snapshotType: type,
@@ -320,11 +339,10 @@ function startAutomaticStockSnapshotScheduler() {
   schedulerStarted = true;
 
   const tick = async () => {
-    const now = new Date();
-    if (now.getHours() !== 22) return;
-    const runKey = `${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}-${now.getHours()}`;
-    if (lastAutomaticRunKey === runKey) return;
-    lastAutomaticRunKey = runKey;
+    const clock = parisClock();
+    if (clock.hour !== 22) return;
+    if (lastAutomaticRunKey === clock.runKey) return;
+    lastAutomaticRunKey = clock.runKey;
 
     for (const clientKey of Object.keys(DB_CLIENTS)) {
       try {
