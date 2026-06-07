@@ -214,60 +214,96 @@ async function findPurchaseCandidates(client, invoice, storeId, dateWindowDays) 
   );
 }
 
-async function findPurchaseLineCandidate(client, line, invoice, storeId, purchaseId = null, usedPurchaseLineIds = []) {
-  const normalizedRef = normalizeSupplierReference(line.supplier_reference);
-  const articleId = line.article_id || null;
-  const lineAmount = Number(line.line_amount_ex_vat || 0);
+async function loadPurchaseLineCandidates(client, invoice, storeId, purchaseId = null) {
   const result = await client.query(
-    `SELECT pl.*, p.id purchase_id, p.bl_number, p.receipt_date, l.id lot_id,
-            CASE
-              WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(pl.supplier_reference, '')), '[^A-Z0-9]', '', 'g') = $6 THEN 'supplier_reference'
-              WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'supplier_reference', '')), '[^A-Z0-9]', '', 'g') = $6 THEN 'metadata_supplier_reference'
-              WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'refFournisseur', '')), '[^A-Z0-9]', '', 'g') = $6 THEN 'metadata_ref_fournisseur'
-              WHEN mapped.article_id IS NOT NULL AND pl.article_id = mapped.article_id THEN 'supplier_article_mapping'
-              WHEN $3::uuid IS NOT NULL AND pl.article_id = $3::uuid THEN 'article_id'
-              ELSE NULL
-            END AS match_reason
+    `SELECT pl.*, p.id purchase_id, p.bl_number, p.receipt_date, l.id lot_id, plm.meta_value
      FROM purchase_lines pl
      JOIN purchases p ON p.id = pl.purchase_id
      LEFT JOIN lots l ON l.purchase_line_id = pl.id
      LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id = pl.id AND plm.meta_key = 'gc_line'
-     LEFT JOIN LATERAL (
-       SELECT m.article_id
-       FROM supplier_article_mappings m
-       WHERE m.supplier_id = $2
-         AND COALESCE(m.is_active, true) = true
-         AND $6 <> ''
-         AND regexp_replace(UPPER(COALESCE(m.supplier_ref, '')), '[^A-Z0-9]', '', 'g') = $6
-       LIMIT 1
-     ) mapped ON true
      WHERE pl.store_id = $1
-       AND pl.supplier_id = $2
-       AND p.status = ANY($8::text[])
-       AND ($5::uuid IS NULL OR p.id = $5::uuid)
-       AND NOT (pl.id = ANY($7::uuid[]))
-       AND (
-         ($6 <> '' AND regexp_replace(UPPER(COALESCE(pl.supplier_reference, '')), '[^A-Z0-9]', '', 'g') = $6)
-         OR ($6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'supplier_reference', '')), '[^A-Z0-9]', '', 'g') = $6)
-         OR ($6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'refFournisseur', '')), '[^A-Z0-9]', '', 'g') = $6)
-         OR (mapped.article_id IS NOT NULL AND pl.article_id = mapped.article_id)
-         OR ($3::uuid IS NOT NULL AND pl.article_id = $3::uuid)
-       )
-     ORDER BY
-       CASE
-         WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(pl.supplier_reference, '')), '[^A-Z0-9]', '', 'g') = $6 THEN 0
-         WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'supplier_reference', '')), '[^A-Z0-9]', '', 'g') = $6 THEN 1
-         WHEN $6 <> '' AND regexp_replace(UPPER(COALESCE(plm.meta_value->>'refFournisseur', '')), '[^A-Z0-9]', '', 'g') = $6 THEN 1
-         WHEN mapped.article_id IS NOT NULL AND pl.article_id = mapped.article_id THEN 2
-         WHEN $3::uuid IS NOT NULL AND pl.article_id = $3::uuid THEN 3
-         ELSE 9
-       END,
-       ABS(COALESCE(pl.line_amount_ex_vat, 0) - $4::numeric) ASC,
-       p.receipt_date DESC NULLS LAST
-     LIMIT 1`,
-    [storeId, invoice.supplier_id, articleId, lineAmount, purchaseId, normalizedRef, usedPurchaseLineIds, MATCHABLE_PURCHASE_STATUSES]
+       AND p.supplier_id = $2
+       AND p.status = ANY($3::text[])
+       AND ($4::uuid IS NULL OR p.id = $4::uuid)
+     ORDER BY p.receipt_date DESC NULLS LAST, pl.line_number ASC`,
+    [storeId, invoice.supplier_id, MATCHABLE_PURCHASE_STATUSES, purchaseId]
   );
-  return result.rows[0] || null;
+  return result.rows;
+}
+
+async function findMappedArticleId(client, invoice, normalizedRef) {
+  if (!normalizedRef) return null;
+  const result = await client.query(
+    `SELECT m.article_id
+     FROM supplier_article_mappings m
+     WHERE m.supplier_id = $1
+       AND COALESCE(m.is_active, true) = true
+       AND regexp_replace(UPPER(COALESCE(m.supplier_ref, '')), '[^A-Z0-9]', '', 'g') = $2
+     LIMIT 1`,
+    [invoice.supplier_id, normalizedRef]
+  ).catch(() => ({ rows: [] }));
+  return result.rows[0]?.article_id || null;
+}
+
+function metaValue(row) {
+  return row?.meta_value && typeof row.meta_value === 'object' ? row.meta_value : {};
+}
+
+function purchaseLineMatchRank(invoiceLine, purchaseLine, mappedArticleId) {
+  const invoiceRef = normalizeSupplierReference(invoiceLine.supplier_reference);
+  const meta = metaValue(purchaseLine);
+  const directRef = normalizeSupplierReference(purchaseLine.supplier_reference);
+  const metaSupplierRef = normalizeSupplierReference(meta.supplier_reference);
+  const metaLegacyRef = normalizeSupplierReference(meta.refFournisseur);
+
+  if (invoiceRef && directRef === invoiceRef) return { rank: 0, reason: 'supplier_reference' };
+  if (invoiceRef && metaSupplierRef === invoiceRef) return { rank: 1, reason: 'metadata_supplier_reference' };
+  if (invoiceRef && metaLegacyRef === invoiceRef) return { rank: 1, reason: 'metadata_ref_fournisseur' };
+  if (mappedArticleId && purchaseLine.article_id && String(purchaseLine.article_id) === String(mappedArticleId)) return { rank: 2, reason: 'supplier_article_mapping' };
+  if (invoiceLine.article_id && purchaseLine.article_id && String(purchaseLine.article_id) === String(invoiceLine.article_id)) return { rank: 3, reason: 'article_id' };
+  return null;
+}
+
+async function findPurchaseLineCandidate(client, line, invoice, storeId, purchaseId = null, usedPurchaseLineIds = []) {
+  const normalizedRef = normalizeSupplierReference(line.supplier_reference);
+  const mappedArticleId = await findMappedArticleId(client, invoice, normalizedRef);
+  const candidates = await loadPurchaseLineCandidates(client, invoice, storeId, purchaseId);
+  const used = new Set(usedPurchaseLineIds.map((id) => String(id)));
+
+  const ranked = candidates
+    .filter((candidate) => !used.has(String(candidate.id)))
+    .map((candidate) => {
+      const match = purchaseLineMatchRank(line, candidate, mappedArticleId);
+      if (!match) return null;
+      return {
+        ...candidate,
+        match_reason: match.reason,
+        match_rank: match.rank,
+        amount_gap: Math.abs(Number(candidate.line_amount_ex_vat || 0) - Number(line.line_amount_ex_vat || 0)),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.match_rank - b.match_rank || a.amount_gap - b.amount_gap || Number(a.line_number || 0) - Number(b.line_number || 0));
+
+  console.info('Auto-match facture fournisseur: candidats ligne', {
+    invoice_id: invoice.id,
+    invoice_line_id: line.id,
+    supplier_reference: line.supplier_reference,
+    normalized_supplier_reference: normalizedRef,
+    purchase_id: purchaseId,
+    loaded_purchase_lines: candidates.length,
+    candidate_count: ranked.length,
+    candidates: ranked.map((row) => ({
+      purchase_line_id: row.id,
+      supplier_reference: row.supplier_reference,
+      article_id: row.article_id,
+      line_amount_ex_vat: row.line_amount_ex_vat,
+      match_reason: row.match_reason,
+      match_rank: row.match_rank,
+    })),
+  });
+
+  return ranked[0] || null;
 }
 
 function purchaseLineTotalQuantity(line) {
