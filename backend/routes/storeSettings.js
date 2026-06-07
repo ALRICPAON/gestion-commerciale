@@ -13,16 +13,23 @@ const { attachDbContext } = require('../middleware/dbContext');
 const router = express.Router();
 
 const STORE_LOGOS_DIR = path.resolve(__dirname, '..', 'uploads', 'store-logos');
+const STORE_FAVICONS_DIR = path.resolve(__dirname, '..', 'uploads', 'store-favicons');
 const STORE_LOGOS_PUBLIC_PATH = '/uploads/store-logos';
+const STORE_FAVICONS_PUBLIC_PATH = '/uploads/store-favicons';
 const MAX_LOGO_SIZE_BYTES = 2 * 1024 * 1024;
+const MAX_FAVICON_SIZE_BYTES = 512 * 1024;
 const ALLOWED_LOGO_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/svg+xml']);
 const ALLOWED_LOGO_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.svg']);
+const ALLOWED_FAVICON_MIME_TYPES = new Set(['image/x-icon', 'image/vnd.microsoft.icon', 'image/png', 'image/svg+xml']);
+const ALLOWED_FAVICON_EXTENSIONS = new Set(['.ico', '.png', '.svg']);
 
 fs.mkdirSync(STORE_LOGOS_DIR, { recursive: true });
+fs.mkdirSync(STORE_FAVICONS_DIR, { recursive: true });
 
 const STORE_SETTINGS_FIELDS = [
   'company_name',
   'logo_url',
+  'favicon_url',
   'address_line1',
   'address_line2',
   'postal_code',
@@ -67,6 +74,7 @@ function settingsSelectSql() {
       store_id,
       company_name,
       logo_url,
+      favicon_url,
       address_line1,
       address_line2,
       postal_code,
@@ -112,79 +120,97 @@ function uploadError(message) {
   return err;
 }
 
-function logoExtension(filename = '') {
+function fileExtension(filename = '') {
   return path.extname(filename).toLowerCase();
 }
 
-function validateLogoMetadata(file) {
-  if (!file) return uploadError('Fichier logo manquant');
-  const ext = logoExtension(file.originalname);
-  if (!ALLOWED_LOGO_EXTENSIONS.has(ext)) {
-    return uploadError('Extension logo non autorisee');
+function validateFileMetadata(file, options) {
+  if (!file) return uploadError(`Fichier ${options.label} manquant`);
+  const ext = fileExtension(file.originalname);
+  if (!options.extensions.has(ext)) {
+    return uploadError(`Extension ${options.label} non autorisee`);
   }
-  if (!ALLOWED_LOGO_MIME_TYPES.has(file.mimetype)) {
-    return uploadError('Type MIME logo non autorise');
+  if (!options.mimeTypes.has(file.mimetype)) {
+    return uploadError(`Type MIME ${options.label} non autorise`);
   }
   return null;
 }
 
-function safeLogoFilename(req, file) {
-  const ext = logoExtension(file.originalname);
+function safeUploadFilename(req, file) {
+  const ext = fileExtension(file.originalname);
   const storeId = String(req.user.store_id || 'store').replace(/[^a-zA-Z0-9-]/g, '');
   return `${storeId}-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
 }
 
-const logoUpload = multer({
-  storage: multer.diskStorage({
-    destination(req, file, cb) {
-      fs.mkdir(STORE_LOGOS_DIR, { recursive: true }, (err) => cb(err, STORE_LOGOS_DIR));
+function buildUpload(options) {
+  return multer({
+    storage: multer.diskStorage({
+      destination(req, file, cb) {
+        fs.mkdir(options.directory, { recursive: true }, (err) => cb(err, options.directory));
+      },
+      filename(req, file, cb) {
+        cb(null, safeUploadFilename(req, file));
+      },
+    }),
+    limits: { fileSize: options.maxSize },
+    fileFilter(req, file, cb) {
+      const err = validateFileMetadata(file, options);
+      cb(err, !err);
     },
-    filename(req, file, cb) {
-      cb(null, safeLogoFilename(req, file));
-    },
-  }),
-  limits: { fileSize: MAX_LOGO_SIZE_BYTES },
-  fileFilter(req, file, cb) {
-    const err = validateLogoMetadata(file);
-    cb(err, !err);
-  },
-});
-
-function logoPublicUrl(req, filename) {
-  const baseUrl = `${req.protocol}://${req.get('host')}`;
-  return `${baseUrl}${STORE_LOGOS_PUBLIC_PATH}/${encodeURIComponent(filename)}`;
+  });
 }
 
-function localLogoPathFromUrl(logoUrl) {
-  if (!logoUrl) return null;
+const logoUpload = buildUpload({
+  label: 'logo',
+  directory: STORE_LOGOS_DIR,
+  maxSize: MAX_LOGO_SIZE_BYTES,
+  extensions: ALLOWED_LOGO_EXTENSIONS,
+  mimeTypes: ALLOWED_LOGO_MIME_TYPES,
+});
+
+const faviconUpload = buildUpload({
+  label: 'favicon',
+  directory: STORE_FAVICONS_DIR,
+  maxSize: MAX_FAVICON_SIZE_BYTES,
+  extensions: ALLOWED_FAVICON_EXTENSIONS,
+  mimeTypes: ALLOWED_FAVICON_MIME_TYPES,
+});
+
+function publicUrl(req, publicPath, filename) {
+  const baseUrl = `${req.protocol}://${req.get('host')}`;
+  return `${baseUrl}${publicPath}/${encodeURIComponent(filename)}`;
+}
+
+function localUploadedPathFromUrl(fileUrl, publicPath, directory) {
+  if (!fileUrl) return null;
 
   let pathname;
   try {
-    pathname = new URL(logoUrl).pathname;
+    pathname = new URL(fileUrl).pathname;
   } catch {
-    pathname = String(logoUrl || '');
+    pathname = String(fileUrl || '');
   }
 
-  const expectedPrefix = `${STORE_LOGOS_PUBLIC_PATH}/`;
+  const expectedPrefix = `${publicPath}/`;
   if (!pathname.startsWith(expectedPrefix)) return null;
 
   const filename = path.basename(decodeURIComponent(pathname));
   if (!filename) return null;
 
-  const candidatePath = path.resolve(STORE_LOGOS_DIR, filename);
-  const allowedRoot = `${STORE_LOGOS_DIR}${path.sep}`;
+  const candidatePath = path.resolve(directory, filename);
+  const allowedRoot = `${directory}${path.sep}`;
   return candidatePath.startsWith(allowedRoot) ? candidatePath : null;
 }
 
-async function removeLocalLogoIfOwned(logoUrl) {
-  const localPath = localLogoPathFromUrl(logoUrl);
+async function removeLocalUploadIfOwned(fileUrl, publicPath, directory) {
+  const localPath = localUploadedPathFromUrl(fileUrl, publicPath, directory);
   if (!localPath) return;
 
   try {
     await fsp.unlink(localPath);
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      console.error('Erreur suppression ancien logo :', err);
+      console.error('Erreur suppression ancien fichier branding :', err);
     }
   }
 }
@@ -195,30 +221,98 @@ async function removeUploadedFile(file) {
     await fsp.unlink(file.path);
   } catch (err) {
     if (err.code !== 'ENOENT') {
-      console.error('Erreur nettoyage logo uploadé :', err);
+      console.error('Erreur nettoyage fichier uploadé :', err);
     }
   }
 }
 
-async function validateStoredLogoContent(file) {
-  const ext = logoExtension(file.originalname);
+async function validateStoredImageContent(file, allowedExtensions) {
+  const ext = fileExtension(file.originalname);
   const buffer = await fsp.readFile(file.path);
 
-  if (ext === '.png') {
+  if (allowedExtensions.has('.png') && ext === '.png') {
     const pngSignature = '89504e470d0a1a0a';
     return buffer.subarray(0, 8).toString('hex') === pngSignature;
   }
 
-  if (ext === '.jpg' || ext === '.jpeg') {
+  if (allowedExtensions.has('.jpg') && (ext === '.jpg' || ext === '.jpeg')) {
     return buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
   }
 
-  if (ext === '.svg') {
+  if (allowedExtensions.has('.svg') && ext === '.svg') {
     const text = buffer.toString('utf8').trim().toLowerCase();
     return text.includes('<svg') && !text.includes('<script') && !text.includes('javascript:');
   }
 
+  if (allowedExtensions.has('.ico') && ext === '.ico') {
+    return buffer.length > 6 && buffer[0] === 0x00 && buffer[1] === 0x00 && buffer[2] === 0x01 && buffer[3] === 0x00;
+  }
+
   return false;
+}
+
+function storeSettingsColumnsSql() {
+  return `
+    store_id,
+    company_name,
+    logo_url,
+    favicon_url,
+    address_line1,
+    address_line2,
+    postal_code,
+    city,
+    country,
+    phone,
+    email,
+    siret,
+    vat_number,
+    sanitary_approval_number,
+    iban,
+    bic,
+    payment_terms,
+    legal_mentions,
+    terms_and_conditions,
+    delivery_note_footer,
+    invoice_footer,
+    created_by,
+    updated_by
+  `;
+}
+
+function storeSettingsValuesSql() {
+  return `
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+    $21, $22, $23
+  `;
+}
+
+function storeSettingsParams(req, settings) {
+  return [
+    req.user.store_id,
+    settings.company_name,
+    settings.logo_url,
+    settings.favicon_url,
+    settings.address_line1,
+    settings.address_line2,
+    settings.postal_code,
+    settings.city,
+    settings.country,
+    settings.phone,
+    settings.email,
+    settings.siret,
+    settings.vat_number,
+    settings.sanitary_approval_number,
+    settings.iban,
+    settings.bic,
+    settings.payment_terms,
+    settings.legal_mentions,
+    settings.terms_and_conditions,
+    settings.delivery_note_footer,
+    settings.invoice_footer,
+    req.user.id,
+    req.user.id,
+  ];
 }
 
 router.get('/store-settings', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
@@ -237,60 +331,11 @@ router.post('/store-settings', authenticateToken, attachDbContext, requireAdminO
 
     const result = await req.dbPool.query(
       `
-      INSERT INTO store_settings (
-        store_id,
-        company_name,
-        logo_url,
-        address_line1,
-        address_line2,
-        postal_code,
-        city,
-        country,
-        phone,
-        email,
-        siret,
-        vat_number,
-        sanitary_approval_number,
-        iban,
-        bic,
-        payment_terms,
-        legal_mentions,
-        terms_and_conditions,
-        delivery_note_footer,
-        invoice_footer,
-        created_by,
-        updated_by
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22
-      )
+      INSERT INTO store_settings (${storeSettingsColumnsSql()})
+      VALUES (${storeSettingsValuesSql()})
       RETURNING id
       `,
-      [
-        req.user.store_id,
-        settings.company_name,
-        settings.logo_url,
-        settings.address_line1,
-        settings.address_line2,
-        settings.postal_code,
-        settings.city,
-        settings.country,
-        settings.phone,
-        settings.email,
-        settings.siret,
-        settings.vat_number,
-        settings.sanitary_approval_number,
-        settings.iban,
-        settings.bic,
-        settings.payment_terms,
-        settings.legal_mentions,
-        settings.terms_and_conditions,
-        settings.delivery_note_footer,
-        settings.invoice_footer,
-        req.user.id,
-        req.user.id,
-      ]
+      storeSettingsParams(req, settings)
     );
 
     const created = await findStoreSettings(req);
@@ -310,38 +355,13 @@ router.put('/store-settings', authenticateToken, attachDbContext, requireAdminOr
 
     await req.dbPool.query(
       `
-      INSERT INTO store_settings (
-        store_id,
-        company_name,
-        logo_url,
-        address_line1,
-        address_line2,
-        postal_code,
-        city,
-        country,
-        phone,
-        email,
-        siret,
-        vat_number,
-        sanitary_approval_number,
-        iban,
-        bic,
-        payment_terms,
-        legal_mentions,
-        terms_and_conditions,
-        delivery_note_footer,
-        invoice_footer,
-        created_by,
-        updated_by
-      ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-        $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-        $21, $22
-      )
+      INSERT INTO store_settings (${storeSettingsColumnsSql()})
+      VALUES (${storeSettingsValuesSql()})
       ON CONFLICT (store_id) DO UPDATE
       SET
         company_name = EXCLUDED.company_name,
         logo_url = EXCLUDED.logo_url,
+        favicon_url = EXCLUDED.favicon_url,
         address_line1 = EXCLUDED.address_line1,
         address_line2 = EXCLUDED.address_line2,
         postal_code = EXCLUDED.postal_code,
@@ -362,30 +382,7 @@ router.put('/store-settings', authenticateToken, attachDbContext, requireAdminOr
         updated_by = EXCLUDED.updated_by,
         updated_at = now()
       `,
-      [
-        req.user.store_id,
-        settings.company_name,
-        settings.logo_url,
-        settings.address_line1,
-        settings.address_line2,
-        settings.postal_code,
-        settings.city,
-        settings.country,
-        settings.phone,
-        settings.email,
-        settings.siret,
-        settings.vat_number,
-        settings.sanitary_approval_number,
-        settings.iban,
-        settings.bic,
-        settings.payment_terms,
-        settings.legal_mentions,
-        settings.terms_and_conditions,
-        settings.delivery_note_footer,
-        settings.invoice_footer,
-        req.user.id,
-        req.user.id,
-      ]
+      storeSettingsParams(req, settings)
     );
 
     const updated = await findStoreSettings(req);
@@ -408,14 +405,14 @@ router.post(
         return res.status(400).json({ error: 'Fichier logo manquant' });
       }
 
-      const validContent = await validateStoredLogoContent(req.file);
+      const validContent = await validateStoredImageContent(req.file, ALLOWED_LOGO_EXTENSIONS);
       if (!validContent) {
         await removeUploadedFile(req.file);
         return res.status(400).json({ error: 'Contenu du logo invalide' });
       }
 
       const previousSettings = await findStoreSettings(req);
-      const logoUrl = logoPublicUrl(req, req.file.filename);
+      const logoUrl = publicUrl(req, STORE_LOGOS_PUBLIC_PATH, req.file.filename);
 
       await req.dbPool.query(
         `
@@ -429,7 +426,7 @@ router.post(
         [req.user.store_id, logoUrl, req.user.id]
       );
 
-      await removeLocalLogoIfOwned(previousSettings?.logo_url);
+      await removeLocalUploadIfOwned(previousSettings?.logo_url, STORE_LOGOS_PUBLIC_PATH, STORE_LOGOS_DIR);
       const updated = await findStoreSettings(req);
       return res.json(updated);
     } catch (err) {
@@ -457,12 +454,82 @@ router.delete('/store-settings/logo', authenticateToken, attachDbContext, requir
       );
     }
 
-    await removeLocalLogoIfOwned(previousSettings?.logo_url);
+    await removeLocalUploadIfOwned(previousSettings?.logo_url, STORE_LOGOS_PUBLIC_PATH, STORE_LOGOS_DIR);
     const updated = await findStoreSettings(req);
     return res.json(updated || { logo_url: null });
   } catch (err) {
     console.error('Erreur DELETE /api/store-settings/logo :', err);
     return res.status(500).json({ error: 'Erreur serveur suppression logo' });
+  }
+});
+
+router.post(
+  '/store-settings/favicon',
+  authenticateToken,
+  attachDbContext,
+  requireAdminOrManager,
+  faviconUpload.single('favicon'),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: 'Fichier favicon manquant' });
+      }
+
+      const validContent = await validateStoredImageContent(req.file, ALLOWED_FAVICON_EXTENSIONS);
+      if (!validContent) {
+        await removeUploadedFile(req.file);
+        return res.status(400).json({ error: 'Contenu du favicon invalide' });
+      }
+
+      const previousSettings = await findStoreSettings(req);
+      const faviconUrl = publicUrl(req, STORE_FAVICONS_PUBLIC_PATH, req.file.filename);
+
+      await req.dbPool.query(
+        `
+        INSERT INTO store_settings (store_id, favicon_url, created_by, updated_by)
+        VALUES ($1, $2, $3, $3)
+        ON CONFLICT (store_id) DO UPDATE
+        SET favicon_url = EXCLUDED.favicon_url,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = now()
+        `,
+        [req.user.store_id, faviconUrl, req.user.id]
+      );
+
+      await removeLocalUploadIfOwned(previousSettings?.favicon_url, STORE_FAVICONS_PUBLIC_PATH, STORE_FAVICONS_DIR);
+      const updated = await findStoreSettings(req);
+      return res.json(updated);
+    } catch (err) {
+      await removeUploadedFile(req.file);
+      console.error('Erreur POST /api/store-settings/favicon :', err);
+      return res.status(500).json({ error: 'Erreur serveur upload favicon' });
+    }
+  }
+);
+
+router.delete('/store-settings/favicon', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const previousSettings = await findStoreSettings(req);
+
+    if (previousSettings) {
+      await req.dbPool.query(
+        `
+        UPDATE store_settings
+        SET favicon_url = NULL,
+          updated_by = $2,
+          updated_at = now()
+        WHERE store_id = $1
+        `,
+        [req.user.store_id, req.user.id]
+      );
+    }
+
+    await removeLocalUploadIfOwned(previousSettings?.favicon_url, STORE_FAVICONS_PUBLIC_PATH, STORE_FAVICONS_DIR);
+    const updated = await findStoreSettings(req);
+    return res.json(updated || { favicon_url: null });
+  } catch (err) {
+    console.error('Erreur DELETE /api/store-settings/favicon :', err);
+    return res.status(500).json({ error: 'Erreur serveur suppression favicon' });
   }
 });
 
