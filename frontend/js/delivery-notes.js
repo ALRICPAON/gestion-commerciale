@@ -22,6 +22,37 @@ let selectedDeliveryNote = null;
 function logoutAndRedirect() { ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key)); window.location.href = './login.html'; }
 function showFeedback(message, type = 'success') { if (!pageFeedback) return; pageFeedback.textContent = message; pageFeedback.className = `page-feedback ${type}`; setTimeout(() => { pageFeedback.className = 'page-feedback hidden'; pageFeedback.textContent = ''; }, 3500); }
 async function apiFetch(url, options = {}) { const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${authToken}` } }); if (response.status === 401) { logoutAndRedirect(); return null; } return response; }
+async function apiJson(url, options = {}) {
+  const response = await apiFetch(url, {
+    ...options,
+    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+  });
+  if (!response) return null;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data.message || data.error || 'Erreur API');
+    error.status = response.status;
+    error.code = data.code;
+    error.details = data.details || {};
+    error.payload = data;
+    throw error;
+  }
+  return data;
+}
+async function postWithStockConfirmation(url, payload = {}) {
+  console.info('Validation BL payload envoyé', { url, payload });
+  try {
+    return await apiJson(url, { method: 'POST', body: JSON.stringify(payload) });
+  } catch (error) {
+    if (error.status !== 409 || error.code !== 'STOCK_INSUFFICIENT') throw error;
+    const missing = error.details?.missing_quantity ? `\nManque : ${qty(error.details.missing_quantity)}` : '';
+    const confirmed = confirm(`Stock insuffisant. Voulez-vous valider quand même en sortie forcée ?${missing}`);
+    if (!confirmed) throw error;
+    const forcedPayload = { ...payload, allow_negative_stock: true };
+    console.info('Validation BL payload envoyé après confirmation', { url, payload: forcedPayload });
+    return apiJson(url, { method: 'POST', body: JSON.stringify(forcedPayload) });
+  }
+}
 async function downloadPdf(url, fallbackName) { const response = await apiFetch(url); if (!response) return; if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || 'Erreur generation PDF'); } const disposition = response.headers.get('Content-Disposition') || ''; const match = disposition.match(/filename="?([^";]+)"?/i); const filename = match?.[1] || fallbackName; const blob = await response.blob(); const objectUrl = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = objectUrl; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(objectUrl); }
 const money = (value) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(Number(value || 0));
 const qty = (value) => Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
@@ -66,9 +97,9 @@ function renderDetail(note) {
 async function loadOrders() { const response = await apiFetch(`${API_BASE_URL}/api/sales?document_type=ORDER&status=validated`); if (!response) return; const data = await response.json().catch(() => []); if (!response.ok) throw new Error(data.error || 'Impossible de charger les commandes'); renderOrders(Array.isArray(data) ? data : []); }
 async function loadDeliveryNotes() { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes`); if (!response) return; const data = await response.json().catch(() => []); if (!response.ok) throw new Error(data.error || 'Impossible de charger les BL'); renderDeliveryNotes(Array.isArray(data) ? data : []); }
 async function refreshAll() { try { await Promise.all([loadOrders(), loadDeliveryNotes()]); } catch (err) { console.error('Erreur chargement BL :', err); showFeedback(err.message || 'Erreur chargement', 'error'); } }
-async function generateDeliveryNote(orderId) { try { const response = await apiFetch(`${API_BASE_URL}/api/sales/${orderId}/validate-delivery-note`, { method: 'POST' }); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur validation en BL'); showFeedback('Commande validée en BL et stock déstocké.'); await refreshAll(); if (data.delivery_note_id) await openDeliveryNote(data.delivery_note_id); } catch (err) { console.error('Erreur validation en BL :', err); showFeedback(err.message || 'Erreur validation en BL', 'error'); } }
+async function generateDeliveryNote(orderId) { try { const data = await postWithStockConfirmation(`${API_BASE_URL}/api/sales/${orderId}/validate-delivery-note`, {}); if (!data) return; showFeedback(data.forced_stock_exit ? 'Commande validée en BL avec sortie forcée tracée.' : 'Commande validée en BL et stock déstocké.'); await refreshAll(); if (data.delivery_note_id) await openDeliveryNote(data.delivery_note_id); } catch (err) { console.error('Erreur validation en BL :', err); showFeedback(err.message || 'Erreur validation en BL', 'error'); } }
 async function openDeliveryNote(id) { try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${id}`); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Impossible de charger le BL'); renderDetail(data); } catch (err) { console.error('Erreur ouverture BL :', err); showFeedback(err.message || 'Erreur ouverture BL', 'error'); } }
-async function validateDeliveryNote() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate`, { method: 'POST' }); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur validation BL'); showFeedback('BL validé et stock déstocké.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation BL :', err); showFeedback(err.message || 'Erreur validation BL', 'error'); } }
+async function validateDeliveryNote() { if (!selectedDeliveryNote) return; try { const data = await postWithStockConfirmation(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate`, {}); if (!data) return; showFeedback(data.forced_stock_exit ? 'BL validé avec sortie forcée tracée.' : 'BL validé et stock déstocké.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation BL :', err); showFeedback(err.message || 'Erreur validation BL', 'error'); } }
 async function validateInvoice() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate-invoice`, { method: 'POST' }); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur validation facture'); showFeedback(data.existing ? 'Facture déjà préparée.' : 'Facture préparée depuis le BL.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation facture :', err); showFeedback(err.message || 'Erreur validation facture', 'error'); } }
 async function downloadDeliveryNotePdf() { if (!selectedDeliveryNote || !downloadPdfBtn) return; downloadPdfBtn.disabled = true; try { await downloadPdf(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/pdf`, 'bon-de-livraison.pdf'); showFeedback('PDF bon de livraison généré.'); } catch (err) { console.error('Erreur PDF BL :', err); showFeedback(err.message || 'Erreur PDF BL', 'error'); } finally { downloadPdfBtn.disabled = false; } }
 
