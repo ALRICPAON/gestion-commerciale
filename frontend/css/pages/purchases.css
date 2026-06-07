@@ -19,6 +19,7 @@
 
 .status-ordered { background: #1976d2; }
 .status-received { background: #2e7d32; }
+.status-received_pending_invoice { background: #558b2f; }
 .status-closed { background: #424242; }
 .status-cancelled { background: #b71c1c; }
 .status-draft { background: #757575; }
