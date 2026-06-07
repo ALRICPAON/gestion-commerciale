@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Régularisation stock - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/stock-regularization.css?v=1" />
+</head>
+<body class="app-page stock-regularization-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Régularisation stock</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content stock-regularization-layout">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Stocks négatifs à régulariser</h2>
+          <p>Créer une entrée interne pour remettre un lot négatif exactement à zéro, sans supprimer l'historique.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="refresh-btn" class="btn btn-primary">Actualiser</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="stock-regularization-kpis" aria-label="Synthèse régularisation">
+      <div class="stock-regularization-kpi">
+        <span>Lots négatifs</span>
+        <strong id="kpi-lots">0</strong>
+      </div>
+      <div class="stock-regularization-kpi">
+        <span>Quantité à régulariser</span>
+        <strong id="kpi-quantity">0</strong>
+      </div>
+      <div class="stock-regularization-kpi">
+        <span>Dernier mouvement</span>
+        <strong id="kpi-last-movement">-</strong>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="filters-row stock-regularization-filters">
+        <div class="form-group">
+          <label for="regularization-search-input">Recherche</label>
+          <input id="regularization-search-input" type="text" placeholder="PLU, article, lot, fournisseur..." />
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="regularization-search-btn" class="btn btn-secondary">Filtrer</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div id="regularization-feedback" class="page-feedback hidden"></div>
+      <div class="table-wrap">
+        <table class="data-table stock-regularization-table">
+          <thead>
+            <tr>
+              <th>Article</th>
+              <th>Lot</th>
+              <th>Quantité négative</th>
+              <th>Fournisseur</th>
+              <th>Dernier mouvement</th>
+              <th>Origine sortie forcée</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="regularization-tbody">
+            <tr><td colspan="7">Chargement des stocks négatifs...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/stock-regularization.js?v=1"></script>
+</body>
+</html>
