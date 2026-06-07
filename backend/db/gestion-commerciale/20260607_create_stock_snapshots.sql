@@ -21,12 +21,11 @@ CREATE TABLE IF NOT EXISTS stock_snapshot_lines (
 CREATE INDEX IF NOT EXISTS idx_stock_snapshots_store_date
   ON stock_snapshots(store_id, snapshot_date DESC);
 
+CREATE INDEX IF NOT EXISTS idx_stock_snapshots_store_type_date
+  ON stock_snapshots(store_id, snapshot_type, snapshot_date DESC);
+
 CREATE INDEX IF NOT EXISTS idx_stock_snapshot_lines_snapshot
   ON stock_snapshot_lines(snapshot_id);
 
 CREATE INDEX IF NOT EXISTS idx_stock_snapshot_lines_article_lot
   ON stock_snapshot_lines(article_id, lot_id);
-
-CREATE UNIQUE INDEX IF NOT EXISTS ux_stock_snapshots_auto_store_day
-  ON stock_snapshots(store_id, (snapshot_date::date))
-  WHERE snapshot_type = 'automatic';
