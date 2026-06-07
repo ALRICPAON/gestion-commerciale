@@ -10,9 +10,7 @@ if (!sessionUser) {
 const storeNameEl = document.getElementById("store-name");
 const userNameEl = document.getElementById("user-name");
 const usersBtn = document.getElementById("users-btn");
-const usersCardBtn = document.getElementById("users-card-btn");
-const afMapCardBtn = document.getElementById("af-map-card-btn");
-const settingsCardBtn = document.getElementById("settings-card-btn");
+const settingsCard = document.getElementById("settings-card");
 const logoutBtn = document.getElementById("logout-btn");
 const departmentSelect = document.getElementById("topbar-department-select");
 const currentDepartmentNameEl = document.getElementById("current-department-name");
@@ -43,18 +41,6 @@ function openUsers() {
   window.location.href = "./users.html";
 }
 
-function openAfMap() {
-  window.location.href = "./af-map.html";
-}
-
-function openSettings() {
-  window.location.href = "./settings.html";
-}
-
-function canManageAfMap() {
-  return ["admin", "responsable"].includes(sessionUser.role);
-}
-
 function canManageSettings() {
   return ["admin", "responsable"].includes(sessionUser.role);
 }
@@ -77,31 +63,8 @@ function renderTopbar() {
     }
   }
 
-  if (usersCardBtn) {
-    usersCardBtn.disabled = !canManageUsers;
-    usersCardBtn.textContent = canManageUsers ? "Ouvrir" : "Reserve admin";
-    if (canManageUsers) {
-      usersCardBtn.addEventListener("click", openUsers);
-    }
-  }
-
-  if (afMapCardBtn) {
-    const allowed = canManageAfMap();
-    afMapCardBtn.disabled = !allowed;
-    afMapCardBtn.textContent = allowed ? "Ouvrir" : "Reserve responsable";
-    if (allowed) {
-      afMapCardBtn.addEventListener("click", openAfMap);
-    }
-  }
-
-  if (settingsCardBtn) {
-    const allowed = canManageSettings();
-    settingsCardBtn.disabled = !allowed;
-    settingsCardBtn.textContent = allowed ? "Ouvrir" : "Reserve responsable";
-    settingsCardBtn.closest(".module-card").style.display = allowed ? "block" : "none";
-    if (allowed) {
-      settingsCardBtn.addEventListener("click", openSettings);
-    }
+  if (settingsCard) {
+    settingsCard.style.display = canManageSettings() ? "flex" : "none";
   }
 }
 
