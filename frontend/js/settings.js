@@ -66,6 +66,12 @@ function showFeedback(message, type = 'success') {
   }, 4000);
 }
 
+function refreshGlobalBranding() {
+  if (window.AltaMareeBranding?.refresh) {
+    window.AltaMareeBranding.refresh();
+  }
+}
+
 function getField(id) {
   return document.getElementById(id);
 }
@@ -205,6 +211,7 @@ async function saveSettings() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'Erreur enregistrement paramètres société');
     fillForm(data || {});
+    refreshGlobalBranding();
     showFeedback('Paramètres société enregistrés.');
   } catch (err) {
     console.error('Erreur sauvegarde paramètres société :', err);
@@ -229,6 +236,7 @@ async function uploadBrandingFile(file, options) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `Erreur upload ${options.label}`);
     fillForm(data || {});
+    refreshGlobalBranding();
     showFeedback(`${options.labelTitle} société mis à jour.`);
   } catch (err) {
     console.error(`Erreur upload ${options.label} :`, err);
@@ -251,6 +259,7 @@ async function deleteBrandingFile(options) {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `Erreur suppression ${options.label}`);
     fillForm(data || {});
+    refreshGlobalBranding();
     showFeedback(`${options.labelTitle} société supprimé.`);
   } catch (err) {
     console.error(`Erreur suppression ${options.label} :`, err);

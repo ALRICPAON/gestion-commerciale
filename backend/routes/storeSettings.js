@@ -124,13 +124,29 @@ function fileExtension(filename = '') {
   return path.extname(filename).toLowerCase();
 }
 
+function logUploadRejection(label, file, reason) {
+  console.warn(`Upload ${label} refusé`, {
+    reason,
+    filename: file?.originalname || null,
+    mimetype: file?.mimetype || null,
+    extension: file ? fileExtension(file.originalname) : null,
+    size: file?.size || null,
+  });
+}
+
 function validateFileMetadata(file, options) {
-  if (!file) return uploadError(`Fichier ${options.label} manquant`);
+  if (!file) {
+    logUploadRejection(options.label, file, 'fichier manquant');
+    return uploadError(`Fichier ${options.label} manquant`);
+  }
+
   const ext = fileExtension(file.originalname);
   if (!options.extensions.has(ext)) {
+    logUploadRejection(options.label, file, 'extension non autorisee');
     return uploadError(`Extension ${options.label} non autorisee`);
   }
   if (!options.mimeTypes.has(file.mimetype)) {
+    logUploadRejection(options.label, file, 'type MIME non autorise');
     return uploadError(`Type MIME ${options.label} non autorise`);
   }
   return null;
@@ -407,6 +423,7 @@ router.post(
 
       const validContent = await validateStoredImageContent(req.file, ALLOWED_LOGO_EXTENSIONS);
       if (!validContent) {
+        logUploadRejection('logo', req.file, 'contenu invalide');
         await removeUploadedFile(req.file);
         return res.status(400).json({ error: 'Contenu du logo invalide' });
       }
@@ -477,6 +494,7 @@ router.post(
 
       const validContent = await validateStoredImageContent(req.file, ALLOWED_FAVICON_EXTENSIONS);
       if (!validContent) {
+        logUploadRejection('favicon', req.file, 'contenu invalide');
         await removeUploadedFile(req.file);
         return res.status(400).json({ error: 'Contenu du favicon invalide' });
       }
