@@ -41,9 +41,11 @@ const invoiceSummary = document.getElementById("invoice-summary");
 const matchesTableBody = document.getElementById("matches-table-body");
 const invoiceDocumentLink = document.getElementById("invoice-document-link");
 const autoMatchBtn = document.getElementById("auto-match-btn");
+const confirmMatchBtn = document.getElementById("confirm-match-btn");
 const validateBtn = document.getElementById("validate-btn");
 const validateAdjustBtn = document.getElementById("validate-adjust-btn");
 const payloadBtn = document.getElementById("payload-btn");
+const deleteInvoiceBtn = document.getElementById("delete-invoice-btn");
 const payloadPreview = document.getElementById("payload-preview");
 
 let suppliers = [];
@@ -133,7 +135,7 @@ function statusLabel(status) {
 
 function matchLabel(status) {
   const map = {
-    unmatched: "Non rapprochée",
+    unmatched: "À contrôler",
     partial: "Partiel",
     matched: "OK",
     discrepancy: "Écart",
@@ -224,9 +226,9 @@ function importSuccessMessage(data) {
     messages.push(data.parser?.message || "Document importé mais aucun parser disponible");
   }
   if (data.auto_match?.matches > 0) {
-    messages.push(`Rapprochement automatique : ${data.auto_match.matches} match(s), ${data.auto_match.differences || 0} écart(s)`);
+    messages.push(`Proposition de rapprochement : ${data.auto_match.matches} match(s), ${data.auto_match.differences || 0} écart(s)`);
   } else {
-    messages.push("Facture importée mais aucun BL rapproché automatiquement");
+    messages.push("Facture importée mais aucun BL proposé automatiquement");
   }
   return messages.join(". ");
 }
@@ -260,6 +262,17 @@ async function openInvoice(invoiceId) {
   selectedInvoice = data.invoice;
   renderInvoices();
   renderDetail(data);
+}
+
+function resetDetailPanel() {
+  selectedInvoiceId = null;
+  selectedInvoice = null;
+  invoiceDetail.classList.add("hidden");
+  invoiceDetailEmpty.classList.remove("hidden");
+  matchesTableBody.innerHTML = "";
+  invoiceSummary.innerHTML = "";
+  payloadPreview.classList.add("hidden");
+  payloadPreview.textContent = "";
 }
 
 function renderDetail(data) {
@@ -361,8 +374,24 @@ async function autoMatchSelected() {
   if (data.skipped && data.reason === "zero_total") {
     showFeedback(detailFeedback, "Rapprochement ignoré : total facture à 0", true);
   } else {
-    showFeedback(detailFeedback, `Rapprochement terminé : ${data.matches} match(s), ${data.differences} écart(s)`);
+    const confidence = data.confidence ? `, confiance ${data.confidence}` : "";
+    showFeedback(detailFeedback, `Proposition de rapprochement : ${data.matches} match(s), ${data.differences} écart(s)${confidence}. Confirme le rapprochement avant validation.`);
   }
+  await loadInvoices();
+  await openInvoice(selectedInvoiceId);
+}
+
+async function confirmMatchSelected() {
+  if (!selectedInvoiceId || !selectedInvoice) return;
+  clearFeedback(detailFeedback);
+  const confirmed = confirm("Confirmer le rapprochement proposé pour cette facture fournisseur ?");
+  if (!confirmed) return;
+
+  const data = await apiFetch(`/api/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}/confirm-match`, {
+    method: "POST",
+    body: JSON.stringify({ confirm_difference: true }),
+  });
+  showFeedback(detailFeedback, `Rapprochement confirmé : ${matchLabel(data.match_status)}`);
   await loadInvoices();
   await openInvoice(selectedInvoiceId);
 }
@@ -380,6 +409,19 @@ async function validateSelected(adjustCosts = false) {
   showFeedback(detailFeedback, `Facture validée : ${statusLabel(data.status)}${data.adjusted_lots ? `, ${data.adjusted_lots} lot(s) ajusté(s)` : ""}`);
   await loadInvoices();
   await openInvoice(selectedInvoiceId);
+}
+
+async function deleteSelectedInvoice() {
+  if (!selectedInvoiceId || !selectedInvoice) return;
+  clearFeedback(detailFeedback);
+  const label = selectedInvoice.invoice_number || "cette facture";
+  const confirmed = confirm(`Supprimer définitivement la facture fournisseur ${label} ?\n\nLes rapprochements et lignes facture seront supprimés, et les achats liés repasseront en attente facture si nécessaire.`);
+  if (!confirmed) return;
+
+  await apiFetch(`/api/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}`, { method: "DELETE" });
+  resetDetailPanel();
+  await loadInvoices();
+  showFeedback(listFeedback, "Facture fournisseur supprimée");
 }
 
 async function showPayload() {
@@ -418,9 +460,11 @@ createManualBtn?.addEventListener("click", () => createManualInvoice().catch((er
 importInvoiceBtn?.addEventListener("click", () => importInvoice().catch((error) => showFeedback(createFeedback, error.message, true)));
 invoiceDocumentLink?.addEventListener("click", (event) => openInvoiceDocument(event));
 autoMatchBtn?.addEventListener("click", () => autoMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
+confirmMatchBtn?.addEventListener("click", () => confirmMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateBtn?.addEventListener("click", () => validateSelected(false).catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateAdjustBtn?.addEventListener("click", () => validateSelected(true).catch((error) => showFeedback(detailFeedback, error.message, true)));
 payloadBtn?.addEventListener("click", () => showPayload().catch((error) => showFeedback(detailFeedback, error.message, true)));
+deleteInvoiceBtn?.addEventListener("click", () => deleteSelectedInvoice().catch((error) => showFeedback(detailFeedback, error.message, true)));
 
 invoicesTableBody?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-action='open']");
