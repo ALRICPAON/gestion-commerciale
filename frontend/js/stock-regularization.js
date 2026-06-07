@@ -54,6 +54,13 @@ function formatNumber(value, digits = 3) {
   });
 }
 
+function formatDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleDateString('fr-FR');
+}
+
 function formatDateTime(value) {
   if (!value) return '-';
   const date = new Date(value);
@@ -104,6 +111,31 @@ function originText(row) {
   return parts.join(' - ') || '-';
 }
 
+function suggestedPositiveLotsHtml(row) {
+  const positiveLots = Array.isArray(row.positive_lots) ? row.positive_lots : [];
+  const needed = Math.abs(Number(row.qty_remaining || 0));
+  if (!positiveLots.length) {
+    return '<span class="regularization-muted">Aucun lot positif disponible : régularisation interne possible avec confirmation.</span>';
+  }
+
+  let remaining = needed;
+  return `<div class="regularization-positive-lots">${positiveLots.map((lot) => {
+    const available = Number(lot.qty_remaining || 0);
+    const proposed = Math.max(Math.min(available, remaining), 0);
+    remaining = Math.max(remaining - proposed, 0);
+    const checked = proposed > 0 ? 'checked' : '';
+    const lotLabel = lot.lot_code || lot.supplier_lot_number || lot.lot_id;
+    return `<label class="regularization-positive-lot">
+      <input type="checkbox" data-positive-lot-id="${escapeHtml(lot.lot_id)}" ${checked}>
+      <span>
+        <strong>${escapeHtml(lotLabel || '-')}</strong>
+        <small>${formatNumber(available)} dispo · DLC ${escapeHtml(formatDate(lot.dlc))}</small>
+      </span>
+      <input class="regularization-positive-qty" type="number" min="0" step="0.001" max="${available}" value="${proposed.toFixed(3)}" data-positive-qty-for="${escapeHtml(lot.lot_id)}">
+    </label>`;
+  }).join('')}</div>`;
+}
+
 function renderRows(rows) {
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="7">Aucun stock negatif a regulariser.</td></tr>';
@@ -125,6 +157,7 @@ function renderRows(rows) {
         <td>
           <strong>${escapeHtml(lotLabel || '-')}</strong>
           <span class="regularization-muted">Lot fournisseur ${escapeHtml(row.supplier_lot_number || '-')}</span>
+          ${suggestedPositiveLotsHtml(row)}
         </td>
         <td><span class="regularization-negative">${formatNumber(row.qty_remaining)} ${escapeHtml(unit)}</span></td>
         <td>${escapeHtml(supplierLabel)}</td>
@@ -165,20 +198,48 @@ async function loadNegativeLots() {
   }
 }
 
+function selectedPositiveLots(rowEl) {
+  return Array.from(rowEl.querySelectorAll('input[data-positive-lot-id]:checked')).map((checkbox) => {
+    const lotId = checkbox.dataset.positiveLotId;
+    const qtyInput = rowEl.querySelector(`input[data-positive-qty-for="${CSS.escape(lotId)}"]`);
+    return {
+      lot_id: lotId,
+      quantity: Number(qtyInput?.value || 0),
+    };
+  }).filter((entry) => entry.lot_id && entry.quantity > 0);
+}
+
 async function regularizeLot(lotId) {
   const row = negativeLots.find((item) => String(item.lot_id) === String(lotId));
-  if (!row) return;
+  const rowEl = tbody.querySelector(`tr[data-lot-id="${CSS.escape(String(lotId))}"]`);
+  if (!row || !rowEl) return;
+
   const quantity = Math.abs(Number(row.qty_remaining || 0));
   const lotLabel = row.lot_code || row.supplier_lot_number || row.lot_id;
-  const confirmed = confirm(`Regulariser le lot ${lotLabel} ?\n\nUne entree interne de ${formatNumber(quantity)} ${row.unit || ''} sera creee pour remettre le lot a 0.\nLes anciens mouvements ne seront pas modifies.`);
+  const positiveLots = Array.isArray(row.positive_lots) ? row.positive_lots : [];
+  const sourceLots = selectedPositiveLots(rowEl);
+
+  if (positiveLots.length && !sourceLots.length) {
+    showFeedback('Sélectionne au moins un lot positif du même article pour compenser le négatif.', 'error');
+    return;
+  }
+
+  const confirmationText = sourceLots.length
+    ? `Regulariser le lot negatif ${lotLabel} ?\n\n${formatNumber(quantity)} ${row.unit || ''} seront compenses depuis les lots positifs selectionnes.\nLe negatif repassera a 0 et les lots positifs seront diminues.`
+    : `Regulariser le lot ${lotLabel} ?\n\nAucun lot positif n est disponible. Une entree interne de ${formatNumber(quantity)} ${row.unit || ''} sera creee pour remettre le lot a 0.\nLes anciens mouvements ne seront pas modifies.`;
+  const confirmed = confirm(confirmationText);
   if (!confirmed) return;
 
   const button = tbody.querySelector(`button[data-lot-id="${CSS.escape(String(lotId))}"]`);
   if (button) button.disabled = true;
 
   try {
-    const result = await apiPost(`/api/stock/negative-lots/${encodeURIComponent(lotId)}/regularize`, { confirm: true });
-    showFeedback(`${result.message || 'Lot regularise.'} Mouvement cree : +${formatNumber(result.regularization_qty)}.`, 'success');
+    const result = await apiPost(`/api/stock/negative-lots/${encodeURIComponent(lotId)}/regularize`, {
+      confirm: true,
+      source_lots: sourceLots,
+    });
+    const sourceText = result.mode === 'positive_lots' ? ' par compensation de lot positif' : '';
+    showFeedback(`${result.message || 'Lot regularise'}${sourceText}. Quantite : ${formatNumber(result.regularization_qty)}.`, 'success');
     await loadNegativeLots();
   } catch (error) {
     console.error(error);
