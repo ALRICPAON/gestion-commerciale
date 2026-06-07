@@ -1,7 +1,8 @@
 const { readInvoiceDocument } = require('./read-invoice-document');
 const distrimerParser = require('./parsers/parser-invoice-distrimer');
+const sogelmerParser = require('./parsers/parser-invoice-sogelmer');
 
-const PARSERS = [distrimerParser];
+const PARSERS = [distrimerParser, sogelmerParser];
 
 async function parseSupplierInvoice(file) {
   const document = await readInvoiceDocument(file);
