@@ -3,7 +3,7 @@ const activeDepartment = JSON.parse(localStorage.getItem("grv2_active_department
 const token = localStorage.getItem("grv2_token");
 
 const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
-const FRONT_BASE_URL = window.APP_CONFIG.FRONT_BASE_URL || "https://scorpaseafood.fr";
+const FRONT_BASE_URL = window.APP_CONFIG.FRONT_BASE_URL || "https://altamaree.fr";
 
 if (!sessionUser || !token) {
   window.location.href = "./login.html";
@@ -135,7 +135,7 @@ function closeLoginQrModal() {
 
 function renderTopbar() {
   if (storeNameEl) {
-    storeNameEl.textContent = sessionUser.store_name || "Magasin";
+    storeNameEl.textContent = "Espace de gestion";
   }
 
   if (userNameEl) {
@@ -489,7 +489,7 @@ backHomeBtn?.addEventListener("click", () => {
 logoutBtn?.addEventListener("click", clearSessionAndRedirect);
 
 openLoginQrBtn?.addEventListener("click", openLoginQrModal);
-closeLoginQrBtn?.addEventListener("click", closeLoginQrModal);
+closeLoginQrBtn?.addEventListener("click", closeLoginModal);
 loginQrModal?.addEventListener("click", (event) => {
   if (event.target === loginQrModal) {
     closeLoginQrModal();
