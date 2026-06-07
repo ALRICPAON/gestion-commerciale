@@ -15,6 +15,9 @@ const MATCHABLE_PURCHASE_STATUSES = ['received', 'received_pending_invoice', 'in
 const QUANTITY_TOLERANCE = 0.001;
 const PRICE_TOLERANCE = 0.001;
 const AMOUNT_TOLERANCE = 0.05;
+const REVIEW_STATUS = 'match_review';
+const PROPOSAL_MATCH_STATUS = 'pending_review';
+const PROPOSAL_DISCREPANCY_STATUS = 'pending_review_discrepancy';
 
 fs.mkdirSync(DOCUMENTS_ROOT, { recursive: true });
 
@@ -66,10 +69,6 @@ function jsonLines(value) {
 
 function normalizeSupplierReference(value) {
   return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-}
-
-function almostEqual(left, right, tolerance) {
-  return Math.abs(Number(left || 0) - Number(right || 0)) <= tolerance;
 }
 
 function invoiceDocumentUrl(invoiceId) {
@@ -221,7 +220,15 @@ async function findPurchaseCandidates(client, invoice, storeId, dateWindowDays) 
   );
 }
 
-async function loadPurchaseLineCandidates(client, invoice, storeId, purchaseId = null) {
+function normalizePurchaseScope(purchaseScope) {
+  if (!purchaseScope) return null;
+  const ids = Array.isArray(purchaseScope) ? purchaseScope : [purchaseScope];
+  const cleanIds = ids.map(clean).filter(Boolean);
+  return cleanIds.length ? cleanIds : null;
+}
+
+async function loadPurchaseLineCandidates(client, invoice, storeId, purchaseScope = null) {
+  const purchaseIds = normalizePurchaseScope(purchaseScope);
   const result = await client.query(
     `SELECT pl.*, p.id purchase_id, p.bl_number, p.receipt_date, l.id lot_id,
             plm.meta_value, plm.supplier_lot_number purchase_supplier_lot_number
@@ -232,9 +239,9 @@ async function loadPurchaseLineCandidates(client, invoice, storeId, purchaseId =
      WHERE pl.store_id = $1
        AND p.supplier_id = $2
        AND p.status = ANY($3::text[])
-       AND ($4::uuid IS NULL OR p.id = $4::uuid)
+       AND ($4::uuid[] IS NULL OR p.id = ANY($4::uuid[]))
      ORDER BY p.receipt_date DESC NULLS LAST, pl.line_number ASC`,
-    [storeId, invoice.supplier_id, MATCHABLE_PURCHASE_STATUSES, purchaseId]
+    [storeId, invoice.supplier_id, MATCHABLE_PURCHASE_STATUSES, purchaseIds]
   );
   return result.rows;
 }
@@ -321,10 +328,10 @@ function purchaseLineMatchRank(invoiceLine, purchaseLine, mappedArticleId) {
   return null;
 }
 
-async function findPurchaseLineCandidate(client, line, invoice, storeId, purchaseId = null, usedPurchaseLineIds = []) {
+async function findPurchaseLineCandidate(client, line, invoice, storeId, purchaseScope = null, usedPurchaseLineIds = []) {
   const normalizedRef = normalizeSupplierReference(line.supplier_reference);
   const mappedArticleId = await findMappedArticleId(client, invoice, normalizedRef);
-  const candidates = await loadPurchaseLineCandidates(client, invoice, storeId, purchaseId);
+  const candidates = await loadPurchaseLineCandidates(client, invoice, storeId, purchaseScope);
   const used = new Set(usedPurchaseLineIds.map((id) => String(id)));
 
   const ranked = candidates
@@ -363,11 +370,12 @@ async function findPurchaseLineCandidate(client, line, invoice, storeId, purchas
     invoice_quantity_kg: Number(line.quantity || 0),
     invoice_unit_price_ex_vat: Number(line.unit_price_ex_vat || 0),
     invoice_line_amount_ex_vat: Number(line.line_amount_ex_vat || 0),
-    purchase_id: purchaseId,
+    purchase_scope: normalizePurchaseScope(purchaseScope),
     loaded_purchase_lines: candidates.length,
     candidate_count: ranked.length,
     candidates: ranked.map((row) => ({
       purchase_line_id: row.id,
+      purchase_id: row.purchase_id,
       supplier_reference: row.supplier_reference,
       article_id: row.article_id,
       purchase_lot: row.purchase_lot,
@@ -390,6 +398,7 @@ async function findPurchaseLineCandidate(client, line, invoice, storeId, purchas
       invoice_lot: invoiceLotNumber(line),
       loaded_purchase_lines: candidates.map((candidate) => ({
         purchase_line_id: candidate.id,
+        purchase_id: candidate.purchase_id,
         supplier_reference: candidate.supplier_reference,
         purchase_lot: purchaseLotNumber(candidate),
         purchase_quantity_kg: purchaseLineTotalQuantity(candidate),
@@ -402,11 +411,38 @@ async function findPurchaseLineCandidate(client, line, invoice, storeId, purchas
   return ranked[0] || null;
 }
 
+function invoiceComparableTotal(invoice) {
+  return Number(invoice.product_total_ex_vat || invoice.total_ex_vat || 0);
+}
+
+function purchaseComparableTotal(purchase) {
+  return Number(purchase.received_total_ex_vat || purchase.total_amount_ex_vat || 0);
+}
+
+function confidenceLabel({ blPurchase, fallbackCandidateCount, differences, lineCount, lineMatches }) {
+  if (fallbackCandidateCount > 1 && !blPurchase) return 'doute';
+  if (blPurchase && differences === 0 && lineMatches >= lineCount) return 'sur';
+  if (differences === 0) return 'probable';
+  return 'doute';
+}
+
+function proposalMatchStatus(differences) {
+  return differences > 0 ? PROPOSAL_DISCREPANCY_STATUS : PROPOSAL_MATCH_STATUS;
+}
+
+function finalInvoiceStatus(differences) {
+  return differences > 0 ? 'invoice_difference' : 'matched';
+}
+
+function finalMatchStatus(differences) {
+  return differences > 0 ? 'discrepancy' : 'matched';
+}
+
 async function createPurchaseLevelMatch(client, invoice, purchase, storeId, notePrefix) {
-  const invoiceTotal = Number(invoice.product_total_ex_vat || invoice.total_ex_vat || 0);
-  const purchaseTotal = Number(purchase.received_total_ex_vat || purchase.total_amount_ex_vat || 0);
+  const invoiceTotal = invoiceComparableTotal(invoice);
+  const purchaseTotal = purchaseComparableTotal(purchase);
   const amountDifference = Number((invoiceTotal - purchaseTotal).toFixed(4));
-  const matchStatus = Math.abs(amountDifference) <= 0.05 ? 'matched' : 'difference';
+  const matchStatus = Math.abs(amountDifference) <= AMOUNT_TOLERANCE ? 'matched' : 'difference';
 
   await client.query(
     `INSERT INTO supplier_invoice_matches(id, store_id, supplier_invoice_id, purchase_id, match_status, difference_type, amount_difference, notes)
@@ -429,92 +465,13 @@ async function createPurchaseLevelMatch(client, invoice, purchase, storeId, note
   };
 }
 
-async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) {
-  const invoice = await getInvoice(client, invoiceId, storeId);
-  if (!invoice) return { ok: false, reason: 'invoice_not_found', matches: 0, differences: 0 };
-
-  const invoiceTotal = Number(invoice.product_total_ex_vat || invoice.total_ex_vat || 0);
-  console.info('Auto-match facture fournisseur: debut', {
-    invoice_id: invoice.id,
-    supplier_invoice_bl_number: invoice.supplier_invoice_bl_number,
-    supplier_id: invoice.supplier_id,
-    store_id: storeId,
-    invoice_total_ex_vat: invoiceTotal,
-    status: invoice.status,
-    match_status: invoice.match_status,
-  });
-
-  if (invoiceTotal <= 0) {
-    console.info('Auto-match facture fournisseur: ignore total nul', { invoice_id: invoice.id });
-    return { ok: true, skipped: true, reason: 'zero_total', matches: 0, differences: 0 };
-  }
-
-  await client.query('DELETE FROM supplier_invoice_matches WHERE supplier_invoice_id = $1', [invoice.id]);
-
-  const lines = await getInvoiceLines(client, invoice.id);
-  const blPurchase = await findPurchaseByInvoiceBl(client, invoice, storeId);
-  let candidates = { rows: [] };
-  if (!blPurchase) candidates = await findPurchaseCandidates(client, invoice, storeId, dateWindowDays);
-
-  console.info('Auto-match facture fournisseur: lignes facture chargees', {
-    invoice_id: invoice.id,
-    line_count: lines.length,
-    lines: lines.map((line) => ({
-      supplier_invoice_line_id: line.id,
-      supplier_reference: line.supplier_reference,
-      supplier_lot_number: invoiceLotNumber(line),
-      quantity_kg: Number(line.quantity || 0),
-      unit_price_ex_vat: Number(line.unit_price_ex_vat || 0),
-      line_amount_ex_vat: Number(line.line_amount_ex_vat || 0),
-    })),
-  });
-
-  console.info('Auto-match facture fournisseur: candidats fallback', {
-    invoice_id: invoice.id,
-    bl_purchase_found: Boolean(blPurchase),
-    fallback_candidate_count: candidates.rows.length,
-    fallback_candidates: candidates.rows.map((row) => ({
-      purchase_id: row.id,
-      bl_number: row.bl_number,
-      source_document_original_name: row.source_document_original_name,
-      status: row.status,
-      total_amount_ex_vat: row.total_amount_ex_vat,
-      received_total_ex_vat: row.received_total_ex_vat,
-    })),
-  });
-
+async function insertLineMatches(client, invoice, lines, storeId, purchaseScope = null) {
   let differences = 0;
   let matches = 0;
   const usedPurchaseLineIds = [];
 
-  if (blPurchase) {
-    const purchaseMatch = await createPurchaseLevelMatch(client, invoice, blPurchase, storeId, 'Rapprochement automatique par numero BL facture');
-    matches += 1;
-    if (purchaseMatch.hasDifference) differences += 1;
-  } else if (!lines.length) {
-    const purchase = candidates.rows[0];
-    if (purchase) {
-      const purchaseMatch = await createPurchaseLevelMatch(client, invoice, purchase, storeId, 'Rapprochement automatique par fournisseur/date/total');
-      matches += 1;
-      if (purchaseMatch.hasDifference) differences += 1;
-    }
-  }
-
-  if (!blPurchase && !candidates.rows.length) {
-    console.info('Auto-match facture fournisseur: aucun purchase candidat', {
-      invoice_id: invoice.id,
-      supplier_invoice_bl_number: invoice.supplier_invoice_bl_number,
-      supplier_id: invoice.supplier_id,
-      store_id: storeId,
-      status_filter: MATCHABLE_PURCHASE_STATUSES,
-    });
-  }
-
   for (const line of lines) {
-    let purchaseLine = await findPurchaseLineCandidate(client, line, invoice, storeId, blPurchase?.id || null, usedPurchaseLineIds);
-    if (!purchaseLine && blPurchase?.id) {
-      purchaseLine = await findPurchaseLineCandidate(client, line, invoice, storeId, null, usedPurchaseLineIds);
-    }
+    const purchaseLine = await findPurchaseLineCandidate(client, line, invoice, storeId, purchaseScope, usedPurchaseLineIds);
 
     if (!purchaseLine) {
       differences += 1;
@@ -562,11 +519,11 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
         qtyDifference,
         priceDifference,
         amountDifference,
-        hasDifference ? `Ecart detecte automatiquement (${purchaseLine.match_reason || 'matching'})` : `Rapprochement automatique OK (${purchaseLine.match_reason || 'matching'})`,
+        hasDifference ? `Proposition avec ecart (${purchaseLine.match_reason || 'matching'})` : `Proposition OK (${purchaseLine.match_reason || 'matching'})`,
       ]
     );
 
-    console.info('Auto-match facture fournisseur: ligne rapprochee', {
+    console.info('Auto-match facture fournisseur: ligne proposee', {
       invoice_id: invoice.id,
       supplier_invoice_line_id: line.id,
       purchase_line_id: purchaseLine.id,
@@ -581,34 +538,246 @@ async function autoMatchInvoice(client, invoiceId, storeId, dateWindowDays = 7) 
 
     await client.query(
       'UPDATE supplier_invoice_lines SET match_status = $1, match_error = $2 WHERE id = $3',
-      [hasDifference ? 'price_difference' : 'matched', hasDifference ? 'Ecart facture/reception' : null, line.id]
+      [hasDifference ? 'price_difference' : 'matched', hasDifference ? 'Ecart facture/reception a controler' : null, line.id]
     );
+  }
+
+  return { differences, matches };
+}
+
+async function selectedPurchases(client, invoice, storeId, purchaseIds) {
+  const ids = normalizePurchaseScope(purchaseIds);
+  if (!ids) return [];
+  const result = await client.query(
+    `SELECT p.*, COALESCE(SUM(pl.line_amount_ex_vat), 0) received_total_ex_vat
+     FROM purchases p
+     LEFT JOIN purchase_lines pl ON pl.purchase_id = p.id
+     WHERE p.store_id = $1
+       AND p.supplier_id = $2
+       AND p.status = ANY($3::text[])
+       AND p.id = ANY($4::uuid[])
+     GROUP BY p.id
+     ORDER BY p.receipt_date DESC NULLS LAST`,
+    [storeId, invoice.supplier_id, MATCHABLE_PURCHASE_STATUSES, ids]
+  );
+  return result.rows;
+}
+
+async function createMatchProposal(client, invoiceId, storeId, options = {}) {
+  const invoice = await getInvoice(client, invoiceId, storeId);
+  if (!invoice) return { ok: false, reason: 'invoice_not_found', matches: 0, differences: 0 };
+
+  const invoiceTotal = invoiceComparableTotal(invoice);
+  console.info('Auto-match facture fournisseur: debut proposition', {
+    invoice_id: invoice.id,
+    supplier_invoice_bl_number: invoice.supplier_invoice_bl_number,
+    supplier_id: invoice.supplier_id,
+    store_id: storeId,
+    invoice_total_ex_vat: invoiceTotal,
+    status: invoice.status,
+    match_status: invoice.match_status,
+    manual_purchase_ids: normalizePurchaseScope(options.purchase_ids),
+  });
+
+  if (invoiceTotal <= 0) {
+    console.info('Auto-match facture fournisseur: ignore total nul', { invoice_id: invoice.id });
+    return { ok: true, skipped: true, reason: 'zero_total', matches: 0, differences: 0 };
+  }
+
+  await client.query('DELETE FROM supplier_invoice_matches WHERE supplier_invoice_id = $1', [invoice.id]);
+
+  const lines = await getInvoiceLines(client, invoice.id);
+  const dateWindowDays = Math.max(1, Math.min(Number(options.date_window_days || 7), 45));
+  const manualPurchases = await selectedPurchases(client, invoice, storeId, options.purchase_ids);
+  const blPurchase = manualPurchases.length ? null : await findPurchaseByInvoiceBl(client, invoice, storeId);
+  let fallbackCandidates = { rows: [] };
+  if (!blPurchase && !manualPurchases.length) fallbackCandidates = await findPurchaseCandidates(client, invoice, storeId, dateWindowDays);
+
+  console.info('Auto-match facture fournisseur: lignes facture chargees', {
+    invoice_id: invoice.id,
+    line_count: lines.length,
+    lines: lines.map((line) => ({
+      supplier_invoice_line_id: line.id,
+      supplier_reference: line.supplier_reference,
+      supplier_lot_number: invoiceLotNumber(line),
+      quantity_kg: Number(line.quantity || 0),
+      unit_price_ex_vat: Number(line.unit_price_ex_vat || 0),
+      line_amount_ex_vat: Number(line.line_amount_ex_vat || 0),
+    })),
+  });
+
+  const proposedPurchases = manualPurchases.length ? manualPurchases : (blPurchase ? [blPurchase] : fallbackCandidates.rows.slice(0, 1));
+  console.info('Auto-match facture fournisseur: achats proposes', {
+    invoice_id: invoice.id,
+    proposed_count: proposedPurchases.length,
+    fallback_candidate_count: fallbackCandidates.rows.length,
+    proposed_purchases: proposedPurchases.map((row) => ({
+      purchase_id: row.id,
+      bl_number: row.bl_number,
+      source_document_original_name: row.source_document_original_name,
+      status: row.status,
+      total_amount_ex_vat: row.total_amount_ex_vat,
+      received_total_ex_vat: row.received_total_ex_vat,
+      match_reason: row.match_reason,
+    })),
+  });
+
+  let differences = 0;
+  let matches = 0;
+
+  for (const purchase of proposedPurchases) {
+    const note = manualPurchases.length ? 'Proposition manuelle de rapprochement' : (blPurchase ? 'Proposition automatique par numero BL facture' : 'Proposition automatique par fournisseur/date/total');
+    const purchaseMatch = await createPurchaseLevelMatch(client, invoice, purchase, storeId, note);
+    matches += 1;
+    if (purchaseMatch.hasDifference) differences += 1;
+  }
+
+  const purchaseScope = proposedPurchases.map((purchase) => purchase.id);
+  if (lines.length && purchaseScope.length) {
+    const lineResult = await insertLineMatches(client, invoice, lines, storeId, purchaseScope);
+    matches += lineResult.matches;
+    differences += lineResult.differences;
+  }
+
+  if (!proposedPurchases.length) {
+    console.info('Auto-match facture fournisseur: aucun achat candidat', {
+      invoice_id: invoice.id,
+      supplier_invoice_bl_number: invoice.supplier_invoice_bl_number,
+      supplier_id: invoice.supplier_id,
+      store_id: storeId,
+      status_filter: MATCHABLE_PURCHASE_STATUSES,
+    });
   }
 
   if (matches > 0) {
-    const status = differences > 0 ? 'invoice_difference' : 'matched';
-    const matchStatus = differences > 0 ? 'discrepancy' : 'matched';
-    await client.query('UPDATE supplier_invoices SET status = $1, match_status = $2, updated_at = NOW() WHERE id = $3', [status, matchStatus, invoice.id]);
+    const confidence = confidenceLabel({
+      blPurchase,
+      fallbackCandidateCount: fallbackCandidates.rows.length,
+      differences,
+      lineCount: lines.length,
+      lineMatches: Math.max(0, matches - proposedPurchases.length),
+    });
     await client.query(
-      `UPDATE purchases p
-       SET status = CASE WHEN $1 > 0 THEN 'invoice_difference' ELSE 'invoice_matched' END,
+      `UPDATE supplier_invoices
+       SET status = $1,
+           match_status = $2,
            updated_at = NOW()
-       WHERE p.id IN (SELECT DISTINCT purchase_id FROM supplier_invoice_matches WHERE supplier_invoice_id = $2 AND purchase_id IS NOT NULL)`,
-      [differences, invoice.id]
+       WHERE id = $3`,
+      [REVIEW_STATUS, proposalMatchStatus(differences), invoice.id]
     );
-    console.info('Auto-match facture fournisseur: resultat', {
+    console.info('Auto-match facture fournisseur: proposition creee', {
       invoice_id: invoice.id,
-      status,
-      match_status: matchStatus,
+      status: REVIEW_STATUS,
+      match_status: proposalMatchStatus(differences),
+      confidence,
       matches,
       differences,
-      matched_by_bl: Boolean(blPurchase),
+      proposed_purchase_count: proposedPurchases.length,
     });
-    return { ok: true, status, match_status: matchStatus, matches, differences, matched_by_bl: Boolean(blPurchase) };
+    return {
+      ok: true,
+      status: REVIEW_STATUS,
+      match_status: proposalMatchStatus(differences),
+      confidence,
+      matches,
+      differences,
+      proposed_purchase_ids: proposedPurchases.map((purchase) => purchase.id),
+      requires_human_confirmation: true,
+    };
   }
 
-  console.info('Auto-match facture fournisseur: aucun match cree', { invoice_id: invoice.id });
-  return { ok: true, status: invoice.status, match_status: invoice.match_status, matches, differences, matched_by_bl: false };
+  await client.query('UPDATE supplier_invoices SET status = $1, match_status = $2, updated_at = NOW() WHERE id = $3', [REVIEW_STATUS, 'unmatched', invoice.id]);
+  console.info('Auto-match facture fournisseur: aucune proposition creee', { invoice_id: invoice.id });
+  return { ok: true, status: REVIEW_STATUS, match_status: 'unmatched', confidence: 'doute', matches, differences, requires_human_confirmation: true };
+}
+
+async function confirmMatchProposal(client, invoiceId, storeId, body = {}) {
+  const invoice = await getInvoice(client, invoiceId, storeId);
+  if (!invoice) return { ok: false, statusCode: 404, error: 'Facture fournisseur introuvable' };
+
+  const purchaseIds = normalizePurchaseScope(body.purchase_ids);
+  if (purchaseIds) {
+    await createMatchProposal(client, invoice.id, storeId, { purchase_ids: purchaseIds, date_window_days: body.date_window_days });
+  }
+
+  const summary = await client.query(
+    `SELECT COUNT(*)::int match_count,
+            COUNT(DISTINCT purchase_id)::int purchase_count,
+            COALESCE(SUM(CASE WHEN match_status = 'difference' THEN 1 ELSE 0 END), 0)::int difference_count
+     FROM supplier_invoice_matches
+     WHERE supplier_invoice_id = $1`,
+    [invoice.id]
+  );
+  const row = summary.rows[0] || {};
+  const matches = Number(row.match_count || 0);
+  const differences = Number(row.difference_count || 0);
+
+  if (matches <= 0 || Number(row.purchase_count || 0) <= 0) {
+    return { ok: false, statusCode: 409, error: 'Aucune proposition de rapprochement a confirmer' };
+  }
+
+  const status = finalInvoiceStatus(differences);
+  const matchStatus = finalMatchStatus(differences);
+  await client.query('UPDATE supplier_invoices SET status = $1, match_status = $2, updated_at = NOW() WHERE id = $3', [status, matchStatus, invoice.id]);
+  await client.query(
+    `UPDATE purchases p
+     SET status = CASE WHEN $1 > 0 THEN 'invoice_difference' ELSE 'invoice_matched' END,
+         updated_at = NOW()
+     WHERE p.id IN (SELECT DISTINCT purchase_id FROM supplier_invoice_matches WHERE supplier_invoice_id = $2 AND purchase_id IS NOT NULL)`,
+    [differences, invoice.id]
+  );
+
+  return { ok: true, status, match_status: matchStatus, matches, differences, confirmed: true };
+}
+
+async function matchCandidates(client, invoiceId, storeId, dateWindowDays = 7) {
+  const invoice = await getInvoice(client, invoiceId, storeId);
+  if (!invoice) return null;
+  const blPurchase = await findPurchaseByInvoiceBl(client, invoice, storeId);
+  const fallback = await findPurchaseCandidates(client, invoice, storeId, dateWindowDays);
+  const byId = new Map();
+  if (blPurchase) byId.set(String(blPurchase.id), blPurchase);
+  for (const row of fallback.rows) byId.set(String(row.id), row);
+  const candidates = Array.from(byId.values());
+  const lines = candidates.length ? await loadPurchaseLineCandidates(client, invoice, storeId, candidates.map((row) => row.id)) : [];
+  const linesByPurchase = new Map();
+  for (const line of lines) {
+    const key = String(line.purchase_id);
+    if (!linesByPurchase.has(key)) linesByPurchase.set(key, []);
+    linesByPurchase.get(key).push({
+      id: line.id,
+      line_number: line.line_number,
+      supplier_reference: line.supplier_reference,
+      supplier_label: line.supplier_label,
+      supplier_lot_number: purchaseLotNumber(line),
+      quantity_kg: purchaseLineTotalQuantity(line),
+      unit_price_ex_vat: Number(line.unit_price_ex_vat || 0),
+      line_amount_ex_vat: Number(line.line_amount_ex_vat || 0),
+    });
+  }
+  const invoiceTotal = invoiceComparableTotal(invoice);
+  return {
+    invoice_id: invoice.id,
+    invoice_total_ex_vat: invoiceTotal,
+    candidates: candidates.map((purchase) => {
+      const purchaseTotal = purchaseComparableTotal(purchase);
+      const amountDifference = Number((invoiceTotal - purchaseTotal).toFixed(4));
+      const exactBl = ['bl_number', 'source_document_original_name_stem', 'source_document_original_name_contains'].includes(purchase.match_reason);
+      const totalExact = Math.abs(amountDifference) <= AMOUNT_TOLERANCE;
+      return {
+        purchase_id: purchase.id,
+        bl_number: purchase.bl_number,
+        source_document_original_name: purchase.source_document_original_name,
+        receipt_date: purchase.receipt_date,
+        status: purchase.status,
+        total_ex_vat: purchaseTotal,
+        amount_difference: amountDifference,
+        confidence: exactBl && totalExact ? 'sur' : (totalExact ? 'probable' : 'doute'),
+        match_reason: purchase.match_reason || 'supplier_date_total',
+        lines: linesByPurchase.get(String(purchase.id)) || [],
+      };
+    }),
+  };
 }
 
 router.post('/supplier-invoices/import', authenticateToken, attachDbContext, requireAdminOrManager, upload.single('document'), async (req, res) => {
@@ -717,7 +886,7 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
     }
 
     await syncInvoiceTotals(client, invoice.rows[0].id);
-    const autoMatch = await autoMatchInvoice(client, invoice.rows[0].id, req.user.store_id, 7);
+    const autoMatch = await createMatchProposal(client, invoice.rows[0].id, req.user.store_id, { date_window_days: 7 });
     const finalInvoice = await getInvoice(client, invoice.rows[0].id, req.user.store_id);
     const finalLines = await getInvoiceLines(client, invoice.rows[0].id);
     const payload = buildPennylanePayload(finalInvoice, finalLines);
@@ -734,7 +903,7 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
         message: parsedResult.message,
       },
       auto_match: autoMatch,
-      message: parsedResult.message,
+      message: autoMatch.matches > 0 ? 'Facture importee, rapprochement propose a controler' : parsedResult.message,
     });
   } catch (error) {
     await client.query('ROLLBACK');
@@ -742,6 +911,18 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
     return res.status(500).json({ error: error.message });
   } finally {
     client.release();
+  }
+});
+
+router.get('/supplier-invoices/:id/match-candidates', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const dateWindowDays = Math.max(1, Math.min(Number(req.query.date_window_days || 7), 45));
+    const result = await matchCandidates(req.dbPool, req.params.id, req.user.store_id, dateWindowDays);
+    if (!result) return res.status(404).json({ error: 'Facture fournisseur introuvable' });
+    return res.json(result);
+  } catch (error) {
+    console.error('Erreur candidats rapprochement facture fournisseur :', error);
+    return res.status(500).json({ error: 'Erreur candidats rapprochement facture fournisseur' });
   }
 });
 
@@ -756,12 +937,102 @@ router.post('/supplier-invoices/:id/auto-match', authenticateToken, attachDbCont
     }
 
     const dateWindowDays = Math.max(1, Math.min(Number(req.body.date_window_days || 7), 45));
-    const result = await autoMatchInvoice(client, invoice.id, req.user.store_id, dateWindowDays);
+    const result = await createMatchProposal(client, invoice.id, req.user.store_id, { date_window_days: dateWindowDays });
     await client.query('COMMIT');
     return res.json(result);
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erreur rapprochement facture fournisseur :', error);
+    return res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/supplier-invoices/:id/confirm-match', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await confirmMatchProposal(client, req.params.id, req.user.store_id, req.body || {});
+    if (!result.ok) {
+      await client.query('ROLLBACK');
+      return res.status(result.statusCode || 400).json({ error: result.error });
+    }
+    await client.query('COMMIT');
+    return res.json(result);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erreur confirmation rapprochement facture fournisseur :', error);
+    return res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/supplier-invoices/:id/validate', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res, next) => {
+  try {
+    const invoice = await getInvoice(req.dbPool, req.params.id, req.user.store_id);
+    if (!invoice) return res.status(404).json({ error: 'Facture fournisseur introuvable' });
+    if (!['matched', 'discrepancy'].includes(invoice.match_status)) {
+      return res.status(409).json({
+        error: 'Rapprochement a confirmer avant validation facture',
+        code: 'SUPPLIER_INVOICE_MATCH_CONFIRMATION_REQUIRED',
+        status: invoice.status,
+        match_status: invoice.match_status,
+      });
+    }
+    if (invoice.match_status === 'discrepancy' && req.body.confirm_difference !== true) {
+      return res.status(409).json({ error: 'Validation manuelle obligatoire en cas d ecart', code: 'INVOICE_DIFFERENCE_CONFIRMATION_REQUIRED' });
+    }
+    return next();
+  } catch (error) {
+    console.error('Erreur garde validation facture fournisseur :', error);
+    return res.status(500).json({ error: 'Erreur validation facture fournisseur' });
+  }
+});
+
+router.delete('/supplier-invoices/:id', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  let documents = [];
+  try {
+    await client.query('BEGIN');
+    const invoice = await getInvoice(client, req.params.id, req.user.store_id);
+    if (!invoice) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Facture fournisseur introuvable' });
+    }
+
+    const docs = await client.query('SELECT storage_path FROM supplier_invoice_documents WHERE supplier_invoice_id = $1 AND store_id = $2', [invoice.id, req.user.store_id]);
+    documents = docs.rows.map((row) => row.storage_path).filter(Boolean);
+    const purchases = await client.query('SELECT DISTINCT purchase_id FROM supplier_invoice_matches WHERE supplier_invoice_id = $1 AND purchase_id IS NOT NULL', [invoice.id]);
+    const purchaseIds = purchases.rows.map((row) => row.purchase_id).filter(Boolean);
+
+    await client.query(
+      `UPDATE purchases
+       SET status = 'received_pending_invoice', updated_at = NOW()
+       WHERE id = ANY($1::uuid[])
+         AND store_id = $2
+         AND status IN ('invoice_matched', 'invoice_difference')`,
+      [purchaseIds, req.user.store_id]
+    );
+
+    await client.query('DELETE FROM supplier_invoice_cost_adjustments WHERE supplier_invoice_id = $1', [invoice.id]);
+    await client.query('DELETE FROM supplier_invoice_exports WHERE supplier_invoice_id = $1', [invoice.id]);
+    await client.query('DELETE FROM supplier_invoice_matches WHERE supplier_invoice_id = $1', [invoice.id]);
+    await client.query('DELETE FROM supplier_invoice_lines WHERE supplier_invoice_id = $1', [invoice.id]);
+    await client.query('DELETE FROM supplier_invoice_documents WHERE supplier_invoice_id = $1', [invoice.id]);
+    await client.query('DELETE FROM supplier_invoices WHERE id = $1 AND store_id = $2', [invoice.id, req.user.store_id]);
+
+    await client.query('COMMIT');
+    for (const storagePath of documents) {
+      fs.unlink(storagePath, (error) => {
+        if (error && error.code !== 'ENOENT') console.warn('Impossible de supprimer le fichier facture fournisseur :', storagePath, error.message);
+      });
+    }
+    return res.json({ ok: true, deleted: true, restored_purchase_ids: purchaseIds });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erreur suppression facture fournisseur :', error);
     return res.status(500).json({ error: error.message });
   } finally {
     client.release();
