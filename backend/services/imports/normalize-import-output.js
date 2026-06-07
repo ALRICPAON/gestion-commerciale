@@ -8,6 +8,7 @@ function normalizeLine(line) {
   return {
     supplier_reference: line.supplier_reference || null,
     supplier_label: line.supplier_label || null,
+    article_id: line.article_id || null,
     article_plu: line.article_plu || null,
     designation: line.designation || null,
     latin_name: line.latin_name || null,

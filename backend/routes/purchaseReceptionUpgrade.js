@@ -164,6 +164,49 @@ async function resolveArticle(client, storeId, { article_id, article_plu }) {
   return null;
 }
 
+function crieeMappingSupplierCodes(supplierCode) {
+  const code = String(supplierCode || '').trim();
+  if (code === '81269') return ['81269', '81268'];
+  if (code === '81268') return ['81268', '81269'];
+  return [code].filter(Boolean);
+}
+
+async function resolveSupplierArticleMapping(client, storeId, supplier, supplierReference) {
+  const ref = String(supplierReference || '').trim();
+  if (!ref) return null;
+
+  const supplierCode = String(supplier?.code || '').trim();
+  const crieeCodes = crieeMappingSupplierCodes(supplierCode);
+
+  if (supplierCode === '81268' || supplierCode === '81269') {
+    const result = await client.query(
+      `WITH candidates(code, priority) AS (
+         SELECT * FROM unnest($3::text[]) WITH ORDINALITY AS c(code, priority)
+       )
+       SELECT a.*, s.code AS mapping_supplier_code
+       FROM candidates c
+       JOIN suppliers s ON s.store_id = $1 AND s.code = c.code
+       JOIN supplier_article_mappings m ON m.supplier_id = s.id
+       JOIN articles a ON a.id = m.article_id AND a.store_id = $1
+       WHERE m.supplier_ref = $2 AND COALESCE(m.is_active, true) = true
+       ORDER BY c.priority
+       LIMIT 1`,
+      [storeId, ref, crieeCodes]
+    ).catch(() => ({ rows: [] }));
+    return result.rows[0] || null;
+  }
+
+  const result = await client.query(
+    `SELECT a.*
+     FROM supplier_article_mappings m
+     JOIN articles a ON a.id = m.article_id AND a.store_id = $3
+     WHERE m.supplier_id = $1 AND m.supplier_ref = $2 AND COALESCE(m.is_active, true) = true
+     LIMIT 1`,
+    [supplier.id, ref, storeId]
+  ).catch(() => ({ rows: [] }));
+  return result.rows[0] || null;
+}
+
 function publicPurchaseDocumentUrl(purchaseId) {
   return `/api/purchases/${encodeURIComponent(purchaseId)}/document`;
 }
@@ -422,19 +465,21 @@ router.post('/purchases/import-document', authenticateToken, attachDbContext, re
     let imported = 0;
 
     for (const line of result.lines || []) {
-      let article = null;
-      if (line.article_plu) article = await resolveArticle(client, req.user.store_id, { article_plu: line.article_plu });
+      let article = await resolveArticle(client, req.user.store_id, {
+        article_id: line.article_id,
+        article_plu: line.article_plu,
+      });
+
       if (!article && line.supplier_reference) {
-        const m = await client.query(
-          `SELECT a.*
-           FROM supplier_article_mappings m
-           JOIN articles a ON a.id = m.article_id
-           WHERE m.supplier_id = $1 AND m.supplier_ref = $2 AND COALESCE(m.is_active, true) = true
-           LIMIT 1`,
-          [supplier.id, line.supplier_reference]
-        ).catch(() => ({ rows: [] }));
-        article = m.rows[0] || null;
+        article = await resolveSupplierArticleMapping(client, req.user.store_id, supplier, line.supplier_reference);
       }
+
+      if (article) {
+        line.article_id = article.id;
+        line.article_plu = article.plu || line.article_plu || null;
+        line.needs_mapping = false;
+      }
+
       if (!article && line.needs_mapping) missing.push({ supplier_reference: line.supplier_reference, designation: line.designation });
 
       const n = await client.query('SELECT COALESCE(MAX(line_number), 0) + 1 n FROM purchase_lines WHERE purchase_id = $1', [purchaseId]);
