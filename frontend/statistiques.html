@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Statistiques - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/statistiques.css?v=1" />
+</head>
+<body class="app-page statistics-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Statistiques</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content statistics-layout">
+    <section class="welcome-card">
+      <div class="page-actions statistics-header">
+        <div>
+          <h2>Analyse activite</h2>
+          <p>Articles, clients, fournisseurs et marges sur donnees validees.</p>
+        </div>
+        <button id="refresh-statistics-btn" class="btn btn-secondary">Actualiser</button>
+      </div>
+      <div id="statistics-feedback" class="page-feedback hidden"></div>
+    </section>
+
+    <section class="card statistics-filters">
+      <div class="filters-row statistics-filter-grid">
+        <div class="form-group">
+          <label for="period-select">Periode</label>
+          <select id="period-select">
+            <option value="day">Jour</option>
+            <option value="week">Semaine</option>
+            <option value="month" selected>Mois</option>
+            <option value="year">Annee</option>
+            <option value="custom">Personnalisee</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="from-date">Du</label>
+          <input id="from-date" type="date" />
+        </div>
+        <div class="form-group">
+          <label for="to-date">Au</label>
+          <input id="to-date" type="date" />
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="apply-period-btn" class="btn btn-primary">Appliquer</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="statistics-tabs" role="tablist" aria-label="Onglets statistiques">
+      <button class="statistics-tab active" type="button" data-tab="articles">Articles</button>
+      <button class="statistics-tab" type="button" data-tab="clients">Clients</button>
+      <button class="statistics-tab" type="button" data-tab="suppliers">Fournisseurs</button>
+      <button class="statistics-tab" type="button" data-tab="margins">Marges</button>
+    </section>
+
+    <section class="statistics-kpis" id="kpi-grid" aria-label="Indicateurs"></section>
+
+    <section id="statistics-warning" class="page-feedback warning hidden"></section>
+
+    <section class="statistics-chart-grid" id="chart-grid"></section>
+
+    <section class="card">
+      <div class="page-actions">
+        <div>
+          <h3 id="main-table-title">Detail</h3>
+          <p id="main-table-subtitle">Tableau triable.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table statistics-table" id="main-table">
+          <thead id="main-table-head"></thead>
+          <tbody id="main-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card hidden" id="secondary-section">
+      <div class="page-actions">
+        <div>
+          <h3 id="secondary-title">Details complementaires</h3>
+          <p id="secondary-subtitle"></p>
+        </div>
+      </div>
+      <div id="secondary-content"></div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/chart-lite.js?v=1"></script>
+  <script src="./js/statistiques.js?v=1"></script>
+</body>
+</html>
