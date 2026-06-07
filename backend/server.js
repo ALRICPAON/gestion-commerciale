@@ -52,11 +52,9 @@ const transformationsRoutes = require('./routes/transformations');
 const app = express();
 const PORT = process.env.PORT || 3002;
 const STORE_LOGOS_DIR = path.join(__dirname, 'uploads', 'store-logos');
-const STORE_FAVICONS_DIR = path.join(__dirname, 'uploads', 'store-favicons');
 const SANITARY_PHOTOS_DIR = path.join(__dirname, 'uploads', 'sanitary-photos');
 
 fs.mkdirSync(STORE_LOGOS_DIR, { recursive: true });
-fs.mkdirSync(STORE_FAVICONS_DIR, { recursive: true });
 fs.mkdirSync(SANITARY_PHOTOS_DIR, { recursive: true });
 
 if (!process.env.JWT_SECRET) {
@@ -133,11 +131,6 @@ app.use(helmet({
 
 app.use(cors(corsOptions));
 app.use('/uploads/store-logos', express.static(STORE_LOGOS_DIR, {
-  fallthrough: false,
-  index: false,
-  maxAge: '7d',
-}));
-app.use('/uploads/store-favicons', express.static(STORE_FAVICONS_DIR, {
   fallthrough: false,
   index: false,
   maxAge: '7d',
