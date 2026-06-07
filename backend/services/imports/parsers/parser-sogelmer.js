@@ -58,6 +58,19 @@ function weightPerColisKg(totalWeightKg, colisCount, parsedWeightPerColisKg = 0)
   return parsed > 0 ? parsed : null;
 }
 
+function extractBlNumber(text, context = {}) {
+  const normalized = normalizeText(text);
+  const directMatch =
+    normalized.match(/N[°º]?\s*BL\s+Date\s+Client\s+([0-9]{3}-[0-9]{8})/i) ||
+    normalized.match(/N[°º]?\s*BL\s+([0-9]{3}-[0-9]{8})/i) ||
+    normalized.match(/\b([0-9]{3}-[0-9]{8})\b/);
+
+  if (directMatch) return directMatch[1];
+
+  const fileMatch = String(context.originalname || context.filename || "").match(/([0-9]{3}-[0-9]{8})/);
+  return fileMatch ? fileMatch[1] : null;
+}
+
 function extractFAOs(bio) {
   if (!bio) return [];
 
@@ -121,7 +134,7 @@ function splitLines(text) {
 function parseArticleLine(line) {
   const raw = normalizeText(line);
 
-  // Format observé :
+  // Format observe :
   // FILLINB/3 FILET LINGUE BLEUE 3 KG 3 3,00 9,00 KG 05050102514 16,50 € 148,50 € 1
   const regex =
     /^([A-Z0-9/]{4,16})\s+(.+?)\s+(\d+(?:,\d+)?)\s+(\d+(?:,\d+)?)\s+(\d+(?:,\d+)?)\s+([A-Z]{2,5})\s+([A-Z0-9]{8,20})\s+(\d+(?:,\d+)?)\s*€\s+(\d+(?:,\d+)?)\s*€(?:\s+\d+)?$/i;
@@ -190,7 +203,7 @@ function parseSogelmerText(text) {
     parsed.sousZone = sousZone;
     parsed.engin = extractFishingGear(bio);
 
-    // sécurité : si la ligne suivante n'est pas une bio, on n'écrase pas tout
+    // securite : si la ligne suivante n'est pas une bio, on n'ecrase pas tout
     if (!bio || /^(\d+\s*X\s*\d+)/i.test(bio) || parseArticleLine(bio)) {
       parsed.nomLatin = "";
       parsed.fao = "";
@@ -230,7 +243,7 @@ module.exports = {
     if (ext === ".pdf") score += 20;
     if (name.includes("sogelmer")) score += 100;
 
-    // Avec sélection manuelle du fournisseur, on peut rester simple.
+    // Avec selection manuelle du fournisseur, on peut rester simple.
     return score;
   },
 
@@ -240,33 +253,40 @@ module.exports = {
     try {
       text = await extractPdfText(context);
     } catch (error) {
+      const blNumber = extractBlNumber("", context);
       return {
         supplier_code: "10003",
         supplier_name: "SOGELMER",
         purchase_type: "order",
         document_type: "supplier_bl",
+        bl_number: blNumber,
         lines: [],
         warnings: [`Impossible de lire le PDF SOGELMER: ${error.message}`],
         meta: {
+          bl_number: blNumber,
           detected_from_filename: context.originalname || null,
         },
       };
     }
 
     if (!text) {
+      const blNumber = extractBlNumber("", context);
       return {
         supplier_code: "10003",
         supplier_name: "SOGELMER",
         purchase_type: "order",
         document_type: "supplier_bl",
+        bl_number: blNumber,
         lines: [],
         warnings: ["Texte PDF vide ou non extrait"],
         meta: {
+          bl_number: blNumber,
           detected_from_filename: context.originalname || null,
         },
       };
     }
 
+    const blNumber = extractBlNumber(text, context);
     const parsedRows = parseSogelmerText(text);
 
     const lines = parsedRows.map((L) => {
@@ -323,7 +343,7 @@ module.exports = {
 
     const warnings = [];
     if (!lines.length) {
-      warnings.push("Aucune ligne exploitable détectée dans le PDF SOGELMER");
+      warnings.push("Aucune ligne exploitable detectee dans le PDF SOGELMER");
     }
 
     return {
@@ -331,9 +351,11 @@ module.exports = {
       supplier_name: "SOGELMER",
       purchase_type: "order",
       document_type: "supplier_bl",
+      bl_number: blNumber,
       lines,
       warnings,
       meta: {
+        bl_number: blNumber,
         detected_from_filename: context.originalname || null,
         parsed_line_count: lines.length,
         total_weight: Number(totalWeight.toFixed(3)),
