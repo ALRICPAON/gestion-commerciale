@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Régularisation stock - Gestion Commerciale</title>
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/stock-regularization.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/stock-regularization.css?v=2" />
 </head>
 <body class="app-page stock-regularization-page">
   <header class="topbar">
@@ -26,7 +26,7 @@
       <div class="page-actions">
         <div>
           <h2>Stocks négatifs à régulariser</h2>
-          <p>Créer une entrée interne pour remettre un lot négatif exactement à zéro, sans supprimer l'historique.</p>
+          <p>Compenser un lot négatif avec un lot positif du même article quand il existe, sans supprimer l'historique.</p>
         </div>
         <div class="page-actions-right">
           <button id="refresh-btn" class="btn btn-primary">Actualiser</button>
@@ -86,6 +86,6 @@
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/stock-regularization.js?v=1"></script>
+  <script src="./js/stock-regularization.js?v=2"></script>
 </body>
 </html>
