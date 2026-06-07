@@ -1,7 +1,7 @@
 (function () {
   const DEFAULT_BRAND_NAME = "ALTA MARÉE";
   const FALLBACK_LOGO_HREF = "assets/logo-alta-maree.svg";
-  const FALLBACK_FAVICON_HREF = "assets/favicon.ico";
+  const STATIC_FAVICON_HREF = "assets/favicon.ico?v=2";
 
   let activeBrandName = DEFAULT_BRAND_NAME;
 
@@ -19,9 +19,11 @@
     return link;
   }
 
-  function setFavicon(src) {
+  function setStaticFavicon() {
     const link = ensureFaviconLink();
-    link.href = src || FALLBACK_FAVICON_HREF;
+    link.href = STATIC_FAVICON_HREF;
+    link.setAttribute("sizes", "any");
+    link.removeAttribute("type");
   }
 
   function injectStyles() {
@@ -172,9 +174,9 @@
   }
 
   async function loadBranding() {
+    setStaticFavicon();
     const branding = await fetchBranding();
     activeBrandName = branding?.company_name || DEFAULT_BRAND_NAME;
-    setFavicon(branding?.favicon_url || FALLBACK_FAVICON_HREF);
     normalizeTitles();
     normalizeLegacyText();
 
@@ -188,6 +190,7 @@
 
   function applyBranding() {
     injectStyles();
+    setStaticFavicon();
     normalizeTitles();
     normalizeLegacyText();
     hideLogo(true);
