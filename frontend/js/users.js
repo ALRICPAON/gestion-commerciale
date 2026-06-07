@@ -489,7 +489,7 @@ backHomeBtn?.addEventListener("click", () => {
 logoutBtn?.addEventListener("click", clearSessionAndRedirect);
 
 openLoginQrBtn?.addEventListener("click", openLoginQrModal);
-closeLoginQrBtn?.addEventListener("click", closeLoginModal);
+closeLoginQrBtn?.addEventListener("click", closeLoginQrModal);
 loginQrModal?.addEventListener("click", (event) => {
   if (event.target === loginQrModal) {
     closeLoginQrModal();
