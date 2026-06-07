@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tableau de bord - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/dashboard.css?v=1" />
+</head>
+<body class="app-page dashboard-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Tableau de bord</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content dashboard-layout">
+    <section class="welcome-card">
+      <div class="page-actions dashboard-header">
+        <div>
+          <h2>Indicateurs commerciaux</h2>
+          <p>CA, achats, stock, achats consommes et marge brute.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="capture-stock-btn" class="btn btn-primary">Capturer le stock maintenant</button>
+          <button id="refresh-dashboard-btn" class="btn btn-secondary">Actualiser</button>
+        </div>
+      </div>
+      <div id="dashboard-feedback" class="page-feedback hidden"></div>
+    </section>
+
+    <section class="card dashboard-filters">
+      <div class="filters-row dashboard-filter-grid">
+        <div class="form-group">
+          <label for="period-select">Periode</label>
+          <select id="period-select">
+            <option value="day">Jour</option>
+            <option value="week">Semaine</option>
+            <option value="month">Mois</option>
+            <option value="custom">Personnalisee</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="from-date">Du</label>
+          <input id="from-date" type="date" />
+        </div>
+        <div class="form-group">
+          <label for="to-date">Au</label>
+          <input id="to-date" type="date" />
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="apply-period-btn" class="btn btn-primary">Appliquer</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="dashboard-kpis" aria-label="Indicateurs">
+      <article class="dashboard-kpi"><span>CA HT</span><strong id="kpi-ca-ht">0,00 EUR</strong></article>
+      <article class="dashboard-kpi"><span>CA TTC</span><strong id="kpi-ca-ttc">0,00 EUR</strong></article>
+      <article class="dashboard-kpi"><span>Achats HT periode</span><strong id="kpi-purchases">0,00 EUR</strong></article>
+      <article class="dashboard-kpi"><span>Stock initial HT</span><strong id="kpi-stock-initial">-</strong></article>
+      <article class="dashboard-kpi"><span>Stock final HT</span><strong id="kpi-stock-final">-</strong></article>
+      <article class="dashboard-kpi"><span>Achats consommes HT</span><strong id="kpi-consumed">-</strong></article>
+      <article class="dashboard-kpi"><span>Marge brute HT</span><strong id="kpi-margin">-</strong></article>
+      <article class="dashboard-kpi"><span>Marge %</span><strong id="kpi-margin-rate">-</strong></article>
+    </section>
+
+    <section id="snapshot-warning" class="page-feedback warning hidden"></section>
+
+    <section class="dashboard-main-grid">
+      <article class="card">
+        <h3>Resume periode</h3>
+        <div class="table-wrap">
+          <table class="data-table dashboard-summary-table">
+            <tbody id="summary-body"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <h3>CA / Achats / Marge</h3>
+        <div id="dashboard-chart" class="dashboard-chart"></div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="page-actions">
+        <div>
+          <h3>Dernieres captures de stock</h3>
+          <p>Photos comptables utilisees pour stock initial et stock final.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Date</th><th>Type</th><th>Valeur HT</th></tr></thead>
+          <tbody id="snapshots-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/dashboard.js?v=1"></script>
+</body>
+</html>
