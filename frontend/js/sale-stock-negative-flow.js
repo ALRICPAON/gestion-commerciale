@@ -109,14 +109,14 @@
 
   async function findArticleForSale(search) {
     const query = encodeURIComponent(search || '');
-    const stockRows = await getJson(`/api/stock?search=${query}&limit=20`).catch(() => []);
-    const stockItems = (Array.isArray(stockRows) ? stockRows : []).map(normalizeArticle);
-    const stockMatch = stockItems.find((item) => String(item.plu) === String(search)) || stockItems[0];
-    if (stockMatch) return stockMatch;
-
     const articleRows = await getJson(`/api/articles/search?q=${query}`).catch(() => []);
     const articleItems = (Array.isArray(articleRows) ? articleRows : []).map(normalizeArticle);
-    return articleItems.find((item) => String(item.plu) === String(search)) || articleItems[0] || null;
+    const articleMatch = articleItems.find((item) => String(item.plu) === String(search)) || articleItems[0];
+    if (articleMatch) return articleMatch;
+
+    const stockRows = await getJson(`/api/stock?search=${query}&available_only=false&limit=20`).catch(() => []);
+    const stockItems = (Array.isArray(stockRows) ? stockRows : []).map(normalizeArticle);
+    return stockItems.find((item) => String(item.plu) === String(search)) || stockItems[0] || null;
   }
 
   async function refreshSaleSnapshot() {
