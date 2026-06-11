@@ -1,6 +1,7 @@
 const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
 const token = localStorage.getItem('gc_token') || localStorage.getItem('grv2_token');
 const sessionUser = JSON.parse(localStorage.getItem('gc_user') || localStorage.getItem('grv2_user') || 'null');
+const ALTA_ALERT_STORAGE_KEY = 'alta_intelligence_alert';
 
 if (!token || !sessionUser) window.location.href = './login.html';
 
@@ -92,24 +93,50 @@ async function askAssistant(question) {
   }
 }
 
-function alertPromptFromUrl() {
-  const params = new URLSearchParams(window.location.search);
-  const prompt = params.get('alta_prompt');
-  if (!prompt) return null;
+function formatAlertItems(items = []) {
+  if (!Array.isArray(items) || items.length === 0) return 'Aucun détail transmis.';
 
-  const title = params.get('alert_title') || 'Alerte';
-  const count = params.get('alert_count') || '0';
-  const items = params.get('alert_items') || '[]';
+  return items
+    .map((item, index) => {
+      const parts = [
+        item.label,
+        item.detail,
+        item.reference ? `réf. ${item.reference}` : null,
+        item.date ? `date ${item.date}` : null,
+      ].filter(Boolean);
+      return `${index + 1}. ${parts.join(' - ')}`;
+    })
+    .join('\n');
+}
 
+function buildAlertPrompt(alert) {
   return [
-    prompt,
+    `Analyse cette alerte du Centre de surveillance : ${alert.title || 'Alerte'}.`,
+    `Type : ${alert.id || 'non renseigné'}.`,
+    `Niveau : ${alert.level_label || alert.level || 'non renseigné'}.`,
+    `Compteur : ${alert.count ?? 0}.`,
+    alert.description ? `Description : ${alert.description}.` : null,
     '',
-    `Alerte concernée : ${title}`,
-    `Compteur : ${count}`,
-    `Détails transmis par la Home : ${items}`,
+    'Détails :',
+    formatAlertItems(alert.items),
     '',
-    'Analyse uniquement cette alerte. Ne considère pas que tu as modifié une donnée.',
-  ].join('\n');
+    'Donne-moi les causes possibles et les actions à faire. Ne considère pas que tu as modifié une donnée.',
+  ].filter((line) => line !== null).join('\n');
+}
+
+function readIncomingAlert() {
+  const raw = sessionStorage.getItem(ALTA_ALERT_STORAGE_KEY);
+  if (!raw) return null;
+
+  sessionStorage.removeItem(ALTA_ALERT_STORAGE_KEY);
+
+  try {
+    const alert = JSON.parse(raw);
+    return alert && typeof alert === 'object' ? alert : null;
+  } catch (error) {
+    console.error('Alerte ALTA invalide :', error);
+    return null;
+  }
 }
 
 function logout() {
@@ -133,9 +160,9 @@ function init() {
     button.addEventListener('click', () => askAssistant(button.dataset.prompt));
   });
 
-  const incomingAlertPrompt = alertPromptFromUrl();
-  if (incomingAlertPrompt) {
-    askAssistant(incomingAlertPrompt);
+  const incomingAlert = readIncomingAlert();
+  if (incomingAlert) {
+    askAssistant(buildAlertPrompt(incomingAlert));
   }
 }
 
