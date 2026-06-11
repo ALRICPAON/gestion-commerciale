@@ -3,6 +3,7 @@ const { buildAiContext } = require('./aiContextService');
 const { normalizeConversation } = require('./aiMemoryService');
 const { SYSTEM_PROMPT, buildContextPrompt } = require('./aiPrompts');
 const { listTools } = require('./aiToolsRegistry');
+const { executeRelevantTools } = require('./aiToolExecutor');
 
 const MAX_QUESTION_LENGTH = 2000;
 
@@ -20,9 +21,10 @@ function normalizeQuestion(question) {
 
 async function chat({ db, user, question, messages = [] }) {
   const prompt = normalizeQuestion(question);
-  const [context, conversation] = await Promise.all([
+  const [context, conversation, toolResults] = await Promise.all([
     buildAiContext({ db, user }),
     Promise.resolve(normalizeConversation(messages)),
+    executeRelevantTools({ db, storeId: user.store_id, question: prompt }),
   ]);
 
   console.info('Agent IA demande recue', {
@@ -30,6 +32,7 @@ async function chat({ db, user, question, messages = [] }) {
     store_id: user.store_id,
     model: process.env.AI_MODEL || 'gpt-4o-mini',
     conversation_messages: conversation.length,
+    readonly_tools: toolResults.map((tool) => tool.name),
   });
 
   const answer = await generateAnswer({
@@ -39,7 +42,8 @@ async function chat({ db, user, question, messages = [] }) {
         role: 'system',
         content: buildContextPrompt({
           ...context,
-          tools_v2_declared_disabled: listTools(),
+          tools_readonly_available: listTools().filter((tool) => tool.enabled && tool.readonly),
+          tools_readonly_results: toolResults,
         }),
       },
       ...conversation,
