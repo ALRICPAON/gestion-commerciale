@@ -42,6 +42,7 @@
 .home-module-grid {
   gap: 18px;
   grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  margin-bottom: 24px;
 }
 
 .home-module-grid .module-card {
@@ -73,6 +74,114 @@
   font-weight: 800;
   margin-top: auto;
   padding: 5px 9px;
+}
+
+.intelligence-center {
+  margin-top: 24px;
+}
+
+.intelligence-center-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.intelligence-center-header h2 {
+  margin: 0 0 6px;
+}
+
+.intelligence-center-header p {
+  margin: 0;
+  color: #6b7280;
+}
+
+.intelligence-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.intelligence-card {
+  display: flex;
+  min-height: 176px;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid #e5e7eb;
+  border-top: 4px solid #16a34a;
+  border-radius: 8px;
+  padding: 14px;
+  background: #ffffff;
+}
+
+.intelligence-card.level-orange {
+  border-top-color: #f59e0b;
+}
+
+.intelligence-card.level-red {
+  border-top-color: #dc2626;
+}
+
+.intelligence-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.intelligence-card h3 {
+  min-height: 0;
+  margin: 0;
+  color: #111827;
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.intelligence-level {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 4px 7px;
+  text-transform: uppercase;
+}
+
+.level-orange .intelligence-level {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.level-red .intelligence-level {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.intelligence-count {
+  font-size: 32px;
+  line-height: 1;
+}
+
+.intelligence-card p {
+  margin: 0;
+  color: #6b7280;
+  line-height: 1.4;
+}
+
+.intelligence-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.intelligence-loading {
+  grid-column: 1 / -1;
+  color: #6b7280;
+  padding: 12px;
 }
 
 @media (max-width: 900px) {
