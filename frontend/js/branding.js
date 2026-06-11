@@ -1,7 +1,7 @@
 (function () {
   const DEFAULT_BRAND_NAME = "ALTA MARÉE";
   const FALLBACK_LOGO_HREF = "assets/logo-alta-maree.svg";
-  const STATIC_FAVICON_HREF = "/assets/favicon.png?v=4";
+  const STATIC_FAVICON_HREF = "/assets/favicon.png?v=7";
 
   let activeBrandName = DEFAULT_BRAND_NAME;
 
