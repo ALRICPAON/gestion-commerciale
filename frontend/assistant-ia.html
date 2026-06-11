@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Assistant IA - ALTA MARÉE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/assistant-ia.css?v=1" />
+</head>
+<body class="app-page ai-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">ALTA MARÉE</h1>
+      <p class="app-subtitle">Assistant IA commercial</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content ai-layout">
+    <section class="welcome-card ai-intro">
+      <div>
+        <h2>Agent IA métier</h2>
+        <p>Analyse en lecture seule du stock, des clients, des fournisseurs, des ventes, des achats et des marges.</p>
+      </div>
+      <span class="ai-mode-badge">V1 lecture seule</span>
+    </section>
+
+    <section class="ai-quick-actions" aria-label="Questions rapides">
+      <button class="btn btn-secondary" data-prompt="Résume le stock disponible et les points d'attention.">Résumer le stock</button>
+      <button class="btn btn-secondary" data-prompt="Quels clients faudrait-il relancer en priorité et pourquoi ?">Clients à relancer</button>
+      <button class="btn btn-secondary" data-prompt="Quels produits puis-je proposer commercialement aujourd'hui ?">Produits à proposer</button>
+      <button class="btn btn-secondary" data-prompt="Quels lots ont une DLC proche et quelles actions commerciales proposer ?">DLC proches</button>
+      <button class="btn btn-secondary" data-prompt="Analyse les marges disponibles et les points de vigilance.">Analyse marge</button>
+      <button class="btn btn-secondary" data-prompt="Prépare un message WhatsApp commercial à envoyer manuellement à un client.">Préparer message WhatsApp</button>
+      <button class="btn btn-secondary" data-prompt="Prépare un email commercial à envoyer manuellement à un client.">Préparer email commercial</button>
+    </section>
+
+    <section class="card ai-chat-card" aria-label="Conversation Assistant IA">
+      <div id="ai-feedback" class="page-feedback hidden"></div>
+      <div id="chat-history" class="ai-chat-history" aria-live="polite"></div>
+
+      <form id="chat-form" class="ai-chat-form">
+        <div class="form-group ai-input-group">
+          <label for="message-input">Message</label>
+          <textarea id="message-input" rows="3" placeholder="Pose une question métier..." required></textarea>
+        </div>
+        <button id="send-btn" class="btn btn-primary" type="submit">Envoyer</button>
+      </form>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/assistant-ia.js?v=1"></script>
+</body>
+</html>

@@ -48,6 +48,7 @@ const transformationDetailsRoutes = require('./routes/transformationDetails');
 const transformationUpdateRoutes = require('./routes/transformationUpdate');
 const transformationValidationRoutes = require('./routes/transformationValidation');
 const transformationsRoutes = require('./routes/transformations');
+const aiAgentRoutes = require('./routes/aiAgent');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -181,6 +182,7 @@ app.use('/api/transformations', transformationDetailsRoutes);
 app.use('/api/transformations', transformationUpdateRoutes);
 app.use('/api/transformations', transformationValidationRoutes);
 app.use('/api/transformations', transformationsRoutes);
+app.use('/api', aiAgentRoutes);
 app.get('/', (req, res) => {
   res.send('API ALTA MARÉE fonctionne');
 });
