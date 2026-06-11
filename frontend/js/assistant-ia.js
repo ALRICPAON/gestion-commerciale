@@ -93,15 +93,41 @@ async function askAssistant(question) {
   }
 }
 
+function cleanAltaPromptFromUrl() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('alta_prompt')) return;
+
+  url.searchParams.delete('alta_prompt');
+  history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
+function readPendingAutoPrompt() {
+  const sessionPrompt = sessionStorage.getItem(ALTA_PENDING_AI_PROMPT_KEY);
+  if (sessionPrompt) {
+    console.log('[ALTA AI] session prompt found');
+    sessionStorage.removeItem(ALTA_PENDING_AI_PROMPT_KEY);
+    cleanAltaPromptFromUrl();
+    return sessionPrompt;
+  }
+
+  const urlPrompt = new URLSearchParams(window.location.search).get('alta_prompt');
+  if (urlPrompt) {
+    console.log('[ALTA AI] url prompt found');
+    sessionStorage.removeItem(ALTA_PENDING_AI_PROMPT_KEY);
+    cleanAltaPromptFromUrl();
+    return urlPrompt;
+  }
+
+  return null;
+}
+
 async function runPendingAutoAnalysis() {
-  const pendingPrompt = sessionStorage.getItem(ALTA_PENDING_AI_PROMPT_KEY);
+  const pendingPrompt = readPendingAutoPrompt();
   if (!pendingPrompt) {
     console.log('[ALTA AI] no pending prompt');
     return;
   }
 
-  console.log('[ALTA AI] pending prompt found');
-  sessionStorage.removeItem(ALTA_PENDING_AI_PROMPT_KEY);
   console.log('[ALTA AI] sending auto analysis');
   await askAssistant(pendingPrompt);
   console.log('[ALTA AI] auto analysis done');
