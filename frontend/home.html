@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/home-branding.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/home-branding.css?v=2" />
 </head>
 <body class="app-page">
   <header class="topbar home-topbar">
@@ -37,8 +37,21 @@
       <a id="settings-card" class="module-card" href="./settings.html" data-module="settings"><h3>Paramètres société</h3><p>Informations magasin, société et documents.</p></a>
       <a class="module-card" href="./assistant-ia.html" data-module="assistant-ia"><h3>Assistant IA</h3><p>Agent métier en lecture seule pour analyser stock, clients, fournisseurs, ventes, achats et marges.</p></a>
     </section>
+
+    <section class="welcome-card intelligence-center" aria-label="Centre de surveillance">
+      <div class="intelligence-center-header">
+        <div>
+          <h2>Centre de surveillance</h2>
+          <p>Alertes calculées localement depuis PostgreSQL, sans appel OpenAI.</p>
+        </div>
+        <button id="refresh-intelligence-btn" class="btn btn-secondary" type="button">Actualiser</button>
+      </div>
+      <div id="intelligence-center-feedback" class="page-feedback hidden"></div>
+      <div id="intelligence-alerts-grid" class="intelligence-grid"></div>
+    </section>
   </main>
   <script src="./js/config.js"></script>
   <script src="./js/home.js?v=19"></script>
+  <script src="./js/intelligence-center-home.js?v=1"></script>
 </body>
 </html>
