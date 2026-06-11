@@ -2,7 +2,8 @@ const intelligenceToken = localStorage.getItem('gc_token') || localStorage.getIt
 const intelligenceGrid = document.getElementById('intelligence-alerts-grid');
 const intelligenceFeedback = document.getElementById('intelligence-center-feedback');
 const intelligenceRefreshBtn = document.getElementById('refresh-intelligence-btn');
-const ALTA_ALERT_STORAGE_KEY = 'alta_intelligence_alert';
+const ALTA_PENDING_AI_PROMPT_KEY = 'alta_pending_ai_prompt';
+const ALTA_PENDING_AI_ALERT_PAYLOAD_KEY = 'alta_pending_ai_alert_payload';
 
 function levelLabel(level) {
   if (level === 'red') return 'Rouge';
@@ -16,27 +17,43 @@ function setIntelligenceFeedback(message = '', type = 'error') {
   intelligenceFeedback.className = message ? `page-feedback ${type}` : 'page-feedback hidden';
 }
 
-function alertForAlta(alert) {
-  return {
-    id: alert.id,
-    title: alert.title,
-    level: alert.level,
-    level_label: levelLabel(alert.level),
-    count: alert.count || 0,
-    description: alert.description,
-    prompt: alert.alta_prompt || `Analyse l'alerte ${alert.title}`,
-    items: (alert.items || []).slice(0, 10),
-  };
+function formatAlertDetail(item) {
+  const parts = [
+    item.label,
+    item.detail,
+    item.reference ? `ref. ${item.reference}` : null,
+    item.date ? `date ${item.date}` : null,
+  ].filter(Boolean);
+
+  return `- ${parts.join(' - ') || 'Détail non renseigné'}`;
+}
+
+function buildAltaPrompt(alert) {
+  const details = Array.isArray(alert.items) && alert.items.length > 0
+    ? alert.items.slice(0, 10).map(formatAlertDetail).join('\n')
+    : '- Aucun détail transmis par le Centre de surveillance.';
+
+  return [
+    'Analyse cette alerte du Centre de surveillance ALTA MARÉE :',
+    `Type : ${alert.title || alert.id || 'Alerte non renseignée'}`,
+    `Niveau : ${levelLabel(alert.level).toLowerCase()}`,
+    `Nombre : ${alert.count || 0}`,
+    alert.description ? `Description : ${alert.description}` : null,
+    'Détails :',
+    details,
+    'Donne-moi les causes probables, les risques et les actions concrètes à faire.',
+  ].filter(Boolean).join('\n');
 }
 
 function openAlertWithAlta(alert) {
   try {
-    sessionStorage.setItem(ALTA_ALERT_STORAGE_KEY, JSON.stringify(alertForAlta(alert)));
+    sessionStorage.setItem(ALTA_PENDING_AI_PROMPT_KEY, buildAltaPrompt(alert));
+    sessionStorage.setItem(ALTA_PENDING_AI_ALERT_PAYLOAD_KEY, JSON.stringify(alert));
   } catch (error) {
     console.error('Impossible de préparer l’alerte pour ALTA :', error);
   }
 
-  window.location.href = './assistant-ia.html?from=intelligence-center';
+  window.location.href = './assistant-ia.html?autoAnalyze=1';
 }
 
 function renderAlert(alert) {

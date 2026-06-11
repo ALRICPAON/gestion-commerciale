@@ -1,7 +1,7 @@
 const API_BASE_URL = window.APP_CONFIG.API_BASE_URL;
 const token = localStorage.getItem('gc_token') || localStorage.getItem('grv2_token');
 const sessionUser = JSON.parse(localStorage.getItem('gc_user') || localStorage.getItem('grv2_user') || 'null');
-const ALTA_ALERT_STORAGE_KEY = 'alta_intelligence_alert';
+const ALTA_PENDING_AI_PROMPT_KEY = 'alta_pending_ai_prompt';
 
 if (!token || !sessionUser) window.location.href = './login.html';
 
@@ -93,50 +93,18 @@ async function askAssistant(question) {
   }
 }
 
-function formatAlertItems(items = []) {
-  if (!Array.isArray(items) || items.length === 0) return 'Aucun détail transmis.';
-
-  return items
-    .map((item, index) => {
-      const parts = [
-        item.label,
-        item.detail,
-        item.reference ? `réf. ${item.reference}` : null,
-        item.date ? `date ${item.date}` : null,
-      ].filter(Boolean);
-      return `${index + 1}. ${parts.join(' - ')}`;
-    })
-    .join('\n');
-}
-
-function buildAlertPrompt(alert) {
-  return [
-    `Analyse cette alerte du Centre de surveillance : ${alert.title || 'Alerte'}.`,
-    `Type : ${alert.id || 'non renseigné'}.`,
-    `Niveau : ${alert.level_label || alert.level || 'non renseigné'}.`,
-    `Compteur : ${alert.count ?? 0}.`,
-    alert.description ? `Description : ${alert.description}.` : null,
-    '',
-    'Détails :',
-    formatAlertItems(alert.items),
-    '',
-    'Donne-moi les causes possibles et les actions à faire. Ne considère pas que tu as modifié une donnée.',
-  ].filter((line) => line !== null).join('\n');
-}
-
-function readIncomingAlert() {
-  const raw = sessionStorage.getItem(ALTA_ALERT_STORAGE_KEY);
-  if (!raw) return null;
-
-  sessionStorage.removeItem(ALTA_ALERT_STORAGE_KEY);
-
-  try {
-    const alert = JSON.parse(raw);
-    return alert && typeof alert === 'object' ? alert : null;
-  } catch (error) {
-    console.error('Alerte ALTA invalide :', error);
-    return null;
+async function runPendingAutoAnalysis() {
+  const pendingPrompt = sessionStorage.getItem(ALTA_PENDING_AI_PROMPT_KEY);
+  if (!pendingPrompt) {
+    console.log('[ALTA AI] no pending prompt');
+    return;
   }
+
+  console.log('[ALTA AI] pending prompt found');
+  sessionStorage.removeItem(ALTA_PENDING_AI_PROMPT_KEY);
+  console.log('[ALTA AI] sending auto analysis');
+  await askAssistant(pendingPrompt);
+  console.log('[ALTA AI] auto analysis done');
 }
 
 function logout() {
@@ -160,10 +128,11 @@ function init() {
     button.addEventListener('click', () => askAssistant(button.dataset.prompt));
   });
 
-  const incomingAlert = readIncomingAlert();
-  if (incomingAlert) {
-    askAssistant(buildAlertPrompt(incomingAlert));
-  }
+  runPendingAutoAnalysis();
 }
 
-init();
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}
