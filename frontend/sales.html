@@ -1,11 +1,13 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Commandes client - Gestion Commerciale</title>
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
+<link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
 </head>
 <body class="app-page">
@@ -21,7 +23,7 @@
       </div>
       <div class="user-box"><span id="user-name">Utilisateur</span></div>
       <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+      <button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
     </div>
   </header>
 
@@ -29,7 +31,7 @@
     <section class="welcome-card">
       <div class="page-actions">
         <div><h2>Vente</h2><p>Service actif : <strong id="current-department-name">-</strong></p></div>
-        <div class="page-actions-right"><button id="new-sale-btn" class="btn btn-primary">Créer commande</button></div>
+        <div class="page-actions-right"><button id="new-sale-btn" class="btn btn-primary">CrÃ©er commande</button></div>
       </div>
     </section>
 
@@ -45,10 +47,10 @@
     <section class="card">
       <h3>Filtres</h3>
       <div class="filters-row">
-        <div class="form-group"><label for="sale-status-filter">Statut</label><select id="sale-status-filter"><option value="">Tous</option><option value="draft">Brouillon</option><option value="validated">Validé</option><option value="delivered">Livré</option><option value="invoiced">Facturé</option><option value="cancelled">Annulé</option></select></div>
+        <div class="form-group"><label for="sale-status-filter">Statut</label><select id="sale-status-filter"><option value="">Tous</option><option value="draft">Brouillon</option><option value="validated">ValidÃ©</option><option value="delivered">LivrÃ©</option><option value="invoiced">FacturÃ©</option><option value="cancelled">AnnulÃ©</option></select></div>
         <div class="form-group"><label for="sale-date-from-filter">Du</label><input id="sale-date-from-filter" type="date" /></div>
         <div class="form-group"><label for="sale-date-to-filter">Au</label><input id="sale-date-to-filter" type="date" /></div>
-        <div class="form-group filter-actions"><label>&nbsp;</label><div class="page-actions-right"><button id="refresh-sales-btn" class="btn btn-secondary">Rafraîchir</button><button id="reset-sales-filters-btn" class="btn btn-secondary">Réinitialiser</button></div></div>
+        <div class="form-group filter-actions"><label>&nbsp;</label><div class="page-actions-right"><button id="refresh-sales-btn" class="btn btn-secondary">RafraÃ®chir</button><button id="reset-sales-filters-btn" class="btn btn-secondary">RÃ©initialiser</button></div></div>
       </div>
     </section>
 
@@ -58,7 +60,7 @@
       <div id="sales-feedback" class="page-feedback hidden"></div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Date</th><th>Client</th><th>Type</th><th>Statut</th><th>Référence / lien</th><th>Lignes</th><th>Total HT</th><th>Total TTC</th><th>Actions</th></tr></thead>
+          <thead><tr><th>Date</th><th>Client</th><th>Type</th><th>Statut</th><th>RÃ©fÃ©rence / lien</th><th>Lignes</th><th>Total HT</th><th>Total TTC</th><th>Actions</th></tr></thead>
           <tbody id="sales-table-body"><tr><td colspan="9">Chargement...</td></tr></tbody>
         </table>
       </div>

@@ -1,11 +1,13 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Utilisateurs - ALTA MARÉE</title>
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <title>Utilisateurs - ALTA MARÃ‰E</title>
+
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
+<link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/home-branding.css?v=1" />
   <link rel="stylesheet" href="./css/pages/users.css?v=2" />
@@ -13,11 +15,11 @@
 <body class="app-page">
   <header class="topbar">
     <div class="topbar-left brand-lockup">
-      <img class="brand-logo hidden" alt="ALTA MARÉE" />
+      <img class="brand-logo hidden" alt="ALTA MARÃ‰E" />
       <div class="brand-copy">
-        <h1 class="app-title home-brand-title">ALTA MARÉE</h1>
+        <h1 class="app-title home-brand-title">ALTA MARÃ‰E</h1>
         <p class="app-subtitle">
-          <span id="store-name">Espace de gestion</span> • Gestion des utilisateurs
+          <span id="store-name">Espace de gestion</span> â€¢ Gestion des utilisateurs
         </p>
       </div>
     </div>
@@ -33,7 +35,7 @@
       </div>
 
       <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+      <button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
     </div>
   </header>
 
@@ -43,7 +45,7 @@
       <div class="page-actions-right">
         <button id="open-login-qr-btn" type="button" class="btn btn-secondary">QR connexion</button>
       </div>
-      <p>Créer un compte et lui attribuer un rôle ainsi que ses services autorisés.</p>
+      <p>CrÃ©er un compte et lui attribuer un rÃ´le ainsi que ses services autorisÃ©s.</p>
     </section>
 
     <section class="form-section">
@@ -59,30 +61,30 @@
         </div>
 
         <div class="form-group">
-          <label for="role">Rôle</label>
+          <label for="role">RÃ´le</label>
           <select id="role" required>
             <option value="vendeur">Vendeur</option>
             <option value="commercial">Commercial</option>
             <option value="responsable">Responsable</option>
-            <option value="qualite">Qualité</option>
+            <option value="qualite">QualitÃ©</option>
             <option value="admin">Admin</option>
           </select>
         </div>
 
         <div class="form-group">
-          <label>Services autorisés</label>
+          <label>Services autorisÃ©s</label>
           <div id="departments-checkboxes"></div>
         </div>
 
         <div class="form-group">
-          <label for="default-department">Service par défaut</label>
+          <label for="default-department">Service par dÃ©faut</label>
           <select id="default-department">
             <option value="">Choisir</option>
           </select>
         </div>
 
         <button type="submit" id="submit-user-btn" class="btn btn-primary">
-          Créer l'utilisateur
+          CrÃ©er l'utilisateur
         </button>
         <p id="form-message" class="error-text"></p>
       </form>
@@ -103,14 +105,14 @@
       <div class="qr-modal-header">
         <div>
           <h3 id="login-qr-title">QR connexion</h3>
-          <p>Accès public à l'application, sans identifiant ni token.</p>
+          <p>AccÃ¨s public Ã  l'application, sans identifiant ni token.</p>
         </div>
         <button id="close-login-qr-btn" type="button" class="btn btn-secondary">Fermer</button>
       </div>
 
       <div id="login-qr-print-area" class="login-qr-print-area">
         <div id="login-qr-code" class="login-qr-code"></div>
-        <p class="login-qr-label">Scanner pour accéder à ALTA MARÉE</p>
+        <p class="login-qr-label">Scanner pour accÃ©der Ã  ALTA MARÃ‰E</p>
         <p id="login-qr-url" class="login-qr-url"></p>
       </div>
 
@@ -125,3 +127,4 @@
 <script src="./js/users.js?v=10"></script>
 </body>
 </html>
+

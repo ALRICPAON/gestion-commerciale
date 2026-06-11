@@ -1,10 +1,13 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Achats - Gestion Commerciale</title>
-  <link rel="stylesheet" href="./css/app.css" />
+  
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
+<link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/purchases.css?v=3" />
 </head>
 <body class="app-page">
@@ -25,7 +28,7 @@
       </div>
 
       <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+      <button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
     </div>
   </header>
 
@@ -93,7 +96,7 @@
       <pre
         id="import-document-result"
         style="margin-top:16px; white-space:pre-wrap; background:#f7f7f7; padding:12px; border-radius:10px; font-size:13px;"
-      >Aucun test lancé</pre>
+      >Aucun test lancÃ©</pre>
     </section>
 
     <section class="card">
@@ -105,12 +108,12 @@
           <select id="purchase-status-filter">
             <option value="">Tous</option>
             <option value="draft">Brouillon</option>
-            <option value="ordered">Commandé</option>
-            <option value="receiving">Réception en cours</option>
-            <option value="received">Reçu</option>
-            <option value="received_pending_invoice">Reçu - facture attendue</option>
-            <option value="closed">Clôturé</option>
-            <option value="cancelled">Annulé</option>
+            <option value="ordered">CommandÃ©</option>
+            <option value="receiving">RÃ©ception en cours</option>
+            <option value="received">ReÃ§u</option>
+            <option value="received_pending_invoice">ReÃ§u - facture attendue</option>
+            <option value="closed">ClÃ´turÃ©</option>
+            <option value="cancelled">AnnulÃ©</option>
           </select>
         </div>
 
@@ -139,8 +142,8 @@
         <div class="form-group filter-actions">
           <label>&nbsp;</label>
           <div class="page-actions-right">
-            <button id="refresh-purchases-btn" class="btn btn-secondary">Rafraîchir</button>
-            <button id="reset-filters-btn" class="btn btn-secondary">Réinitialiser</button>
+            <button id="refresh-purchases-btn" class="btn btn-secondary">RafraÃ®chir</button>
+            <button id="reset-filters-btn" class="btn btn-secondary">RÃ©initialiser</button>
           </div>
         </div>
       </div>
@@ -179,7 +182,7 @@
     <div class="modal-card modal-large">
       <div class="modal-header">
         <div>
-          <h3>Sélectionner un fournisseur</h3>
+          <h3>SÃ©lectionner un fournisseur</h3>
           <p>Double clic ou Entree pour creer l'achat</p>
         </div>
         <button type="button" id="close-supplier-modal-btn" class="btn btn-secondary">Fermer</button>
@@ -197,7 +200,7 @@
               <th>Code</th>
               <th>Nom</th>
               <th>Contact</th>
-              <th>Téléphone</th>
+              <th>TÃ©lÃ©phone</th>
               <th>Statut</th>
             </tr>
           </thead>
@@ -212,7 +215,7 @@
     <div class="modal-card modal-xl">
       <div class="modal-header">
         <div>
-          <h3>Mapper les références fournisseur</h3>
+          <h3>Mapper les rÃ©fÃ©rences fournisseur</h3>
           <p id="import-mapping-step-counter" style="font-size: 0.9em; color: #666;"></p>
         </div>
         <button type="button" id="close-import-mapping-modal" class="btn btn-secondary">Fermer</button>
@@ -220,43 +223,43 @@
 
       <div id="import-mapping-feedback" class="page-feedback hidden"></div>
 
-      <!-- Affichage de la référence fournisseur courante -->
+      <!-- Affichage de la rÃ©fÃ©rence fournisseur courante -->
       <div id="import-mapping-current-item" style="margin-bottom: 16px; padding: 12px; background: #f9f9f9; border-left: 4px solid #2196F3; border-radius: 4px;">
-        <div style="margin-bottom: 8px;"><strong>Référence fournisseur:</strong> <span id="import-mapping-ref" style="font-family: monospace; font-weight: bold;"></span></div>
-        <div><strong>Désignation:</strong> <span id="import-mapping-designation"></span></div>
+        <div style="margin-bottom: 8px;"><strong>RÃ©fÃ©rence fournisseur:</strong> <span id="import-mapping-ref" style="font-family: monospace; font-weight: bold;"></span></div>
+        <div><strong>DÃ©signation:</strong> <span id="import-mapping-designation"></span></div>
       </div>
 
       <!-- Zone de recherche article -->
       <div class="search-section" style="margin-bottom: 16px;">
         <div class="form-group">
-          <label for="import-mapping-search" class="search-label">Rechercher un article à relier :</label>
-          <input type="text" id="import-mapping-search" class="search-input" placeholder="PLU, désignation...">
+          <label for="import-mapping-search" class="search-label">Rechercher un article Ã  relier :</label>
+          <input type="text" id="import-mapping-search" class="search-input" placeholder="PLU, dÃ©signation...">
         </div>
       </div>
 
-      <!-- Liste des articles filtrés -->
+      <!-- Liste des articles filtrÃ©s -->
       <div class="table-wrap" style="max-height: 300px; overflow-y: auto;">
         <table class="data-table">
           <thead>
             <tr>
               <th>PLU</th>
-              <th>Désignation</th>
-              <th>Nom affiché</th>
+              <th>DÃ©signation</th>
+              <th>Nom affichÃ©</th>
             </tr>
           </thead>
           <tbody id="import-mapping-articles-list"></tbody>
         </table>
       </div>
 
-      <!-- Article sélectionné affiché -->
+      <!-- Article sÃ©lectionnÃ© affichÃ© -->
       <div id="import-mapping-selected-article" style="margin-top: 16px; padding: 12px; background: #e8f5e9; border-radius: 4px; min-height: 40px; display: flex; align-items: center;">
-        <span style="color: #666;">Aucun article sélectionné</span>
+        <span style="color: #666;">Aucun article sÃ©lectionnÃ©</span>
       </div>
 
       <!-- Boutons de navigation et action -->
       <div class="page-actions-right" style="margin-top: 16px; gap: 8px; display: flex; justify-content: flex-end;">
-        <button type="button" id="prev-import-mapping-btn" class="btn btn-secondary">← Précédent</button>
-        <button type="button" id="next-import-mapping-btn" class="btn btn-secondary">Suivant →</button>
+        <button type="button" id="prev-import-mapping-btn" class="btn btn-secondary">â† PrÃ©cÃ©dent</button>
+        <button type="button" id="next-import-mapping-btn" class="btn btn-secondary">Suivant â†’</button>
         <button type="button" id="save-import-mappings-btn" class="btn btn-primary">Enregistrer tout</button>
         <button type="button" id="close-import-mapping-modal-2" class="btn btn-secondary">Fermer</button>
       </div>

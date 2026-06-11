@@ -1,11 +1,13 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Transformations - Gestion Commerciale</title>
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
+<link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/transformations.css?v=1" />
 </head>
@@ -18,7 +20,7 @@
     <div class="topbar-right">
       <div class="user-box"><span id="user-name">Utilisateur</span></div>
       <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+      <button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
     </div>
   </header>
 
@@ -27,7 +29,7 @@
       <div class="card-header-row">
         <div>
           <h2>Transformations</h2>
-          <p>FIFO automatique, choix manuel de lots et création de lot transformé.</p>
+          <p>FIFO automatique, choix manuel de lots et crÃ©ation de lot transformÃ©.</p>
         </div>
         <button id="create-transformation-btn" class="btn btn-primary">Nouvelle transformation</button>
       </div>
@@ -37,8 +39,8 @@
           <select id="status-filter" class="input">
             <option value="">Tous</option>
             <option value="draft">Brouillon</option>
-            <option value="validated">Validée</option>
-            <option value="cancelled">Annulée</option>
+            <option value="validated">ValidÃ©e</option>
+            <option value="cancelled">AnnulÃ©e</option>
           </select>
         </label>
         <label>Limite
@@ -48,7 +50,7 @@
             <option value="100">100</option>
           </select>
         </label>
-        <button id="refresh-btn" class="btn btn-secondary">Rafraîchir</button>
+        <button id="refresh-btn" class="btn btn-secondary">RafraÃ®chir</button>
       </div>
 
       <div id="page-message" class="page-message"></div>
@@ -61,7 +63,7 @@
               <th>Statut</th>
               <th>Source</th>
               <th>Cible</th>
-              <th>Référence</th>
+              <th>RÃ©fÃ©rence</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -77,3 +79,4 @@
   <script src="./js/transformations.js?v=2"></script>
 </body>
 </html>
+
