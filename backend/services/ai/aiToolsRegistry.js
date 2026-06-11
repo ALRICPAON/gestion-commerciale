@@ -1,5 +1,41 @@
 const tools = [
   {
+    name: 'analyze_stock',
+    description: 'Analyse le stock disponible par article, les lots disponibles, les stocks negatifs et les articles sans stock.',
+    enabled: true,
+    readonly: true,
+  },
+  {
+    name: 'analyze_dlc',
+    description: 'Analyse les lots avec DLC proche, les lots depasses et les priorites de vente.',
+    enabled: true,
+    readonly: true,
+  },
+  {
+    name: 'analyze_clients',
+    description: 'Analyse les meilleurs clients, clients recents, clients inactifs et clients a relancer.',
+    enabled: true,
+    readonly: true,
+  },
+  {
+    name: 'analyze_sales',
+    description: 'Analyse les ventes recentes, le CA par periode, les top articles vendus et les top clients.',
+    enabled: true,
+    readonly: true,
+  },
+  {
+    name: 'analyze_margins',
+    description: 'Analyse les marges par article et client, ainsi que les articles a faible ou forte marge.',
+    enabled: true,
+    readonly: true,
+  },
+  {
+    name: 'analyze_suppliers',
+    description: 'Analyse les fournisseurs recents, achats recents et fournisseurs principaux.',
+    enabled: true,
+    readonly: true,
+  },
+  {
     name: 'create_sale_draft',
     description: 'Preparera une commande ou vente brouillon apres confirmation utilisateur.',
     enabled: false,
@@ -20,24 +56,6 @@ const tools = [
   {
     name: 'prepare_whatsapp_message',
     description: 'Preparera un message WhatsApp sans l envoyer.',
-    enabled: false,
-    readonly: true,
-  },
-  {
-    name: 'analyze_stock',
-    description: 'Analysera le stock, les lots, la DLC et les rotations.',
-    enabled: false,
-    readonly: true,
-  },
-  {
-    name: 'analyze_customer_history',
-    description: 'Analysera l historique client.',
-    enabled: false,
-    readonly: true,
-  },
-  {
-    name: 'analyze_margin',
-    description: 'Analysera les marges articles, clients et fournisseurs.',
     enabled: false,
     readonly: true,
   },
