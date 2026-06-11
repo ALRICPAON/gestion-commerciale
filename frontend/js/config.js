@@ -1,7 +1,7 @@
 (function () {
   const host = window.location.hostname;
   const isLocal = host === "localhost" || host === "127.0.0.1" || host === "";
-  const faviconHref = "/assets/favicon.png?v=4";
+  const faviconHref = "/assets/favicon.png?v=7";
 
   function ensureFaviconLink(rel) {
     let link = document.querySelector(`link[rel="${rel}"]`);
@@ -25,7 +25,7 @@
   };
 
   const script = document.createElement("script");
-  script.src = "./js/branding.js?v=4";
+  script.src = "./js/branding.js?v=7";
   script.defer = true;
   document.head.appendChild(script);
 })();
