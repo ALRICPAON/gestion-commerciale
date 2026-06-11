@@ -2,6 +2,7 @@ const intelligenceToken = localStorage.getItem('gc_token') || localStorage.getIt
 const intelligenceGrid = document.getElementById('intelligence-alerts-grid');
 const intelligenceFeedback = document.getElementById('intelligence-center-feedback');
 const intelligenceRefreshBtn = document.getElementById('refresh-intelligence-btn');
+const ALTA_ALERT_STORAGE_KEY = 'alta_intelligence_alert';
 
 function levelLabel(level) {
   if (level === 'red') return 'Rouge';
@@ -15,14 +16,27 @@ function setIntelligenceFeedback(message = '', type = 'error') {
   intelligenceFeedback.className = message ? `page-feedback ${type}` : 'page-feedback hidden';
 }
 
-function buildAltaUrl(alert) {
-  const params = new URLSearchParams();
-  params.set('alta_prompt', alert.alta_prompt || `Analyse l'alerte ${alert.title}`);
-  params.set('alert_id', alert.id);
-  params.set('alert_title', alert.title);
-  params.set('alert_count', String(alert.count || 0));
-  params.set('alert_items', JSON.stringify((alert.items || []).slice(0, 10)));
-  return `./assistant-ia.html?${params.toString()}`;
+function alertForAlta(alert) {
+  return {
+    id: alert.id,
+    title: alert.title,
+    level: alert.level,
+    level_label: levelLabel(alert.level),
+    count: alert.count || 0,
+    description: alert.description,
+    prompt: alert.alta_prompt || `Analyse l'alerte ${alert.title}`,
+    items: (alert.items || []).slice(0, 10),
+  };
+}
+
+function openAlertWithAlta(alert) {
+  try {
+    sessionStorage.setItem(ALTA_ALERT_STORAGE_KEY, JSON.stringify(alertForAlta(alert)));
+  } catch (error) {
+    console.error('Impossible de préparer l’alerte pour ALTA :', error);
+  }
+
+  window.location.href = './assistant-ia.html?from=intelligence-center';
 }
 
 function renderAlert(alert) {
@@ -54,10 +68,11 @@ function renderAlert(alert) {
   view.href = alert.view_url || '#';
   view.textContent = 'Voir';
 
-  const analyze = document.createElement('a');
+  const analyze = document.createElement('button');
   analyze.className = 'btn btn-primary btn-sm';
-  analyze.href = buildAltaUrl(alert);
+  analyze.type = 'button';
   analyze.textContent = 'Analyser avec ALTA';
+  analyze.addEventListener('click', () => openAlertWithAlta(alert));
 
   actions.append(view, analyze);
   card.append(header, count, description, actions);
