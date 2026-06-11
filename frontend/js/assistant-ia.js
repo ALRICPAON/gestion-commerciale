@@ -92,6 +92,26 @@ async function askAssistant(question) {
   }
 }
 
+function alertPromptFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const prompt = params.get('alta_prompt');
+  if (!prompt) return null;
+
+  const title = params.get('alert_title') || 'Alerte';
+  const count = params.get('alert_count') || '0';
+  const items = params.get('alert_items') || '[]';
+
+  return [
+    prompt,
+    '',
+    `Alerte concernée : ${title}`,
+    `Compteur : ${count}`,
+    `Détails transmis par la Home : ${items}`,
+    '',
+    'Analyse uniquement cette alerte. Ne considère pas que tu as modifié une donnée.',
+  ].join('\n');
+}
+
 function logout() {
   ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key));
   window.location.href = './login.html';
@@ -112,6 +132,11 @@ function init() {
   els.quickActions.forEach((button) => {
     button.addEventListener('click', () => askAssistant(button.dataset.prompt));
   });
+
+  const incomingAlertPrompt = alertPromptFromUrl();
+  if (incomingAlertPrompt) {
+    askAssistant(incomingAlertPrompt);
+  }
 }
 
 init();
