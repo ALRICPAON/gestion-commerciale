@@ -1,15 +1,12 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <title>DÃ©tail fournisseur - Gestion Commerciale</title>
+  <title>Détail fournisseur - Gestion Commerciale</title>
 
-  
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
-<link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/suppliers.css?v=4" />
 </head>
 
@@ -17,7 +14,7 @@
   <header class="topbar">
     <div class="topbar-left">
       <h1 class="app-title">Gestion Commerciale</h1>
-      <p class="app-subtitle" id="page-subtitle">DÃ©tail fournisseur</p>
+      <p class="app-subtitle" id="page-subtitle">Détail fournisseur</p>
     </div>
 
     <div class="topbar-right">
@@ -27,7 +24,7 @@
 
       <button type="button" id="back-list-btn" class="btn btn-secondary">Fournisseurs</button>
       <button type="button" id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button type="button" id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
+      <button type="button" id="logout-btn" class="btn btn-secondary">Déconnexion</button>
     </div>
   </header>
 
@@ -36,7 +33,7 @@
       <div class="page-actions">
         <div>
           <h2 id="form-title">Nouveau fournisseur</h2>
-          <p id="form-description">CrÃ©e ou modifie la fiche fournisseur.</p>
+          <p id="form-description">Crée ou modifie la fiche fournisseur.</p>
         </div>
 
         <div class="page-actions-right">
@@ -45,7 +42,7 @@
           </button>
 
           <button type="button" id="status-supplier-btn" class="btn btn-secondary hidden">
-            DÃ©sactiver
+            Désactiver
           </button>
         </div>
       </div>
@@ -55,7 +52,7 @@
 
     <form id="supplier-form">
       <section class="suppliers-card">
-        <h3>IdentitÃ©</h3>
+        <h3>Identité</h3>
 
         <div class="form-grid">
           <div class="suppliers-field">
@@ -78,7 +75,7 @@
             <select id="supplier_type" name="supplier_type">
               <option value="standard">Standard</option>
               <option value="mareyeur">Mareyeur</option>
-              <option value="criee">CriÃ©e</option>
+              <option value="criee">Criée</option>
               <option value="importateur">Importateur</option>
               <option value="transporteur">Transporteur</option>
               <option value="emballage">Emballage</option>
@@ -91,7 +88,7 @@
             <select id="status" name="status">
               <option value="active">Actif</option>
               <option value="inactive">Inactif</option>
-              <option value="blocked">BloquÃ©</option>
+              <option value="blocked">Bloqué</option>
             </select>
           </div>
         </div>
@@ -107,7 +104,7 @@
           </div>
 
           <div class="suppliers-field">
-            <label for="phone">TÃ©lÃ©phone</label>
+            <label for="phone">Téléphone</label>
             <input id="phone" name="phone" type="tel" />
           </div>
 
@@ -133,7 +130,7 @@
           </div>
 
           <div class="suppliers-field form-group-span-2">
-            <label for="address_line2">ComplÃ©ment adresse</label>
+            <label for="address_line2">Complément adresse</label>
             <input id="address_line2" name="address_line2" type="text" />
           </div>
 
@@ -159,7 +156,7 @@
 
         <div class="form-grid">
           <div class="suppliers-field">
-            <label for="vat_number">NÂ° TVA</label>
+            <label for="vat_number">N° TVA</label>
             <input id="vat_number" name="vat_number" type="text" />
           </div>
 
@@ -175,7 +172,7 @@
 
           <div class="suppliers-field">
             <label for="delivery_terms">Conditions de livraison</label>
-            <input id="delivery_terms" name="delivery_terms" type="text" placeholder="Ex : Franco, dÃ©part atelier..." />
+            <input id="delivery_terms" name="delivery_terms" type="text" placeholder="Ex : Franco, départ atelier..." />
           </div>
         </div>
       </section>

@@ -1,13 +1,11 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RÃ©gularisation stock - Gestion Commerciale</title>
-
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
-<link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <title>Régularisation stock - Gestion Commerciale</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/stock-regularization.css?v=2" />
 </head>
@@ -15,13 +13,13 @@
   <header class="topbar">
     <div>
       <h1 class="app-title">Gestion Commerciale</h1>
-      <p class="app-subtitle">RÃ©gularisation stock</p>
+      <p class="app-subtitle">Régularisation stock</p>
     </div>
 
     <div class="topbar-right">
       <div class="user-box"><span id="user-name">Utilisateur</span></div>
       <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
     </div>
   </header>
 
@@ -29,8 +27,8 @@
     <section class="welcome-card">
       <div class="page-actions">
         <div>
-          <h2>Stocks nÃ©gatifs Ã  rÃ©gulariser</h2>
-          <p>Compenser un lot nÃ©gatif avec un lot positif du mÃªme article quand il existe, sans supprimer l'historique.</p>
+          <h2>Stocks négatifs à régulariser</h2>
+          <p>Compenser un lot négatif avec un lot positif du même article quand il existe, sans supprimer l'historique.</p>
         </div>
         <div class="page-actions-right">
           <button id="refresh-btn" class="btn btn-primary">Actualiser</button>
@@ -38,13 +36,13 @@
       </div>
     </section>
 
-    <section class="stock-regularization-kpis" aria-label="SynthÃ¨se rÃ©gularisation">
+    <section class="stock-regularization-kpis" aria-label="Synthèse régularisation">
       <div class="stock-regularization-kpi">
-        <span>Lots nÃ©gatifs</span>
+        <span>Lots négatifs</span>
         <strong id="kpi-lots">0</strong>
       </div>
       <div class="stock-regularization-kpi">
-        <span>QuantitÃ© Ã  rÃ©gulariser</span>
+        <span>Quantité à régulariser</span>
         <strong id="kpi-quantity">0</strong>
       </div>
       <div class="stock-regularization-kpi">
@@ -74,15 +72,15 @@
             <tr>
               <th>Article</th>
               <th>Lot</th>
-              <th>QuantitÃ© nÃ©gative</th>
+              <th>Quantité négative</th>
               <th>Fournisseur</th>
               <th>Dernier mouvement</th>
-              <th>Origine sortie forcÃ©e</th>
+              <th>Origine sortie forcée</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody id="regularization-tbody">
-            <tr><td colspan="7">Chargement des stocks nÃ©gatifs...</td></tr>
+            <tr><td colspan="7">Chargement des stocks négatifs...</td></tr>
           </tbody>
         </table>
       </div>

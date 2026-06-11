@@ -1,20 +1,18 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>TraÃ§abilitÃ© - Gestion Commerciale</title>
-
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
-<link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <title>Traçabilité - Gestion Commerciale</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/traceability.css?v=1" />
 </head>
 <body class="app-page traceability-page">
   <header class="topbar">
-    <div class="topbar-left"><h1 class="app-title">Gestion Commerciale</h1><p class="app-subtitle">TraÃ§abilitÃ© lots et clients livrÃ©s</p></div>
-    <div class="topbar-right"><div class="user-box"><span id="user-name">Utilisateur</span></div><button type="button" id="back-home-btn" class="btn btn-secondary">Accueil</button><button type="button" id="logout-btn" class="btn btn-secondary">DÃ©connexion</button></div>
+    <div class="topbar-left"><h1 class="app-title">Gestion Commerciale</h1><p class="app-subtitle">Traçabilité lots et clients livrés</p></div>
+    <div class="topbar-right"><div class="user-box"><span id="user-name">Utilisateur</span></div><button type="button" id="back-home-btn" class="btn btn-secondary">Accueil</button><button type="button" id="logout-btn" class="btn btn-secondary">Déconnexion</button></div>
   </header>
 
   <main class="main-content trace-content">
@@ -25,17 +23,17 @@
         <div class="form-group"><label for="filter-plu">PLU</label><input id="filter-plu" type="text" placeholder="PLU" /></div>
         <div class="form-group"><label for="filter-lot">Lot</label><input id="filter-lot" type="text" placeholder="Lot interne ou fournisseur" /></div>
         <div class="form-group"><label for="filter-supplier">Fournisseur</label><input id="filter-supplier" type="text" placeholder="Nom ou code" /></div>
-        <div class="form-group"><label for="filter-client">Client livrÃ© / facturÃ©</label><input id="filter-client" type="text" placeholder="Nom, code, identifiant magasin" list="trace-client-suggestions" /><datalist id="trace-client-suggestions"></datalist></div>
-        <div class="form-group"><label for="filter-status">Statut lot</label><select id="filter-status"><option value="">Tous</option><option value="open">Ouvert</option><option value="partial">Partiel</option><option value="closed">FermÃ©</option></select></div>
+        <div class="form-group"><label for="filter-client">Client livré / facturé</label><input id="filter-client" type="text" placeholder="Nom, code, identifiant magasin" list="trace-client-suggestions" /><datalist id="trace-client-suggestions"></datalist></div>
+        <div class="form-group"><label for="filter-status">Statut lot</label><select id="filter-status"><option value="">Tous</option><option value="open">Ouvert</option><option value="partial">Partiel</option><option value="closed">Fermé</option></select></div>
         <div class="form-group"><label for="filter-source-type">Origine lot</label><select id="filter-source-type"><option value="">Toutes</option><option value="purchase">Achat</option><option value="transformation">Transformation</option><option value="fabrication">Fabrication</option></select></div>
-        <div class="form-group"><label for="filter-movement-type">Type mouvement</label><select id="filter-movement-type"><option value="">Tous</option><option value="purchase_in">EntrÃ©e achat</option><option value="sale_out">Sortie vente</option><option value="forced_stock_exit">Sortie forcÃ©e</option><option value="inventory_sale_out">Sortie inventaire</option><option value="transformation_in">EntrÃ©e transformation</option><option value="transformation_out">Sortie transformation</option><option value="fabrication_in">EntrÃ©e fabrication</option><option value="fabrication_out">Sortie fabrication</option></select></div>
+        <div class="form-group"><label for="filter-movement-type">Type mouvement</label><select id="filter-movement-type"><option value="">Tous</option><option value="purchase_in">Entrée achat</option><option value="sale_out">Sortie vente</option><option value="forced_stock_exit">Sortie forcée</option><option value="inventory_sale_out">Sortie inventaire</option><option value="transformation_in">Entrée transformation</option><option value="transformation_out">Sortie transformation</option><option value="fabrication_in">Entrée fabrication</option><option value="fabrication_out">Sortie fabrication</option></select></div>
         <div class="form-group trace-filter-actions"><label>&nbsp;</label><button type="button" id="apply-filters-btn" class="btn btn-primary">Rechercher</button></div>
       </div>
     </section>
 
     <section class="trace-summary-row">
-      <div class="trace-summary"><span>Lots affichÃ©s</span><strong id="trace-count">0</strong></div>
-      <div class="trace-summary"><span>Ã‰tat</span><strong id="trace-state">PrÃªt</strong></div>
+      <div class="trace-summary"><span>Lots affichés</span><strong id="trace-count">0</strong></div>
+      <div class="trace-summary"><span>État</span><strong id="trace-state">Prêt</strong></div>
     </section>
 
     <section id="trace-list" class="trace-list"></section>
@@ -45,7 +43,7 @@
   <div id="lot-modal" class="trace-modal hidden">
     <div class="trace-modal-backdrop" data-close-modal="true"></div>
     <section class="trace-modal-panel">
-      <div class="trace-modal-header"><div><h2 id="lot-modal-title">DÃ©tail lot</h2><p id="lot-modal-subtitle"></p></div><button type="button" id="lot-modal-close" class="btn btn-secondary">Fermer</button></div>
+      <div class="trace-modal-header"><div><h2 id="lot-modal-title">Détail lot</h2><p id="lot-modal-subtitle"></p></div><button type="button" id="lot-modal-close" class="btn btn-secondary">Fermer</button></div>
       <div id="lot-modal-body" class="trace-modal-body"></div>
     </section>
   </div>
@@ -59,4 +57,3 @@
   <script src="./js/traceability.js?v=1"></script>
 </body>
 </html>
-

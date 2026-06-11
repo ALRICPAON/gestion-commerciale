@@ -1,47 +1,44 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Accueil - ALTA MARÃ‰E</title>
-
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
-<link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <title>Accueil - ALTA MARÉE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/home-branding.css?v=1" />
 </head>
 <body class="app-page">
   <header class="topbar home-topbar">
     <div class="topbar-left brand-lockup">
-      <img class="brand-logo hidden" alt="ALTA MARÃ‰E" />
+      <img class="brand-logo hidden" alt="ALTA MARÉE" />
       <div class="brand-copy">
-        <h1 class="app-title home-brand-title">ALTA MARÃ‰E</h1>
+        <h1 class="app-title home-brand-title">ALTA MARÉE</h1>
         <p class="app-subtitle" id="store-name">Espace de gestion</p>
       </div>
     </div>
-    <div class="topbar-right"><div class="topbar-department-box"><label for="topbar-department-select" class="topbar-label">Service actif</label><select id="topbar-department-select" class="topbar-select"></select></div><div class="user-box"><span id="user-name">Utilisateur</span></div><button id="users-btn" class="btn btn-secondary">Utilisateurs</button><button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button></div>
+    <div class="topbar-right"><div class="topbar-department-box"><label for="topbar-department-select" class="topbar-label">Service actif</label><select id="topbar-department-select" class="topbar-select"></select></div><div class="user-box"><span id="user-name">Utilisateur</span></div><button id="users-btn" class="btn btn-secondary">Utilisateurs</button><button id="logout-btn" class="btn btn-secondary">Déconnexion</button></div>
   </header>
   <main class="main-content home-content">
     <section class="welcome-card home-welcome"><h2>Modules</h2><p>Service actif : <strong id="current-department-name">-</strong></p></section>
-    <section class="dashboard-grid home-module-grid" aria-label="Modules ALTA MARÃ‰E">
-      <a class="module-card" href="./tableau-de-bord.html" data-module="dashboard"><h3>Tableau de bord</h3><p>CA, achats, stock, achats consommÃ©s et marge.</p></a>
+    <section class="dashboard-grid home-module-grid" aria-label="Modules ALTA MARÉE">
+      <a class="module-card" href="./tableau-de-bord.html" data-module="dashboard"><h3>Tableau de bord</h3><p>CA, achats, stock, achats consommés et marge.</p></a>
       <a class="module-card" href="./statistiques.html" data-module="statistics"><h3>Statistiques</h3><p>Analyse articles, clients, fournisseurs et marges.</p></a>
       <a class="module-card" href="./clients.html" data-module="clients"><h3>Clients</h3><p>Fiches clients, tarifs et informations de facturation.</p></a>
       <a class="module-card" href="./customer-price-list.html" data-module="customer-price-list"><h3>Cours / Mercuriale</h3><p>Mercuriale rapide du jour et tarifs clients.</p></a>
       <a class="module-card" href="./articles.html" data-module="articles"><h3>Articles</h3><p>Produits, familles, TVA, prix et PLU.</p></a>
-      <a class="module-card" href="./suppliers.html" data-module="suppliers"><h3>Fournisseurs</h3><p>Mareyeurs, criÃ©es, importateurs et contacts.</p></a>
-      <a class="module-card" href="./purchases.html" data-module="purchases"><h3>Achats / RÃ©ceptions</h3><p>Commandes fournisseurs, BL et rÃ©ceptions.</p></a>
-      <a class="module-card" href="./stock.html" data-module="stocks"><h3>Stock / Lots</h3><p>Lots disponibles, quantitÃ©s et traÃ§abilitÃ©.</p></a>
-      <a class="module-card" href="./stock-regularization.html" data-module="stock-regularization"><h3>RÃ©gularisation stock</h3><p>Lots nÃ©gatifs et corrections internes contrÃ´lÃ©es.</p></a>
+      <a class="module-card" href="./suppliers.html" data-module="suppliers"><h3>Fournisseurs</h3><p>Mareyeurs, criées, importateurs et contacts.</p></a>
+      <a class="module-card" href="./purchases.html" data-module="purchases"><h3>Achats / Réceptions</h3><p>Commandes fournisseurs, BL et réceptions.</p></a>
+      <a class="module-card" href="./stock.html" data-module="stocks"><h3>Stock / Lots</h3><p>Lots disponibles, quantités et traçabilité.</p></a>
+      <a class="module-card" href="./stock-regularization.html" data-module="stock-regularization"><h3>Régularisation stock</h3><p>Lots négatifs et corrections internes contrôlées.</p></a>
       <a class="module-card" href="./sales.html" data-module="sales"><h3>Ventes / Commandes</h3><p>Commandes, BL, factures clients et avoirs.</p></a>
-      <a class="module-card" href="./supplier-invoices.html" data-module="supplier-invoices"><h3>Factures fournisseurs</h3><p>Rapprochements, Ã©carts et validation fournisseur.</p></a>
-      <a id="settings-card" class="module-card" href="./settings.html" data-module="settings"><h3>ParamÃ¨tres sociÃ©tÃ©</h3><p>Informations magasin, sociÃ©tÃ© et documents.</p></a>
-      <article class="module-card is-disabled" aria-disabled="true"><h3>Assistant IA</h3><p>Module prÃ©vu plus tard, sans logique active dans cette PR.</p><span class="module-badge">BientÃ´t</span></article>
+      <a class="module-card" href="./supplier-invoices.html" data-module="supplier-invoices"><h3>Factures fournisseurs</h3><p>Rapprochements, écarts et validation fournisseur.</p></a>
+      <a id="settings-card" class="module-card" href="./settings.html" data-module="settings"><h3>Paramètres société</h3><p>Informations magasin, société et documents.</p></a>
+      <article class="module-card is-disabled" aria-disabled="true"><h3>Assistant IA</h3><p>Module prévu plus tard, sans logique active dans cette PR.</p><span class="module-badge">Bientôt</span></article>
     </section>
   </main>
   <script src="./js/config.js"></script>
   <script src="./js/home.js?v=18"></script>
 </body>
 </html>
-

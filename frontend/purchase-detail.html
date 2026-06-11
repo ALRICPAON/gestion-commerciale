@@ -1,13 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DÃ©tail achat - Gestion Commerciale</title>
-  
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
-<link rel="stylesheet" href="./css/app.css" />
+  <title>Détail achat - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/purchase-detail.css?v=3" />
   <link rel="stylesheet" href="./css/pages/sanitary-sheet.css?v=5">
 </head>
@@ -15,7 +12,7 @@
   <header class="topbar">
     <div class="topbar-left">
       <h1 class="app-title">Gestion Commerciale</h1>
-      <p class="app-subtitle">DÃ©tail achat</p>
+      <p class="app-subtitle">Détail achat</p>
     </div>
 
     <div class="topbar-right">
@@ -28,8 +25,8 @@
         <span id="user-name">Utilisateur</span>
       </div>
 
-      <button id="back-purchases-btn" class="btn btn-secondary">â† Retour achats</button>
-      <button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
+      <button id="back-purchases-btn" class="btn btn-secondary">← Retour achats</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
     </div>
   </header>
 
@@ -37,7 +34,7 @@
     <section class="welcome-card">
       <div class="page-actions">
         <div>
-          <h2>DÃ©tail achat</h2>
+          <h2>Détail achat</h2>
           <p>
             Service actif :
             <strong id="current-department-name">-</strong>
@@ -45,16 +42,16 @@
         </div>
 
         <div class="page-actions-right">
-  <button id="save-purchase-btn" class="btn btn-primary">ðŸ’¾ Enregistrer</button>
-  <button id="validate-reception-btn" class="btn btn-primary">âœ… Valider rÃ©ception</button>
-  <button id="add-line-btn" class="btn btn-secondary">âž• Ajouter ligne</button>
-  <button id="open-qr-modal-btn" class="btn btn-secondary">ðŸ“± GÃ©nÃ©rer QR photo BL</button>
+  <button id="save-purchase-btn" class="btn btn-primary">💾 Enregistrer</button>
+  <button id="validate-reception-btn" class="btn btn-primary">✅ Valider réception</button>
+  <button id="add-line-btn" class="btn btn-secondary">➕ Ajouter ligne</button>
+  <button id="open-qr-modal-btn" class="btn btn-secondary">📱 Générer QR photo BL</button>
 </div>
       </div>
     </section>
 
     <section class="card">
-      <h3>En-tÃªte achat</h3>
+      <h3>En-tête achat</h3>
       <div id="purchase-header-feedback" class="page-feedback hidden"></div>
 
       <div class="form-grid">
@@ -64,7 +61,7 @@
         </div>
 
         <div class="form-group">
-          <label for="purchase-receipt-date">Date rÃ©ception</label>
+          <label for="purchase-receipt-date">Date réception</label>
           <input type="date" id="purchase-receipt-date" />
         </div>
 
@@ -85,18 +82,18 @@
         <div class="form-group">
           <label for="purchase-status">Statut</label>
           <select id="purchase-status">
-  <option value="ordered">CommandÃ©</option>
-  <option value="cancelled">AnnulÃ©</option>
+  <option value="ordered">Commandé</option>
+  <option value="cancelled">Annulé</option>
 </select>
         </div>
 
         <div class="form-group">
-          <label for="purchase-bl-number">NÂ° BL</label>
+          <label for="purchase-bl-number">N° BL</label>
           <input type="text" id="purchase-bl-number" />
         </div>
 
         <div class="form-group">
-          <label for="purchase-invoice-number">NÂ° facture</label>
+          <label for="purchase-invoice-number">N° facture</label>
           <input type="text" id="purchase-invoice-number" />
         </div>
 
@@ -107,7 +104,7 @@
 
         <div class="form-group form-group-span-2">
           <label>Total BL HT</label>
-          <div id="purchase-total-ht" class="readonly-field">0,00 â‚¬</div>
+          <div id="purchase-total-ht" class="readonly-field">0,00 €</div>
         </div>
       </div>
     </section>
@@ -117,7 +114,7 @@
         <div>
           <h3>Lignes achat</h3>
           <p class="helper-text">
-            PLU direct ou F9 pour rechercher â€¢ EntrÃ©e = enregistrer + nouvelle ligne
+            PLU direct ou F9 pour rechercher • Entrée = enregistrer + nouvelle ligne
           </p>
           <p id="lines-mode-label" class="helper-text"></p>
         </div>
@@ -132,12 +129,12 @@
               <th>PLU</th>
               <th>Article</th>
               <th>Colis</th>
-              <th>PiÃ¨ces</th>
+              <th>Pièces</th>
               <th>Poids</th>
-              <th>QtÃ© totale</th>
+              <th>Qté totale</th>
               <th>Prix HT</th>
               <th>Total ligne</th>
-              <th>UnitÃ© prix</th>
+              <th>Unité prix</th>
               <th>Statut</th>
               <th>Actions</th>
             </tr>
@@ -156,7 +153,7 @@
     <div class="modal-card modal-xl">
       <div class="modal-header">
         <div>
-          <h3>SÃ©lectionner un article</h3>
+          <h3>Sélectionner un article</h3>
           <p>Double clic pour choisir</p>
         </div>
         <button type="button" id="close-article-modal-btn" class="btn btn-secondary">Fermer</button>
@@ -165,7 +162,7 @@
       <div class="filters-row">
         <div class="form-group">
           <label for="article-search-input">Recherche article</label>
-          <input type="text" id="article-search-input" placeholder="PLU, dÃ©signation, nom latin..." />
+          <input type="text" id="article-search-input" placeholder="PLU, désignation, nom latin..." />
         </div>
 
         <div class="form-group">
@@ -191,7 +188,7 @@
 
         <div class="form-group filter-actions">
           <label>&nbsp;</label>
-          <button type="button" id="refresh-article-modal-btn" class="btn btn-secondary">RafraÃ®chir</button>
+          <button type="button" id="refresh-article-modal-btn" class="btn btn-secondary">Rafraîchir</button>
         </div>
       </div>
 
@@ -200,10 +197,10 @@
           <thead>
             <tr>
               <th>PLU</th>
-              <th>DÃ©signation</th>
+              <th>Désignation</th>
               <th>Rayon</th>
               <th>Secteur</th>
-              <th>UnitÃ©</th>
+              <th>Unité</th>
             </tr>
           </thead>
           <tbody id="article-modal-table-body"></tbody>
@@ -217,7 +214,7 @@
       <div class="modal-header">
         <div>
           <h3>Fiche ligne achat</h3>
-          <p>Infos mÃ©tier, DLC et photo sanitaire</p>
+          <p>Infos métier, DLC et photo sanitaire</p>
         </div>
         <button type="button" id="close-line-sheet-modal-btn" class="btn btn-secondary">Fermer</button>
       </div>
@@ -268,12 +265,12 @@
       </div>
 
       <div class="form-group">
-        <label for="sheet-line-origin-label">Origine / mÃ©thode</label>
+        <label for="sheet-line-origin-label">Origine / méthode</label>
         <input type="text" id="sheet-line-origin-label" />
       </div>
 
       <div class="form-group">
-        <label for="sheet-line-allergens">AllergÃ¨nes</label>
+        <label for="sheet-line-allergens">Allergènes</label>
         <input type="text" id="sheet-line-allergens" />
       </div>
 
@@ -283,7 +280,7 @@
       </div>
 
       <div class="form-group form-group-span-2">
-        <label for="sheet-line-notes">Notes qualitÃ©</label>
+        <label for="sheet-line-notes">Notes qualité</label>
         <textarea id="sheet-line-notes" rows="4"></textarea>
       </div>
     </div>
@@ -304,13 +301,13 @@
     </div>
 
     <div id="sheet-line-photo-empty" class="line-sheet-photo-empty">
-      Aucune photo renseignÃ©e
+      Aucune photo renseignée
     </div>
   </div>
 </div>
 
 <div class="page-actions-right" style="margin-top: 16px;">
-  <button type="button" id="save-line-sheet-btn" class="btn btn-primary">ðŸ’¾ Enregistrer la fiche</button>
+  <button type="button" id="save-line-sheet-btn" class="btn btn-primary">💾 Enregistrer la fiche</button>
 </div>
     </div>
   </div>
@@ -320,7 +317,7 @@
     <div class="modal-header">
       <div>
         <h3>QR code photo BL</h3>
-        <p>Scanne avec le tÃ©lÃ©phone pour ouvrir la page de prise de photo</p>
+        <p>Scanne avec le téléphone pour ouvrir la page de prise de photo</p>
       </div>
       <button type="button" id="close-qr-modal-btn" class="btn btn-secondary">Fermer</button>
     </div>
@@ -341,8 +338,8 @@
     </div>
 
     <div class="page-actions-right" style="margin-top:16px;">
-      <button type="button" id="print-qr-btn" class="btn btn-primary">ðŸ–¨ï¸ Imprimer</button>
-      <button type="button" id="copy-qr-link-btn" class="btn btn-secondary">ðŸ”— Copier le lien</button>
+      <button type="button" id="print-qr-btn" class="btn btn-primary">🖨️ Imprimer</button>
+      <button type="button" id="copy-qr-link-btn" class="btn btn-secondary">🔗 Copier le lien</button>
     </div>
   </div>
 </div>
@@ -355,4 +352,3 @@
 
 </body>
 </html>
-

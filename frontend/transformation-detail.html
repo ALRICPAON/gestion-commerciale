@@ -1,25 +1,22 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DÃ©tail transformation - Gestion Commerciale</title>
-  
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
-<link rel="stylesheet" href="./css/app.css" />
+  <title>Détail transformation - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/transformations.css?v=1" />
 </head>
 <body class="app-page transformation-detail-page">
   <header class="topbar">
     <div class="topbar-left">
       <h1 class="app-title">Gestion Commerciale</h1>
-      <p class="app-subtitle">DÃ©tail transformation</p>
+      <p class="app-subtitle">Détail transformation</p>
     </div>
     <div class="topbar-right">
       <div class="user-box"><span id="detail-user-name">Utilisateur</span></div>
       <button id="detail-back-list-btn" class="btn btn-secondary">Retour liste</button>
-      <button id="detail-logout-btn" class="btn btn-secondary">DÃ©connexion</button>
+      <button id="detail-logout-btn" class="btn btn-secondary">Déconnexion</button>
     </div>
   </header>
 
@@ -41,16 +38,16 @@
 
       <div class="detail-grid">
         <div class="detail-card">
-          <h3>En-tÃªte</h3>
+          <h3>En-tête</h3>
           <label for="transformation-date">Date transformation</label>
           <input id="transformation-date" type="date" class="input" />
           <label for="transformation-status">Statut</label>
           <select id="transformation-status" class="input" disabled>
             <option value="draft">Brouillon</option>
-            <option value="validated">ValidÃ©e</option>
-            <option value="cancelled">AnnulÃ©e</option>
+            <option value="validated">Validée</option>
+            <option value="cancelled">Annulée</option>
           </select>
-          <label for="transformation-reference">RÃ©fÃ©rence</label>
+          <label for="transformation-reference">Référence</label>
           <input id="transformation-reference" class="input" placeholder="TRF-001" />
           <label for="transformation-notes">Notes</label>
           <textarea id="transformation-notes" class="input" rows="4" placeholder="Notes"></textarea>
@@ -63,12 +60,12 @@
             <input id="input-article-search" class="input" placeholder="Chercher article en stock..." />
             <select id="input-article-select" class="input"></select>
           </div>
-          <label for="input-quantity">QuantitÃ© source</label>
+          <label for="input-quantity">Quantité source</label>
           <input id="input-quantity" type="number" step="0.001" class="input" placeholder="0.000" />
-          <label for="input-unit">UnitÃ© source</label>
+          <label for="input-unit">Unité source</label>
           <select id="input-unit" class="input">
             <option value="kg">kg</option>
-            <option value="piece">piÃ¨ce</option>
+            <option value="piece">pièce</option>
             <option value="colis">colis</option>
           </select>
           <div class="mini-actions-row"><button id="load-source-lots-btn" class="btn btn-secondary">Voir les lots disponibles</button></div>
@@ -81,16 +78,16 @@
             <input id="output-article-search" class="input" placeholder="Chercher article cible..." />
             <select id="output-article-select" class="input"></select>
           </div>
-          <label for="output-quantity">QuantitÃ© produite</label>
+          <label for="output-quantity">Quantité produite</label>
           <input id="output-quantity" type="number" step="0.001" class="input" placeholder="0.000" />
-          <label for="output-unit">UnitÃ© cible</label>
+          <label for="output-unit">Unité cible</label>
           <select id="output-unit" class="input">
             <option value="kg">kg</option>
-            <option value="piece">piÃ¨ce</option>
+            <option value="piece">pièce</option>
             <option value="colis">colis</option>
           </select>
           <div class="computed-box"><strong id="yield-preview">Rendement : -</strong></div>
-          <div class="computed-box"><strong id="cost-preview">PA transformÃ© : -</strong></div>
+          <div class="computed-box"><strong id="cost-preview">PA transformé : -</strong></div>
         </div>
       </div>
 
@@ -99,17 +96,17 @@
         <div class="table-wrapper">
           <table class="data-table">
             <thead><tr><th>Lot</th><th>Fournisseur</th><th>Date</th><th>DLC</th><th>Reste</th><th>PA HT</th></tr></thead>
-            <tbody id="available-lots-body"><tr><td colspan="6">Aucun lot chargÃ©.</td></tr></tbody>
+            <tbody id="available-lots-body"><tr><td colspan="6">Aucun lot chargé.</td></tr></tbody>
           </table>
         </div>
       </div>
 
       <div class="detail-card detail-table-card">
-        <h3>Lots rÃ©ellement consommÃ©s</h3>
+        <h3>Lots réellement consommés</h3>
         <div class="table-wrapper">
           <table class="data-table">
-            <thead><tr><th>Lot</th><th>Mode</th><th>QtÃ© prise</th><th>PA HT</th><th>Fournisseur</th></tr></thead>
-            <tbody id="used-lots-body"><tr><td colspan="5">Pas encore validÃ©e.</td></tr></tbody>
+            <thead><tr><th>Lot</th><th>Mode</th><th>Qté prise</th><th>PA HT</th><th>Fournisseur</th></tr></thead>
+            <tbody id="used-lots-body"><tr><td colspan="5">Pas encore validée.</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -129,10 +126,10 @@
           <button id="manual-mode-btn" class="btn btn-secondary">Choisir les lots manuellement</button>
         </div>
         <div id="manual-lots-section" class="hidden manual-section">
-          <p><strong>Renseigne les quantitÃ©s Ã  prendre par lot.</strong></p>
+          <p><strong>Renseigne les quantités à prendre par lot.</strong></p>
           <div class="table-wrapper">
             <table class="data-table">
-              <thead><tr><th>Lot</th><th>Fournisseur</th><th>Date</th><th>DLC</th><th>Disponible</th><th>PA HT</th><th>QtÃ© Ã  prendre</th></tr></thead>
+              <thead><tr><th>Lot</th><th>Fournisseur</th><th>Date</th><th>DLC</th><th>Disponible</th><th>PA HT</th><th>Qté à prendre</th></tr></thead>
               <tbody id="manual-lots-body"><tr><td colspan="7">Aucun lot disponible.</td></tr></tbody>
             </table>
           </div>
@@ -146,4 +143,3 @@
   <script src="./js/transformations.js?v=4"></script>
 </body>
 </html>
-

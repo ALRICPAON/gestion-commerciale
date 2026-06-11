@@ -1,13 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Factures fournisseurs - Gestion Commerciale</title>
-  
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
-<link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/supplier-invoices.css?v=2" />
 </head>
 <body class="app-page supplier-invoices-page">
@@ -19,7 +16,7 @@
     <div class="topbar-right">
       <div class="user-box"><span id="user-name">Utilisateur</span></div>
       <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
     </div>
   </header>
 
@@ -27,10 +24,10 @@
     <section class="welcome-card supplier-invoices-toolbar">
       <div>
         <h2>Factures fournisseurs</h2>
-        <p>Rapprochement rÃ©ception, Ã©carts et prÃ©paration Pennylane.</p>
+        <p>Rapprochement réception, écarts et préparation Pennylane.</p>
       </div>
       <div class="page-actions-right">
-        <button id="refresh-btn" class="btn btn-secondary">RafraÃ®chir</button>
+        <button id="refresh-btn" class="btn btn-secondary">Rafraîchir</button>
         <button id="open-create-panel-btn" class="btn btn-primary">Nouvelle facture</button>
       </div>
     </section>
@@ -44,7 +41,7 @@
           <select id="supplier-select"><option value="">Choisir fournisseur</option></select>
         </div>
         <div class="form-group">
-          <label for="invoice-number-input">NÂ° facture</label>
+          <label for="invoice-number-input">N° facture</label>
           <input id="invoice-number-input" type="text" />
         </div>
         <div class="form-group">
@@ -52,7 +49,7 @@
           <input id="invoice-date-input" type="date" />
         </div>
         <div class="form-group">
-          <label for="due-date-input">Ã‰chÃ©ance</label>
+          <label for="due-date-input">Échéance</label>
           <input id="due-date-input" type="date" />
         </div>
         <div class="form-group">
@@ -68,7 +65,7 @@
           <input id="vat-input" type="number" step="0.0001" />
         </div>
         <div class="form-group">
-          <label for="total-inc-input">Total TTC / net Ã  payer</label>
+          <label for="total-inc-input">Total TTC / net à payer</label>
           <input id="total-inc-input" type="number" step="0.0001" />
         </div>
         <div class="form-group form-group-span-2">
@@ -81,7 +78,7 @@
         </div>
       </div>
       <div class="page-actions-right">
-        <button id="create-manual-btn" class="btn btn-secondary">CrÃ©er sans document</button>
+        <button id="create-manual-btn" class="btn btn-secondary">Créer sans document</button>
         <button id="import-invoice-btn" class="btn btn-primary">Importer facture</button>
       </div>
     </section>
@@ -95,11 +92,11 @@
           <select id="status-filter">
             <option value="">Tous</option>
             <option value="draft">Brouillon</option>
-            <option value="matched">RapprochÃ©e</option>
-            <option value="invoice_difference">Ã‰cart</option>
-            <option value="invoice_validated">ValidÃ©e</option>
-            <option value="cost_adjusted">CoÃ»t ajustÃ©</option>
-            <option value="sent_to_pennylane">EnvoyÃ©e Pennylane</option>
+            <option value="matched">Rapprochée</option>
+            <option value="invoice_difference">Écart</option>
+            <option value="invoice_validated">Validée</option>
+            <option value="cost_adjusted">Coût ajusté</option>
+            <option value="sent_to_pennylane">Envoyée Pennylane</option>
           </select>
         </div>
         <div class="form-group">
@@ -127,9 +124,9 @@
     </section>
 
     <section class="card" id="detail-panel">
-      <h3>DÃ©tail facture</h3>
+      <h3>Détail facture</h3>
       <div id="detail-feedback" class="page-feedback hidden"></div>
-      <div id="invoice-detail-empty" class="empty-state">SÃ©lectionne une facture pour voir le rapprochement.</div>
+      <div id="invoice-detail-empty" class="empty-state">Sélectionne une facture pour voir le rapprochement.</div>
       <div id="invoice-detail" class="hidden">
         <div class="detail-grid" id="invoice-summary"></div>
         <h4>Rapprochement</h4>
@@ -141,9 +138,9 @@
                 <th>Ligne achat</th>
                 <th>Article</th>
                 <th>Statut</th>
-                <th>Ã‰cart quantitÃ©</th>
-                <th>Ã‰cart prix</th>
-                <th>Ã‰cart montant</th>
+                <th>Écart quantité</th>
+                <th>Écart prix</th>
+                <th>Écart montant</th>
               </tr>
             </thead>
             <tbody id="matches-table-body"></tbody>
@@ -153,30 +150,30 @@
           <div class="manual-match-header">
             <div>
               <h4>Rapprochement manuel</h4>
-              <p>BL candidats du mÃªme fournisseur. La confirmation est toujours dÃ©clenchÃ©e par clic utilisateur.</p>
+              <p>BL candidats du même fournisseur. La confirmation est toujours déclenchée par clic utilisateur.</p>
             </div>
             <button id="reload-manual-candidates-btn" class="btn btn-secondary btn-sm">Recharger les BL</button>
           </div>
           <div class="manual-match-summary">
             <div><span>Total facture HT</span><strong id="manual-invoice-total">-</strong></div>
-            <div><span>Total BL sÃ©lectionnÃ©s HT</span><strong id="manual-selected-total">-</strong></div>
-            <div><span>Ã‰cart facture / BL</span><strong id="manual-difference-total">-</strong></div>
+            <div><span>Total BL sélectionnés HT</span><strong id="manual-selected-total">-</strong></div>
+            <div><span>Écart facture / BL</span><strong id="manual-difference-total">-</strong></div>
           </div>
           <div id="manual-match-feedback" class="page-feedback hidden"></div>
           <div class="table-wrap">
             <table class="data-table manual-candidates-table">
               <thead>
                 <tr>
-                  <th>SÃ©lection</th>
+                  <th>Sélection</th>
                   <th>Date</th>
-                  <th>NÂ° BL</th>
-                  <th>Total HT rÃ©ceptionnÃ©</th>
+                  <th>N° BL</th>
+                  <th>Total HT réceptionné</th>
                   <th>Statut</th>
-                  <th>Ã‰cart potentiel</th>
+                  <th>Écart potentiel</th>
                   <th>Lignes</th>
                 </tr>
               </thead>
-              <tbody id="manual-candidates-body"><tr><td colspan="7">Clique sur â€œRapprocher manuellementâ€.</td></tr></tbody>
+              <tbody id="manual-candidates-body"><tr><td colspan="7">Clique sur “Rapprocher manuellement”.</td></tr></tbody>
             </table>
           </div>
           <div class="page-actions-right manual-match-actions">
@@ -189,7 +186,7 @@
           <button id="auto-match-btn" class="btn btn-secondary">Rapprocher automatiquement</button>
           <button id="confirm-match-btn" class="btn btn-primary">Confirmer rapprochement</button>
           <button id="validate-btn" class="btn btn-primary">Valider</button>
-          <button id="validate-adjust-btn" class="btn btn-primary">Valider + ajuster coÃ»ts</button>
+          <button id="validate-adjust-btn" class="btn btn-primary">Valider + ajuster coûts</button>
           <button id="payload-btn" class="btn btn-secondary">Payload Pennylane</button>
           <button id="delete-invoice-btn" class="btn btn-secondary">Supprimer la facture</button>
         </div>
@@ -202,4 +199,3 @@
   <script src="./js/supplier-invoices.js?v=5"></script>
 </body>
 </html>
-

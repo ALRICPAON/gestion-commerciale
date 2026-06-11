@@ -1,13 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Articles - Gestion Commerciale</title>
-  
-  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
-  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
-<link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/app.css" />
   <link rel="stylesheet" href="./css/pages/articles.css?v=10" />
 </head>
 <body class="app-page">
@@ -24,7 +21,7 @@
 
 
       <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">DÃ©connexion</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
     </div>
   </header>
 
@@ -33,13 +30,13 @@
       <div class="card-header-row">
         <div>
           <h2>Articles / Produits</h2>
-          <p>Gestion des produits de nÃ©goce : familles, TVA, prix, unitÃ©s et donnÃ©es de traÃ§abilitÃ©.</p>
+          <p>Gestion des produits de négoce : familles, TVA, prix, unités et données de traçabilité.</p>
         </div>
         <div class="table-actions">
           <button id="export-articles-btn" class="btn btn-secondary">Exporter Excel</button>
           <button id="import-articles-btn" class="btn btn-secondary">Importer Excel</button>
           <input type="file" id="import-articles-file" accept=".xlsx,.xls" hidden />
-          <button id="create-article-btn" class="btn btn-primary">+ CrÃ©er un article</button>
+          <button id="create-article-btn" class="btn btn-primary">+ Créer un article</button>
         </div>
       </div>
 
@@ -49,7 +46,7 @@
           <input
             type="text"
             id="search-input"
-            placeholder="PLU, dÃ©signation, EAN, nom latin..."
+            placeholder="PLU, désignation, EAN, nom latin..."
           />
         </div>
 
@@ -84,10 +81,10 @@
           <thead>
             <tr>
               <th>PLU</th>
-              <th>DÃ©signation</th>
+              <th>Désignation</th>
               <th>Service</th>
               <th>Famille</th>
-              <th>UnitÃ©</th>
+              <th>Unité</th>
               <th>TVA</th>
               <th>PV HT</th>
               <th>PV TTC</th>
@@ -108,7 +105,7 @@
   <div id="article-modal" class="modal-overlay hidden">
     <div class="modal-card article-modal-card">
       <div class="modal-header">
-        <h3 id="modal-title">CrÃ©er un article</h3>
+        <h3 id="modal-title">Créer un article</h3>
         <button id="close-modal-btn" class="btn btn-secondary">Fermer</button>
       </div>
 
@@ -122,20 +119,20 @@
           </div>
 
           <div class="form-group">
-            <label for="article-designation">DÃ©signation</label>
+            <label for="article-designation">Désignation</label>
             <input type="text" id="article-designation" required />
           </div>
 
           <div class="form-group">
-            <label for="article-unit">UnitÃ© principale</label>
+            <label for="article-unit">Unité principale</label>
             <select id="article-unit">
               <option value="kg">kg</option>
-              <option value="piece">piÃ¨ce</option>
+              <option value="piece">pièce</option>
               <option value="colis">colis</option>
               <option value="caisse">caisse</option>
               <option value="barquette">barquette</option>
               <option value="sachet">sachet</option>
-              <option value="unite">unitÃ©</option>
+              <option value="unite">unité</option>
             </select>
           </div>
 
@@ -155,10 +152,10 @@
             <label for="article-category">Origine produit</label>
             <select id="article-category">
               <option value="">-- Choisir --</option>
-              <option value="PÃªchÃ© en">PÃªchÃ© en</option>
-              <option value="ElevÃ© en">Ã‰levÃ© en</option>
-              <option value="DÃ©congelÃ©">DÃ©congelÃ©</option>
-              <option value="TransformÃ©">TransformÃ©</option>
+              <option value="Pêché en">Pêché en</option>
+              <option value="Elevé en">Élevé en</option>
+              <option value="Décongelé">Décongelé</option>
+              <option value="Transformé">Transformé</option>
               <option value="Autre">Autre</option>
             </select>
           </div>
@@ -179,59 +176,59 @@
           </div>
 
           <div class="form-group">
-            <label for="article-engin">Engin / mÃ©thode</label>
+            <label for="article-engin">Engin / méthode</label>
             <input type="text" id="article-engin" />
           </div>
 
           <div class="form-group form-group-full">
-            <label for="article-allergenes">AllergÃ¨nes</label>
+            <label for="article-allergenes">Allergènes</label>
             <input type="text" id="article-allergenes" />
           </div>
 
           <div class="form-group">
-            <label for="article-display-name">Nom affichÃ©</label>
+            <label for="article-display-name">Nom affiché</label>
             <input type="text" id="article-display-name" />
           </div>
 
           <div class="form-group">
-            <label for="article-purchase-unit">UnitÃ© achat</label>
+            <label for="article-purchase-unit">Unité achat</label>
             <select id="article-purchase-unit">
               <option value="">-- Choisir --</option>
               <option value="kg">kg</option>
-              <option value="piece">piÃ¨ce</option>
+              <option value="piece">pièce</option>
               <option value="colis">colis</option>
               <option value="caisse">caisse</option>
               <option value="barquette">barquette</option>
               <option value="sachet">sachet</option>
-              <option value="unite">unitÃ©</option>
+              <option value="unite">unité</option>
             </select>
           </div>
 
           <div class="form-group">
-            <label for="article-stock-unit">UnitÃ© stock</label>
+            <label for="article-stock-unit">Unité stock</label>
             <select id="article-stock-unit">
               <option value="">-- Choisir --</option>
               <option value="kg">kg</option>
-              <option value="piece">piÃ¨ce</option>
+              <option value="piece">pièce</option>
               <option value="colis">colis</option>
               <option value="caisse">caisse</option>
               <option value="barquette">barquette</option>
               <option value="sachet">sachet</option>
-              <option value="unite">unitÃ©</option>
+              <option value="unite">unité</option>
             </select>
           </div>
 
           <div class="form-group">
-            <label for="article-sale-unit">UnitÃ© vente</label>
+            <label for="article-sale-unit">Unité vente</label>
             <select id="article-sale-unit">
               <option value="">-- Choisir --</option>
               <option value="kg">kg</option>
-              <option value="piece">piÃ¨ce</option>
+              <option value="piece">pièce</option>
               <option value="colis">colis</option>
               <option value="caisse">caisse</option>
               <option value="barquette">barquette</option>
               <option value="sachet">sachet</option>
-              <option value="unite">unitÃ©</option>
+              <option value="unite">unité</option>
             </select>
           </div>
 
@@ -279,4 +276,3 @@
   <script src="./js/articles.js?v=16"></script>
 </body>
 </html>
-
