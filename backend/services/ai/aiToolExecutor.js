@@ -1,6 +1,29 @@
 const { runBusinessTool } = require('./aiBusinessTools');
+const { recommendSalesActions } = require('./aiRecommendationService');
 
 const TOOL_RULES = [
+  {
+    name: 'recommend_sales_actions',
+    keywords: [
+      'quoi vendre',
+      'que vendre',
+      'qui relancer',
+      'relancer',
+      'relance',
+      'proposer',
+      'propose',
+      'recommander',
+      'recommandation',
+      'recommandations',
+      'action commerciale',
+      'actions commerciales',
+      'actions concretes',
+      'argumentaire',
+      'priorite de vente',
+      'priorites de vente',
+      'centre de surveillance',
+    ],
+  },
   {
     name: 'analyze_stock',
     keywords: ['stock', 'stocks', 'lot', 'lots', 'disponible', 'disponibles', 'negatif', 'negatifs', 'sans stock'],
@@ -56,7 +79,13 @@ async function executeRelevantTools({ db, storeId, question }) {
   });
 
   const results = await Promise.all(
-    toolNames.map((toolName) => runBusinessTool(toolName, { db, storeId }))
+    toolNames.map((toolName) => {
+      if (toolName === 'recommend_sales_actions') {
+        return recommendSalesActions(db, storeId);
+      }
+
+      return runBusinessTool(toolName, { db, storeId });
+    })
   );
 
   return results;
