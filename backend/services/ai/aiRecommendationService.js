@@ -1,6 +1,7 @@
 const OPTIONAL_DB_ERROR_CODES = new Set(['42P01', '42703', '42883']);
 
 const MAX_CLIENTS = 5;
+const LOW_HISTORY_MAX_CLIENTS = 3;
 const MAX_PRODUCTS_PER_CLIENT = 5;
 
 function number(value, fallback = 0) {
@@ -17,7 +18,8 @@ function formatQuantity(value, unit) {
   return `${quantity} ${unit || 'unite'}`;
 }
 
-function buildReasons(row) {
+function buildReasons(row, options = {}) {
+  const includeClientHistory = options.includeClientHistory !== false;
   const reasons = [];
 
   if (number(row.dlc_score) > 0) {
@@ -29,7 +31,7 @@ function buildReasons(row) {
       : 'DLC proche');
   }
 
-  if (number(row.history_score) > 0) {
+  if (includeClientHistory && number(row.history_score) > 0) {
     reasons.push('client deja acheteur');
   }
 
@@ -80,6 +82,8 @@ async function loadRecommendationDiagnostics(db, storeId) {
       FROM clients
       WHERE store_id = $1
         AND COALESCE(status, 'active') <> 'inactive'
+        AND LOWER(COALESCE(name, '')) NOT LIKE '%alric%'
+        AND LOWER(COALESCE(email, '')) NOT LIKE '%alric%'
     `, [storeId]),
     db.query(`
       SELECT COUNT(*)::int AS count
@@ -176,6 +180,8 @@ async function loadRecommendationRows(db, storeId) {
        AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
       WHERE c.store_id = $1
         AND COALESCE(c.status, 'active') <> 'inactive'
+        AND LOWER(COALESCE(c.name, '')) NOT LIKE '%alric%'
+        AND LOWER(COALESCE(c.email, '')) NOT LIKE '%alric%'
       GROUP BY c.id, c.code, c.name, c.city, c.email, c.mobile, c.phone
       ORDER BY
         MAX(sd.document_date) DESC NULLS LAST,
@@ -294,7 +300,53 @@ async function loadRecommendationRows(db, storeId) {
   return result.rows;
 }
 
-function buildRecommendations(queryRows) {
+function buildProductPriorities(queryRows, options = {}) {
+  const includeClientHistory = options.includeClientHistory !== false;
+  const byArticle = new Map();
+
+  queryRows.forEach((row) => {
+    if (byArticle.has(row.article_id)) return;
+
+    const score = number(row.dlc_score)
+      + number(row.margin_score)
+      + number(row.stock_score)
+      + number(row.recent_sales_score);
+
+    if (score <= 0) return;
+
+    byArticle.set(row.article_id, {
+      article_id: row.article_id,
+      plu: row.plu,
+      designation: row.designation,
+      unit: row.unit,
+      stock_quantity: round(row.stock_quantity, 3),
+      stock_value_ht: round(row.stock_value_ex_vat, 2),
+      pma: round(row.pma, 3),
+      next_dlc: row.next_dlc,
+      days_before_dlc: row.days_before_dlc === null ? null : number(row.days_before_dlc),
+      margin_ht_90_days: round(row.margin_ht, 2),
+      margin_rate: round(row.margin_rate, 1),
+      recent_client_count_30_days: number(row.recent_client_count),
+      recent_quantity_30_days: round(row.recent_quantity, 3),
+      score,
+      score_details: {
+        dlc: number(row.dlc_score),
+        margin: number(row.margin_score),
+        stock: number(row.stock_score),
+        recent_sales: number(row.recent_sales_score),
+      },
+      reasons: buildReasons(row, { includeClientHistory }),
+    });
+  });
+
+  return Array.from(byArticle.values())
+    .sort((a, b) => b.score - a.score || b.stock_quantity - a.stock_quantity || a.designation.localeCompare(b.designation))
+    .slice(0, MAX_PRODUCTS_PER_CLIENT);
+}
+
+function buildRecommendations(queryRows, options = {}) {
+  const lowHistoryMode = Boolean(options.lowHistoryMode);
+  const maxClients = options.maxClients || MAX_CLIENTS;
   const byClient = new Map();
 
   queryRows.forEach((row) => {
@@ -320,6 +372,7 @@ function buildRecommendations(queryRows) {
           last_sale_date: row.last_sale_date,
           document_count: number(row.document_count),
           ca_ht: round(row.client_ca_ht, 2),
+          relation_mode: lowHistoryMode ? 'client_a_tester' : 'client_a_relancer',
         },
         products: [],
       });
@@ -351,7 +404,8 @@ function buildRecommendations(queryRows) {
         stock: number(row.stock_score),
         recent_sales: number(row.recent_sales_score),
       },
-      reasons: buildReasons(row),
+      is_personalized_by_history: !lowHistoryMode && number(row.history_score) > 0,
+      reasons: buildReasons(row, { includeClientHistory: !lowHistoryMode }),
     });
   });
 
@@ -373,7 +427,7 @@ function buildRecommendations(queryRows) {
     })
     .filter((recommendation) => recommendation.products.length > 0)
     .sort((a, b) => b.priority_score - a.priority_score || a.client.name.localeCompare(b.client.name))
-    .slice(0, MAX_CLIENTS);
+    .slice(0, maxClients);
 }
 
 async function recommendSalesActions(db, storeId) {
@@ -400,7 +454,15 @@ async function recommendSalesActions(db, storeId) {
     });
 
     const queryRows = await loadRecommendationRows(db, storeId);
-    const recommendations = buildRecommendations(queryRows);
+    const clientArticleHistoryRows = queryRows.filter((row) => number(row.article_sale_count) > 0).length;
+    const lowHistoryMode = diagnostics.sales === 0 || clientArticleHistoryRows < 3;
+    const recommendations = buildRecommendations(queryRows, {
+      lowHistoryMode,
+      maxClients: lowHistoryMode ? LOW_HISTORY_MAX_CLIENTS : MAX_CLIENTS,
+    });
+    const productPriorities = buildProductPriorities(queryRows, {
+      includeClientHistory: !lowHistoryMode,
+    });
 
     const missingData = [];
     if (diagnostics.stock === 0) {
@@ -418,8 +480,8 @@ async function recommendSalesActions(db, storeId) {
     if (queryRows.length === 0 && missingData.length === 0) {
       missingData.push('Aucun stock disponible ou aucun client actif exploitable.');
     }
-    if (diagnostics.sales > 0 && !queryRows.some((row) => number(row.article_sale_count) > 0)) {
-      missingData.push('Historique client/article insuffisant pour personnaliser fortement les propositions.');
+    if (lowHistoryMode) {
+      missingData.push('Historique de ventes insuffisant pour personnaliser fortement les propositions.');
     }
     if (diagnostics.margins > 0 && !queryRows.some((row) => number(row.margin_rate) > 0)) {
       missingData.push('Marges recentes insuffisantes pour prioriser finement la rentabilite.');
@@ -429,6 +491,9 @@ async function recommendSalesActions(db, storeId) {
       store_id: storeId,
       query_rows: queryRows.length,
       recommendations: recommendations.length,
+      product_priorities: productPriorities.length,
+      low_history_mode: lowHistoryMode,
+      client_article_history_rows: clientArticleHistoryRows,
       missing_data: missingData,
     });
 
@@ -438,9 +503,17 @@ async function recommendSalesActions(db, storeId) {
       reason: recommendations.length > 0 ? undefined : 'Pas assez de stock ou d historique exploitable pour recommander une relance.',
       data: {
         summary: {
+          mode: lowHistoryMode ? 'faible_historique' : 'personnalise',
+          message: lowHistoryMode
+            ? 'Comme tu n’as pas encore assez d’historique de ventes, je te propose une stratégie de démarrage basée surtout sur le stock disponible.'
+            : undefined,
+          strategy: lowHistoryMode
+            ? 'Produits prioritaires globaux selon stock, DLC et marge disponible, puis clients a tester en relance.'
+            : 'Recommandations personnalisees par couple client/article.',
           clients_returned: recommendations.length,
-          max_clients: MAX_CLIENTS,
+          max_clients: lowHistoryMode ? LOW_HISTORY_MAX_CLIENTS : MAX_CLIENTS,
           max_products_per_client: MAX_PRODUCTS_PER_CLIENT,
+          client_article_history_rows: clientArticleHistoryRows,
           scoring: {
             dlc_proche: 40,
             client_deja_acheteur: 30,
@@ -449,6 +522,7 @@ async function recommendSalesActions(db, storeId) {
             vente_recente_article: 10,
           },
         },
+        product_priorities: productPriorities,
         recommendations,
         missing_data: missingData,
       },
