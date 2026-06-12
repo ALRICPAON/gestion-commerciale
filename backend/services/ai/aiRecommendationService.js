@@ -167,7 +167,7 @@ async function loadRecommendationRows(db, storeId) {
         c.phone,
         MAX(sd.document_date) AS last_sale_date,
         COUNT(sd.id) AS document_count,
-        COALESCE(SUM(sd.total_ht), 0) AS ca_ht
+        COALESCE(SUM(sd.total_amount_ex_vat), 0) AS ca_ht
       FROM clients c
       LEFT JOIN sales_documents sd
         ON sd.client_id = c.id
@@ -179,7 +179,7 @@ async function loadRecommendationRows(db, storeId) {
       GROUP BY c.id, c.code, c.name, c.city, c.email, c.mobile, c.phone
       ORDER BY
         MAX(sd.document_date) DESC NULLS LAST,
-        COALESCE(SUM(sd.total_ht), 0) DESC,
+        COALESCE(SUM(sd.total_amount_ex_vat), 0) DESC,
         c.name ASC
       LIMIT 80
     ),
@@ -403,13 +403,25 @@ async function recommendSalesActions(db, storeId) {
     const recommendations = buildRecommendations(queryRows);
 
     const missingData = [];
-    if (queryRows.length === 0) {
+    if (diagnostics.stock === 0) {
+      missingData.push('Aucun stock disponible.');
+    }
+    if (diagnostics.clients === 0) {
+      missingData.push('Aucun client actif.');
+    }
+    if (diagnostics.sales === 0) {
+      missingData.push('Aucune vente historique exploitable.');
+    }
+    if (diagnostics.margins === 0) {
+      missingData.push('Aucune marge exploitable.');
+    }
+    if (queryRows.length === 0 && missingData.length === 0) {
       missingData.push('Aucun stock disponible ou aucun client actif exploitable.');
     }
-    if (!queryRows.some((row) => number(row.article_sale_count) > 0)) {
+    if (diagnostics.sales > 0 && !queryRows.some((row) => number(row.article_sale_count) > 0)) {
       missingData.push('Historique client/article insuffisant pour personnaliser fortement les propositions.');
     }
-    if (!queryRows.some((row) => number(row.margin_rate) > 0)) {
+    if (diagnostics.margins > 0 && !queryRows.some((row) => number(row.margin_rate) > 0)) {
       missingData.push('Marges recentes insuffisantes pour prioriser finement la rentabilite.');
     }
 

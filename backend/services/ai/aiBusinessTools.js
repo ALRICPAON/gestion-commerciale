@@ -227,7 +227,7 @@ async function analyzeClients(db, storeId) {
         c.email,
         c.mobile,
         COUNT(sd.id) AS document_count,
-        COALESCE(SUM(sd.total_ht), 0) AS ca_ht,
+        COALESCE(SUM(sd.total_amount_ex_vat), 0) AS ca_ht,
         MAX(sd.document_date) AS last_sale_date
       FROM clients c
       JOIN sales_documents sd ON sd.client_id = c.id AND sd.store_id = c.store_id
@@ -302,10 +302,10 @@ async function analyzeSales(db, storeId) {
       SELECT
         sd.id,
         sd.document_type,
-        sd.document_number,
+        sd.reference_number AS document_number,
         sd.document_date,
         sd.status,
-        sd.total_ht,
+        sd.total_amount_ex_vat AS total_ht,
         c.name AS client_name
       FROM sales_documents sd
       LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
@@ -317,7 +317,7 @@ async function analyzeSales(db, storeId) {
       SELECT
         date_trunc('day', document_date)::date AS period,
         COUNT(*) AS document_count,
-        COALESCE(SUM(total_ht), 0) AS ca_ht
+        COALESCE(SUM(total_amount_ex_vat), 0) AS ca_ht
       FROM sales_documents
       WHERE store_id = $1
         AND document_date >= CURRENT_DATE - INTERVAL '30 days'
@@ -348,7 +348,7 @@ async function analyzeSales(db, storeId) {
         c.code,
         c.name,
         COUNT(sd.id) AS document_count,
-        COALESCE(SUM(sd.total_ht), 0) AS ca_ht
+        COALESCE(SUM(sd.total_amount_ex_vat), 0) AS ca_ht
       FROM sales_documents sd
       LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
       WHERE sd.store_id = $1

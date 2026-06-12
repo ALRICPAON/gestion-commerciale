@@ -207,10 +207,10 @@ async function loadSales(db, storeId) {
       SELECT
         sd.id,
         sd.document_type,
-        sd.document_number,
+        sd.reference_number AS document_number,
         sd.document_date,
         sd.status,
-        sd.total_ht,
+        sd.total_amount_ex_vat AS total_ht,
         c.name AS client_name
       FROM sales_documents sd
       LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
@@ -226,7 +226,7 @@ async function loadSales(db, storeId) {
       `
       SELECT
         COUNT(*) AS document_count,
-        COALESCE(SUM(total_ht), 0) AS ca_ht
+        COALESCE(SUM(total_amount_ex_vat), 0) AS ca_ht
       FROM sales_documents
       WHERE store_id = $1
         AND document_date >= CURRENT_DATE - INTERVAL '30 days'
