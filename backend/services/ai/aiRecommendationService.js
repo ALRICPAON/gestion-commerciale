@@ -73,6 +73,62 @@ function buildUnavailableResult(reason) {
   };
 }
 
+async function loadRecommendationDiagnostics(db, storeId) {
+  const [clients, stock, dlc, sales, margins] = await Promise.all([
+    db.query(`
+      SELECT COUNT(*)::int AS count
+      FROM clients
+      WHERE store_id = $1
+        AND COALESCE(status, 'active') <> 'inactive'
+    `, [storeId]),
+    db.query(`
+      SELECT COUNT(*)::int AS count
+      FROM stock_summary ss
+      JOIN articles a ON a.id = ss.article_id AND a.store_id = ss.store_id
+      WHERE ss.store_id = $1
+        AND COALESCE(a.is_active, true) = true
+        AND COALESCE(ss.stock_quantity, 0) > 0
+    `, [storeId]),
+    db.query(`
+      SELECT COUNT(*)::int AS count
+      FROM stock_summary ss
+      JOIN articles a ON a.id = ss.article_id AND a.store_id = ss.store_id
+      WHERE ss.store_id = $1
+        AND COALESCE(a.is_active, true) = true
+        AND COALESCE(ss.stock_quantity, 0) > 0
+        AND ss.next_dlc IS NOT NULL
+        AND ss.next_dlc::date BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days'
+    `, [storeId]),
+    db.query(`
+      SELECT COUNT(*)::int AS count
+      FROM sales_documents sd
+      JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+      WHERE sd.store_id = $1
+        AND sl.article_id IS NOT NULL
+        AND sd.document_date >= CURRENT_DATE - INTERVAL '180 days'
+        AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
+    `, [storeId]),
+    db.query(`
+      SELECT COUNT(*)::int AS count
+      FROM sales_documents sd
+      JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+      WHERE sd.store_id = $1
+        AND sl.article_id IS NOT NULL
+        AND sd.document_date >= CURRENT_DATE - INTERVAL '90 days'
+        AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
+        AND COALESCE(sl.line_margin_ex_vat, 0) <> 0
+    `, [storeId]),
+  ]);
+
+  return {
+    clients: number(clients.rows[0]?.count),
+    stock: number(stock.rows[0]?.count),
+    dlc: number(dlc.rows[0]?.count),
+    sales: number(sales.rows[0]?.count),
+    margins: number(margins.rows[0]?.count),
+  };
+}
+
 async function loadRecommendationRows(db, storeId) {
   const result = await db.query(`
     WITH available_stock AS (
@@ -111,7 +167,7 @@ async function loadRecommendationRows(db, storeId) {
         c.phone,
         MAX(sd.document_date) AS last_sale_date,
         COUNT(sd.id) AS document_count,
-        COALESCE(SUM(sd.total_ht), 0) AS ca_ht
+        COALESCE(SUM(sd.total_amount_ex_vat), 0) AS ca_ht
       FROM clients c
       LEFT JOIN sales_documents sd
         ON sd.client_id = c.id
@@ -123,7 +179,7 @@ async function loadRecommendationRows(db, storeId) {
       GROUP BY c.id, c.code, c.name, c.city, c.email, c.mobile, c.phone
       ORDER BY
         MAX(sd.document_date) DESC NULLS LAST,
-        COALESCE(SUM(sd.total_ht), 0) DESC,
+        COALESCE(SUM(sd.total_amount_ex_vat), 0) DESC,
         c.name ASC
       LIMIT 80
     ),
@@ -321,20 +377,60 @@ function buildRecommendations(queryRows) {
 }
 
 async function recommendSalesActions(db, storeId) {
+  console.info('[AI SALES] tool called', {
+    store_id: storeId,
+    tool: 'recommend_sales_actions',
+  });
+
   try {
+    const diagnostics = await loadRecommendationDiagnostics(db, storeId);
+    console.info('[AI SALES] clients found', {
+      store_id: storeId,
+      count: diagnostics.clients,
+    });
+    console.info('[AI SALES] stock found', {
+      store_id: storeId,
+      count: diagnostics.stock,
+      dlc_soon_count: diagnostics.dlc,
+    });
+    console.info('[AI SALES] sales data found', {
+      store_id: storeId,
+      sales_line_count_180_days: diagnostics.sales,
+      margin_line_count_90_days: diagnostics.margins,
+    });
+
     const queryRows = await loadRecommendationRows(db, storeId);
     const recommendations = buildRecommendations(queryRows);
 
     const missingData = [];
-    if (queryRows.length === 0) {
+    if (diagnostics.stock === 0) {
+      missingData.push('Aucun stock disponible.');
+    }
+    if (diagnostics.clients === 0) {
+      missingData.push('Aucun client actif.');
+    }
+    if (diagnostics.sales === 0) {
+      missingData.push('Aucune vente historique exploitable.');
+    }
+    if (diagnostics.margins === 0) {
+      missingData.push('Aucune marge exploitable.');
+    }
+    if (queryRows.length === 0 && missingData.length === 0) {
       missingData.push('Aucun stock disponible ou aucun client actif exploitable.');
     }
-    if (!queryRows.some((row) => number(row.article_sale_count) > 0)) {
+    if (diagnostics.sales > 0 && !queryRows.some((row) => number(row.article_sale_count) > 0)) {
       missingData.push('Historique client/article insuffisant pour personnaliser fortement les propositions.');
     }
-    if (!queryRows.some((row) => number(row.margin_rate) > 0)) {
+    if (diagnostics.margins > 0 && !queryRows.some((row) => number(row.margin_rate) > 0)) {
       missingData.push('Marges recentes insuffisantes pour prioriser finement la rentabilite.');
     }
+
+    console.info('[AI SALES] recommendations generated', {
+      store_id: storeId,
+      query_rows: queryRows.length,
+      recommendations: recommendations.length,
+      missing_data: missingData,
+    });
 
     return {
       name: 'recommend_sales_actions',
