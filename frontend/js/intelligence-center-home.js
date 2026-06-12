@@ -42,6 +42,7 @@ function buildAltaPrompt(alert) {
     'Détails :',
     details,
     'Donne-moi les causes probables, les risques et les actions concrètes à faire.',
+    'Si c est pertinent, propose aussi les clients à relancer et les produits à vendre en priorité.',
   ].filter(Boolean).join('\n');
 }
 

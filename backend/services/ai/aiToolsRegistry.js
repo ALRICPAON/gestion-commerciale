@@ -1,5 +1,11 @@
 const tools = [
   {
+    name: 'recommend_sales_actions',
+    description: 'Recommande les clients a relancer et les produits a proposer en croisant stock, DLC, marges, historique client et ventes recentes.',
+    enabled: true,
+    readonly: true,
+  },
+  {
     name: 'analyze_stock',
     description: 'Analyse le stock disponible par article, les lots disponibles, les stocks negatifs et les articles sans stock.',
     enabled: true,
