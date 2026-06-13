@@ -24,6 +24,13 @@ function showFeedback(message = '', type = 'error') {
   els.feedback.className = message ? `page-feedback ${type}` : 'page-feedback hidden';
 }
 
+function appendTextWithLineBreaks(parent, content) {
+  String(content || '').split('\n').forEach((line, index) => {
+    if (index > 0) parent.appendChild(document.createElement('br'));
+    parent.appendChild(document.createTextNode(line));
+  });
+}
+
 function renderMessage(role, content) {
   const article = document.createElement('article');
   article.className = `ai-message ${role === 'assistant' ? 'is-assistant' : 'is-user'}`;
@@ -35,7 +42,7 @@ function renderMessage(role, content) {
   body.className = 'ai-message-body';
   String(content || '').split(/\n{2,}/).forEach((paragraph) => {
     const p = document.createElement('p');
-    p.textContent = paragraph.trim();
+    appendTextWithLineBreaks(p, paragraph.trim());
     body.appendChild(p);
   });
 
