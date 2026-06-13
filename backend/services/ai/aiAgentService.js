@@ -36,7 +36,7 @@ async function chat({ db, user, question, messages = [] }) {
   const [context, conversation, toolResults] = await Promise.all([
     buildAiContext({ db, user }),
     Promise.resolve(normalizeConversation(messages)),
-    executeRelevantTools({ db, user, storeId: user.store_id, question: prompt }),
+    executeRelevantTools({ db, user, storeId: user.store_id, question: prompt, messages: conversation }),
   ]);
   const pendingActions = extractPendingActions(toolResults);
 

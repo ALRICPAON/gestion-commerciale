@@ -125,15 +125,53 @@ function hasSpeciesConflict(search, candidate) {
   return candidateSpecies.some((species) => !requestedSpecies.includes(species));
 }
 
+function lastUserSegment(text) {
+  const parts = String(text || '').split(/\nuser:\s*/i);
+  return parts.length > 1 ? parts[parts.length - 1] : text;
+}
+
+function extractUnitPrice(text) {
+  const match = String(text || '').match(/(?:\bon lui vend|\bvendu|\bprix|\ba|à)\s*(\d+(?:[,.]\d{1,2})?)(?:\s*(?:€|eur|euros))?/i);
+  return match ? number(match[1]) : 0;
+}
+
+function extractCorrectionArticle(text) {
+  const segment = lastUserSegment(text);
+  const match = segment.match(/(?:c[' ]?est|ce sera|produit)\s+(.+?)(?:\s+et\s+on\s+lui\s+vend|\s+(?:a|à|prix|vendu)\s+\d|$)/i);
+  return clean(match?.[1]);
+}
+
+function isNegoceRequest(text) {
+  const segment = normalizeText(lastUserSegment(text));
+  return segment.includes('pas en stock')
+    || segment.includes('negoce')
+    || segment.includes('a approvisionner')
+    || segment.includes('precommande')
+    || Boolean(extractCorrectionArticle(text))
+    || extractUnitPrice(text) > 0;
+}
+
+function stripPricePhrases(value) {
+  return clean(String(value || '')
+    .replace(/\s+(?:et\s+)?on\s+lui\s+vend\s+\d+(?:[,.]\d{1,2})?.*$/i, '')
+    .replace(/\s+(?:a|à|prix|vendu)\s+\d+(?:[,.]\d{1,2})?.*$/i, ''));
+}
+
 function parseCustomerOrderPrompt(prompt) {
   const text = clean(prompt) || '';
-  const clientMatch = text.match(/\bpour\s+(.+?)\s+(?:avec|:)/i);
-  const itemsPart = text.split(/\bavec\b|:/i).slice(1).join(' ');
+  const orderMatches = Array.from(text.matchAll(/\bpour\s+(.+?)\s+(?:avec|:)\s+(.+?)(?=\n(?:user|assistant):|$)/gi));
+  const orderMatch = orderMatches[orderMatches.length - 1];
+  const clientSearch = clean(orderMatch?.[1]);
+  const itemsPart = clean(orderMatch?.[2]);
+  const correctionArticle = extractCorrectionArticle(text);
+  const unitPriceHt = extractUnitPrice(text);
+  const allowNegoce = isNegoceRequest(text);
 
-  if (!clientMatch || !itemsPart) {
+  if (!clientSearch || !itemsPart) {
     const error = new Error('Je n ai pas assez d elements pour preparer la commande brouillon.');
     error.status = 400;
     error.expose = true;
+    error.needs_clarification = true;
     throw error;
   }
 
@@ -142,12 +180,29 @@ function parseCustomerOrderPrompt(prompt) {
     .map((part) => part.trim())
     .filter(Boolean)
     .map((part) => {
+      const packageMatch = part.match(/(\d+(?:[,.]\d+)?)\s*x\s*(\d+(?:[,.]\d+)?)\s*kg\s+(?:de\s+|d')?(.+)/i);
+      if (packageMatch) {
+        const packageCount = number(packageMatch[1]);
+        const weightPerPackage = number(packageMatch[2]);
+        return {
+          quantity: Number((packageCount * weightPerPackage).toFixed(3)),
+          package_count: packageCount,
+          weight_per_package: weightPerPackage,
+          unit: 'kg',
+          article_search: correctionArticle || stripPricePhrases(packageMatch[3]),
+          unit_sale_price_ht: unitPriceHt,
+          allow_negoce: allowNegoce,
+        };
+      }
+
       const match = part.match(/(\d+(?:[,.]\d+)?)\s*(kg|kilo|kilos|piece|pieces|unite|unites)?\s+(?:de\s+|d')?(.+)/);
       if (!match) return null;
       return {
         quantity: number(match[1]),
         unit: ['piece', 'pieces', 'unite', 'unites'].includes(match[2]) ? 'unite' : 'kg',
-        article_search: clean(match[3]),
+        article_search: correctionArticle || stripPricePhrases(match[3]),
+        unit_sale_price_ht: unitPriceHt,
+        allow_negoce: allowNegoce,
       };
     })
     .filter((line) => line && line.quantity > 0 && line.article_search);
@@ -160,7 +215,7 @@ function parseCustomerOrderPrompt(prompt) {
   }
 
   return {
-    client_search: clean(clientMatch[1]),
+    client_search: clientSearch,
     lines,
   };
 }
@@ -305,7 +360,7 @@ function buildArticleClarificationError(search, candidates, reason, details = {}
   });
 }
 
-async function findArticle(db, storeId, client, search) {
+async function findArticle(db, storeId, client, search, options = {}) {
   const requestedTokens = articleTokens(search).slice(0, 6);
   const rawTokens = String(search || '')
     .split(/\s+/)
@@ -451,12 +506,22 @@ async function findArticle(db, storeId, client, search) {
   });
 
   if (!best || best.confidence_score < ARTICLE_MATCH_MIN_CONFIDENCE) {
+    if (options.allow_negoce) {
+      console.info('[AI ACTION] free/custom line candidate', {
+        store_id: storeId,
+        client_id: client?.id || null,
+        requested: search,
+        confidence_score: best?.confidence_score || 0,
+      });
+    }
     throw buildArticleClarificationError(
       search,
       stockCandidates.length > 0 ? stockCandidates : candidates,
-      `Je n ai pas trouve d article correspondant clairement a "${search}".`,
+      options.allow_negoce
+        ? `Cet article n existe pas encore clairement dans les articles : "${search}". Veux-tu creer l article d abord ?`
+        : `Je n ai pas trouve d article correspondant clairement a "${search}".`,
       {
-        reason: 'article_introuvable',
+        reason: options.allow_negoce ? 'article_a_creer' : 'article_introuvable',
         log: {
           store_id: storeId,
           client_id: client?.id || null,
@@ -471,15 +536,42 @@ async function findArticle(db, storeId, client, search) {
   );
 
   if (number(best.stock_quantity) <= 0) {
+    console.info('[AI ACTION] product out of stock', {
+      store_id: storeId,
+      client_id: client?.id || null,
+      requested: search,
+      article_id: best.id,
+      designation: best.designation,
+      stock_quantity: number(best.stock_quantity),
+    });
+
+    if (options.allow_negoce && number(options.unit_sale_price_ht) > 0) {
+      console.info('[AI ACTION] negoce mode detected', {
+        store_id: storeId,
+        client_id: client?.id || null,
+        article_id: best.id,
+        designation: best.designation,
+        unit_sale_price_ht: number(options.unit_sale_price_ht),
+      });
+
+      return {
+        ...best,
+        negoce_mode: true,
+        supply_status: 'a_approvisionner',
+      };
+    }
+
     const alternatives = stockCandidates.filter(
       (candidate) => candidate.confidence_score >= ARTICLE_MATCH_MIN_CONFIDENCE - 0.1
     );
     throw buildArticleClarificationError(
       search,
       alternatives,
-      `Je n ai pas de stock disponible sur "${best.designation}".`,
+      options.allow_negoce
+        ? `Je n ai pas de stock disponible sur "${best.designation}". Indique le prix de vente pour preparer une ligne negoce a approvisionner.`
+        : `Je n ai pas de stock disponible sur "${best.designation}".`,
       {
-        reason: 'article_sans_stock',
+        reason: options.allow_negoce ? 'prix_negoce_manquant' : 'article_sans_stock',
         log: {
           store_id: storeId,
           client_id: client?.id || null,
@@ -536,18 +628,24 @@ function articlePrice(article, client) {
 
 function buildLinePayload(line, article, client) {
   const quantity = number(line.quantity);
-  const unitPriceHt = articlePrice(article, client);
+  const unitPriceHt = number(line.unit_sale_price_ht, articlePrice(article, client));
   const vatRate = client?.is_vat_exempt ? 0 : number(article?.vat_rate, number(client?.vat_rate, 5.5));
   const lineAmountHt = Number((quantity * unitPriceHt).toFixed(2));
   const lineVatAmount = Number((lineAmountHt * vatRate / 100).toFixed(2));
   const lineAmountTtc = Number((lineAmountHt + lineVatAmount).toFixed(2));
   const unitCost = number(article?.pma, 0);
+  const isNegoce = Boolean(line.allow_negoce && article?.negoce_mode);
+  const articleLabel = isNegoce
+    ? `${article.designation} - NEGOCE A APPROVISIONNER`
+    : article.designation;
 
   return {
     article_id: article.id,
     article_plu: article.plu,
-    article_label: article.designation,
+    article_label: articleLabel,
     quantity,
+    package_count: number(line.package_count),
+    weight_per_package: number(line.weight_per_package),
     sale_unit: line.unit || article.sale_unit || article.unit || 'kg',
     unit_sale_price_ht: unitPriceHt,
     unit_sale_price_ttc: quantity > 0 ? Number((lineAmountTtc / quantity).toFixed(4)) : 0,
@@ -557,10 +655,32 @@ function buildLinePayload(line, article, client) {
     line_amount_ttc: lineAmountTtc,
     unit_cost_ex_vat: unitCost,
     line_margin_ex_vat: Number((lineAmountHt - quantity * unitCost).toFixed(2)),
+    is_negoce: isNegoce,
+    supply_status: isNegoce ? 'a_approvisionner' : 'stock',
   };
 }
 
 function buildSummary(client, lines) {
+  const hasNegoce = lines.some((line) => line.is_negoce);
+  if (hasNegoce) {
+    return [
+      `Je peux preparer une commande negoce a approvisionner pour ${client.name} :`,
+      ...lines.map((line) => {
+        const packageText = line.package_count > 0 && line.weight_per_package > 0
+          ? `${line.package_count} colis x ${line.weight_per_package} kg = ${line.quantity} ${line.sale_unit}`
+          : `${line.quantity} ${line.sale_unit}`;
+        return [
+          `- Produit : ${line.article_label}`,
+          `  Quantite : ${packageText}`,
+          `  Prix vente : ${line.unit_sale_price_ht.toFixed(2)} EUR/${line.sale_unit}`,
+          `  Statut : a approvisionner`,
+        ].join('\n');
+      }),
+      '',
+      'Confirmer la creation de cette commande brouillon ?',
+    ].join('\n');
+  }
+
   return [
     `Je vais preparer une commande brouillon pour ${client.name} :`,
     ...lines.map((line) => `- ${line.article_label} : ${line.quantity} ${line.sale_unit}`),
@@ -585,14 +705,18 @@ async function prepareCustomerOrderAction({ db, user, prompt, payload }) {
 
   const lines = [];
   for (const rawLine of parsed.lines) {
-    const article = await findArticle(db, storeId, client, rawLine.article_search);
+    const article = await findArticle(db, storeId, client, rawLine.article_search, {
+      allow_negoce: rawLine.allow_negoce,
+      unit_sale_price_ht: rawLine.unit_sale_price_ht,
+    });
     if (!article) {
       const error = new Error(`Article introuvable pour "${rawLine.article_search}".`);
       error.status = 400;
       error.expose = true;
       throw error;
     }
-    if (articlePrice(article, client) <= 0) {
+    const resolvedPrice = number(rawLine.unit_sale_price_ht, articlePrice(article, client));
+    if (resolvedPrice <= 0) {
       throw buildClarificationError(
         `Prix manquant pour "${article.designation}". Je ne peux pas preparer une commande sans prix de vente.`,
         {
@@ -606,13 +730,14 @@ async function prepareCustomerOrderAction({ db, user, prompt, payload }) {
         }
       );
     }
-    lines.push(buildLinePayload(rawLine, article, client));
+    lines.push(buildLinePayload({ ...rawLine, unit_sale_price_ht: resolvedPrice }, article, client));
   }
 
   const actionPayload = {
     client,
     lines,
     source_prompt: clean(prompt),
+    has_negoce_lines: lines.some((line) => line.is_negoce),
   };
   const summary = buildSummary(client, lines);
 
@@ -623,6 +748,14 @@ async function prepareCustomerOrderAction({ db, user, prompt, payload }) {
     VALUES (gen_random_uuid(), $1, $2, 'customer_order_draft', 'pending', $3::jsonb, NOW())
     RETURNING id, action_type, status, payload, created_at
   `, [storeId, user.id, JSON.stringify(actionPayload)]);
+
+  console.info('[AI ACTION] pending action created', {
+    store_id: storeId,
+    user_id: user.id,
+    action_id: result.rows[0].id,
+    action_type: 'customer_order_draft',
+    has_negoce_lines: actionPayload.has_negoce_lines,
+  });
 
   return {
     id: result.rows[0].id,
@@ -667,7 +800,9 @@ async function executeCustomerOrderDraft(db, action, user) {
     user.store_id,
     user.client_key || null,
     client.id,
-    `Commande brouillon preparee par ALTA - action IA ${action.id}`,
+    payload.has_negoce_lines
+      ? `Commande brouillon preparee par ALTA - action IA ${action.id} - negoce a approvisionner, sans lot alloue, sans destockage`
+      : `Commande brouillon preparee par ALTA - action IA ${action.id}`,
     tariffLevel(clientCheck.rows[0]),
     number(clientCheck.rows[0].vat_rate, 5.5),
     Boolean(clientCheck.rows[0].is_vat_exempt),
@@ -692,17 +827,17 @@ async function executeCustomerOrderDraft(db, action, user) {
     const inserted = await db.query(`
       INSERT INTO sales_lines (
         id, store_id, client_key, sales_document_id, line_number, article_id,
-        article_plu, article_label, total_weight, sold_quantity, sale_unit,
+        article_plu, article_label, package_count, weight_per_package, total_weight, sold_quantity, sale_unit,
         line_status, unit_sale_price_ht, unit_sale_price_ttc, vat_rate,
         line_amount_ht, line_vat_amount, line_amount_ttc, unit_cost_ex_vat,
         line_margin_ex_vat, created_by, updated_by
       )
       VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5,
-        $6, $7, $8, $8, $9,
-        'pending', $10, $11, $12,
-        $13, $14, $15, $16,
-        $17, $18, $18
+        $6, $7, $8, $9, $10, $10, $11,
+        'pending', $12, $13, $14,
+        $15, $16, $17, $18,
+        $19, $20, $20
       )
       RETURNING id, article_label, sold_quantity, sale_unit, line_amount_ht
     `, [
@@ -713,6 +848,8 @@ async function executeCustomerOrderDraft(db, action, user) {
       line.article_id,
       line.article_plu || null,
       line.article_label,
+      number(line.package_count),
+      number(line.weight_per_package),
       number(line.quantity),
       line.sale_unit || 'kg',
       number(line.unit_sale_price_ht),

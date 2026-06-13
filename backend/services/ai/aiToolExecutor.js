@@ -13,6 +13,10 @@ const TOOL_RULES = [
       'commande client brouillon',
       'cree une commande brouillon',
       'creer une commande brouillon',
+      'a approvisionner',
+      'negoce',
+      'precommande',
+      'on lui vend',
     ],
   },
   {
@@ -89,17 +93,38 @@ function normalizeText(value) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
-function selectTools(question) {
+function selectTools(question, messages = []) {
   const text = normalizeText(question);
   const selected = TOOL_RULES
     .filter((rule) => rule.keywords.some((keyword) => text.includes(normalizeText(keyword))))
     .map((rule) => rule.name);
 
+  const recentText = messages
+    .slice(-6)
+    .map((message) => normalizeText(message?.content || ''))
+    .join('\n');
+  const isOrderFollowUp = (
+    text.includes('pas en stock')
+    || text.includes('on lui vend')
+    || text.includes('prix')
+    || text.includes('c est')
+  ) && recentText.includes('prepare une commande');
+  if (isOrderFollowUp) {
+    selected.unshift('prepare_customer_order');
+  }
+
   return Array.from(new Set(selected)).slice(0, 4);
 }
 
-async function executeRelevantTools({ db, user, storeId, question }) {
-  const toolNames = selectTools(question);
+function buildActionPrompt(question, messages = []) {
+  return [
+    ...messages.slice(-6).map((message) => `${message.role || 'message'}: ${message.content || ''}`),
+    `user: ${question}`,
+  ].join('\n');
+}
+
+async function executeRelevantTools({ db, user, storeId, question, messages = [] }) {
+  const toolNames = selectTools(question, messages);
 
   if (toolNames.length === 0) {
     return [];
@@ -113,7 +138,7 @@ async function executeRelevantTools({ db, user, storeId, question }) {
   const results = await Promise.all(
     toolNames.map((toolName) => {
       if (toolName === 'prepare_customer_order') {
-        return prepareCustomerOrderAction({ db, user, prompt: question })
+        return prepareCustomerOrderAction({ db, user, prompt: buildActionPrompt(question, messages) })
           .then((action) => ({
             name: 'prepare_customer_order',
             available: true,
