@@ -1,5 +1,26 @@
 const ALLOWED_ACTIONS = new Set(['customer_order_draft']);
 const OPTIONAL_DB_ERROR_CODES = new Set(['42P01', '42703']);
+const ARTICLE_MATCH_MIN_CONFIDENCE = 0.85;
+const ARTICLE_MATCH_AMBIGUOUS_DELTA = 0.08;
+const ARTICLE_STOP_WORDS = new Set([
+  'de',
+  'des',
+  'du',
+  'd',
+  'la',
+  'le',
+  'les',
+  'l',
+  'un',
+  'une',
+  'kg',
+  'kilo',
+  'kilos',
+  'piece',
+  'pieces',
+  'unite',
+  'unites',
+]);
 
 function clean(value) {
   const text = String(value || '').trim();
@@ -18,11 +39,30 @@ function normalizeText(value) {
     .replace(/[\u0300-\u036f]/g, '');
 }
 
+function normalizeForArticleMatch(value) {
+  return normalizeText(value)
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function singularizeToken(token) {
+  if (token.length > 4 && token.endsWith('s')) {
+    return token.slice(0, -1);
+  }
+  return token;
+}
+
+function articleTokens(value) {
+  return normalizeForArticleMatch(value)
+    .split(/\s+/)
+    .map(singularizeToken)
+    .filter((token) => token.length > 2 && !ARTICLE_STOP_WORDS.has(token));
+}
+
 function parseCustomerOrderPrompt(prompt) {
   const text = clean(prompt) || '';
-  const normalized = normalizeText(text);
-  const clientMatch = normalized.match(/\bpour\s+(.+?)\s+(?:avec|:)/);
-  const itemsPart = normalized.split(/\bavec\b|:/).slice(1).join(' ');
+  const clientMatch = text.match(/\bpour\s+(.+?)\s+(?:avec|:)/i);
+  const itemsPart = text.split(/\bavec\b|:/i).slice(1).join(' ');
 
   if (!clientMatch || !itemsPart) {
     const error = new Error('Je n ai pas assez d elements pour preparer la commande brouillon.');
@@ -32,7 +72,7 @@ function parseCustomerOrderPrompt(prompt) {
   }
 
   const lines = itemsPart
-    .split(/\s+et\s+|,|;/)
+    .split(/\s+et\s+|,|;/i)
     .map((part) => part.trim())
     .filter(Boolean)
     .map((part) => {
@@ -76,17 +116,66 @@ async function findClient(db, storeId, search) {
   return result.rows[0] || null;
 }
 
-async function findArticle(db, storeId, search) {
-  const tokens = normalizeText(search).split(/\s+/).filter((token) => token.length > 2).slice(0, 5);
-  const params = [storeId];
-  const scoreParts = [];
+function scoreArticleCandidate(search, candidate) {
+  const requestedTokens = articleTokens(search);
+  const designationTokens = new Set(articleTokens(candidate.designation));
+  const requestedPhrase = requestedTokens.join(' ');
+  const designationPhrase = articleTokens(candidate.designation).join(' ');
+  const matchedTokens = requestedTokens.filter((token) => designationTokens.has(token));
+  const coverage = requestedTokens.length > 0 ? matchedTokens.length / requestedTokens.length : 0;
 
-  tokens.forEach((token) => {
-    params.push(`%${token}%`);
-    scoreParts.push(`CASE WHEN LOWER(a.designation) LIKE $${params.length} THEN 1 ELSE 0 END`);
+  if (requestedTokens.length === 0) return 0;
+  if (designationPhrase === requestedPhrase) return 1;
+  if (designationPhrase.includes(requestedPhrase)) return 0.95;
+  if (coverage === 1) return 0.9;
+
+  return Number((coverage * 0.6).toFixed(2));
+}
+
+function buildArticleClarificationError(search, candidates, reason) {
+  const lines = candidates
+    .slice(0, 5)
+    .map((candidate) => `- ${candidate.designation}`);
+  const message = lines.length > 0
+    ? [
+        reason,
+        ...lines,
+        'Lequel souhaites-tu ?',
+      ]
+    : [
+        reason,
+        'Peux-tu preciser l article exact ?',
+      ];
+  const error = new Error(message.join('\n'));
+  error.status = 400;
+  error.expose = true;
+  return error;
+}
+
+async function findArticle(db, storeId, search) {
+  const requestedTokens = articleTokens(search).slice(0, 6);
+  const rawTokens = String(search || '')
+    .split(/\s+/)
+    .map((token) => token.replace(/[^\p{L}\p{N}]/gu, '').trim())
+    .filter((token) => token.length > 2 && !ARTICLE_STOP_WORDS.has(normalizeForArticleMatch(token)))
+    .slice(0, 6);
+  const sqlTokens = Array.from(new Set([...rawTokens, ...requestedTokens])).slice(0, 10);
+
+  console.info('[AI ACTION] article requested', {
+    store_id: storeId,
+    requested: search,
+    requested_tokens: requestedTokens,
   });
 
-  if (scoreParts.length === 0) return null;
+  if (requestedTokens.length === 0 || sqlTokens.length === 0) return null;
+
+  const params = [storeId];
+  const whereParts = [];
+  sqlTokens.forEach((token) => {
+    params.push(`%${token}%`);
+    whereParts.push(`LOWER(a.designation) LIKE LOWER($${params.length})`);
+    whereParts.push(`LOWER(COALESCE(a.plu, '')) LIKE LOWER($${params.length})`);
+  });
 
   const result = await db.query(`
     SELECT
@@ -100,18 +189,70 @@ async function findArticle(db, storeId, search) {
       a.sale_price_level_1_ht,
       a.sale_price_level_2_ht,
       a.sale_price_level_3_ht,
-      COALESCE(ss.pma, 0) AS pma,
-      (${scoreParts.join(' + ')}) AS match_score
+      COALESCE(ss.pma, 0) AS pma
     FROM articles a
     LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
     WHERE a.store_id = $1
       AND COALESCE(a.is_active, true) = true
-      AND (${scoreParts.join(' + ')}) > 0
-    ORDER BY match_score DESC, a.designation ASC
-    LIMIT 1
+      AND (${whereParts.join(' OR ')})
+    ORDER BY a.designation ASC
+    LIMIT 20
   `, params);
 
-  return result.rows[0] || null;
+  const candidates = result.rows
+    .map((candidate) => ({
+      ...candidate,
+      confidence_score: scoreArticleCandidate(search, candidate),
+    }))
+    .sort((a, b) => b.confidence_score - a.confidence_score || a.designation.localeCompare(b.designation));
+
+  console.info('[AI ACTION] article matches', {
+    store_id: storeId,
+    requested: search,
+    matches: candidates.map((candidate) => ({
+      article_id: candidate.id,
+      designation: candidate.designation,
+      confidence_score: candidate.confidence_score,
+    })),
+  });
+
+  const best = candidates[0] || null;
+  console.info('[AI ACTION] confidence score', {
+    store_id: storeId,
+    requested: search,
+    confidence_score: best?.confidence_score || 0,
+    min_confidence: ARTICLE_MATCH_MIN_CONFIDENCE,
+  });
+
+  if (!best || best.confidence_score < ARTICLE_MATCH_MIN_CONFIDENCE) {
+    throw buildArticleClarificationError(
+      search,
+      candidates,
+      `Je n ai pas trouve d article correspondant clairement a "${search}".`
+    );
+  }
+
+  const ambiguousCandidates = candidates.filter(
+    (candidate) => candidate.id !== best.id
+      && best.confidence_score - candidate.confidence_score <= ARTICLE_MATCH_AMBIGUOUS_DELTA
+      && candidate.confidence_score >= ARTICLE_MATCH_MIN_CONFIDENCE
+  );
+  if (ambiguousCandidates.length > 0) {
+    throw buildArticleClarificationError(
+      search,
+      [best, ...ambiguousCandidates],
+      'J ai trouve plusieurs articles possibles :'
+    );
+  }
+
+  console.info('[AI ACTION] selected article', {
+    store_id: storeId,
+    requested: search,
+    article_id: best.id,
+    designation: best.designation,
+  });
+
+  return best;
 }
 
 function tariffLevel(client) {
