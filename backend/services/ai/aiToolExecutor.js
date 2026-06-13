@@ -1,8 +1,20 @@
 const { runBusinessTool } = require('./aiBusinessTools');
 const { recommendSalesActions } = require('./aiRecommendationService');
 const { generateSalesDrafts } = require('./aiSalesDraftService');
+const { prepareCustomerOrderAction, isMissingActionTable } = require('./aiActionService');
 
 const TOOL_RULES = [
+  {
+    name: 'prepare_customer_order',
+    keywords: [
+      'prepare une commande',
+      'preparer une commande',
+      'commande brouillon',
+      'commande client brouillon',
+      'cree une commande brouillon',
+      'creer une commande brouillon',
+    ],
+  },
   {
     name: 'generate_sales_drafts',
     keywords: [
@@ -86,7 +98,7 @@ function selectTools(question) {
   return Array.from(new Set(selected)).slice(0, 4);
 }
 
-async function executeRelevantTools({ db, storeId, question }) {
+async function executeRelevantTools({ db, user, storeId, question }) {
   const toolNames = selectTools(question);
 
   if (toolNames.length === 0) {
@@ -100,6 +112,30 @@ async function executeRelevantTools({ db, storeId, question }) {
 
   const results = await Promise.all(
     toolNames.map((toolName) => {
+      if (toolName === 'prepare_customer_order') {
+        return prepareCustomerOrderAction({ db, user, prompt: question })
+          .then((action) => ({
+            name: 'prepare_customer_order',
+            available: true,
+            data: {
+              action,
+              pending_actions: [action],
+              requires_confirmation: true,
+              confirmation_label: 'Confirmer l action ?',
+            },
+          }))
+          .catch((error) => {
+            if (isMissingActionTable(error)) {
+              return {
+                name: 'prepare_customer_order',
+                available: false,
+                reason: 'Table ai_pending_actions absente. Migration requise avant les actions IA confirmees.',
+              };
+            }
+            throw error;
+          });
+      }
+
       if (toolName === 'generate_sales_drafts') {
         return generateSalesDrafts(db, storeId, question);
       }
