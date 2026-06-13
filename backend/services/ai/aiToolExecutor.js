@@ -1,7 +1,27 @@
 const { runBusinessTool } = require('./aiBusinessTools');
 const { recommendSalesActions } = require('./aiRecommendationService');
+const { generateSalesDrafts } = require('./aiSalesDraftService');
 
 const TOOL_RULES = [
+  {
+    name: 'generate_sales_drafts',
+    keywords: [
+      'generer email commercial',
+      'genere email commercial',
+      'email commercial',
+      'mail commercial',
+      'generer whatsapp',
+      'genere whatsapp',
+      'message whatsapp',
+      'generer offre commerciale',
+      'genere offre commerciale',
+      'offre commerciale',
+      'brouillon commercial',
+      'brouillons commerciaux',
+      'brouillon email',
+      'brouillon whatsapp',
+    ],
+  },
   {
     name: 'recommend_sales_actions',
     keywords: [
@@ -80,6 +100,10 @@ async function executeRelevantTools({ db, storeId, question }) {
 
   const results = await Promise.all(
     toolNames.map((toolName) => {
+      if (toolName === 'generate_sales_drafts') {
+        return generateSalesDrafts(db, storeId, question);
+      }
+
       if (toolName === 'recommend_sales_actions') {
         return recommendSalesActions(db, storeId);
       }
