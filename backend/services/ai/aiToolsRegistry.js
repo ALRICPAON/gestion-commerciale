@@ -6,6 +6,12 @@ const tools = [
     readonly: true,
   },
   {
+    name: 'generate_sales_drafts',
+    description: 'Prepare des brouillons commerciaux email, WhatsApp ou offre a partir des recommandations, sans envoi ni ecriture.',
+    enabled: true,
+    readonly: true,
+  },
+  {
     name: 'analyze_stock',
     description: 'Analyse le stock disponible par article, les lots disponibles, les stocks negatifs et les articles sans stock.',
     enabled: true,
