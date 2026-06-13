@@ -147,7 +147,8 @@ function isNegoceRequest(text) {
     || segment.includes('negoce')
     || segment.includes('a approvisionner')
     || segment.includes('precommande')
-    || Boolean(extractCorrectionArticle(text));
+    || Boolean(extractCorrectionArticle(text))
+    || extractUnitPrice(text) > 0;
 }
 
 function stripPricePhrases(value) {
