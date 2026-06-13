@@ -19,13 +19,26 @@ function normalizeQuestion(question) {
   return text.slice(0, MAX_QUESTION_LENGTH);
 }
 
+function extractPendingActions(toolResults) {
+  return toolResults
+    .flatMap((tool) => tool?.data?.pending_actions || [])
+    .filter((action) => action?.id && action?.status === 'pending')
+    .map((action) => ({
+      id: action.id,
+      action_type: action.action_type,
+      status: action.status,
+      summary: action.summary,
+    }));
+}
+
 async function chat({ db, user, question, messages = [] }) {
   const prompt = normalizeQuestion(question);
   const [context, conversation, toolResults] = await Promise.all([
     buildAiContext({ db, user }),
     Promise.resolve(normalizeConversation(messages)),
-    executeRelevantTools({ db, storeId: user.store_id, question: prompt }),
+    executeRelevantTools({ db, user, storeId: user.store_id, question: prompt }),
   ]);
+  const pendingActions = extractPendingActions(toolResults);
 
   console.info('Agent IA demande recue', {
     user_id: user.id,
@@ -33,6 +46,7 @@ async function chat({ db, user, question, messages = [] }) {
     model: process.env.AI_MODEL || 'gpt-4o-mini',
     conversation_messages: conversation.length,
     readonly_tools: toolResults.map((tool) => tool.name),
+    pending_actions: pendingActions.length,
   });
 
   const answer = await generateAnswer({
@@ -53,6 +67,7 @@ async function chat({ db, user, question, messages = [] }) {
 
   return {
     answer: answer || "Je n'ai pas pu produire de reponse exploitable pour le moment.",
+    pending_actions: pendingActions,
   };
 }
 
