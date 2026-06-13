@@ -31,7 +31,30 @@ function appendTextWithLineBreaks(parent, content) {
   });
 }
 
-function renderMessage(role, content) {
+function renderActionButtons(action, container) {
+  if (!action?.id || action.status !== 'pending') return;
+
+  const actions = document.createElement('div');
+  actions.className = 'ai-action-buttons';
+
+  const confirm = document.createElement('button');
+  confirm.type = 'button';
+  confirm.className = 'btn btn-primary';
+  confirm.textContent = 'Confirmer';
+  confirm.addEventListener('click', () => handlePendingAction(action.id, 'confirm', actions));
+
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'btn btn-secondary';
+  cancel.textContent = 'Annuler';
+  cancel.addEventListener('click', () => handlePendingAction(action.id, 'cancel', actions));
+
+  actions.appendChild(confirm);
+  actions.appendChild(cancel);
+  container.appendChild(actions);
+}
+
+function renderMessage(role, content, options = {}) {
   const article = document.createElement('article');
   article.className = `ai-message ${role === 'assistant' ? 'is-assistant' : 'is-user'}`;
   const meta = document.createElement('div');
@@ -45,6 +68,8 @@ function renderMessage(role, content) {
     appendTextWithLineBreaks(p, paragraph.trim());
     body.appendChild(p);
   });
+
+  (options.pendingActions || []).forEach((action) => renderActionButtons(action, body));
 
   article.appendChild(meta);
   article.appendChild(body);
@@ -61,6 +86,69 @@ function setLoading(isLoading) {
   els.send.textContent = isLoading ? 'Analyse...' : 'Envoyer';
 }
 
+async function requestJson(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error || 'Erreur assistant IA');
+  }
+
+  return data;
+}
+
+function formatActionResult(result) {
+  const sale = result?.result;
+  if (!sale) return 'Action IA executee.';
+
+  const lines = Array.isArray(sale.lines)
+    ? sale.lines.map((line) => `- ${line.article_label} : ${line.sold_quantity} ${line.sale_unit}`)
+    : [];
+
+  return [
+    'Commande brouillon creee.',
+    `Client : ${sale.client?.name || 'client'}`,
+    `Document : ${sale.sale_id}`,
+    '',
+    ...lines,
+  ].join('\n');
+}
+
+async function handlePendingAction(actionId, decision, buttons) {
+  if (!actionId || !['confirm', 'cancel'].includes(decision)) return;
+
+  buttons.querySelectorAll('button').forEach((button) => {
+    button.disabled = true;
+  });
+  showFeedback('');
+
+  try {
+    const data = await requestJson(`${API_BASE_URL}/api/ai-agent/actions/${actionId}/${decision}`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+
+    if (decision === 'cancel') {
+      renderMessage('assistant', 'Action IA annulee. Aucune donnee metier n a ete creee.');
+      return;
+    }
+
+    renderMessage('assistant', formatActionResult(data));
+  } catch (error) {
+    buttons.querySelectorAll('button').forEach((button) => {
+      button.disabled = false;
+    });
+    showFeedback(error.message || 'Erreur action IA');
+  }
+}
+
 async function askAssistant(question) {
   const cleanQuestion = String(question || '').trim();
   if (!cleanQuestion) return;
@@ -72,26 +160,19 @@ async function askAssistant(question) {
   setLoading(true);
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/ai-agent/chat`, {
+    const data = await requestJson(`${API_BASE_URL}/api/ai-agent/chat`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
       body: JSON.stringify({
         question: cleanQuestion,
         messages: conversation.slice(-12),
       }),
     });
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Erreur assistant IA');
-    }
 
     const answer = data.answer || "L'assistant n'a pas renvoye de reponse.";
     conversation.push({ role: 'assistant', content: answer });
-    renderMessage('assistant', answer);
+    renderMessage('assistant', answer, {
+      pendingActions: data.pending_actions || [],
+    });
   } catch (error) {
     showFeedback(error.message || 'Erreur assistant IA');
   } finally {
