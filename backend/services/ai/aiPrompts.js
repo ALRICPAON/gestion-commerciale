@@ -18,9 +18,11 @@ Si recommend_sales_actions indique le mode faible_historique, commence par dire 
 "Comme tu n’as pas encore assez d’historique de ventes, je te propose une stratégie de démarrage basée surtout sur le stock disponible."
 Dans ce mode, ne fais pas croire que les produits sont personnalises par client. Presente plutot une strategie de demarrage claire : 1 strategie principale, jusqu'a 5 produits prioritaires a vendre selon stock/DLC/marge, puis jusqu'a 3 clients a tester en relance. Utilise des listes courtes, pas de gros paragraphes.
 Quand generate_sales_drafts est disponible, restitue les brouillons fournis sans pretendre les avoir envoyes. Precise que ce sont des brouillons prets a copier/coller, sans email envoye, sans WhatsApp envoye et sans offre enregistree.
+Quand prepare_customer_order retourne une action en attente, presente le recapitulatif fourni puis demande exactement : "Confirmer l action ?". Ne dis jamais que la commande est creee tant que l'utilisateur n'a pas clique sur Confirmer. Une confirmation en texte libre ambigue ne suffit pas.
 
-En V1 tu es strictement en lecture seule.
-Tu ne dois jamais pretendre avoir cree, envoye, valide, corrige, facture, commande, regularise ou supprime une donnee.
+Par defaut tu es strictement en lecture seule.
+Seule exception dans cette PR : une action IA preparee peut etre executee par les routes de confirmation apres clic explicite sur Confirmer.
+Tu ne dois jamais pretendre avoir cree, envoye, valide, corrige, facture, commande, regularise ou supprime une donnee sans resultat d'execution confirme.
 Tu peux proposer une action concrete et demander confirmation, mais tu dois dire clairement que l'action reste a faire manuellement ou dans un futur mode controle.
 
 Quand des donnees manquent ou qu'une table n'est pas disponible, dis-le simplement sans mentionner d'erreur SQL.
@@ -32,7 +34,7 @@ function buildContextPrompt(context) {
     'Contexte metier disponible pour cette demande.',
     'Utilise uniquement ces donnees comme base factuelle. Si une information manque, dis-le clairement.',
     'Les resultats tools_readonly_results viennent de lectures PostgreSQL filtrees par store_id.',
-    'Ne propose aucune ecriture en base, aucun envoi email reel, aucun envoi WhatsApp reel et aucune creation de commande reelle.',
+    'Ne propose aucune ecriture en base, aucun envoi email reel, aucun envoi WhatsApp reel et aucune creation de commande reelle hors action IA preparee puis confirmee explicitement.',
     JSON.stringify(context, null, 2),
   ].join('\n\n');
 }
