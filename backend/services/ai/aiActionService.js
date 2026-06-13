@@ -2,6 +2,8 @@ const ALLOWED_ACTIONS = new Set(['customer_order_draft']);
 const OPTIONAL_DB_ERROR_CODES = new Set(['42P01', '42703']);
 const ARTICLE_MATCH_MIN_CONFIDENCE = 0.85;
 const ARTICLE_MATCH_AMBIGUOUS_DELTA = 0.08;
+const CLIENT_MATCH_MIN_CONFIDENCE = 0.72;
+const CLIENT_MATCH_AMBIGUOUS_DELTA = 0.08;
 const ARTICLE_STOP_WORDS = new Set([
   'de',
   'des',
@@ -21,6 +23,7 @@ const ARTICLE_STOP_WORDS = new Set([
   'unite',
   'unites',
 ]);
+const BLOCKING_SPECIES = new Set(['saumon', 'cabillaud', 'bar', 'daurade', 'sole', 'limande']);
 
 function clean(value) {
   const text = String(value || '').trim();
@@ -57,6 +60,69 @@ function articleTokens(value) {
     .split(/\s+/)
     .map(singularizeToken)
     .filter((token) => token.length > 2 && !ARTICLE_STOP_WORDS.has(token));
+}
+
+function formatQuantity(value, unit) {
+  const quantity = Number(number(value).toFixed(3));
+  return `${quantity} ${unit || 'unite'}`;
+}
+
+function buildClarificationError(message, details = {}) {
+  const error = new Error(message);
+  error.status = 400;
+  error.expose = true;
+  error.needs_clarification = true;
+  error.details = details;
+
+  console.info('[AI ACTION] needs clarification', {
+    reason: details.reason || message,
+    ...details.log,
+  });
+
+  return error;
+}
+
+function scoreTextMatch(search, value, options = {}) {
+  const minTokenLength = options.minTokenLength || 2;
+  const searchTokens = normalizeForArticleMatch(search)
+    .split(/\s+/)
+    .map(singularizeToken)
+    .filter((token) => token.length >= minTokenLength);
+  const valueTokens = normalizeForArticleMatch(value)
+    .split(/\s+/)
+    .map(singularizeToken)
+    .filter((token) => token.length >= minTokenLength);
+
+  if (searchTokens.length === 0 || valueTokens.length === 0) return 0;
+
+  const searchPhrase = searchTokens.join(' ');
+  const valuePhrase = valueTokens.join(' ');
+  const valueTokenSet = new Set(valueTokens);
+  const matchedTokens = searchTokens.filter((token) => valueTokenSet.has(token));
+  const coverage = matchedTokens.length / searchTokens.length;
+
+  if (valuePhrase === searchPhrase) return 1;
+  if (valuePhrase.includes(searchPhrase)) return 0.95;
+  if (searchPhrase.includes(valuePhrase)) return 0.9;
+  if (coverage === 1) return 0.88;
+  if (coverage > 0) return Number((coverage * 0.7).toFixed(2));
+
+  return 0;
+}
+
+function detectSpecies(value) {
+  const tokens = new Set(articleTokens(value));
+  return Array.from(BLOCKING_SPECIES).filter((species) => tokens.has(species));
+}
+
+function hasSpeciesConflict(search, candidate) {
+  const requestedSpecies = detectSpecies(search);
+  if (requestedSpecies.length === 0) return false;
+
+  const candidateSpecies = detectSpecies(candidate.designation);
+  if (candidateSpecies.length === 0) return false;
+
+  return candidateSpecies.some((species) => !requestedSpecies.includes(species));
 }
 
 function parseCustomerOrderPrompt(prompt) {
@@ -100,59 +166,146 @@ function parseCustomerOrderPrompt(prompt) {
 }
 
 async function findClient(db, storeId, search) {
+  console.info('[AI ACTION] client requested', {
+    store_id: storeId,
+    requested: search,
+  });
+
   const result = await db.query(`
-    SELECT id, code, name, tariff_level, vat_rate, is_vat_exempt
+    SELECT id, code, name, tariff_level, vat_rate, is_vat_exempt, city, email
     FROM clients
     WHERE store_id = $1
       AND COALESCE(status, 'active') <> 'inactive'
-      AND (
-        LOWER(name) LIKE LOWER($2)
-        OR LOWER(COALESCE(code, '')) LIKE LOWER($2)
-      )
     ORDER BY name ASC
-    LIMIT 1
-  `, [storeId, `%${search}%`]);
+    LIMIT 200
+  `, [storeId]);
 
-  return result.rows[0] || null;
+  const candidates = result.rows
+    .map((client) => ({
+      ...client,
+      confidence_score: Math.max(
+        scoreTextMatch(search, client.name, { minTokenLength: 2 }),
+        scoreTextMatch(search, client.code, { minTokenLength: 2 })
+      ),
+    }))
+    .filter((client) => client.confidence_score > 0)
+    .sort((a, b) => b.confidence_score - a.confidence_score || a.name.localeCompare(b.name));
+
+  console.info('[AI ACTION] client matches', {
+    store_id: storeId,
+    requested: search,
+    matches: candidates.slice(0, 8).map((client) => ({
+      client_id: client.id,
+      name: client.name,
+      code: client.code,
+      confidence_score: client.confidence_score,
+    })),
+  });
+
+  const best = candidates[0] || null;
+  if (!best || best.confidence_score < CLIENT_MATCH_MIN_CONFIDENCE) {
+    throw buildClarificationError(
+      `Client introuvable pour "${search}". Peux-tu preciser le client ?`,
+      {
+        reason: 'client_introuvable',
+        requested: search,
+        candidates: candidates.slice(0, 5),
+        log: {
+          store_id: storeId,
+          requested: search,
+          confidence_score: best?.confidence_score || 0,
+        },
+      }
+    );
+  }
+
+  const ambiguousClients = candidates.filter(
+    (client) => client.id !== best.id
+      && best.confidence_score - client.confidence_score <= CLIENT_MATCH_AMBIGUOUS_DELTA
+      && client.confidence_score >= CLIENT_MATCH_MIN_CONFIDENCE
+  );
+  if (ambiguousClients.length > 0) {
+    const choices = [best, ...ambiguousClients]
+      .slice(0, 5)
+      .map((client, index) => `${index + 1}. ${client.name}${client.city ? ` - ${client.city}` : ''}`);
+    throw buildClarificationError(
+      [
+        'J ai trouve plusieurs clients possibles :',
+        ...choices,
+        'Lequel veux-tu utiliser ?',
+      ].join('\n'),
+      {
+        reason: 'client_ambigu',
+        requested: search,
+        candidates: [best, ...ambiguousClients].slice(0, 5),
+        log: {
+          store_id: storeId,
+          requested: search,
+          candidates: [best, ...ambiguousClients].length,
+        },
+      }
+    );
+  }
+
+  console.info('[AI ACTION] selected client', {
+    store_id: storeId,
+    requested: search,
+    client_id: best.id,
+    name: best.name,
+    confidence_score: best.confidence_score,
+  });
+
+  return best;
 }
 
 function scoreArticleCandidate(search, candidate) {
-  const requestedTokens = articleTokens(search);
-  const designationTokens = new Set(articleTokens(candidate.designation));
-  const requestedPhrase = requestedTokens.join(' ');
-  const designationPhrase = articleTokens(candidate.designation).join(' ');
-  const matchedTokens = requestedTokens.filter((token) => designationTokens.has(token));
-  const coverage = requestedTokens.length > 0 ? matchedTokens.length / requestedTokens.length : 0;
+  if (hasSpeciesConflict(search, candidate)) return 0;
 
-  if (requestedTokens.length === 0) return 0;
-  if (designationPhrase === requestedPhrase) return 1;
-  if (designationPhrase.includes(requestedPhrase)) return 0.95;
-  if (coverage === 1) return 0.9;
+  const textScore = scoreTextMatch(search, candidate.designation, { minTokenLength: 3 });
+  if (textScore === 0) return 0;
 
-  return Number((coverage * 0.6).toFixed(2));
+  const stockBonus = number(candidate.stock_quantity) > 0 ? 0.04 : 0;
+  const historyBonus = number(candidate.client_history_count) > 0 ? 0.03 : 0;
+
+  return Number(Math.min(1, textScore + stockBonus + historyBonus).toFixed(2));
 }
 
-function buildArticleClarificationError(search, candidates, reason) {
+function formatArticleChoice(candidate, index) {
+  const parts = [
+    `${index + 1}. ${candidate.designation}`,
+    `stock ${formatQuantity(candidate.stock_quantity, candidate.sale_unit || candidate.unit)}`,
+  ];
+
+  if (number(candidate.client_history_count) > 0) {
+    parts.push('deja achete par ce client');
+  }
+
+  return parts.join(' - ');
+}
+
+function buildArticleClarificationError(search, candidates, reason, details = {}) {
   const lines = candidates
     .slice(0, 5)
-    .map((candidate) => `- ${candidate.designation}`);
+    .map((candidate, index) => formatArticleChoice(candidate, index));
   const message = lines.length > 0
     ? [
         reason,
         ...lines,
-        'Lequel souhaites-tu ?',
+        'Lequel veux-tu utiliser ?',
       ]
     : [
         reason,
         'Peux-tu preciser l article exact ?',
       ];
-  const error = new Error(message.join('\n'));
-  error.status = 400;
-  error.expose = true;
-  return error;
+  return buildClarificationError(message.join('\n'), {
+    reason: details.reason || 'article_a_preciser',
+    requested: search,
+    candidates: candidates.slice(0, 5),
+    log: details.log,
+  });
 }
 
-async function findArticle(db, storeId, search) {
+async function findArticle(db, storeId, client, search) {
   const requestedTokens = articleTokens(search).slice(0, 6);
   const rawTokens = String(search || '')
     .split(/\s+/)
@@ -163,13 +316,24 @@ async function findArticle(db, storeId, search) {
 
   console.info('[AI ACTION] article requested', {
     store_id: storeId,
+    client_id: client?.id || null,
     requested: search,
     requested_tokens: requestedTokens,
   });
 
-  if (requestedTokens.length === 0 || sqlTokens.length === 0) return null;
+  if (requestedTokens.length === 0 || sqlTokens.length === 0) {
+    throw buildArticleClarificationError(
+      search,
+      [],
+      'Quantite ou article manquant dans la demande.',
+      {
+        reason: 'article_manquant',
+        log: { store_id: storeId, client_id: client?.id || null },
+      }
+    );
+  }
 
-  const params = [storeId];
+  const params = [storeId, client?.id || null];
   const whereParts = [];
   sqlTokens.forEach((token) => {
     params.push(`%${token}%`);
@@ -189,14 +353,39 @@ async function findArticle(db, storeId, search) {
       a.sale_price_level_1_ht,
       a.sale_price_level_2_ht,
       a.sale_price_level_3_ht,
-      COALESCE(ss.pma, 0) AS pma
+      COALESCE(ss.stock_quantity, 0) AS stock_quantity,
+      ss.next_dlc,
+      COALESCE(ss.pma, 0) AS pma,
+      COUNT(sd.id)::int AS client_history_count,
+      MAX(sd.document_date) AS last_client_sale_date
     FROM articles a
     LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
+    LEFT JOIN sales_lines sl ON sl.article_id = a.id AND sl.store_id = a.store_id
+    LEFT JOIN sales_documents sd
+      ON sd.id = sl.sales_document_id
+     AND sd.store_id = sl.store_id
+     AND sd.client_id = $2
+     AND sd.document_date >= CURRENT_DATE - INTERVAL '365 days'
+     AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
     WHERE a.store_id = $1
       AND COALESCE(a.is_active, true) = true
       AND (${whereParts.join(' OR ')})
+    GROUP BY
+      a.id,
+      a.plu,
+      a.designation,
+      a.unit,
+      a.sale_unit,
+      a.vat_rate,
+      a.sale_price_ex_vat,
+      a.sale_price_level_1_ht,
+      a.sale_price_level_2_ht,
+      a.sale_price_level_3_ht,
+      ss.stock_quantity,
+      ss.next_dlc,
+      ss.pma
     ORDER BY a.designation ASC
-    LIMIT 20
+    LIMIT 40
   `, params);
 
   const candidates = result.rows
@@ -204,14 +393,50 @@ async function findArticle(db, storeId, search) {
       ...candidate,
       confidence_score: scoreArticleCandidate(search, candidate),
     }))
-    .sort((a, b) => b.confidence_score - a.confidence_score || a.designation.localeCompare(b.designation));
+    .filter((candidate) => candidate.confidence_score > 0)
+    .sort((a, b) => {
+      const confidenceDelta = b.confidence_score - a.confidence_score;
+      if (confidenceDelta !== 0) return confidenceDelta;
+      const historyDelta = number(b.client_history_count) - number(a.client_history_count);
+      if (historyDelta !== 0) return historyDelta;
+      const stockDelta = number(b.stock_quantity) - number(a.stock_quantity);
+      if (stockDelta !== 0) return stockDelta;
+      return a.designation.localeCompare(b.designation);
+    });
+  const stockCandidates = candidates.filter((candidate) => number(candidate.stock_quantity) > 0);
+  const historyCandidates = candidates.filter((candidate) => number(candidate.client_history_count) > 0);
 
   console.info('[AI ACTION] article matches', {
     store_id: storeId,
+    client_id: client?.id || null,
     requested: search,
     matches: candidates.map((candidate) => ({
       article_id: candidate.id,
       designation: candidate.designation,
+      confidence_score: candidate.confidence_score,
+      stock_quantity: number(candidate.stock_quantity),
+      client_history_count: number(candidate.client_history_count),
+    })),
+  });
+  console.info('[AI ACTION] stock candidates', {
+    store_id: storeId,
+    client_id: client?.id || null,
+    requested: search,
+    candidates: stockCandidates.slice(0, 8).map((candidate) => ({
+      article_id: candidate.id,
+      designation: candidate.designation,
+      stock_quantity: number(candidate.stock_quantity),
+      confidence_score: candidate.confidence_score,
+    })),
+  });
+  console.info('[AI ACTION] history candidates', {
+    store_id: storeId,
+    client_id: client?.id || null,
+    requested: search,
+    candidates: historyCandidates.slice(0, 8).map((candidate) => ({
+      article_id: candidate.id,
+      designation: candidate.designation,
+      client_history_count: number(candidate.client_history_count),
       confidence_score: candidate.confidence_score,
     })),
   });
@@ -219,6 +444,7 @@ async function findArticle(db, storeId, search) {
   const best = candidates[0] || null;
   console.info('[AI ACTION] confidence score', {
     store_id: storeId,
+    client_id: client?.id || null,
     requested: search,
     confidence_score: best?.confidence_score || 0,
     min_confidence: ARTICLE_MATCH_MIN_CONFIDENCE,
@@ -227,29 +453,72 @@ async function findArticle(db, storeId, search) {
   if (!best || best.confidence_score < ARTICLE_MATCH_MIN_CONFIDENCE) {
     throw buildArticleClarificationError(
       search,
-      candidates,
-      `Je n ai pas trouve d article correspondant clairement a "${search}".`
+      stockCandidates.length > 0 ? stockCandidates : candidates,
+      `Je n ai pas trouve d article correspondant clairement a "${search}".`,
+      {
+        reason: 'article_introuvable',
+        log: {
+          store_id: storeId,
+          client_id: client?.id || null,
+          confidence_score: best?.confidence_score || 0,
+        },
+      }
     );
   }
 
-  const ambiguousCandidates = candidates.filter(
+  const availableHighConfidence = stockCandidates.filter(
+    (candidate) => candidate.confidence_score >= ARTICLE_MATCH_MIN_CONFIDENCE
+  );
+
+  if (number(best.stock_quantity) <= 0) {
+    const alternatives = stockCandidates.filter(
+      (candidate) => candidate.confidence_score >= ARTICLE_MATCH_MIN_CONFIDENCE - 0.1
+    );
+    throw buildArticleClarificationError(
+      search,
+      alternatives,
+      `Je n ai pas de stock disponible sur "${best.designation}".`,
+      {
+        reason: 'article_sans_stock',
+        log: {
+          store_id: storeId,
+          client_id: client?.id || null,
+          article_id: best.id,
+          stock_quantity: number(best.stock_quantity),
+          alternatives: alternatives.length,
+        },
+      }
+    );
+  }
+
+  const ambiguousCandidates = availableHighConfidence.filter(
     (candidate) => candidate.id !== best.id
       && best.confidence_score - candidate.confidence_score <= ARTICLE_MATCH_AMBIGUOUS_DELTA
-      && candidate.confidence_score >= ARTICLE_MATCH_MIN_CONFIDENCE
   );
   if (ambiguousCandidates.length > 0) {
     throw buildArticleClarificationError(
       search,
       [best, ...ambiguousCandidates],
-      'J ai trouve plusieurs articles possibles :'
+      `J ai trouve plusieurs articles ${detectSpecies(search)[0] || 'possibles'} :`,
+      {
+        reason: 'article_ambigu',
+        log: {
+          store_id: storeId,
+          client_id: client?.id || null,
+          candidates: [best, ...ambiguousCandidates].length,
+        },
+      }
     );
   }
 
   console.info('[AI ACTION] selected article', {
     store_id: storeId,
+    client_id: client?.id || null,
     requested: search,
     article_id: best.id,
     designation: best.designation,
+    stock_quantity: number(best.stock_quantity),
+    confidence_score: best.confidence_score,
   });
 
   return best;
@@ -316,12 +585,26 @@ async function prepareCustomerOrderAction({ db, user, prompt, payload }) {
 
   const lines = [];
   for (const rawLine of parsed.lines) {
-    const article = await findArticle(db, storeId, rawLine.article_search);
+    const article = await findArticle(db, storeId, client, rawLine.article_search);
     if (!article) {
       const error = new Error(`Article introuvable pour "${rawLine.article_search}".`);
       error.status = 400;
       error.expose = true;
       throw error;
+    }
+    if (articlePrice(article, client) <= 0) {
+      throw buildClarificationError(
+        `Prix manquant pour "${article.designation}". Je ne peux pas preparer une commande sans prix de vente.`,
+        {
+          reason: 'prix_manquant',
+          requested: rawLine.article_search,
+          log: {
+            store_id: storeId,
+            client_id: client.id,
+            article_id: article.id,
+          },
+        }
+      );
     }
     lines.push(buildLinePayload(rawLine, article, client));
   }

@@ -132,6 +132,19 @@ async function executeRelevantTools({ db, user, storeId, question }) {
                 reason: 'Table ai_pending_actions absente. Migration requise avant les actions IA confirmees.',
               };
             }
+            if (error.expose && error.needs_clarification) {
+              return {
+                name: 'prepare_customer_order',
+                available: false,
+                reason: error.message,
+                data: {
+                  needs_clarification: true,
+                  clarification_message: error.message,
+                  details: error.details || null,
+                  pending_actions: [],
+                },
+              };
+            }
             throw error;
           });
       }
