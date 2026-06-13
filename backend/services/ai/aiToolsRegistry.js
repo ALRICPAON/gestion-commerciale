@@ -12,6 +12,18 @@ const tools = [
     readonly: true,
   },
   {
+    name: 'prepare_customer_order',
+    description: 'Prepare une action IA de commande client brouillon a confirmer explicitement avant execution.',
+    enabled: true,
+    readonly: false,
+  },
+  {
+    name: 'confirm_ai_action',
+    description: 'Execute une action IA preparee uniquement apres confirmation explicite via la route de confirmation.',
+    enabled: true,
+    readonly: false,
+  },
+  {
     name: 'analyze_stock',
     description: 'Analyse le stock disponible par article, les lots disponibles, les stocks negatifs et les articles sans stock.',
     enabled: true,
