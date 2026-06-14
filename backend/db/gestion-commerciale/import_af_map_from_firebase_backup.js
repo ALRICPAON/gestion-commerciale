@@ -10,7 +10,7 @@ require('dotenv').config({
 const { Pool } = require('pg');
 
 const TABLE = 'supplier_article_mappings';
-const REF_COLUMNS = ['supplier_reference', 'ref_fournisseur', 'refFournisseur', 'reference_fournisseur'];
+const REF_COLUMNS = ['supplier_ref', 'supplier_reference', 'ref_fournisseur', 'refFournisseur', 'reference_fournisseur'];
 
 const COLUMN_CANDIDATES = {
   supplier_code: ['supplier_code', 'fournisseur_code', 'fournisseurCode'],
