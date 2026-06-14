@@ -31,6 +31,22 @@ async function generateAnswer({ messages }) {
   return completion.choices?.[0]?.message?.content?.trim() || '';
 }
 
+async function generateToolCall({ messages, tools, toolChoice }) {
+  const client = getOpenAIClient();
+  const model = process.env.AI_MODEL || 'gpt-4o-mini';
+
+  const completion = await client.chat.completions.create({
+    model,
+    messages,
+    tools,
+    tool_choice: toolChoice || 'auto',
+    temperature: 0,
+  });
+
+  return completion.choices?.[0]?.message || null;
+}
+
 module.exports = {
   generateAnswer,
+  generateToolCall,
 };

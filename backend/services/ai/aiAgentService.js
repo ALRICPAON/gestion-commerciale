@@ -87,10 +87,26 @@ async function handleConfirmationIntent({ db, user }) {
     };
   }
 
+  const pendingAction = pendingActions[0];
+  console.info('[AI ACTION] confirmation matched pending action', {
+    store_id: user.store_id,
+    user_id: user.id,
+    action_id: pendingAction.id,
+    action_type: pendingAction.action_type,
+  });
+
   const confirmed = await confirmAction({
     dbPool: db,
     user,
-    actionId: pendingActions[0].id,
+    actionId: pendingAction.id,
+  });
+
+  console.info('[AI ACTION] pending action executed', {
+    store_id: user.store_id,
+    user_id: user.id,
+    action_id: pendingAction.id,
+    status: confirmed.status,
+    sale_id: confirmed.result?.sale_id || null,
   });
 
   return {
