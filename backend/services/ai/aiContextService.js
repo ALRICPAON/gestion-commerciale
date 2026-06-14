@@ -1,3 +1,5 @@
+const { loadUserMemory } = require('./aiUserMemoryService');
+
 const OPTIONAL_TABLE_ERROR_CODES = new Set(['42P01', '42703']);
 
 function asNumber(value, fallback = 0) {
@@ -293,6 +295,7 @@ async function buildAiContext({ db, user }) {
   const storeId = user.store_id;
   const [
     userContext,
+    userMemory,
     storeContext,
     articles,
     clients,
@@ -302,6 +305,7 @@ async function buildAiContext({ db, user }) {
     purchases,
   ] = await Promise.all([
     loadUserContext(db, user),
+    loadUserMemory({ db, user }),
     loadStoreContext(db, storeId),
     loadArticles(db, storeId),
     loadClients(db, storeId),
@@ -315,6 +319,7 @@ async function buildAiContext({ db, user }) {
     readonly: true,
     generated_at: new Date().toISOString(),
     user: userContext,
+    user_memory: userMemory,
     store_id: storeId,
     company: storeContext,
     articles,
