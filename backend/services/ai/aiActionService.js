@@ -404,6 +404,17 @@ function scoreArticleCandidate(search, candidate) {
   return Number(Math.min(1, baseScore + historyBonus).toFixed(2));
 }
 
+function isExactNormalizedArticleMatch(candidate, normalizedSearch) {
+  if (!normalizedSearch) return false;
+
+  return normalizeForArticleExact(candidate?.designation) === normalizedSearch
+    || normalizeForArticleExact(candidate?.display_name) === normalizedSearch;
+}
+
+function findExactNormalizedArticleMatches(rows, normalizedSearch) {
+  return rows.filter((row) => isExactNormalizedArticleMatch(row, normalizedSearch));
+}
+
 function formatArticleChoice(candidate, index) {
   const parts = [
     `${index + 1}. ${candidate.designation}`,
@@ -490,6 +501,7 @@ function buildArticleLookup({ storeId, client, search, sqlTokens, referenceToken
   }
 
   const existenceFilter = broadFallback || whereParts.length === 0 ? 'TRUE' : `(${whereParts.join(' OR ')})`;
+  const limitClause = broadFallback ? '' : 'LIMIT 80';
   const lookupQuery = `
     SELECT
       a.id,
@@ -540,17 +552,91 @@ function buildArticleLookup({ storeId, client, search, sqlTokens, referenceToken
       ss.next_dlc,
       ss.pma
     ORDER BY a.designation ASC
-    LIMIT ${broadFallback ? 500 : 80}
+    ${limitClause}
   `;
 
   return { lookupQuery, params, whereParts };
+}
+
+async function applyJsExactFallback(db, buildOptions, currentLookup) {
+  const currentExactMatches = findExactNormalizedArticleMatches(
+    currentLookup.result.rows,
+    buildOptions.normalizedSearch
+  );
+  if (currentExactMatches.length > 0) {
+    return {
+      ...currentLookup,
+      jsFallbackUsed: false,
+      jsFallbackRawCount: null,
+      jsFallbackExactCount: currentExactMatches.length,
+    };
+  }
+
+  console.info('[AI ACTION] article js fallback started', {
+    store_id: buildOptions.storeId,
+    client_id: buildOptions.client?.id || null,
+    requested: buildOptions.search,
+    normalized_search: buildOptions.normalizedSearch,
+    previous_raw_count: currentLookup.result.rows.length,
+  });
+
+  const broadLookup = buildArticleLookup({ ...buildOptions, useUnaccent: false, broadFallback: true });
+  const result = await db.query(broadLookup.lookupQuery, broadLookup.params);
+  const exactMatches = findExactNormalizedArticleMatches(result.rows, buildOptions.normalizedSearch);
+
+  console.info('[AI ACTION] article js fallback exact match', {
+    store_id: buildOptions.storeId,
+    client_id: buildOptions.client?.id || null,
+    requested: buildOptions.search,
+    normalized_search: buildOptions.normalizedSearch,
+    matched: exactMatches.length > 0,
+    matches: exactMatches.slice(0, 8).map((candidate) => ({
+      article_id: candidate.id,
+      plu: candidate.plu,
+      designation: candidate.designation,
+      display_name: candidate.display_name,
+      normalized_designation: normalizeForArticleExact(candidate.designation),
+      normalized_display_name: normalizeForArticleExact(candidate.display_name),
+    })),
+  });
+  console.info('[AI ACTION] article js fallback results count', {
+    store_id: buildOptions.storeId,
+    client_id: buildOptions.client?.id || null,
+    requested: buildOptions.search,
+    raw_count: result.rows.length,
+    exact_count: exactMatches.length,
+  });
+
+  if (exactMatches.length > 0) {
+    return {
+      ...broadLookup,
+      result: { ...result, rows: exactMatches },
+      usedUnaccent: false,
+      broadFallback: true,
+      jsFallbackUsed: true,
+      jsFallbackRawCount: result.rows.length,
+      jsFallbackExactCount: exactMatches.length,
+    };
+  }
+
+  return {
+    ...currentLookup,
+    jsFallbackUsed: true,
+    jsFallbackRawCount: result.rows.length,
+    jsFallbackExactCount: 0,
+  };
 }
 
 async function queryArticleCandidates(db, buildOptions) {
   try {
     const lookup = buildArticleLookup({ ...buildOptions, useUnaccent: true });
     const result = await db.query(lookup.lookupQuery, lookup.params);
-    return { ...lookup, result, usedUnaccent: true, broadFallback: false };
+    return applyJsExactFallback(db, buildOptions, {
+      ...lookup,
+      result,
+      usedUnaccent: true,
+      broadFallback: false,
+    });
   } catch (error) {
     if (!UNACCENT_UNAVAILABLE_CODES.has(error.code)) throw error;
 
@@ -563,14 +649,13 @@ async function queryArticleCandidates(db, buildOptions) {
   }
 
   const fallbackLookup = buildArticleLookup({ ...buildOptions, useUnaccent: false });
-  let result = await db.query(fallbackLookup.lookupQuery, fallbackLookup.params);
-  if (result.rows.length > 0) {
-    return { ...fallbackLookup, result, usedUnaccent: false, broadFallback: false };
-  }
-
-  const broadLookup = buildArticleLookup({ ...buildOptions, useUnaccent: false, broadFallback: true });
-  result = await db.query(broadLookup.lookupQuery, broadLookup.params);
-  return { ...broadLookup, result, usedUnaccent: false, broadFallback: true };
+  const result = await db.query(fallbackLookup.lookupQuery, fallbackLookup.params);
+  return applyJsExactFallback(db, buildOptions, {
+    ...fallbackLookup,
+    result,
+    usedUnaccent: false,
+    broadFallback: false,
+  });
 }
 
 async function findArticle(db, storeId, client, search, options = {}) {
@@ -626,6 +711,9 @@ async function findArticle(db, storeId, client, search, options = {}) {
     reference_token: referenceToken || null,
     used_unaccent: lookup.usedUnaccent,
     broad_fallback: lookup.broadFallback,
+    js_fallback_used: lookup.jsFallbackUsed,
+    js_fallback_raw_count: lookup.jsFallbackRawCount,
+    js_fallback_exact_count: lookup.jsFallbackExactCount,
     where_parts: lookup.whereParts,
     sql: lookup.lookupQuery.replace(/\s+/g, ' ').trim(),
   });
@@ -655,6 +743,9 @@ async function findArticle(db, storeId, client, search, options = {}) {
     scored_count: candidates.length,
     used_unaccent: lookup.usedUnaccent,
     broad_fallback: lookup.broadFallback,
+    js_fallback_used: lookup.jsFallbackUsed,
+    js_fallback_raw_count: lookup.jsFallbackRawCount,
+    js_fallback_exact_count: lookup.jsFallbackExactCount,
     results: articleLookupLogRows(candidates),
   });
   console.info('[AI ACTION] article matches', {
