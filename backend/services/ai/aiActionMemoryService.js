@@ -169,6 +169,20 @@ function validatedPositiveNumber(value) {
   return parsed > 0 ? parsed : null;
 }
 
+function filterMissingFields(missingFields, validated) {
+  const hasArticleSearch = Boolean(validated.article_search || validated.article_plu);
+  const hasQuantity = Boolean(validated.quantity);
+
+  return missingFields.filter((field) => {
+    if (field === 'action_type') return !validated.action_type;
+    if (field === 'client') return !validated.client_search;
+    if (field === 'article' || field === 'article_plu') return !hasArticleSearch;
+    if (field === 'quantity' || field === 'colis_count' || field === 'weight_per_colis') return !hasQuantity;
+    if (field === 'unit_price_ht') return !validated.unit_price_ht;
+    return true;
+  });
+}
+
 function validateMemoryPayload(payload = {}) {
   const actionType = payload.action_type === 'customer_order_draft'
     ? 'customer_order_draft'
@@ -193,9 +207,11 @@ function validateMemoryPayload(payload = {}) {
     weight_per_colis: weightPerColis,
     quantity,
     unit_price_ht: validatedPositiveNumber(payload.unit_price_ht),
-    missing_fields: missingFields,
+    missing_fields: [],
     status,
   };
+
+  validated.missing_fields = filterMissingFields(missingFields, validated);
 
   if (!validated.action_type) validated.missing_fields.push('action_type');
   if (!validated.client_search) validated.missing_fields.push('client');
