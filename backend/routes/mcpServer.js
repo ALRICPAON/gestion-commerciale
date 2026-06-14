@@ -167,8 +167,8 @@ const executePendingActionInputSchema = {
 function toolMeta(invoking, invoked, options = {}) {
   return {
     securitySchemes: SECURITY_SCHEMES,
+    ui: { resourceUri: ALTA_WIDGET_URI, visibility: ['model', 'app'] },
     'openai/outputTemplate': ALTA_WIDGET_URI,
-    'ui/resourceUri': ALTA_WIDGET_URI,
     'openai/widgetAccessible': true,
     'openai/toolInvocation/invoking': invoking,
     'openai/toolInvocation/invoked': invoked,
@@ -301,8 +301,8 @@ function toolResult(payload) {
     ],
     structuredContent: payload,
     _meta: {
+      ui: { resourceUri: ALTA_WIDGET_URI },
       'openai/outputTemplate': ALTA_WIDGET_URI,
-      'ui/resourceUri': ALTA_WIDGET_URI,
     },
   };
 }
