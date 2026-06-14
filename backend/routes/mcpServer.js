@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 
 const {
@@ -15,6 +16,8 @@ const {
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
+const LEGACY_SESSIONS = new Map();
+const SESSION_TTL_MS = 30 * 60 * 1000;
 
 const searchInputSchema = {
   type: 'object',
@@ -126,6 +129,29 @@ function toolResult(payload) {
   };
 }
 
+function getMcpEndpoint(req, sessionId) {
+  const baseUrl = `${req.protocol}://${req.get('host')}${req.baseUrl}`;
+  return `${baseUrl}?sessionId=${encodeURIComponent(sessionId)}`;
+}
+
+function writeSse(res, event, data) {
+  res.write(`event: ${event}\n`);
+  res.write(`data: ${data}\n\n`);
+}
+
+function writeSseJson(res, message) {
+  writeSse(res, 'message', JSON.stringify(message));
+}
+
+function closeLegacySession(sessionId) {
+  const session = LEGACY_SESSIONS.get(sessionId);
+  if (!session) return;
+  clearInterval(session.heartbeat);
+  clearTimeout(session.timeout);
+  LEGACY_SESSIONS.delete(sessionId);
+  if (!session.res.destroyed) session.res.end();
+}
+
 async function handleRequest(req, message) {
   if (!message || message.jsonrpc !== '2.0' || !message.method) {
     return jsonRpcError(message?.id, -32600, 'Requête JSON-RPC invalide');
@@ -140,8 +166,9 @@ async function handleRequest(req, message) {
   if (method === 'initialize') {
     return jsonRpcResult(id, {
       protocolVersion: PROTOCOL_VERSION,
-      capabilities: { tools: {} },
-      serverInfo: { name: 'alta-maree-mcp', version: '1.0.0' },
+      capabilities: { tools: { listChanged: false } },
+      serverInfo: { name: 'alta-maree-mcp', version: '1.0.1' },
+      instructions: 'Utilise les outils ALTA uniquement pour lire les données métier et préparer des actions en attente de confirmation humaine.',
     });
   }
 
@@ -179,6 +206,16 @@ async function handleRequest(req, message) {
   return jsonRpcError(id, -32601, `Méthode MCP non supportée : ${method}`);
 }
 
+async function handleBatch(req, body) {
+  if (!Array.isArray(body)) {
+    const response = await handleRequest(req, body);
+    return response ? [response] : [];
+  }
+
+  const responses = await Promise.all(body.map((message) => handleRequest(req, message)));
+  return responses.filter(Boolean);
+}
+
 router.use(requireAgentApiKey, resolveAgentStore);
 
 router.get('/', (req, res) => {
@@ -187,36 +224,44 @@ router.get('/', (req, res) => {
     return res.status(405).json({ error: 'Utilise POST JSON-RPC ou GET avec Accept: text/event-stream' });
   }
 
+  const sessionId = crypto.randomUUID();
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
     Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
   });
-
-  res.write('event: endpoint\n');
-  res.write('data: /mcp\n\n');
-  res.write('event: ready\n');
-  res.write('data: {"ok":true}\n\n');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
 
   const heartbeat = setInterval(() => {
     res.write(': keepalive\n\n');
   }, 15000);
+  const timeout = setTimeout(() => closeLegacySession(sessionId), SESSION_TTL_MS);
 
-  req.on('close', () => clearInterval(heartbeat));
+  LEGACY_SESSIONS.set(sessionId, { res, heartbeat, timeout });
+  writeSse(res, 'endpoint', getMcpEndpoint(req, sessionId));
+
+  req.on('close', () => closeLegacySession(sessionId));
 });
 
 router.post('/', async (req, res) => {
   try {
-    const body = req.body;
-    if (Array.isArray(body)) {
-      const responses = (await Promise.all(body.map((message) => handleRequest(req, message)))).filter(Boolean);
-      if (responses.length === 0) return res.status(202).end();
-      return res.json(responses);
+    const sessionId = req.query.sessionId;
+    if (sessionId) {
+      const session = LEGACY_SESSIONS.get(String(sessionId));
+      if (!session || session.res.destroyed) {
+        return res.status(404).json({ error: 'Session MCP SSE introuvable' });
+      }
+
+      const responses = await handleBatch(req, req.body);
+      responses.forEach((response) => writeSseJson(session.res, response));
+      return res.status(202).end();
     }
 
-    const response = await handleRequest(req, body);
-    if (!response) return res.status(202).end();
-    return res.json(response);
+    const responses = await handleBatch(req, req.body);
+    if (responses.length === 0) return res.status(202).end();
+    if (Array.isArray(req.body)) return res.json(responses);
+    return res.json(responses[0]);
   } catch (error) {
     console.error('Erreur MCP ALTA :', error);
     return res.status(500).json(jsonRpcError(null, -32603, 'Erreur serveur MCP'));
@@ -224,6 +269,8 @@ router.post('/', async (req, res) => {
 });
 
 router.delete('/', (req, res) => {
+  const sessionId = req.query.sessionId || req.get('mcp-session-id');
+  if (sessionId) closeLegacySession(String(sessionId));
   res.status(405).json({ error: 'Session MCP stateless : suppression non supportée' });
 });
 
