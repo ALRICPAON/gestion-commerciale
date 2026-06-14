@@ -217,6 +217,31 @@ function logResolutionError({ storeId, user, error }) {
   });
 }
 
+function mergeResolutionError(shortMemory, error) {
+  const missingFields = new Set(shortMemory.missing_fields || []);
+  const reason = error.details?.reason || '';
+
+  if (reason.includes('client') && !shortMemory.client_search) {
+    missingFields.add('client');
+  }
+  if (reason.includes('prix') && !shortMemory.unit_price_ht) {
+    missingFields.add('unit_price_ht');
+  }
+  if (reason.includes('article') && !shortMemory.article_search && !shortMemory.article_plu) {
+    missingFields.add('article');
+  }
+
+  return {
+    ...shortMemory,
+    status: 'collecting',
+    missing_fields: Array.from(missingFields),
+    resolution_error: {
+      message: error.message,
+      details: error.details || null,
+    },
+  };
+}
+
 async function executePrepareCustomerOrder({ db, user, storeId, question, messages, collectingMemory }) {
   console.info('[AI TOOL] prepare_customer_order called', {
     store_id: storeId,
@@ -368,15 +393,7 @@ async function executePrepareCustomerOrder({ db, user, storeId, question, messag
         memory = await saveCollectingActionMemory({
           db,
           user,
-          shortMemory: {
-            ...shortMemory,
-            status: 'collecting',
-            missing_fields: Array.from(new Set([...(shortMemory.missing_fields || []), 'article'])),
-            resolution_error: {
-              message: error.message,
-              details: error.details || null,
-            },
-          },
+          shortMemory: mergeResolutionError(shortMemory, error),
           question,
         });
       } catch (memoryError) {
