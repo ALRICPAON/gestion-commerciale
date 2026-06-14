@@ -18,6 +18,12 @@ const tools = [
     readonly: false,
   },
   {
+    name: 'update_user_memory',
+    description: 'Met a jour la memoire longue utilisateur avec des habitudes de travail reutilisables via outil structure dedie.',
+    enabled: true,
+    readonly: false,
+  },
+  {
     name: 'confirm_ai_action',
     description: 'Execute une action IA preparee uniquement apres confirmation explicite via la route de confirmation.',
     enabled: true,
