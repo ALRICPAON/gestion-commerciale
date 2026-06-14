@@ -18,6 +18,87 @@ const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
+const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
+const ALTA_WIDGET_MIME_TYPE = 'text/html;profile=mcp-app';
+const SECURITY_SCHEMES = [{ type: 'http', scheme: 'bearer' }];
+
+const ALTA_WIDGET_HTML = `<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ALTA MAREE connecté</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f7fafc;
+      --panel: #ffffff;
+      --text: #122033;
+      --muted: #5f6f82;
+      --accent: #0f766e;
+      --border: #d9e2ec;
+    }
+
+    body {
+      margin: 0;
+      padding: 18px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 14px;
+      padding: 8px 10px;
+      border: 1px solid rgba(15, 118, 110, 0.24);
+      border-radius: 8px;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>ALTA MAREE connecté</h1>
+    <p>Les outils ALTA sont disponibles pour rechercher clients, articles, stock, fournisseurs et ventes, puis préparer des actions en attente de confirmation humaine.</p>
+    <div class="status"><span class="dot" aria-hidden="true"></span>Connexion MCP active</div>
+  </main>
+</body>
+</html>`;
 
 const searchInputSchema = {
   type: 'object',
@@ -29,71 +110,164 @@ const searchInputSchema = {
   additionalProperties: false,
 };
 
+const searchOutputSchema = {
+  type: 'object',
+  properties: {
+    results: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: true },
+    },
+  },
+  required: ['results'],
+  additionalProperties: true,
+};
+
+const pendingActionOutputSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    action_type: { type: 'string' },
+    summary: { type: 'string' },
+    payload: { type: 'object', additionalProperties: true },
+    status: { type: 'string' },
+  },
+  additionalProperties: true,
+};
+
+const pendingActionInputSchema = {
+  type: 'object',
+  required: ['action_type', 'summary', 'payload'],
+  properties: {
+    action_type: { type: 'string', description: 'Type métier préparé, par exemple customer_order_draft ou email_draft.' },
+    summary: { type: 'string', description: 'Résumé clair à afficher à l’utilisateur avant confirmation.' },
+    payload: { type: 'object', description: 'Payload figé préparé par l’agent.', additionalProperties: true },
+  },
+  additionalProperties: false,
+};
+
+const getPendingActionInputSchema = {
+  type: 'object',
+  required: ['id'],
+  properties: {
+    id: { type: 'string', description: 'Identifiant UUID de l’action en attente.' },
+  },
+  additionalProperties: false,
+};
+
+const executePendingActionInputSchema = {
+  type: 'object',
+  required: ['id', 'confirmation'],
+  properties: {
+    id: { type: 'string', description: 'Identifiant UUID de l’action en attente.' },
+    confirmation: { type: 'string', enum: ['human_confirmed'], description: 'Doit valoir human_confirmed.' },
+  },
+  additionalProperties: false,
+};
+
+function toolMeta(invoking, invoked, options = {}) {
+  return {
+    securitySchemes: SECURITY_SCHEMES,
+    ui: { resourceUri: ALTA_WIDGET_URI, visibility: ['model', 'app'] },
+    'openai/outputTemplate': ALTA_WIDGET_URI,
+    'openai/widgetAccessible': true,
+    'openai/toolInvocation/invoking': invoking,
+    'openai/toolInvocation/invoked': invoked,
+    ...options,
+  };
+}
+
+function makeTool({ name, title, description, inputSchema, outputSchema, invoking, invoked, readOnly = true }) {
+  return {
+    name,
+    title,
+    description,
+    inputSchema,
+    outputSchema,
+    securitySchemes: SECURITY_SCHEMES,
+    annotations: {
+      readOnlyHint: readOnly,
+      destructiveHint: false,
+      openWorldHint: false,
+    },
+    _meta: toolMeta(invoking, invoked),
+  };
+}
+
 const tools = [
-  {
+  makeTool({
     name: 'search_clients',
-    description: 'Recherche des clients ALTA MARÉE par code, nom, contact, email, téléphone ou ville.',
+    title: 'Rechercher des clients',
+    description: 'Recherche des clients ALTA MAREE par code, nom, contact, email, téléphone ou ville.',
     inputSchema: searchInputSchema,
-  },
-  {
+    outputSchema: searchOutputSchema,
+    invoking: 'Recherche clients ALTA...',
+    invoked: 'Clients ALTA trouvés',
+  }),
+  makeTool({
     name: 'search_articles',
-    description: 'Recherche des articles ALTA MARÉE par PLU, désignation, EAN, famille ou nom latin.',
+    title: 'Rechercher des articles',
+    description: 'Recherche des articles ALTA MAREE par PLU, désignation, EAN, famille ou nom latin.',
     inputSchema: searchInputSchema,
-  },
-  {
+    outputSchema: searchOutputSchema,
+    invoking: 'Recherche articles ALTA...',
+    invoked: 'Articles ALTA trouvés',
+  }),
+  makeTool({
     name: 'search_stock',
+    title: 'Rechercher le stock',
     description: 'Recherche l’état de stock par article, avec quantité disponible et prochain lot FIFO.',
     inputSchema: searchInputSchema,
-  },
-  {
+    outputSchema: searchOutputSchema,
+    invoking: 'Lecture stock ALTA...',
+    invoked: 'Stock ALTA consulté',
+  }),
+  makeTool({
     name: 'search_suppliers',
-    description: 'Recherche des fournisseurs ALTA MARÉE par code, nom, contact, email, téléphone ou ville.',
+    title: 'Rechercher des fournisseurs',
+    description: 'Recherche des fournisseurs ALTA MAREE par code, nom, contact, email, téléphone ou ville.',
     inputSchema: searchInputSchema,
-  },
-  {
+    outputSchema: searchOutputSchema,
+    invoking: 'Recherche fournisseurs ALTA...',
+    invoked: 'Fournisseurs ALTA trouvés',
+  }),
+  makeTool({
     name: 'search_sales',
+    title: 'Rechercher les ventes',
     description: 'Recherche des documents de vente, commandes ou lignes de vente.',
     inputSchema: searchInputSchema,
-  },
-  {
+    outputSchema: searchOutputSchema,
+    invoking: 'Recherche ventes ALTA...',
+    invoked: 'Ventes ALTA trouvées',
+  }),
+  makeTool({
     name: 'create_pending_action',
+    title: 'Créer une action en attente',
     description: 'Crée une action ALTA en attente de confirmation humaine. Aucune action métier directe n’est exécutée.',
-    inputSchema: {
-      type: 'object',
-      required: ['action_type', 'summary', 'payload'],
-      properties: {
-        action_type: { type: 'string', description: 'Type métier préparé, par exemple customer_order_draft ou email_draft.' },
-        summary: { type: 'string', description: 'Résumé clair à afficher à l’utilisateur avant confirmation.' },
-        payload: { type: 'object', description: 'Payload figé préparé par l’agent.', additionalProperties: true },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
+    inputSchema: pendingActionInputSchema,
+    outputSchema: pendingActionOutputSchema,
+    invoking: 'Préparation action ALTA...',
+    invoked: 'Action ALTA en attente créée',
+    readOnly: false,
+  }),
+  makeTool({
     name: 'get_pending_action',
+    title: 'Lire une action en attente',
     description: 'Lit une action en attente existante.',
-    inputSchema: {
-      type: 'object',
-      required: ['id'],
-      properties: {
-        id: { type: 'string', description: 'Identifiant UUID de l’action en attente.' },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
+    inputSchema: getPendingActionInputSchema,
+    outputSchema: pendingActionOutputSchema,
+    invoking: 'Lecture action ALTA...',
+    invoked: 'Action ALTA chargée',
+  }),
+  makeTool({
     name: 'execute_pending_action',
+    title: 'Exécuter une action confirmée',
     description: 'Marque une action pending comme exécutée uniquement après confirmation humaine explicite.',
-    inputSchema: {
-      type: 'object',
-      required: ['id', 'confirmation'],
-      properties: {
-        id: { type: 'string', description: 'Identifiant UUID de l’action en attente.' },
-        confirmation: { type: 'string', enum: ['human_confirmed'], description: 'Doit valoir human_confirmed.' },
-      },
-      additionalProperties: false,
-    },
-  },
+    inputSchema: executePendingActionInputSchema,
+    outputSchema: pendingActionOutputSchema,
+    invoking: 'Confirmation action ALTA...',
+    invoked: 'Action ALTA marquée exécutée',
+    readOnly: false,
+  }),
 ];
 
 const toolHandlers = {
@@ -126,6 +300,39 @@ function toolResult(payload) {
       },
     ],
     structuredContent: payload,
+    _meta: {
+      ui: { resourceUri: ALTA_WIDGET_URI },
+      'openai/outputTemplate': ALTA_WIDGET_URI,
+    },
+  };
+}
+
+function altaWidgetResource() {
+  return {
+    uri: ALTA_WIDGET_URI,
+    name: 'ALTA MAREE connecté',
+    title: 'ALTA MAREE connecté',
+    description: 'Template HTML minimal pour l’application ChatGPT Business ALTA MAREE.',
+    mimeType: ALTA_WIDGET_MIME_TYPE,
+    _meta: {
+      'openai/widgetDescription': 'ALTA MAREE est connecté et prêt à interroger les données commerciales via MCP.',
+      'openai/widgetPrefersBorder': true,
+      'openai/widgetCSP': {
+        connect_domains: ['https://api.altamaree.fr'],
+        resource_domains: [],
+      },
+      'openai/widgetDomain': 'https://api.altamaree.fr',
+    },
+  };
+}
+
+function altaWidgetContent() {
+  const resource = altaWidgetResource();
+  return {
+    uri: resource.uri,
+    mimeType: resource.mimeType,
+    text: ALTA_WIDGET_HTML,
+    _meta: resource._meta,
   };
 }
 
@@ -166,9 +373,15 @@ async function handleRequest(req, message) {
   if (method === 'initialize') {
     return jsonRpcResult(id, {
       protocolVersion: PROTOCOL_VERSION,
-      capabilities: { tools: { listChanged: false } },
-      serverInfo: { name: 'alta-maree-mcp', version: '1.0.1' },
+      capabilities: {
+        tools: { listChanged: false },
+        resources: { subscribe: false, listChanged: false },
+      },
+      serverInfo: { name: 'alta-maree-mcp', version: '1.1.0' },
       instructions: 'Utilise les outils ALTA uniquement pour lire les données métier et préparer des actions en attente de confirmation humaine.',
+      _meta: {
+        securitySchemes: SECURITY_SCHEMES,
+      },
     });
   }
 
@@ -200,7 +413,22 @@ async function handleRequest(req, message) {
     }
   }
 
-  if (method === 'resources/list') return jsonRpcResult(id, { resources: [] });
+  if (method === 'resources/list') {
+    return jsonRpcResult(id, { resources: [altaWidgetResource()] });
+  }
+
+  if (method === 'resources/templates/list') {
+    return jsonRpcResult(id, { resourceTemplates: [] });
+  }
+
+  if (method === 'resources/read') {
+    if (params.uri !== ALTA_WIDGET_URI) {
+      return jsonRpcError(id, -32602, `Ressource inconnue : ${params.uri || ''}`);
+    }
+
+    return jsonRpcResult(id, { contents: [altaWidgetContent()] });
+  }
+
   if (method === 'prompts/list') return jsonRpcResult(id, { prompts: [] });
 
   return jsonRpcError(id, -32601, `Méthode MCP non supportée : ${method}`);
