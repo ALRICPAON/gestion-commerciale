@@ -1,4 +1,4 @@
-# Serveur MCP ALTA MARÉE
+# Serveur MCP ALTA MAREE
 
 URL à déclarer dans ChatGPT Business Apps :
 
@@ -15,6 +15,18 @@ Authorization: Bearer <ALTA_AGENT_API_KEY>
 ```
 
 Aucun secret ne doit être stocké dans le dépôt. La variable `ALTA_AGENT_API_KEY` reste côté VPS.
+
+## Compatibilité OpenAI Apps SDK
+
+Le serveur expose les éléments attendus par ChatGPT Apps en plus du transport MCP :
+
+- descripteurs de tools avec `securitySchemes` et miroir `_meta.securitySchemes` ;
+- statuts `_meta["openai/toolInvocation/invoking"]` et `_meta["openai/toolInvocation/invoked"]` ;
+- template `_meta["openai/outputTemplate"]` pointant vers `ui://widget/alta-maree-connected.html` ;
+- ressource HTML `text/html;profile=mcp-app` lisible via `resources/read` ;
+- CSP widget minimal sans exposition de secret.
+
+La ressource Apps SDK affiche simplement `ALTA MAREE connecté`. Elle sert de template d'attachement pour ChatGPT Business Apps et ne remplace pas le frontend ALTA.
 
 ## Transports MCP supportés
 
@@ -67,6 +79,8 @@ curl -X POST https://api.altamaree.fr/mcp \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
 ```
 
+La réponse doit contenir les outils métier et leurs métadonnées Apps SDK, dont `_meta.openai/outputTemplate` et `_meta.openai/toolInvocation/*`.
+
 Appel outil :
 
 ```bash
@@ -76,6 +90,30 @@ curl -X POST https://api.altamaree.fr/mcp \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_clients","arguments":{"query":"royale","limit":5}}}'
 ```
+
+La réponse doit retourner ROYALE MAREE si la donnée est présente dans la base cible.
+
+Liste des ressources Apps SDK :
+
+```bash
+curl -X POST https://api.altamaree.fr/mcp \
+  -H 'Authorization: Bearer <ALTA_AGENT_API_KEY>' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":4,"method":"resources/list","params":{}}'
+```
+
+Lecture du template HTML Apps SDK :
+
+```bash
+curl -X POST https://api.altamaree.fr/mcp \
+  -H 'Authorization: Bearer <ALTA_AGENT_API_KEY>' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"resources/read","params":{"uri":"ui://widget/alta-maree-connected.html"}}'
+```
+
+La réponse doit contenir un contenu `text/html;profile=mcp-app` avec le texte `ALTA MAREE connecté`.
 
 ## Vérification HTTP+SSE legacy
 
@@ -101,7 +139,7 @@ curl -X POST 'https://api.altamaree.fr/mcp?sessionId=<SESSION_ID>' \
   -H 'Authorization: Bearer <ALTA_AGENT_API_KEY>' \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{}}'
+  -d '{"jsonrpc":"2.0","id":6,"method":"tools/list","params":{}}'
 ```
 
 Le POST doit répondre `202 Accepted`, et le premier terminal doit recevoir un événement `message` contenant la réponse JSON-RPC.
