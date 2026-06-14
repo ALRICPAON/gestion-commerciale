@@ -165,10 +165,26 @@ async function executeRelevantTools({ db, user, storeId, question, messages = []
   const results = await Promise.all(
     toolNames.map((toolName) => {
       if (toolName === 'prepare_customer_order') {
+        const actionPrompt = buildActionPrompt(question, messages, collectingMemory);
+        console.info('[AI TOOL] prepare_customer_order called', {
+          store_id: storeId,
+          user_id: user.id,
+          original_question: question,
+          conversation_messages: Array.isArray(messages) ? messages.length : 0,
+          has_collecting_action_memory: Boolean(collectingMemory?.id),
+        });
+        console.info('[AI TOOL] prepare_customer_order args', {
+          store_id: storeId,
+          user_id: user.id,
+          prompt: actionPrompt,
+          collecting_action_memory_id: collectingMemory?.id || null,
+          collecting_short_memory: collectingMemory?.payload?.short_memory || null,
+        });
+
         return prepareCustomerOrderAction({
           db,
           user,
-          prompt: buildActionPrompt(question, messages, collectingMemory),
+          prompt: actionPrompt,
         })
           .then(async (action) => {
             try {
