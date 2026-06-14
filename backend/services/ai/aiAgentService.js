@@ -1,4 +1,4 @@
-const { chat } = require('./aiToolFirstAgentService');
+const { chat } = require('./aiGptLedAgentService');
 
 module.exports = {
   chat,
