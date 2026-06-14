@@ -24,6 +24,7 @@ const ARTICLE_STOP_WORDS = new Set([
   'unites',
 ]);
 const BLOCKING_SPECIES = new Set(['saumon', 'cabillaud', 'bar', 'daurade', 'sole', 'limande']);
+const UNACCENT_UNAVAILABLE_CODES = new Set(['42883', '42P01']);
 
 function clean(value) {
   const text = String(value || '').trim();
@@ -48,6 +49,14 @@ function normalizeForArticleMatch(value) {
     .trim();
 }
 
+function normalizeForArticleExact(value) {
+  return normalizeText(value)
+    .replace(/\s*\/\s*/g, '/')
+    .replace(/[^a-z0-9/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function normalizeReference(value) {
   return normalizeText(value).replace(/[^a-z0-9]+/g, '');
 }
@@ -59,11 +68,35 @@ function singularizeToken(token) {
   return token;
 }
 
+function articleCalibers(value) {
+  return normalizeForArticleExact(value).match(/\b\d+\/\d+\b/g) || [];
+}
+
 function articleTokens(value) {
-  return normalizeForArticleMatch(value)
+  return normalizeForArticleExact(value)
     .split(/\s+/)
     .map(singularizeToken)
-    .filter((token) => token.length > 2 && !ARTICLE_STOP_WORDS.has(token));
+    .filter((token) => token.length > 1 && !ARTICLE_STOP_WORDS.has(token));
+}
+
+function buildArticleSqlTokens(value) {
+  const rawTokens = String(value || '')
+    .split(/\s+/)
+    .map((token) => token.replace(/[^\p{L}\p{N}/]/gu, '').trim())
+    .filter((token) => token.length > 1);
+  const normalizedRawTokens = rawTokens
+    .map(normalizeForArticleExact)
+    .filter((token) => token.length > 1);
+  const caliberParts = articleCalibers(value).flatMap((caliber) => caliber.split('/'));
+
+  return Array.from(new Set([
+    ...rawTokens,
+    ...normalizedRawTokens,
+    ...articleTokens(value),
+    ...caliberParts,
+  ]))
+    .filter((token) => token.length > 1 && !ARTICLE_STOP_WORDS.has(normalizeForArticleExact(token)))
+    .slice(0, 16);
 }
 
 function formatQuantity(value, unit) {
@@ -110,6 +143,32 @@ function scoreTextMatch(search, value, options = {}) {
   if (searchPhrase.includes(valuePhrase)) return 0.9;
   if (coverage === 1) return 0.88;
   if (coverage > 0) return Number((coverage * 0.7).toFixed(2));
+
+  return 0;
+}
+
+function scoreArticleTextMatch(search, value) {
+  const searchLabel = normalizeForArticleExact(search);
+  const valueLabel = normalizeForArticleExact(value);
+  if (!searchLabel || !valueLabel) return 0;
+
+  const searchCalibers = articleCalibers(searchLabel);
+  const valueCalibers = articleCalibers(valueLabel);
+  const hasMissingCaliber = searchCalibers.some((caliber) => !valueCalibers.includes(caliber));
+
+  if (valueLabel === searchLabel) return 1;
+  if (valueLabel.includes(searchLabel)) return hasMissingCaliber ? 0.4 : 0.97;
+  if (searchLabel.includes(valueLabel)) return hasMissingCaliber ? 0.4 : 0.92;
+
+  const searchTokens = articleTokens(searchLabel);
+  const valueTokenSet = new Set(articleTokens(valueLabel));
+  if (searchTokens.length === 0 || valueTokenSet.size === 0) return 0;
+
+  const matchedTokens = searchTokens.filter((token) => valueTokenSet.has(token));
+  const coverage = matchedTokens.length / searchTokens.length;
+  if (hasMissingCaliber) return Number(Math.min(0.4, coverage * 0.4).toFixed(2));
+  if (coverage === 1) return 0.9;
+  if (coverage > 0) return Number((coverage * 0.78).toFixed(2));
 
   return 0;
 }
@@ -330,14 +389,15 @@ function scoreArticleCandidate(search, candidate) {
   if (hasSpeciesConflict(search, candidate)) return 0;
 
   const scores = {
-    designation: scoreTextMatch(search, candidate.designation, { minTokenLength: 3 }),
-    display_name: scoreTextMatch(search, candidate.display_name, { minTokenLength: 3 }),
+    designation: scoreArticleTextMatch(search, candidate.designation),
+    display_name: scoreArticleTextMatch(search, candidate.display_name),
     plu: scoreReferenceMatch(search, candidate.plu),
     ean: scoreReferenceMatch(search, candidate.ean),
     id: scoreReferenceMatch(search, candidate.id),
   };
   const baseScore = Math.max(...Object.values(scores));
   if (baseScore === 0) return 0;
+  if (baseScore === 1) return 1;
 
   const historyBonus = number(candidate.client_history_count) > 0 ? 0.03 : 0;
 
@@ -388,65 +448,48 @@ function articleLookupLogRows(rows) {
     designation: candidate.designation,
     display_name: candidate.display_name,
     confidence_score: candidate.confidence_score,
+    normalized_designation: normalizeForArticleExact(candidate.designation),
+    normalized_display_name: normalizeForArticleExact(candidate.display_name),
     stock_quantity: number(candidate.stock_quantity),
     has_stock_summary: Boolean(candidate.has_stock_summary),
     client_history_count: number(candidate.client_history_count),
   }));
 }
 
-async function findArticle(db, storeId, client, search, options = {}) {
-  const requestedTokens = articleTokens(search).slice(0, 6);
-  const rawTokens = String(search || '')
-    .split(/\s+/)
-    .map((token) => token.replace(/[^\p{L}\p{N}]/gu, '').trim())
-    .filter((token) => token.length > 1 && !ARTICLE_STOP_WORDS.has(normalizeForArticleMatch(token)))
-    .slice(0, 6);
-  const referenceToken = normalizeReference(search);
-  const sqlTokens = Array.from(new Set([...rawTokens, ...requestedTokens])).slice(0, 10);
+function articleNormalizeSql(expression, useUnaccent) {
+  const lowered = `LOWER(COALESCE(${expression}, ''))`;
+  const text = useUnaccent ? `unaccent(${lowered})` : lowered;
+  return `trim(regexp_replace(regexp_replace(regexp_replace(${text}, '\\s*/\\s*', '/', 'g'), '[^a-z0-9/]+', ' ', 'g'), '\\s+', ' ', 'g'))`;
+}
 
-  console.info('[AI ACTION] article requested', {
-    store_id: storeId,
-    client_id: client?.id || null,
-    requested: search,
-    requested_tokens: requestedTokens,
-  });
-  console.info('[AI ACTION] article lookup source', {
-    source: 'articles',
-    base_table: 'articles a',
-    enrichment_tables: ['stock_summary ss', 'sales_lines sl', 'sales_documents sd'],
-    stock_role: 'availability_only',
-    existence_rule: 'articles.store_id + active article match on designation/plu/ean/display_name/id',
-  });
-
-  if (requestedTokens.length === 0 && sqlTokens.length === 0 && !referenceToken) {
-    throw buildArticleClarificationError(
-      search,
-      [],
-      'Quantite ou article manquant dans la demande.',
-      {
-        reason: 'article_manquant',
-        log: { store_id: storeId, client_id: client?.id || null },
-      }
-    );
-  }
-
+function buildArticleLookup({ storeId, client, search, sqlTokens, referenceToken, normalizedSearch, useUnaccent, broadFallback = false }) {
   const params = [storeId, client?.id || null];
   const whereParts = [];
-  sqlTokens.forEach((token) => {
-    params.push(`%${token}%`);
-    whereParts.push(`a.designation ILIKE $${params.length}`);
-    whereParts.push(`COALESCE(a.display_name, '') ILIKE $${params.length}`);
-    whereParts.push(`COALESCE(a.plu, '') ILIKE $${params.length}`);
-    whereParts.push(`COALESCE(a.ean, '') ILIKE $${params.length}`);
-  });
 
-  if (referenceToken) {
-    params.push(referenceToken);
-    whereParts.push(`regexp_replace(LOWER(COALESCE(a.plu, '')), '[^a-z0-9]', '', 'g') = $${params.length}`);
-    whereParts.push(`regexp_replace(LOWER(COALESCE(a.ean, '')), '[^a-z0-9]', '', 'g') = $${params.length}`);
-    whereParts.push(`regexp_replace(LOWER(a.id::text), '[^a-z0-9]', '', 'g') = $${params.length}`);
+  if (!broadFallback) {
+    if (normalizedSearch) {
+      params.push(normalizedSearch);
+      whereParts.push(`${articleNormalizeSql('a.designation', useUnaccent)} = $${params.length}`);
+      whereParts.push(`${articleNormalizeSql('a.display_name', useUnaccent)} = $${params.length}`);
+    }
+
+    sqlTokens.forEach((token) => {
+      params.push(`%${token}%`);
+      whereParts.push(`a.designation ILIKE $${params.length}`);
+      whereParts.push(`COALESCE(a.display_name, '') ILIKE $${params.length}`);
+      whereParts.push(`COALESCE(a.plu, '') ILIKE $${params.length}`);
+      whereParts.push(`COALESCE(a.ean, '') ILIKE $${params.length}`);
+    });
+
+    if (referenceToken) {
+      params.push(referenceToken);
+      whereParts.push(`regexp_replace(LOWER(COALESCE(a.plu, '')), '[^a-z0-9]', '', 'g') = $${params.length}`);
+      whereParts.push(`regexp_replace(LOWER(COALESCE(a.ean, '')), '[^a-z0-9]', '', 'g') = $${params.length}`);
+      whereParts.push(`regexp_replace(LOWER(a.id::text), '[^a-z0-9]', '', 'g') = $${params.length}`);
+    }
   }
 
+  const existenceFilter = broadFallback || whereParts.length === 0 ? 'TRUE' : `(${whereParts.join(' OR ')})`;
   const lookupQuery = `
     SELECT
       a.id,
@@ -478,7 +521,7 @@ async function findArticle(db, storeId, client, search, options = {}) {
      AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
     WHERE a.store_id = $1
       AND COALESCE(a.is_active, true) = true
-      AND (${whereParts.join(' OR ')})
+      AND ${existenceFilter}
     GROUP BY
       a.id,
       a.plu,
@@ -497,22 +540,97 @@ async function findArticle(db, storeId, client, search, options = {}) {
       ss.next_dlc,
       ss.pma
     ORDER BY a.designation ASC
-    LIMIT 40
+    LIMIT ${broadFallback ? 500 : 80}
   `;
+
+  return { lookupQuery, params, whereParts };
+}
+
+async function queryArticleCandidates(db, buildOptions) {
+  try {
+    const lookup = buildArticleLookup({ ...buildOptions, useUnaccent: true });
+    const result = await db.query(lookup.lookupQuery, lookup.params);
+    return { ...lookup, result, usedUnaccent: true, broadFallback: false };
+  } catch (error) {
+    if (!UNACCENT_UNAVAILABLE_CODES.has(error.code)) throw error;
+
+    console.info('[AI ACTION] article lookup unaccent unavailable', {
+      store_id: buildOptions.storeId,
+      requested: buildOptions.search,
+      code: error.code,
+      fallback: 'js_normalization',
+    });
+  }
+
+  const fallbackLookup = buildArticleLookup({ ...buildOptions, useUnaccent: false });
+  let result = await db.query(fallbackLookup.lookupQuery, fallbackLookup.params);
+  if (result.rows.length > 0) {
+    return { ...fallbackLookup, result, usedUnaccent: false, broadFallback: false };
+  }
+
+  const broadLookup = buildArticleLookup({ ...buildOptions, useUnaccent: false, broadFallback: true });
+  result = await db.query(broadLookup.lookupQuery, broadLookup.params);
+  return { ...broadLookup, result, usedUnaccent: false, broadFallback: true };
+}
+
+async function findArticle(db, storeId, client, search, options = {}) {
+  const requestedTokens = articleTokens(search).slice(0, 8);
+  const referenceToken = normalizeReference(search);
+  const normalizedSearch = normalizeForArticleExact(search);
+  const sqlTokens = buildArticleSqlTokens(search);
+
+  console.info('[AI ACTION] article requested', {
+    store_id: storeId,
+    client_id: client?.id || null,
+    requested: search,
+    normalized_search: normalizedSearch,
+    requested_tokens: requestedTokens,
+    calibers: articleCalibers(search),
+  });
+  console.info('[AI ACTION] article lookup source', {
+    source: 'articles',
+    base_table: 'articles a',
+    enrichment_tables: ['stock_summary ss', 'sales_lines sl', 'sales_documents sd'],
+    stock_role: 'availability_only',
+    existence_rule: 'articles.store_id + active article match on normalized designation/display_name/plu/ean/id',
+  });
+
+  if (requestedTokens.length === 0 && sqlTokens.length === 0 && !referenceToken) {
+    throw buildArticleClarificationError(
+      search,
+      [],
+      'Quantite ou article manquant dans la demande.',
+      {
+        reason: 'article_manquant',
+        log: { store_id: storeId, client_id: client?.id || null },
+      }
+    );
+  }
+
+  const lookup = await queryArticleCandidates(db, {
+    storeId,
+    client,
+    search,
+    sqlTokens,
+    referenceToken,
+    normalizedSearch,
+  });
 
   console.info('[AI ACTION] article lookup query', {
     store_id: storeId,
     client_id: client?.id || null,
     requested: search,
-    search_modes: ['designation', 'plu', 'ean', 'display_name', 'article_id'],
+    normalized_search: normalizedSearch,
+    search_modes: ['normalized_exact_designation', 'normalized_exact_display_name', 'designation', 'plu', 'ean', 'display_name', 'article_id'],
     sql_tokens: sqlTokens,
     reference_token: referenceToken || null,
-    where_parts: whereParts,
-    sql: lookupQuery.replace(/\s+/g, ' ').trim(),
+    used_unaccent: lookup.usedUnaccent,
+    broad_fallback: lookup.broadFallback,
+    where_parts: lookup.whereParts,
+    sql: lookup.lookupQuery.replace(/\s+/g, ' ').trim(),
   });
 
-  const result = await db.query(lookupQuery, params);
-  const rawCandidates = result.rows.map((candidate) => ({
+  const rawCandidates = lookup.result.rows.map((candidate) => ({
     ...candidate,
     confidence_score: scoreArticleCandidate(search, candidate),
   }));
@@ -532,8 +650,11 @@ async function findArticle(db, storeId, client, search, options = {}) {
     store_id: storeId,
     client_id: client?.id || null,
     requested: search,
-    raw_count: result.rows.length,
+    normalized_search: normalizedSearch,
+    raw_count: lookup.result.rows.length,
     scored_count: candidates.length,
+    used_unaccent: lookup.usedUnaccent,
+    broad_fallback: lookup.broadFallback,
     results: articleLookupLogRows(candidates),
   });
   console.info('[AI ACTION] article matches', {
@@ -544,6 +665,7 @@ async function findArticle(db, storeId, client, search, options = {}) {
       article_id: candidate.id,
       plu: candidate.plu,
       designation: candidate.designation,
+      normalized_designation: normalizeForArticleExact(candidate.designation),
       confidence_score: candidate.confidence_score,
       stock_quantity: number(candidate.stock_quantity),
       client_history_count: number(candidate.client_history_count),
@@ -604,7 +726,7 @@ async function findArticle(db, storeId, client, search, options = {}) {
           store_id: storeId,
           client_id: client?.id || null,
           confidence_score: best?.confidence_score || 0,
-          raw_count: result.rows.length,
+          raw_count: lookup.result.rows.length,
           scored_count: candidates.length,
         },
       }
@@ -616,6 +738,7 @@ async function findArticle(db, storeId, client, search, options = {}) {
   );
   const ambiguousCandidates = highConfidenceCandidates.filter(
     (candidate) => candidate.id !== best.id
+      && best.confidence_score < 1
       && best.confidence_score - candidate.confidence_score <= ARTICLE_MATCH_AMBIGUOUS_DELTA
   );
   if (ambiguousCandidates.length > 0) {
