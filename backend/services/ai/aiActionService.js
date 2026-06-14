@@ -48,6 +48,10 @@ function normalizeForArticleMatch(value) {
     .trim();
 }
 
+function normalizeReference(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, '');
+}
+
 function singularizeToken(token) {
   if (token.length > 4 && token.endsWith('s')) {
     return token.slice(0, -1);
@@ -107,6 +111,15 @@ function scoreTextMatch(search, value, options = {}) {
   if (coverage === 1) return 0.88;
   if (coverage > 0) return Number((coverage * 0.7).toFixed(2));
 
+  return 0;
+}
+
+function scoreReferenceMatch(search, value) {
+  const normalizedSearch = normalizeReference(search);
+  const normalizedValue = normalizeReference(value);
+  if (!normalizedSearch || !normalizedValue) return 0;
+  if (normalizedSearch === normalizedValue) return 1;
+  if (normalizedSearch.includes(normalizedValue) || normalizedValue.includes(normalizedSearch)) return 0.94;
   return 0;
 }
 
@@ -316,20 +329,27 @@ async function findClient(db, storeId, search) {
 function scoreArticleCandidate(search, candidate) {
   if (hasSpeciesConflict(search, candidate)) return 0;
 
-  const textScore = scoreTextMatch(search, candidate.designation, { minTokenLength: 3 });
-  if (textScore === 0) return 0;
+  const scores = {
+    designation: scoreTextMatch(search, candidate.designation, { minTokenLength: 3 }),
+    display_name: scoreTextMatch(search, candidate.display_name, { minTokenLength: 3 }),
+    plu: scoreReferenceMatch(search, candidate.plu),
+    ean: scoreReferenceMatch(search, candidate.ean),
+    id: scoreReferenceMatch(search, candidate.id),
+  };
+  const baseScore = Math.max(...Object.values(scores));
+  if (baseScore === 0) return 0;
 
-  const stockBonus = number(candidate.stock_quantity) > 0 ? 0.04 : 0;
   const historyBonus = number(candidate.client_history_count) > 0 ? 0.03 : 0;
 
-  return Number(Math.min(1, textScore + stockBonus + historyBonus).toFixed(2));
+  return Number(Math.min(1, baseScore + historyBonus).toFixed(2));
 }
 
 function formatArticleChoice(candidate, index) {
   const parts = [
     `${index + 1}. ${candidate.designation}`,
+    candidate.plu ? `PLU ${candidate.plu}` : null,
     `stock ${formatQuantity(candidate.stock_quantity, candidate.sale_unit || candidate.unit)}`,
-  ];
+  ].filter(Boolean);
 
   if (number(candidate.client_history_count) > 0) {
     parts.push('deja achete par ce client');
@@ -360,13 +380,28 @@ function buildArticleClarificationError(search, candidates, reason, details = {}
   });
 }
 
+function articleLookupLogRows(rows) {
+  return rows.slice(0, 12).map((candidate) => ({
+    article_id: candidate.id,
+    plu: candidate.plu,
+    ean: candidate.ean,
+    designation: candidate.designation,
+    display_name: candidate.display_name,
+    confidence_score: candidate.confidence_score,
+    stock_quantity: number(candidate.stock_quantity),
+    has_stock_summary: Boolean(candidate.has_stock_summary),
+    client_history_count: number(candidate.client_history_count),
+  }));
+}
+
 async function findArticle(db, storeId, client, search, options = {}) {
   const requestedTokens = articleTokens(search).slice(0, 6);
   const rawTokens = String(search || '')
     .split(/\s+/)
     .map((token) => token.replace(/[^\p{L}\p{N}]/gu, '').trim())
-    .filter((token) => token.length > 2 && !ARTICLE_STOP_WORDS.has(normalizeForArticleMatch(token)))
+    .filter((token) => token.length > 1 && !ARTICLE_STOP_WORDS.has(normalizeForArticleMatch(token)))
     .slice(0, 6);
+  const referenceToken = normalizeReference(search);
   const sqlTokens = Array.from(new Set([...rawTokens, ...requestedTokens])).slice(0, 10);
 
   console.info('[AI ACTION] article requested', {
@@ -375,8 +410,15 @@ async function findArticle(db, storeId, client, search, options = {}) {
     requested: search,
     requested_tokens: requestedTokens,
   });
+  console.info('[AI ACTION] article lookup source', {
+    source: 'articles',
+    base_table: 'articles a',
+    enrichment_tables: ['stock_summary ss', 'sales_lines sl', 'sales_documents sd'],
+    stock_role: 'availability_only',
+    existence_rule: 'articles.store_id + active article match on designation/plu/ean/display_name/id',
+  });
 
-  if (requestedTokens.length === 0 || sqlTokens.length === 0) {
+  if (requestedTokens.length === 0 && sqlTokens.length === 0 && !referenceToken) {
     throw buildArticleClarificationError(
       search,
       [],
@@ -392,15 +434,26 @@ async function findArticle(db, storeId, client, search, options = {}) {
   const whereParts = [];
   sqlTokens.forEach((token) => {
     params.push(`%${token}%`);
-    whereParts.push(`LOWER(a.designation) LIKE LOWER($${params.length})`);
-    whereParts.push(`LOWER(COALESCE(a.plu, '')) LIKE LOWER($${params.length})`);
+    whereParts.push(`a.designation ILIKE $${params.length}`);
+    whereParts.push(`COALESCE(a.display_name, '') ILIKE $${params.length}`);
+    whereParts.push(`COALESCE(a.plu, '') ILIKE $${params.length}`);
+    whereParts.push(`COALESCE(a.ean, '') ILIKE $${params.length}`);
   });
 
-  const result = await db.query(`
+  if (referenceToken) {
+    params.push(referenceToken);
+    whereParts.push(`regexp_replace(LOWER(COALESCE(a.plu, '')), '[^a-z0-9]', '', 'g') = $${params.length}`);
+    whereParts.push(`regexp_replace(LOWER(COALESCE(a.ean, '')), '[^a-z0-9]', '', 'g') = $${params.length}`);
+    whereParts.push(`regexp_replace(LOWER(a.id::text), '[^a-z0-9]', '', 'g') = $${params.length}`);
+  }
+
+  const lookupQuery = `
     SELECT
       a.id,
       a.plu,
+      a.ean,
       a.designation,
+      a.display_name,
       a.unit,
       a.sale_unit,
       a.vat_rate,
@@ -409,6 +462,7 @@ async function findArticle(db, storeId, client, search, options = {}) {
       a.sale_price_level_2_ht,
       a.sale_price_level_3_ht,
       COALESCE(ss.stock_quantity, 0) AS stock_quantity,
+      (ss.article_id IS NOT NULL) AS has_stock_summary,
       ss.next_dlc,
       COALESCE(ss.pma, 0) AS pma,
       COUNT(sd.id)::int AS client_history_count,
@@ -428,7 +482,9 @@ async function findArticle(db, storeId, client, search, options = {}) {
     GROUP BY
       a.id,
       a.plu,
+      a.ean,
       a.designation,
+      a.display_name,
       a.unit,
       a.sale_unit,
       a.vat_rate,
@@ -436,37 +492,57 @@ async function findArticle(db, storeId, client, search, options = {}) {
       a.sale_price_level_1_ht,
       a.sale_price_level_2_ht,
       a.sale_price_level_3_ht,
+      ss.article_id,
       ss.stock_quantity,
       ss.next_dlc,
       ss.pma
     ORDER BY a.designation ASC
     LIMIT 40
-  `, params);
+  `;
 
-  const candidates = result.rows
-    .map((candidate) => ({
-      ...candidate,
-      confidence_score: scoreArticleCandidate(search, candidate),
-    }))
+  console.info('[AI ACTION] article lookup query', {
+    store_id: storeId,
+    client_id: client?.id || null,
+    requested: search,
+    search_modes: ['designation', 'plu', 'ean', 'display_name', 'article_id'],
+    sql_tokens: sqlTokens,
+    reference_token: referenceToken || null,
+    where_parts: whereParts,
+    sql: lookupQuery.replace(/\s+/g, ' ').trim(),
+  });
+
+  const result = await db.query(lookupQuery, params);
+  const rawCandidates = result.rows.map((candidate) => ({
+    ...candidate,
+    confidence_score: scoreArticleCandidate(search, candidate),
+  }));
+  const candidates = rawCandidates
     .filter((candidate) => candidate.confidence_score > 0)
     .sort((a, b) => {
       const confidenceDelta = b.confidence_score - a.confidence_score;
       if (confidenceDelta !== 0) return confidenceDelta;
       const historyDelta = number(b.client_history_count) - number(a.client_history_count);
       if (historyDelta !== 0) return historyDelta;
-      const stockDelta = number(b.stock_quantity) - number(a.stock_quantity);
-      if (stockDelta !== 0) return stockDelta;
       return a.designation.localeCompare(b.designation);
     });
   const stockCandidates = candidates.filter((candidate) => number(candidate.stock_quantity) > 0);
   const historyCandidates = candidates.filter((candidate) => number(candidate.client_history_count) > 0);
 
+  console.info('[AI ACTION] article lookup results', {
+    store_id: storeId,
+    client_id: client?.id || null,
+    requested: search,
+    raw_count: result.rows.length,
+    scored_count: candidates.length,
+    results: articleLookupLogRows(candidates),
+  });
   console.info('[AI ACTION] article matches', {
     store_id: storeId,
     client_id: client?.id || null,
     requested: search,
     matches: candidates.map((candidate) => ({
       article_id: candidate.id,
+      plu: candidate.plu,
       designation: candidate.designation,
       confidence_score: candidate.confidence_score,
       stock_quantity: number(candidate.stock_quantity),
@@ -479,6 +555,7 @@ async function findArticle(db, storeId, client, search, options = {}) {
     requested: search,
     candidates: stockCandidates.slice(0, 8).map((candidate) => ({
       article_id: candidate.id,
+      plu: candidate.plu,
       designation: candidate.designation,
       stock_quantity: number(candidate.stock_quantity),
       confidence_score: candidate.confidence_score,
@@ -490,6 +567,7 @@ async function findArticle(db, storeId, client, search, options = {}) {
     requested: search,
     candidates: historyCandidates.slice(0, 8).map((candidate) => ({
       article_id: candidate.id,
+      plu: candidate.plu,
       designation: candidate.designation,
       client_history_count: number(candidate.client_history_count),
       confidence_score: candidate.confidence_score,
@@ -516,7 +594,7 @@ async function findArticle(db, storeId, client, search, options = {}) {
     }
     throw buildArticleClarificationError(
       search,
-      stockCandidates.length > 0 ? stockCandidates : candidates,
+      candidates,
       options.allow_negoce
         ? `Cet article n existe pas encore clairement dans les articles : "${search}". Veux-tu creer l article d abord ?`
         : `Je n ai pas trouve d article correspondant clairement a "${search}".`,
@@ -526,64 +604,17 @@ async function findArticle(db, storeId, client, search, options = {}) {
           store_id: storeId,
           client_id: client?.id || null,
           confidence_score: best?.confidence_score || 0,
+          raw_count: result.rows.length,
+          scored_count: candidates.length,
         },
       }
     );
   }
 
-  const availableHighConfidence = stockCandidates.filter(
+  const highConfidenceCandidates = candidates.filter(
     (candidate) => candidate.confidence_score >= ARTICLE_MATCH_MIN_CONFIDENCE
   );
-
-  if (number(best.stock_quantity) <= 0) {
-    console.info('[AI ACTION] product out of stock', {
-      store_id: storeId,
-      client_id: client?.id || null,
-      requested: search,
-      article_id: best.id,
-      designation: best.designation,
-      stock_quantity: number(best.stock_quantity),
-    });
-
-    if (options.allow_negoce && number(options.unit_sale_price_ht) > 0) {
-      console.info('[AI ACTION] negoce mode detected', {
-        store_id: storeId,
-        client_id: client?.id || null,
-        article_id: best.id,
-        designation: best.designation,
-        unit_sale_price_ht: number(options.unit_sale_price_ht),
-      });
-
-      return {
-        ...best,
-        negoce_mode: true,
-        supply_status: 'a_approvisionner',
-      };
-    }
-
-    const alternatives = stockCandidates.filter(
-      (candidate) => candidate.confidence_score >= ARTICLE_MATCH_MIN_CONFIDENCE - 0.1
-    );
-    throw buildArticleClarificationError(
-      search,
-      alternatives,
-      options.allow_negoce
-        ? `Je n ai pas de stock disponible sur "${best.designation}". Indique le prix de vente pour preparer une ligne negoce a approvisionner.`
-        : `Je n ai pas de stock disponible sur "${best.designation}".`,
-      {
-        reason: options.allow_negoce ? 'prix_negoce_manquant' : 'article_sans_stock',
-        log: {
-          store_id: storeId,
-          client_id: client?.id || null,
-          article_id: best.id,
-          stock_quantity: number(best.stock_quantity),
-          alternatives: alternatives.length,
-        },
-      }
-    );
-  }
-
-  const ambiguousCandidates = availableHighConfidence.filter(
+  const ambiguousCandidates = highConfidenceCandidates.filter(
     (candidate) => candidate.id !== best.id
       && best.confidence_score - candidate.confidence_score <= ARTICLE_MATCH_AMBIGUOUS_DELTA
   );
@@ -603,11 +634,60 @@ async function findArticle(db, storeId, client, search, options = {}) {
     );
   }
 
+  if (number(best.stock_quantity) <= 0) {
+    console.info('[AI ACTION] product out of stock', {
+      store_id: storeId,
+      client_id: client?.id || null,
+      requested: search,
+      article_id: best.id,
+      plu: best.plu,
+      designation: best.designation,
+      stock_quantity: number(best.stock_quantity),
+      has_stock_summary: Boolean(best.has_stock_summary),
+    });
+
+    if (options.allow_negoce && number(options.unit_sale_price_ht) > 0) {
+      console.info('[AI ACTION] negoce mode detected', {
+        store_id: storeId,
+        client_id: client?.id || null,
+        article_id: best.id,
+        plu: best.plu,
+        designation: best.designation,
+        unit_sale_price_ht: number(options.unit_sale_price_ht),
+      });
+
+      return {
+        ...best,
+        negoce_mode: true,
+        supply_status: 'a_approvisionner',
+      };
+    }
+
+    throw buildArticleClarificationError(
+      search,
+      [best],
+      options.allow_negoce
+        ? `Je n ai pas de stock disponible sur "${best.designation}". Indique le prix de vente pour preparer une ligne negoce a approvisionner.`
+        : `Je n ai pas de stock disponible sur "${best.designation}".`,
+      {
+        reason: options.allow_negoce ? 'prix_negoce_manquant' : 'article_sans_stock',
+        log: {
+          store_id: storeId,
+          client_id: client?.id || null,
+          article_id: best.id,
+          plu: best.plu,
+          stock_quantity: number(best.stock_quantity),
+        },
+      }
+    );
+  }
+
   console.info('[AI ACTION] selected article', {
     store_id: storeId,
     client_id: client?.id || null,
     requested: search,
     article_id: best.id,
+    plu: best.plu,
     designation: best.designation,
     stock_quantity: number(best.stock_quantity),
     confidence_score: best.confidence_score,
