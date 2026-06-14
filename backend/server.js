@@ -51,6 +51,7 @@ const transformationUpdateRoutes = require('./routes/transformationUpdate');
 const transformationValidationRoutes = require('./routes/transformationValidation');
 const transformationsRoutes = require('./routes/transformations');
 const aiAgentRoutes = require('./routes/aiAgent');
+const agentActionsRouter = require('./routes/agentActions');
 const intelligenceCenterRoutes = require('./routes/intelligenceCenter');
 
 const app = express();
@@ -188,6 +189,7 @@ app.use('/api/transformations', transformationUpdateRoutes);
 app.use('/api/transformations', transformationValidationRoutes);
 app.use('/api/transformations', transformationsRoutes);
 app.use('/api', aiAgentRoutes);
+app.use('/api/agent', agentActionsRouter);
 app.use('/api', intelligenceCenterRoutes);
 app.get('/', (req, res) => {
   res.send('API ALTA MARÉE fonctionne');
