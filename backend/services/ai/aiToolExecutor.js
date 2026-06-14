@@ -4,6 +4,7 @@ const { generateSalesDrafts } = require('./aiSalesDraftService');
 const { prepareCustomerOrderAction, isMissingActionTable } = require('./aiActionService');
 const {
   buildPromptFromShortMemory,
+  buildShortMemory,
   findLatestCollectingActionMemory,
   isMissingActionMemoryTable,
   markCollectingMemoryCompleted,
@@ -131,9 +132,8 @@ function selectTools(question, messages = [], options = {}) {
 }
 
 function buildActionPrompt(question, messages = [], collectingMemory = null) {
-  const memoryPrompt = collectingMemory?.payload?.short_memory
-    ? buildPromptFromShortMemory(collectingMemory.payload.short_memory, question)
-    : question;
+  const shortMemory = collectingMemory?.payload?.short_memory || buildShortMemory({ question, messages });
+  const memoryPrompt = buildPromptFromShortMemory(shortMemory, question);
 
   return [
     ...messages.slice(-6).map((message) => `${message.role || 'message'}: ${message.content || ''}`),
