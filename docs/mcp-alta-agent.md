@@ -16,6 +16,13 @@ Authorization: Bearer <ALTA_AGENT_API_KEY>
 
 Aucun secret ne doit être stocké dans le dépôt. La variable `ALTA_AGENT_API_KEY` reste côté VPS.
 
+## Transports MCP supportés
+
+Le serveur supporte les deux modes utiles pour ChatGPT Business Apps et les outils de diagnostic :
+
+- Streamable HTTP : POST JSON-RPC direct sur `/mcp`, réponse JSON directe.
+- HTTP+SSE legacy : GET `/mcp` ouvre un flux SSE, envoie un événement `endpoint` avec un `sessionId`, puis les POST vers cet endpoint renvoient leurs réponses dans le flux SSE via des événements `message`.
+
 ## Outils exposés
 
 - `search_clients`
@@ -38,7 +45,7 @@ Les outils de recherche sont limités à 25 résultats maximum et utilisent les 
 - `execute_pending_action` exige `confirmation: "human_confirmed"`.
 - L'exécution MCP conserve le comportement du socle agent : elle marque l'action comme exécutée mais ne crée pas encore de vente, BL, facture, achat ou email métier.
 
-## Vérification rapide
+## Vérification Streamable HTTP
 
 Initialisation MCP :
 
@@ -70,10 +77,31 @@ curl -X POST https://api.altamaree.fr/mcp \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"search_clients","arguments":{"query":"royale","limit":5}}}'
 ```
 
-SSE :
+## Vérification HTTP+SSE legacy
+
+Ouvrir le flux SSE :
 
 ```bash
 curl -N https://api.altamaree.fr/mcp \
   -H 'Authorization: Bearer <ALTA_AGENT_API_KEY>' \
   -H 'Accept: text/event-stream'
 ```
+
+La première réponse doit contenir un événement de ce type :
+
+```text
+event: endpoint
+data: https://api.altamaree.fr/mcp?sessionId=<SESSION_ID>
+```
+
+Dans un second terminal, envoyer un POST JSON-RPC vers l'endpoint reçu :
+
+```bash
+curl -X POST 'https://api.altamaree.fr/mcp?sessionId=<SESSION_ID>' \
+  -H 'Authorization: Bearer <ALTA_AGENT_API_KEY>' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{}}'
+```
+
+Le POST doit répondre `202 Accepted`, et le premier terminal doit recevoir un événement `message` contenant la réponse JSON-RPC.
