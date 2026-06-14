@@ -26,85 +26,201 @@
     <section class="welcome-card">
       <div class="page-actions">
         <div>
-          <h2>Diagnostic AF_MAP</h2>
-          <p>Contrôle des correspondances fournisseurs après réimport des articles.</p>
+          <h2>AF_MAP</h2>
+          <p>Correspondances fournisseurs vers articles ALTA MARÉE.</p>
         </div>
         <div class="page-actions-right">
+          <button id="create-mapping-btn" class="btn btn-primary" type="button">+ Nouveau mapping</button>
           <button id="refresh-btn" class="btn btn-secondary" type="button">Actualiser</button>
-          <button id="rematch-preview-btn" class="btn btn-secondary" type="button">Aperçu rematch</button>
-          <button id="rematch-confirm-btn" class="btn btn-primary" type="button" disabled>Corriger les mappings réparables</button>
         </div>
       </div>
       <div id="af-map-feedback" class="page-feedback hidden"></div>
     </section>
 
-    <section class="dashboard-grid">
-      <div class="white-card">
-        <h3>Total mappings</h3>
-        <p id="total-mappings">-</p>
-      </div>
-      <div class="white-card">
-        <h3>Mappings valides</h3>
-        <p id="valid-mappings">-</p>
-      </div>
-      <div class="white-card">
-        <h3>Mappings orphelins</h3>
-        <p id="orphan-mappings">-</p>
-      </div>
-      <div class="white-card">
-        <h3>Réparables</h3>
-        <p id="repairable-mappings">-</p>
-      </div>
-      <div class="white-card">
-        <h3>Non réparables</h3>
-        <p id="non-repairable-mappings">-</p>
+    <section class="welcome-card">
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="search-input">Recherche</label>
+          <input id="search-input" type="text" placeholder="Référence, libellé, fournisseur, PLU..." />
+        </div>
+        <div class="form-group">
+          <label for="supplier-filter-input">Fournisseur</label>
+          <div class="page-actions-right">
+            <input id="supplier-filter-input" type="text" placeholder="Tous les fournisseurs" readonly />
+            <button id="supplier-filter-f9-btn" class="btn btn-secondary" type="button">F9</button>
+            <button id="supplier-filter-clear-btn" class="btn btn-secondary" type="button">Effacer</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="status-filter">Statut</label>
+          <select id="status-filter">
+            <option value="active">Actifs</option>
+            <option value="inactive">Inactifs</option>
+            <option value="all">Tous</option>
+          </select>
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="apply-filters-btn" class="btn btn-secondary" type="button">Filtrer</button>
+        </div>
       </div>
     </section>
 
     <section class="welcome-card">
-      <h2>Fournisseurs concernés</h2>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
             <tr>
               <th>Fournisseur</th>
-              <th>Orphelins</th>
-              <th>Réparables</th>
-              <th>Non réparables</th>
-            </tr>
-          </thead>
-          <tbody id="suppliers-tbody">
-            <tr><td colspan="4">Chargement...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="welcome-card">
-      <h2>Aperçu rematch</h2>
-      <p id="rematch-methods">Aucun aperçu chargé.</p>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead>
-            <tr>
-              <th>Fournisseur</th>
-              <th>PLU source</th>
-              <th>EAN source</th>
-              <th>Désignation source</th>
-              <th>Méthode</th>
-              <th>Article proposé</th>
+              <th>Réf fournisseur</th>
+              <th>Libellé fournisseur</th>
+              <th>PLU</th>
+              <th>Article</th>
+              <th>Unité achat</th>
+              <th>Unité prix</th>
               <th>Statut</th>
+              <th>Actions</th>
             </tr>
           </thead>
-          <tbody id="preview-tbody">
-            <tr><td colspan="7">Aucun aperçu chargé.</td></tr>
+          <tbody id="mappings-tbody">
+            <tr><td colspan="9">Chargement...</td></tr>
           </tbody>
         </table>
       </div>
     </section>
   </main>
 
+  <div id="mapping-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div>
+          <h3 id="mapping-modal-title">Nouveau mapping</h3>
+          <p>Associer une référence fournisseur à un article ALTA.</p>
+        </div>
+        <button id="close-mapping-modal-btn" class="btn btn-secondary" type="button">Fermer</button>
+      </div>
+
+      <form id="mapping-form" class="modal-form">
+        <input id="mapping-id" type="hidden" />
+        <input id="mapping-supplier-id" type="hidden" />
+        <input id="mapping-article-id" type="hidden" />
+
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="mapping-supplier-display">Fournisseur</label>
+            <div class="page-actions-right">
+              <input id="mapping-supplier-display" type="text" readonly required />
+              <button id="mapping-supplier-f9-btn" class="btn btn-secondary" type="button">F9</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="mapping-article-display">Article</label>
+            <div class="page-actions-right">
+              <input id="mapping-article-display" type="text" readonly required />
+              <button id="mapping-article-f9-btn" class="btn btn-secondary" type="button">F9</button>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="mapping-supplier-ref">Référence fournisseur</label>
+            <input id="mapping-supplier-ref" type="text" required />
+          </div>
+          <div class="form-group">
+            <label for="mapping-supplier-label">Libellé fournisseur</label>
+            <input id="mapping-supplier-label" type="text" />
+          </div>
+          <div class="form-group">
+            <label for="mapping-purchase-unit">Unité achat</label>
+            <input id="mapping-purchase-unit" type="text" placeholder="kg, colis, pièce..." />
+          </div>
+          <div class="form-group">
+            <label for="mapping-price-unit">Unité prix</label>
+            <input id="mapping-price-unit" type="text" placeholder="kg, colis, pièce..." />
+          </div>
+        </div>
+
+        <div class="page-actions-right" style="margin-top: 18px;">
+          <button id="save-mapping-btn" class="btn btn-primary" type="submit">Enregistrer</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="supplier-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div>
+          <h3>Choisir un fournisseur</h3>
+          <p>Recherche par code, nom ou contact.</p>
+        </div>
+        <button id="close-supplier-modal-btn" class="btn btn-secondary" type="button">Fermer</button>
+      </div>
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="supplier-search-input">Recherche fournisseur</label>
+          <input id="supplier-search-input" type="text" />
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="supplier-search-btn" class="btn btn-secondary" type="button">Rechercher</button>
+        </div>
+      </div>
+      <div class="table-wrap" style="margin-top: 16px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Nom</th>
+              <th>Statut</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="supplier-results-tbody">
+            <tr><td colspan="4">Lance une recherche.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="article-modal" class="modal-overlay hidden">
+    <div class="modal-card modal-large">
+      <div class="modal-header">
+        <div>
+          <h3>Choisir un article</h3>
+          <p>Recherche par PLU, désignation ou EAN.</p>
+        </div>
+        <button id="close-article-modal-btn" class="btn btn-secondary" type="button">Fermer</button>
+      </div>
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="article-search-input">Recherche article</label>
+          <input id="article-search-input" type="text" />
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="article-search-btn" class="btn btn-secondary" type="button">Rechercher</button>
+        </div>
+      </div>
+      <div class="table-wrap" style="margin-top: 16px;">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>PLU</th>
+              <th>Désignation</th>
+              <th>Unité achat</th>
+              <th>Statut</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="article-results-tbody">
+            <tr><td colspan="5">Lance une recherche.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <script src="./js/config.js"></script>
-  <script src="./js/supplier-article-mappings.js?v=1"></script>
+  <script src="./js/supplier-article-mappings.js?v=2"></script>
 </body>
 </html>
