@@ -165,12 +165,57 @@ async function executeRelevantTools({ db, user, storeId, question, messages = []
   const results = await Promise.all(
     toolNames.map((toolName) => {
       if (toolName === 'prepare_customer_order') {
+        const actionPrompt = buildActionPrompt(question, messages, collectingMemory);
+        console.info('[AI TOOL] prepare_customer_order called', {
+          store_id: storeId,
+          user_id: user.id,
+          original_question: question,
+          conversation_messages: Array.isArray(messages) ? messages.length : 0,
+          has_collecting_action_memory: Boolean(collectingMemory?.id),
+        });
+        console.info('[AI TOOL] prepare_customer_order args', {
+          store_id: storeId,
+          user_id: user.id,
+          prompt: actionPrompt,
+          collecting_action_memory_id: collectingMemory?.id || null,
+          collecting_short_memory: collectingMemory?.payload?.short_memory || null,
+        });
+        console.info('[AI TOOL] article search started', {
+          store_id: storeId,
+          user_id: user.id,
+          prompt: actionPrompt,
+          original_question: question,
+        });
+
         return prepareCustomerOrderAction({
           db,
           user,
-          prompt: buildActionPrompt(question, messages, collectingMemory),
+          prompt: actionPrompt,
         })
           .then(async (action) => {
+            console.info('[AI TOOL] customer detected', {
+              store_id: storeId,
+              user_id: user.id,
+              status: 'success',
+              client_id: action.payload?.client?.id || null,
+              client_name: action.payload?.client?.name || null,
+            });
+            console.info('[AI TOOL] article search result', {
+              store_id: storeId,
+              user_id: user.id,
+              status: 'success',
+              lines: Array.isArray(action.payload?.lines)
+                ? action.payload.lines.map((line) => ({
+                    article_id: line.article_id,
+                    article_plu: line.article_plu,
+                    article_label: line.article_label,
+                    quantity: line.quantity,
+                    sale_unit: line.sale_unit,
+                    stock_status: line.supply_status,
+                  }))
+                : [],
+            });
+
             try {
               await markCollectingMemoryCompleted({ db, user, actionId: action.id });
             } catch (error) {
@@ -190,6 +235,24 @@ async function executeRelevantTools({ db, user, storeId, question, messages = []
             };
           })
           .catch(async (error) => {
+            console.info('[AI TOOL] customer detected', {
+              store_id: storeId,
+              user_id: user.id,
+              status: 'error_or_unknown',
+              reason: error.details?.reason || null,
+              client_id: error.details?.log?.client_id || null,
+              message: error.message,
+            });
+            console.info('[AI TOOL] article search result', {
+              store_id: storeId,
+              user_id: user.id,
+              status: 'error',
+              reason: error.details?.reason || null,
+              requested: error.details?.requested || null,
+              candidates: error.details?.candidates || [],
+              message: error.message,
+            });
+
             if (isMissingActionTable(error) || isMissingActionMemoryTable(error)) {
               return {
                 name: 'prepare_customer_order',
