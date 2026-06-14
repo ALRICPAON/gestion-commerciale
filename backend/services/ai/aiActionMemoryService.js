@@ -183,6 +183,26 @@ function filterMissingFields(missingFields, validated) {
   });
 }
 
+function evaluateReadiness(validated) {
+  const evaluation = {
+    client_present: Boolean(validated.client_search),
+    article_present: Boolean(validated.article_search || validated.article_plu),
+    quantity_present: number(validated.quantity) > 0,
+    price_present: number(validated.unit_price_ht) > 0,
+    missing_fields_count: Array.isArray(validated.missing_fields) ? validated.missing_fields.length : 0,
+  };
+
+  evaluation.ready_for_pending_action = evaluation.client_present
+    && evaluation.article_present
+    && evaluation.quantity_present
+    && evaluation.price_present
+    && evaluation.missing_fields_count === 0;
+
+  console.info('[AI MEMORY] readiness evaluation', evaluation);
+
+  return evaluation;
+}
+
 function validateMemoryPayload(payload = {}) {
   const actionType = payload.action_type === 'customer_order_draft'
     ? 'customer_order_draft'
@@ -193,7 +213,6 @@ function validateMemoryPayload(payload = {}) {
   const quantity = colisCount && weightPerColis
     ? Number((colisCount * weightPerColis).toFixed(3))
     : directQuantity;
-  const status = ALLOWED_STATUSES.has(payload.status) ? payload.status : 'collecting';
   const missingFields = Array.isArray(payload.missing_fields)
     ? payload.missing_fields.filter((field) => ALLOWED_MISSING_FIELDS.has(field))
     : [];
@@ -208,7 +227,7 @@ function validateMemoryPayload(payload = {}) {
     quantity,
     unit_price_ht: validatedPositiveNumber(payload.unit_price_ht),
     missing_fields: [],
-    status,
+    status: 'collecting',
   };
 
   validated.missing_fields = filterMissingFields(missingFields, validated);
@@ -220,9 +239,8 @@ function validateMemoryPayload(payload = {}) {
   if (!validated.unit_price_ht) validated.missing_fields.push('unit_price_ht');
 
   validated.missing_fields = Array.from(new Set(validated.missing_fields));
-  if (validated.missing_fields.length > 0) {
-    validated.status = 'collecting';
-  }
+  const readiness = evaluateReadiness(validated);
+  validated.status = readiness.ready_for_pending_action ? 'ready_for_confirmation' : 'collecting';
 
   console.info('[AI MEMORY TOOL] validated fields', validated);
 
