@@ -20,7 +20,7 @@ const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
 const ALTA_WIDGET_MIME_TYPE = 'text/html;profile=mcp-app';
-const SECURITY_SCHEMES = [{ type: 'http', scheme: 'bearer' }];
+const SECURITY_SCHEMES = [{ type: 'noauth' }];
 
 const ALTA_WIDGET_HTML = `<!doctype html>
 <html lang="fr">
