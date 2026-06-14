@@ -31,8 +31,8 @@ function appendTextWithLineBreaks(parent, content) {
   });
 }
 
-function renderActionButtons(action, container) {
-  if (!action?.id || action.status !== 'pending') return;
+function renderActionButtons(actionId, container) {
+  if (!actionId) return;
 
   const actions = document.createElement('div');
   actions.className = 'ai-action-buttons';
@@ -41,13 +41,13 @@ function renderActionButtons(action, container) {
   confirm.type = 'button';
   confirm.className = 'btn btn-primary';
   confirm.textContent = 'Confirmer';
-  confirm.addEventListener('click', () => handlePendingAction(action.id, 'confirm', actions));
+  confirm.addEventListener('click', () => handlePendingAction(actionId, 'confirm', actions));
 
   const cancel = document.createElement('button');
   cancel.type = 'button';
   cancel.className = 'btn btn-secondary';
   cancel.textContent = 'Annuler';
-  cancel.addEventListener('click', () => handlePendingAction(action.id, 'cancel', actions));
+  cancel.addEventListener('click', () => handlePendingAction(actionId, 'cancel', actions));
 
   actions.appendChild(confirm);
   actions.appendChild(cancel);
@@ -69,7 +69,7 @@ function renderMessage(role, content, options = {}) {
     body.appendChild(p);
   });
 
-  (options.pendingActions || []).forEach((action) => renderActionButtons(action, body));
+  renderActionButtons(options.pendingActionId, body);
 
   article.appendChild(meta);
   article.appendChild(body);
@@ -171,7 +171,7 @@ async function askAssistant(question) {
     const answer = data.answer || "L'assistant n'a pas renvoye de reponse.";
     conversation.push({ role: 'assistant', content: answer });
     renderMessage('assistant', answer, {
-      pendingActions: data.pending_actions || [],
+      pendingActionId: data.pending_action_id || null,
     });
   } catch (error) {
     showFeedback(error.message || 'Erreur assistant IA');

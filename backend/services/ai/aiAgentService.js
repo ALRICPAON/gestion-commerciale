@@ -4,6 +4,12 @@ const { normalizeConversation } = require('./aiMemoryService');
 const { SYSTEM_PROMPT, buildContextPrompt } = require('./aiPrompts');
 const { listTools } = require('./aiToolsRegistry');
 const { executeRelevantTools } = require('./aiToolExecutor');
+const { confirmAction } = require('./aiActionService');
+const {
+  findPendingActionsForUser,
+  isConfirmationIntent,
+  isMissingActionMemoryTable,
+} = require('./aiActionMemoryService');
 
 const MAX_QUESTION_LENGTH = 2000;
 
@@ -31,14 +37,90 @@ function extractPendingActions(toolResults) {
     }));
 }
 
+function formatActionResult(result) {
+  const sale = result?.result;
+  if (!sale) return 'Action IA executee.';
+
+  const lines = Array.isArray(sale.lines)
+    ? sale.lines.map((line) => `- ${line.article_label} : ${line.sold_quantity} ${line.sale_unit}`)
+    : [];
+
+  return [
+    'Commande brouillon creee.',
+    `Client : ${sale.client?.name || 'client'}`,
+    `Document : ${sale.sale_id}`,
+    '',
+    ...lines,
+  ].join('\n');
+}
+
+async function handleConfirmationIntent({ db, user }) {
+  let pendingActions = [];
+  try {
+    pendingActions = await findPendingActionsForUser({ db, user, limit: 2 });
+  } catch (error) {
+    if (!isMissingActionMemoryTable(error)) throw error;
+    return {
+      answer: 'aucune action à confirmer',
+      pending_action_id: null,
+      pending_actions: [],
+    };
+  }
+
+  if (pendingActions.length === 0) {
+    return {
+      answer: 'aucune action à confirmer',
+      pending_action_id: null,
+      pending_actions: [],
+    };
+  }
+
+  if (pendingActions.length > 1) {
+    return {
+      answer: 'J ai plusieurs actions en attente. Utilise le bouton Confirmer de l action voulue pour eviter toute ambiguite.',
+      pending_action_id: null,
+      pending_actions: pendingActions.map((action) => ({
+        id: action.id,
+        action_type: action.action_type,
+        status: action.status,
+      })),
+    };
+  }
+
+  const confirmed = await confirmAction({
+    dbPool: db,
+    user,
+    actionId: pendingActions[0].id,
+  });
+
+  return {
+    answer: formatActionResult(confirmed),
+    pending_action_id: null,
+    pending_actions: [],
+    action_result: confirmed,
+  };
+}
+
 async function chat({ db, user, question, messages = [] }) {
   const prompt = normalizeQuestion(question);
   const conversation = normalizeConversation(Array.isArray(messages) ? messages : []);
+
+  if (isConfirmationIntent(prompt)) {
+    const confirmationResult = await handleConfirmationIntent({ db, user });
+    console.info('Agent IA confirmation texte traitee', {
+      user_id: user.id,
+      store_id: user.store_id,
+      executed: Boolean(confirmationResult.action_result),
+    });
+    return confirmationResult;
+  }
+
   const [context, toolResults] = await Promise.all([
     buildAiContext({ db, user }),
     executeRelevantTools({ db, user, storeId: user.store_id, question: prompt, messages: conversation }),
   ]);
   const pendingActions = extractPendingActions(toolResults);
+  const pendingAction = pendingActions[0] || null;
 
   console.info('Agent IA demande recue', {
     user_id: user.id,
@@ -58,6 +140,7 @@ async function chat({ db, user, question, messages = [] }) {
           ...context,
           tools_readonly_available: listTools().filter((tool) => tool.enabled && tool.readonly),
           tools_readonly_results: toolResults,
+          pending_action_id: pendingAction?.id || null,
         }),
       },
       ...conversation,
@@ -67,6 +150,8 @@ async function chat({ db, user, question, messages = [] }) {
 
   return {
     answer: answer || "Je n'ai pas pu produire de reponse exploitable pour le moment.",
+    pending_action_id: pendingAction?.id || null,
+    pending_action: pendingAction,
     pending_actions: pendingActions,
   };
 }
