@@ -5,6 +5,7 @@ const { SYSTEM_PROMPT, buildContextPrompt } = require('./aiPrompts');
 const { listTools } = require('./aiToolsRegistry');
 const { executeRelevantTools } = require('./aiToolExecutor');
 const { confirmAction } = require('./aiActionService');
+const { updateUserMemory } = require('./aiUserMemoryService');
 const {
   findPendingActionsForUser,
   isConfirmationIntent,
@@ -117,6 +118,18 @@ async function handleConfirmationIntent({ db, user }) {
   };
 }
 
+async function updateUserMemorySafely({ db, user, question, messages }) {
+  try {
+    await updateUserMemory({ db, user, question, messages });
+  } catch (error) {
+    console.warn('[AI USER MEMORY] update ignored', {
+      store_id: user.store_id,
+      user_id: user.id,
+      message: error.message,
+    });
+  }
+}
+
 async function chat({ db, user, question, messages = [] }) {
   const prompt = normalizeQuestion(question);
   const conversation = normalizeConversation(Array.isArray(messages) ? messages : []);
@@ -134,6 +147,7 @@ async function chat({ db, user, question, messages = [] }) {
   const [context, toolResults] = await Promise.all([
     buildAiContext({ db, user }),
     executeRelevantTools({ db, user, storeId: user.store_id, question: prompt, messages: conversation }),
+    updateUserMemorySafely({ db, user, question: prompt, messages: conversation }),
   ]);
   const pendingActions = extractPendingActions(toolResults);
   const pendingAction = pendingActions[0] || null;
