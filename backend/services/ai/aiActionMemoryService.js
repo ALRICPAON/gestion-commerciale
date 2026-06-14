@@ -138,7 +138,7 @@ function buildShortMemory({ question, messages = [], previousMemory = null, clar
       article_search: product.article_search,
       price: product.price || null,
     })),
-    statut: missingFields.size > 0 ? 'collecting' : 'collecting',
+    statut: 'collecting',
     missing_fields: Array.from(missingFields),
     clarification: clarification?.message || null,
     updated_at: new Date().toISOString(),
@@ -248,6 +248,7 @@ function isMissingActionMemoryTable(error) {
 
 module.exports = {
   buildPromptFromShortMemory,
+  buildShortMemory,
   findLatestCollectingActionMemory,
   findPendingActionsForUser,
   isConfirmationIntent,
