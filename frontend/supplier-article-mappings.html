@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AF_MAP - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">AF_MAP - Correspondances fournisseurs articles</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Diagnostic AF_MAP</h2>
+          <p>Contrôle des correspondances fournisseurs après réimport des articles.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="refresh-btn" class="btn btn-secondary" type="button">Actualiser</button>
+          <button id="rematch-preview-btn" class="btn btn-secondary" type="button">Aperçu rematch</button>
+          <button id="rematch-confirm-btn" class="btn btn-primary" type="button" disabled>Corriger les mappings réparables</button>
+        </div>
+      </div>
+      <div id="af-map-feedback" class="page-feedback hidden"></div>
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="white-card">
+        <h3>Total mappings</h3>
+        <p id="total-mappings">-</p>
+      </div>
+      <div class="white-card">
+        <h3>Mappings valides</h3>
+        <p id="valid-mappings">-</p>
+      </div>
+      <div class="white-card">
+        <h3>Mappings orphelins</h3>
+        <p id="orphan-mappings">-</p>
+      </div>
+      <div class="white-card">
+        <h3>Réparables</h3>
+        <p id="repairable-mappings">-</p>
+      </div>
+      <div class="white-card">
+        <h3>Non réparables</h3>
+        <p id="non-repairable-mappings">-</p>
+      </div>
+    </section>
+
+    <section class="welcome-card">
+      <h2>Fournisseurs concernés</h2>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Fournisseur</th>
+              <th>Orphelins</th>
+              <th>Réparables</th>
+              <th>Non réparables</th>
+            </tr>
+          </thead>
+          <tbody id="suppliers-tbody">
+            <tr><td colspan="4">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="welcome-card">
+      <h2>Aperçu rematch</h2>
+      <p id="rematch-methods">Aucun aperçu chargé.</p>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Fournisseur</th>
+              <th>PLU source</th>
+              <th>EAN source</th>
+              <th>Désignation source</th>
+              <th>Méthode</th>
+              <th>Article proposé</th>
+              <th>Statut</th>
+            </tr>
+          </thead>
+          <tbody id="preview-tbody">
+            <tr><td colspan="7">Aucun aperçu chargé.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/supplier-article-mappings.js?v=1"></script>
+</body>
+</html>
