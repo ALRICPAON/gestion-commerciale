@@ -1,0 +1,263 @@
+openapi: 3.1.0
+info:
+  title: ALTA MARÉE Agent API
+  version: 1.0.0
+  description: API sécurisée pour connecter un agent ChatGPT Business à ALTA MARÉE via GPT Actions.
+servers:
+  - url: https://api.altamaree.fr/api/agent
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ALTA_AGENT_API_KEY
+  schemas:
+    SearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+    PendingActionInput:
+      type: object
+      required:
+        - action_type
+        - summary
+        - payload
+      properties:
+        action_type:
+          type: string
+          description: Type métier préparé, par exemple customer_order_draft, email_draft ou supplier_order_draft.
+        summary:
+          type: string
+          description: Résumé lisible par l'utilisateur avant confirmation.
+        payload:
+          type: object
+          description: Payload figé préparé par l'agent. Il ne doit contenir que le choix final à confirmer.
+          additionalProperties: true
+    PendingAction:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        store_id:
+          type: string
+          format: uuid
+        created_by_source:
+          type: string
+        action_type:
+          type: string
+        summary:
+          type: string
+        payload:
+          type: object
+          additionalProperties: true
+        status:
+          type: string
+          enum: [pending, executed, cancelled]
+        created_at:
+          type: string
+          format: date-time
+        executed_at:
+          type:
+            - string
+            - 'null'
+          format: date-time
+        cancelled_at:
+          type:
+            - string
+            - 'null'
+          format: date-time
+paths:
+  /clients/search:
+    get:
+      operationId: searchClients
+      summary: Rechercher des clients ALTA
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 25
+      responses:
+        '200':
+          description: Liste de clients
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /articles/search:
+    get:
+      operationId: searchArticles
+      summary: Rechercher des articles ALTA
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 25
+      responses:
+        '200':
+          description: Liste d'articles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /stock/search:
+    get:
+      operationId: searchStock
+      summary: Rechercher l'état du stock par article
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 25
+      responses:
+        '200':
+          description: État du stock
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /suppliers/search:
+    get:
+      operationId: searchSuppliers
+      summary: Rechercher des fournisseurs ALTA
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 25
+      responses:
+        '200':
+          description: Liste de fournisseurs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /sales/search:
+    get:
+      operationId: searchSales
+      summary: Rechercher des ventes, commandes ou documents commerciaux
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 25
+      responses:
+        '200':
+          description: Liste de documents de vente
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+  /pending-actions:
+    post:
+      operationId: createPendingAction
+      summary: Créer une action en attente de confirmation humaine
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PendingActionInput'
+      responses:
+        '201':
+          description: Action en attente créée
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingAction'
+  /pending-actions/{id}:
+    get:
+      operationId: getPendingAction
+      summary: Lire une action en attente
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Action trouvée
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PendingAction'
+  /pending-actions/{id}/execute:
+    post:
+      operationId: executePendingAction
+      summary: Marquer une action en attente comme confirmée et exécutée
+      description: Ce socle ne crée pas directement de vente, BL, email ou suppression. L'appel exige confirmation=human_confirmed et marque uniquement l'action pending comme exécutée.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - confirmation
+              properties:
+                confirmation:
+                  type: string
+                  enum: [human_confirmed]
+      responses:
+        '200':
+          description: Action marquée exécutée
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PendingAction'
+                  - type: object
+                    properties:
+                      execution_note:
+                        type: string
