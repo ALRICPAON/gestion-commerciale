@@ -28,6 +28,7 @@ const purchaseReceptionUpgradeRoutes = require('./routes/purchaseReceptionUpgrad
 const supplierInvoiceManualMatchingRoutes = require('./routes/supplierInvoiceManualMatching');
 const supplierInvoiceImportPatchRoutes = require('./routes/supplierInvoiceImportPatch');
 const supplierArticleMappingsRoutes = require('./routes/supplierArticleMappings');
+const supplierArticleMappingsCrudRoutes = require('./routes/supplierArticleMappingsCrud');
 const supplierInvoicesRoutes = require('./routes/supplierInvoices');
 const purchasesRoutes = require('./routes/purchases');
 const saleUnitNormalizerRoutes = require('./routes/saleUnitNormalizer');
@@ -163,6 +164,7 @@ app.use('/api/customer-price-lists', customerPriceListsRoutes);
 app.use('/api', purchaseReceptionUpgradeRoutes);
 app.use('/api', supplierInvoiceManualMatchingRoutes);
 app.use('/api', supplierInvoiceImportPatchRoutes);
+app.use('/api', supplierArticleMappingsCrudRoutes);
 app.use('/api', supplierArticleMappingsRoutes);
 app.use('/api', supplierInvoicesRoutes);
 app.use('/api', purchasesRoutes);
