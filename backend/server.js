@@ -52,6 +52,7 @@ const transformationValidationRoutes = require('./routes/transformationValidatio
 const transformationsRoutes = require('./routes/transformations');
 const aiAgentRoutes = require('./routes/aiAgent');
 const agentActionsRouter = require('./routes/agentActions');
+const mcpServerRoutes = require('./routes/mcpServer');
 const intelligenceCenterRoutes = require('./routes/intelligenceCenter');
 
 const app = express();
@@ -146,6 +147,8 @@ app.use('/uploads/sanitary-photos', express.static(SANITARY_PHOTOS_DIR, {
   maxAge: '7d',
 }));
 app.use(express.json());
+app.use('/mcp', apiRateLimiter);
+app.use('/mcp', mcpServerRoutes);
 app.use('/api/login', loginRateLimiter);
 app.use('/api', apiRateLimiter);
 app.use('/api', authRoutes);
