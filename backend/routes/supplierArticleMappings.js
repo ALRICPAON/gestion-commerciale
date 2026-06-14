@@ -137,12 +137,13 @@ function buildRepairSql(columns) {
 
   const allMatchesSql = matchBranches.length > 0 ? matchBranches.join('\nUNION ALL\n') : `
       SELECT
-        NULL::uuid mapping_id,
+        sam.id mapping_id,
         NULL::text match_method,
-        NULL::uuid article_id,
+        sam.article_id article_id,
         NULL::text article_plu,
         NULL::text article_designation,
         NULL::int priority
+      FROM orphan_mappings sam
       WHERE false
     `;
 
