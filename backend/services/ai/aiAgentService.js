@@ -34,6 +34,7 @@ function extractPendingActions(toolResults) {
       action_type: action.action_type,
       status: action.status,
       summary: action.summary,
+      payload: action.payload || null,
     }));
 }
 
@@ -52,6 +53,44 @@ function formatActionResult(result) {
     '',
     ...lines,
   ].join('\n');
+}
+
+function formatPendingActionAnswer(pendingAction) {
+  if (pendingAction?.summary) return pendingAction.summary;
+
+  const payload = pendingAction?.payload || {};
+  const clientName = payload.client?.name || 'client';
+  const lines = Array.isArray(payload.lines) ? payload.lines : [];
+  if (lines.length === 0) return 'Confirmer l action ?';
+
+  return [
+    `Je vais preparer une commande brouillon pour ${clientName} :`,
+    ...lines.map((line) => {
+      const plu = line.article_plu ? ` - PLU ${line.article_plu}` : '';
+      return `- ${line.article_label}${plu} : ${line.quantity} ${line.sale_unit || 'kg'}`;
+    }),
+    '',
+    'Confirmer l action ?',
+  ].join('\n');
+}
+
+function logConfirmationDisplayPayload({ user, pendingAction }) {
+  const lines = Array.isArray(pendingAction?.payload?.lines) ? pendingAction.payload.lines : [];
+  console.info('[AI ACTION] confirmation display payload', {
+    store_id: user.store_id,
+    user_id: user.id,
+    action_id: pendingAction?.id || null,
+    action_type: pendingAction?.action_type || null,
+    lines: lines.map((line) => ({
+      article_id: line.article_id || null,
+      plu: line.article_plu || null,
+      designation: line.article_label || null,
+      quantity: line.quantity || null,
+      sale_unit: line.sale_unit || null,
+      stock_status: line.supply_status || null,
+      is_negoce: Boolean(line.is_negoce),
+    })),
+  });
 }
 
 async function handleConfirmationIntent({ db, user }) {
@@ -147,6 +186,16 @@ async function chat({ db, user, question, messages = [] }) {
     pending_actions: pendingActions.length,
   });
 
+  if (pendingAction) {
+    logConfirmationDisplayPayload({ user, pendingAction });
+    return {
+      answer: formatPendingActionAnswer(pendingAction),
+      pending_action_id: pendingAction.id,
+      pending_action: pendingAction,
+      pending_actions: pendingActions,
+    };
+  }
+
   const answer = await generateAnswer({
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
@@ -156,7 +205,7 @@ async function chat({ db, user, question, messages = [] }) {
           ...context,
           tools_readonly_available: listTools().filter((tool) => tool.enabled && tool.readonly),
           tools_readonly_results: toolResults,
-          pending_action_id: pendingAction?.id || null,
+          pending_action_id: null,
         }),
       },
       ...conversation,
@@ -166,9 +215,9 @@ async function chat({ db, user, question, messages = [] }) {
 
   return {
     answer: answer || "Je n'ai pas pu produire de reponse exploitable pour le moment.",
-    pending_action_id: pendingAction?.id || null,
-    pending_action: pendingAction,
-    pending_actions: pendingActions,
+    pending_action_id: null,
+    pending_action: null,
+    pending_actions: [],
   };
 }
 
