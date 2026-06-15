@@ -485,6 +485,67 @@ async function createPendingAction(dbPool, storeId, input = {}) {
   });
 }
 
+async function getPendingActionType(dbPool, storeId, id) {
+  const result = await dbPool.query(
+    `
+    SELECT action_type
+    FROM agent_pending_actions
+    WHERE id = $1
+      AND store_id = $2
+      AND status = 'pending'
+    LIMIT 1
+    `,
+    [id, storeId]
+  );
+
+  return clean(result.rows[0]?.action_type);
+}
+
+async function salesAuditColumnsRequireUser(db) {
+  const result = await db.query(
+    `
+    SELECT COUNT(*)::int AS required_count
+    FROM information_schema.columns
+    WHERE table_schema = CURRENT_SCHEMA()
+      AND table_name IN ('sales_documents', 'sales_lines')
+      AND column_name IN ('created_by', 'updated_by')
+      AND is_nullable = 'NO'
+    `
+  );
+
+  return num(result.rows[0]?.required_count) > 0;
+}
+
+async function resolveSalesAuditUserId(db, storeId) {
+  const requiresUser = await salesAuditColumnsRequireUser(db);
+  const result = await db.query(
+    `
+    SELECT id
+    FROM users
+    WHERE store_id = $1
+      AND COALESCE(is_active, true) = true
+    ORDER BY
+      CASE role
+        WHEN 'admin' THEN 1
+        WHEN 'manager' THEN 2
+        ELSE 3
+      END,
+      id ASC
+    LIMIT 1
+    `,
+    [storeId]
+  );
+
+  const userId = result.rows[0]?.id || null;
+  if (requiresUser && !userId) {
+    const error = new Error('Aucun utilisateur technique disponible pour créer la commande');
+    error.status = 503;
+    throw error;
+  }
+
+  return userId;
+}
+
 async function executePendingAction(dbPool, storeId, input = {}) {
   const id = clean(input.id);
   const confirmation = clean(input.confirmation);
@@ -492,6 +553,11 @@ async function executePendingAction(dbPool, storeId, input = {}) {
     const error = new Error('id et confirmation=human_confirmed obligatoires');
     error.status = 400;
     throw error;
+  }
+
+  const actionType = await getPendingActionType(dbPool, storeId, id);
+  if (!ORDER_ACTION_TYPES.has(actionType)) {
+    return base.executePendingAction(dbPool, storeId, input);
   }
 
   const db = await dbPool.connect();
@@ -513,8 +579,7 @@ async function executePendingAction(dbPool, storeId, input = {}) {
       throw error;
     }
     const payload = await prepareOrderPayload(db, storeId, action.payload || {});
-    const actor = await db.query('SELECT id FROM users WHERE store_id=$1 ORDER BY id ASC LIMIT 1', [storeId]);
-    const actorId = actor.rows[0]?.id || null;
+    const actorId = await resolveSalesAuditUserId(db, storeId);
     const client = payload.client;
     const sale = await db.query(
       `
