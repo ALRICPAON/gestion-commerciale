@@ -19,6 +19,7 @@ const {
   getSalesOverview,
   getSalesToday,
   getTopClients,
+  createCustomerOrderConfirmed,
   createPendingAction,
   getPendingAction,
   executePendingAction,
@@ -204,15 +205,72 @@ const pendingActionOutputSchema = {
   additionalProperties: true,
 };
 
+const customerOrderOutputSchema = {
+  type: 'object',
+  properties: {
+    sale_id: { type: 'string' },
+    reference_number: { type: 'string' },
+    document_type: { type: 'string' },
+    status: { type: 'string' },
+    client: { type: 'object', additionalProperties: true },
+    line_count: { type: 'integer' },
+    total_amount_ex_vat: { type: 'number' },
+    total_vat_amount: { type: 'number' },
+    total_amount_inc_vat: { type: 'number' },
+    stock_warning: { type: 'boolean' },
+    stock_message: { type: 'string' },
+    created_lines: {
+      type: 'array',
+      items: { type: 'object', additionalProperties: true },
+    },
+  },
+  additionalProperties: true,
+};
+
+const customerOrderConfirmedInputSchema = {
+  type: 'object',
+  required: ['client_id', 'lines'],
+  properties: {
+    client_id: { type: 'string', description: 'UUID du client actif.' },
+    document_date: { type: 'string', description: 'Date de commande YYYY-MM-DD. Optionnel.' },
+    notes: { type: 'string', description: 'Notes optionnelles de la commande.' },
+    lines: {
+      type: 'array',
+      minItems: 1,
+      items: {
+        type: 'object',
+        required: ['unit_sale_price_ht'],
+        properties: {
+          article_id: { type: 'string', description: 'UUID article. Recommandé après search_articles/search_stock.' },
+          article_plu: { type: 'string', description: 'PLU article si article_id indisponible.' },
+          article_label: { type: 'string', description: 'Libellé article affiché sur la ligne.' },
+          package_count: { type: 'number', description: 'Nombre de colis, par exemple 10.' },
+          weight_per_package: { type: 'number', description: 'Poids par colis en kg, par exemple 3.' },
+          total_weight: { type: 'number', description: 'Poids total en kg. Calculé si absent et si package_count + weight_per_package sont fournis.' },
+          unit_sale_price_ht: { type: 'number', description: 'Prix de vente HT par unité, par exemple 15.' },
+          sale_unit: { type: 'string', description: 'Unité de vente, généralement kg.' },
+          force_stock_exit: { type: 'boolean', description: 'True si le client confirme une commande malgré stock insuffisant.' },
+        },
+        anyOf: [
+          { required: ['article_id'] },
+          { required: ['article_plu'] },
+        ],
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+};
+
 const pendingActionInputSchema = {
   type: 'object',
   required: ['action_type', 'summary', 'payload'],
   properties: {
-    action_type: { type: 'string', description: 'Type métier préparé. Pour une commande client, utiliser customer_order_draft.' },
+    action_type: { type: 'string', description: 'Type métier générique. Ne pas utiliser pour les commandes client ChatGPT: utiliser create_customer_order_confirmed après confirmation utilisateur.' },
     summary: { type: 'string', description: 'Résumé clair à afficher à l’utilisateur avant confirmation.' },
     payload: {
       type: 'object',
-      description: 'Payload figé préparé par l’agent. Pour action_type=customer_order_draft, fournir client_id et lines[]. Une ligne peut utiliser article_id ou article_plu, puis total_weight ou package_count + weight_per_package; sold_quantity est optionnel.',
+      description: 'Payload figé préparé par l’agent pour les actions génériques hors commande client directe.',
       properties: {
         client_id: { type: 'string' },
         document_type: { type: 'string', enum: ['ORDER'] },
@@ -435,9 +493,19 @@ const tools = [
     invoked: 'Meilleurs clients ALTA prêts',
   }),
   makeTool({
+    name: 'create_customer_order_confirmed',
+    title: 'Créer une commande client confirmée',
+    description: 'Crée réellement une commande client brouillon dans ALTA. À appeler uniquement après confirmation explicite de l’utilisateur dans la conversation. Ne pas utiliser create_pending_action pour les commandes client ChatGPT.',
+    inputSchema: customerOrderConfirmedInputSchema,
+    outputSchema: customerOrderOutputSchema,
+    invoking: 'Création commande ALTA...',
+    invoked: 'Commande ALTA créée',
+    readOnly: false,
+  }),
+  makeTool({
     name: 'create_pending_action',
     title: 'Créer une action en attente',
-    description: 'Crée une action ALTA en attente de confirmation humaine. Pour créer une commande client, préparer action_type=customer_order_draft.',
+    description: 'Crée une action ALTA générique en attente de confirmation humaine. Ne pas utiliser pour une commande client ChatGPT: utiliser create_customer_order_confirmed après confirmation conversationnelle.',
     inputSchema: pendingActionInputSchema,
     outputSchema: pendingActionOutputSchema,
     invoking: 'Préparation action ALTA...',
@@ -481,6 +549,7 @@ const toolHandlers = {
   get_sales_overview: getSalesOverview,
   get_sales_today: getSalesToday,
   get_top_clients: getTopClients,
+  create_customer_order_confirmed: createCustomerOrderConfirmed,
   create_pending_action: createPendingAction,
   get_pending_action: getPendingAction,
   execute_pending_action: executePendingAction,
@@ -583,7 +652,7 @@ async function handleRequest(req, message) {
         resources: { subscribe: false, listChanged: false },
       },
       serverInfo: { name: 'alta-maree-mcp', version: '1.2.0' },
-      instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Toute création, modification, validation, facturation, email ou suppression doit passer par create_pending_action puis execute_pending_action après confirmation humaine explicite.',
+      instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed afin de créer un brouillon modifiable dans ALTA. Les outils pending_action restent réservés aux actions génériques hors commande client directe. Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
       _meta: {
         securitySchemes: SECURITY_SCHEMES,
       },

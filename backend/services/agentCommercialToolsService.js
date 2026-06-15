@@ -546,6 +546,92 @@ async function resolveSalesAuditUserId(db, storeId) {
   return userId;
 }
 
+async function insertCustomerOrderDraft(db, storeId, payload, notesFallback = null) {
+  const actorId = await resolveSalesAuditUserId(db, storeId);
+  const client = payload.client;
+  const sale = await db.query(
+    `
+    INSERT INTO sales_documents(id,store_id,client_key,client_id,document_date,status,document_type,origin,reference_number,notes,tariff_level_snapshot,vat_rate_snapshot,is_vat_exempt_snapshot,created_by,updated_by)
+    VALUES(gen_random_uuid(),$1,NULL,$2,COALESCE($3::date,CURRENT_DATE),'draft','ORDER','chatgpt_mcp',$4,$5,$6,$7,$8,$9,$9)
+    RETURNING *
+    `,
+    [storeId, client.id, clean(payload.document_date), clean(payload.reference_number), clean(payload.notes) || notesFallback, num(client.tariff_level, 1), num(client.vat_rate, 5.5), Boolean(client.is_vat_exempt), actorId]
+  );
+  const saleId = sale.rows[0].id;
+  const createdLines = [];
+  let lineNumber = 1;
+  for (const line of payload.lines) {
+    const quantity = pos(line.sold_quantity || line.total_weight);
+    const unitHt = pos(line.unit_sale_price_ht);
+    const vatRate = client.is_vat_exempt ? 0 : pos(line.vat_rate, num(client.vat_rate, 5.5));
+    const ht = Number((quantity * unitHt).toFixed(2));
+    const vat = Number((ht * vatRate / 100).toFixed(2));
+    const ttc = Number((ht + vat).toFixed(2));
+    const unitTtc = quantity > 0 ? Number((ttc / quantity).toFixed(4)) : unitHt;
+    const cost = pos(line.unit_cost_ex_vat);
+    const inserted = await db.query(
+      `
+      INSERT INTO sales_lines(id,store_id,client_key,sales_document_id,line_number,article_id,article_plu,article_label,package_count,weight_per_package,total_weight,sold_quantity,sale_unit,line_status,unit_sale_price_ht,unit_sale_price_ttc,vat_rate,line_amount_ht,line_vat_amount,line_amount_ttc,unit_cost_ex_vat,line_margin_ex_vat,suggested_lot_id,traceability_snapshot,created_by,updated_by)
+      VALUES(gen_random_uuid(),$1,NULL,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$22)
+      RETURNING id, article_id, article_plu, article_label, sold_quantity, sale_unit, unit_sale_price_ht, line_amount_ht, line_amount_ttc
+      `,
+      [storeId, saleId, lineNumber, line.article_id, line.article_plu, line.article_label, pos(line.package_count), pos(line.weight_per_package), quantity, quantity, clean(line.sale_unit) || 'kg', unitHt, unitTtc, vatRate, ht, vat, ttc, cost, Number((ht - quantity * cost).toFixed(2)), clean(line.suggested_lot_id), JSON.stringify({ stock_status: line.stock_status, stock_quantity: line.stock_quantity, missing_quantity: line.missing_quantity, force_stock_exit: line.force_stock_exit, prepared_by: SOURCE }), actorId]
+    );
+    createdLines.push(inserted.rows[0]);
+    lineNumber += 1;
+  }
+
+  const totals = await db.query(
+    `
+    UPDATE sales_documents sd
+    SET total_amount_ex_vat=x.ht,total_vat_amount=x.vat,total_amount_inc_vat=x.ttc,updated_at=NOW()
+    FROM (
+      SELECT COALESCE(SUM(line_amount_ht),0) ht,
+             COALESCE(SUM(line_vat_amount),0) vat,
+             COALESCE(SUM(line_amount_ttc),0) ttc
+      FROM sales_lines
+      WHERE sales_document_id=$1
+    ) x
+    WHERE sd.id=$1
+    RETURNING sd.reference_number, sd.total_amount_ex_vat, sd.total_vat_amount, sd.total_amount_inc_vat
+    `,
+    [saleId]
+  );
+  const totalRow = totals.rows[0] || {};
+  return {
+    sale_id: saleId,
+    reference_number: totalRow.reference_number || sale.rows[0].reference_number || null,
+    document_type: 'ORDER',
+    status: 'draft',
+    client: { id: client.id, code: client.code, name: client.name },
+    line_count: createdLines.length,
+    total_amount_ex_vat: totalRow.total_amount_ex_vat,
+    total_vat_amount: totalRow.total_vat_amount,
+    total_amount_inc_vat: totalRow.total_amount_inc_vat,
+    stock_warning: payload.stock_warning,
+    stock_message: payload.stock_warning
+      ? 'Commande brouillon créée avec stock insuffisant ou absent sur au moins une ligne.'
+      : 'Commande brouillon créée avec stock disponible pour les lignes demandées.',
+    created_lines: createdLines,
+  };
+}
+
+async function createCustomerOrderConfirmed(dbPool, storeId, input = {}) {
+  const db = await dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const payload = await prepareOrderPayload(db, storeId, input);
+    const result = await insertCustomerOrderDraft(db, storeId, payload, input.notes);
+    await db.query('COMMIT');
+    return result;
+  } catch (error) {
+    await db.query('ROLLBACK');
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+
 async function executePendingAction(dbPool, storeId, input = {}) {
   const id = clean(input.id);
   const confirmation = clean(input.confirmation);
@@ -579,44 +665,7 @@ async function executePendingAction(dbPool, storeId, input = {}) {
       throw error;
     }
     const payload = await prepareOrderPayload(db, storeId, action.payload || {});
-    const actorId = await resolveSalesAuditUserId(db, storeId);
-    const client = payload.client;
-    const sale = await db.query(
-      `
-      INSERT INTO sales_documents(id,store_id,client_key,client_id,document_date,status,document_type,origin,reference_number,notes,tariff_level_snapshot,vat_rate_snapshot,is_vat_exempt_snapshot,created_by,updated_by)
-      VALUES(gen_random_uuid(),$1,NULL,$2,COALESCE($3::date,CURRENT_DATE),'draft','ORDER','chatgpt_mcp',$4,$5,$6,$7,$8,$9,$9)
-      RETURNING *
-      `,
-      [storeId, client.id, clean(payload.document_date), clean(payload.reference_number), clean(payload.notes) || action.summary, num(client.tariff_level, 1), num(client.vat_rate, 5.5), Boolean(client.is_vat_exempt), actorId]
-    );
-    const saleId = sale.rows[0].id;
-    const createdLines = [];
-    let lineNumber = 1;
-    for (const line of payload.lines) {
-      const quantity = pos(line.sold_quantity || line.total_weight);
-      const unitHt = pos(line.unit_sale_price_ht);
-      const vatRate = client.is_vat_exempt ? 0 : pos(line.vat_rate, num(client.vat_rate, 5.5));
-      const ht = Number((quantity * unitHt).toFixed(2));
-      const vat = Number((ht * vatRate / 100).toFixed(2));
-      const ttc = Number((ht + vat).toFixed(2));
-      const unitTtc = quantity > 0 ? Number((ttc / quantity).toFixed(4)) : unitHt;
-      const cost = pos(line.unit_cost_ex_vat);
-      const inserted = await db.query(
-        `
-        INSERT INTO sales_lines(id,store_id,client_key,sales_document_id,line_number,article_id,article_plu,article_label,package_count,weight_per_package,total_weight,sold_quantity,sale_unit,line_status,unit_sale_price_ht,unit_sale_price_ttc,vat_rate,line_amount_ht,line_vat_amount,line_amount_ttc,unit_cost_ex_vat,line_margin_ex_vat,suggested_lot_id,traceability_snapshot,created_by,updated_by)
-        VALUES(gen_random_uuid(),$1,NULL,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22,$22)
-        RETURNING id, article_id, article_plu, article_label, sold_quantity, unit_sale_price_ht, line_amount_ht
-        `,
-        [storeId, saleId, lineNumber, line.article_id, line.article_plu, line.article_label, pos(line.package_count), pos(line.weight_per_package), quantity, quantity, clean(line.sale_unit) || 'kg', unitHt, unitTtc, vatRate, ht, vat, ttc, cost, Number((ht - quantity * cost).toFixed(2)), clean(line.suggested_lot_id), JSON.stringify({ stock_status: line.stock_status, stock_quantity: line.stock_quantity, missing_quantity: line.missing_quantity, force_stock_exit: line.force_stock_exit, prepared_by: SOURCE }), actorId]
-      );
-      createdLines.push(inserted.rows[0]);
-      lineNumber += 1;
-    }
-    await db.query(
-      `UPDATE sales_documents sd SET total_amount_ex_vat=x.ht,total_vat_amount=x.vat,total_amount_inc_vat=x.ttc,updated_at=NOW() FROM (SELECT COALESCE(SUM(line_amount_ht),0) ht, COALESCE(SUM(line_vat_amount),0) vat, COALESCE(SUM(line_amount_ttc),0) ttc FROM sales_lines WHERE sales_document_id=$1) x WHERE sd.id=$1`,
-      [saleId]
-    );
-    const executionResult = { sale_id: saleId, document_type: 'ORDER', status: 'draft', client: { id: client.id, code: client.code, name: client.name }, line_count: createdLines.length, stock_warning: payload.stock_warning, created_lines: createdLines };
+    const executionResult = await insertCustomerOrderDraft(db, storeId, payload, action.summary);
     const updated = await db.query(
       `UPDATE agent_pending_actions SET status='executed', executed_at=NOW(), payload=jsonb_set(payload,'{execution_result}',$3::jsonb,true) WHERE id=$1 AND store_id=$2 RETURNING *`,
       [id, storeId, JSON.stringify(executionResult)]
@@ -644,6 +693,7 @@ module.exports = {
   getTopClients,
   getExpiringLots,
   getNegativeStock,
+  createCustomerOrderConfirmed,
   createPendingAction,
   executePendingAction,
 };
