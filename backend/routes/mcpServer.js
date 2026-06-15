@@ -5,10 +5,20 @@ const {
   requireAgentApiKey,
   resolveAgentStore,
   searchClients,
+  getClientsOverview,
   searchArticles,
+  getArticlesOverview,
   searchStock,
+  getStockOverview,
+  getStockState,
+  getExpiringLots,
+  getNegativeStock,
   searchSuppliers,
+  getSuppliersOverview,
   searchSales,
+  getSalesOverview,
+  getSalesToday,
+  getTopClients,
   createPendingAction,
   getPendingAction,
   executePendingAction,
@@ -94,11 +104,21 @@ const ALTA_WIDGET_HTML = `<!doctype html>
 <body>
   <main>
     <h1>ALTA MAREE connecté</h1>
-    <p>Les outils ALTA sont disponibles pour rechercher clients, articles, stock, fournisseurs et ventes, puis préparer des actions en attente de confirmation humaine.</p>
+    <p>Les outils ALTA lisent les données commerciales, préparent les commandes et exécutent uniquement après confirmation humaine.</p>
     <div class="status"><span class="dot" aria-hidden="true"></span>Connexion MCP active</div>
   </main>
 </body>
 </html>`;
+
+const flexibleSearchInputSchema = {
+  type: 'object',
+  properties: {
+    query: { type: 'string', description: 'Texte à rechercher. Optionnel pour obtenir une vue globale.' },
+    limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Nombre maximum de résultats.' },
+    available_only: { type: 'boolean', description: 'Limiter aux articles/lots disponibles quand applicable.' },
+  },
+  additionalProperties: false,
+};
 
 const searchInputSchema = {
   type: 'object',
@@ -110,15 +130,64 @@ const searchInputSchema = {
   additionalProperties: false,
 };
 
-const searchOutputSchema = {
+const stockSearchInputSchema = {
   type: 'object',
   properties: {
+    query: { type: 'string', description: 'Texte à rechercher. Optionnel pour obtenir une vue globale du stock.' },
+    limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Nombre maximum de résultats.' },
+    available_only: { type: 'boolean', description: 'Limiter aux articles disponibles.' },
+  },
+  additionalProperties: false,
+};
+
+const overviewInputSchema = {
+  type: 'object',
+  properties: {
+    limit: { type: 'integer', minimum: 1, maximum: 100, description: 'Nombre maximum de lignes de détail.' },
+  },
+  additionalProperties: false,
+};
+
+const salesOverviewInputSchema = {
+  type: 'object',
+  properties: {
+    date_from: { type: 'string', description: 'Date début YYYY-MM-DD.' },
+    date_to: { type: 'string', description: 'Date fin YYYY-MM-DD.' },
+    status: { type: 'string', description: 'Statut document, par exemple draft ou validated.' },
+    document_type: { type: 'string', description: 'Type document, par exemple ORDER, DELIVERY_NOTE ou INVOICE.' },
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+  },
+  additionalProperties: false,
+};
+
+const topClientsInputSchema = {
+  type: 'object',
+  properties: {
+    days: { type: 'integer', minimum: 1, maximum: 3650, description: 'Période analysée en jours.' },
+    limit: { type: 'integer', minimum: 1, maximum: 50 },
+  },
+  additionalProperties: false,
+};
+
+const expiringLotsInputSchema = {
+  type: 'object',
+  properties: {
+    query: { type: 'string', description: 'Filtre article ou lot optionnel.' },
+    days: { type: 'integer', minimum: 1, maximum: 60, description: 'Horizon DLC courte en jours.' },
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+  },
+  additionalProperties: false,
+};
+
+const genericOutputSchema = {
+  type: 'object',
+  properties: {
+    summary: { type: 'object', additionalProperties: true },
     results: {
       type: 'array',
       items: { type: 'object', additionalProperties: true },
     },
   },
-  required: ['results'],
   additionalProperties: true,
 };
 
@@ -130,6 +199,7 @@ const pendingActionOutputSchema = {
     summary: { type: 'string' },
     payload: { type: 'object', additionalProperties: true },
     status: { type: 'string' },
+    execution_result: { type: 'object', additionalProperties: true },
   },
   additionalProperties: true,
 };
@@ -138,9 +208,44 @@ const pendingActionInputSchema = {
   type: 'object',
   required: ['action_type', 'summary', 'payload'],
   properties: {
-    action_type: { type: 'string', description: 'Type métier préparé, par exemple customer_order_draft ou email_draft.' },
+    action_type: { type: 'string', description: 'Type métier préparé. Pour une commande client, utiliser customer_order_draft.' },
     summary: { type: 'string', description: 'Résumé clair à afficher à l’utilisateur avant confirmation.' },
-    payload: { type: 'object', description: 'Payload figé préparé par l’agent.', additionalProperties: true },
+    payload: {
+      type: 'object',
+      description: 'Payload figé préparé par l’agent. Pour action_type=customer_order_draft, fournir client_id et lines[]. Une ligne peut utiliser article_id ou article_plu, puis total_weight ou package_count + weight_per_package; sold_quantity est optionnel.',
+      properties: {
+        client_id: { type: 'string' },
+        document_type: { type: 'string', enum: ['ORDER'] },
+        document_date: { type: 'string' },
+        reference_number: { type: 'string' },
+        notes: { type: 'string' },
+        lines: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['unit_sale_price_ht'],
+            properties: {
+              article_id: { type: 'string', description: 'Identifiant article, à privilégier après search_articles/search_stock.' },
+              article_plu: { type: 'string', description: 'PLU article si article_id indisponible.' },
+              article_label: { type: 'string' },
+              package_count: { type: 'number', description: 'Nombre de colis, par exemple 10.' },
+              weight_per_package: { type: 'number', description: 'Poids par colis en kg, par exemple 3.' },
+              total_weight: { type: 'number', description: 'Poids total en kg, par exemple 30.' },
+              sold_quantity: { type: 'number', description: 'Quantité vendue en kg. Peut être égale au poids total.' },
+              sale_unit: { type: 'string', description: 'Unité de vente, souvent kg.' },
+              unit_sale_price_ht: { type: 'number', description: 'Prix de vente HT par unité, par exemple 15.' },
+              force_stock_exit: { type: 'boolean', description: 'Mettre true si stock insuffisant mais commande à préparer quand même.' },
+            },
+            anyOf: [
+              { required: ['article_id'] },
+              { required: ['article_plu'] },
+            ],
+            additionalProperties: true,
+          },
+        },
+      },
+      additionalProperties: true,
+    },
   },
   additionalProperties: false,
 };
@@ -199,50 +304,140 @@ const tools = [
     title: 'Rechercher des clients',
     description: 'Recherche des clients ALTA MAREE par code, nom, contact, email, téléphone ou ville.',
     inputSchema: searchInputSchema,
-    outputSchema: searchOutputSchema,
+    outputSchema: genericOutputSchema,
     invoking: 'Recherche clients ALTA...',
     invoked: 'Clients ALTA trouvés',
+  }),
+  makeTool({
+    name: 'get_clients_overview',
+    title: 'Vue clients',
+    description: 'Donne une vue globale des clients du magasin avec résumé et liste.',
+    inputSchema: overviewInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Lecture clients ALTA...',
+    invoked: 'Clients ALTA consultés',
   }),
   makeTool({
     name: 'search_articles',
     title: 'Rechercher des articles',
     description: 'Recherche des articles ALTA MAREE par PLU, désignation, EAN, famille ou nom latin.',
     inputSchema: searchInputSchema,
-    outputSchema: searchOutputSchema,
+    outputSchema: genericOutputSchema,
     invoking: 'Recherche articles ALTA...',
     invoked: 'Articles ALTA trouvés',
   }),
   makeTool({
+    name: 'get_articles_overview',
+    title: 'Vue articles',
+    description: 'Donne une vue globale des articles du magasin avec stock associé.',
+    inputSchema: overviewInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Lecture articles ALTA...',
+    invoked: 'Articles ALTA consultés',
+  }),
+  makeTool({
     name: 'search_stock',
     title: 'Rechercher le stock',
-    description: 'Recherche l’état de stock par article, avec quantité disponible et prochain lot FIFO.',
-    inputSchema: searchInputSchema,
-    outputSchema: searchOutputSchema,
+    description: 'Recherche le stock par article ou lot. Si query est absent, retourne une vue globale du stock.',
+    inputSchema: stockSearchInputSchema,
+    outputSchema: genericOutputSchema,
     invoking: 'Lecture stock ALTA...',
     invoked: 'Stock ALTA consulté',
+  }),
+  makeTool({
+    name: 'get_stock_overview',
+    title: 'Vue stock globale',
+    description: 'Donne une vraie vue globale du stock: volumes, valeur, articles en stock et premières DLC.',
+    inputSchema: flexibleSearchInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Synthèse stock ALTA...',
+    invoked: 'Synthèse stock ALTA prête',
+  }),
+  makeTool({
+    name: 'get_stock_state',
+    title: 'État de stock',
+    description: 'Retourne l’état de stock global ou filtré par query, utilisable pour “j’ai quoi en stock en saumon ?”.',
+    inputSchema: flexibleSearchInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'État stock ALTA...',
+    invoked: 'État stock ALTA prêt',
+  }),
+  makeTool({
+    name: 'get_expiring_lots',
+    title: 'Lots à DLC courte',
+    description: 'Liste les lots disponibles dont la DLC arrive dans les prochains jours.',
+    inputSchema: expiringLotsInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Recherche DLC courtes ALTA...',
+    invoked: 'DLC courtes ALTA trouvées',
+  }),
+  makeTool({
+    name: 'get_negative_stock',
+    title: 'Stock négatif',
+    description: 'Liste les articles avec stock négatif.',
+    inputSchema: overviewInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Recherche stock négatif ALTA...',
+    invoked: 'Stock négatif ALTA consulté',
   }),
   makeTool({
     name: 'search_suppliers',
     title: 'Rechercher des fournisseurs',
     description: 'Recherche des fournisseurs ALTA MAREE par code, nom, contact, email, téléphone ou ville.',
     inputSchema: searchInputSchema,
-    outputSchema: searchOutputSchema,
+    outputSchema: genericOutputSchema,
     invoking: 'Recherche fournisseurs ALTA...',
     invoked: 'Fournisseurs ALTA trouvés',
+  }),
+  makeTool({
+    name: 'get_suppliers_overview',
+    title: 'Vue fournisseurs',
+    description: 'Donne une vue globale des fournisseurs du magasin.',
+    inputSchema: overviewInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Lecture fournisseurs ALTA...',
+    invoked: 'Fournisseurs ALTA consultés',
   }),
   makeTool({
     name: 'search_sales',
     title: 'Rechercher les ventes',
     description: 'Recherche des documents de vente, commandes ou lignes de vente.',
     inputSchema: searchInputSchema,
-    outputSchema: searchOutputSchema,
+    outputSchema: genericOutputSchema,
     invoking: 'Recherche ventes ALTA...',
     invoked: 'Ventes ALTA trouvées',
   }),
   makeTool({
+    name: 'get_sales_overview',
+    title: 'Vue ventes',
+    description: 'Donne une synthèse des ventes/commandes avec filtres date, statut et type document.',
+    inputSchema: salesOverviewInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Synthèse ventes ALTA...',
+    invoked: 'Synthèse ventes ALTA prête',
+  }),
+  makeTool({
+    name: 'get_sales_today',
+    title: 'Ventes du jour',
+    description: 'Donne les ventes/commandes du jour.',
+    inputSchema: overviewInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Lecture ventes du jour ALTA...',
+    invoked: 'Ventes du jour ALTA consultées',
+  }),
+  makeTool({
+    name: 'get_top_clients',
+    title: 'Meilleurs clients',
+    description: 'Classe les clients par chiffre d’affaires sur une période.',
+    inputSchema: topClientsInputSchema,
+    outputSchema: genericOutputSchema,
+    invoking: 'Calcul meilleurs clients ALTA...',
+    invoked: 'Meilleurs clients ALTA prêts',
+  }),
+  makeTool({
     name: 'create_pending_action',
     title: 'Créer une action en attente',
-    description: 'Crée une action ALTA en attente de confirmation humaine. Aucune action métier directe n’est exécutée.',
+    description: 'Crée une action ALTA en attente de confirmation humaine. Pour créer une commande client, préparer action_type=customer_order_draft.',
     inputSchema: pendingActionInputSchema,
     outputSchema: pendingActionOutputSchema,
     invoking: 'Préparation action ALTA...',
@@ -261,21 +456,31 @@ const tools = [
   makeTool({
     name: 'execute_pending_action',
     title: 'Exécuter une action confirmée',
-    description: 'Marque une action pending comme exécutée uniquement après confirmation humaine explicite.',
+    description: 'Exécute une action pending uniquement après confirmation humaine explicite.',
     inputSchema: executePendingActionInputSchema,
     outputSchema: pendingActionOutputSchema,
     invoking: 'Confirmation action ALTA...',
-    invoked: 'Action ALTA marquée exécutée',
+    invoked: 'Action ALTA exécutée',
     readOnly: false,
   }),
 ];
 
 const toolHandlers = {
   search_clients: searchClients,
+  get_clients_overview: getClientsOverview,
   search_articles: searchArticles,
+  get_articles_overview: getArticlesOverview,
   search_stock: searchStock,
+  get_stock_overview: getStockOverview,
+  get_stock_state: getStockState,
+  get_expiring_lots: getExpiringLots,
+  get_negative_stock: getNegativeStock,
   search_suppliers: searchSuppliers,
+  get_suppliers_overview: getSuppliersOverview,
   search_sales: searchSales,
+  get_sales_overview: getSalesOverview,
+  get_sales_today: getSalesToday,
+  get_top_clients: getTopClients,
   create_pending_action: createPendingAction,
   get_pending_action: getPendingAction,
   execute_pending_action: executePendingAction,
@@ -377,8 +582,8 @@ async function handleRequest(req, message) {
         tools: { listChanged: false },
         resources: { subscribe: false, listChanged: false },
       },
-      serverInfo: { name: 'alta-maree-mcp', version: '1.1.0' },
-      instructions: 'Utilise les outils ALTA uniquement pour lire les données métier et préparer des actions en attente de confirmation humaine.',
+      serverInfo: { name: 'alta-maree-mcp', version: '1.2.0' },
+      instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Toute création, modification, validation, facturation, email ou suppression doit passer par create_pending_action puis execute_pending_action après confirmation humaine explicite.',
       _meta: {
         securitySchemes: SECURITY_SCHEMES,
       },
@@ -398,9 +603,24 @@ async function handleRequest(req, message) {
 
     try {
       const args = params.arguments || {};
+      console.log('MCP ALTA tool call', {
+        tool: toolName,
+        store_id: req.agentStoreId,
+        has_query: Boolean(args.query),
+      });
       const payload = await handler(req.dbPool, req.agentStoreId, args);
+      console.log('MCP ALTA tool success', {
+        tool: toolName,
+        result_count: Array.isArray(payload?.results) ? payload.results.length : undefined,
+        status: payload?.status,
+      });
       return jsonRpcResult(id, toolResult(payload));
     } catch (error) {
+      console.error('Erreur outil MCP ALTA', {
+        tool: toolName,
+        message: error.message,
+        status: error.status,
+      });
       return jsonRpcResult(id, {
         isError: true,
         content: [
