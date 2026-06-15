@@ -241,8 +241,8 @@ const customerOrderConfirmedInputSchema = {
         type: 'object',
         required: ['unit_sale_price_ht'],
         properties: {
-          article_id: { type: 'string', description: 'UUID article. Recommandé après search_articles/search_stock.' },
-          article_plu: { type: 'string', description: 'PLU article si article_id indisponible.' },
+          article_id: { type: 'string', description: 'UUID article. Fournir article_id ou article_plu; la validation backend impose au moins un des deux.' },
+          article_plu: { type: 'string', description: 'PLU article. Fournir article_plu si article_id indisponible; la validation backend impose au moins un des deux.' },
           article_label: { type: 'string', description: 'Libellé article affiché sur la ligne.' },
           package_count: { type: 'number', description: 'Nombre de colis, par exemple 10.' },
           weight_per_package: { type: 'number', description: 'Poids par colis en kg, par exemple 3.' },
@@ -251,10 +251,6 @@ const customerOrderConfirmedInputSchema = {
           sale_unit: { type: 'string', description: 'Unité de vente, généralement kg.' },
           force_stock_exit: { type: 'boolean', description: 'True si le client confirme une commande malgré stock insuffisant.' },
         },
-        anyOf: [
-          { required: ['article_id'] },
-          { required: ['article_plu'] },
-        ],
         additionalProperties: false,
       },
     },
@@ -283,8 +279,8 @@ const pendingActionInputSchema = {
             type: 'object',
             required: ['unit_sale_price_ht'],
             properties: {
-              article_id: { type: 'string', description: 'Identifiant article, à privilégier après search_articles/search_stock.' },
-              article_plu: { type: 'string', description: 'PLU article si article_id indisponible.' },
+              article_id: { type: 'string', description: 'Identifiant article. Fournir article_id ou article_plu; la validation backend impose au moins un des deux.' },
+              article_plu: { type: 'string', description: 'PLU article si article_id indisponible; la validation backend impose au moins un des deux.' },
               article_label: { type: 'string' },
               package_count: { type: 'number', description: 'Nombre de colis, par exemple 10.' },
               weight_per_package: { type: 'number', description: 'Poids par colis en kg, par exemple 3.' },
@@ -294,10 +290,6 @@ const pendingActionInputSchema = {
               unit_sale_price_ht: { type: 'number', description: 'Prix de vente HT par unité, par exemple 15.' },
               force_stock_exit: { type: 'boolean', description: 'Mettre true si stock insuffisant mais commande à préparer quand même.' },
             },
-            anyOf: [
-              { required: ['article_id'] },
-              { required: ['article_plu'] },
-            ],
             additionalProperties: true,
           },
         },
@@ -651,7 +643,7 @@ async function handleRequest(req, message) {
         tools: { listChanged: false },
         resources: { subscribe: false, listChanged: false },
       },
-      serverInfo: { name: 'alta-maree-mcp', version: '1.2.0' },
+      serverInfo: { name: 'alta-maree-mcp', version: '1.4.0' },
       instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed afin de créer un brouillon modifiable dans ALTA. Les outils pending_action restent réservés aux actions génériques hors commande client directe. Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
       _meta: {
         securitySchemes: SECURITY_SCHEMES,
@@ -662,6 +654,7 @@ async function handleRequest(req, message) {
   if (method === 'ping') return jsonRpcResult(id, {});
 
   if (method === 'tools/list') {
+    console.log('MCP ALTA tools/list', { count: tools.length, names: tools.map(t => t.name) });
     return jsonRpcResult(id, { tools });
   }
 
