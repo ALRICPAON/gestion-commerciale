@@ -1,7 +1,9 @@
 const base = require('./agentToolsService');
+const { recomputeArticleStock } = require('./stockService');
 
 const MAX_LIMIT = 100;
 const ORDER_ACTION_TYPES = new Set(['customer_order_draft', 'create_customer_order', 'create_customer_order_draft']);
+const DELIVERY_NOTE_ACTION_TYPES = new Set(['validate_order_to_delivery_note', 'create_delivery_note_from_order', 'order_to_delivery_note']);
 const SOURCE = 'chatgpt_business';
 const ACCENT_SOURCE = 'ÀÂÄàâäÉÈÊËéèêëÎÏîïÔÖôöÙÛÜùûüÇç';
 const ACCENT_TARGET = 'AAAaaaEEEEeeeeIIiiOOooUUUuuuCc';
@@ -632,6 +634,260 @@ async function createCustomerOrderConfirmed(dbPool, storeId, input = {}) {
   }
 }
 
+async function allocateSalesDocumentStock(db, storeId, salesDocumentId, actorId, movementLabel) {
+  const lines = await db.query(
+    'SELECT * FROM sales_lines WHERE sales_document_id=$1 AND store_id=$2 ORDER BY line_number FOR UPDATE',
+    [salesDocumentId, storeId]
+  );
+  let allocated = 0;
+  const articles = new Set();
+
+  for (const line of lines.rows) {
+    let remaining = pos(line.sold_quantity || line.total_weight, 0);
+    if (!line.article_id || remaining <= 0) continue;
+
+    const lots = line.selected_lot_id
+      ? await db.query(
+        'SELECT * FROM lots WHERE store_id=$1 AND article_id=$2 AND id=$3 AND qty_remaining>0 FOR UPDATE',
+        [storeId, line.article_id, line.selected_lot_id]
+      )
+      : await db.query(
+        `SELECT * FROM lots
+         WHERE store_id=$1 AND article_id=$2 AND qty_remaining>0
+         ORDER BY COALESCE(dlc,DATE '9999-12-31'),created_at,id
+         FOR UPDATE`,
+        [storeId, line.article_id]
+      );
+
+    for (const lot of lots.rows) {
+      if (remaining <= 0) break;
+      const quantity = Math.min(remaining, num(lot.qty_remaining));
+      if (quantity <= 0) continue;
+
+      await db.query(
+        'UPDATE lots SET qty_remaining=qty_remaining-$1,updated_at=NOW() WHERE id=$2',
+        [quantity, lot.id]
+      );
+      await db.query(
+        'INSERT INTO sale_line_allocations(id,sales_line_id,lot_id,quantity,unit_cost_ex_vat) VALUES(gen_random_uuid(),$1,$2,$3,$4)',
+        [line.id, lot.id, quantity, num(lot.unit_cost_ex_vat)]
+      );
+      await db.query(
+        `INSERT INTO stock_movements(id,store_id,client_key,article_id,lot_id,movement_type,quantity,unit_cost_ex_vat,source_table,source_id,notes,created_by)
+         VALUES(gen_random_uuid(),$1,NULL,$2,$3,'sale_out',$4,$5,'sales_lines',$6,$7,$8)`,
+        [storeId, line.article_id, lot.id, -quantity, num(lot.unit_cost_ex_vat), line.id, movementLabel, actorId]
+      );
+
+      remaining = Number((remaining - quantity).toFixed(3));
+      allocated += 1;
+    }
+
+    if (remaining > 0) {
+      const error = new Error(`Stock insuffisant ligne ${line.line_number}`);
+      error.status = 400;
+      throw error;
+    }
+
+    await db.query(
+      "UPDATE sales_lines SET line_status='validated',updated_by=$1,updated_at=NOW() WHERE id=$2",
+      [actorId, line.id]
+    );
+    articles.add(line.article_id);
+  }
+
+  for (const articleId of articles) {
+    await recomputeArticleStock(db, articleId, storeId);
+  }
+
+  return { allocated, line_count: lines.rows.length, article_count: articles.size };
+}
+
+async function findCustomerOrderForDeliveryNote(db, storeId, payload = {}) {
+  const saleId = clean(payload.sale_id || payload.order_id || payload.id);
+  const referenceNumber = clean(payload.reference_number || payload.order_reference || payload.order_reference_number);
+  if (!saleId && !referenceNumber) {
+    const error = new Error('payload.sale_id ou payload.reference_number obligatoire pour valider une commande en BL');
+    error.status = 400;
+    throw error;
+  }
+
+  const params = [storeId];
+  let where = 'sd.store_id=$1';
+  if (saleId) {
+    params.push(saleId);
+    where += ` AND sd.id=$${params.length}`;
+  } else {
+    params.push(referenceNumber);
+    where += ` AND sd.reference_number=$${params.length}`;
+  }
+
+  const result = await db.query(
+    `SELECT sd.*, c.code AS client_code, c.name AS client_name
+     FROM sales_documents sd
+     LEFT JOIN clients c ON c.id=sd.client_id AND c.store_id=sd.store_id
+     WHERE ${where}
+     FOR UPDATE OF sd`,
+    params
+  );
+
+  if (!result.rows.length) {
+    const error = new Error('Commande introuvable pour ce magasin');
+    error.status = 404;
+    throw error;
+  }
+
+  const order = result.rows[0];
+  if (order.document_type !== 'ORDER') {
+    const error = new Error('Le document trouvé n’est pas une commande client');
+    error.status = 400;
+    throw error;
+  }
+  if (['invoiced', 'factured', 'facturee'].includes(clean(order.status))) {
+    const error = new Error('Commande déjà facturée');
+    error.status = 400;
+    throw error;
+  }
+
+  const existingDeliveryNote = await db.query(
+    `SELECT id, reference_number
+     FROM sales_documents
+     WHERE store_id=$1
+       AND document_type='DELIVERY_NOTE'
+       AND notes LIKE $2
+     LIMIT 1`,
+    [storeId, `%source_order_id:${order.id}%`]
+  );
+  if (existingDeliveryNote.rows.length) {
+    const error = new Error(`Commande déjà convertie en BL ${existingDeliveryNote.rows[0].reference_number || existingDeliveryNote.rows[0].id}`);
+    error.status = 400;
+    throw error;
+  }
+
+  return order;
+}
+
+async function createDeliveryNoteFromOrder(db, storeId, payload = {}, summary = null) {
+  const actorId = await resolveSalesAuditUserId(db, storeId);
+  const order = await findCustomerOrderForDeliveryNote(db, storeId, payload);
+  const orderLines = await db.query(
+    'SELECT * FROM sales_lines WHERE sales_document_id=$1 AND store_id=$2 ORDER BY line_number',
+    [order.id, storeId]
+  );
+  if (!orderLines.rows.length) {
+    const error = new Error('Commande sans ligne, impossible de créer un BL');
+    error.status = 400;
+    throw error;
+  }
+
+  const notes = [
+    clean(payload.notes) || summary || `BL créé depuis la commande ${order.reference_number || order.id}`,
+    `source_order_id:${order.id}`,
+    order.reference_number ? `source_order_reference:${order.reference_number}` : null,
+  ].filter(Boolean).join('\n');
+
+  const delivery = await db.query(
+    `INSERT INTO sales_documents(id,store_id,client_key,client_id,document_date,status,document_type,origin,reference_number,notes,tariff_level_snapshot,vat_rate_snapshot,is_vat_exempt_snapshot,created_by,updated_by)
+     VALUES(gen_random_uuid(),$1,NULL,$2,COALESCE($3::date,CURRENT_DATE),'draft','DELIVERY_NOTE','chatgpt_mcp',NULL,$4,$5,$6,$7,$8,$8)
+     RETURNING *`,
+    [
+      storeId,
+      order.client_id,
+      clean(payload.document_date),
+      notes,
+      num(order.tariff_level_snapshot, 1),
+      num(order.vat_rate_snapshot, 5.5),
+      Boolean(order.is_vat_exempt_snapshot),
+      actorId,
+    ]
+  );
+  const deliveryId = delivery.rows[0].id;
+
+  for (const line of orderLines.rows) {
+    await db.query(
+      `INSERT INTO sales_lines(id,store_id,client_key,sales_document_id,line_number,article_id,article_plu,article_label,package_count,weight_per_package,total_weight,sold_quantity,sale_unit,line_status,unit_sale_price_ht,unit_sale_price_ttc,vat_rate,line_amount_ht,line_vat_amount,line_amount_ttc,unit_cost_ex_vat,line_margin_ex_vat,selected_lot_id,suggested_lot_id,traceability_snapshot,created_by,updated_by)
+       VALUES(gen_random_uuid(),$1,NULL,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'pending',$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,$23,$23)`,
+      [
+        storeId,
+        deliveryId,
+        line.line_number,
+        line.article_id,
+        line.article_plu,
+        line.article_label,
+        pos(line.package_count),
+        pos(line.weight_per_package),
+        pos(line.total_weight),
+        pos(line.sold_quantity || line.total_weight),
+        clean(line.sale_unit) || 'kg',
+        pos(line.unit_sale_price_ht),
+        pos(line.unit_sale_price_ttc),
+        pos(line.vat_rate),
+        pos(line.line_amount_ht),
+        pos(line.line_vat_amount),
+        pos(line.line_amount_ttc),
+        pos(line.unit_cost_ex_vat),
+        num(line.line_margin_ex_vat),
+        clean(line.selected_lot_id),
+        clean(line.suggested_lot_id),
+        JSON.stringify({ ...(line.traceability_snapshot || {}), source_order_id: order.id, source_order_line_id: line.id, prepared_by: SOURCE }),
+        actorId,
+      ]
+    );
+  }
+
+  const totals = await db.query(
+    `UPDATE sales_documents sd
+     SET total_amount_ex_vat=x.ht,total_vat_amount=x.vat,total_amount_inc_vat=x.ttc,updated_at=NOW()
+     FROM (
+       SELECT COALESCE(SUM(line_amount_ht),0) ht,
+              COALESCE(SUM(line_vat_amount),0) vat,
+              COALESCE(SUM(line_amount_ttc),0) ttc
+       FROM sales_lines
+       WHERE sales_document_id=$1
+     ) x
+     WHERE sd.id=$1
+     RETURNING sd.reference_number, sd.total_amount_ex_vat, sd.total_vat_amount, sd.total_amount_inc_vat`,
+    [deliveryId]
+  );
+
+  const stockResult = await allocateSalesDocumentStock(
+    db,
+    storeId,
+    deliveryId,
+    actorId,
+    `Validation BL depuis commande ${order.reference_number || order.id}`
+  );
+
+  const updatedDelivery = await db.query(
+    `UPDATE sales_documents
+     SET status='validated',updated_by=$1,updated_at=NOW()
+     WHERE id=$2 AND store_id=$3
+     RETURNING reference_number,status`,
+    [actorId, deliveryId, storeId]
+  );
+  await db.query(
+    `UPDATE sales_documents
+     SET status='validated',updated_by=$1,updated_at=NOW()
+     WHERE id=$2 AND store_id=$3`,
+    [actorId, order.id, storeId]
+  );
+
+  const totalRow = totals.rows[0] || {};
+  return {
+    delivery_note_id: deliveryId,
+    delivery_note_reference: updatedDelivery.rows[0]?.reference_number || totalRow.reference_number || delivery.rows[0].reference_number || null,
+    document_type: 'DELIVERY_NOTE',
+    status: updatedDelivery.rows[0]?.status || 'validated',
+    source_order_id: order.id,
+    source_order_reference: order.reference_number || null,
+    client: { id: order.client_id, code: order.client_code, name: order.client_name },
+    line_count: orderLines.rows.length,
+    allocated: stockResult.allocated,
+    total_amount_ex_vat: totalRow.total_amount_ex_vat,
+    total_vat_amount: totalRow.total_vat_amount,
+    total_amount_inc_vat: totalRow.total_amount_inc_vat,
+  };
+}
+
 async function executePendingAction(dbPool, storeId, input = {}) {
   const id = clean(input.id);
   const confirmation = clean(input.confirmation);
@@ -642,7 +898,7 @@ async function executePendingAction(dbPool, storeId, input = {}) {
   }
 
   const actionType = await getPendingActionType(dbPool, storeId, id);
-  if (!ORDER_ACTION_TYPES.has(actionType)) {
+  if (!ORDER_ACTION_TYPES.has(actionType) && !DELIVERY_NOTE_ACTION_TYPES.has(actionType)) {
     return base.executePendingAction(dbPool, storeId, input);
   }
 
@@ -659,13 +915,14 @@ async function executePendingAction(dbPool, storeId, input = {}) {
       throw error;
     }
     const action = actionResult.rows[0];
-    if (!ORDER_ACTION_TYPES.has(action.action_type)) {
+    if (!ORDER_ACTION_TYPES.has(action.action_type) && !DELIVERY_NOTE_ACTION_TYPES.has(action.action_type)) {
       const error = new Error(`Type action non executable par MCP : ${action.action_type}`);
       error.status = 400;
       throw error;
     }
-    const payload = await prepareOrderPayload(db, storeId, action.payload || {});
-    const executionResult = await insertCustomerOrderDraft(db, storeId, payload, action.summary);
+    const executionResult = DELIVERY_NOTE_ACTION_TYPES.has(action.action_type)
+      ? await createDeliveryNoteFromOrder(db, storeId, action.payload || {}, action.summary)
+      : await insertCustomerOrderDraft(db, storeId, await prepareOrderPayload(db, storeId, action.payload || {}), action.summary);
     const updated = await db.query(
       `UPDATE agent_pending_actions SET status='executed', executed_at=NOW(), payload=jsonb_set(payload,'{execution_result}',$3::jsonb,true) WHERE id=$1 AND store_id=$2 RETURNING *`,
       [id, storeId, JSON.stringify(executionResult)]
