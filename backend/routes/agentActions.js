@@ -11,7 +11,7 @@ const {
   createPendingAction,
   getPendingAction,
   executePendingAction,
-} = require('../services/agentToolsService');
+} = require('../services/agentCommercialToolsService');
 
 const router = express.Router();
 
