@@ -12,7 +12,7 @@ const {
   createPendingAction,
   getPendingAction,
   executePendingAction,
-} = require('../services/agentToolsService');
+} = require('../services/agentCommercialToolsService');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
