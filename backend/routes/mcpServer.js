@@ -262,16 +262,17 @@ const pendingActionInputSchema = {
   type: 'object',
   required: ['action_type', 'summary', 'payload'],
   properties: {
-    action_type: { type: 'string', description: 'Type métier générique. Ne pas utiliser pour les commandes client ChatGPT: utiliser create_customer_order_confirmed après confirmation utilisateur.' },
+    action_type: { type: 'string', description: 'Type métier. Commande client: customer_order_draft, create_customer_order ou create_customer_order_draft. Passage commande en BL: validate_order_to_delivery_note, create_delivery_note_from_order ou order_to_delivery_note.' },
     summary: { type: 'string', description: 'Résumé clair à afficher à l’utilisateur avant confirmation.' },
     payload: {
       type: 'object',
-      description: 'Payload figé préparé par l’agent pour les actions génériques hors commande client directe.',
+      description: 'Payload figé préparé par l’agent. Pour une commande client: client_id et lines[] sont requis. Pour passer une commande en BL: fournir sale_id ou reference_number.',
       properties: {
+        sale_id: { type: 'string', description: 'UUID de la commande à passer en BL.' },
         client_id: { type: 'string' },
         document_type: { type: 'string', enum: ['ORDER'] },
         document_date: { type: 'string' },
-        reference_number: { type: 'string' },
+        reference_number: { type: 'string', description: 'Référence de la commande à passer en BL, par exemple CMD-2026-00002.' },
         notes: { type: 'string' },
         lines: {
           type: 'array',
@@ -487,7 +488,7 @@ const tools = [
   makeTool({
     name: 'create_customer_order_confirmed',
     title: 'Créer une commande client confirmée',
-    description: 'Crée réellement une commande client brouillon dans ALTA. À appeler uniquement après confirmation explicite de l’utilisateur dans la conversation. Ne pas utiliser create_pending_action pour les commandes client ChatGPT.',
+    description: 'Crée réellement une commande client brouillon dans ALTA. À appeler uniquement après confirmation explicite de l’utilisateur dans la conversation. Si cet outil n’est pas visible côté ChatGPT, utiliser create_pending_action avec action_type customer_order_draft puis execute_pending_action.',
     inputSchema: customerOrderConfirmedInputSchema,
     outputSchema: customerOrderOutputSchema,
     invoking: 'Création commande ALTA...',
@@ -497,7 +498,7 @@ const tools = [
   makeTool({
     name: 'create_pending_action',
     title: 'Créer une action en attente',
-    description: 'Crée une action ALTA générique en attente de confirmation humaine. Ne pas utiliser pour une commande client ChatGPT: utiliser create_customer_order_confirmed après confirmation conversationnelle.',
+    description: 'Crée une action ALTA en attente de confirmation humaine. Pour une commande client, utiliser action_type customer_order_draft/create_customer_order. Pour passer une commande en BL, utiliser validate_order_to_delivery_note avec payload.reference_number ou payload.sale_id.',
     inputSchema: pendingActionInputSchema,
     outputSchema: pendingActionOutputSchema,
     invoking: 'Préparation action ALTA...',
@@ -516,7 +517,7 @@ const tools = [
   makeTool({
     name: 'execute_pending_action',
     title: 'Exécuter une action confirmée',
-    description: 'Exécute une action pending uniquement après confirmation humaine explicite.',
+    description: 'Exécute une action pending uniquement après confirmation humaine explicite. Pour une commande client, crée la commande. Pour validate_order_to_delivery_note, crée le BL, copie les lignes et décrémente le stock.',
     inputSchema: executePendingActionInputSchema,
     outputSchema: pendingActionOutputSchema,
     invoking: 'Confirmation action ALTA...',
@@ -644,7 +645,7 @@ async function handleRequest(req, message) {
         resources: { subscribe: false, listChanged: false },
       },
       serverInfo: { name: 'alta-maree-mcp', version: '1.4.0' },
-      instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed afin de créer un brouillon modifiable dans ALTA. Les outils pending_action restent réservés aux actions génériques hors commande client directe. Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
+      instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec action_type customer_order_draft puis execute_pending_action après confirmation. Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
       _meta: {
         securitySchemes: SECURITY_SCHEMES,
       },
