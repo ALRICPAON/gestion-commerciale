@@ -1,9 +1,14 @@
 const express = require('express');
 
 const { authenticateToken } = require('../middleware/auth');
-const { requireAdmin } = require('../middleware/authorization');
+const { requireAdmin, requireAdminOrManager } = require('../middleware/authorization');
 const { attachDbContext } = require('../middleware/dbContext');
 const { sendTestEmail } = require('../services/emailService');
+const {
+  getInvoiceCommunicationDefaults,
+  sendDeliveryNoteDocumentEmail,
+  sendInvoiceDocumentEmail,
+} = require('../services/documentEmailService');
 
 const router = express.Router();
 
@@ -30,6 +35,14 @@ function publicCommunicationSettings(row = {}) {
   return Object.fromEntries(
     Object.entries(COMMUNICATION_DEFAULTS).map(([key, fallback]) => [key, clean(row[key]) || fallback])
   );
+}
+
+function emailPayload(body = {}) {
+  return {
+    to: clean(body.to),
+    subject: clean(body.subject),
+    message: clean(body.message),
+  };
 }
 
 router.get('/communication/settings', authenticateToken, attachDbContext, async (req, res) => {
@@ -81,5 +94,71 @@ router.post('/communication/email/test', authenticateToken, requireAdmin, async 
     });
   }
 });
+
+router.post(
+  '/communication/send-delivery-note-email/:id',
+  authenticateToken,
+  attachDbContext,
+  requireAdminOrManager,
+  async (req, res) => {
+    try {
+      const result = await sendDeliveryNoteDocumentEmail(req.dbPool, {
+        storeId: req.user.store_id,
+        deliveryNoteId: req.params.id,
+        ...emailPayload(req.body),
+      });
+      res.json(result);
+    } catch (err) {
+      console.error('Erreur envoi email PDF BL :', {
+        message: err.message,
+        status: err.status || 500,
+        delivery_note_id: req.params.id,
+      });
+      res.status(err.status || 500).json({ error: err.expose ? err.message : (err.message || 'Erreur envoi email BL') });
+    }
+  }
+);
+
+router.get('/communication/invoices/:id/defaults', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const defaults = await getInvoiceCommunicationDefaults(req.dbPool, {
+      storeId: req.user.store_id,
+      invoiceId: req.params.id,
+    });
+    if (!defaults) return res.status(404).json({ error: 'Facture introuvable' });
+    return res.json(defaults);
+  } catch (err) {
+    console.error('Erreur defaults communication facture :', {
+      message: err.message,
+      status: err.status || 500,
+      invoice_id: req.params.id,
+    });
+    return res.status(err.status || 500).json({ error: err.expose ? err.message : 'Erreur communication facture' });
+  }
+});
+
+router.post(
+  '/communication/send-invoice-email/:id',
+  authenticateToken,
+  attachDbContext,
+  requireAdminOrManager,
+  async (req, res) => {
+    try {
+      const result = await sendInvoiceDocumentEmail(req.dbPool, {
+        storeId: req.user.store_id,
+        invoiceId: req.params.id,
+        ...emailPayload(req.body),
+      });
+      res.json(result);
+    } catch (err) {
+      console.error('Erreur envoi email PDF facture :', {
+        message: err.message,
+        status: err.status || 500,
+        invoice_id: req.params.id,
+      });
+      res.status(err.status || 500).json({ error: err.expose ? err.message : (err.message || 'Erreur envoi email facture') });
+    }
+  }
+);
 
 module.exports = router;

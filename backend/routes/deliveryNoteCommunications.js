@@ -5,9 +5,9 @@ const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const {
   getDeliveryNoteCommunicationContext,
-  sendDeliveryNoteEmail,
   sendDeliveryNoteWhatsapp,
 } = require('../services/deliveryNoteCommunicationService');
+const { sendDeliveryNoteDocumentEmail } = require('../services/documentEmailService');
 
 const router = express.Router();
 
@@ -39,7 +39,7 @@ router.get('/delivery-notes/:id/communication-options', authenticateToken, attac
 
 router.post('/delivery-notes/:id/send-email', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   try {
-    const result = await sendDeliveryNoteEmail(req.dbPool, {
+    const result = await sendDeliveryNoteDocumentEmail(req.dbPool, {
       storeId: req.user.store_id,
       deliveryNoteId: req.params.id,
       to: req.body?.to,
@@ -48,7 +48,11 @@ router.post('/delivery-notes/:id/send-email', authenticateToken, attachDbContext
     });
     res.json(result);
   } catch (err) {
-    console.error('Erreur envoi email BL :', err);
+    console.error('Erreur envoi email PDF BL :', {
+      message: err.message,
+      status: err.status || 500,
+      delivery_note_id: req.params.id,
+    });
     res.status(err.status || 500).json({ error: err.message || 'Erreur envoi email BL' });
   }
 });
