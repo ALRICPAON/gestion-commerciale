@@ -947,6 +947,27 @@ async function createDeliveryNoteFromOrder(db, storeId, payload = {}, summary = 
   };
 }
 
+async function convertOrderToDeliveryNote(dbPool, storeId, input = {}) {
+  if (clean(input.confirmation) !== 'human_confirmed') {
+    const error = new Error('confirmation=human_confirmed obligatoire');
+    error.status = 400;
+    throw error;
+  }
+
+  const db = await dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const result = await createDeliveryNoteFromOrder(db, storeId, input, input.summary || input.notes);
+    await db.query('COMMIT');
+    return result;
+  } catch (error) {
+    await db.query('ROLLBACK');
+    throw error;
+  } finally {
+    db.release();
+  }
+}
+
 async function executePendingAction(dbPool, storeId, input = {}) {
   const id = clean(input.id);
   const confirmation = clean(input.confirmation);
@@ -1026,6 +1047,7 @@ module.exports = {
   getExpiringLots,
   getNegativeStock,
   createCustomerOrderConfirmed,
+  convertOrderToDeliveryNote,
   createPendingAction,
   executePendingAction,
 };
