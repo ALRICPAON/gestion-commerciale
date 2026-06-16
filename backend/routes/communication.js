@@ -3,7 +3,7 @@ const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const { requireAdmin } = require('../middleware/authorization');
 const { attachDbContext } = require('../middleware/dbContext');
-const { sendTestEmail, getSmtpStatus } = require('../services/emailService');
+const { sendTestEmail } = require('../services/emailService');
 
 const router = express.Router();
 
@@ -55,10 +55,6 @@ router.get('/communication/settings', authenticateToken, attachDbContext, async 
     console.error('Erreur GET /api/communication/settings :', err);
     res.status(500).json({ error: 'Erreur serveur paramètres communication' });
   }
-});
-
-router.get('/communication/email/status', authenticateToken, requireAdmin, (req, res) => {
-  res.json(getSmtpStatus());
 });
 
 router.post('/communication/email/test', authenticateToken, requireAdmin, async (req, res) => {
