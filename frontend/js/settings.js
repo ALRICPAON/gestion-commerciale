@@ -16,6 +16,12 @@ const fields = [
   'country',
   'phone',
   'email',
+  'email_sender_name',
+  'email_sender_address',
+  'contact_email',
+  'internal_email',
+  'webmail_url',
+  'calendar_url',
   'siret',
   'vat_number',
   'sanitary_approval_number',
@@ -27,6 +33,15 @@ const fields = [
   'delivery_note_footer',
   'invoice_footer',
 ];
+
+const communicationDefaults = {
+  email_sender_name: 'ALTA MARÉE',
+  email_sender_address: 'commercial@altamaree.fr',
+  contact_email: 'contact@altamaree.fr',
+  internal_email: 'alric@altamaree.fr',
+  webmail_url: 'https://mail.altamaree.fr',
+  calendar_url: 'https://mail.altamaree.fr',
+};
 
 let currentSettings = {};
 
@@ -105,6 +120,9 @@ function fillForm(settings = {}) {
   currentSettings = { ...(settings || {}) };
   fields.forEach((field) => setFieldValue(field, currentSettings[field]));
   if (!currentSettings.country) setFieldValue('country', 'France');
+  Object.entries(communicationDefaults).forEach(([field, fallback]) => {
+    if (!currentSettings[field]) setFieldValue(field, fallback);
+  });
   renderLogoPreview();
 }
 
@@ -114,6 +132,9 @@ function collectPayload() {
     payload[field] = getFieldValue(field);
   });
   if (!payload.country) payload.country = 'France';
+  Object.entries(communicationDefaults).forEach(([field, fallback]) => {
+    if (!payload[field]) payload[field] = fallback;
+  });
   payload.logo_url = currentSettings.logo_url || null;
   return payload;
 }
