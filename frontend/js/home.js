@@ -1,4 +1,6 @@
+const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || '';
 const sessionUser = JSON.parse(localStorage.getItem("gc_user") || localStorage.getItem("grv2_user") || "null");
+const authToken = localStorage.getItem("gc_token") || localStorage.getItem("grv2_token");
 const activeDepartment = JSON.parse(
   localStorage.getItem("gc_active_department") || localStorage.getItem("grv2_active_department") || "null"
 );
@@ -14,6 +16,13 @@ const settingsCard = document.getElementById("settings-card");
 const logoutBtn = document.getElementById("logout-btn");
 const departmentSelect = document.getElementById("topbar-department-select");
 const currentDepartmentNameEl = document.getElementById("current-department-name");
+const communicationButtons = document.querySelectorAll("[data-communication-open]");
+
+const communicationLinks = {
+  webmail: "https://mail.altamaree.fr",
+  calendar: "https://mail.altamaree.fr",
+  whatsapp: "https://web.whatsapp.com",
+};
 
 function getUserDepartments() {
   return Array.isArray(sessionUser.departments) ? sessionUser.departments : [];
@@ -116,6 +125,36 @@ function renderDepartmentSelector() {
   });
 }
 
+async function loadCommunicationSettings() {
+  if (!authToken) return;
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/communication/settings`, {
+      headers: {
+        Authorization: `Bearer ${authToken}`,
+      },
+    });
+
+    if (!response.ok) return;
+    const data = await response.json().catch(() => ({}));
+    communicationLinks.webmail = data.webmail_url || communicationLinks.webmail;
+    communicationLinks.calendar = data.calendar_url || communicationLinks.calendar;
+  } catch (err) {
+    console.warn("Paramètres communication indisponibles :", err.message);
+  }
+}
+
+function bindCommunicationActions() {
+  communicationButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      const target = button.dataset.communicationOpen;
+      const url = communicationLinks[target];
+      if (!url) return;
+      window.open(url, "_blank", "noopener,noreferrer");
+    });
+  });
+}
+
 if (logoutBtn) {
   logoutBtn.addEventListener("click", () => {
     localStorage.removeItem("grv2_token");
@@ -130,3 +169,5 @@ if (logoutBtn) {
 
 renderTopbar();
 renderDepartmentSelector();
+bindCommunicationActions();
+loadCommunicationSettings();

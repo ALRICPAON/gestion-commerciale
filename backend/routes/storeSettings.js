@@ -20,6 +20,15 @@ const ALLOWED_LOGO_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.svg']);
 
 fs.mkdirSync(STORE_LOGOS_DIR, { recursive: true });
 
+const COMMUNICATION_DEFAULTS = {
+  email_sender_name: 'ALTA MARÉE',
+  email_sender_address: 'commercial@altamaree.fr',
+  contact_email: 'contact@altamaree.fr',
+  internal_email: 'alric@altamaree.fr',
+  webmail_url: 'https://mail.altamaree.fr',
+  calendar_url: 'https://mail.altamaree.fr',
+};
+
 const STORE_SETTINGS_FIELDS = [
   'company_name',
   'logo_url',
@@ -40,6 +49,7 @@ const STORE_SETTINGS_FIELDS = [
   'terms_and_conditions',
   'delivery_note_footer',
   'invoice_footer',
+  ...Object.keys(COMMUNICATION_DEFAULTS),
 ];
 
 function normalizeText(value) {
@@ -56,6 +66,9 @@ function mapSettingsPayload(body = {}) {
   });
 
   settings.country = settings.country || 'France';
+  Object.entries(COMMUNICATION_DEFAULTS).forEach(([field, fallback]) => {
+    settings[field] = settings[field] || fallback;
+  });
 
   return settings;
 }
@@ -65,25 +78,7 @@ function settingsSelectSql() {
     SELECT
       id,
       store_id,
-      company_name,
-      logo_url,
-      address_line1,
-      address_line2,
-      postal_code,
-      city,
-      country,
-      phone,
-      email,
-      siret,
-      vat_number,
-      sanitary_approval_number,
-      iban,
-      bic,
-      payment_terms,
-      legal_mentions,
-      terms_and_conditions,
-      delivery_note_footer,
-      invoice_footer,
+      ${STORE_SETTINGS_FIELDS.join(',\n      ')},
       created_by,
       updated_by,
       created_at,
@@ -248,65 +243,23 @@ async function validateStoredImageContent(file, allowedExtensions) {
 }
 
 function storeSettingsColumnsSql() {
-  return `
-    store_id,
-    company_name,
-    logo_url,
-    address_line1,
-    address_line2,
-    postal_code,
-    city,
-    country,
-    phone,
-    email,
-    siret,
-    vat_number,
-    sanitary_approval_number,
-    iban,
-    bic,
-    payment_terms,
-    legal_mentions,
-    terms_and_conditions,
-    delivery_note_footer,
-    invoice_footer,
-    created_by,
-    updated_by
-  `;
+  return ['store_id', ...STORE_SETTINGS_FIELDS, 'created_by', 'updated_by'].join(',\n    ');
 }
 
 function storeSettingsValuesSql() {
-  return `
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-    $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-    $21, $22
-  `;
+  return Array.from({ length: STORE_SETTINGS_FIELDS.length + 3 }, (_, index) => `$${index + 1}`).join(', ');
 }
 
 function storeSettingsParams(req, settings) {
+  return [req.user.store_id, ...STORE_SETTINGS_FIELDS.map((field) => settings[field]), req.user.id, req.user.id];
+}
+
+function storeSettingsUpsertSql() {
   return [
-    req.user.store_id,
-    settings.company_name,
-    settings.logo_url,
-    settings.address_line1,
-    settings.address_line2,
-    settings.postal_code,
-    settings.city,
-    settings.country,
-    settings.phone,
-    settings.email,
-    settings.siret,
-    settings.vat_number,
-    settings.sanitary_approval_number,
-    settings.iban,
-    settings.bic,
-    settings.payment_terms,
-    settings.legal_mentions,
-    settings.terms_and_conditions,
-    settings.delivery_note_footer,
-    settings.invoice_footer,
-    req.user.id,
-    req.user.id,
-  ];
+    ...STORE_SETTINGS_FIELDS.map((field) => `${field} = EXCLUDED.${field}`),
+    'updated_by = EXCLUDED.updated_by',
+    'updated_at = now()',
+  ].join(',\n        ');
 }
 
 router.get('/store-settings', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
@@ -353,27 +306,7 @@ router.put('/store-settings', authenticateToken, attachDbContext, requireAdminOr
       VALUES (${storeSettingsValuesSql()})
       ON CONFLICT (store_id) DO UPDATE
       SET
-        company_name = EXCLUDED.company_name,
-        logo_url = EXCLUDED.logo_url,
-        address_line1 = EXCLUDED.address_line1,
-        address_line2 = EXCLUDED.address_line2,
-        postal_code = EXCLUDED.postal_code,
-        city = EXCLUDED.city,
-        country = EXCLUDED.country,
-        phone = EXCLUDED.phone,
-        email = EXCLUDED.email,
-        siret = EXCLUDED.siret,
-        vat_number = EXCLUDED.vat_number,
-        sanitary_approval_number = EXCLUDED.sanitary_approval_number,
-        iban = EXCLUDED.iban,
-        bic = EXCLUDED.bic,
-        payment_terms = EXCLUDED.payment_terms,
-        legal_mentions = EXCLUDED.legal_mentions,
-        terms_and_conditions = EXCLUDED.terms_and_conditions,
-        delivery_note_footer = EXCLUDED.delivery_note_footer,
-        invoice_footer = EXCLUDED.invoice_footer,
-        updated_by = EXCLUDED.updated_by,
-        updated_at = now()
+        ${storeSettingsUpsertSql()}
       `,
       storeSettingsParams(req, settings)
     );

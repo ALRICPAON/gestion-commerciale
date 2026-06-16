@@ -76,6 +76,23 @@
   padding: 5px 9px;
 }
 
+.communication-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.communication-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.communication-actions .btn {
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+
 .intelligence-center {
   margin-top: 24px;
 }
