@@ -263,7 +263,7 @@ const pendingActionInputSchema = {
   type: 'object',
   required: ['action_type', 'summary', 'payload'],
   properties: {
-    action_type: { type: 'string', description: 'Type métier. Commande client: customer_order_draft, create_customer_order ou create_customer_order_draft. Passage commande en BL: validate_order_to_bl, validate_order_to_delivery_note, convert_order_to_bl, convert_order_to_delivery_note, create_delivery_note_from_order ou order_to_delivery_note.' },
+    action_type: { type: 'string', description: 'Type métier. Commande client: customer_order_draft, create_customer_order ou create_customer_order_draft. Passage commande en BL: customer_delivery_note_draft avec référence CMD, validate_order_to_bl, validate_order_to_delivery_note, convert_order_to_bl, convert_order_to_delivery_note, create_delivery_note_from_order ou order_to_delivery_note.' },
     summary: { type: 'string', description: 'Résumé clair à afficher à l’utilisateur avant confirmation.' },
     payload: {
       type: 'object',
@@ -525,7 +525,7 @@ const tools = [
   makeTool({
     name: 'create_pending_action',
     title: 'Créer une action en attente',
-    description: 'Crée une action ALTA en attente de confirmation humaine. Pour une commande client, utiliser action_type customer_order_draft/create_customer_order. Pour passer une commande en BL, utiliser validate_order_to_bl ou validate_order_to_delivery_note avec payload.reference_number ou payload.sale_id.',
+    description: 'Crée une action ALTA en attente de confirmation humaine. Pour une commande client, utiliser action_type customer_order_draft/create_customer_order. Pour passer une commande en BL, utiliser customer_delivery_note_draft, validate_order_to_bl ou validate_order_to_delivery_note avec payload.reference_number ou payload.sale_id.',
     inputSchema: pendingActionInputSchema,
     outputSchema: pendingActionOutputSchema,
     invoking: 'Préparation action ALTA...',
@@ -544,7 +544,7 @@ const tools = [
   makeTool({
     name: 'execute_pending_action',
     title: 'Exécuter une action confirmée',
-    description: 'Exécute une action pending uniquement après confirmation humaine explicite. Pour une commande client, crée la commande. Pour validate_order_to_bl ou validate_order_to_delivery_note, crée le BL, copie les lignes et décrémente le stock.',
+    description: 'Exécute une action pending uniquement après confirmation humaine explicite. Pour une commande client, crée la commande. Pour customer_delivery_note_draft avec référence CMD, validate_order_to_bl ou validate_order_to_delivery_note, crée le BL, copie les lignes et décrémente le stock.',
     inputSchema: executePendingActionInputSchema,
     outputSchema: pendingActionOutputSchema,
     invoking: 'Confirmation action ALTA...',
@@ -672,8 +672,8 @@ async function handleRequest(req, message) {
         tools: { listChanged: false },
         resources: { subscribe: false, listChanged: false },
       },
-      serverInfo: { name: 'alta-maree-mcp', version: '1.5.0' },
-      instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec action_type customer_order_draft puis execute_pending_action après confirmation. Pour passer une commande en BL après confirmation, appelle convert_order_to_delivery_note si disponible; sinon utilise create_pending_action avec action_type validate_order_to_bl puis execute_pending_action. Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
+      serverInfo: { name: 'alta-maree-mcp', version: '1.5.1' },
+      instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec action_type customer_order_draft puis execute_pending_action après confirmation. Pour passer une commande en BL après confirmation, appelle convert_order_to_delivery_note si disponible; sinon utilise create_pending_action avec action_type customer_delivery_note_draft ou validate_order_to_bl et une référence CMD, puis execute_pending_action. Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
       _meta: {
         securitySchemes: SECURITY_SCHEMES,
       },
