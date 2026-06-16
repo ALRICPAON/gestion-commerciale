@@ -3,7 +3,9 @@ const { recomputeArticleStock } = require('./stockService');
 
 const MAX_LIMIT = 100;
 const ORDER_ACTION_TYPES = new Set(['customer_order_draft', 'create_customer_order', 'create_customer_order_draft']);
+const CUSTOMER_DELIVERY_NOTE_DRAFT_ACTION = 'customer_delivery_note_draft';
 const DELIVERY_NOTE_ACTION_TYPES = new Set([
+  CUSTOMER_DELIVERY_NOTE_DRAFT_ACTION,
   'validate_order_to_delivery_note',
   'create_delivery_note_from_order',
   'order_to_delivery_note',
@@ -67,6 +69,23 @@ function findFirstClean(payload, paths) {
 function extractOrderReference(text) {
   const match = clean(text)?.match(/\bCMD[-_\s]?\d{4}[-_\s]?\d{3,}\b/i);
   return match ? match[0].toUpperCase().replace(/\s+/g, '-').replace(/_/g, '-') : null;
+}
+
+function detectOrderReference(payload = {}, summary = null) {
+  const payloadReference = findFirstClean(payload, [
+    'reference_number',
+    'reference',
+    'order_reference',
+    'order_reference_number',
+    'order_number',
+    'sale_reference',
+    'document_reference',
+    'document_number',
+    'sale.reference_number',
+    'order.reference_number',
+    'document.reference_number',
+  ]);
+  return extractOrderReference(payloadReference) || extractOrderReference(summary);
 }
 
 function normalized(field) {
@@ -1003,11 +1022,13 @@ async function executePendingAction(dbPool, storeId, input = {}) {
     }
     const action = actionResult.rows[0];
     const lockedActionType = normalizeActionType(action.action_type);
+    const referenceNumber = detectOrderReference(action.payload || {}, action.summary);
     console.log('ALTA pending action locked', {
       id,
       store_id: storeId,
       action_type: action.action_type,
       normalized_action_type: lockedActionType,
+      reference_number: referenceNumber,
       payload_reference_number: findFirstClean(action.payload || {}, ['reference_number', 'reference', 'order_reference', 'order_number', 'document_reference']),
       summary_reference_number: extractOrderReference(action.summary),
     });
@@ -1016,9 +1037,25 @@ async function executePendingAction(dbPool, storeId, input = {}) {
       error.status = 400;
       throw error;
     }
-    const executionResult = DELIVERY_NOTE_ACTION_TYPES.has(lockedActionType)
-      ? await createDeliveryNoteFromOrder(db, storeId, action.payload || {}, action.summary)
+    if (lockedActionType === CUSTOMER_DELIVERY_NOTE_DRAFT_ACTION && !referenceNumber) {
+      const error = new Error('customer_delivery_note_draft exige une référence commande CMD-xxxx dans le payload ou le résumé');
+      error.status = 400;
+      throw error;
+    }
+    const isDeliveryNoteAction = DELIVERY_NOTE_ACTION_TYPES.has(lockedActionType);
+    const deliveryNotePayload = {
+      ...(action.payload || {}),
+      ...(referenceNumber ? { reference_number: referenceNumber } : {}),
+    };
+    const executionResult = isDeliveryNoteAction
+      ? await createDeliveryNoteFromOrder(db, storeId, deliveryNotePayload, action.summary)
       : await insertCustomerOrderDraft(db, storeId, await prepareOrderPayload(db, storeId, action.payload || {}), action.summary);
+    console.log('ALTA pending action business execution', {
+      id,
+      store_id: storeId,
+      reference_number: referenceNumber,
+      business_action_executed: isDeliveryNoteAction ? 'convert_order_to_delivery_note' : 'create_customer_order',
+    });
     const updated = await db.query(
       `UPDATE agent_pending_actions SET status='executed', executed_at=NOW(), payload=jsonb_set(payload,'{execution_result}',$3::jsonb,true) WHERE id=$1 AND store_id=$2 RETURNING *`,
       [id, storeId, JSON.stringify(executionResult)]
