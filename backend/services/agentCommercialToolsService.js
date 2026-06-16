@@ -3,7 +3,24 @@ const { recomputeArticleStock } = require('./stockService');
 
 const MAX_LIMIT = 100;
 const ORDER_ACTION_TYPES = new Set(['customer_order_draft', 'create_customer_order', 'create_customer_order_draft']);
-const DELIVERY_NOTE_ACTION_TYPES = new Set(['validate_order_to_delivery_note', 'create_delivery_note_from_order', 'order_to_delivery_note']);
+const DELIVERY_NOTE_ACTION_TYPES = new Set([
+  'validate_order_to_delivery_note',
+  'create_delivery_note_from_order',
+  'order_to_delivery_note',
+  'validate_order',
+  'validate_customer_order',
+  'validate_order_delivery_note',
+  'validate_order_to_bl',
+  'validate_cmd_to_bl',
+  'order_to_bl',
+  'commande_to_bl',
+  'create_bl_from_order',
+  'create_delivery_note',
+  'delivery_note_from_order',
+  'convert_order_to_delivery_note',
+  'convert_order_to_bl',
+  'validation_bl',
+]);
 const SOURCE = 'chatgpt_business';
 const ACCENT_SOURCE = 'ÀÂÄàâäÉÈÊËéèêëÎÏîïÔÖôöÙÛÜùûüÇç';
 const ACCENT_TARGET = 'AAAaaaEEEEeeeeIIiiOOooUUUuuuCc';
@@ -27,6 +44,29 @@ function num(value, fallback = 0) {
 
 function pos(value, fallback = 0) {
   return Math.max(num(value, fallback), 0);
+}
+
+function normalizeActionType(value) {
+  return clean(value)?.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || null;
+}
+
+function getNested(obj, path) {
+  return path.split('.').reduce((current, key) => (
+    current && typeof current === 'object' ? current[key] : undefined
+  ), obj);
+}
+
+function findFirstClean(payload, paths) {
+  for (const path of paths) {
+    const value = clean(getNested(payload, path));
+    if (value) return value;
+  }
+  return null;
+}
+
+function extractOrderReference(text) {
+  const match = clean(text)?.match(/\bCMD[-_\s]?\d{4}[-_\s]?\d{3,}\b/i);
+  return match ? match[0].toUpperCase().replace(/\s+/g, '-').replace(/_/g, '-') : null;
 }
 
 function normalized(field) {
@@ -478,7 +518,7 @@ async function prepareOrderPayload(dbPool, storeId, payload) {
 }
 
 async function createPendingAction(dbPool, storeId, input = {}) {
-  if (!ORDER_ACTION_TYPES.has(clean(input.action_type))) {
+  if (!ORDER_ACTION_TYPES.has(normalizeActionType(input.action_type))) {
     return base.createPendingAction(dbPool, storeId, input);
   }
   return base.createPendingAction(dbPool, storeId, {
@@ -500,7 +540,7 @@ async function getPendingActionType(dbPool, storeId, id) {
     [id, storeId]
   );
 
-  return clean(result.rows[0]?.action_type);
+  return normalizeActionType(result.rows[0]?.action_type);
 }
 
 async function salesAuditColumnsRequireUser(db) {
@@ -702,9 +742,28 @@ async function allocateSalesDocumentStock(db, storeId, salesDocumentId, actorId,
   return { allocated, line_count: lines.rows.length, article_count: articles.size };
 }
 
-async function findCustomerOrderForDeliveryNote(db, storeId, payload = {}) {
-  const saleId = clean(payload.sale_id || payload.order_id || payload.id);
-  const referenceNumber = clean(payload.reference_number || payload.order_reference || payload.order_reference_number);
+async function findCustomerOrderForDeliveryNote(db, storeId, payload = {}, summary = null) {
+  const saleId = findFirstClean(payload, [
+    'sale_id',
+    'order_id',
+    'id',
+    'sale.id',
+    'order.id',
+    'document.id',
+  ]);
+  const referenceNumber = findFirstClean(payload, [
+    'reference_number',
+    'reference',
+    'order_reference',
+    'order_reference_number',
+    'order_number',
+    'sale_reference',
+    'document_reference',
+    'document_number',
+    'sale.reference_number',
+    'order.reference_number',
+    'document.reference_number',
+  ]) || extractOrderReference(summary);
   if (!saleId && !referenceNumber) {
     const error = new Error('payload.sale_id ou payload.reference_number obligatoire pour valider une commande en BL');
     error.status = 400;
@@ -768,7 +827,7 @@ async function findCustomerOrderForDeliveryNote(db, storeId, payload = {}) {
 
 async function createDeliveryNoteFromOrder(db, storeId, payload = {}, summary = null) {
   const actorId = await resolveSalesAuditUserId(db, storeId);
-  const order = await findCustomerOrderForDeliveryNote(db, storeId, payload);
+  const order = await findCustomerOrderForDeliveryNote(db, storeId, payload, summary);
   const orderLines = await db.query(
     'SELECT * FROM sales_lines WHERE sales_document_id=$1 AND store_id=$2 ORDER BY line_number',
     [order.id, storeId]
@@ -898,6 +957,13 @@ async function executePendingAction(dbPool, storeId, input = {}) {
   }
 
   const actionType = await getPendingActionType(dbPool, storeId, id);
+  console.log('ALTA pending action execute routing', {
+    id,
+    store_id: storeId,
+    normalized_action_type: actionType,
+    is_order_action: ORDER_ACTION_TYPES.has(actionType),
+    is_delivery_note_action: DELIVERY_NOTE_ACTION_TYPES.has(actionType),
+  });
   if (!ORDER_ACTION_TYPES.has(actionType) && !DELIVERY_NOTE_ACTION_TYPES.has(actionType)) {
     return base.executePendingAction(dbPool, storeId, input);
   }
@@ -915,12 +981,21 @@ async function executePendingAction(dbPool, storeId, input = {}) {
       throw error;
     }
     const action = actionResult.rows[0];
-    if (!ORDER_ACTION_TYPES.has(action.action_type) && !DELIVERY_NOTE_ACTION_TYPES.has(action.action_type)) {
+    const lockedActionType = normalizeActionType(action.action_type);
+    console.log('ALTA pending action locked', {
+      id,
+      store_id: storeId,
+      action_type: action.action_type,
+      normalized_action_type: lockedActionType,
+      payload_reference_number: findFirstClean(action.payload || {}, ['reference_number', 'reference', 'order_reference', 'order_number', 'document_reference']),
+      summary_reference_number: extractOrderReference(action.summary),
+    });
+    if (!ORDER_ACTION_TYPES.has(lockedActionType) && !DELIVERY_NOTE_ACTION_TYPES.has(lockedActionType)) {
       const error = new Error(`Type action non executable par MCP : ${action.action_type}`);
       error.status = 400;
       throw error;
     }
-    const executionResult = DELIVERY_NOTE_ACTION_TYPES.has(action.action_type)
+    const executionResult = DELIVERY_NOTE_ACTION_TYPES.has(lockedActionType)
       ? await createDeliveryNoteFromOrder(db, storeId, action.payload || {}, action.summary)
       : await insertCustomerOrderDraft(db, storeId, await prepareOrderPayload(db, storeId, action.payload || {}), action.summary);
     const updated = await db.query(
