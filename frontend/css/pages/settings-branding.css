@@ -7,8 +7,8 @@
 
 .favicon-preview-box {
   align-items: center;
-  background: #f8fafc;
-  border: 1px dashed #cbd5e1;
+  background: #F8FAFC;
+  border: 1px dashed #D0D5DD;
   border-radius: 10px;
   display: flex;
   height: 64px;
@@ -24,7 +24,7 @@
 }
 
 .settings-helper {
-  color: #64748b;
+  color: var(--alta-muted);
   font-size: 0.88rem;
   font-weight: 700;
   line-height: 1.35;
