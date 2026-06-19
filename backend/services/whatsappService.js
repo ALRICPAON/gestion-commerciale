@@ -1,6 +1,6 @@
 const https = require('https');
 
-const TEST_MESSAGE_GRAPH_VERSION = 'v25.0';
+const WHATSAPP_GRAPH_VERSION = 'v25.0';
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -23,6 +23,10 @@ function requireEnv(name) {
   return value;
 }
 
+function hasPhoneNumberId() {
+  return Boolean(clean(process.env.WHATSAPP_PHONE_NUMBER_ID));
+}
+
 function normalizePhone(value) {
   const raw = clean(value);
   if (!raw) return null;
@@ -43,10 +47,6 @@ function normalizeRequiredPhone(value) {
     throw error;
   }
   return phone;
-}
-
-function graphVersion() {
-  return clean(process.env.WHATSAPP_API_VERSION) || 'v20.0';
 }
 
 function graphHost() {
@@ -83,10 +83,13 @@ function postJson(path, payload) {
         let parsed = {};
         try { parsed = data ? JSON.parse(data) : {}; }
         catch { parsed = {}; }
-        if (res.statusCode >= 200 && res.statusCode < 300) return resolve(parsed);
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          return resolve({ status: res.statusCode, data: parsed });
+        }
         const error = new Error(sanitizeMetaError(parsed));
         error.status = res.statusCode || 502;
         error.expose = res.statusCode < 500;
+        error.meta_message = sanitizeMetaError(parsed);
         return reject(error);
       });
     });
@@ -115,7 +118,7 @@ async function sendTextMessage(to, message) {
   }
 
   const phoneNumberId = requireEnv('WHATSAPP_PHONE_NUMBER_ID');
-  const result = await postJson(`/${TEST_MESSAGE_GRAPH_VERSION}/${phoneNumberId}/messages`, {
+  const { status, data } = await postJson(`/${WHATSAPP_GRAPH_VERSION}/${phoneNumberId}/messages`, {
     messaging_product: 'whatsapp',
     to: recipient,
     type: 'text',
@@ -126,19 +129,32 @@ async function sendTextMessage(to, message) {
 
   return {
     to: recipient,
-    message_id: result.messages?.[0]?.id || null,
+    status,
+    message_id: data.messages?.[0]?.id || null,
+    result: data,
   };
 }
 
-async function sendTemplateMessage({ to, templateName, languageCode, bodyParameters = [] }) {
-  const recipient = normalizeRequiredPhone(to);
+async function sendTemplateMessage(to, templateName, languageCode = 'fr', bodyParameters = []) {
+  let options = null;
+  if (typeof to === 'object' && to !== null) {
+    options = to;
+  }
 
-  const name = clean(templateName) || clean(process.env.WHATSAPP_DELIVERY_NOTE_TEMPLATE_NAME);
+  const recipient = normalizeRequiredPhone(options ? options.to : to);
+  const name = clean(options ? options.templateName : templateName) || clean(process.env.WHATSAPP_DELIVERY_NOTE_TEMPLATE_NAME);
+  const language = clean(options ? options.languageCode : languageCode) || clean(process.env.WHATSAPP_DEFAULT_LANGUAGE) || 'fr';
+  const parameters = Array.isArray(options?.bodyParameters) ? options.bodyParameters : bodyParameters;
+
   if (!name) {
-    const error = new Error('Template WhatsApp BL non configure');
+    const error = new Error('Template WhatsApp non configure');
     error.status = 500;
     throw error;
   }
+
+  const bodyComponent = parameters.length > 0
+    ? [{ type: 'body', parameters: parameters.map(templateParameter) }]
+    : [];
 
   const payload = {
     messaging_product: 'whatsapp',
@@ -147,27 +163,26 @@ async function sendTemplateMessage({ to, templateName, languageCode, bodyParamet
     template: {
       name,
       language: {
-        code: clean(languageCode) || clean(process.env.WHATSAPP_DEFAULT_LANGUAGE) || 'fr',
+        code: language,
       },
-      components: [
-        {
-          type: 'body',
-          parameters: bodyParameters.map(templateParameter),
-        },
-      ],
+      ...(bodyComponent.length > 0 ? { components: bodyComponent } : {}),
     },
   };
 
   const phoneNumberId = requireEnv('WHATSAPP_PHONE_NUMBER_ID');
-  const result = await postJson(`/${graphVersion()}/${phoneNumberId}/messages`, payload);
+  const { status, data } = await postJson(`/${WHATSAPP_GRAPH_VERSION}/${phoneNumberId}/messages`, payload);
   return {
     to: recipient,
     template: name,
-    result,
+    language_code: language,
+    status,
+    message_id: data.messages?.[0]?.id || null,
+    result: data,
   };
 }
 
 module.exports = {
+  hasPhoneNumberId,
   normalizePhone,
   sendTemplateMessage,
   sendTextMessage,

@@ -2,13 +2,16 @@
 
 ## Objectif
 
-Cette integration ajoute un premier test d'envoi WhatsApp depuis ALTA MARÉE pour valider la configuration Meta WhatsApp Business Cloud API.
+Cette integration ajoute un test d'envoi WhatsApp depuis ALTA MARÉE pour valider la configuration Meta WhatsApp Business Cloud API.
 
-Le test envoie le message fixe suivant au numero saisi depuis la Home:
+Le test utilise le template Meta standard:
 
 ```text
-Bonjour depuis ALTA MARÉE 🚀
+template name: hello_world
+language code: en_US
 ```
+
+Ce choix rend le test fiable hors fenetre de conversation WhatsApp, contrairement a un texte libre qui peut etre refuse ou non delivre selon le contexte Meta.
 
 ## Architecture
 
@@ -52,11 +55,14 @@ Payload:
 }
 ```
 
-Retour succes:
+Le backend normalise le numero avant l'envoi a Meta. Par exemple, `+33612345678` devient `33612345678`.
+
+Retour succes uniquement si Meta retourne un `message_id`:
 
 ```json
 {
-  "success": true
+  "success": true,
+  "message_id": "wamid..."
 }
 ```
 
@@ -69,14 +75,35 @@ Retour erreur exemple:
 }
 ```
 
+## Logs attendus
+
+La route journalise uniquement des informations non sensibles:
+
+- route appelee
+- numero masque
+- presence du `WHATSAPP_PHONE_NUMBER_ID`: oui/non
+- succes Meta: status + `message_id`
+- erreur Meta: status + message d'erreur Meta sans token
+
+Exemples:
+
+```text
+WhatsApp test route called { to: '336****78', phone_number_id_present: true }
+WhatsApp test Meta success { to: '336****78', status: 200, message_id: 'wamid...' }
+```
+
+```text
+WhatsApp test Meta error { to: '336****78', status: 400, error: '...' }
+```
+
 ## Procedure de test depuis ALTA
 
 1. Se connecter a ALTA avec un compte admin.
 2. Ouvrir la Home.
 3. Dans la carte Communication, cliquer sur `💬 Envoyer test WhatsApp`.
 4. Saisir un numero au format international, par exemple `+33612345678`.
-5. Verifier que le message est recu sur le telephone cible.
-6. En cas d'erreur, verifier le message affiche dans la carte Communication et les logs backend sans jamais afficher le token.
+5. Verifier que le message template `hello_world` est recu sur le telephone cible.
+6. Si aucun message n'arrive, verifier les logs PM2 backend et chercher `WhatsApp test`.
 
 ## Procedure de test API
 
@@ -93,12 +120,11 @@ curl -X POST "$API_BASE_URL/api/communication/whatsapp/test" \
 
 - Le token Meta reste uniquement cote backend.
 - La route ne renvoie jamais de token ni de configuration WhatsApp.
-- Les logs backend ne journalisent que le message d'erreur et le statut HTTP.
+- Les logs backend ne journalisent jamais le token.
 - Les erreurs Meta sont simplifiees avant retour API.
 
 ## Hors perimetre
 
 - Pas de webhook WhatsApp entrant.
-- Pas de templates conversationnels ajoutes.
 - Pas de modification des modules metier.
 - Pas de migration SQL necessaire.
