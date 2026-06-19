@@ -131,6 +131,7 @@ async function sendTextMessage(to, message) {
     to: recipient,
     status,
     message_id: data.messages?.[0]?.id || null,
+    result: data,
   };
 }
 
@@ -141,8 +142,8 @@ async function sendTemplateMessage(to, templateName, languageCode = 'fr', bodyPa
   }
 
   const recipient = normalizeRequiredPhone(options ? options.to : to);
-  const name = clean(options ? options.templateName : templateName);
-  const language = clean(options ? options.languageCode : languageCode) || 'fr';
+  const name = clean(options ? options.templateName : templateName) || clean(process.env.WHATSAPP_DELIVERY_NOTE_TEMPLATE_NAME);
+  const language = clean(options ? options.languageCode : languageCode) || clean(process.env.WHATSAPP_DEFAULT_LANGUAGE) || 'fr';
   const parameters = Array.isArray(options?.bodyParameters) ? options.bodyParameters : bodyParameters;
 
   if (!name) {
@@ -176,6 +177,7 @@ async function sendTemplateMessage(to, templateName, languageCode = 'fr', bodyPa
     language_code: language,
     status,
     message_id: data.messages?.[0]?.id || null,
+    result: data,
   };
 }
 
