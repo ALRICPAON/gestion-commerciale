@@ -1,12 +1,13 @@
-/* Targeted styles for purchases list page — minimal and non-intrusive */
+/* Targeted styles for purchases list page: minimal and non-intrusive. */
 .purchases-total-cell {
   text-align: right;
   width: 160px;
-  color: #222;
+  color: var(--alta-text);
 }
+
 .purchases-total-cell strong {
   font-weight: 600;
-  color: #111;
+  color: var(--alta-text);
 }
 
 .purchase-status-badge {
@@ -17,12 +18,12 @@
   color: #fff;
 }
 
-.status-ordered { background: #1976d2; }
+.status-ordered { background: var(--alta-ocean); }
 .status-received { background: #2e7d32; }
 .status-received_pending_invoice { background: #558b2f; }
 .status-closed { background: #424242; }
 .status-cancelled { background: #b71c1c; }
 .status-draft { background: #757575; }
-.status-receiving { background: #0288d1; }
+.status-receiving { background: var(--alta-turquoise); }
 
-/* Keep this file narrowly scoped — avoid generic selectors that override global styles. */
+/* Keep this file narrowly scoped: avoid generic selectors that override global styles. */
