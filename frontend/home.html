@@ -7,44 +7,46 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/home-branding.css?v=3" />
+  <link rel="stylesheet" href="./css/pages/home-branding.css?v=4" />
 </head>
 <body class="app-page">
   <header class="topbar home-topbar">
     <div class="topbar-left brand-lockup">
       <img class="brand-logo hidden" alt="ALTA MARÉE" />
+      <div class="brand-mark" aria-hidden="true">AM</div>
       <div class="brand-copy">
         <h1 class="app-title home-brand-title">ALTA MARÉE</h1>
         <p class="app-subtitle" id="store-name">Espace de gestion</p>
       </div>
     </div>
-    <div class="topbar-right"><div class="topbar-department-box"><label for="topbar-department-select" class="topbar-label">Service actif</label><select id="topbar-department-select" class="topbar-select"></select></div><div class="user-box"><span id="user-name">Utilisateur</span></div><button id="users-btn" class="btn btn-secondary">Utilisateurs</button><button id="logout-btn" class="btn btn-secondary">Déconnexion</button></div>
+    <div class="topbar-right">
+      <div class="topbar-department-box">
+        <label for="topbar-department-select" class="topbar-label">Service actif</label>
+        <select id="topbar-department-select" class="topbar-select"></select>
+      </div>
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="users-btn" class="btn btn-secondary">Utilisateurs</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
   </header>
+
   <main class="main-content home-content">
-    <section class="welcome-card home-welcome"><h2>Modules</h2><p>Service actif : <strong id="current-department-name">-</strong></p></section>
-    <section class="dashboard-grid home-module-grid" aria-label="Modules ALTA MARÉE">
-      <a class="module-card" href="./tableau-de-bord.html" data-module="dashboard"><h3>Tableau de bord</h3><p>CA, achats, stock, achats consommés et marge.</p></a>
-      <a class="module-card" href="./statistiques.html" data-module="statistics"><h3>Statistiques</h3><p>Analyse articles, clients, fournisseurs et marges.</p></a>
-      <a class="module-card" href="./clients.html" data-module="clients"><h3>Clients</h3><p>Fiches clients, tarifs et informations de facturation.</p></a>
-      <a class="module-card" href="./customer-price-list.html" data-module="customer-price-list"><h3>Cours / Mercuriale</h3><p>Mercuriale rapide du jour et tarifs clients.</p></a>
-      <a class="module-card" href="./articles.html" data-module="articles"><h3>Articles</h3><p>Produits, familles, TVA, prix et PLU.</p></a>
-      <a class="module-card" href="./supplier-article-mappings.html" data-module="supplier-article-mappings"><h3>AF_MAP</h3><p>Correspondances fournisseurs ↔ articles.</p></a>
-      <a class="module-card" href="./suppliers.html" data-module="suppliers"><h3>Fournisseurs</h3><p>Mareyeurs, criées, importateurs et contacts.</p></a>
-      <a class="module-card" href="./purchases.html" data-module="purchases"><h3>Achats / Réceptions</h3><p>Commandes fournisseurs, BL et réceptions.</p></a>
-      <a class="module-card" href="./stock.html" data-module="stocks"><h3>Stock / Lots</h3><p>Lots disponibles, quantités et traçabilité.</p></a>
-      <a class="module-card" href="./traceability.html" data-module="traceability"><h3>Traçabilité</h3><p>Lots, mouvements, clients livrés et origine des produits.</p></a>
-      <a class="module-card" href="./transformations.html" data-module="transformations"><h3>Transformations</h3><p>Transformations de lots, sorties et créations de produits finis.</p></a>
-      <a class="module-card" href="./stock-regularization.html" data-module="stock-regularization"><h3>Régularisation stock</h3><p>Lots négatifs et corrections internes contrôlées.</p></a>
-      <a class="module-card" href="./sales.html" data-module="sales"><h3>Ventes / Commandes</h3><p>Commandes, BL, factures clients et avoirs.</p></a>
-      <a class="module-card" href="./supplier-invoices.html" data-module="supplier-invoices"><h3>Factures fournisseurs</h3><p>Rapprochements, écarts et validation fournisseur.</p></a>
-      <article class="module-card communication-card" data-module="communication"><h3>Communication</h3><p>Accès rapides aux emails, au calendrier Zimbra et à WhatsApp Web.</p><div class="communication-actions"><button type="button" class="btn btn-secondary" data-communication-open="webmail">Emails</button><button type="button" class="btn btn-secondary" data-communication-open="calendar">Calendrier</button><button type="button" class="btn btn-secondary" data-communication-open="whatsapp">WhatsApp</button></div></article>
-      <a id="settings-card" class="module-card" href="./settings.html" data-module="settings"><h3>Paramètres société</h3><p>Informations magasin, société et documents.</p></a>
-      <a class="module-card" href="./assistant-ia.html" data-module="assistant-ia"><h3>Assistant IA</h3><p>Agent métier en lecture seule pour analyser stock, clients, fournisseurs, ventes, achats et marges.</p></a>
+    <section class="home-cockpit" aria-label="Accueil ALTA MARÉE">
+      <div>
+        <span class="home-eyebrow">Cockpit commercial</span>
+        <h2>Bienvenue dans ALTA MARÉE</h2>
+        <p>Pilotage commercial, stock, ventes et communication.</p>
+      </div>
+      <div class="cockpit-service">
+        <span>Service actif</span>
+        <strong id="current-department-name">-</strong>
+      </div>
     </section>
 
     <section class="welcome-card intelligence-center" aria-label="Centre de surveillance">
       <div class="intelligence-center-header">
         <div>
+          <span class="section-kicker">Surveillance</span>
           <h2>Centre de surveillance</h2>
           <p>Alertes calculées localement depuis PostgreSQL, sans appel OpenAI.</p>
         </div>
@@ -53,9 +55,150 @@
       <div id="intelligence-center-feedback" class="page-feedback hidden"></div>
       <div id="intelligence-alerts-grid" class="intelligence-grid"></div>
     </section>
+
+    <section class="home-section" aria-labelledby="pilotage-title">
+      <div class="home-section-header">
+        <span class="section-kicker">A</span>
+        <h2 id="pilotage-title">Pilotage</h2>
+      </div>
+      <div class="dashboard-grid home-module-grid">
+        <a class="module-card" href="./tableau-de-bord.html" data-module="dashboard">
+          <span class="module-icon" aria-hidden="true">📊</span>
+          <h3>Tableau de bord</h3>
+          <p>CA, achats, stock, achats consommés et marge.</p>
+        </a>
+        <a class="module-card" href="./statistiques.html" data-module="statistics">
+          <span class="module-icon" aria-hidden="true">📈</span>
+          <h3>Statistiques</h3>
+          <p>Analyse articles, clients, fournisseurs et marges.</p>
+        </a>
+        <a class="module-card" href="./assistant-ia.html" data-module="assistant-ia">
+          <span class="module-icon" aria-hidden="true">✨</span>
+          <h3>Assistant IA</h3>
+          <p>Agent métier en lecture seule pour analyser stock, clients, fournisseurs, ventes, achats et marges.</p>
+        </a>
+      </div>
+    </section>
+
+    <section class="home-section" aria-labelledby="commerce-title">
+      <div class="home-section-header">
+        <span class="section-kicker">B</span>
+        <h2 id="commerce-title">Commerce</h2>
+      </div>
+      <div class="dashboard-grid home-module-grid">
+        <a class="module-card" href="./clients.html" data-module="clients">
+          <span class="module-icon" aria-hidden="true">👥</span>
+          <h3>Clients</h3>
+          <p>Fiches clients, tarifs et informations de facturation.</p>
+        </a>
+        <a class="module-card" href="./customer-price-list.html" data-module="customer-price-list">
+          <span class="module-icon" aria-hidden="true">🧾</span>
+          <h3>Cours / Mercuriale</h3>
+          <p>Mercuriale rapide du jour et tarifs clients.</p>
+        </a>
+        <a class="module-card" href="./sales.html" data-module="sales">
+          <span class="module-icon" aria-hidden="true">🛒</span>
+          <h3>Ventes / Commandes</h3>
+          <p>Commandes, BL, factures clients et avoirs.</p>
+        </a>
+      </div>
+    </section>
+
+    <section class="home-section" aria-labelledby="achats-title">
+      <div class="home-section-header">
+        <span class="section-kicker">C</span>
+        <h2 id="achats-title">Achats</h2>
+      </div>
+      <div class="dashboard-grid home-module-grid">
+        <a class="module-card" href="./suppliers.html" data-module="suppliers">
+          <span class="module-icon" aria-hidden="true">🏷️</span>
+          <h3>Fournisseurs</h3>
+          <p>Mareyeurs, criées, importateurs et contacts.</p>
+        </a>
+        <a class="module-card" href="./supplier-article-mappings.html" data-module="supplier-article-mappings">
+          <span class="module-icon" aria-hidden="true">🔗</span>
+          <h3>AF_MAP</h3>
+          <p>Correspondances fournisseurs ↔ articles.</p>
+        </a>
+        <a class="module-card" href="./purchases.html" data-module="purchases">
+          <span class="module-icon" aria-hidden="true">📦</span>
+          <h3>Achats / Réceptions</h3>
+          <p>Commandes fournisseurs, BL et réceptions.</p>
+        </a>
+        <a class="module-card" href="./supplier-invoices.html" data-module="supplier-invoices">
+          <span class="module-icon" aria-hidden="true">📄</span>
+          <h3>Factures fournisseurs</h3>
+          <p>Rapprochements, écarts et validation fournisseur.</p>
+        </a>
+      </div>
+    </section>
+
+    <section class="home-section" aria-labelledby="stock-title">
+      <div class="home-section-header">
+        <span class="section-kicker">D</span>
+        <h2 id="stock-title">Stock & Production</h2>
+      </div>
+      <div class="dashboard-grid home-module-grid">
+        <a class="module-card" href="./articles.html" data-module="articles">
+          <span class="module-icon" aria-hidden="true">🐟</span>
+          <h3>Articles</h3>
+          <p>Produits, familles, TVA, prix et PLU.</p>
+        </a>
+        <a class="module-card" href="./stock.html" data-module="stocks">
+          <span class="module-icon" aria-hidden="true">🧊</span>
+          <h3>Stock / Lots</h3>
+          <p>Lots disponibles, quantités et traçabilité.</p>
+        </a>
+        <a class="module-card" href="./traceability.html" data-module="traceability">
+          <span class="module-icon" aria-hidden="true">🧭</span>
+          <h3>Traçabilité</h3>
+          <p>Lots, mouvements, clients livrés et origine des produits.</p>
+        </a>
+        <a class="module-card" href="./transformations.html" data-module="transformations">
+          <span class="module-icon" aria-hidden="true">⚙️</span>
+          <h3>Transformations</h3>
+          <p>Transformations de lots, sorties et créations de produits finis.</p>
+        </a>
+        <a class="module-card" href="./stock-regularization.html" data-module="stock-regularization">
+          <span class="module-icon" aria-hidden="true">✅</span>
+          <h3>Régularisation stock</h3>
+          <p>Lots négatifs et corrections internes contrôlées.</p>
+        </a>
+      </div>
+    </section>
+
+    <section class="home-section" aria-labelledby="administration-title">
+      <div class="home-section-header">
+        <span class="section-kicker">E</span>
+        <h2 id="administration-title">Administration & Communication</h2>
+      </div>
+      <div class="dashboard-grid home-module-grid">
+        <article class="module-card communication-card" data-module="communication">
+          <span class="module-icon" aria-hidden="true">💬</span>
+          <h3>Communication</h3>
+          <p>Accès rapides aux emails, au calendrier Zimbra et à WhatsApp Web.</p>
+          <div class="communication-actions">
+            <button type="button" class="btn btn-secondary" data-communication-open="webmail">Emails</button>
+            <button type="button" class="btn btn-secondary" data-communication-open="calendar">Calendrier</button>
+            <button type="button" class="btn btn-secondary" data-communication-open="whatsapp">WhatsApp</button>
+          </div>
+        </article>
+        <a id="settings-card" class="module-card" href="./settings.html" data-module="settings">
+          <span class="module-icon" aria-hidden="true">🏢</span>
+          <h3>Paramètres société</h3>
+          <p>Informations magasin, société et documents.</p>
+        </a>
+        <a id="users-card" class="module-card" href="./users.html" data-module="users">
+          <span class="module-icon" aria-hidden="true">🔐</span>
+          <h3>Utilisateurs</h3>
+          <p>Comptes, rôles et accès des équipes.</p>
+        </a>
+      </div>
+    </section>
   </main>
+
   <script src="./js/config.js"></script>
-  <script src="./js/home.js?v=20"></script>
+  <script src="./js/home.js?v=21"></script>
   <script src="./js/intelligence-center-home.js?v=92"></script>
 </body>
 </html>
