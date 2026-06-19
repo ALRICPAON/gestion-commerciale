@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/home-branding.css?v=4" />
+  <link rel="stylesheet" href="./css/pages/home-branding.css?v=5" />
 </head>
 <body class="app-page">
   <header class="topbar home-topbar">
@@ -20,8 +20,8 @@
       </div>
     </div>
     <div class="topbar-right">
-      <div class="topbar-department-box">
-        <label for="topbar-department-select" class="topbar-label">Service actif</label>
+      <div class="topbar-department-box topbar-department-compact">
+        <label for="topbar-department-select" class="topbar-label">Service</label>
         <select id="topbar-department-select" class="topbar-select"></select>
       </div>
       <div class="user-box"><span id="user-name">Utilisateur</span></div>
@@ -37,9 +37,38 @@
         <h2>Bienvenue dans ALTA MARÉE</h2>
         <p>Pilotage commercial, stock, ventes et communication.</p>
       </div>
-      <div class="cockpit-service">
-        <span>Service actif</span>
-        <strong id="current-department-name">-</strong>
+    </section>
+
+    <section class="home-kpi-panel" aria-label="KPI commerciaux">
+      <div class="home-kpi-header">
+        <div>
+          <span class="section-kicker">KPI</span>
+          <h2>Chiffre & marge</h2>
+          <p id="home-kpi-feedback">Données du jour et de la veille issues du tableau de bord.</p>
+        </div>
+        <button id="refresh-home-kpis-btn" class="btn btn-secondary" type="button">Actualiser</button>
+      </div>
+      <div class="home-kpi-grid">
+        <article class="home-kpi-card">
+          <span>CA HT aujourd'hui</span>
+          <strong id="home-kpi-today-revenue">-</strong>
+          <small id="home-kpi-today-revenue-note">Chargement...</small>
+        </article>
+        <article class="home-kpi-card">
+          <span>Marge brute aujourd'hui</span>
+          <strong id="home-kpi-today-margin">-</strong>
+          <small id="home-kpi-today-margin-note">Chargement...</small>
+        </article>
+        <article class="home-kpi-card">
+          <span>Marge % aujourd'hui</span>
+          <strong id="home-kpi-today-rate">-</strong>
+          <small id="home-kpi-today-rate-note">Chargement...</small>
+        </article>
+        <article class="home-kpi-card home-kpi-card-muted">
+          <span>Veille</span>
+          <strong id="home-kpi-yesterday-revenue">-</strong>
+          <small id="home-kpi-yesterday-rate">Marge : -</small>
+        </article>
       </div>
     </section>
 
@@ -48,7 +77,7 @@
         <div>
           <span class="section-kicker">Surveillance</span>
           <h2>Centre de surveillance</h2>
-          <p>Alertes calculées localement depuis PostgreSQL, sans appel OpenAI.</p>
+          <p>Alertes prioritaires calculées localement depuis PostgreSQL.</p>
         </div>
         <button id="refresh-intelligence-btn" class="btn btn-secondary" type="button">Actualiser</button>
       </div>
@@ -71,11 +100,6 @@
           <span class="module-icon" aria-hidden="true">📈</span>
           <h3>Statistiques</h3>
           <p>Analyse articles, clients, fournisseurs et marges.</p>
-        </a>
-        <a class="module-card" href="./assistant-ia.html" data-module="assistant-ia">
-          <span class="module-icon" aria-hidden="true">✨</span>
-          <h3>Assistant IA</h3>
-          <p>Agent métier en lecture seule pour analyser stock, clients, fournisseurs, ventes, achats et marges.</p>
         </a>
       </div>
     </section>
@@ -198,7 +222,7 @@
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/home.js?v=21"></script>
-  <script src="./js/intelligence-center-home.js?v=92"></script>
+  <script src="./js/home.js?v=22"></script>
+  <script src="./js/intelligence-center-home.js?v=93"></script>
 </body>
 </html>
