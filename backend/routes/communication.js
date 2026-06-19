@@ -4,6 +4,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { requireAdmin, requireAdminOrManager } = require('../middleware/authorization');
 const { attachDbContext } = require('../middleware/dbContext');
 const { sendTestEmail } = require('../services/emailService');
+const { sendTextMessage } = require('../services/whatsappService');
 const {
   getInvoiceCommunicationDefaults,
   sendDeliveryNoteDocumentEmail,
@@ -20,6 +21,7 @@ const COMMUNICATION_DEFAULTS = {
   webmail_url: 'https://mail.altamaree.fr',
   calendar_url: 'https://mail.altamaree.fr',
 };
+const WHATSAPP_TEST_MESSAGE = 'Bonjour depuis ALTA MARÉE 🚀';
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -91,6 +93,23 @@ router.post('/communication/email/test', authenticateToken, requireAdmin, async 
     res.status(err.status || 500).json({
       success: false,
       error: err.expose ? err.message : 'Erreur envoi email',
+    });
+  }
+});
+
+router.post('/communication/whatsapp/test', authenticateToken, requireAdmin, async (req, res) => {
+  try {
+    await sendTextMessage(req.body?.to, WHATSAPP_TEST_MESSAGE);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Erreur POST /api/communication/whatsapp/test :', {
+      message: err.message,
+      status: err.status || 500,
+    });
+
+    res.status(err.status || 500).json({
+      success: false,
+      error: err.expose ? err.message : 'Erreur envoi WhatsApp',
     });
   }
 });
