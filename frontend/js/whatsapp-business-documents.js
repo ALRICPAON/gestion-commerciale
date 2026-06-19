@@ -92,8 +92,11 @@
 
     try {
       const defaults = await apiGet(config.defaultsPath());
+      const fallback = clean(config.fallbackMessage?.());
       field('business-whatsapp-to').value = clean(defaults.to);
-      field('business-whatsapp-message').value = clean(defaults.message || config.fallbackMessage?.());
+      field('business-whatsapp-message').value = config.preferFallbackMessage && fallback
+        ? fallback
+        : clean(defaults.message || fallback);
       if (!defaults.to) showFeedback('Aucun numéro disponible : renseigne un numéro manuel avant envoi.', 'error');
     } catch (error) {
       field('business-whatsapp-message').value = clean(config.fallbackMessage?.());
@@ -165,15 +168,14 @@
     disabledButton.id = 'send-price-list-whatsapp-btn';
     disabledButton.textContent = '💬 Envoyer les cours WhatsApp';
     disabledButton.addEventListener('click', () => {
-      const message = priceListPreviewMessage();
       const params = new URLSearchParams();
       if (priceListClientId()) params.set('client_id', priceListClientId());
-      params.set('message', message);
       openModal({
         title: 'Envoyer les cours WhatsApp',
         defaultsPath: () => `/api/communication/whatsapp/price-list/defaults?${params.toString()}`,
         sendPath: () => '/api/communication/whatsapp/price-list',
         fallbackMessage: priceListPreviewMessage,
+        preferFallbackMessage: true,
         payload: () => ({ client_id: priceListClientId() || null }),
       });
     });
