@@ -12,6 +12,7 @@ if (!sessionUser) {
 const storeNameEl = document.getElementById("store-name");
 const userNameEl = document.getElementById("user-name");
 const usersBtn = document.getElementById("users-btn");
+const usersCard = document.getElementById("users-card");
 const settingsCard = document.getElementById("settings-card");
 const logoutBtn = document.getElementById("logout-btn");
 const departmentSelect = document.getElementById("topbar-department-select");
@@ -70,6 +71,10 @@ function renderTopbar() {
     if (canManageUsers) {
       usersBtn.addEventListener("click", openUsers);
     }
+  }
+
+  if (usersCard) {
+    usersCard.style.display = canManageUsers ? "flex" : "none";
   }
 
   if (settingsCard) {
