@@ -18,6 +18,8 @@ const logoutBtn = document.getElementById("logout-btn");
 const departmentSelect = document.getElementById("topbar-department-select");
 const currentDepartmentNameEl = document.getElementById("current-department-name");
 const communicationButtons = document.querySelectorAll("[data-communication-open]");
+const whatsappTestBtn = document.getElementById("whatsapp-test-btn");
+const whatsappTestFeedback = document.getElementById("whatsapp-test-feedback");
 const refreshHomeKpisBtn = document.getElementById("refresh-home-kpis-btn");
 const homeKpiFeedback = document.getElementById("home-kpi-feedback");
 const homeKpiEls = {
@@ -243,6 +245,45 @@ async function loadCommunicationSettings() {
   }
 }
 
+function setWhatsappFeedback(message, type = "") {
+  if (!whatsappTestFeedback) return;
+  whatsappTestFeedback.textContent = message;
+  whatsappTestFeedback.className = `communication-feedback ${type}`.trim();
+}
+
+async function sendWhatsappTest() {
+  if (!authToken) return;
+  const to = window.prompt("Numéro WhatsApp de test (ex : +33612345678)");
+  if (!to || !to.trim()) return;
+
+  if (whatsappTestBtn) {
+    whatsappTestBtn.disabled = true;
+  }
+  setWhatsappFeedback("Envoi du test WhatsApp...");
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/communication/whatsapp/test`, {
+      method: "POST",
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ to: to.trim() }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || data.success !== true) {
+      throw new Error(data.error || "Erreur envoi WhatsApp");
+    }
+    setWhatsappFeedback("Test WhatsApp envoyé avec succès.", "success");
+  } catch (error) {
+    setWhatsappFeedback(error.message || "Erreur envoi WhatsApp", "error");
+  } finally {
+    if (whatsappTestBtn) {
+      whatsappTestBtn.disabled = false;
+    }
+  }
+}
+
 function bindCommunicationActions() {
   communicationButtons.forEach((button) => {
     button.addEventListener("click", () => {
@@ -252,6 +293,10 @@ function bindCommunicationActions() {
       window.open(url, "_blank", "noopener,noreferrer");
     });
   });
+
+  if (whatsappTestBtn) {
+    whatsappTestBtn.addEventListener("click", sendWhatsappTest);
+  }
 }
 
 if (logoutBtn) {

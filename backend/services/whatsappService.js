@@ -1,17 +1,24 @@
 const https = require('https');
 
+const TEST_MESSAGE_GRAPH_VERSION = 'v25.0';
+
 function clean(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim();
   return text || null;
 }
 
+function configurationError() {
+  const error = new Error('Configuration WhatsApp incomplete');
+  error.status = 503;
+  error.expose = true;
+  return error;
+}
+
 function requireEnv(name) {
   const value = clean(process.env[name]);
   if (!value) {
-    const error = new Error(`Variable WhatsApp manquante: ${name}`);
-    error.status = 500;
-    throw error;
+    throw configurationError();
   }
   return value;
 }
@@ -27,12 +34,31 @@ function normalizePhone(value) {
   return phone || null;
 }
 
+function normalizeRequiredPhone(value) {
+  const phone = normalizePhone(value);
+  if (!phone || !/^[1-9]\d{6,14}$/.test(phone)) {
+    const error = new Error('Numero WhatsApp destinataire invalide');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+  return phone;
+}
+
 function graphVersion() {
   return clean(process.env.WHATSAPP_API_VERSION) || 'v20.0';
 }
 
 function graphHost() {
   return clean(process.env.WHATSAPP_API_HOST) || 'graph.facebook.com';
+}
+
+function sanitizeMetaError(parsed = {}) {
+  const metaError = parsed.error || {};
+  const message = clean(metaError.message) || 'Erreur WhatsApp Cloud API';
+  const code = metaError.code ? `Code Meta ${metaError.code}` : null;
+  const type = clean(metaError.type);
+  return [message, type, code].filter(Boolean).join(' - ');
 }
 
 function postJson(path, payload) {
@@ -56,11 +82,11 @@ function postJson(path, payload) {
       res.on('end', () => {
         let parsed = {};
         try { parsed = data ? JSON.parse(data) : {}; }
-        catch { parsed = { raw: data }; }
+        catch { parsed = {}; }
         if (res.statusCode >= 200 && res.statusCode < 300) return resolve(parsed);
-        const error = new Error(parsed?.error?.message || 'Erreur WhatsApp Cloud API');
+        const error = new Error(sanitizeMetaError(parsed));
         error.status = res.statusCode || 502;
-        error.details = parsed;
+        error.expose = res.statusCode < 500;
         return reject(error);
       });
     });
@@ -77,13 +103,35 @@ function templateParameter(value) {
   };
 }
 
-async function sendTemplateMessage({ to, templateName, languageCode, bodyParameters = [] }) {
-  const recipient = normalizePhone(to);
-  if (!recipient) {
-    const error = new Error('Numero WhatsApp destinataire manquant');
+async function sendTextMessage(to, message) {
+  const recipient = normalizeRequiredPhone(to);
+  const body = clean(message);
+
+  if (!body) {
+    const error = new Error('Message WhatsApp vide');
     error.status = 400;
+    error.expose = true;
     throw error;
   }
+
+  const phoneNumberId = requireEnv('WHATSAPP_PHONE_NUMBER_ID');
+  const result = await postJson(`/${TEST_MESSAGE_GRAPH_VERSION}/${phoneNumberId}/messages`, {
+    messaging_product: 'whatsapp',
+    to: recipient,
+    type: 'text',
+    text: {
+      body,
+    },
+  });
+
+  return {
+    to: recipient,
+    message_id: result.messages?.[0]?.id || null,
+  };
+}
+
+async function sendTemplateMessage({ to, templateName, languageCode, bodyParameters = [] }) {
+  const recipient = normalizeRequiredPhone(to);
 
   const name = clean(templateName) || clean(process.env.WHATSAPP_DELIVERY_NOTE_TEMPLATE_NAME);
   if (!name) {
@@ -122,4 +170,5 @@ async function sendTemplateMessage({ to, templateName, languageCode, bodyParamet
 module.exports = {
   normalizePhone,
   sendTemplateMessage,
+  sendTextMessage,
 };
