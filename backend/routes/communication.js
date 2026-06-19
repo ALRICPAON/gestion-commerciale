@@ -4,7 +4,16 @@ const { authenticateToken } = require('../middleware/auth');
 const { requireAdmin, requireAdminOrManager } = require('../middleware/authorization');
 const { attachDbContext } = require('../middleware/dbContext');
 const { sendTestEmail } = require('../services/emailService');
-const { hasPhoneNumberId, normalizePhone, sendTemplateMessage } = require('../services/whatsappService');
+const {
+  hasPhoneNumberId,
+  maskPhoneNumber,
+  normalizePhone,
+  sendTemplateMessage,
+} = require('../services/whatsappService');
+const {
+  getWhatsappDefaults,
+  sendWhatsappBusinessDocument,
+} = require('../services/whatsappBusinessDocumentService');
 const {
   getInvoiceCommunicationDefaults,
   sendDeliveryNoteDocumentEmail,
@@ -31,9 +40,7 @@ function clean(value) {
 }
 
 function maskPhone(value) {
-  const phone = normalizePhone(value) || clean(value) || '';
-  if (phone.length <= 4) return phone ? '****' : '-';
-  return `${phone.slice(0, 3)}****${phone.slice(-2)}`;
+  return maskPhoneNumber(value || normalizePhone(value));
 }
 
 function isValidEmail(value) {
@@ -51,6 +58,76 @@ function emailPayload(body = {}) {
     to: clean(body.to),
     subject: clean(body.subject),
     message: clean(body.message),
+  };
+}
+
+function whatsappPayload(body = {}) {
+  return {
+    to: clean(body.to),
+    message: clean(body.message),
+    priceListId: clean(body.price_list_id),
+    clientId: clean(body.client_id),
+  };
+}
+
+function routeError(res, err, fallback) {
+  return res.status(err.status || 500).json({
+    success: false,
+    error: err.expose ? err.message : fallback,
+  });
+}
+
+function whatsappDefaultsRoute(kind) {
+  return async (req, res) => {
+    try {
+      const defaults = await getWhatsappDefaults(req.dbPool, {
+        storeId: req.user.store_id,
+        kind,
+        id: req.params.id,
+        priceListId: clean(req.query.price_list_id),
+        clientId: clean(req.query.client_id),
+        fallbackMessage: clean(req.query.message),
+      });
+      res.json(defaults);
+    } catch (err) {
+      console.error('Erreur defaults WhatsApp document :', {
+        document_type: kind,
+        document_id: req.params.id || clean(req.query.price_list_id) || null,
+        status: err.status || 500,
+        error: err.message,
+      });
+      routeError(res, err, 'Erreur préparation WhatsApp');
+    }
+  };
+}
+
+function whatsappSendRoute(kind) {
+  return async (req, res) => {
+    const payload = whatsappPayload(req.body);
+    console.log('WhatsApp business route called', {
+      document_type: kind,
+      document_id: req.params.id || payload.priceListId || null,
+      to: maskPhone(payload.to),
+      phone_number_id_present: hasPhoneNumberId(),
+    });
+
+    try {
+      const result = await sendWhatsappBusinessDocument(req.dbPool, {
+        storeId: req.user.store_id,
+        kind,
+        id: req.params.id,
+        ...payload,
+      });
+      res.json(result);
+    } catch (err) {
+      console.error('Erreur envoi WhatsApp document :', {
+        document_type: kind,
+        document_id: req.params.id || payload.priceListId || null,
+        status: err.status || 500,
+        error: err.message,
+      });
+      routeError(res, err, 'Erreur envoi WhatsApp');
+    }
   };
 }
 
@@ -144,6 +221,17 @@ router.post('/communication/whatsapp/test', authenticateToken, requireAdmin, asy
     });
   }
 });
+
+router.get('/communication/whatsapp/sale/:id/defaults', authenticateToken, attachDbContext, whatsappDefaultsRoute('sale'));
+router.post('/communication/whatsapp/sale/:id', authenticateToken, attachDbContext, requireAdminOrManager, whatsappSendRoute('sale'));
+router.get('/communication/whatsapp/delivery-note/:id/defaults', authenticateToken, attachDbContext, whatsappDefaultsRoute('delivery_note'));
+router.post('/communication/whatsapp/delivery-note/:id', authenticateToken, attachDbContext, requireAdminOrManager, whatsappSendRoute('delivery_note'));
+router.get('/communication/whatsapp/invoice/:id/defaults', authenticateToken, attachDbContext, whatsappDefaultsRoute('invoice'));
+router.post('/communication/whatsapp/invoice/:id', authenticateToken, attachDbContext, requireAdminOrManager, whatsappSendRoute('invoice'));
+router.get('/communication/whatsapp/purchase/:id/defaults', authenticateToken, attachDbContext, whatsappDefaultsRoute('purchase'));
+router.post('/communication/whatsapp/purchase/:id', authenticateToken, attachDbContext, requireAdminOrManager, whatsappSendRoute('purchase'));
+router.get('/communication/whatsapp/price-list/defaults', authenticateToken, attachDbContext, whatsappDefaultsRoute('price_list'));
+router.post('/communication/whatsapp/price-list', authenticateToken, attachDbContext, requireAdminOrManager, whatsappSendRoute('price_list'));
 
 router.post(
   '/communication/send-delivery-note-email/:id',
