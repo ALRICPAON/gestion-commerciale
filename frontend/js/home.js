@@ -18,6 +18,18 @@ const logoutBtn = document.getElementById("logout-btn");
 const departmentSelect = document.getElementById("topbar-department-select");
 const currentDepartmentNameEl = document.getElementById("current-department-name");
 const communicationButtons = document.querySelectorAll("[data-communication-open]");
+const refreshHomeKpisBtn = document.getElementById("refresh-home-kpis-btn");
+const homeKpiFeedback = document.getElementById("home-kpi-feedback");
+const homeKpiEls = {
+  todayRevenue: document.getElementById("home-kpi-today-revenue"),
+  todayRevenueNote: document.getElementById("home-kpi-today-revenue-note"),
+  todayMargin: document.getElementById("home-kpi-today-margin"),
+  todayMarginNote: document.getElementById("home-kpi-today-margin-note"),
+  todayRate: document.getElementById("home-kpi-today-rate"),
+  todayRateNote: document.getElementById("home-kpi-today-rate-note"),
+  yesterdayRevenue: document.getElementById("home-kpi-yesterday-revenue"),
+  yesterdayRate: document.getElementById("home-kpi-yesterday-rate"),
+};
 
 const communicationLinks = {
   webmail: "https://mail.altamaree.fr",
@@ -130,6 +142,88 @@ function renderDepartmentSelector() {
   });
 }
 
+function authHeaders() {
+  return { Authorization: `Bearer ${authToken}` };
+}
+
+function money(value) {
+  if (value === null || value === undefined) return "-";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return number.toLocaleString("fr-FR", { style: "currency", currency: "EUR" });
+}
+
+function percent(value) {
+  if (value === null || value === undefined) return "-";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${number.toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} %`;
+}
+
+function isoDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+async function getDashboardKpis(query) {
+  const response = await fetch(`${API_BASE_URL}/api/dashboard?${query}`, { headers: authHeaders() });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Erreur KPI Home");
+  return data;
+}
+
+function renderKpiBlock(today = {}, yesterday = {}) {
+  const todayKpis = today.kpis || {};
+  const yesterdayKpis = yesterday.kpis || {};
+  const todayRevenue = Number(todayKpis.ca_ht || 0);
+  const noSaleToday = todayRevenue === 0;
+  const todaySnapshotsMissing = today.snapshots?.available === false;
+  const yesterdaySnapshotsMissing = yesterday.snapshots?.available === false;
+
+  homeKpiEls.todayRevenue.textContent = money(todayKpis.ca_ht || 0);
+  homeKpiEls.todayRevenueNote.textContent = noSaleToday ? "Aucune vente aujourd'hui" : "CA HT validé";
+  homeKpiEls.todayMargin.textContent = money(todayKpis.gross_margin_ht);
+  homeKpiEls.todayMarginNote.textContent = todaySnapshotsMissing ? "Capture stock requise" : "Marge brute";
+  homeKpiEls.todayRate.textContent = percent(todayKpis.margin_rate);
+  homeKpiEls.todayRateNote.textContent = todaySnapshotsMissing ? "Marge non calculable" : "Taux de marge";
+  homeKpiEls.yesterdayRevenue.textContent = money(yesterdayKpis.ca_ht || 0);
+  homeKpiEls.yesterdayRate.textContent = `Marge veille : ${percent(yesterdayKpis.margin_rate)}${yesterdaySnapshotsMissing ? " · capture requise" : ""}`;
+
+  if (homeKpiFeedback) {
+    homeKpiFeedback.textContent = "Données du jour et de la veille issues du tableau de bord.";
+    homeKpiFeedback.className = "";
+  }
+}
+
+async function loadHomeKpis() {
+  if (!authToken || !homeKpiEls.todayRevenue) return;
+  if (homeKpiFeedback) {
+    homeKpiFeedback.textContent = "Chargement des KPI...";
+    homeKpiFeedback.className = "";
+  }
+
+  const yesterday = isoDate(addDays(new Date(), -1));
+  const yesterdayQuery = new URLSearchParams({ period: "custom", from: yesterday, to: yesterday }).toString();
+
+  try {
+    const [todayData, yesterdayData] = await Promise.all([
+      getDashboardKpis("period=day"),
+      getDashboardKpis(yesterdayQuery),
+    ]);
+    renderKpiBlock(todayData, yesterdayData);
+  } catch (error) {
+    if (homeKpiFeedback) {
+      homeKpiFeedback.textContent = error.message || "KPI indisponibles";
+      homeKpiFeedback.className = "home-kpi-error";
+    }
+  }
+}
+
 async function loadCommunicationSettings() {
   if (!authToken) return;
 
@@ -172,7 +266,12 @@ if (logoutBtn) {
   });
 }
 
+if (refreshHomeKpisBtn) {
+  refreshHomeKpisBtn.addEventListener("click", loadHomeKpis);
+}
+
 renderTopbar();
 renderDepartmentSelector();
 bindCommunicationActions();
 loadCommunicationSettings();
+loadHomeKpis();
