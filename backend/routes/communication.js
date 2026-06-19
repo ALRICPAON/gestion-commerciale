@@ -66,6 +66,7 @@ function whatsappPayload(body = {}) {
     to: clean(body.to),
     message: clean(body.message),
     priceListId: clean(body.price_list_id),
+    clientId: clean(body.client_id),
   };
 }
 
@@ -84,6 +85,7 @@ function whatsappDefaultsRoute(kind) {
         kind,
         id: req.params.id,
         priceListId: clean(req.query.price_list_id),
+        clientId: clean(req.query.client_id),
         fallbackMessage: clean(req.query.message),
       });
       res.json(defaults);
