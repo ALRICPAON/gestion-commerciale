@@ -271,10 +271,10 @@ async function sendWhatsappTest() {
       body: JSON.stringify({ to: to.trim() }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || data.success !== true) {
+    if (!response.ok || data.success !== true || !data.message_id) {
       throw new Error(data.error || "Erreur envoi WhatsApp");
     }
-    setWhatsappFeedback("Test WhatsApp envoyé avec succès.", "success");
+    setWhatsappFeedback(`Test WhatsApp envoyé avec succès (${data.message_id}).`, "success");
   } catch (error) {
     setWhatsappFeedback(error.message || "Erreur envoi WhatsApp", "error");
   } finally {
