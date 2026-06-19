@@ -94,6 +94,29 @@ function priceListMessage(lines) {
   return `Bonjour,\n\nVoici les cours ALTA MARÉE du jour :\n\n${priceListSummary(lines)}\n\nCordialement,\nALTA MARÉE`;
 }
 
+async function clientRecipientContext(db, { storeId, clientId }) {
+  if (!clientId) return null;
+  const result = await db.query(
+    `
+    SELECT id, name, mobile, phone
+    FROM clients
+    WHERE id = $1
+      AND store_id = $2
+      AND status <> 'inactive'
+    LIMIT 1
+    `,
+    [clientId, storeId]
+  );
+  const client = result.rows[0];
+  if (!client) return null;
+  const to = firstPhone(client.mobile, client.phone);
+  return {
+    recipient_name: clean(client.name),
+    to,
+    masked_to: maskPhoneNumber(to),
+  };
+}
+
 async function getSalesDocumentContext(db, { storeId, id, kind }) {
   const expectedType = DOCUMENT_TYPES[kind];
   const result = await db.query(
@@ -188,14 +211,15 @@ async function getPurchaseContext(db, { storeId, id }) {
   };
 }
 
-async function getPriceListContext(db, { storeId, priceListId, fallbackMessage }) {
+async function getPriceListContext(db, { storeId, priceListId, clientId, fallbackMessage }) {
   if (!priceListId) {
+    const client = await clientRecipientContext(db, { storeId, clientId });
     return {
       document_type: 'price_list',
       document_id: null,
-      recipient_name: null,
-      to: null,
-      masked_to: '-',
+      recipient_name: client?.recipient_name || null,
+      to: client?.to || null,
+      masked_to: client?.masked_to || '-',
       message: clean(fallbackMessage) || priceListMessage([]),
     };
   }
@@ -241,14 +265,14 @@ async function getPriceListContext(db, { storeId, priceListId, fallbackMessage }
   };
 }
 
-async function getWhatsappDefaults(db, { storeId, kind, id, priceListId, fallbackMessage }) {
+async function getWhatsappDefaults(db, { storeId, kind, id, priceListId, clientId, fallbackMessage }) {
   if (kind === 'purchase') return getPurchaseContext(db, { storeId, id });
-  if (kind === 'price_list') return getPriceListContext(db, { storeId, priceListId, fallbackMessage });
+  if (kind === 'price_list') return getPriceListContext(db, { storeId, priceListId, clientId, fallbackMessage });
   return getSalesDocumentContext(db, { storeId, id, kind });
 }
 
-async function sendWhatsappBusinessDocument(db, { storeId, kind, id, priceListId, to, message }) {
-  const defaults = await getWhatsappDefaults(db, { storeId, kind, id, priceListId, fallbackMessage: message });
+async function sendWhatsappBusinessDocument(db, { storeId, kind, id, priceListId, clientId, to, message }) {
+  const defaults = await getWhatsappDefaults(db, { storeId, kind, id, priceListId, clientId, fallbackMessage: message });
   const recipient = normalizePhoneNumber(to) || defaults.to;
   const body = clean(message) || defaults.message;
 
