@@ -4,7 +4,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { requireAdmin, requireAdminOrManager } = require('../middleware/authorization');
 const { attachDbContext } = require('../middleware/dbContext');
 const { sendTestEmail } = require('../services/emailService');
-const { sendTextMessage } = require('../services/whatsappService');
+const { hasPhoneNumberId, normalizePhone, sendTemplateMessage } = require('../services/whatsappService');
 const {
   getInvoiceCommunicationDefaults,
   sendDeliveryNoteDocumentEmail,
@@ -21,12 +21,19 @@ const COMMUNICATION_DEFAULTS = {
   webmail_url: 'https://mail.altamaree.fr',
   calendar_url: 'https://mail.altamaree.fr',
 };
-const WHATSAPP_TEST_MESSAGE = 'Bonjour depuis ALTA MARÉE 🚀';
+const WHATSAPP_TEST_TEMPLATE_NAME = 'hello_world';
+const WHATSAPP_TEST_LANGUAGE_CODE = 'en_US';
 
 function clean(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim();
   return text || null;
+}
+
+function maskPhone(value) {
+  const phone = normalizePhone(value) || clean(value) || '';
+  if (phone.length <= 4) return phone ? '****' : '-';
+  return `${phone.slice(0, 3)}****${phone.slice(-2)}`;
 }
 
 function isValidEmail(value) {
@@ -98,18 +105,42 @@ router.post('/communication/email/test', authenticateToken, requireAdmin, async 
 });
 
 router.post('/communication/whatsapp/test', authenticateToken, requireAdmin, async (req, res) => {
+  const maskedTo = maskPhone(req.body?.to);
+  console.log('WhatsApp test route called', {
+    to: maskedTo,
+    phone_number_id_present: hasPhoneNumberId(),
+  });
+
   try {
-    await sendTextMessage(req.body?.to, WHATSAPP_TEST_MESSAGE);
-    res.json({ success: true });
+    const result = await sendTemplateMessage(req.body?.to, WHATSAPP_TEST_TEMPLATE_NAME, WHATSAPP_TEST_LANGUAGE_CODE);
+
+    if (!result.message_id) {
+      const error = new Error('Meta n a pas retourne de message_id');
+      error.status = 502;
+      error.expose = true;
+      throw error;
+    }
+
+    console.log('WhatsApp test Meta success', {
+      to: maskedTo,
+      status: result.status,
+      message_id: result.message_id,
+    });
+
+    res.json({
+      success: true,
+      message_id: result.message_id,
+    });
   } catch (err) {
-    console.error('Erreur POST /api/communication/whatsapp/test :', {
-      message: err.message,
+    console.error('WhatsApp test Meta error', {
+      to: maskedTo,
       status: err.status || 500,
+      error: err.meta_message || err.message || 'Erreur envoi WhatsApp',
     });
 
     res.status(err.status || 500).json({
       success: false,
-      error: err.expose ? err.message : 'Erreur envoi WhatsApp',
+      error: err.expose ? (err.meta_message || err.message) : 'Erreur envoi WhatsApp',
     });
   }
 });
