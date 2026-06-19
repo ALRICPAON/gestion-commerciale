@@ -10,6 +10,7 @@
   let blOptions = null;
   let invoiceDefaults = null;
   let activeEmailKind = null;
+  let activeWhatsappKind = null;
 
   function clean(value) {
     const text = String(value ?? '').trim();
@@ -42,6 +43,10 @@
     return String(sale?.document_type || '').toUpperCase();
   }
 
+  function isOrder() {
+    return documentType() === 'ORDER';
+  }
+
   function isDeliveryNote() {
     return documentType() === 'DELIVERY_NOTE';
   }
@@ -66,7 +71,7 @@
     return invoiceDefaults?.message || `Bonjour,\n\nVeuillez trouver ci-joint votre facture ${invoiceReference()}.\n\nCordialement,\nALTA MARÉE`;
   }
 
-  function ensureModal() {
+  function ensureEmailModal() {
     if (document.getElementById('document-email-modal')) return;
     const modal = document.createElement('div');
     modal.id = 'document-email-modal';
@@ -99,16 +104,50 @@
         </div>
       </div>`;
     document.body.appendChild(modal);
-    document.getElementById('close-document-email-modal-btn')?.addEventListener('click', closeModal);
+    document.getElementById('close-document-email-modal-btn')?.addEventListener('click', closeEmailModal);
     document.getElementById('send-document-email-confirm-btn')?.addEventListener('click', sendEmail);
+  }
+
+  function ensureWhatsappModal() {
+    if (document.getElementById('document-whatsapp-modal')) return;
+    const modal = document.createElement('div');
+    modal.id = 'document-whatsapp-modal';
+    modal.className = 'modal-overlay hidden';
+    modal.innerHTML = `
+      <div class="modal-card">
+        <div class="modal-header">
+          <div>
+            <h3 id="document-whatsapp-modal-title">Envoyer par WhatsApp</h3>
+            <p id="document-whatsapp-modal-helper">Vérifie le numéro et le message avant envoi.</p>
+          </div>
+          <button type="button" id="close-document-whatsapp-modal-btn" class="btn btn-secondary">Fermer</button>
+        </div>
+        <div class="form-grid">
+          <div class="form-group form-group-span-2">
+            <label for="document-whatsapp-to">Numéro WhatsApp</label>
+            <input id="document-whatsapp-to" type="tel" autocomplete="tel" placeholder="+336..." />
+          </div>
+          <div class="form-group form-group-span-2">
+            <label for="document-whatsapp-message">Message</label>
+            <textarea id="document-whatsapp-message" rows="7"></textarea>
+          </div>
+        </div>
+        <p class="helper-text">Si Meta refuse le texte libre hors conversation récente, il faudra utiliser un template WhatsApp officiel.</p>
+        <div class="page-actions-right">
+          <button type="button" id="send-document-whatsapp-confirm-btn" class="btn btn-primary">Envoyer</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    document.getElementById('close-document-whatsapp-modal-btn')?.addEventListener('click', closeWhatsappModal);
+    document.getElementById('send-document-whatsapp-confirm-btn')?.addEventListener('click', sendWhatsapp);
   }
 
   function modalField(id) {
     return document.getElementById(id);
   }
 
-  function openModal(kind) {
-    ensureModal();
+  function openEmailModal(kind) {
+    ensureEmailModal();
     activeEmailKind = kind;
     const isInvoiceEmail = kind === 'invoice';
     const reference = isInvoiceEmail ? invoiceReference() : deliveryNoteReference();
@@ -119,8 +158,42 @@
     document.getElementById('document-email-modal')?.classList.remove('hidden');
   }
 
-  function closeModal() {
+  async function openWhatsappModal(kind) {
+    ensureWhatsappModal();
+    activeWhatsappKind = kind;
+    const titles = {
+      sale: 'Envoyer la commande WhatsApp',
+      delivery_note: 'Envoyer le BL WhatsApp',
+      invoice: 'Envoyer la facture WhatsApp',
+    };
+    modalField('document-whatsapp-modal-title').textContent = titles[kind] || 'Envoyer par WhatsApp';
+    modalField('document-whatsapp-to').value = '';
+    modalField('document-whatsapp-message').value = 'Chargement...';
+    document.getElementById('document-whatsapp-modal')?.classList.remove('hidden');
+
+    try {
+      const defaults = await request(`${whatsappPath(kind)}/defaults`);
+      modalField('document-whatsapp-to').value = clean(defaults.to);
+      modalField('document-whatsapp-message').value = clean(defaults.message);
+      if (!defaults.to) showFeedback('Aucun numéro sur la fiche : renseigne un numéro manuel avant envoi.', true);
+    } catch (err) {
+      modalField('document-whatsapp-message').value = '';
+      showFeedback(err.message || 'Préparation WhatsApp impossible', true);
+    }
+  }
+
+  function closeEmailModal() {
     document.getElementById('document-email-modal')?.classList.add('hidden');
+  }
+
+  function closeWhatsappModal() {
+    document.getElementById('document-whatsapp-modal')?.classList.add('hidden');
+  }
+
+  function whatsappPath(kind) {
+    if (kind === 'invoice') return `/api/communication/whatsapp/invoice/${sale.id}`;
+    if (kind === 'delivery_note') return `/api/communication/whatsapp/delivery-note/${sale.id}`;
+    return `/api/communication/whatsapp/sale/${sale.id}`;
   }
 
   async function sendEmail() {
@@ -142,7 +215,7 @@
         method: 'POST',
         body: JSON.stringify({ to, subject, message }),
       });
-      closeModal();
+      closeEmailModal();
       showFeedback(`Email envoyé à ${result.to}`);
     } catch (err) {
       showFeedback(err.message || 'Erreur envoi email', true);
@@ -151,22 +224,32 @@
     }
   }
 
-  function normalizeWhatsappPhone(phone) {
-    let digits = clean(phone).replace(/\D/g, '');
-    if (!digits) return '';
-    if (digits.startsWith('00')) digits = digits.slice(2);
-    if (digits.startsWith('0')) digits = `33${digits.slice(1)}`;
-    return digits;
-  }
+  async function sendWhatsapp() {
+    const to = clean(modalField('document-whatsapp-to')?.value);
+    const message = clean(modalField('document-whatsapp-message')?.value);
+    if (!to) {
+      showFeedback('Renseigne un numéro WhatsApp.', true);
+      return;
+    }
+    if (!message) {
+      showFeedback('Renseigne un message WhatsApp.', true);
+      return;
+    }
 
-  function openInvoiceWhatsapp() {
-    const message = invoiceDefaults?.whatsapp_message || `Bonjour, votre facture ${invoiceReference()} est disponible. Cordialement, ALTA MARÉE.`;
-    const phone = normalizeWhatsappPhone(invoiceDefaults?.phone);
-    const encoded = encodeURIComponent(message);
-    const url = phone
-      ? `https://web.whatsapp.com/send?phone=${phone}&text=${encoded}`
-      : `https://web.whatsapp.com/send?text=${encoded}`;
-    window.open(url, '_blank', 'noopener,noreferrer');
+    const button = modalField('send-document-whatsapp-confirm-btn');
+    if (button) button.disabled = true;
+    try {
+      const result = await request(whatsappPath(activeWhatsappKind), {
+        method: 'POST',
+        body: JSON.stringify({ to, message }),
+      });
+      closeWhatsappModal();
+      showFeedback(`WhatsApp envoyé (${result.message_id}).`);
+    } catch (err) {
+      showFeedback(err.message || 'Erreur envoi WhatsApp', true);
+    } finally {
+      if (button) button.disabled = false;
+    }
   }
 
   async function refresh() {
@@ -191,17 +274,25 @@
   }
 
   function updateButtons() {
-    const visible = isDeliveryNote() || isInvoice();
-    mailBtn.classList.toggle('hidden', !visible);
-    whatsappBtn.classList.toggle('hidden', !visible);
+    const canEmail = isDeliveryNote() || isInvoice();
+    const canWhatsapp = isOrder() || isDeliveryNote() || isInvoice();
+    mailBtn.classList.toggle('hidden', !canEmail);
+    whatsappBtn.classList.toggle('hidden', !canWhatsapp);
+
+    if (isOrder()) {
+      whatsappBtn.disabled = false;
+      whatsappBtn.textContent = '💬 Envoyer commande WhatsApp';
+      whatsappBtn.title = 'Envoyer la commande par WhatsApp';
+      return;
+    }
 
     if (isInvoice()) {
       mailBtn.disabled = false;
       mailBtn.textContent = '📧 Envoyer par email';
       mailBtn.title = invoiceDefaults?.email ? `Envoyer à ${invoiceDefaults.email}` : 'Destinataire à renseigner';
       whatsappBtn.disabled = false;
-      whatsappBtn.textContent = '💬 WhatsApp';
-      whatsappBtn.title = invoiceDefaults?.phone ? `Ouvrir WhatsApp pour ${invoiceDefaults.phone}` : 'Ouvrir WhatsApp Web';
+      whatsappBtn.textContent = '💬 Envoyer facture WhatsApp';
+      whatsappBtn.title = 'Envoyer la facture par WhatsApp';
       return;
     }
 
@@ -209,8 +300,9 @@
       mailBtn.disabled = false;
       mailBtn.textContent = '📧 Envoyer par email';
       mailBtn.title = blOptions?.email ? `Envoyer à ${blOptions.email}` : 'Destinataire à renseigner';
-      whatsappBtn.disabled = !(blOptions?.can_send_whatsapp);
-      whatsappBtn.textContent = '💬 WhatsApp';
+      whatsappBtn.disabled = false;
+      whatsappBtn.textContent = '💬 Envoyer BL WhatsApp';
+      whatsappBtn.title = 'Envoyer le BL par WhatsApp';
     }
   }
 
@@ -218,17 +310,19 @@
     if (!isDeliveryNote() && !isInvoice()) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    openModal(isInvoice() ? 'invoice' : 'delivery_note');
+    openEmailModal(isInvoice() ? 'invoice' : 'delivery_note');
   }, true);
 
   whatsappBtn?.addEventListener('click', (event) => {
-    if (!isInvoice()) return;
+    if (!isOrder() && !isDeliveryNote() && !isInvoice()) return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    openInvoiceWhatsapp();
+    const kind = isInvoice() ? 'invoice' : isDeliveryNote() ? 'delivery_note' : 'sale';
+    openWhatsappModal(kind);
   }, true);
 
-  ensureModal();
+  ensureEmailModal();
+  ensureWhatsappModal();
   setTimeout(refresh, 350);
   window.setInterval(refresh, 1500);
 }());
