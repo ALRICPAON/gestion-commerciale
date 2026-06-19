@@ -503,43 +503,215 @@ select:focus {
   font: inherit;
 }
 
+.hidden {
+  display: none !important;
+}
+
+/* ALTA theme priority guard: page-specific CSS is loaded after app.css on several screens. */
+body,
+.app-page,
+.auth-page {
+  background: var(--alta-bg) !important;
+  color: var(--alta-text) !important;
+}
+
+.topbar,
+.home-topbar,
+header.topbar {
+  background: var(--alta-navy) !important;
+  color: #FFFFFF !important;
+  box-shadow: 0 14px 36px rgba(15, 39, 68, 0.18) !important;
+}
+
+.app-title,
+.topbar h1,
+.home-brand-title {
+  color: #FFFFFF !important;
+}
+
+.app-subtitle,
+.topbar-label,
+.topbar p {
+  color: rgba(255, 255, 255, 0.72) !important;
+}
+
+.user-box {
+  background: rgba(255, 255, 255, 0.12) !important;
+  border-color: rgba(255, 255, 255, 0.14) !important;
+  color: #FFFFFF !important;
+}
+
+.btn-primary,
+button.btn-primary,
+a.btn-primary {
+  background: var(--alta-ocean) !important;
+  border-color: var(--alta-ocean) !important;
+  color: #FFFFFF !important;
+}
+
+.btn-primary:hover,
+button.btn-primary:hover,
+a.btn-primary:hover {
+  background: var(--alta-navy) !important;
+  border-color: var(--alta-navy) !important;
+}
+
+.btn-secondary,
+button.btn-secondary,
+a.btn-secondary {
+  background: #EEF3F8 !important;
+  border-color: #DCE5EE !important;
+  color: var(--alta-ocean) !important;
+}
+
+.btn-secondary:hover,
+button.btn-secondary:hover,
+a.btn-secondary:hover {
+  background: #E4F6F6 !important;
+  border-color: rgba(0, 166, 166, 0.45) !important;
+  color: var(--alta-navy) !important;
+}
+
+.topbar .btn-secondary,
+.topbar button.btn-secondary,
+.topbar a.btn-secondary {
+  background: rgba(255, 255, 255, 0.1) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+  color: #FFFFFF !important;
+}
+
+.topbar .btn-secondary:hover,
+.topbar button.btn-secondary:hover,
+.topbar a.btn-secondary:hover {
+  background: rgba(0, 166, 166, 0.32) !important;
+  border-color: rgba(0, 166, 166, 0.72) !important;
+  color: #FFFFFF !important;
+}
+
+.welcome-card,
+.white-card,
+.module-card,
+.card,
+.clients-card,
+.suppliers-card,
+.settings-card,
+.transformations-panel,
+.trace-panel,
+.trace-summary,
 .dashboard-kpi,
 .statistics-kpi,
 .inactive-card,
 .statistics-chart-card,
-.clients-card {
+.home-kpi-panel,
+.home-kpi-card,
+.intelligence-center,
+.intelligence-card {
   background: var(--alta-card) !important;
-  border: 1px solid var(--alta-border) !important;
+  border-color: var(--alta-border) !important;
   border-radius: 14px !important;
-  box-shadow: 0 8px 22px rgba(15, 39, 68, 0.05);
+  box-shadow: 0 8px 22px rgba(15, 39, 68, 0.05) !important;
 }
 
+h2,
+h3,
+.page-actions h2,
+.page-actions h3,
+.module-card h3,
+.dashboard-kpi strong,
+.statistics-kpi strong,
+.home-kpi-card strong {
+  color: var(--alta-text) !important;
+}
+
+p,
+.helper-text,
+.settings-helper,
+.module-card p,
+.welcome-card p,
+.home-kpi-card small,
 .dashboard-kpi span,
 .statistics-kpi span {
   color: var(--alta-muted) !important;
 }
 
-.dashboard-kpi strong,
-.statistics-kpi strong {
+.module-card:hover,
+.card:hover {
+  border-color: rgba(0, 166, 166, 0.42) !important;
+}
+
+.form-group input,
+.form-group select,
+.form-group textarea,
+.settings-field input,
+.settings-field select,
+.settings-field textarea,
+input,
+select,
+textarea {
+  border-color: #D0D5DD !important;
+  background: #FFFFFF !important;
   color: var(--alta-text) !important;
 }
 
+.form-group input:focus,
+.form-group select:focus,
+.form-group textarea:focus,
+.settings-field input:focus,
+.settings-field select:focus,
+.settings-field textarea:focus,
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--alta-turquoise) !important;
+  box-shadow: 0 0 0 3px rgba(0, 166, 166, 0.14) !important;
+}
+
+.table-wrap,
+.table-wrapper,
+.data-table,
+table.data-table {
+  border-color: var(--alta-border) !important;
+  background: #FFFFFF !important;
+}
+
+.data-table th,
+table.data-table th {
+  background: #F8FAFC !important;
+  color: #344054 !important;
+}
+
+.data-table td,
+table.data-table td {
+  border-bottom-color: #EEF2F7 !important;
+  color: var(--alta-text) !important;
+}
+
+.data-table tbody tr:nth-child(even) td,
+table.data-table tbody tr:nth-child(even) td {
+  background: #FCFDFE !important;
+}
+
+.data-table tbody tr:hover td,
+.selectable-table tbody tr.is-selected td,
+table.data-table tbody tr:hover td {
+  background: #EDF7F8 !important;
+}
+
+.page-feedback {
+  border-color: #B8E7E7 !important;
+  background: #EFFBFB !important;
+  color: #0F5F68 !important;
+}
+
+.statistics-tab.active,
+.statistics-tab[aria-selected="true"],
 .chart-bar {
   background: var(--alta-turquoise) !important;
+  color: #FFFFFF !important;
 }
 
 .chart-bar.negative {
   background: #DC2626 !important;
-}
-
-.statistics-tab.active,
-.statistics-tab[aria-selected="true"] {
-  background: var(--alta-ocean) !important;
-  color: #FFFFFF !important;
-}
-
-.hidden {
-  display: none !important;
 }
 
 @media (max-width: 900px) {
