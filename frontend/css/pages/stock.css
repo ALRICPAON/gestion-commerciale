@@ -12,22 +12,23 @@
 .stock-kpi {
   min-height: 96px;
   padding: 16px;
-  border-radius: 8px;
-  border: 1px solid #dbeafe;
-  background: #ffffff;
+  border-radius: 14px;
+  border: 1px solid var(--alta-border);
+  background: var(--alta-card);
+  box-shadow: 0 8px 22px rgba(15, 39, 68, 0.05);
 }
 
 .stock-kpi span {
   display: block;
   margin-bottom: 10px;
-  color: #6b7280;
+  color: var(--alta-muted);
   font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .stock-kpi strong {
-  color: #111827;
+  color: var(--alta-text);
   font-size: 24px;
 }
 
@@ -64,14 +65,16 @@
   width: 96px;
   min-height: 34px;
   padding: 7px 9px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #D0D5DD;
   border-radius: 8px;
+  color: var(--alta-text);
   font: inherit;
   text-align: right;
 }
 
 .tariff-input:focus {
-  border-color: var(--theme-main);
+  border-color: var(--alta-turquoise);
+  box-shadow: 0 0 0 3px rgba(0, 166, 166, 0.14);
   outline: none;
 }
 
@@ -100,7 +103,7 @@
 .stock-muted {
   display: block;
   margin-top: 4px;
-  color: #6b7280;
+  color: var(--alta-muted);
   font-size: 12px;
 }
 

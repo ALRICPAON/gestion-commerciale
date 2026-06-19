@@ -21,22 +21,23 @@
 .dashboard-kpi {
   min-height: 104px;
   padding: 16px;
-  border: 1px solid #dbeafe;
-  border-radius: 8px;
-  background: #ffffff;
+  border: 1px solid var(--alta-border);
+  border-radius: 14px;
+  background: var(--alta-card);
+  box-shadow: 0 8px 22px rgba(15, 39, 68, 0.05);
 }
 
 .dashboard-kpi span {
   display: block;
   margin-bottom: 10px;
-  color: #6b7280;
+  color: var(--alta-muted);
   font-size: 13px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .dashboard-kpi strong {
-  color: #111827;
+  color: var(--alta-text);
   font-size: 23px;
 }
 
@@ -50,7 +51,7 @@
 .dashboard-summary-table th {
   width: 45%;
   text-align: left;
-  color: #374151;
+  color: #344054;
 }
 
 .dashboard-summary-table td {
@@ -73,7 +74,7 @@
 }
 
 .chart-row span {
-  color: #374151;
+  color: #344054;
   font-weight: 700;
 }
 
@@ -85,14 +86,14 @@
   height: 18px;
   overflow: hidden;
   border-radius: 8px;
-  background: #e5e7eb;
+  background: #E5E7EB;
 }
 
 .chart-bar {
   height: 100%;
   min-width: 0;
   border-radius: 8px;
-  background: #2563eb;
+  background: var(--alta-turquoise);
 }
 
 .chart-bar.negative {

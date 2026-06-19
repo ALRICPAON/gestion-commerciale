@@ -1,4 +1,3 @@
-﻿
 /* ========================= */
 /* CLIENTS - PAGE MODULE */
 /* ========================= */
@@ -15,17 +14,17 @@
 
 .clients-card,
 .client-detail-page .card {
-  background: #ffffff;
-  border-radius: 16px;
+  background: var(--alta-card);
+  border-radius: 14px;
   padding: 22px;
   margin-bottom: 22px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
-  border: 1px solid #e5e7eb;
+  box-shadow: 0 8px 22px rgba(15, 39, 68, 0.05);
+  border: 1px solid var(--alta-border);
 }
 
 .clients-card:first-child,
 .client-detail-page .card:first-child {
-  border-top: 5px solid var(--theme-main);
+  border-top: 5px solid var(--alta-turquoise);
 }
 
 .clients-card h2,
@@ -33,8 +32,8 @@
 .client-detail-page .card h2,
 .client-detail-page .card h3 {
   margin: 0 0 10px;
-  color: #0f172a;
-  letter-spacing: -0.02em;
+  color: var(--alta-text);
+  letter-spacing: 0;
 }
 
 .clients-card h2,
@@ -46,14 +45,14 @@
 .client-detail-page .card h3 {
   font-size: 1.05rem;
   padding-bottom: 12px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--alta-border);
   margin-bottom: 18px;
 }
 
 .clients-card p,
 .client-detail-page .card p {
   margin: 0;
-  color: #64748b;
+  color: var(--alta-muted);
   line-height: 1.5;
 }
 
@@ -130,7 +129,7 @@
 
 .form-group label,
 .clients-field label {
-  color: #334155;
+  color: #344054;
   font-size: 0.9rem;
   font-weight: 700;
 }
@@ -144,10 +143,10 @@
   width: 100%;
   min-height: 44px;
   border-radius: 12px;
-  border: 1px solid #d1d5db;
+  border: 1px solid #D0D5DD;
   background: #ffffff;
   padding: 12px 14px;
-  color: #111827;
+  color: var(--alta-text);
   font: inherit;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
@@ -166,8 +165,8 @@
 .clients-field input:focus,
 .clients-field select:focus,
 .clients-field textarea:focus {
-  border-color: var(--theme-main);
-  box-shadow: 0 0 0 4px rgba(0, 91, 170, 0.12);
+  border-color: var(--alta-turquoise);
+  box-shadow: 0 0 0 4px rgba(0, 166, 166, 0.14);
 }
 
 .filter-actions label {
@@ -180,7 +179,7 @@
 .table-wrapper {
   width: 100%;
   overflow-x: auto;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--alta-border);
   border-radius: 14px;
 }
 
@@ -189,7 +188,7 @@
   width: 100%;
   min-width: 1040px;
   border-collapse: collapse;
-  background: #ffffff;
+  background: var(--alta-card);
   font-size: 0.92rem;
 }
 
@@ -198,22 +197,22 @@
 .data-table th,
 .data-table td {
   padding: 14px 12px;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--alta-border);
   text-align: left;
   vertical-align: middle;
 }
 
 .clients-table th,
 .data-table th {
-  background: #f8fafc;
-  color: #334155;
+  background: #F8FAFC;
+  color: #344054;
   font-size: 0.8rem;
   font-weight: 800;
 }
 
 .clients-table tbody tr:hover,
 .data-table tbody tr:hover {
-  background: #f8fafc;
+  background: #EDF7F8;
 }
 
 .clients-table td:last-child,
@@ -231,13 +230,13 @@
 
 .clients-table td:nth-child(2) strong,
 .data-table td:nth-child(2) strong {
-  color: #0f172a;
+  color: var(--alta-text);
   font-size: 0.95rem;
 }
 
 .clients-table td:nth-child(2) small,
 .data-table td:nth-child(2) small {
-  color: #64748b;
+  color: var(--alta-muted);
 }
 
 /* Detail form */
@@ -302,12 +301,12 @@
 }
 
 .btn-muted {
-  background: #f1f5f9;
-  color: #334155;
+  background: #F2F4F7;
+  color: #344054;
 }
 
 .btn-muted:hover {
-  background: #e2e8f0;
+  background: #E4F6F6;
 }
 
 @media (max-width: 1050px) {
@@ -367,8 +366,6 @@
   }
 }
 
-/* force deploy clients css */
-
 /* ========================= */
 /* DETAIL CLIENT */
 /* ========================= */
@@ -383,37 +380,37 @@ body.app-page.client-detail-page .clients-page {
 }
 
 body.client-detail-page .clients-card {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 18px;
+  background: var(--alta-card);
+  border: 1px solid var(--alta-border);
+  border-radius: 14px;
   padding: 22px;
   margin-bottom: 22px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.07);
+  box-shadow: 0 8px 22px rgba(15, 39, 68, 0.05);
 }
 
 body.client-detail-page .clients-card:first-child {
-  border-top: 5px solid var(--theme-main, #005baa);
+  border-top: 5px solid var(--alta-turquoise);
 }
 
 body.client-detail-page .clients-card h2 {
   margin: 0 0 6px;
-  color: #0f172a;
+  color: var(--alta-text);
   font-size: 1.55rem;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 body.client-detail-page .clients-card h3 {
   margin: 0 0 18px;
   padding-bottom: 12px;
-  border-bottom: 1px solid #e5e7eb;
-  color: #0f172a;
+  border-bottom: 1px solid var(--alta-border);
+  color: var(--alta-text);
   font-size: 1.08rem;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 body.client-detail-page .clients-card p {
   margin: 0;
-  color: #64748b;
+  color: var(--alta-muted);
 }
 
 body.client-detail-page #client-form {
@@ -439,7 +436,7 @@ body.client-detail-page .clients-field {
 }
 
 body.client-detail-page .clients-field label {
-  color: #334155;
+  color: #344054;
   font-size: 0.9rem;
   font-weight: 800;
 }
@@ -449,11 +446,11 @@ body.client-detail-page .clients-field select,
 body.client-detail-page .clients-field textarea {
   width: 100%;
   min-height: 46px;
-  border: 1px solid #cfd8e3;
+  border: 1px solid #D0D5DD;
   border-radius: 12px;
   background: #ffffff;
   padding: 11px 14px;
-  color: #111827;
+  color: var(--alta-text);
   font: inherit;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
@@ -468,9 +465,9 @@ body.client-detail-page .clients-field textarea {
 body.client-detail-page .clients-field input:focus,
 body.client-detail-page .clients-field select:focus,
 body.client-detail-page .clients-field textarea:focus {
-  border-color: var(--theme-main, #005baa);
-  box-shadow: 0 0 0 4px rgba(0, 91, 170, 0.12);
-  background: #fbfdff;
+  border-color: var(--alta-turquoise);
+  box-shadow: 0 0 0 4px rgba(0, 166, 166, 0.14);
+  background: #ffffff;
 }
 
 body.client-detail-page .page-actions {
