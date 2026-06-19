@@ -1,6 +1,7 @@
 const https = require('https');
 
 const WHATSAPP_GRAPH_VERSION = 'v25.0';
+const FREE_TEXT_TEMPLATE_ERROR = 'WhatsApp impose l’utilisation d’un modèle/template pour contacter ce numéro hors conversation récente.';
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -38,6 +39,10 @@ function normalizePhone(value) {
   return phone || null;
 }
 
+function normalizePhoneNumber(value) {
+  return normalizePhone(value);
+}
+
 function normalizeRequiredPhone(value) {
   const phone = normalizePhone(value);
   if (!phone || !/^[1-9]\d{6,14}$/.test(phone)) {
@@ -47,6 +52,13 @@ function normalizeRequiredPhone(value) {
     throw error;
   }
   return phone;
+}
+
+function maskPhoneNumber(value) {
+  const phone = normalizePhone(value) || clean(value) || '';
+  if (!phone) return '-';
+  if (phone.length <= 4) return '****';
+  return `${phone.slice(0, 3)}****${phone.slice(-2)}`;
 }
 
 function graphHost() {
@@ -59,6 +71,16 @@ function sanitizeMetaError(parsed = {}) {
   const code = metaError.code ? `Code Meta ${metaError.code}` : null;
   const type = clean(metaError.type);
   return [message, type, code].filter(Boolean).join(' - ');
+}
+
+function isTemplateWindowError(message = '') {
+  return /template|24\s*h|24-hour|24 hour|outside.*window|customer care window|re-engage|reengage|outside.*allowed/i.test(String(message));
+}
+
+function publicWhatsappError(error) {
+  const message = clean(error?.meta_message) || clean(error?.message) || 'Erreur envoi WhatsApp';
+  if (isTemplateWindowError(message)) return FREE_TEXT_TEMPLATE_ERROR;
+  return message;
 }
 
 function postJson(path, payload) {
@@ -107,32 +129,45 @@ function templateParameter(value) {
 }
 
 async function sendTextMessage(to, message) {
-  const recipient = normalizeRequiredPhone(to);
-  const body = clean(message);
+  try {
+    const recipient = normalizeRequiredPhone(to);
+    const body = clean(message);
 
-  if (!body) {
-    const error = new Error('Message WhatsApp vide');
-    error.status = 400;
-    error.expose = true;
-    throw error;
+    if (!body) {
+      const error = new Error('Message WhatsApp vide');
+      error.status = 400;
+      error.expose = true;
+      throw error;
+    }
+
+    const phoneNumberId = requireEnv('WHATSAPP_PHONE_NUMBER_ID');
+    const { status, data } = await postJson(`/${WHATSAPP_GRAPH_VERSION}/${phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      to: recipient,
+      type: 'text',
+      text: {
+        body,
+      },
+    });
+
+    return {
+      success: Boolean(data.messages?.[0]?.id),
+      to: recipient,
+      status,
+      message_id: data.messages?.[0]?.id || null,
+      result: data,
+      error: null,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      to: normalizePhone(to),
+      status: error.status || 500,
+      message_id: null,
+      result: null,
+      error: publicWhatsappError(error),
+    };
   }
-
-  const phoneNumberId = requireEnv('WHATSAPP_PHONE_NUMBER_ID');
-  const { status, data } = await postJson(`/${WHATSAPP_GRAPH_VERSION}/${phoneNumberId}/messages`, {
-    messaging_product: 'whatsapp',
-    to: recipient,
-    type: 'text',
-    text: {
-      body,
-    },
-  });
-
-  return {
-    to: recipient,
-    status,
-    message_id: data.messages?.[0]?.id || null,
-    result: data,
-  };
 }
 
 async function sendTemplateMessage(to, templateName, languageCode = 'fr', bodyParameters = []) {
@@ -182,8 +217,12 @@ async function sendTemplateMessage(to, templateName, languageCode = 'fr', bodyPa
 }
 
 module.exports = {
+  FREE_TEXT_TEMPLATE_ERROR,
   hasPhoneNumberId,
+  maskPhoneNumber,
   normalizePhone,
+  normalizePhoneNumber,
+  publicWhatsappError,
   sendTemplateMessage,
   sendTextMessage,
 };
