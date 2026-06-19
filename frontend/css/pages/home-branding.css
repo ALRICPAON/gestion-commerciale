@@ -283,6 +283,32 @@
   padding: 9px 11px;
 }
 
+.communication-feedback {
+  border: 1px solid #B8E7E7;
+  border-radius: 10px;
+  color: #0F5F68;
+  font-size: 13px;
+  font-weight: 700;
+  margin-top: 12px !important;
+  padding: 9px 11px;
+}
+
+.communication-feedback.success {
+  background: #ECFDF3;
+  border-color: #ABEFC6;
+  color: #067647;
+}
+
+.communication-feedback.error {
+  background: #FEF3F2;
+  border-color: #FECDCA;
+  color: #B42318;
+}
+
+.communication-feedback.hidden {
+  display: none;
+}
+
 .intelligence-center {
   margin-top: 20px;
 }
