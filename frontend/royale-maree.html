@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Royale Maree - Gestion Commerciale</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/dashboard.css?v=1" />
+</head>
+<body class="app-page dashboard-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Pilotage - Royale Maree</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content dashboard-layout">
+    <section class="welcome-card">
+      <div class="page-actions dashboard-header">
+        <div>
+          <h2>Settlement Royale Maree</h2>
+          <p>Volumes et CA livres aux magasins, factures a la centrale Royale Maree.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="refresh-btn" class="btn btn-secondary" type="button">Actualiser</button>
+          <button id="prepare-credit-note-btn" class="btn btn-primary" type="button">Preparer avoir Royale Maree</button>
+        </div>
+      </div>
+      <div id="royale-feedback" class="page-feedback hidden"></div>
+    </section>
+
+    <section class="card dashboard-filters">
+      <div class="filters-row dashboard-filter-grid">
+        <div class="form-group">
+          <label for="from-date">Du</label>
+          <input id="from-date" type="date" />
+        </div>
+        <div class="form-group">
+          <label for="to-date">Au</label>
+          <input id="to-date" type="date" />
+        </div>
+        <div class="form-group">
+          <label for="delivered-client-select">Magasin livre</label>
+          <select id="delivered-client-select">
+            <option value="">Tous magasins</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="commission-rate">Commission EUR/kg</label>
+          <input id="commission-rate" type="number" min="0" step="0.01" value="0.30" />
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="apply-btn" class="btn btn-primary" type="button">Appliquer</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="dashboard-kpis" aria-label="Totaux Royale Maree">
+      <article class="dashboard-kpi"><span>Poids total</span><strong id="total-weight">-</strong></article>
+      <article class="dashboard-kpi"><span>CA HT total</span><strong id="total-ht">-</strong></article>
+      <article class="dashboard-kpi"><span>CA TTC total</span><strong id="total-ttc">-</strong></article>
+      <article class="dashboard-kpi"><span>Avoir commission</span><strong id="total-credit">-</strong></article>
+    </section>
+
+    <section class="card">
+      <div class="page-actions">
+        <div>
+          <h3>Magasins livres</h3>
+          <p id="settlement-subtitle">Selectionne une periode pour calculer le settlement.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Magasin</th>
+              <th>Poids kg</th>
+              <th>CA HT</th>
+              <th>TVA</th>
+              <th>CA TTC</th>
+              <th>Nb BL</th>
+              <th>Nb factures</th>
+              <th>Commission EUR/kg</th>
+              <th>Montant avoir</th>
+            </tr>
+          </thead>
+          <tbody id="settlement-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/royale-maree.js?v=1"></script>
+</body>
+</html>
