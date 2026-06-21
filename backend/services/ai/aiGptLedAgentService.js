@@ -2,6 +2,7 @@ const { generateToolCall } = require('./aiClient');
 const { normalizeConversation } = require('./aiMemoryService');
 const { confirmAction, cancelAction } = require('./aiActionService');
 const { buildIntelligenceAlerts } = require('../intelligence/alertEngine');
+const fullBusinessReadTools = require('./aiFullBusinessReadTools');
 
 const MAX_QUESTION_LENGTH = 2000;
 const MAX_TOOL_STEPS = 8;
@@ -193,6 +194,7 @@ function systemPrompt() {
     'Tu ne generes jamais de SQL libre et tu ne demandes jamais au backend de parser la conversation.',
     'Tous les outils lecture sont read-only, limites par store_id, sans DELETE, UPDATE ni INSERT.',
     'Les outils de synthese ventes, marges, achats, factures fournisseurs et alertes sont des outils de lecture uniquement.',
+    'Les outils de lecture metier complete exposent comptabilite, dashboard, marge reelle, achats, ventes, lots, transformations et tracabilite.',
     'prepare_email_draft prepare seulement un texte de brouillon : aucun email n est envoye et aucune donnee metier n est enregistree.',
     'Une action sensible passe obligatoirement par create_pending_action puis confirmation humaine.',
     'Tu ne dois jamais afficher Confirmer si aucune pending_action n existe.',
@@ -226,6 +228,7 @@ function toolDefinitions() {
     { type: 'function', function: { name: 'get_clients_to_follow_up', description: 'Clients actifs a relancer selon derniere vente connue.', parameters: { type: 'object', properties: { inactive_days: { type: 'integer', minimum: 1, maximum: 365 }, limit: { type: 'integer', minimum: 1, maximum: 80 } } } } },
     { type: 'function', function: { name: 'get_intelligence_alerts', description: 'Lit les alertes du centre de surveillance ALTA.', parameters: { type: 'object', properties: { level: { type: 'string', enum: ['green', 'orange', 'red'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } } } } },
     { type: 'function', function: { name: 'prepare_email_draft', description: 'Prepare un brouillon email texte sans envoi et sans ecriture metier.', parameters: { type: 'object', properties: { client_id: { type: 'string' }, client_name: { type: 'string' }, purpose: { type: 'string' }, product_focus: { type: 'string' } } } } },
+    ...fullBusinessReadTools.toolDefinitions(),
     { type: 'function', function: { name: 'get_pending_action', description: 'Lit une action en attente.', parameters: { type: 'object', properties: { action_id: { type: 'string' } } } } },
     { type: 'function', function: { name: 'create_pending_action', description: 'Fige le choix final de GPT et demande confirmation humaine.', parameters: { type: 'object', properties: { action_type: { type: 'string', enum: ['customer_order_draft'] }, payload: { type: 'object' } }, required: ['action_type', 'payload'] } } },
     { type: 'function', function: { name: 'execute_pending_action', description: 'Execute une pending_action apres confirmation humaine.', parameters: idArg('action_id') } },
@@ -884,6 +887,7 @@ const HANDLERS = {
   get_clients_to_follow_up: getClientsToFollowUp,
   get_intelligence_alerts: getIntelligenceAlerts,
   prepare_email_draft: prepareEmailDraft,
+  ...fullBusinessReadTools.handlers,
   prepare_customer_order_draft: prepareCustomerOrderDraft,
   create_pending_action: createPendingAction,
   get_pending_action: getPendingAction,
