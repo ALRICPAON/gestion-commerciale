@@ -633,8 +633,8 @@ async function getIntelligenceAlerts({ db, user, args }) {
   const requestedLevel = clean(args.level);
   const filtered = alerts
     .filter((alert) => !requestedLevel || alert.level === requestedLevel)
-    .sort((a, b) => ({ red: 3, orange: 2, green: 1 }[b.level] - { red: 3, orange: 2, green: 1 }[a.level] || b.count - a.count)
-    .slice(0, limit(args.limit, 10, 20));
+    .sort((a, b) => ({ red: 3, orange: 2, green: 1 }[b.level] - { red: 3, orange: 2, green: 1 }[a.level] || b.count - a.count))
+.slice(0, limit(args.limit, 10, 20));
   return ok({ alerts: filtered, source: 'intelligence_center', read_only: true });
 }
 
