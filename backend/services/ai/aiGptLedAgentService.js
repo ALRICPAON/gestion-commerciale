@@ -1,10 +1,12 @@
 const { generateToolCall } = require('./aiClient');
 const { normalizeConversation } = require('./aiMemoryService');
 const { confirmAction, cancelAction } = require('./aiActionService');
+const { buildIntelligenceAlerts } = require('../intelligence/alertEngine');
 
 const MAX_QUESTION_LENGTH = 2000;
 const MAX_TOOL_STEPS = 8;
-const OPTIONAL_DB_ERROR_CODES = new Set(['42P01', '42703', '42883']);
+const OPTIONAL_DB_ERROR_CODES = new Set(['42P01', '42703', '42883', '42P10']);
+const DEFAULT_READ_LIMIT = 30;
 
 function number(value, fallback = 0) {
   const parsed = Number(String(value ?? '').replace(',', '.'));
@@ -101,6 +103,59 @@ function formatMoney(value) {
   return `${number(value).toFixed(2)} EUR`;
 }
 
+function clean(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
+function limit(value, fallback = DEFAULT_READ_LIMIT, max = 100) {
+  return Math.min(Math.max(Math.trunc(number(value, fallback)), 1), max);
+}
+
+function isoDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const copy = new Date(date);
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function dateRange(args = {}, defaultPeriod = 'last_30_days') {
+  const now = new Date();
+  const period = clean(args.period) || defaultPeriod;
+  if (args.date_from || args.date_to) {
+    return {
+      date_from: clean(args.date_from) || isoDate(addDays(now, -30)),
+      date_to: clean(args.date_to) || isoDate(now),
+      period: 'custom',
+    };
+  }
+  if (period === 'today') {
+    return { date_from: isoDate(now), date_to: isoDate(now), period };
+  }
+  if (period === 'month') {
+    return { date_from: isoDate(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))), date_to: isoDate(now), period };
+  }
+  if (period === 'year') {
+    return { date_from: isoDate(new Date(Date.UTC(now.getUTCFullYear(), 0, 1))), date_to: isoDate(now), period };
+  }
+  return { date_from: isoDate(addDays(now, -30)), date_to: isoDate(now), period: 'last_30_days' };
+}
+
+function buildDateFilters(alias, args, params) {
+  const range = dateRange(args);
+  params.push(range.date_from);
+  const fromIndex = params.length;
+  params.push(range.date_to);
+  const toIndex = params.length;
+  return {
+    range,
+    sql: `${alias}.document_date >= $${fromIndex}::date AND ${alias}.document_date <= $${toIndex}::date`,
+  };
+}
+
 function pendingSummary(payload) {
   const clientName = payload?.client?.name || 'client';
   const lines = Array.isArray(payload?.lines) ? payload.lines : [];
@@ -135,9 +190,10 @@ function systemPrompt() {
     'Le backend ne choisit pas les clients/articles a ta place. Les outils renvoient plusieurs candidats riches.',
     'Tu dois comparer les candidats, expliquer ton choix ou demander une precision si le choix est ambigu.',
     'Ne considere jamais l ordre des resultats comme une decision backend. Utilise les donnees : designation, PLU, stock, historique, prix.',
-    'Exemple : si PAVES DE SAUMON GROS a du stock et PAVE DE SAUMON MARINEE a 0, propose le stock disponible ou explique la difference.',
     'Tu ne generes jamais de SQL libre et tu ne demandes jamais au backend de parser la conversation.',
     'Tous les outils lecture sont read-only, limites par store_id, sans DELETE, UPDATE ni INSERT.',
+    'Les outils de synthese ventes, marges, achats, factures fournisseurs et alertes sont des outils de lecture uniquement.',
+    'prepare_email_draft prepare seulement un texte de brouillon : aucun email n est envoye et aucune donnee metier n est enregistree.',
     'Une action sensible passe obligatoirement par create_pending_action puis confirmation humaine.',
     'Tu ne dois jamais afficher Confirmer si aucune pending_action n existe.',
     'Le payload pending_action doit contenir uniquement ton choix final, avec article_id exact.',
@@ -148,6 +204,11 @@ function systemPrompt() {
 
 function toolDefinitions() {
   const idArg = (name) => ({ type: 'object', properties: { [name]: { type: 'string' } }, required: [name] });
+  const periodArgs = {
+    period: { type: 'string', enum: ['today', 'month', 'last_30_days', 'year', 'custom'] },
+    date_from: { type: 'string', description: 'Date debut YYYY-MM-DD si period=custom.' },
+    date_to: { type: 'string', description: 'Date fin YYYY-MM-DD si period=custom.' },
+  };
   return [
     { type: 'function', function: { name: 'search_clients', description: 'Retourne plusieurs clients candidats. GPT choisit ou demande precision.', parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 30 } }, required: ['query'] } } },
     { type: 'function', function: { name: 'search_articles', description: 'Retourne plusieurs articles candidats avec stock/prix. GPT compare et choisit.', parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 50 }, only_in_stock: { type: 'boolean' } }, required: ['query'] } } },
@@ -157,6 +218,14 @@ function toolDefinitions() {
     { type: 'function', function: { name: 'get_stock_state', description: 'Lit le stock detaille d un article.', parameters: idArg('article_id') } },
     { type: 'function', function: { name: 'search_suppliers', description: 'Retourne plusieurs fournisseurs candidats.', parameters: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 30 } }, required: ['query'] } } },
     { type: 'function', function: { name: 'get_sales_history', description: 'Lit historique ventes client/article.', parameters: { type: 'object', properties: { client_id: { type: 'string' }, article_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 80 } } } } },
+    { type: 'function', function: { name: 'get_sales_summary', description: 'Synthese read-only des ventes, CA et marge sur une periode.', parameters: { type: 'object', properties: { ...periodArgs, document_type: { type: 'string', enum: ['ORDER', 'DELIVERY_NOTE', 'INVOICE', 'CREDIT_NOTE'] } } } } },
+    { type: 'function', function: { name: 'get_sales_documents', description: 'Liste read-only de commandes, BL, factures ou avoirs clients.', parameters: { type: 'object', properties: { ...periodArgs, document_type: { type: 'string', enum: ['ORDER', 'DELIVERY_NOTE', 'INVOICE', 'CREDIT_NOTE'] }, status: { type: 'string' }, client_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 80 } } } } },
+    { type: 'function', function: { name: 'get_margin_analysis', description: 'Analyse read-only des marges par article, client ou fournisseur.', parameters: { type: 'object', properties: { ...periodArgs, group_by: { type: 'string', enum: ['article', 'client', 'supplier'] }, limit: { type: 'integer', minimum: 1, maximum: 80 } } } } },
+    { type: 'function', function: { name: 'get_purchase_summary', description: 'Synthese read-only des achats, receptions et fournisseurs.', parameters: { type: 'object', properties: { period: periodArgs.period, date_from: periodArgs.date_from, date_to: periodArgs.date_to, supplier_id: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 80 } } } } },
+    { type: 'function', function: { name: 'get_supplier_invoice_summary', description: 'Synthese read-only des factures fournisseurs et rapprochements.', parameters: { type: 'object', properties: { period: periodArgs.period, date_from: periodArgs.date_from, date_to: periodArgs.date_to, supplier_id: { type: 'string' }, status: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 80 } } } } },
+    { type: 'function', function: { name: 'get_clients_to_follow_up', description: 'Clients actifs a relancer selon derniere vente connue.', parameters: { type: 'object', properties: { inactive_days: { type: 'integer', minimum: 1, maximum: 365 }, limit: { type: 'integer', minimum: 1, maximum: 80 } } } } },
+    { type: 'function', function: { name: 'get_intelligence_alerts', description: 'Lit les alertes du centre de surveillance ALTA.', parameters: { type: 'object', properties: { level: { type: 'string', enum: ['green', 'orange', 'red'] }, limit: { type: 'integer', minimum: 1, maximum: 20 } } } } },
+    { type: 'function', function: { name: 'prepare_email_draft', description: 'Prepare un brouillon email texte sans envoi et sans ecriture metier.', parameters: { type: 'object', properties: { client_id: { type: 'string' }, client_name: { type: 'string' }, purpose: { type: 'string' }, product_focus: { type: 'string' } } } } },
     { type: 'function', function: { name: 'get_pending_action', description: 'Lit une action en attente.', parameters: { type: 'object', properties: { action_id: { type: 'string' } } } } },
     { type: 'function', function: { name: 'create_pending_action', description: 'Fige le choix final de GPT et demande confirmation humaine.', parameters: { type: 'object', properties: { action_type: { type: 'string', enum: ['customer_order_draft'] }, payload: { type: 'object' } }, required: ['action_type', 'payload'] } } },
     { type: 'function', function: { name: 'execute_pending_action', description: 'Execute une pending_action apres confirmation humaine.', parameters: idArg('action_id') } },
@@ -165,7 +234,7 @@ function toolDefinitions() {
 }
 
 async function searchClients({ db, user, args }) {
-  const limit = Math.min(number(args.limit, 12), 30);
+  const maxRows = Math.min(number(args.limit, 12), 30);
   const result = await db.query(`
     SELECT id, code, name, COALESCE(status, 'active') AS status, city, email, tariff_level
     FROM clients
@@ -174,12 +243,12 @@ async function searchClients({ db, user, args }) {
     ORDER BY name ASC
     LIMIT 300
   `, [user.store_id]);
-  const candidates = candidateList(result.rows, args.query, (row) => [row.name, row.code, row.city, row.email], limit);
+  const candidates = candidateList(result.rows, args.query, (row) => [row.name, row.code, row.city, row.email], maxRows);
   return ok({ candidates: candidates.map((row) => businessResult('clients', row)) });
 }
 
 async function searchArticles({ db, user, args }) {
-  const limit = Math.min(number(args.limit, 20), 50);
+  const maxRows = Math.min(number(args.limit, 20), 50);
   const onlyInStock = Boolean(args.only_in_stock);
   const result = await db.query(`
     SELECT a.id, a.plu, a.ean, a.designation, a.display_name, a.unit, a.sale_unit,
@@ -194,7 +263,7 @@ async function searchArticles({ db, user, args }) {
     ORDER BY a.designation ASC
     LIMIT 500
   `, [user.store_id, onlyInStock]);
-  const candidates = candidateList(result.rows, args.query, (row) => [row.designation, row.display_name, row.plu, row.ean], limit);
+  const candidates = candidateList(result.rows, args.query, (row) => [row.designation, row.display_name, row.plu, row.ean], maxRows);
   return ok({ candidates: candidates.map((row) => businessResult('articles', row)) });
 }
 
@@ -280,7 +349,7 @@ async function getArticleProfile({ db, user, args }) {
 }
 
 async function searchSuppliers({ db, user, args }) {
-  const limit = Math.min(number(args.limit, 12), 30);
+  const maxRows = Math.min(number(args.limit, 12), 30);
   const result = await db.query(`
     SELECT id, code, name, COALESCE(status, 'active') AS status, city, email, phone
     FROM suppliers
@@ -289,17 +358,17 @@ async function searchSuppliers({ db, user, args }) {
     ORDER BY name ASC
     LIMIT 300
   `, [user.store_id]);
-  const candidates = candidateList(result.rows, args.query, (row) => [row.name, row.code, row.city, row.email], limit);
+  const candidates = candidateList(result.rows, args.query, (row) => [row.name, row.code, row.city, row.email], maxRows);
   return ok({ candidates: candidates.map((row) => businessResult('suppliers', row)) });
 }
 
 async function getSalesHistory({ db, user, args }) {
-  const limit = Math.min(number(args.limit, 30), 80);
+  const maxRows = Math.min(number(args.limit, 30), 80);
   const params = [user.store_id];
   const filters = ['sd.store_id = $1'];
   if (args.client_id) { params.push(args.client_id); filters.push(`sd.client_id = $${params.length}`); }
   if (args.article_id) { params.push(args.article_id); filters.push(`sl.article_id = $${params.length}`); }
-  params.push(limit);
+  params.push(maxRows);
   const result = await db.query(`
     SELECT sd.id AS document_id, sd.document_date, sd.document_type, sd.status,
            c.id AS client_id, c.code AS client_code, c.name AS client_name,
@@ -327,6 +396,306 @@ async function getSalesHistory({ db, user, args }) {
       amount_ht: number(row.line_amount_ht),
       margin_ht: number(row.line_margin_ex_vat),
     })),
+  });
+}
+
+async function getSalesSummary({ db, user, args }) {
+  const params = [user.store_id];
+  const dateFilter = buildDateFilters('sd', args, params);
+  const filters = ['sd.store_id = $1', dateFilter.sql, "COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')"];
+  if (args.document_type) { params.push(args.document_type); filters.push(`sd.document_type = $${params.length}`); }
+  const result = await db.query(`
+    SELECT
+      COUNT(DISTINCT sd.id)::int AS document_count,
+      COUNT(sl.id)::int AS line_count,
+      COALESCE(SUM(sl.line_amount_ht), 0) AS ca_ht,
+      COALESCE(SUM(sl.line_margin_ex_vat), 0) AS margin_ht,
+      CASE WHEN COALESCE(SUM(sl.line_amount_ht), 0) > 0
+        THEN COALESCE(SUM(sl.line_margin_ex_vat), 0) / COALESCE(SUM(sl.line_amount_ht), 0) * 100
+        ELSE 0
+      END AS margin_rate,
+      COALESCE(SUM(COALESCE(sl.sold_quantity, sl.total_weight, 0)), 0) AS quantity,
+      COUNT(DISTINCT sd.client_id)::int AS client_count
+    FROM sales_documents sd
+    LEFT JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+    WHERE ${filters.join(' AND ')}
+  `, params);
+  const byType = await db.query(`
+    SELECT sd.document_type,
+           COUNT(DISTINCT sd.id)::int AS document_count,
+           COALESCE(SUM(sl.line_amount_ht), 0) AS ca_ht,
+           COALESCE(SUM(sl.line_margin_ex_vat), 0) AS margin_ht
+    FROM sales_documents sd
+    LEFT JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+    WHERE ${filters.join(' AND ')}
+    GROUP BY sd.document_type
+    ORDER BY ca_ht DESC
+  `, params);
+  return ok({ sales_summary: { period: dateFilter.range, totals: result.rows[0] || {}, by_document_type: byType.rows } });
+}
+
+async function getSalesDocuments({ db, user, args }) {
+  const params = [user.store_id];
+  const dateFilter = buildDateFilters('sd', args, params);
+  const filters = ['sd.store_id = $1', dateFilter.sql];
+  if (args.document_type) { params.push(args.document_type); filters.push(`sd.document_type = $${params.length}`); }
+  if (args.status) { params.push(args.status); filters.push(`sd.status = $${params.length}`); }
+  if (args.client_id) { params.push(args.client_id); filters.push(`sd.client_id = $${params.length}`); }
+  params.push(limit(args.limit, 30, 80));
+  const result = await db.query(`
+    SELECT sd.id, sd.reference_number, sd.document_number, sd.document_date, sd.document_type, sd.status,
+           sd.total_amount_ex_vat, sd.total_vat_amount, sd.total_amount_inc_vat,
+           c.id AS client_id, c.code AS client_code, c.name AS client_name,
+           COUNT(sl.id)::int AS line_count,
+           COALESCE(SUM(sl.line_margin_ex_vat), 0) AS margin_ht
+    FROM sales_documents sd
+    LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
+    LEFT JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+    WHERE ${filters.join(' AND ')}
+    GROUP BY sd.id, c.id, c.code, c.name
+    ORDER BY sd.document_date DESC NULLS LAST, sd.created_at DESC
+    LIMIT $${params.length}
+  `, params);
+  return ok({ period: dateFilter.range, sales_documents: result.rows });
+}
+
+async function getMarginAnalysis({ db, user, args }) {
+  const groupBy = ['article', 'client', 'supplier'].includes(args.group_by) ? args.group_by : 'article';
+  const params = [user.store_id];
+  const dateFilter = buildDateFilters('sd', args, params);
+  const maxRows = limit(args.limit, 30, 80);
+  params.push(maxRows);
+
+  if (groupBy === 'client') {
+    const result = await db.query(`
+      SELECT c.id AS client_id, c.code, c.name,
+             COUNT(DISTINCT sd.id)::int AS document_count,
+             COALESCE(SUM(sl.line_amount_ht), 0) AS ca_ht,
+             COALESCE(SUM(sl.line_margin_ex_vat), 0) AS margin_ht,
+             CASE WHEN COALESCE(SUM(sl.line_amount_ht), 0) > 0
+               THEN COALESCE(SUM(sl.line_margin_ex_vat), 0) / COALESCE(SUM(sl.line_amount_ht), 0) * 100
+               ELSE 0
+             END AS margin_rate
+      FROM sales_documents sd
+      JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+      LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
+      WHERE sd.store_id = $1 AND ${dateFilter.sql} AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
+      GROUP BY c.id, c.code, c.name
+      ORDER BY margin_ht DESC, ca_ht DESC
+      LIMIT $${params.length}
+    `, params);
+    return ok({ period: dateFilter.range, group_by: groupBy, margins: result.rows });
+  }
+
+  if (groupBy === 'supplier') {
+    const result = await db.query(`
+      SELECT s.id AS supplier_id, s.code, s.name,
+             COUNT(sl.id)::int AS line_count,
+             COALESCE(SUM(sl.line_amount_ht), 0) AS ca_ht,
+             COALESCE(SUM(sl.line_margin_ex_vat), 0) AS margin_ht,
+             CASE WHEN COALESCE(SUM(sl.line_amount_ht), 0) > 0
+               THEN COALESCE(SUM(sl.line_margin_ex_vat), 0) / COALESCE(SUM(sl.line_amount_ht), 0) * 100
+               ELSE 0
+             END AS margin_rate
+      FROM sales_documents sd
+      JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+      LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
+      LEFT JOIN lots l ON l.id = sla.lot_id AND l.store_id = sl.store_id
+      LEFT JOIN suppliers s ON s.id = l.supplier_id AND s.store_id = l.store_id
+      WHERE sd.store_id = $1 AND ${dateFilter.sql} AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
+      GROUP BY s.id, s.code, s.name
+      ORDER BY margin_ht DESC, ca_ht DESC
+      LIMIT $${params.length}
+    `, params);
+    return ok({ period: dateFilter.range, group_by: groupBy, margins: result.rows });
+  }
+
+  const result = await db.query(`
+    SELECT COALESCE(a.id, sl.article_id) AS article_id,
+           COALESCE(a.plu, sl.article_plu) AS plu,
+           COALESCE(a.designation, sl.article_label, 'Article sans nom') AS designation,
+           COALESCE(SUM(COALESCE(sl.sold_quantity, sl.total_weight, 0)), 0) AS quantity,
+           COALESCE(SUM(sl.line_amount_ht), 0) AS ca_ht,
+           COALESCE(SUM(sl.line_margin_ex_vat), 0) AS margin_ht,
+           CASE WHEN COALESCE(SUM(sl.line_amount_ht), 0) > 0
+             THEN COALESCE(SUM(sl.line_margin_ex_vat), 0) / COALESCE(SUM(sl.line_amount_ht), 0) * 100
+             ELSE 0
+           END AS margin_rate
+    FROM sales_documents sd
+    JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+    LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
+    WHERE sd.store_id = $1 AND ${dateFilter.sql} AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
+    GROUP BY COALESCE(a.id, sl.article_id), COALESCE(a.plu, sl.article_plu), COALESCE(a.designation, sl.article_label, 'Article sans nom')
+    ORDER BY margin_ht DESC, ca_ht DESC
+    LIMIT $${params.length}
+  `, params);
+  return ok({ period: dateFilter.range, group_by: groupBy, margins: result.rows });
+}
+
+async function getPurchaseSummary({ db, user, args }) {
+  const range = dateRange(args);
+  const params = [user.store_id, range.date_from, range.date_to];
+  const filters = [
+    'p.store_id = $1',
+    "COALESCE(p.receipt_date, p.purchase_date) >= $2::date",
+    "COALESCE(p.receipt_date, p.purchase_date) <= $3::date",
+  ];
+  if (args.supplier_id) { params.push(args.supplier_id); filters.push(`p.supplier_id = $${params.length}`); }
+  const summary = await db.query(`
+    SELECT COUNT(DISTINCT p.id)::int AS purchase_count,
+           COUNT(pl.id)::int AS line_count,
+           COALESCE(SUM(pl.line_amount_ex_vat), 0) AS purchases_ht,
+           COALESCE(SUM(COALESCE(pl.received_quantity, pl.ordered_quantity, 0)), 0) AS quantity,
+           COUNT(DISTINCT p.supplier_id)::int AS supplier_count
+    FROM purchases p
+    LEFT JOIN purchase_lines pl ON pl.purchase_id = p.id AND pl.store_id = p.store_id
+    WHERE ${filters.join(' AND ')} AND COALESCE(p.status, '') <> 'cancelled'
+  `, params);
+  params.push(limit(args.limit, 30, 80));
+  const recent = await db.query(`
+    SELECT p.id, p.purchase_date, p.receipt_date, p.status, p.bl_number, p.invoice_number,
+           p.total_amount_ex_vat, s.id AS supplier_id, s.code AS supplier_code, s.name AS supplier_name,
+           COUNT(pl.id)::int AS line_count
+    FROM purchases p
+    LEFT JOIN suppliers s ON s.id = p.supplier_id AND s.store_id = p.store_id
+    LEFT JOIN purchase_lines pl ON pl.purchase_id = p.id AND pl.store_id = p.store_id
+    WHERE ${filters.join(' AND ')}
+    GROUP BY p.id, s.id, s.code, s.name
+    ORDER BY COALESCE(p.receipt_date, p.purchase_date) DESC NULLS LAST, p.created_at DESC
+    LIMIT $${params.length}
+  `, params);
+  return ok({ period: range, purchase_summary: summary.rows[0] || {}, recent_purchases: recent.rows });
+}
+
+async function getSupplierInvoiceSummary({ db, user, args }) {
+  const range = dateRange(args);
+  const params = [user.store_id, range.date_from, range.date_to];
+  const filters = ['si.store_id = $1', 'si.invoice_date >= $2::date', 'si.invoice_date <= $3::date'];
+  if (args.supplier_id) { params.push(args.supplier_id); filters.push(`si.supplier_id = $${params.length}`); }
+  if (args.status) { params.push(args.status); filters.push(`si.status = $${params.length}`); }
+  const summary = await db.query(`
+    SELECT COUNT(DISTINCT si.id)::int AS invoice_count,
+           COALESCE(SUM(si.total_ex_vat), 0) AS total_ht,
+           COALESCE(SUM(si.total_vat), 0) AS total_vat,
+           COALESCE(SUM(si.total_inc_vat), 0) AS total_ttc,
+           COUNT(DISTINCT si.supplier_id)::int AS supplier_count,
+           COUNT(DISTINCT si.id) FILTER (WHERE sim.id IS NULL)::int AS unmatched_count
+    FROM supplier_invoices si
+    LEFT JOIN supplier_invoice_matches sim ON sim.supplier_invoice_id = si.id
+    WHERE ${filters.join(' AND ')} AND COALESCE(si.status, '') <> 'cancelled'
+  `, params);
+  params.push(limit(args.limit, 30, 80));
+  const invoices = await db.query(`
+    SELECT si.id, si.invoice_number, si.invoice_date, si.status, si.total_ex_vat, si.total_inc_vat,
+           s.id AS supplier_id, s.code AS supplier_code, s.name AS supplier_name,
+           COUNT(sim.id)::int AS match_count
+    FROM supplier_invoices si
+    LEFT JOIN suppliers s ON s.id = si.supplier_id AND s.store_id = si.store_id
+    LEFT JOIN supplier_invoice_matches sim ON sim.supplier_invoice_id = si.id
+    WHERE ${filters.join(' AND ')}
+    GROUP BY si.id, s.id, s.code, s.name
+    ORDER BY si.invoice_date DESC NULLS LAST, si.created_at DESC
+    LIMIT $${params.length}
+  `, params);
+  return ok({ period: range, supplier_invoice_summary: summary.rows[0] || {}, supplier_invoices: invoices.rows });
+}
+
+async function getClientsToFollowUp({ db, user, args }) {
+  const inactiveDays = Math.min(Math.max(Math.trunc(number(args.inactive_days, 30)), 1), 365);
+  const maxRows = limit(args.limit, 30, 80);
+  const result = await db.query(`
+    WITH last_sales AS (
+      SELECT client_id, MAX(document_date) AS last_sale_date, COUNT(*) AS document_count,
+             COALESCE(SUM(total_amount_ex_vat), 0) AS ca_ht
+      FROM sales_documents
+      WHERE store_id = $1
+        AND COALESCE(status, '') NOT IN ('draft', 'cancelled')
+      GROUP BY client_id
+    )
+    SELECT c.id AS client_id, c.code, c.name, c.email, c.mobile, c.phone,
+           ls.last_sale_date,
+           CASE WHEN ls.last_sale_date IS NULL THEN 9999 ELSE CURRENT_DATE - ls.last_sale_date::date END AS inactive_days,
+           COALESCE(ls.document_count, 0) AS document_count,
+           COALESCE(ls.ca_ht, 0) AS ca_ht
+    FROM clients c
+    LEFT JOIN last_sales ls ON ls.client_id = c.id
+    WHERE c.store_id = $1
+      AND COALESCE(c.status, 'active') <> 'inactive'
+      AND (ls.last_sale_date IS NULL OR ls.last_sale_date <= CURRENT_DATE - ($2::int || ' days')::interval)
+    ORDER BY inactive_days DESC, c.name ASC
+    LIMIT $3
+  `, [user.store_id, inactiveDays, maxRows]);
+  return ok({ inactive_days_threshold: inactiveDays, clients_to_follow_up: result.rows });
+}
+
+async function getIntelligenceAlerts({ db, user, args }) {
+  const alerts = await buildIntelligenceAlerts(db, user.store_id);
+  const requestedLevel = clean(args.level);
+  const filtered = alerts
+    .filter((alert) => !requestedLevel || alert.level === requestedLevel)
+    .sort((a, b) => ({ red: 3, orange: 2, green: 1 }[b.level] - { red: 3, orange: 2, green: 1 }[a.level] || b.count - a.count)
+    .slice(0, limit(args.limit, 10, 20));
+  return ok({ alerts: filtered, source: 'intelligence_center', read_only: true });
+}
+
+function pickEmailClient(client, fallbackName) {
+  if (client) return client;
+  return { id: null, name: fallbackName || 'client', email: null, mobile: null, code: null };
+}
+
+async function prepareEmailDraft({ db, user, args }) {
+  let client = null;
+  if (args.client_id) {
+    const result = await db.query(`
+      SELECT id, code, name, email, mobile, phone, city
+      FROM clients
+      WHERE id = $1 AND store_id = $2 AND COALESCE(status, 'active') <> 'inactive'
+      LIMIT 1
+    `, [args.client_id, user.store_id]);
+    client = result.rows[0] || null;
+  }
+  if (!client && args.client_name) {
+    const candidates = await searchClients({ db, user, args: { query: args.client_name, limit: 1 } });
+    client = candidates.candidates?.[0]?.raw || null;
+  }
+  if (!client) {
+    const followUp = await getClientsToFollowUp({ db, user, args: { inactive_days: 30, limit: 1 } });
+    client = followUp.clients_to_follow_up?.[0] ? {
+      id: followUp.clients_to_follow_up[0].client_id,
+      name: followUp.clients_to_follow_up[0].name,
+      email: followUp.clients_to_follow_up[0].email,
+      mobile: followUp.clients_to_follow_up[0].mobile,
+      code: followUp.clients_to_follow_up[0].code,
+    } : null;
+  }
+
+  const target = pickEmailClient(client, args.client_name);
+  const purpose = clean(args.purpose) || 'relance commerciale';
+  const productFocus = clean(args.product_focus);
+  const subject = productFocus
+    ? `Disponibilite ${productFocus} - ALTA MAREE`
+    : 'Disponibilites produits de la mer - ALTA MAREE';
+  const body = [
+    `Bonjour ${target.name && target.name !== 'client' ? target.name : ''},`.trim(),
+    '',
+    purpose.toLowerCase().includes('relance')
+      ? 'Je me permets de te recontacter pour faire le point sur tes besoins produits de la mer.'
+      : 'Je te contacte au sujet de nos disponibilites produits de la mer.',
+    productFocus ? `Nous pouvons notamment regarder ensemble les disponibilites autour de : ${productFocus}.` : 'Je peux te proposer les produits disponibles et les priorites du moment selon le stock.',
+    '',
+    'Dis-moi ce qui peut t interesser et je te prepare une proposition adaptee.',
+    '',
+    'Bien cordialement,',
+    'ALTA MAREE',
+  ].join('\n');
+
+  return ok({
+    draft_only: true,
+    send_allowed: false,
+    read_only: true,
+    client: target,
+    email_draft: { subject, body },
+    warning: 'Brouillon uniquement : aucun email envoye, aucune donnee metier enregistree.',
   });
 }
 
@@ -507,6 +876,14 @@ const HANDLERS = {
   get_stock_state: getStockState,
   search_suppliers: searchSuppliers,
   get_sales_history: getSalesHistory,
+  get_sales_summary: getSalesSummary,
+  get_sales_documents: getSalesDocuments,
+  get_margin_analysis: getMarginAnalysis,
+  get_purchase_summary: getPurchaseSummary,
+  get_supplier_invoice_summary: getSupplierInvoiceSummary,
+  get_clients_to_follow_up: getClientsToFollowUp,
+  get_intelligence_alerts: getIntelligenceAlerts,
+  prepare_email_draft: prepareEmailDraft,
   prepare_customer_order_draft: prepareCustomerOrderDraft,
   create_pending_action: createPendingAction,
   get_pending_action: getPendingAction,
