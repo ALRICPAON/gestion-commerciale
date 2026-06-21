@@ -81,6 +81,7 @@ function fillForm(client) {
 function collectPayload() {
   const payload = {};
   fields.forEach((field) => { payload[field] = getFieldValue(field); });
+  payload.is_royale_maree_member = Boolean($('is_royale_maree_member')?.checked);
   if (!payload.country) payload.country = 'France';
   if (!payload.client_type) payload.client_type = 'standard';
   if (!payload.status) payload.status = 'active';
