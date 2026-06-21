@@ -16,7 +16,7 @@ const statusClientBtn = $('status-client-btn');
 const clientForm = $('client-form');
 const billedClientSelect = $('billed_client_id');
 
-const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
+const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'is_royale_maree_member', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
 let currentClient = null;
 let clients = [];
 
@@ -34,8 +34,22 @@ function showFeedback(message, type = 'success') {
 
 const canEditClient = () => ['admin', 'responsable', 'commercial'].includes(sessionUser.role);
 const canChangeStatus = () => ['admin', 'responsable'].includes(sessionUser.role);
-const setFieldValue = (id, value) => { const el = $(id); if (el) el.value = value ?? ''; };
-const getFieldValue = (id) => { const el = $(id); if (!el) return null; const value = el.value.trim(); return value === '' ? null : value; };
+const setFieldValue = (id, value) => {
+  const el = $(id);
+  if (!el) return;
+  if (el.type === 'checkbox') {
+    el.checked = value === true || value === 'true' || value === '1';
+    return;
+  }
+  el.value = value ?? '';
+};
+const getFieldValue = (id) => {
+  const el = $(id);
+  if (!el) return null;
+  if (el.type === 'checkbox') return el.checked;
+  const value = el.value.trim();
+  return value === '' ? null : value;
+};
 
 async function apiFetch(url, options = {}) {
   const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${authToken}` } });

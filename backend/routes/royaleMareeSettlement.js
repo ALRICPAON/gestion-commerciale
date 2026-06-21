@@ -98,12 +98,16 @@ async function buildSettlement(db, { storeId, from, to, deliveredClientId, commi
       LEFT JOIN clients billed
         ON billed.id = COALESCE(d.billed_client_id, d.client_id)
        AND billed.store_id = d.store_id
+      LEFT JOIN clients delivered_filter
+        ON delivered_filter.id = d.client_id
+       AND delivered_filter.store_id = d.store_id
       WHERE d.store_id = $1
         AND d.document_date >= $2::date
         AND d.document_date <= $3::date
         AND d.document_type IN ('DELIVERY_NOTE', 'INVOICE')
         AND COALESCE(d.status, '') NOT IN ('draft', 'cancelled')
         AND ${royaleFilterSql('billed')}
+        AND COALESCE(delivered_filter.is_royale_maree_member, false) = true
         ${deliveredFilter.join(' ')}
     ),
     basis_docs AS (
@@ -224,7 +228,7 @@ router.get('/royale-maree-settlement', authenticateToken, attachDbContext, async
       commission_rate: commissionRate,
       royale_client: royaleClient,
       ...settlement,
-      message: settlement.rows.length ? null : 'Aucun BL ou facture Royale Maree trouve sur la periode.',
+      message: settlement.rows.length ? null : 'Aucun BL ou facture Royale Maree trouve pour les magasins coches sur la periode.',
     });
   } catch (err) {
     console.error('Erreur settlement Royale Maree :', err);
@@ -290,7 +294,7 @@ router.post('/royale-maree-settlement/credit-note', authenticateToken, attachDbC
         royaleClient.id,
         documentDate,
         reference,
-        clean(body.notes) || `Commission centrale Royale Maree du ${from} au ${to}`,
+        clean(body.notes) || `Commission centrale Royale Maree du ${from.split('-').reverse().join('/')} au ${to.split('-').reverse().join('/')}`,
         totalHt,
         vat,
         totalTtc,

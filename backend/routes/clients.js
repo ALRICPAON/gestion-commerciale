@@ -54,6 +54,7 @@ function clientSelectSql() {
       c.client_type,
       c.status,
       c.tariff_level,
+      COALESCE(c.is_royale_maree_member, false) AS is_royale_maree_member,
       COALESCE(c.billed_client_id, c.id) AS billed_client_id,
       billed.code AS billed_client_code,
       billed.name AS billed_client_name,
@@ -89,6 +90,7 @@ function mapClientPayload(body) {
     client_type: normalizeClientType(body.client_type),
     status: normalizeStatus(body.status),
     tariff_level: normalizeTariffLevel(body.tariff_level ?? body.price_level),
+    is_royale_maree_member: body.is_royale_maree_member === true || body.is_royale_maree_member === 'true' || body.is_royale_maree_member === '1',
     billed_client_id: normalizeUuid(body.billed_client_id),
     store_identifier: normalizeText(body.store_identifier),
 
@@ -221,18 +223,18 @@ router.post(
         `
         INSERT INTO clients (
           store_id, code, name, legal_name, client_type, status, tariff_level,
-          billed_client_id, store_identifier,
+          is_royale_maree_member, billed_client_id, store_identifier,
           contact_name, phone, mobile, email,
           address_line1, address_line2, postal_code, city, country,
           vat_number, siret, payment_terms, delivery_terms, notes,
           created_by, updated_by
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
-          $8, $9,
-          $10, $11, $12, $13,
-          $14, $15, $16, $17, $18,
-          $19, $20, $21, $22, $23,
-          $24, $25
+          $8, $9, $10,
+          $11, $12, $13, $14,
+          $15, $16, $17, $18, $19,
+          $20, $21, $22, $23, $24,
+          $25, $26
         )
         RETURNING id
         `,
@@ -244,6 +246,7 @@ router.post(
           client.client_type,
           client.status,
           client.tariff_level,
+          client.is_royale_maree_member,
           billedClientId,
           client.store_identifier,
           client.contact_name,
@@ -323,9 +326,10 @@ router.put(
           payment_terms = $20,
           delivery_terms = $21,
           notes = $22,
-          updated_by = $23
-        WHERE id = $24
-          AND store_id = $25
+          is_royale_maree_member = $23,
+          updated_by = $24
+        WHERE id = $25
+          AND store_id = $26
         RETURNING id
         `,
         [
@@ -351,6 +355,7 @@ router.put(
           client.payment_terms,
           client.delivery_terms,
           client.notes,
+          client.is_royale_maree_member,
           req.user.id,
           req.params.id,
           req.user.store_id,
