@@ -44,6 +44,15 @@ function normalizeUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(text) ? text : null;
 }
 
+function normalizeBoolean(value, fallback = null) {
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === 'boolean') return value;
+  const text = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(text)) return true;
+  if (['false', '0', 'no', 'off'].includes(text)) return false;
+  return fallback;
+}
+
 function clientSelectSql() {
   return `
     SELECT
@@ -90,7 +99,7 @@ function mapClientPayload(body) {
     client_type: normalizeClientType(body.client_type),
     status: normalizeStatus(body.status),
     tariff_level: normalizeTariffLevel(body.tariff_level ?? body.price_level),
-    is_royale_maree_member: body.is_royale_maree_member === true || body.is_royale_maree_member === 'true' || body.is_royale_maree_member === '1',
+    is_royale_maree_member: normalizeBoolean(body.is_royale_maree_member),
     billed_client_id: normalizeUuid(body.billed_client_id),
     store_identifier: normalizeText(body.store_identifier),
 
@@ -230,7 +239,7 @@ router.post(
           created_by, updated_by
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
-          $8, $9, $10,
+          COALESCE($8::boolean, false), $9, $10,
           $11, $12, $13, $14,
           $15, $16, $17, $18, $19,
           $20, $21, $22, $23, $24,
@@ -326,7 +335,7 @@ router.put(
           payment_terms = $20,
           delivery_terms = $21,
           notes = $22,
-          is_royale_maree_member = $23,
+          is_royale_maree_member = COALESCE($23::boolean, is_royale_maree_member),
           updated_by = $24
         WHERE id = $25
           AND store_id = $26
