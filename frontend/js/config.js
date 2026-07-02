@@ -15,6 +15,14 @@
     link.removeAttribute("sizes");
   }
 
+  function appendDeferredScript(src) {
+    if (document.querySelector(`script[src="${src}"]`)) return;
+    const script = document.createElement("script");
+    script.src = src;
+    script.defer = true;
+    document.head.appendChild(script);
+  }
+
   ensureFaviconLink("icon");
   ensureFaviconLink("shortcut icon");
 
@@ -24,8 +32,6 @@
     APP_NAME: "ALTA MARÉE",
   };
 
-  const script = document.createElement("script");
-  script.src = "./js/branding.js?v=7";
-  script.defer = true;
-  document.head.appendChild(script);
+  appendDeferredScript("./js/branding.js?v=7");
+  appendDeferredScript("./js/pennylane-actions.js?v=1");
 })();
