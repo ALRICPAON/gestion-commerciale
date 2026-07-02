@@ -102,7 +102,8 @@ function normalizeVatRate(value, invoice) {
   const rate = Number(value ?? invoice.vat_rate_snapshot ?? 0);
   if (!Number.isFinite(rate) || rate <= 0) return 'exempt';
 
-  return `FR_${String(Math.round(rate * 10)).replace(/\D/g, '')}`;
+  const code = Math.round(rate * 10).toString().padStart(3, '0');
+  return `FR_${code}`;
 }
 
 function normalizeUnit(value) {
