@@ -9,6 +9,7 @@ const {
 
 const DEFAULT_BATCH_SIZE = 10;
 const MAX_BACKOFF_MINUTES = 60;
+const ENTITY_LOCK_NAMESPACE = 'pennylane:client-sync';
 
 function normalizeCountry(value) {
   const country = String(value || 'France').trim().toLowerCase();
@@ -65,6 +66,21 @@ function getPennylaneCustomerId(responseBody) {
   return customer?.id ? String(customer.id) : null;
 }
 
+function redactSensitivePayload(value) {
+  if (!value || typeof value !== 'object') return value;
+  if (Array.isArray(value)) return value.map(redactSensitivePayload);
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => {
+      if (/authorization|api[_-]?token|access[_-]?token|refresh[_-]?token|secret/i.test(key)) {
+        return [key, '[REDACTED]'];
+      }
+
+      return [key, redactSensitivePayload(entry)];
+    })
+  );
+}
+
 function buildExternalReference(client) {
   return `alta:${client.store_id}:client:${client.id}`;
 }
@@ -101,7 +117,7 @@ function sanitizePennylaneError(err) {
       message: err.message,
       status: err.status,
       code: err.code,
-      responseBody: err.responseBody,
+      responseBody: redactSensitivePayload(err.responseBody),
     };
   }
 
@@ -142,13 +158,23 @@ async function findPennylaneCustomerByExternalReference(pennylaneClient, externa
   return customer || null;
 }
 
+async function updateExistingPennylaneCustomer(pennylaneClient, pennylaneCustomerId, payload, mode) {
+  const response = await pennylaneClient.put(`/company_customers/${pennylaneCustomerId}`, payload);
+
+  return {
+    response,
+    payload,
+    pennylaneCustomerId: getPennylaneCustomerId(response.body) || String(pennylaneCustomerId),
+    mode,
+  };
+}
+
 async function upsertPennylaneCustomer({ pennylaneClient, altaClient }) {
   const payload = buildPennylaneCompanyCustomerPayload(altaClient);
   const existingPennylaneId = altaClient.pennylane_customer_id;
 
   if (existingPennylaneId) {
-    const response = await pennylaneClient.put(`/company_customers/${existingPennylaneId}`, payload);
-    return { response, payload, pennylaneCustomerId: getPennylaneCustomerId(response.body), mode: 'update' };
+    return updateExistingPennylaneCustomer(pennylaneClient, existingPennylaneId, payload, 'update');
   }
 
   const existingCustomer = await findPennylaneCustomerByExternalReference(
@@ -157,17 +183,33 @@ async function upsertPennylaneCustomer({ pennylaneClient, altaClient }) {
   );
 
   if (existingCustomer?.id) {
-    const response = await pennylaneClient.put(`/company_customers/${existingCustomer.id}`, payload);
-    return {
-      response,
-      payload,
-      pennylaneCustomerId: String(existingCustomer.id),
-      mode: 'link_then_update',
-    };
+    return updateExistingPennylaneCustomer(pennylaneClient, existingCustomer.id, payload, 'link_then_update');
   }
 
-  const response = await pennylaneClient.post('/company_customers', payload);
-  return { response, payload, pennylaneCustomerId: getPennylaneCustomerId(response.body), mode: 'create' };
+  try {
+    const response = await pennylaneClient.post('/company_customers', payload);
+    return { response, payload, pennylaneCustomerId: getPennylaneCustomerId(response.body), mode: 'create' };
+  } catch (err) {
+    if (!(err instanceof PennylaneApiError) || err.status !== 409) {
+      throw err;
+    }
+
+    const conflictedCustomer = await findPennylaneCustomerByExternalReference(
+      pennylaneClient,
+      payload.external_reference
+    );
+
+    if (!conflictedCustomer?.id) {
+      throw err;
+    }
+
+    return updateExistingPennylaneCustomer(
+      pennylaneClient,
+      conflictedCustomer.id,
+      payload,
+      'conflict_then_update'
+    );
+  }
 }
 
 async function markQueueSuccess(db, queueItem, result) {
@@ -214,7 +256,7 @@ async function markQueueSuccess(db, queueItem, result) {
     status: 'success',
     message: 'Client synchronise avec Pennylane.',
     requestPayload: result.payload,
-    responsePayload: result.response.body,
+    responsePayload: redactSensitivePayload(result.response.body),
   });
 }
 
@@ -299,33 +341,89 @@ async function claimQueueItems(db, { batchSize, workerId }) {
   return result.rows;
 }
 
-async function processQueueItem(db, pennylaneClient, queueItem) {
-  const altaClient = await fetchAltaClient(db, queueItem.store_id, queueItem.entity_id);
-
-  if (!altaClient) {
-    throw new Error('Client ALTA introuvable pour la synchronisation Pennylane');
-  }
-
-  await db.query(
+async function tryAcquireClientLock(db, queueItem) {
+  const result = await db.query(
     `
-    UPDATE clients
-    SET
-      pennylane_sync_status = 'processing',
-      pennylane_sync_last_error = NULL,
-      pennylane_sync_updated_at = now()
-    WHERE id = $1
-      AND store_id = $2
+    SELECT pg_try_advisory_lock(hashtext($1), hashtext($2)) AS locked
     `,
-    [altaClient.id, altaClient.store_id]
+    [ENTITY_LOCK_NAMESPACE, `${queueItem.store_id}:${queueItem.entity_id}`]
   );
 
-  const result = await upsertPennylaneCustomer({ pennylaneClient, altaClient });
+  return Boolean(result.rows[0]?.locked);
+}
 
-  if (!result.pennylaneCustomerId) {
-    throw new Error('Pennylane n a pas retourne d identifiant client exploitable');
+async function releaseClientLock(db, queueItem) {
+  await db.query(
+    `
+    SELECT pg_advisory_unlock(hashtext($1), hashtext($2))
+    `,
+    [ENTITY_LOCK_NAMESPACE, `${queueItem.store_id}:${queueItem.entity_id}`]
+  );
+}
+
+async function deferQueueItem(db, queueItem) {
+  await db.query(
+    `
+    UPDATE pennylane_sync_queue
+    SET
+      status = 'pending',
+      attempts = GREATEST(attempts - 1, 0),
+      locked_at = NULL,
+      locked_by = NULL,
+      scheduled_at = now() + interval '30 seconds',
+      updated_at = now()
+    WHERE id = $1
+    `,
+    [queueItem.id]
+  );
+
+  await writeSyncLog(db, {
+    queueId: queueItem.id,
+    storeId: queueItem.store_id,
+    status: 'pending',
+    message: 'Synchronisation client Pennylane reportee car un autre job du meme client est deja en cours.',
+  });
+}
+
+async function processQueueItem(db, pennylaneClient, queueItem) {
+  const lockAcquired = await tryAcquireClientLock(db, queueItem);
+
+  if (!lockAcquired) {
+    await deferQueueItem(db, queueItem);
+    return 'deferred';
   }
 
-  await markQueueSuccess(db, queueItem, result);
+  try {
+    const altaClient = await fetchAltaClient(db, queueItem.store_id, queueItem.entity_id);
+
+    if (!altaClient) {
+      throw new Error('Client ALTA introuvable pour la synchronisation Pennylane');
+    }
+
+    await db.query(
+      `
+      UPDATE clients
+      SET
+        pennylane_sync_status = 'processing',
+        pennylane_sync_last_error = NULL,
+        pennylane_sync_updated_at = now()
+      WHERE id = $1
+        AND store_id = $2
+      `,
+      [altaClient.id, altaClient.store_id]
+    );
+
+    const result = await upsertPennylaneCustomer({ pennylaneClient, altaClient });
+
+    if (!result.pennylaneCustomerId) {
+      throw new Error('Pennylane n a pas retourne d identifiant client exploitable');
+    }
+
+    await markQueueSuccess(db, queueItem, result);
+    return 'success';
+  } finally {
+    await releaseClientLock(db, queueItem);
+  }
 }
 
 async function processPennylaneClientSyncQueue(db, options = {}) {
@@ -345,11 +443,16 @@ async function processPennylaneClientSyncQueue(db, options = {}) {
   const queueItems = await claimQueueItems(db, { batchSize, workerId });
   let succeeded = 0;
   let failed = 0;
+  let deferred = 0;
 
   for (const queueItem of queueItems) {
     try {
-      await processQueueItem(db, pennylaneClient, queueItem);
-      succeeded += 1;
+      const status = await processQueueItem(db, pennylaneClient, queueItem);
+      if (status === 'deferred') {
+        deferred += 1;
+      } else {
+        succeeded += 1;
+      }
     } catch (err) {
       await markQueueFailure(db, queueItem, err);
       failed += 1;
@@ -360,6 +463,7 @@ async function processPennylaneClientSyncQueue(db, options = {}) {
     processed: queueItems.length,
     succeeded,
     failed,
+    deferred,
     skipped: false,
   };
 }
