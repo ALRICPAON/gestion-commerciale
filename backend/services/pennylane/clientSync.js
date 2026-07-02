@@ -386,14 +386,17 @@ async function deferQueueItem(db, queueItem) {
 }
 
 async function processQueueItem(db, pennylaneClient, queueItem) {
-  const lockAcquired = await tryAcquireClientLock(db, queueItem);
-
-  if (!lockAcquired) {
-    await deferQueueItem(db, queueItem);
-    return 'deferred';
-  }
+  const lockDb = typeof db.connect === 'function' ? await db.connect() : db;
+  let lockAcquired = false;
 
   try {
+    lockAcquired = await tryAcquireClientLock(lockDb, queueItem);
+
+    if (!lockAcquired) {
+      await deferQueueItem(db, queueItem);
+      return 'deferred';
+    }
+
     const altaClient = await fetchAltaClient(db, queueItem.store_id, queueItem.entity_id);
 
     if (!altaClient) {
@@ -422,7 +425,19 @@ async function processQueueItem(db, pennylaneClient, queueItem) {
     await markQueueSuccess(db, queueItem, result);
     return 'success';
   } finally {
-    await releaseClientLock(db, queueItem);
+    if (lockAcquired) {
+      await releaseClientLock(lockDb, queueItem).catch((err) => {
+        console.warn('Impossible de liberer le verrou Pennylane client', {
+          queue_id: queueItem.id,
+          client_id: queueItem.entity_id,
+          error: err.message,
+        });
+      });
+    }
+
+    if (lockDb !== db && typeof lockDb.release === 'function') {
+      lockDb.release();
+    }
   }
 }
 
