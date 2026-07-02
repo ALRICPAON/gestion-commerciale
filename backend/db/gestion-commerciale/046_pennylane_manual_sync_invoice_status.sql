@@ -1,6 +1,9 @@
 BEGIN;
 
 ALTER TABLE sales_documents
+DROP CONSTRAINT IF EXISTS sales_documents_pennylane_status_check;
+
+ALTER TABLE sales_documents
   ADD COLUMN IF NOT EXISTS pennylane_invoice_number text,
   ADD COLUMN IF NOT EXISTS pennylane_payment_status text,
   ADD COLUMN IF NOT EXISTS pennylane_paid_amount numeric(14,2),
