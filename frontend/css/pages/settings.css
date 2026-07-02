@@ -146,6 +146,66 @@
   gap: 10px;
 }
 
+.integration-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.integration-status-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.integration-status-badge {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.88rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 9px 12px;
+}
+
+.integration-status-badge.connected {
+  background: #ecfdf3;
+  border: 1px solid #abefc6;
+  color: #067647;
+}
+
+.integration-status-badge.disconnected {
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  color: #b42318;
+}
+
+.integration-environment {
+  color: var(--alta-muted);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.integration-response {
+  background: #101828;
+  border-radius: 10px;
+  color: #f9fafb;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0;
+  max-height: 260px;
+  overflow: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
+.integration-response.hidden {
+  display: none;
+}
+
+.integration-actions {
+  display: flex;
+}
+
 .settings-page .page-feedback {
   margin-top: 16px;
   margin-bottom: 0;

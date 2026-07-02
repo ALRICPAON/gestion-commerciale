@@ -54,6 +54,11 @@ const logoEmpty = document.getElementById('logo-empty');
 const logoFileInput = document.getElementById('logo_file');
 const uploadLogoBtn = document.getElementById('upload-logo-btn');
 const deleteLogoBtn = document.getElementById('delete-logo-btn');
+const testPennylaneBtn = document.getElementById('test-pennylane-btn');
+const pennylaneStatusBadge = document.getElementById('pennylane-status-badge');
+const pennylaneEnvironment = document.getElementById('pennylane-environment');
+const pennylaneMessage = document.getElementById('pennylane-message');
+const pennylaneResponse = document.getElementById('pennylane-response');
 
 function canManageSettings() {
   return ['admin', 'responsable'].includes(sessionUser.role);
@@ -148,6 +153,7 @@ function lockForm() {
   if (uploadLogoBtn) uploadLogoBtn.disabled = true;
   if (deleteLogoBtn) deleteLogoBtn.disabled = true;
   if (logoFileInput) logoFileInput.disabled = true;
+  if (testPennylaneBtn) testPennylaneBtn.disabled = true;
 }
 
 async function apiFetch(url, options = {}) {
@@ -170,6 +176,65 @@ async function apiFetch(url, options = {}) {
   }
 
   return response;
+}
+
+function renderPennylaneResult(result) {
+  if (!result) return;
+
+  const connected = Boolean(result.connected);
+  if (pennylaneStatusBadge) {
+    pennylaneStatusBadge.textContent = connected ? 'Connecté' : 'Non connecté';
+    pennylaneStatusBadge.className = `integration-status-badge ${connected ? 'connected' : 'disconnected'}`;
+  }
+
+  if (pennylaneEnvironment) {
+    pennylaneEnvironment.textContent = `Environnement : ${result.environment || 'sandbox'}`;
+  }
+
+  if (pennylaneMessage) {
+    pennylaneMessage.textContent = result.message || 'Test terminé.';
+  }
+
+  if (pennylaneResponse) {
+    const response = result.pennylane_response;
+    pennylaneResponse.textContent = response ? JSON.stringify(response, null, 2) : '';
+    pennylaneResponse.classList.toggle('hidden', !response);
+  }
+}
+
+async function testPennylaneConnection() {
+  if (!canManageSettings()) {
+    showFeedback("Vous n'avez pas le droit de tester les intégrations.", 'error');
+    return;
+  }
+
+  if (testPennylaneBtn) {
+    testPennylaneBtn.disabled = true;
+    testPennylaneBtn.textContent = 'Test en cours...';
+  }
+
+  try {
+    const response = await apiFetch(`${API_BASE_URL}/api/integrations/pennylane/test`);
+    if (!response) return;
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || data.message || 'Erreur test Pennylane');
+    renderPennylaneResult(data);
+    showFeedback(data.connected ? 'Connexion Pennylane réussie.' : data.message, data.connected ? 'success' : 'error');
+  } catch (err) {
+    console.error('Erreur test Pennylane :', err);
+    renderPennylaneResult({
+      connected: false,
+      environment: 'sandbox',
+      message: err.message || 'Erreur test Pennylane',
+      pennylane_response: null,
+    });
+    showFeedback(err.message || 'Erreur test Pennylane', 'error');
+  } finally {
+    if (testPennylaneBtn) {
+      testPennylaneBtn.disabled = !canManageSettings();
+      testPennylaneBtn.textContent = 'Tester la connexion';
+    }
+  }
 }
 
 async function loadSettings() {
@@ -304,6 +369,7 @@ function bindEvents() {
   uploadLogoBtn?.addEventListener('click', () => logoFileInput?.click());
   logoFileInput?.addEventListener('change', () => uploadLogo(logoFileInput.files?.[0]));
   deleteLogoBtn?.addEventListener('click', deleteLogo);
+  testPennylaneBtn?.addEventListener('click', testPennylaneConnection);
 }
 
 bindEvents();
