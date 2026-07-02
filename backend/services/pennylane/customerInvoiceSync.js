@@ -166,6 +166,51 @@ function getInvoiceId(responseBody) {
   return invoice?.id ? String(invoice.id) : null;
 }
 
+function firstPresent(object, keys) {
+  if (!object || typeof object !== 'object') return null;
+
+  for (const key of keys) {
+    if (object[key] !== undefined && object[key] !== null && object[key] !== '') {
+      return object[key];
+    }
+  }
+
+  return null;
+}
+
+function toNullableMoney(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount.toFixed(2) : null;
+}
+
+function normalizePaymentStatus(invoice) {
+  const rawPaymentStatus = firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']);
+  if (rawPaymentStatus) return String(rawPaymentStatus);
+
+  const remainingAmount = Number(firstPresent(invoice, ['remaining_amount', 'amount_due', 'due_amount']));
+  const paidAmount = Number(firstPresent(invoice, ['paid_amount', 'amount_paid', 'total_paid']));
+
+  if (Number.isFinite(remainingAmount) && remainingAmount <= 0) return 'paid';
+  if (Number.isFinite(paidAmount) && paidAmount > 0) return 'partially_paid';
+
+  return 'unpaid';
+}
+
+function extractPennylaneInvoiceAccountingStatus(responseBody) {
+  const invoice = extractInvoice(responseBody);
+  if (!invoice) return null;
+
+  return {
+    invoiceNumber: firstPresent(invoice, ['invoice_number', 'number']),
+    paymentStatus: normalizePaymentStatus(invoice),
+    paidAmount: toNullableMoney(firstPresent(invoice, ['paid_amount', 'amount_paid', 'total_paid'])),
+    remainingAmount: toNullableMoney(firstPresent(invoice, ['remaining_amount', 'amount_due', 'due_amount'])),
+    paidAt: firstPresent(invoice, ['paid_at', 'paid_on', 'payment_date']),
+    status: firstPresent(invoice, ['status', 'state']),
+  };
+}
+
 async function fetchAltaInvoice(db, storeId, invoiceId) {
   const result = await db.query(
     `
@@ -211,28 +256,27 @@ async function findPennylaneInvoiceByExternalReference(pennylaneClient, external
   return invoice || null;
 }
 
-async function updatePennylaneInvoice(pennylaneClient, pennylaneInvoiceId, payload, mode) {
-  const response = await pennylaneClient.put(`/customer_invoices/${pennylaneInvoiceId}`, payload);
+async function refreshPennylaneInvoiceStatus(pennylaneClient, pennylaneInvoiceId) {
+  const response = await pennylaneClient.get(`/customer_invoices/${pennylaneInvoiceId}`);
 
   return {
     response,
-    payload,
+    payload: null,
     pennylaneInvoiceId: getInvoiceId(response.body) || String(pennylaneInvoiceId),
-    mode,
+    mode: 'refresh_status',
   };
 }
 
 async function upsertPennylaneInvoice({ pennylaneClient, invoice, lines }) {
-  const payload = buildPennylaneCustomerInvoicePayload(invoice, lines);
-
   if (invoice.pennylane_invoice_id) {
-    return updatePennylaneInvoice(pennylaneClient, invoice.pennylane_invoice_id, payload, 'update');
+    return refreshPennylaneInvoiceStatus(pennylaneClient, invoice.pennylane_invoice_id);
   }
 
+  const payload = buildPennylaneCustomerInvoicePayload(invoice, lines);
   const existingInvoice = await findPennylaneInvoiceByExternalReference(pennylaneClient, payload.external_reference);
 
   if (existingInvoice?.id) {
-    return updatePennylaneInvoice(pennylaneClient, existingInvoice.id, payload, 'link_then_update');
+    return refreshPennylaneInvoiceStatus(pennylaneClient, existingInvoice.id);
   }
 
   try {
@@ -254,7 +298,7 @@ async function upsertPennylaneInvoice({ pennylaneClient, invoice, lines }) {
       throw err;
     }
 
-    return updatePennylaneInvoice(pennylaneClient, conflictedInvoice.id, payload, 'conflict_then_update');
+    return refreshPennylaneInvoiceStatus(pennylaneClient, conflictedInvoice.id);
   }
 }
 
@@ -354,11 +398,20 @@ async function deferQueueItem(db, queueItem, { message, delayMinutes }) {
 }
 
 async function markQueueSuccess(db, queueItem, result) {
+  const accountingStatus = extractPennylaneInvoiceAccountingStatus(result.response.body);
+
   await db.query(
     `
     UPDATE sales_documents
     SET
       pennylane_invoice_id = $1,
+      pennylane_invoice_number = COALESCE($4, pennylane_invoice_number),
+      pennylane_payment_status = COALESCE($5, pennylane_payment_status),
+      pennylane_paid_amount = $6,
+      pennylane_remaining_amount = $7,
+      pennylane_paid_at = $8,
+      pennylane_status = COALESCE($9, pennylane_status),
+      pennylane_last_status_synced_at = now(),
       pennylane_sync_status = 'success',
       pennylane_sync_last_error = NULL,
       pennylane_synced_at = now(),
@@ -367,7 +420,17 @@ async function markQueueSuccess(db, queueItem, result) {
       AND store_id = $3
       AND document_type = 'INVOICE'
     `,
-    [result.pennylaneInvoiceId, queueItem.entity_id, queueItem.store_id]
+    [
+      result.pennylaneInvoiceId,
+      queueItem.entity_id,
+      queueItem.store_id,
+      accountingStatus?.invoiceNumber || null,
+      accountingStatus?.paymentStatus || null,
+      accountingStatus?.paidAmount || null,
+      accountingStatus?.remainingAmount || null,
+      accountingStatus?.paidAt || null,
+      accountingStatus?.status || null,
+    ]
   );
 
   await db.query(
@@ -396,7 +459,9 @@ async function markQueueSuccess(db, queueItem, result) {
     queueId: queueItem.id,
     storeId: queueItem.store_id,
     status: 'success',
-    message: 'Facture client synchronisee avec Pennylane.',
+    message: result.mode === 'refresh_status'
+      ? 'Statut facture client Pennylane rafraichi.'
+      : 'Facture client creee dans Pennylane.',
     requestPayload: result.payload,
     responsePayload: redactSensitivePayload(result.response.body),
   });
@@ -489,12 +554,6 @@ async function processQueueItem(db, pennylaneClient, queueItem) {
       return 'deferred';
     }
 
-    const lines = await fetchAltaInvoiceLines(db, queueItem.store_id, queueItem.entity_id);
-
-    if (!lines.length) {
-      throw new Error('Facture client ALTA sans ligne : synchronisation Pennylane impossible');
-    }
-
     await db.query(
       `
       UPDATE sales_documents
@@ -508,6 +567,16 @@ async function processQueueItem(db, pennylaneClient, queueItem) {
       `,
       [invoice.id, invoice.store_id]
     );
+
+    let lines = [];
+
+    if (!invoice.pennylane_invoice_id) {
+      lines = await fetchAltaInvoiceLines(db, queueItem.store_id, queueItem.entity_id);
+
+      if (!lines.length) {
+        throw new Error('Facture client ALTA sans ligne : synchronisation Pennylane impossible');
+      }
+    }
 
     const result = await upsertPennylaneInvoice({ pennylaneClient, invoice, lines });
 
@@ -582,4 +651,5 @@ module.exports = {
   CUSTOMER_INVOICE_UPDATE_ACTION,
   buildPennylaneCustomerInvoicePayload,
   processPennylaneCustomerInvoiceSyncQueue,
+  extractPennylaneInvoiceAccountingStatus,
 };
