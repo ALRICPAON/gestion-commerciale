@@ -102,25 +102,22 @@ EXECUTE FUNCTION enqueue_pennylane_client_sync();
 DROP TRIGGER IF EXISTS clients_pennylane_sync_update_trg ON clients;
 CREATE TRIGGER clients_pennylane_sync_update_trg
 BEFORE UPDATE OF
-  code, name, legal_name, client_type, status, tariff_level,
-  billed_client_id, store_identifier, contact_name, phone, mobile, email,
+  code, name, legal_name, status,
+  contact_name, phone, mobile, email,
   address_line1, address_line2, postal_code, city, country,
-  vat_number, siret, payment_terms, delivery_terms, notes,
-  is_royale_maree_member
+  vat_number, siret, payment_terms, notes
 ON clients
 FOR EACH ROW
 WHEN (
-  ROW(OLD.code, OLD.name, OLD.legal_name, OLD.client_type, OLD.status, OLD.tariff_level,
-      OLD.billed_client_id, OLD.store_identifier, OLD.contact_name, OLD.phone, OLD.mobile, OLD.email,
+  ROW(OLD.code, OLD.name, OLD.legal_name, OLD.status,
+      OLD.contact_name, OLD.phone, OLD.mobile, OLD.email,
       OLD.address_line1, OLD.address_line2, OLD.postal_code, OLD.city, OLD.country,
-      OLD.vat_number, OLD.siret, OLD.payment_terms, OLD.delivery_terms, OLD.notes,
-      OLD.is_royale_maree_member)
+      OLD.vat_number, OLD.siret, OLD.payment_terms, OLD.notes)
   IS DISTINCT FROM
-  ROW(NEW.code, NEW.name, NEW.legal_name, NEW.client_type, NEW.status, NEW.tariff_level,
-      NEW.billed_client_id, NEW.store_identifier, NEW.contact_name, NEW.phone, NEW.mobile, NEW.email,
+  ROW(NEW.code, NEW.name, NEW.legal_name, NEW.status,
+      NEW.contact_name, NEW.phone, NEW.mobile, NEW.email,
       NEW.address_line1, NEW.address_line2, NEW.postal_code, NEW.city, NEW.country,
-      NEW.vat_number, NEW.siret, NEW.payment_terms, NEW.delivery_terms, NEW.notes,
-      NEW.is_royale_maree_member)
+      NEW.vat_number, NEW.siret, NEW.payment_terms, NEW.notes)
 )
 EXECUTE FUNCTION enqueue_pennylane_client_sync();
 
