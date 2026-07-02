@@ -152,7 +152,13 @@ async function fetchAltaClient(db, storeId, clientId) {
 }
 
 async function findPennylaneCustomerByExternalReference(pennylaneClient, externalReference) {
-  const filter = encodeURIComponent(`external_reference:eq:${externalReference}`);
+  const filter = encodeURIComponent(JSON.stringify([
+    {
+      field: 'external_reference',
+      operator: 'eq',
+      value: externalReference,
+    },
+  ]));
   const response = await pennylaneClient.get(`/customers?limit=1&filter=${filter}`);
   const [customer] = extractPennylaneCustomerList(response.body);
   return customer || null;
