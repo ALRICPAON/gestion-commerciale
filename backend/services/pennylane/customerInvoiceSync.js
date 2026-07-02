@@ -166,6 +166,51 @@ function getInvoiceId(responseBody) {
   return invoice?.id ? String(invoice.id) : null;
 }
 
+function firstPresent(object, keys) {
+  if (!object || typeof object !== 'object') return null;
+
+  for (const key of keys) {
+    if (object[key] !== undefined && object[key] !== null && object[key] !== '') {
+      return object[key];
+    }
+  }
+
+  return null;
+}
+
+function toNullableMoney(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount.toFixed(2) : null;
+}
+
+function normalizePaymentStatus(invoice) {
+  const rawPaymentStatus = firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']);
+  if (rawPaymentStatus) return String(rawPaymentStatus);
+
+  const remainingAmount = Number(firstPresent(invoice, ['remaining_amount', 'amount_due', 'due_amount']));
+  const paidAmount = Number(firstPresent(invoice, ['paid_amount', 'amount_paid', 'total_paid']));
+
+  if (Number.isFinite(remainingAmount) && remainingAmount <= 0) return 'paid';
+  if (Number.isFinite(paidAmount) && paidAmount > 0) return 'partially_paid';
+
+  return 'unpaid';
+}
+
+function extractPennylaneInvoiceAccountingStatus(responseBody) {
+  const invoice = extractInvoice(responseBody);
+  if (!invoice) return null;
+
+  return {
+    invoiceNumber: firstPresent(invoice, ['invoice_number', 'number']),
+    paymentStatus: normalizePaymentStatus(invoice),
+    paidAmount: toNullableMoney(firstPresent(invoice, ['paid_amount', 'amount_paid', 'total_paid'])),
+    remainingAmount: toNullableMoney(firstPresent(invoice, ['remaining_amount', 'amount_due', 'due_amount'])),
+    paidAt: firstPresent(invoice, ['paid_at', 'paid_on', 'payment_date']),
+    status: firstPresent(invoice, ['status', 'state']),
+  };
+}
+
 async function fetchAltaInvoice(db, storeId, invoiceId) {
   const result = await db.query(
     `
@@ -354,11 +399,20 @@ async function deferQueueItem(db, queueItem, { message, delayMinutes }) {
 }
 
 async function markQueueSuccess(db, queueItem, result) {
+  const accountingStatus = extractPennylaneInvoiceAccountingStatus(result.response.body);
+
   await db.query(
     `
     UPDATE sales_documents
     SET
       pennylane_invoice_id = $1,
+      pennylane_invoice_number = COALESCE($4, pennylane_invoice_number),
+      pennylane_payment_status = COALESCE($5, pennylane_payment_status),
+      pennylane_paid_amount = $6,
+      pennylane_remaining_amount = $7,
+      pennylane_paid_at = $8,
+      pennylane_status = COALESCE($9, pennylane_status),
+      pennylane_last_status_synced_at = now(),
       pennylane_sync_status = 'success',
       pennylane_sync_last_error = NULL,
       pennylane_synced_at = now(),
@@ -367,7 +421,17 @@ async function markQueueSuccess(db, queueItem, result) {
       AND store_id = $3
       AND document_type = 'INVOICE'
     `,
-    [result.pennylaneInvoiceId, queueItem.entity_id, queueItem.store_id]
+    [
+      result.pennylaneInvoiceId,
+      queueItem.entity_id,
+      queueItem.store_id,
+      accountingStatus?.invoiceNumber || null,
+      accountingStatus?.paymentStatus || null,
+      accountingStatus?.paidAmount || null,
+      accountingStatus?.remainingAmount || null,
+      accountingStatus?.paidAt || null,
+      accountingStatus?.status || null,
+    ]
   );
 
   await db.query(
@@ -582,4 +646,5 @@ module.exports = {
   CUSTOMER_INVOICE_UPDATE_ACTION,
   buildPennylaneCustomerInvoicePayload,
   processPennylaneCustomerInvoiceSyncQueue,
+  extractPennylaneInvoiceAccountingStatus,
 };
