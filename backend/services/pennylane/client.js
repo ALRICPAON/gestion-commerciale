@@ -25,6 +25,19 @@ async function parseResponseBody(response) {
   return text ? { raw: text.slice(0, 1000) } : null;
 }
 
+function withJsonBody(options, body) {
+  if (body === undefined) return options;
+
+  return {
+    ...options,
+    body: JSON.stringify(body),
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  };
+}
+
 function createPennylaneClient(config = getPennylaneConfig()) {
   async function request(endpoint, options = {}) {
     if (!config.apiToken) {
@@ -83,6 +96,12 @@ function createPennylaneClient(config = getPennylaneConfig()) {
   return {
     get(endpoint) {
       return request(endpoint, { method: 'GET' });
+    },
+    post(endpoint, body) {
+      return request(endpoint, withJsonBody({ method: 'POST' }, body));
+    },
+    put(endpoint, body) {
+      return request(endpoint, withJsonBody({ method: 'PUT' }, body));
     },
   };
 }
