@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Factures clients - ALTA MARÉE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7" />
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7" />
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/clients.css?v=1" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Factures clients</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button type="button" id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button type="button" id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content clients-page">
+    <section class="clients-card">
+      <div class="page-actions">
+        <div>
+          <h2>Factures clients</h2>
+          <p>Suivi commercial ALTA et statut paiement Pennylane.</p>
+        </div>
+        <div class="page-actions-right">
+          <button type="button" id="refresh-btn" class="btn btn-secondary">Actualiser</button>
+        </div>
+      </div>
+      <div id="page-feedback" class="page-feedback hidden"></div>
+    </section>
+
+    <section class="clients-card">
+      <div class="clients-filters">
+        <div class="clients-field">
+          <label for="client-search">Client</label>
+          <input id="client-search" type="search" placeholder="Nom ou code client" />
+        </div>
+        <div class="clients-field">
+          <label for="from-date">Du</label>
+          <input id="from-date" type="date" />
+        </div>
+        <div class="clients-field">
+          <label for="to-date">Au</label>
+          <input id="to-date" type="date" />
+        </div>
+        <div class="clients-field">
+          <label for="payment-filter">Paiement</label>
+          <select id="payment-filter">
+            <option value="all">Tous</option>
+            <option value="paid">Payée</option>
+            <option value="partially_paid">Partiellement payée</option>
+            <option value="unpaid">Non payée</option>
+          </select>
+        </div>
+        <div class="clients-field">
+          <label for="sync-filter">Synchro Pennylane</label>
+          <select id="sync-filter">
+            <option value="all">Tous</option>
+            <option value="success">Synchronisée</option>
+            <option value="pending">En attente</option>
+            <option value="failed">Erreur</option>
+          </select>
+        </div>
+        <div class="clients-field">
+          <label for="overdue-filter">Retard</label>
+          <select id="overdue-filter">
+            <option value="all">Tous</option>
+            <option value="true">En retard</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <section class="clients-card">
+      <div class="table-wrap">
+        <table class="clients-table">
+          <thead>
+            <tr>
+              <th>Facture ALTA</th>
+              <th>Facture Pennylane</th>
+              <th>Client</th>
+              <th>Date</th>
+              <th>Echéance</th>
+              <th>Total TTC</th>
+              <th>Statut ALTA</th>
+              <th>Synchro</th>
+              <th>Paiement</th>
+              <th>Payé</th>
+              <th>Reste dû</th>
+              <th>Retard</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="invoices-tbody">
+            <tr><td colspan="13">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/customer-invoices.js?v=1"></script>
+</body>
+</html>
