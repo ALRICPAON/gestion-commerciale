@@ -139,11 +139,8 @@ function buildPennylaneCustomerInvoicePayload(invoice, lines) {
     customer_id: Number(invoice.pennylane_customer_id),
     date,
     deadline,
-    invoice_number: invoice.reference_number,
-    currency: invoice.currency || 'EUR',
     invoice_lines: lines.map((line) => buildInvoiceLinePayload(line, invoice)),
     external_reference: buildExternalReference(invoice),
-    draft: false,
   });
 }
 
