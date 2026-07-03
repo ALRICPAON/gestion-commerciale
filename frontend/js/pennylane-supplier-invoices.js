@@ -22,6 +22,7 @@ const detailContent = document.getElementById("detail-content");
 const invoiceSummary = document.getElementById("invoice-summary");
 const linesTableBody = document.getElementById("lines-table-body");
 const pdfLink = document.getElementById("pdf-link");
+const analyzeBtn = document.getElementById("analyze-btn");
 
 let invoices = [];
 let selectedInvoiceId = null;
@@ -77,18 +78,51 @@ function formatCurrency(value) {
   });
 }
 
+function formatNumber(value, decimals = 3) {
+  if (value === undefined || value === null || value === "") return "-";
+  return Number(value || 0).toLocaleString("fr-FR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function formatSignedCurrency(value) {
+  if (value === undefined || value === null || value === "") return "-";
+  const amount = Number(value || 0);
+  const sign = amount > 0 ? "+" : "";
+  return `${sign}${formatCurrency(amount)}`;
+}
+
 function altaStatusLabel(status) {
   const map = {
     nouvelle: "Nouvelle",
     a_rapprocher: "À rapprocher",
+    analyse_automatique: "Analyse automatique",
     en_controle: "En contrôle",
     conforme: "Conforme",
     ecart_prix: "Écart prix",
     ecart_quantite: "Écart quantité",
+    ecart_tva: "Écart TVA",
+    bl_manquant: "BL manquant",
+    article_inconnu: "Article inconnu",
+    controle_manuel: "Contrôle manuel",
     litige: "Litige",
     refusee: "Refusée",
     validee_a_payer: "Validée à payer",
     payee: "Payée",
+  };
+  return map[status] || status || "-";
+}
+
+function matchStatusLabel(status) {
+  const map = {
+    conforme: "Conforme",
+    ecart_prix: "Écart prix",
+    ecart_quantite: "Écart quantité",
+    ecart_tva: "Écart TVA",
+    bl_manquant: "BL manquant",
+    article_inconnu: "Article inconnu",
+    unmatched: "Non rapprochée",
   };
   return map[status] || status || "-";
 }
@@ -116,7 +150,7 @@ async function loadInvoices() {
 
 function renderInvoices() {
   if (!invoices.length) {
-    invoicesTableBody.innerHTML = `<tr><td colspan="11">Aucune facture fournisseur Pennylane synchronisée</td></tr>`;
+    invoicesTableBody.innerHTML = `<tr><td colspan="14">Aucune facture fournisseur Pennylane synchronisée</td></tr>`;
     return;
   }
 
@@ -131,6 +165,9 @@ function renderInvoices() {
       <td>${formatCurrency(invoice.amount_inc_vat || invoice.currency_amount_inc_vat)}</td>
       <td>${escapeHtml(pennylaneStatus(invoice))}</td>
       <td><span class="invoice-status status-${escapeHtml(invoice.alta_business_status)}">${altaStatusLabel(invoice.alta_business_status)}</span></td>
+      <td>${formatNumber(invoice.auto_bl_count, 0)}</td>
+      <td>${formatNumber(invoice.auto_matched_lines_count, 0)} / ${formatNumber(invoice.line_count, 0)}</td>
+      <td><span class="invoice-status ${Number(invoice.auto_anomaly_count || 0) > 0 ? "status-ecart_prix" : "status-conforme"}">${formatNumber(invoice.auto_anomaly_count, 0)}</span></td>
       <td>${invoice.public_file_url ? `<a href="${escapeHtml(invoice.public_file_url)}" target="_blank" rel="noopener">PDF</a>` : "-"}</td>
       <td><button class="btn btn-secondary btn-sm" data-action="open" data-id="${invoice.id}">Voir / contrôler</button></td>
     </tr>
@@ -148,6 +185,8 @@ async function openInvoice(invoiceId) {
 function renderDetail(data) {
   const invoice = data.invoice;
   const lines = data.lines || [];
+  const matchResults = data.match_results || [];
+  const resultByLineId = new Map(matchResults.map((result) => [result.supplier_invoice_line_id, result]));
 
   detailEmpty.classList.add("hidden");
   detailContent.classList.remove("hidden");
@@ -159,6 +198,10 @@ function renderDetail(data) {
     <div><span>Échéance</span><strong>${formatDate(invoice.due_date)}</strong></div>
     <div><span>Statut Pennylane</span><strong>${escapeHtml(pennylaneStatus(invoice))}</strong></div>
     <div><span>Statut métier ALTA</span><strong>${altaStatusLabel(invoice.alta_business_status)}</strong></div>
+    <div><span>BL trouvés</span><strong>${formatNumber(invoice.auto_bl_count, 0)}</strong></div>
+    <div><span>Lignes rapprochées</span><strong>${formatNumber(invoice.auto_matched_lines_count, 0)} / ${formatNumber(lines.length, 0)}</strong></div>
+    <div><span>Anomalies</span><strong>${formatNumber(invoice.auto_anomaly_count, 0)}</strong></div>
+    <div><span>Conformité</span><strong>${formatNumber(invoice.auto_conformity_score, 2)} %</strong></div>
     <div><span>Total HT</span><strong>${formatCurrency(invoice.amount_ex_vat || invoice.currency_amount_ex_vat)}</strong></div>
     <div><span>Total TTC</span><strong>${formatCurrency(invoice.amount_inc_vat || invoice.currency_amount_inc_vat)}</strong></div>
   `;
@@ -172,18 +215,41 @@ function renderDetail(data) {
     return;
   }
 
-  linesTableBody.innerHTML = lines.map((line) => `
+  linesTableBody.innerHTML = lines.map((line) => {
+    const result = resultByLineId.get(line.id) || {};
+    const article = result.article_label || result.article_name || line.label || "-";
+    return `
     <tr>
       <td>${escapeHtml(line.line_position || "-")}</td>
-      <td>${escapeHtml(line.label || "-")}</td>
-      <td>${Number(line.quantity || 0).toLocaleString("fr-FR")}</td>
-      <td>${escapeHtml(line.unit || "-")}</td>
-      <td>${formatCurrency(line.raw_currency_unit_price)}</td>
-      <td>${formatCurrency(line.amount || line.currency_amount)}</td>
-      <td>${formatCurrency(line.tax || line.currency_tax)}</td>
-      <td>${escapeHtml(line.vat_rate || "-")}</td>
+      <td>
+        <strong>${escapeHtml(article)}</strong>
+        <small>${escapeHtml(result.purchase_bl_number ? `BL ${result.purchase_bl_number}` : line.label || "")}</small>
+      </td>
+      <td>${formatNumber(result.invoice_quantity ?? line.quantity)}</td>
+      <td>${formatNumber(result.received_quantity)}</td>
+      <td>${formatCurrency(result.purchase_unit_price_ex_vat)}</td>
+      <td>${formatCurrency(result.invoice_unit_price_ex_vat ?? line.raw_currency_unit_price)}</td>
+      <td>${formatSignedCurrency(result.amount_difference ?? result.unit_price_difference)}</td>
+      <td><span class="invoice-status status-${escapeHtml(result.match_status || invoice.alta_business_status)}">${matchStatusLabel(result.match_status)}</span></td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
+}
+
+async function analyzeSelectedInvoice() {
+  if (!selectedInvoiceId) return;
+  clearFeedback(detailFeedback);
+  analyzeBtn.disabled = true;
+  analyzeBtn.textContent = "Analyse...";
+  try {
+    const result = await apiFetch(`/api/integrations/pennylane/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}/analyze`, { method: "POST" });
+    showFeedback(detailFeedback, `Analyse terminée : ${result.conform_lines || 0} conforme(s), ${result.anomaly_count || 0} anomalie(s).`);
+    await loadInvoices();
+    await openInvoice(selectedInvoiceId);
+  } finally {
+    analyzeBtn.disabled = false;
+    analyzeBtn.textContent = "Relancer analyse";
+  }
 }
 
 async function syncNow() {
@@ -192,9 +258,11 @@ async function syncNow() {
   syncBtn.textContent = "Synchronisation...";
   try {
     const result = await apiFetch("/api/integrations/pennylane/supplier-invoices/sync", { method: "POST" });
+    const sync = result.sync || result;
+    const matching = result.matching || {};
     showFeedback(
       listFeedback,
-      `Synchronisation lancée : ${result.succeeded || 0} facture(s), ${result.deleted || 0} suppression(s), ${result.failed || 0} erreur(s).`
+      `Synchronisation lancée : ${sync.succeeded || 0} facture(s), ${sync.deleted || 0} suppression(s), ${sync.failed || 0} erreur(s). Analyse : ${matching.succeeded || 0} facture(s), ${matching.failed || 0} erreur(s).`
     );
     await loadInvoices();
   } finally {
@@ -226,6 +294,7 @@ backHomeBtn?.addEventListener("click", () => { window.location.href = "./home.ht
 logoutBtn?.addEventListener("click", logout);
 refreshBtn?.addEventListener("click", () => loadInvoices().catch((error) => showFeedback(listFeedback, error.message, true)));
 syncBtn?.addEventListener("click", () => syncNow().catch((error) => showFeedback(listFeedback, error.message, true)));
+analyzeBtn?.addEventListener("click", () => analyzeSelectedInvoice().catch((error) => showFeedback(detailFeedback, error.message, true)));
 statusFilter?.addEventListener("change", () => loadInvoices().catch((error) => showFeedback(listFeedback, error.message, true)));
 searchInput?.addEventListener("input", () => {
   window.clearTimeout(searchInput._timer);
