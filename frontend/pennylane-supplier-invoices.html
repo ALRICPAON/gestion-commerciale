@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Factures fournisseurs Pennylane - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/pennylane-supplier-invoices.css" />
+</head>
+<body class="app-page pennylane-supplier-invoices-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Factures fournisseurs Pennylane</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card pennylane-supplier-invoices-toolbar">
+      <div>
+        <h2>Factures fournisseurs Pennylane</h2>
+        <p>Contrôle des factures reçues depuis Pennylane avant rapprochement métier ALTA.</p>
+      </div>
+      <div class="page-actions-right">
+        <button id="sync-btn" class="btn btn-secondary">Synchroniser Pennylane</button>
+        <button id="refresh-btn" class="btn btn-primary">Rafraîchir</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div id="list-feedback" class="page-feedback hidden"></div>
+      <div class="filters-row">
+        <div class="form-group">
+          <label for="status-filter">Statut ALTA</label>
+          <select id="status-filter">
+            <option value="all">Tous</option>
+            <option value="nouvelle">Nouvelle</option>
+            <option value="a_rapprocher">À rapprocher</option>
+            <option value="en_controle">En contrôle</option>
+            <option value="conforme">Conforme</option>
+            <option value="ecart_prix">Écart prix</option>
+            <option value="ecart_quantite">Écart quantité</option>
+            <option value="litige">Litige</option>
+            <option value="refusee">Refusée</option>
+            <option value="validee_a_payer">Validée à payer</option>
+            <option value="payee">Payée</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="search-input">Recherche</label>
+          <input id="search-input" type="text" placeholder="Fournisseur, numéro facture..." />
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Fournisseur</th>
+              <th>N° facture</th>
+              <th>Date</th>
+              <th>Échéance</th>
+              <th>HT</th>
+              <th>TVA</th>
+              <th>TTC</th>
+              <th>Statut Pennylane</th>
+              <th>Statut ALTA</th>
+              <th>PDF</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="invoices-table-body">
+            <tr><td colspan="11">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="detail-panel">
+      <h3>Contrôle</h3>
+      <div id="detail-feedback" class="page-feedback hidden"></div>
+      <div id="detail-empty" class="empty-state">Sélectionne une facture Pennylane pour voir son détail.</div>
+      <div id="detail-content" class="hidden">
+        <div class="detail-grid" id="invoice-summary"></div>
+        <h4>Lignes Pennylane</h4>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Libellé</th>
+                <th>Quantité</th>
+                <th>Unité</th>
+                <th>Prix unitaire</th>
+                <th>HT</th>
+                <th>TVA</th>
+                <th>Taux TVA</th>
+              </tr>
+            </thead>
+            <tbody id="lines-table-body"></tbody>
+          </table>
+        </div>
+        <div class="page-actions-right detail-actions">
+          <a id="pdf-link" class="btn btn-secondary" href="#" target="_blank" rel="noopener">Voir PDF Pennylane</a>
+          <a id="legacy-module-link" class="btn btn-primary" href="./supplier-invoices.html">Contrôler dans le module actuel</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/pennylane-supplier-invoices.js"></script>
+</body>
+</html>
