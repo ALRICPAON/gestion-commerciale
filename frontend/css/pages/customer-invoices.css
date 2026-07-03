@@ -1,0 +1,124 @@
+.customer-invoices-page {
+  max-width: 1680px;
+}
+
+.customer-invoices-page .clients-card {
+  padding: 18px;
+}
+
+.customer-invoices-page .clients-filters {
+  grid-template-columns: minmax(260px, 1.4fr) repeat(5, minmax(150px, 1fr));
+}
+
+.customer-invoices-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border-radius: 10px;
+}
+
+.customer-invoices-table {
+  min-width: 1480px;
+  table-layout: fixed;
+}
+
+.customer-invoices-table th,
+.customer-invoices-table td {
+  padding: 12px 10px;
+  white-space: nowrap;
+}
+
+.customer-invoices-table th:nth-child(1),
+.customer-invoices-table td:nth-child(1) {
+  width: 130px;
+}
+
+.customer-invoices-table th:nth-child(2),
+.customer-invoices-table td:nth-child(2) {
+  width: 150px;
+}
+
+.customer-invoices-table th:nth-child(3),
+.customer-invoices-table td:nth-child(3) {
+  width: 220px;
+}
+
+.customer-invoices-table th:nth-child(4),
+.customer-invoices-table td:nth-child(4),
+.customer-invoices-table th:nth-child(5),
+.customer-invoices-table td:nth-child(5) {
+  width: 105px;
+}
+
+.customer-invoices-table th:nth-child(6),
+.customer-invoices-table td:nth-child(6),
+.customer-invoices-table th:nth-child(10),
+.customer-invoices-table td:nth-child(10),
+.customer-invoices-table th:nth-child(11),
+.customer-invoices-table td:nth-child(11) {
+  width: 120px;
+  text-align: right;
+}
+
+.customer-invoices-table th:nth-child(7),
+.customer-invoices-table td:nth-child(7),
+.customer-invoices-table th:nth-child(8),
+.customer-invoices-table td:nth-child(8),
+.customer-invoices-table th:nth-child(9),
+.customer-invoices-table td:nth-child(9) {
+  width: 135px;
+}
+
+.customer-invoices-table th:nth-child(12),
+.customer-invoices-table td:nth-child(12) {
+  width: 80px;
+  text-align: center;
+}
+
+.customer-invoices-table th:nth-child(13),
+.customer-invoices-table td:nth-child(13) {
+  width: 245px;
+}
+
+.customer-invoices-table .client-cell,
+.customer-invoices-table .invoice-ref {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.customer-invoices-table .money-cell {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.customer-invoices-table .actions-cell {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-start;
+}
+
+.customer-invoices-table .actions-cell .btn {
+  min-height: 34px;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+
+@media (max-width: 1200px) {
+  .customer-invoices-page .clients-filters {
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .customer-invoices-page {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+
+  .customer-invoices-page .clients-filters {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-invoices-table {
+    min-width: 1320px;
+  }
+}
