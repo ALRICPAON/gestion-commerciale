@@ -99,9 +99,16 @@ const allowedCorsOrigins = new Set([
 
 const corsOptions = {
   origin(origin, callback) {
-    if (!origin || allowedCorsOrigins.has(origin)) {
+    const normalizedOrigin = normalizeCorsOrigin(origin);
+    if (!origin || allowedCorsOrigins.has(normalizedOrigin)) {
       return callback(null, true);
     }
+
+    console.warn('Origine CORS refusee', {
+      origin,
+      normalizedOrigin,
+      allowedOrigins: Array.from(allowedCorsOrigins),
+    });
 
     return callback(new Error('Origine CORS non autorisee'));
   },
