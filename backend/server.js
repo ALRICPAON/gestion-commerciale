@@ -57,6 +57,7 @@ const agentActionsRouter = require('./routes/agentActions');
 const mcpServerRoutes = require('./routes/mcpServer');
 const intelligenceCenterRoutes = require('./routes/intelligenceCenter');
 const pennylaneIntegrationRoutes = require('./routes/pennylaneIntegration');
+const pennylaneSupplierInvoicesRoutes = require('./routes/pennylaneSupplierInvoices');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -200,6 +201,7 @@ app.use('/api', aiAgentRoutes);
 app.use('/api/agent', agentActionsRouter);
 app.use('/api', intelligenceCenterRoutes);
 app.use('/api', pennylaneIntegrationRoutes);
+app.use('/api', pennylaneSupplierInvoicesRoutes);
 app.get('/', (req, res) => {
   res.send('API ALTA MARÉE fonctionne');
 });
