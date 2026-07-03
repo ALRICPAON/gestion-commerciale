@@ -4,6 +4,7 @@ const db = require('../db');
 const {
   processPennylaneClientSyncQueue,
   processPennylaneCustomerInvoiceSyncQueue,
+  processPennylaneSupplierInvoiceImportSync,
   processPennylaneSupplierSyncQueue,
 } = require('../services/pennylane');
 
@@ -22,6 +23,10 @@ const syncTasks = [
   {
     name: 'factures_clients',
     process: processPennylaneCustomerInvoiceSyncQueue,
+  },
+  {
+    name: 'factures_fournisseurs_pennylane',
+    process: processPennylaneSupplierInvoiceImportSync,
   },
 ];
 
@@ -45,7 +50,7 @@ function wait(ms) {
 }
 
 function hasActivity(result) {
-  return Boolean(result?.processed || result?.succeeded || result?.failed || result?.deferred);
+  return Boolean(result?.processed || result?.succeeded || result?.failed || result?.deferred || result?.deleted);
 }
 
 function shouldLogSkipped(result) {
