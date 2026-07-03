@@ -1,0 +1,93 @@
+.pennylane-supplier-invoices-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pennylane-supplier-invoices-page .detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.pennylane-supplier-invoices-page .detail-grid div {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+  background: #fff;
+}
+
+.pennylane-supplier-invoices-page .detail-grid span {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.pennylane-supplier-invoices-page .invoice-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #eef2ff;
+  color: #3730a3;
+  white-space: nowrap;
+}
+
+.pennylane-supplier-invoices-page .status-ecart_prix,
+.pennylane-supplier-invoices-page .status-ecart_quantite,
+.pennylane-supplier-invoices-page .status-litige,
+.pennylane-supplier-invoices-page .status-refusee {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.pennylane-supplier-invoices-page .status-conforme,
+.pennylane-supplier-invoices-page .status-validee_a_payer,
+.pennylane-supplier-invoices-page .status-payee {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.pennylane-supplier-invoices-page .status-a_rapprocher,
+.pennylane-supplier-invoices-page .status-en_controle {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.pennylane-supplier-invoices-page tr.is-selected {
+  background: #eff6ff;
+}
+
+.pennylane-supplier-invoices-page .detail-actions {
+  margin-top: 16px;
+}
+
+.pennylane-supplier-invoices-page .empty-state {
+  padding: 18px;
+  color: #6b7280;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.pennylane-supplier-invoices-page a.disabled,
+.pennylane-supplier-invoices-page .btn.disabled {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
+@media (max-width: 900px) {
+  .pennylane-supplier-invoices-toolbar,
+  .pennylane-supplier-invoices-page .page-actions-right {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pennylane-supplier-invoices-page .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
