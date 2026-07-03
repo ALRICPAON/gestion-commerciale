@@ -45,10 +45,15 @@ async function enqueuePennylaneSync(db, {
     `
     UPDATE pennylane_sync_queue
     SET
+      status = 'pending',
+      attempts = 0,
+      locked_at = NULL,
+      locked_by = NULL,
+      processed_at = NULL,
+      last_error = NULL,
       payload = $5::jsonb,
       priority = LEAST(priority, $6),
       scheduled_at = now(),
-      last_error = NULL,
       updated_at = now()
     WHERE id = (
       SELECT id
@@ -57,7 +62,6 @@ async function enqueuePennylaneSync(db, {
         AND entity_type = $2
         AND entity_id = $3
         AND action = $4
-        AND status = 'pending'
       ORDER BY created_at DESC
       LIMIT 1
     )
@@ -72,7 +76,7 @@ async function enqueuePennylaneSync(db, {
       queueId,
       storeId,
       status: 'pending',
-      message: 'Demande de synchronisation Pennylane mise a jour dans la queue.',
+      message: 'Demande de synchronisation Pennylane relancee dans la queue.',
       requestPayload: { entity_type: entityType, entity_id: entityId, action, payload },
       createdBy,
     });
