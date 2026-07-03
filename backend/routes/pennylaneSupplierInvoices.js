@@ -4,16 +4,25 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { processPennylaneSupplierInvoiceImportSync } = require('../services/pennylane');
+const {
+  analyzePennylaneSupplierInvoice,
+  processPendingPennylaneSupplierInvoiceMatching,
+} = require('../services/supplierInvoiceMatchingEngine');
 
 const router = express.Router();
 
 const ALTA_STATUSES = new Set([
   'nouvelle',
   'a_rapprocher',
+  'analyse_automatique',
   'en_controle',
   'conforme',
   'ecart_prix',
   'ecart_quantite',
+  'ecart_tva',
+  'bl_manquant',
+  'article_inconnu',
+  'controle_manuel',
   'litige',
   'refusee',
   'validee_a_payer',
@@ -84,6 +93,13 @@ router.get('/integrations/pennylane/supplier-invoices', authenticateToken, attac
         psi.pennylane_filename,
         psi.alta_business_status,
         psi.match_status,
+        psi.auto_match_status,
+        psi.auto_match_summary,
+        psi.auto_bl_count,
+        psi.auto_matched_lines_count,
+        psi.auto_anomaly_count,
+        psi.auto_conformity_score,
+        psi.auto_matched_at,
         psi.sync_status,
         psi.last_synced_at,
         COUNT(psil.id)::int AS line_count
@@ -157,14 +173,54 @@ router.get('/integrations/pennylane/supplier-invoices/:id', authenticateToken, a
       [req.params.id, req.user.store_id]
     );
 
+    const matchResults = await req.dbPool.query(
+      `
+      SELECT
+        mr.*,
+        a.plu article_plu,
+        a.designation article_name
+      FROM pennylane_supplier_invoice_match_results mr
+      LEFT JOIN articles a
+        ON a.id = mr.article_id
+       AND a.store_id = mr.store_id
+      WHERE mr.supplier_invoice_id = $1
+        AND mr.store_id = $2
+      ORDER BY mr.created_at ASC
+      `,
+      [req.params.id, req.user.store_id]
+    );
+
     return res.json({
       invoice: invoice.rows[0],
       lines: lines.rows,
       links: links.rows,
+      match_results: matchResults.rows,
     });
   } catch (err) {
     console.error('Erreur GET /api/integrations/pennylane/supplier-invoices/:id :', err);
     return res.status(500).json({ error: 'Erreur detail facture fournisseur Pennylane' });
+  }
+});
+
+router.post('/integrations/pennylane/supplier-invoices/:id/analyze', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant facture fournisseur Pennylane invalide' });
+    }
+
+    const result = await analyzePennylaneSupplierInvoice(req.dbPool, {
+      invoiceId: req.params.id,
+      storeId: req.user.store_id,
+    });
+
+    if (result.reason === 'NOT_FOUND') {
+      return res.status(404).json({ error: 'Facture fournisseur Pennylane introuvable' });
+    }
+
+    return res.json(result);
+  } catch (err) {
+    console.error('Erreur POST /api/integrations/pennylane/supplier-invoices/:id/analyze :', err);
+    return res.status(500).json({ error: 'Erreur analyse automatique facture fournisseur Pennylane' });
   }
 });
 
@@ -174,10 +230,14 @@ router.post('/integrations/pennylane/supplier-invoices/sync', authenticateToken,
       storeId: req.user.store_id,
       workerId: `manual-pennylane-supplier-invoice-sync-${req.user.id}`,
     });
+    const matching = await processPendingPennylaneSupplierInvoiceMatching(req.dbPool, {
+      storeId: req.user.store_id,
+    });
 
     return res.status(202).json({
       ok: true,
-      ...result,
+      sync: result,
+      matching,
     });
   } catch (err) {
     console.error('Erreur POST /api/integrations/pennylane/supplier-invoices/sync :', err);
