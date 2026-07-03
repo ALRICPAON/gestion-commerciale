@@ -3,6 +3,7 @@ const { getPennylaneConfig } = require('./config');
 const { buildPennylaneCompanyCustomerPayload, processPennylaneClientSyncQueue } = require('./clientSync');
 const { buildPennylaneCustomerInvoicePayload, processPennylaneCustomerInvoiceSyncQueue } = require('./customerInvoiceSync');
 const { buildPennylaneSupplierPayload, processPennylaneSupplierSyncQueue } = require('./supplierSync');
+const { processPennylaneSupplierInvoiceImportSync } = require('./supplierInvoiceImportSync');
 const { testPennylaneConnection } = require('./testConnection');
 
 module.exports = {
@@ -14,6 +15,7 @@ module.exports = {
   getPennylaneConfig,
   processPennylaneClientSyncQueue,
   processPennylaneCustomerInvoiceSyncQueue,
+  processPennylaneSupplierInvoiceImportSync,
   processPennylaneSupplierSyncQueue,
   testPennylaneConnection,
 };
