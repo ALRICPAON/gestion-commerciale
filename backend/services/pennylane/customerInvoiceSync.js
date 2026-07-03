@@ -102,7 +102,7 @@ function normalizeVatRate(value, invoice) {
   const rate = Number(value ?? invoice.vat_rate_snapshot ?? 0);
   if (!Number.isFinite(rate) || rate <= 0) return 'exempt';
 
-  const code = Math.round(rate * 10).toString().padStart(3, '0');
+  const code = Math.round(rate * 10).toString();
   return `FR_${code}`;
 }
 
@@ -140,7 +140,6 @@ function buildPennylaneCustomerInvoicePayload(invoice, lines) {
     customer_id: Number(invoice.pennylane_customer_id),
     date,
     deadline,
-    draft: false,
     invoice_lines: lines.map((line) => buildStandardInvoiceLinePayload(line, invoice)),
     external_reference: buildExternalReference(invoice),
   });
