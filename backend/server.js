@@ -75,15 +75,27 @@ if (!process.env.JWT_SECRET) {
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
-const allowedCorsOrigins = new Set(
-  (
-    process.env.CORS_ALLOWED_ORIGINS ||
-    'http://localhost,http://localhost:3002,http://localhost:8080,http://127.0.0.1:3002,http://127.0.0.1:8080,https://altamaree.fr,https://www.altamaree.fr,https://api.altamaree.fr'
-  )
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean)
-);
+const defaultCorsOrigins = [
+  'http://localhost',
+  'http://localhost:3002',
+  'http://localhost:8080',
+  'http://127.0.0.1:3002',
+  'http://127.0.0.1:8080',
+  'https://altamaree.fr',
+  'https://www.altamaree.fr',
+  'https://api.altamaree.fr',
+];
+
+function normalizeCorsOrigin(origin) {
+  return String(origin || '').trim().replace(/\/+$/, '');
+}
+
+const allowedCorsOrigins = new Set([
+  ...defaultCorsOrigins,
+  ...(process.env.CORS_ALLOWED_ORIGINS || '').split(','),
+]
+  .map(normalizeCorsOrigin)
+  .filter(Boolean));
 
 const corsOptions = {
   origin(origin, callback) {
@@ -95,6 +107,7 @@ const corsOptions = {
   },
   allowedHeaders: ['Authorization', 'Content-Type'],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  preflightContinue: false,
   optionsSuccessStatus: 204,
 };
 
@@ -116,6 +129,9 @@ const loginRateLimiter = rateLimit({
   skip: (req) => req.method === 'OPTIONS',
   message: { error: 'Trop de tentatives de connexion, reessaie plus tard' },
 });
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 
 app.use(helmet({
   contentSecurityPolicy: {
@@ -139,7 +155,6 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
 
-app.use(cors(corsOptions));
 app.use('/uploads/store-logos', express.static(STORE_LOGOS_DIR, {
   fallthrough: false,
   index: false,
