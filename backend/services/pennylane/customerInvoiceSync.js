@@ -102,7 +102,7 @@ function normalizeVatRate(value, invoice) {
   const rate = Number(value ?? invoice.vat_rate_snapshot ?? 0);
   if (!Number.isFinite(rate) || rate <= 0) return 'exempt';
 
-  const code = Math.round(rate * 10).toString().padStart(3, '0');
+  const code = Math.round(rate * 10).toString();
   return `FR_${code}`;
 }
 
@@ -119,17 +119,17 @@ function lineQuantity(line) {
   return quantity || 1;
 }
 
-function buildInvoiceLinePayload(line, invoice) {
+function buildStandardInvoiceLinePayload(line, invoice) {
   const quantity = lineQuantity(line);
   const unitPrice = Number(line.unit_sale_price_ht ?? 0);
 
-  return compactObject({
+  return {
     label: line.article_label || `Ligne ${line.line_number || ''}`.trim(),
     quantity,
     unit: normalizeUnit(line.sale_unit),
     raw_currency_unit_price: toMoneyString(unitPrice),
     vat_rate: normalizeVatRate(line.vat_rate, invoice),
-  });
+  };
 }
 
 function buildPennylaneCustomerInvoicePayload(invoice, lines) {
@@ -140,7 +140,7 @@ function buildPennylaneCustomerInvoicePayload(invoice, lines) {
     customer_id: Number(invoice.pennylane_customer_id),
     date,
     deadline,
-    invoice_lines: lines.map((line) => buildInvoiceLinePayload(line, invoice)),
+    invoice_lines: lines.map((line) => buildStandardInvoiceLinePayload(line, invoice)),
     external_reference: buildExternalReference(invoice),
   });
 }
@@ -184,15 +184,50 @@ function toNullableMoney(value) {
   return Number.isFinite(amount) ? amount.toFixed(2) : null;
 }
 
+function toNumberOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+function sumPennylanePayments(payments) {
+  if (!Array.isArray(payments)) return null;
+
+  const total = payments.reduce((sum, payment) => {
+    const amount = toNumberOrNull(firstPresent(payment, [
+      'amount',
+      'currency_amount',
+      'amount_with_tax',
+      'amount_without_tax',
+    ]));
+    return amount === null ? sum : sum + amount;
+  }, 0);
+
+  return total > 0 ? total : null;
+}
+
 function normalizePaymentStatus(invoice) {
   const rawPaymentStatus = firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']);
   if (rawPaymentStatus) return String(rawPaymentStatus);
 
-  const remainingAmount = Number(firstPresent(invoice, ['remaining_amount', 'amount_due', 'due_amount']));
-  const paidAmount = Number(firstPresent(invoice, ['paid_amount', 'amount_paid', 'total_paid']));
+  if (invoice.paid === true) return 'paid';
 
-  if (Number.isFinite(remainingAmount) && remainingAmount <= 0) return 'paid';
-  if (Number.isFinite(paidAmount) && paidAmount > 0) return 'partially_paid';
+  const remainingAmount = toNumberOrNull(firstPresent(invoice, [
+    'remaining_amount_with_tax',
+    'remaining_amount',
+    'amount_due',
+    'due_amount',
+    'remaining_amount_without_tax',
+  ]));
+  const paidAmount = toNumberOrNull(firstPresent(invoice, [
+    'paid_amount_with_tax',
+    'paid_amount',
+    'amount_paid',
+    'total_paid',
+  ])) ?? sumPennylanePayments(invoice.payments);
+
+  if (remainingAmount !== null && remainingAmount <= 0) return 'paid';
+  if (paidAmount !== null && paidAmount > 0) return 'partially_paid';
 
   return 'unpaid';
 }
@@ -201,11 +236,37 @@ function extractPennylaneInvoiceAccountingStatus(responseBody) {
   const invoice = extractInvoice(responseBody);
   if (!invoice) return null;
 
+  const remainingAmount = toNullableMoney(firstPresent(invoice, [
+    'remaining_amount_with_tax',
+    'remaining_amount',
+    'amount_due',
+    'due_amount',
+    'remaining_amount_without_tax',
+  ]));
+  const explicitPaidAmount = toNullableMoney(firstPresent(invoice, [
+    'paid_amount_with_tax',
+    'paid_amount',
+    'amount_paid',
+    'total_paid',
+  ]));
+  const paymentsPaidAmount = toNullableMoney(sumPennylanePayments(invoice.payments));
+  const totalAmount = toNumberOrNull(firstPresent(invoice, [
+    'amount_with_tax',
+    'total_amount_with_tax',
+    'amount',
+    'currency_amount',
+    'total',
+  ]));
+  const remainingNumber = toNumberOrNull(remainingAmount);
+  const derivedPaidAmount = totalAmount !== null && remainingNumber !== null
+    ? toNullableMoney(Math.max(totalAmount - remainingNumber, 0))
+    : null;
+
   return {
     invoiceNumber: firstPresent(invoice, ['invoice_number', 'number']),
     paymentStatus: normalizePaymentStatus(invoice),
-    paidAmount: toNullableMoney(firstPresent(invoice, ['paid_amount', 'amount_paid', 'total_paid'])),
-    remainingAmount: toNullableMoney(firstPresent(invoice, ['remaining_amount', 'amount_due', 'due_amount'])),
+    paidAmount: explicitPaidAmount || paymentsPaidAmount || derivedPaidAmount || (invoice.paid === false ? '0.00' : null),
+    remainingAmount,
     paidAt: firstPresent(invoice, ['paid_at', 'paid_on', 'payment_date']),
     status: firstPresent(invoice, ['status', 'state']),
   };

@@ -41,7 +41,9 @@ function formatDate(value) {
 }
 
 function formatMoney(value) {
-  const amount = Number(value || 0);
+  if (value === null || value === undefined || value === "") return "-";
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return "-";
   return new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(amount);
 }
 
@@ -78,19 +80,19 @@ function renderInvoices() {
     const paymentStatus = invoice.pennylane_payment_status || "unpaid";
     return `
       <tr>
-        <td>${invoice.reference_number || "-"}</td>
-        <td>${invoice.pennylane_invoice_number || invoice.pennylane_invoice_id || "-"}</td>
-        <td>${invoice.client_name || "-"}</td>
+        <td class="invoice-ref">${invoice.reference_number || "-"}</td>
+        <td class="invoice-ref">${invoice.pennylane_invoice_number || invoice.pennylane_invoice_id || "-"}</td>
+        <td class="client-cell">${invoice.client_name || "-"}</td>
         <td>${formatDate(invoice.document_date)}</td>
         <td>${formatDate(invoice.deadline)}</td>
-        <td>${formatMoney(invoice.total_amount_inc_vat)}</td>
+        <td class="money-cell">${formatMoney(invoice.total_amount_inc_vat)}</td>
         <td>${invoice.alta_status || "-"}</td>
         <td>${syncStatus}</td>
         <td>${labelPaymentStatus(paymentStatus)}</td>
-        <td>${formatMoney(invoice.pennylane_paid_amount)}</td>
-        <td>${formatMoney(invoice.pennylane_remaining_amount)}</td>
+        <td class="money-cell">${formatMoney(invoice.pennylane_paid_amount)}</td>
+        <td class="money-cell">${formatMoney(invoice.pennylane_remaining_amount)}</td>
         <td>${invoice.is_overdue ? "Oui" : "Non"}</td>
-        <td>
+        <td class="actions-cell">
           <button type="button" class="btn btn-secondary" data-pdf="${invoice.id}">PDF ALTA</button>
           <button type="button" class="btn btn-secondary" data-sync="${invoice.id}">Synchroniser Pennylane</button>
         </td>

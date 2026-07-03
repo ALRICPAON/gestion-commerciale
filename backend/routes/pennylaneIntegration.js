@@ -12,16 +12,22 @@ const MANUAL_SYNC_PRIORITY = 40;
 const FINALIZED_INVOICE_STATUSES = ['validated', 'finalized', 'sent', 'paid', 'partially_paid', 'overdue'];
 
 function isUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(String(value || ''));
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
 
 function normalizeEntityType(value) {
-  const text = String(value || '').trim().toLowerCase();
-  if (['client', 'customer'].includes(text)) return 'client';
-  if (['supplier', 'fournisseur'].includes(text)) return 'supplier';
-  if (['customer_invoice', 'invoice', 'facture_client'].includes(text)) return 'customer_invoice';
-  if (['supplier_invoice', 'facture_fournisseur'].includes(text)) return 'supplier_invoice';
+  const text = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['client', 'clients', 'customer', 'customers'].includes(text)) return 'client';
+  if (['supplier', 'suppliers', 'fournisseur', 'fournisseurs'].includes(text)) return 'supplier';
+  if (['customer_invoice', 'customer_invoices', 'invoice', 'invoices', 'facture_client'].includes(text)) return 'customer_invoice';
+  if (['supplier_invoice', 'supplier_invoices', 'facture_fournisseur'].includes(text)) return 'supplier_invoice';
   return null;
+}
+
+function normalizeEntityId(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[\u200B-\u200D\uFEFF]/g, '');
 }
 
 function buildExternalReference(storeId, entityType, entityId) {
@@ -212,9 +218,16 @@ router.get('/integrations/pennylane/test', authenticateToken, requireAdminOrMana
 router.post('/integrations/pennylane/sync/:entityType/:entityId', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   try {
     const entityType = normalizeEntityType(req.params.entityType);
-    const entityId = req.params.entityId;
+    const entityId = normalizeEntityId(req.params.entityId);
 
     if (!entityType || !isUuid(entityId)) {
+      console.warn('[Pennylane manual sync invalid]', {
+        rawEntityType: req.params.entityType,
+        normalizedEntityType: entityType,
+        rawEntityId: req.params.entityId,
+        isUuid: isUuid(entityId),
+        url: req.originalUrl,
+      });
       return res.status(400).json({ error: 'Demande de synchronisation Pennylane invalide' });
     }
 
