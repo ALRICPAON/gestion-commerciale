@@ -7,6 +7,7 @@ const {
   processPennylaneSupplierInvoiceImportSync,
   processPennylaneSupplierSyncQueue,
 } = require('../services/pennylane');
+const { processPendingPennylaneSupplierInvoiceMatching } = require('../services/supplierInvoiceMatchingEngine');
 
 const DEFAULT_INTERVAL_MS = 5000;
 const MIN_INTERVAL_MS = 1000;
@@ -27,6 +28,10 @@ const syncTasks = [
   {
     name: 'factures_fournisseurs_pennylane',
     process: processPennylaneSupplierInvoiceImportSync,
+  },
+  {
+    name: 'controle_factures_fournisseurs_pennylane',
+    process: processPendingPennylaneSupplierInvoiceMatching,
   },
 ];
 
