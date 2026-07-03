@@ -119,17 +119,17 @@ function lineQuantity(line) {
   return quantity || 1;
 }
 
-function buildInvoiceLinePayload(line, invoice) {
+function buildStandardInvoiceLinePayload(line, invoice) {
   const quantity = lineQuantity(line);
   const unitPrice = Number(line.unit_sale_price_ht ?? 0);
 
-  return compactObject({
+  return {
     label: line.article_label || `Ligne ${line.line_number || ''}`.trim(),
     quantity,
     unit: normalizeUnit(line.sale_unit),
     raw_currency_unit_price: toMoneyString(unitPrice),
     vat_rate: normalizeVatRate(line.vat_rate, invoice),
-  });
+  };
 }
 
 function buildPennylaneCustomerInvoicePayload(invoice, lines) {
@@ -140,7 +140,8 @@ function buildPennylaneCustomerInvoicePayload(invoice, lines) {
     customer_id: Number(invoice.pennylane_customer_id),
     date,
     deadline,
-    invoice_lines: lines.map((line) => buildInvoiceLinePayload(line, invoice)),
+    draft: false,
+    invoice_lines: lines.map((line) => buildStandardInvoiceLinePayload(line, invoice)),
     external_reference: buildExternalReference(invoice),
   });
 }
