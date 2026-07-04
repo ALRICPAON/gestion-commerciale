@@ -562,7 +562,8 @@ async function validateSelected(adjustCosts = false) {
     method: "POST",
     body: JSON.stringify({ confirm_difference: confirmDifference, adjust_costs: adjustCosts }),
   });
-  showFeedback(detailFeedback, `Facture validée : ${statusLabel(data.status)}${data.adjusted_lots ? `, ${data.adjusted_lots} lot(s) ajusté(s)` : ""}`);
+  const warning = data.warning ? " Facture validée dans ALTA, mais statut Pennylane non mis à jour" : "";
+  showFeedback(detailFeedback, `Facture validée : ${statusLabel(data.status)}${data.adjusted_lots ? `, ${data.adjusted_lots} lot(s) ajusté(s)` : ""}${warning}`);
   await loadInvoices();
   await openInvoice(selectedInvoiceId);
 }
