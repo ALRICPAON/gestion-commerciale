@@ -76,12 +76,33 @@ function firstPresent(object, keys) {
   return null;
 }
 
+function nestedFirstPresent(object, keys) {
+  const direct = firstPresent(object, keys);
+  if (direct !== null && direct !== undefined && direct !== '') return direct;
+  if (!object || typeof object !== 'object') return null;
+
+  for (const value of Object.values(object)) {
+    if (value && typeof value === 'object') {
+      const nested = nestedFirstPresent(value, keys);
+      if (nested !== null && nested !== undefined && nested !== '') return nested;
+    }
+  }
+
+  return null;
+}
+
 function extractList(responseBody) {
   if (!responseBody || typeof responseBody !== 'object') return [];
   if (Array.isArray(responseBody.items)) return responseBody.items;
   if (Array.isArray(responseBody.data)) return responseBody.data;
   if (Array.isArray(responseBody.supplier_invoices)) return responseBody.supplier_invoices;
+  if (Array.isArray(responseBody.invoice_lines)) return responseBody.invoice_lines;
+  if (Array.isArray(responseBody.supplier_invoice_lines)) return responseBody.supplier_invoice_lines;
+  if (Array.isArray(responseBody.lines)) return responseBody.lines;
   if (Array.isArray(responseBody.changes)) return responseBody.changes;
+  if (responseBody.data && typeof responseBody.data === 'object') return extractList(responseBody.data);
+  if (responseBody.invoice_lines && typeof responseBody.invoice_lines === 'object') return extractList(responseBody.invoice_lines);
+  if (responseBody.supplier_invoice_lines && typeof responseBody.supplier_invoice_lines === 'object') return extractList(responseBody.supplier_invoice_lines);
   return [];
 }
 
@@ -151,6 +172,27 @@ function buildLinesEndpoint(invoice) {
   return `/supplier_invoices/${encodeURIComponent(invoice.id)}/invoice_lines?limit=100`;
 }
 
+function extractEmbeddedInvoiceLines(invoice) {
+  const direct = extractList(invoice);
+  if (direct.length) return direct;
+
+  const invoiceLines = invoice?.invoice_lines;
+  if (Array.isArray(invoiceLines)) return invoiceLines;
+  if (invoiceLines && typeof invoiceLines === 'object') {
+    const lines = extractList(invoiceLines);
+    if (lines.length) return lines;
+  }
+
+  const supplierInvoiceLines = invoice?.supplier_invoice_lines;
+  if (Array.isArray(supplierInvoiceLines)) return supplierInvoiceLines;
+  if (supplierInvoiceLines && typeof supplierInvoiceLines === 'object') {
+    const lines = extractList(supplierInvoiceLines);
+    if (lines.length) return lines;
+  }
+
+  return [];
+}
+
 function normalizeAltaStatus(currentStatus, invoice, supplierId) {
   if (currentStatus && ALTA_STATUSES.has(currentStatus) && currentStatus !== 'nouvelle') {
     return currentStatus;
@@ -162,9 +204,33 @@ function normalizeAltaStatus(currentStatus, invoice, supplierId) {
 }
 
 function normalizeSupplierId(invoice) {
+  const direct = firstPresent(invoice, [
+    'supplier_id',
+    'pennylane_supplier_id',
+    'thirdparty_id',
+    'provider_id',
+    'vendor_id',
+    'source_id',
+    'remote_id',
+  ]);
+  if (direct) return direct;
+
   const supplier = invoice?.supplier;
-  if (!supplier || typeof supplier !== 'object') return null;
-  return firstPresent(supplier, ['id', 'supplier_id']);
+  if (typeof supplier === 'string' || typeof supplier === 'number') return supplier;
+  if (supplier && typeof supplier === 'object') {
+    return firstPresent(supplier, [
+      'id',
+      'supplier_id',
+      'pennylane_supplier_id',
+      'thirdparty_id',
+      'provider_id',
+      'vendor_id',
+      'source_id',
+      'remote_id',
+    ]);
+  }
+
+  return nestedFirstPresent(invoice, ['supplier_id']);
 }
 
 function normalizeEInvoicing(invoice) {
@@ -176,22 +242,75 @@ function normalizeEInvoicing(invoice) {
   };
 }
 
-function normalizeLine(line, index) {
+function unwrapLine(line) {
+  if (!line || typeof line !== 'object') return line;
+  return line.invoice_line || line.supplier_invoice_line || line.line || line;
+}
+
+function normalizeLine(inputLine, index) {
+  const line = unwrapLine(inputLine);
+  const label = nestedFirstPresent(line, [
+    'label',
+    'description',
+    'designation',
+    'name',
+    'product_name',
+    'article_name',
+    'item_name',
+  ]);
+  const supplierReference = nestedFirstPresent(line, [
+    'supplier_reference',
+    'supplier_ref',
+    'reference',
+    'product_reference',
+    'product_ref',
+    'article_code',
+    'sku',
+    'ean',
+  ]);
+
   return {
-    pennylane_line_id: firstPresent(line, ['id', 'invoice_line_id']),
-    e_invoice_line_id: firstPresent(line, ['e_invoice_line_id']),
-    label: firstPresent(line, ['label', 'description', 'name']),
-    quantity: toNumberOrNull(firstPresent(line, ['quantity', 'qty'])),
-    unit: firstPresent(line, ['unit', 'price_unit']),
-    raw_currency_unit_price: toNumberOrNull(firstPresent(line, ['raw_currency_unit_price', 'unit_price'])),
-    currency_amount: toNumberOrNull(firstPresent(line, ['currency_amount', 'amount'])),
-    amount: toNumberOrNull(firstPresent(line, ['amount'])),
-    currency_tax: toNumberOrNull(firstPresent(line, ['currency_tax', 'tax'])),
-    tax: toNumberOrNull(firstPresent(line, ['tax'])),
-    vat_rate: firstPresent(line, ['vat_rate']),
-    ledger_account_id: firstPresent(line, ['ledger_account_id']),
-    position: Number(firstPresent(line, ['position', 'line_number'])) || index + 1,
-    raw_payload: line,
+    pennylane_line_id: firstPresent(line, ['id', 'invoice_line_id', 'supplier_invoice_line_id']),
+    e_invoice_line_id: nestedFirstPresent(line, ['e_invoice_line_id']),
+    label,
+    quantity: toNumberOrNull(nestedFirstPresent(line, ['quantity', 'qty', 'quantity_billed'])),
+    unit: nestedFirstPresent(line, ['unit', 'price_unit', 'unit_name', 'measure_unit']),
+    raw_currency_unit_price: toNumberOrNull(nestedFirstPresent(line, [
+      'raw_currency_unit_price',
+      'currency_unit_price',
+      'unit_price',
+      'price',
+      'unit_amount',
+      'amount_unit',
+    ])),
+    currency_amount: toNumberOrNull(nestedFirstPresent(line, [
+      'currency_amount',
+      'currency_amount_before_tax',
+      'amount_before_tax',
+      'amount_ex_vat',
+      'total_ex_vat',
+      'total_without_tax',
+      'subtotal',
+    ])),
+    amount: toNumberOrNull(nestedFirstPresent(line, [
+      'amount',
+      'amount_before_tax',
+      'amount_ex_vat',
+      'total_ex_vat',
+      'total_without_tax',
+      'subtotal',
+    ])),
+    currency_tax: toNumberOrNull(nestedFirstPresent(line, ['currency_tax', 'currency_vat', 'tax', 'vat_amount'])),
+    tax: toNumberOrNull(nestedFirstPresent(line, ['tax', 'vat_amount', 'amount_vat'])),
+    vat_rate: nestedFirstPresent(line, ['vat_rate', 'tax_rate', 'vat']),
+    ledger_account_id: nestedFirstPresent(line, ['ledger_account_id']),
+    position: Number(nestedFirstPresent(line, ['position', 'line_number', 'rank'])) || index + 1,
+    raw_payload: {
+      ...line,
+      supplier_reference: supplierReference || line.supplier_reference || null,
+      article_code: nestedFirstPresent(line, ['article_code', 'product_code']) || null,
+      sku: nestedFirstPresent(line, ['sku']) || null,
+    },
   };
 }
 
@@ -318,7 +437,8 @@ async function fetchInvoiceLines(pennylaneClient, invoice) {
     endpoint = `${endpoint}${separator}cursor=${encodeURIComponent(cursor)}`;
   }
 
-  return lines;
+  if (lines.length) return lines;
+  return extractEmbeddedInvoiceLines(invoice);
 }
 
 async function markInvoiceDeleted(db, storeId, pennylaneInvoiceId) {
