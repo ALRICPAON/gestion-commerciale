@@ -57,7 +57,7 @@ BEGIN
             WHEN auto_match_status = 'success' THEN 'validated'
             ELSE auto_match_status
           END,
-          payment_status = COALESCE(NULLIF(payment_status, ''), 'to_be_paid'),
+          payment_status = 'to_be_paid',
           last_synced_at = COALESCE(last_synced_at, NOW()),
           updated_at = NOW()
       WHERE store_id = NEW.store_id
@@ -130,7 +130,7 @@ SET alta_business_status = 'validee_a_payer',
       WHEN psi.auto_match_status = 'success' THEN 'validated'
       ELSE psi.auto_match_status
     END,
-    payment_status = COALESCE(NULLIF(psi.payment_status, ''), 'to_be_paid'),
+    payment_status = 'to_be_paid',
     last_synced_at = COALESCE(psi.last_synced_at, NOW()),
     updated_at = NOW()
 FROM supplier_invoices si
@@ -141,6 +141,7 @@ WHERE si.store_id = psi.store_id
   AND (
     psi.alta_business_status <> 'validee_a_payer'
     OR psi.match_status <> 'matched'
+    OR psi.payment_status IS DISTINCT FROM 'to_be_paid'
     OR psi.auto_match_status = 'success'
     OR psi.last_synced_at IS NULL
   );
