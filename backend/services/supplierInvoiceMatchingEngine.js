@@ -1,12 +1,10 @@
 const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_DATE_WINDOW_DAYS = 21;
-const QUANTITY_TOLERANCE = 0.001;
-const UNIT_PRICE_TOLERANCE = 0.01;
-const AMOUNT_TOLERANCE = 0.05;
-const VAT_TOLERANCE = 0.05;
-const PURCHASE_LINE_MATCH_THRESHOLD = 55;
+const DEFAULT_AMOUNT_TOLERANCE = 1;
+const DEFAULT_AMOUNT_RATIO_TOLERANCE = 0.005;
 
 const FINAL_ALTA_STATUSES = new Set(['validee_a_payer', 'payee', 'litige', 'refusee']);
+const MATCHABLE_PURCHASE_STATUSES = ['received', 'received_pending_invoice', 'invoice_difference'];
 
 function toNumber(value, fallback = 0) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -19,98 +17,23 @@ function round(value, decimals = 4) {
   return Math.round(toNumber(value) * factor) / factor;
 }
 
-function clean(value) {
-  if (value === undefined || value === null) return null;
-  const text = String(value).trim();
-  return text || null;
+function daysBetween(left, right) {
+  if (!left || !right) return null;
+  const leftDate = new Date(left);
+  const rightDate = new Date(right);
+  if (Number.isNaN(leftDate.getTime()) || Number.isNaN(rightDate.getTime())) return null;
+  return Math.abs(leftDate.getTime() - rightDate.getTime()) / 86400000;
 }
 
-function normalizeText(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+function amountTolerance(amount) {
+  const absoluteTolerance = Number(process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_TOLERANCE) || DEFAULT_AMOUNT_TOLERANCE;
+  const ratioTolerance = Number(process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_RATIO_TOLERANCE) ||
+    DEFAULT_AMOUNT_RATIO_TOLERANCE;
+  return Math.max(absoluteTolerance, Math.abs(toNumber(amount)) * ratioTolerance);
 }
 
-function normalizeReference(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]/g, '');
-}
-
-function firstPresent(object, keys) {
-  if (!object || typeof object !== 'object') return null;
-  for (const key of keys) {
-    if (object[key] !== undefined && object[key] !== null && object[key] !== '') return object[key];
-  }
-  return null;
-}
-
-function nestedFirstPresent(object, keys) {
-  const direct = firstPresent(object, keys);
-  if (direct) return direct;
-  if (!object || typeof object !== 'object') return null;
-
-  for (const value of Object.values(object)) {
-    if (value && typeof value === 'object') {
-      const nested = nestedFirstPresent(value, keys);
-      if (nested) return nested;
-    }
-  }
-
-  return null;
-}
-
-function extractSupplierReference(line) {
-  return clean(
-    nestedFirstPresent(line.raw_payload, [
-      'supplier_reference',
-      'supplier_ref',
-      'reference',
-      'product_reference',
-      'product_ref',
-      'sku',
-      'ean',
-    ])
-  );
-}
-
-function tokenSimilarity(left, right) {
-  const leftText = normalizeText(left);
-  const rightText = normalizeText(right);
-  if (!leftText || !rightText) return 0;
-  if (leftText === rightText) return 1;
-  if (leftText.includes(rightText) || rightText.includes(leftText)) return 0.88;
-
-  const leftTokens = new Set(leftText.split(/\s+/).filter((token) => token.length > 2));
-  const rightTokens = new Set(rightText.split(/\s+/).filter((token) => token.length > 2));
-  if (!leftTokens.size || !rightTokens.size) return 0;
-
-  let common = 0;
-  for (const token of leftTokens) {
-    if (rightTokens.has(token)) common += 1;
-  }
-
-  return common / Math.max(leftTokens.size, rightTokens.size);
-}
-
-function parseVatRate(value) {
-  const text = String(value || '').replace('%', '').replace(',', '.').trim();
-  const parsed = Number(text);
-  if (!Number.isFinite(parsed)) return null;
-  return parsed > 1 ? parsed / 100 : parsed;
-}
-
-function invoiceLineUnitPrice(line) {
-  const direct = toNumber(line.raw_currency_unit_price, NaN);
-  if (Number.isFinite(direct) && direct !== 0) return direct;
-  const quantity = toNumber(line.quantity);
-  if (quantity === 0) return 0;
-  return round(toNumber(line.amount ?? line.currency_amount) / quantity, 6);
+function amountMatches(left, right) {
+  return Math.abs(toNumber(left) - toNumber(right)) <= amountTolerance(left);
 }
 
 function scoreNumericCloseness(left, right) {
@@ -120,14 +43,6 @@ function scoreNumericCloseness(left, right) {
   if (leftValue === 0 && rightValue === 0) return 1;
   if (leftValue === 0 || rightValue === 0) return 0;
   return Math.max(0, 1 - Math.abs(leftValue - rightValue) / Math.max(leftValue, rightValue, 1));
-}
-
-function daysBetween(left, right) {
-  if (!left || !right) return null;
-  const leftDate = new Date(left);
-  const rightDate = new Date(right);
-  if (Number.isNaN(leftDate.getTime()) || Number.isNaN(rightDate.getTime())) return null;
-  return Math.abs(leftDate.getTime() - rightDate.getTime()) / 86400000;
 }
 
 async function loadInvoice(client, invoiceId, storeId) {
@@ -159,461 +74,169 @@ async function loadInvoice(client, invoiceId, storeId) {
   return { invoice: invoice.rows[0], lines: lines.rows };
 }
 
-async function loadMappings(client, storeId, supplierId) {
-  if (!supplierId) return [];
-  const result = await client.query(
-    `
-    SELECT
-      m.id mapping_id,
-      m.supplier_ref,
-      m.supplier_label,
-      m.article_id,
-      a.plu article_plu,
-      a.designation article_name
-    FROM supplier_article_mappings m
-    JOIN articles a ON a.id = m.article_id AND a.store_id = m.store_id
-    WHERE m.store_id = $1
-      AND m.supplier_id = $2
-      AND COALESCE(m.is_active, true) = true
-    `,
-    [storeId, supplierId]
-  ).catch(() => ({ rows: [] }));
-
-  return result.rows;
-}
-
-async function loadArticleCandidates(client, storeId) {
-  const result = await client.query(
-    `
-    SELECT id, plu, designation
-    FROM articles
-    WHERE store_id = $1
-    ORDER BY designation ASC
-    LIMIT 5000
-    `,
-    [storeId]
-  );
-  return result.rows;
-}
-
-async function loadPurchaseLineCandidates(client, invoice, dateWindowDays) {
+async function loadGlobalPurchaseCandidates(client, invoice, dateWindowDays) {
   if (!invoice.supplier_id) return [];
+
   const result = await client.query(
     `
     SELECT
-      pl.id purchase_line_id,
-      pl.purchase_id,
-      pl.article_id,
-      pl.supplier_reference,
-      pl.supplier_label,
-      pl.ordered_quantity,
-      pl.received_quantity,
-      pl.unit_price_ex_vat,
-      pl.line_amount_ex_vat,
-      pl.price_unit,
+      p.id purchase_id,
       p.bl_number,
       p.receipt_date,
       p.status purchase_status,
-      a.plu article_plu,
-      a.designation article_name,
-      l.id lot_id
-    FROM purchase_lines pl
-    JOIN purchases p ON p.id = pl.purchase_id AND p.store_id = pl.store_id
-    LEFT JOIN articles a ON a.id = pl.article_id AND a.store_id = pl.store_id
-    LEFT JOIN lots l ON l.purchase_line_id = pl.id
-    WHERE pl.store_id = $1
-      AND pl.supplier_id = $2
-      AND p.status IN ('received', 'received_pending_invoice', 'invoice_difference', 'invoice_matched')
-      AND (
-        $3::date IS NULL
-        OR p.receipt_date IS NULL
-        OR p.receipt_date BETWEEN ($3::date - ($4::int || ' days')::interval)
-          AND ($3::date + ($4::int || ' days')::interval)
+      COALESCE(NULLIF(p.total_amount_ex_vat, 0), SUM(COALESCE(pl.line_amount_ex_vat, 0)), 0) AS purchase_amount_ex_vat,
+      SUM(COALESCE(pl.line_amount_ex_vat, 0)) AS purchase_lines_amount_ex_vat,
+      COUNT(pl.id)::int AS purchase_lines_count
+    FROM purchases p
+    LEFT JOIN purchase_lines pl
+      ON pl.purchase_id = p.id
+     AND pl.store_id = p.store_id
+    WHERE p.store_id = $1
+      AND p.supplier_id = $2
+      AND p.status = ANY($3::text[])
+      AND NOT EXISTS (
+        SELECT 1
+        FROM pennylane_supplier_invoice_match_results mr
+        WHERE mr.store_id = p.store_id
+          AND mr.purchase_id = p.id
+          AND mr.supplier_invoice_id <> $4
+          AND mr.match_status = 'conforme'
       )
-    ORDER BY p.receipt_date DESC NULLS LAST, pl.line_number ASC
-    LIMIT 500
+      AND (
+        $5::date IS NULL
+        OR p.receipt_date IS NULL
+        OR p.receipt_date BETWEEN ($5::date - ($6::int || ' days')::interval)
+          AND ($5::date + ($6::int || ' days')::interval)
+      )
+    GROUP BY p.id, p.bl_number, p.receipt_date, p.status, p.total_amount_ex_vat
+    ORDER BY p.receipt_date DESC NULLS LAST, p.created_at DESC
+    LIMIT 200
     `,
-    [invoice.store_id, invoice.supplier_id, invoice.invoice_date || null, dateWindowDays]
+    [
+      invoice.store_id,
+      invoice.supplier_id,
+      MATCHABLE_PURCHASE_STATUSES,
+      invoice.id,
+      invoice.invoice_date || null,
+      dateWindowDays,
+    ]
   );
 
   return result.rows;
 }
 
-function resolveArticle(line, mappings, articles) {
-  const supplierReference = extractSupplierReference(line);
-  const normalizedReference = normalizeReference(supplierReference);
-
-  if (normalizedReference) {
-    const mapping = mappings.find((entry) => normalizeReference(entry.supplier_ref) === normalizedReference);
-    if (mapping) {
-      return {
-        articleId: mapping.article_id,
-        articleLabel: mapping.article_name,
-        supplierReference,
-        source: 'af_map',
-        confidence: 100,
-      };
-    }
-  }
-
-  const label = line.label || '';
-  const mappingByLabel = mappings
-    .map((entry) => ({
-      entry,
-      score: Math.max(tokenSimilarity(label, entry.supplier_label), tokenSimilarity(label, entry.article_name)),
-    }))
-    .sort((left, right) => right.score - left.score)[0];
-
-  if (mappingByLabel?.score >= 0.72) {
-    return {
-      articleId: mappingByLabel.entry.article_id,
-      articleLabel: mappingByLabel.entry.article_name,
-      supplierReference,
-      source: 'designation',
-      confidence: round(mappingByLabel.score * 100, 2),
-    };
-  }
-
-  const articleByLabel = articles
-    .map((entry) => ({
-      entry,
-      score: Math.max(tokenSimilarity(label, entry.designation), tokenSimilarity(label, entry.plu)),
-    }))
-    .sort((left, right) => right.score - left.score)[0];
-
-  if (articleByLabel?.score >= 0.78) {
-    return {
-      articleId: articleByLabel.entry.id,
-      articleLabel: articleByLabel.entry.designation,
-      supplierReference,
-      source: 'article_alta',
-      confidence: round(articleByLabel.score * 100, 2),
-    };
-  }
+function scorePurchaseCandidate(invoice, candidate, dateWindowDays) {
+  const invoiceExVat = toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat);
+  const purchaseExVat = toNumber(candidate.purchase_amount_ex_vat);
+  const amountScore = scoreNumericCloseness(invoiceExVat, purchaseExVat);
+  const dateDistance = daysBetween(invoice.invoice_date, candidate.receipt_date);
+  const dateScore = dateDistance === null ? 0.5 : Math.max(0, 1 - dateDistance / Math.max(dateWindowDays, 1));
+  const exactAmount = amountMatches(invoiceExVat, purchaseExVat);
+  const score = round((amountScore * 75) + (dateScore * 25), 2);
 
   return {
-    articleId: null,
-    articleLabel: null,
-    supplierReference,
-    source: 'none',
-    confidence: 0,
+    ...candidate,
+    invoice_amount_ex_vat: invoiceExVat,
+    purchase_amount_ex_vat: purchaseExVat,
+    amount_difference: round(invoiceExVat - purchaseExVat, 4),
+    date_distance_days: dateDistance,
+    amount_score: round(amountScore, 4),
+    date_score: round(dateScore, 4),
+    exact_amount: exactAmount,
+    score,
   };
 }
 
-function scorePurchaseLine(line, resolvedArticle, purchaseLine, invoice) {
-  const supplierReference = normalizeReference(resolvedArticle.supplierReference);
-  const purchaseReference = normalizeReference(purchaseLine.supplier_reference);
-  const labelScore = Math.max(
-    tokenSimilarity(line.label, purchaseLine.supplier_label),
-    tokenSimilarity(line.label, purchaseLine.article_name)
-  );
-  const invoiceAmount = Math.abs(toNumber(line.amount ?? line.currency_amount));
-  const purchaseAmount = Math.abs(toNumber(purchaseLine.line_amount_ex_vat));
-  const amountScore = scoreNumericCloseness(invoiceAmount, purchaseAmount);
-  const quantityScore = Math.max(
-    scoreNumericCloseness(line.quantity, purchaseLine.received_quantity),
-    scoreNumericCloseness(line.quantity, purchaseLine.ordered_quantity)
-  );
-  const unitPriceScore = scoreNumericCloseness(invoiceLineUnitPrice(line), purchaseLine.unit_price_ex_vat);
-  const dateDistance = daysBetween(invoice.invoice_date, purchaseLine.receipt_date);
-  const dateScore = dateDistance === null ? 0.5 : Math.max(0, 1 - dateDistance / DEFAULT_DATE_WINDOW_DAYS);
-
-  let score = 0;
-  let source = 'purchase_line';
-
-  if (labelScore >= 0.72) {
-    score += labelScore * 55;
-    source = 'purchase_line_label';
-  }
-  if (quantityScore >= 0.85) score += quantityScore * 15;
-  if (unitPriceScore >= 0.85) score += unitPriceScore * 15;
-  if (amountScore >= 0.75) score += amountScore * 10;
-  score += dateScore * 10;
-
-  if (resolvedArticle.articleId && purchaseLine.article_id === resolvedArticle.articleId) {
-    score += 20;
-    if (resolvedArticle.source === 'af_map') source = 'purchase_line_af_map';
-  }
-  if (supplierReference && purchaseReference && supplierReference === purchaseReference) {
-    score += 25;
-    source = 'purchase_line_reference';
-  }
-
-  return { score, source, labelScore, amountScore, quantityScore, unitPriceScore, dateScore };
-}
-
-function selectPurchaseLine(line, resolvedArticle, candidates, invoice, usedPurchaseLineIds = new Set()) {
-  const ranked = candidates
-    .filter((purchaseLine) => !usedPurchaseLineIds.has(purchaseLine.purchase_line_id))
-    .map((purchaseLine) => ({
-      purchaseLine,
-      ...scorePurchaseLine(line, resolvedArticle, purchaseLine, invoice),
-    }))
-    .sort((left, right) => right.score - left.score);
-
-  const best = ranked[0];
-  if (!best || best.score < PURCHASE_LINE_MATCH_THRESHOLD) return null;
-  return best;
-}
-
-function rankPurchaseLines(line, resolvedArticle, candidates, invoice) {
+function rankGlobalCandidates(invoice, candidates, dateWindowDays) {
   return candidates
-    .map((purchaseLine) => ({
-      purchaseLine,
-      ...scorePurchaseLine(line, resolvedArticle, purchaseLine, invoice),
-    }))
-    .sort((left, right) => right.score - left.score);
-}
-
-function purchaseCandidateSample(candidate) {
-  return {
-    purchase_line_id: candidate.purchase_line_id,
-    purchase_id: candidate.purchase_id,
-    article_id: candidate.article_id,
-    article_name: candidate.article_name,
-    supplier_reference: candidate.supplier_reference,
-    supplier_label: candidate.supplier_label,
-    bl_number: candidate.bl_number,
-    receipt_date: candidate.receipt_date,
-    status: candidate.purchase_status,
-    ordered_quantity: candidate.ordered_quantity,
-    received_quantity: candidate.received_quantity,
-    unit_price_ex_vat: candidate.unit_price_ex_vat,
-    line_amount_ex_vat: candidate.line_amount_ex_vat,
-  };
-}
-
-function buildLineDebug(invoice, line, mappings, articles, purchaseCandidates) {
-  const resolvedArticle = resolveArticle(line, mappings, articles);
-  const rankedCandidates = rankPurchaseLines(line, resolvedArticle, purchaseCandidates, invoice);
-  const best = rankedCandidates[0] || null;
-  const reasons = [];
-
-  if (!invoice.supplier_id) reasons.push('Fournisseur Pennylane non relie a un fournisseur ALTA');
-  if (!clean(line.label)) reasons.push('Designation ligne Pennylane absente');
-  if (!purchaseCandidates.length) reasons.push('Aucune ligne achat/reception candidate trouvee pour ce fournisseur et cette periode');
-  if (best && best.score < PURCHASE_LINE_MATCH_THRESHOLD) reasons.push('Meilleure ligne achat/reception sous le seuil de rapprochement');
-  if (best && !best.purchaseLine.article_id && !resolvedArticle.articleId) reasons.push('Ligne achat/reception trouvee mais sans article ALTA exploitable');
-  if (!best && purchaseCandidates.length) reasons.push('Aucune ligne achat/reception assez proche de la ligne facture');
-
-  return {
-    supplier_invoice_line_id: line.id,
-    line_position: line.line_position,
-    label: line.label,
-    quantity: line.quantity,
-    unit_price_ex_vat: invoiceLineUnitPrice(line),
-    amount_ex_vat: line.amount ?? line.currency_amount,
-    resolved_article_id: best?.purchaseLine?.article_id || resolvedArticle.articleId || null,
-    resolved_article_label: best?.purchaseLine?.article_name || resolvedArticle.articleLabel || null,
-    resolved_article_source: best?.purchaseLine?.article_id ? best.source : resolvedArticle.source,
-    best_candidate_score: best ? round(best.score, 2) : null,
-    best_candidate_threshold: PURCHASE_LINE_MATCH_THRESHOLD,
-    best_candidate: best ? {
-      ...purchaseCandidateSample(best.purchaseLine),
-      score: round(best.score, 2),
-      source: best.source,
-      label_score: round(best.labelScore, 4),
-      quantity_score: round(best.quantityScore, 4),
-      unit_price_score: round(best.unitPriceScore, 4),
-      amount_score: round(best.amountScore, 4),
-      date_score: round(best.dateScore, 4),
-    } : null,
-    reasons_for_article_unknown: reasons,
-  };
-}
-
-function buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine) {
-  const purchaseLine = selectedPurchaseLine?.purchaseLine || null;
-  const effectiveArticle = {
-    articleId: purchaseLine?.article_id || resolvedArticle.articleId || null,
-    articleLabel: purchaseLine?.article_name || resolvedArticle.articleLabel || null,
-    supplierReference: resolvedArticle.supplierReference || purchaseLine?.supplier_reference || null,
-    source: purchaseLine?.article_id ? selectedPurchaseLine.source : resolvedArticle.source,
-    confidence: purchaseLine?.article_id
-      ? Math.min(100, round(selectedPurchaseLine.score, 2))
-      : resolvedArticle.confidence,
-  };
-  const invoiceQuantity = toNumber(line.quantity);
-  const invoiceUnitPrice = invoiceLineUnitPrice(line);
-  const invoiceAmount = toNumber(line.amount ?? line.currency_amount);
-  const invoiceVat = toNumber(line.tax ?? line.currency_tax);
-
-  if (!effectiveArticle.articleId) {
-    return lineResult(invoice, line, effectiveArticle, purchaseLine, {
-      matchStatus: 'article_inconnu',
-      anomalyCode: 'article_inconnu',
-      anomalyLabel: 'Article ALTA non identifie',
-      invoiceQuantity,
-      invoiceUnitPrice,
-      invoiceAmount,
-      invoiceVat,
-      confidence: effectiveArticle.confidence,
-      matchSource: purchaseLine ? selectedPurchaseLine.source : resolvedArticle.source,
+    .map((candidate) => scorePurchaseCandidate(invoice, candidate, dateWindowDays))
+    .sort((left, right) => {
+      if (Number(right.exact_amount) !== Number(left.exact_amount)) {
+        return Number(right.exact_amount) - Number(left.exact_amount);
+      }
+      return right.score - left.score;
     });
-  }
-
-  if (!purchaseLine) {
-    return lineResult(invoice, line, effectiveArticle, purchaseLine, {
-      matchStatus: 'bl_manquant',
-      anomalyCode: 'bl_manquant',
-      anomalyLabel: 'Aucune ligne reception/BL rapprochable',
-      invoiceQuantity,
-      invoiceUnitPrice,
-      invoiceAmount,
-      invoiceVat,
-      confidence: effectiveArticle.confidence,
-    });
-  }
-
-  const receivedQuantity = toNumber(purchaseLine.received_quantity || purchaseLine.ordered_quantity);
-  const orderedQuantity = toNumber(purchaseLine.ordered_quantity);
-  const purchaseUnitPrice = toNumber(purchaseLine.unit_price_ex_vat);
-  const purchaseAmount = toNumber(purchaseLine.line_amount_ex_vat);
-  const quantityDifference = round(invoiceQuantity - receivedQuantity, 4);
-  const unitPriceDifference = round(invoiceUnitPrice - purchaseUnitPrice, 6);
-  const amountDifference = round(invoiceAmount - purchaseAmount, 4);
-  const vatRate = parseVatRate(line.vat_rate);
-  const expectedVat = vatRate === null ? null : round(invoiceAmount * vatRate, 4);
-  const vatDifference = expectedVat === null ? 0 : round(invoiceVat - expectedVat, 4);
-
-  let matchStatus = 'conforme';
-  let anomalyCode = null;
-  let anomalyLabel = null;
-
-  if (Math.abs(quantityDifference) > QUANTITY_TOLERANCE) {
-    matchStatus = 'ecart_quantite';
-    anomalyCode = 'ecart_quantite';
-    anomalyLabel = 'Quantite facturee differente de la quantite receptionnee';
-  } else if (Math.abs(unitPriceDifference) > UNIT_PRICE_TOLERANCE || Math.abs(amountDifference) > AMOUNT_TOLERANCE) {
-    matchStatus = 'ecart_prix';
-    anomalyCode = 'ecart_prix';
-    anomalyLabel = 'Prix facture different du prix receptionne';
-  } else if (Math.abs(vatDifference) > VAT_TOLERANCE) {
-    matchStatus = 'ecart_tva';
-    anomalyCode = 'ecart_tva';
-    anomalyLabel = 'TVA ligne incoherente avec le taux Pennylane';
-  }
-
-  return lineResult(invoice, line, effectiveArticle, purchaseLine, {
-    matchStatus,
-    anomalyCode,
-    anomalyLabel,
-    orderedQuantity,
-    receivedQuantity,
-    invoiceQuantity,
-    purchaseUnitPrice,
-    invoiceUnitPrice,
-    quantityDifference,
-    unitPriceDifference,
-    amountDifference,
-    vatDifference,
-    invoiceAmount,
-    purchaseAmount,
-    invoiceVat,
-    confidence: selectedPurchaseLine ? Math.min(100, round(selectedPurchaseLine.score, 2)) : effectiveArticle.confidence,
-    matchSource: selectedPurchaseLine?.source || effectiveArticle.source,
-  });
 }
 
-function lineResult(invoice, line, resolvedArticle, purchaseLine, details) {
-  const aiContext = {
-    invoice_number: invoice.invoice_number,
-    supplier_name: invoice.supplier_name,
-    line_label: line.label,
-    article_label: resolvedArticle.articleLabel || purchaseLine?.article_name || null,
-    anomaly_code: details.anomalyCode,
-    anomaly_label: details.anomalyLabel,
-    recommendation: details.anomalyCode ? 'controle_manuel' : 'conforme',
-  };
-
+function buildGlobalResult(invoice, candidate, matchStatus, anomalyCode = null, anomalyLabel = null) {
   return {
     store_id: invoice.store_id,
     supplier_invoice_id: invoice.id,
-    supplier_invoice_line_id: line.id,
+    supplier_invoice_line_id: null,
     supplier_id: invoice.supplier_id,
-    article_id: resolvedArticle.articleId || purchaseLine?.article_id || null,
-    purchase_id: purchaseLine?.purchase_id || null,
-    purchase_line_id: purchaseLine?.purchase_line_id || null,
-    lot_id: purchaseLine?.lot_id || null,
-    match_source: details.matchSource || resolvedArticle.source || 'none',
-    match_status: details.matchStatus,
-    anomaly_code: details.anomalyCode,
-    anomaly_label: details.anomalyLabel,
-    supplier_reference: resolvedArticle.supplierReference || purchaseLine?.supplier_reference || null,
-    invoice_label: line.label || null,
-    article_label: resolvedArticle.articleLabel || purchaseLine?.article_name || null,
-    purchase_bl_number: purchaseLine?.bl_number || null,
-    purchase_receipt_date: purchaseLine?.receipt_date || null,
-    ordered_quantity: details.orderedQuantity ?? null,
-    received_quantity: details.receivedQuantity ?? null,
-    invoice_quantity: details.invoiceQuantity ?? null,
-    purchase_unit_price_ex_vat: details.purchaseUnitPrice ?? null,
-    invoice_unit_price_ex_vat: details.invoiceUnitPrice ?? null,
-    quantity_difference: details.quantityDifference ?? null,
-    unit_price_difference: details.unitPriceDifference ?? null,
-    amount_difference: details.amountDifference ?? null,
-    vat_difference: details.vatDifference ?? null,
-    invoice_amount_ex_vat: details.invoiceAmount ?? null,
-    purchase_amount_ex_vat: details.purchaseAmount ?? null,
-    invoice_vat_amount: details.invoiceVat ?? null,
-    confidence: details.confidence ?? 0,
-    ai_context: aiContext,
+    article_id: null,
+    purchase_id: candidate?.purchase_id || null,
+    purchase_line_id: null,
+    lot_id: null,
+    match_source: candidate ? 'global_amount_date' : 'none',
+    match_status: matchStatus,
+    anomaly_code: anomalyCode,
+    anomaly_label: anomalyLabel,
+    supplier_reference: null,
+    invoice_label: invoice.invoice_number || 'Facture fournisseur Pennylane',
+    article_label: 'Rapprochement global facture',
+    purchase_bl_number: candidate?.bl_number || null,
+    purchase_receipt_date: candidate?.receipt_date || null,
+    ordered_quantity: null,
+    received_quantity: null,
+    invoice_quantity: null,
+    purchase_unit_price_ex_vat: null,
+    invoice_unit_price_ex_vat: null,
+    quantity_difference: null,
+    unit_price_difference: null,
+    amount_difference: candidate?.amount_difference ?? null,
+    vat_difference: null,
+    invoice_amount_ex_vat: toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat),
+    purchase_amount_ex_vat: candidate?.purchase_amount_ex_vat ?? null,
+    invoice_vat_amount: toNumber(invoice.amount_vat ?? invoice.currency_amount_vat),
+    confidence: candidate?.score ?? 0,
+    ai_context: {
+      mode: 'global_amount_date',
+      invoice_number: invoice.invoice_number,
+      supplier_name: invoice.supplier_name,
+      invoice_date: invoice.invoice_date,
+      invoice_amount_ex_vat: toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat),
+      invoice_amount_vat: toNumber(invoice.amount_vat ?? invoice.currency_amount_vat),
+      invoice_amount_inc_vat: toNumber(invoice.amount_inc_vat ?? invoice.currency_amount_inc_vat),
+      purchase_amount_ex_vat: candidate?.purchase_amount_ex_vat ?? null,
+      amount_tolerance: amountTolerance(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat),
+      recommendation: anomalyCode ? 'controle_manuel' : 'proposition_rapprochement',
+    },
     raw_payload: {
-      invoice_line: line.raw_payload || {},
-      purchase_line_id: purchaseLine?.purchase_line_id || null,
+      mode: 'global_amount_date',
+      candidate: candidate || null,
     },
   };
 }
 
-function summarize(invoice, lines, results) {
-  const anomalyResults = results.filter((result) => result.match_status !== 'conforme');
-  const matchedResults = results.filter((result) => result.purchase_line_id);
-  const purchaseIds = new Set(results.map((result) => result.purchase_id).filter(Boolean));
-  const lineTotalExVat = round(lines.reduce((sum, line) => sum + toNumber(line.amount ?? line.currency_amount), 0), 4);
-  const lineVat = round(lines.reduce((sum, line) => sum + toNumber(line.tax ?? line.currency_tax), 0), 4);
-  const invoiceExVat = toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat);
-  const invoiceVat = toNumber(invoice.amount_vat ?? invoice.currency_amount_vat);
-  const totalExVatDifference = round(invoiceExVat - lineTotalExVat, 4);
-  const totalVatDifference = round(invoiceVat - lineVat, 4);
-  const totalAnomalies = [...anomalyResults];
-
-  if (Math.abs(totalVatDifference) > VAT_TOLERANCE && lines.length > 0) {
-    totalAnomalies.push({ match_status: 'ecart_tva', anomaly_code: 'ecart_tva' });
-  }
-
-  const anomalyCounts = totalAnomalies.reduce((acc, result) => {
-    const key = result.anomaly_code || result.match_status || 'controle_manuel';
-    acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
-
-  const conformityScore = lines.length
-    ? round((results.filter((result) => result.match_status === 'conforme').length / lines.length) * 100, 2)
-    : 0;
+function summarizeGlobal(invoice, candidates, result) {
+  const isMatched = result?.match_status === 'conforme';
+  const hasAmountMismatch = result?.match_status === 'ecart_prix';
 
   return {
-    line_count: lines.length,
-    matched_lines: matchedResults.length,
-    conform_lines: results.filter((result) => result.match_status === 'conforme').length,
-    anomaly_count: totalAnomalies.length,
-    bl_count: purchaseIds.size,
-    conformity_score: conformityScore,
-    total_ex_vat_difference: totalExVatDifference,
-    total_vat_difference: totalVatDifference,
-    anomaly_counts: anomalyCounts,
+    line_count: 0,
+    matched_lines: isMatched ? 1 : 0,
+    conform_lines: isMatched ? 1 : 0,
+    anomaly_count: hasAmountMismatch ? 1 : 0,
+    bl_count: candidates.length,
+    conformity_score: isMatched ? 100 : 0,
+    total_ex_vat_difference: result?.amount_difference ?? null,
+    total_vat_difference: null,
+    anomaly_counts: hasAmountMismatch ? { ecart_prix: 1 } : {},
+    mode: 'global_amount_date',
+    candidate_count: candidates.length,
   };
 }
 
 function statusFromSummary(invoice, summary) {
   if (invoice.paid === true || invoice.payment_status === 'paid') return 'payee';
-  if (!summary.line_count) return 'a_rapprocher';
-  if (!summary.anomaly_count) return 'conforme';
-  if (summary.anomaly_counts.article_inconnu) return 'article_inconnu';
-  if (summary.anomaly_counts.bl_manquant) return 'bl_manquant';
-  if (summary.anomaly_counts.ecart_quantite) return 'ecart_quantite';
-  if (summary.anomaly_counts.ecart_prix) return 'ecart_prix';
-  if (summary.anomaly_counts.ecart_tva) return 'ecart_tva';
-  return 'controle_manuel';
+  if (!invoice.supplier_id) return 'a_rapprocher';
+  if (summary.mode === 'global_amount_date') {
+    if (!summary.candidate_count) return 'a_rapprocher';
+    if (summary.anomaly_count) return 'ecart_prix';
+    return 'en_controle';
+  }
+  return 'a_rapprocher';
 }
 
 async function persistResults(client, invoice, results, summary) {
@@ -692,7 +315,7 @@ async function persistResults(client, invoice, results, summary) {
     `
     UPDATE pennylane_supplier_invoices
     SET alta_business_status = $2,
-        match_status = CASE WHEN $3::int = 0 AND $4::int > 0 THEN 'matched' ELSE 'discrepancy' END,
+        match_status = CASE WHEN $3::int = 0 AND $4::int > 0 THEN 'matched' ELSE 'pending' END,
         auto_match_status = 'success',
         auto_match_summary = $5::jsonb,
         auto_match_last_error = NULL,
@@ -708,7 +331,7 @@ async function persistResults(client, invoice, results, summary) {
       invoice.id,
       altaStatus,
       summary.anomaly_count,
-      summary.line_count,
+      summary.candidate_count,
       JSON.stringify(summary),
       summary.bl_count,
       summary.matched_lines,
@@ -727,7 +350,7 @@ async function analyzePennylaneSupplierInvoice(db, { invoiceId, storeId, dateWin
       return { ok: false, reason: 'NOT_FOUND' };
     }
 
-    const { invoice, lines } = loaded;
+    const { invoice } = loaded;
     if (FINAL_ALTA_STATUSES.has(invoice.alta_business_status)) {
       await client.query('ROLLBACK');
       return { ok: true, skipped: true, reason: 'FINAL_STATUS', invoice_id: invoice.id };
@@ -745,22 +368,25 @@ async function analyzePennylaneSupplierInvoice(db, { invoiceId, storeId, dateWin
       [invoice.id]
     );
 
-    const mappings = await loadMappings(client, invoice.store_id, invoice.supplier_id);
-    const articles = await loadArticleCandidates(client, invoice.store_id);
-    const purchaseCandidates = await loadPurchaseLineCandidates(client, invoice, dateWindowDays);
+    const candidates = await loadGlobalPurchaseCandidates(client, invoice, dateWindowDays);
+    const ranked = rankGlobalCandidates(invoice, candidates, dateWindowDays);
+    const best = ranked[0] || null;
+    const result = best
+      ? buildGlobalResult(
+        invoice,
+        best,
+        best.exact_amount ? 'conforme' : 'ecart_prix',
+        best.exact_amount ? null : 'ecart_prix',
+        best.exact_amount ? null : 'Montant HT facture different du total HT receptionne'
+      )
+      : buildGlobalResult(invoice, null, 'unmatched');
 
-    const usedPurchaseLineIds = new Set();
-    const results = lines.map((line) => {
-      const resolvedArticle = resolveArticle(line, mappings, articles);
-      const selectedPurchaseLine = selectPurchaseLine(line, resolvedArticle, purchaseCandidates, invoice, usedPurchaseLineIds);
-      if (selectedPurchaseLine?.purchaseLine?.purchase_line_id) {
-        usedPurchaseLineIds.add(selectedPurchaseLine.purchaseLine.purchase_line_id);
-      }
-      return buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine);
-    });
-
-    const summary = summarize(invoice, lines, results);
-    await persistResults(client, invoice, results, summary);
+    const summary = summarizeGlobal(invoice, ranked, result);
+    await persistResults(client, invoice, best ? [result, ...ranked.slice(1, 5).map((candidate) => (
+      buildGlobalResult(invoice, candidate, candidate.exact_amount ? 'conforme' : 'ecart_prix',
+        candidate.exact_amount ? null : 'ecart_prix',
+        candidate.exact_amount ? null : 'Montant HT facture different du total HT receptionne')
+    ))] : [], summary);
     await client.query('COMMIT');
 
     return { ok: true, invoice_id: invoice.id, ...summary };
@@ -787,7 +413,10 @@ async function analyzePennylaneSupplierInvoice(db, { invoiceId, storeId, dateWin
 }
 
 async function processPendingPennylaneSupplierInvoiceMatching(db, options = {}) {
-  const batchSize = Math.max(1, Math.min(Number(options.batchSize || process.env.PENNYLANE_SUPPLIER_INVOICE_MATCH_BATCH_SIZE) || DEFAULT_BATCH_SIZE, 100));
+  const batchSize = Math.max(
+    1,
+    Math.min(Number(options.batchSize || process.env.PENNYLANE_SUPPLIER_INVOICE_MATCH_BATCH_SIZE) || DEFAULT_BATCH_SIZE, 100)
+  );
   const storeId = options.storeId || null;
   const params = [];
   const where = [
@@ -829,7 +458,7 @@ async function processPendingPennylaneSupplierInvoiceMatching(db, options = {}) 
       succeeded += 1;
     } catch (error) {
       failed += 1;
-      console.error('[Supplier invoice matching] erreur analyse automatique', {
+      console.error('[Supplier invoice matching] erreur analyse automatique globale', {
         invoice_id: invoice.id,
         message: error.message,
       });
@@ -846,14 +475,12 @@ async function buildPennylaneSupplierInvoiceMatchingDebug(db, { invoiceId, store
     if (!loaded) return { found: false };
 
     const { invoice, lines } = loaded;
-    const mappings = await loadMappings(client, invoice.store_id, invoice.supplier_id);
-    const articles = await loadArticleCandidates(client, invoice.store_id);
-    const purchaseCandidates = await loadPurchaseLineCandidates(client, invoice, dateWindowDays);
-    const lineDebug = lines.map((line) => buildLineDebug(invoice, line, mappings, articles, purchaseCandidates));
-    const reasons = new Set(lineDebug.flatMap((line) => line.reasons_for_article_unknown || []));
+    const candidates = await loadGlobalPurchaseCandidates(client, invoice, dateWindowDays);
+    const ranked = rankGlobalCandidates(invoice, candidates, dateWindowDays);
 
     return {
       found: true,
+      mode: 'global_amount_date',
       pennylane_supplier: {
         pennylane_supplier_id: invoice.pennylane_supplier_id,
         supplier_name: invoice.supplier_name,
@@ -862,10 +489,15 @@ async function buildPennylaneSupplierInvoiceMatchingDebug(db, { invoiceId, store
       alta_supplier_id: invoice.supplier_id,
       invoice_date: invoice.invoice_date,
       invoice_lines_count: lines.length,
-      candidate_purchase_lines_count: purchaseCandidates.length,
-      candidates_sample: purchaseCandidates.slice(0, 10).map(purchaseCandidateSample),
-      reasons_for_article_unknown: Array.from(reasons),
-      line_debug: lineDebug,
+      invoice_amounts: {
+        amount_ex_vat: invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat,
+        amount_vat: invoice.amount_vat ?? invoice.currency_amount_vat,
+        amount_inc_vat: invoice.amount_inc_vat ?? invoice.currency_amount_inc_vat,
+      },
+      amount_tolerance: amountTolerance(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat),
+      candidate_purchase_count: ranked.length,
+      candidates_sample: ranked.slice(0, 10),
+      reasons_for_article_unknown: [],
     };
   } finally {
     client.release();
