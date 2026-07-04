@@ -1,6 +1,7 @@
 const { PennylaneApiError, createPennylaneClient } = require('./client');
 const { getPennylaneConfig } = require('./config');
 const { writeSyncLog } = require('./syncQueue');
+const { extractSupplierInvoicePdfLines } = require('./supplierInvoicePdfParser');
 const { analyzePennylaneSupplierInvoice } = require('../supplierInvoiceMatchingEngine');
 
 const DEFAULT_BATCH_SIZE = 50;
@@ -328,6 +329,30 @@ function summarizeImportedLines(lines) {
   };
 }
 
+function isDetailedInvoiceLine(line, index) {
+  const normalizedLine = normalizeLine(line, index);
+  return (
+    hasFilledText(normalizedLine.label) &&
+    normalizedLine.quantity !== null &&
+    normalizedLine.raw_currency_unit_price !== null
+  );
+}
+
+function withLineSource(lines, source, diagnostic = {}) {
+  return lines.map((line) => ({
+    ...line,
+    source_lignes: source,
+    pdf_parser_name: diagnostic.pdf_parser_name || line.pdf_parser_name || line.raw_payload?.pdf_parser_name || null,
+    pdf_parse_error: diagnostic.pdf_parse_error || null,
+    raw_payload: {
+      ...(line.raw_payload || {}),
+      source_lignes: source,
+      pdf_parser_name: diagnostic.pdf_parser_name || line.raw_payload?.pdf_parser_name || null,
+      pdf_parse_error: diagnostic.pdf_parse_error || null,
+    },
+  }));
+}
+
 function logSupplierInvoiceLinesWillCall({ invoiceId, endpoint, reason }) {
   console.info(`[DEBUG Pennylane supplier invoice_lines WILL CALL] ${JSON.stringify({
     invoice_id: invoiceId ? String(invoiceId) : null,
@@ -336,12 +361,26 @@ function logSupplierInvoiceLinesWillCall({ invoiceId, endpoint, reason }) {
   })}`);
 }
 
-function logSupplierInvoiceLinesImportResult({ invoiceId, reason, lines }) {
+function logSupplierInvoiceLinesImportResult({ invoiceId, reason, lines, diagnostic = {} }) {
   console.info(`[DEBUG Pennylane supplier invoice_lines IMPORT RESULT] ${JSON.stringify({
     invoice_id: invoiceId ? String(invoiceId) : null,
     reason,
+    source_lignes: diagnostic.source_lignes || 'pennylane_api',
+    pdf_lines_count: diagnostic.pdf_lines_count || 0,
+    pdf_parser_name: diagnostic.pdf_parser_name || null,
+    pdf_parse_error: diagnostic.pdf_parse_error || null,
     ...summarizeImportedLines(lines),
   })}`);
+}
+
+function logSupplierInvoiceLinesDiagnostic({ invoiceId, diagnostic }) {
+  console.info('[Pennylane supplier invoice import] diagnostic lignes', {
+    invoice_id: invoiceId ? String(invoiceId) : null,
+    source_lignes: diagnostic.source_lignes,
+    pdf_lines_count: diagnostic.pdf_lines_count,
+    pdf_parser_name: diagnostic.pdf_parser_name,
+    pdf_parse_error: diagnostic.pdf_parse_error,
+  });
 }
 
 async function listStoresToSync(db, storeId = null) {
@@ -472,6 +511,50 @@ async function fetchInvoiceLines(pennylaneClient, invoice, reason = 'sync') {
   return extractEmbeddedInvoiceLines(invoice);
 }
 
+async function resolveInvoiceLines({ invoice, apiLines }) {
+  const detailedApiLines = apiLines.filter((line, index) => isDetailedInvoiceLine(line, index));
+  const baseDiagnostic = {
+    source_lignes: 'pennylane_api',
+    pdf_lines_count: 0,
+    pdf_parser_name: null,
+    pdf_parse_error: null,
+  };
+
+  if (apiLines.length > 0 && detailedApiLines.length === apiLines.length) {
+    return {
+      lines: withLineSource(apiLines, 'pennylane_api', baseDiagnostic),
+      diagnostic: baseDiagnostic,
+    };
+  }
+
+  const pdfResult = await extractSupplierInvoicePdfLines({
+    invoice,
+    publicFileUrl: firstPresent(invoice, ['public_file_url', 'file_url', 'pdf_url']),
+  });
+
+  if (pdfResult.lines.length) {
+    return {
+      lines: withLineSource(pdfResult.lines, 'pdf_fallback', pdfResult),
+      diagnostic: {
+        source_lignes: 'pdf_fallback',
+        pdf_lines_count: pdfResult.pdf_lines_count,
+        pdf_parser_name: pdfResult.pdf_parser_name,
+        pdf_parse_error: null,
+      },
+    };
+  }
+
+  return {
+    lines: detailedApiLines.length ? withLineSource(detailedApiLines, 'pennylane_api', pdfResult) : [],
+    diagnostic: {
+      source_lignes: detailedApiLines.length ? 'pennylane_api' : 'pdf_fallback',
+      pdf_lines_count: pdfResult.pdf_lines_count,
+      pdf_parser_name: pdfResult.pdf_parser_name,
+      pdf_parse_error: pdfResult.pdf_parse_error,
+    },
+  };
+}
+
 async function listIncompleteLocalInvoices(db, storeId, limit = 50) {
   const result = await db.query(
     `
@@ -534,6 +617,14 @@ async function markInvoiceDeleted(db, storeId, pennylaneInvoiceId) {
 
 async function upsertInvoiceLines(db, { storeId, localInvoiceId, lines }) {
   const touchedLineIds = [];
+
+  if (!lines.length) {
+    await db.query('DELETE FROM pennylane_supplier_invoice_lines WHERE supplier_invoice_id = $1 AND store_id = $2', [
+      localInvoiceId,
+      storeId,
+    ]);
+    return;
+  }
 
   for (const [index, line] of lines.entries()) {
     const normalizedLine = normalizeLine(line, index);
@@ -667,7 +758,7 @@ async function upsertInvoiceLines(db, { storeId, localInvoiceId, lines }) {
   }
 }
 
-async function upsertInvoice(db, { storeId, invoice, lines }) {
+async function upsertInvoice(db, { storeId, invoice, lines, lineDiagnostic }) {
   const pennylaneSupplierId = normalizeSupplierId(invoice);
   const supplierId = await findAltaSupplier(db, storeId, pennylaneSupplierId);
   const eInvoicing = normalizeEInvoicing(invoice);
@@ -771,7 +862,10 @@ async function upsertInvoice(db, { storeId, invoice, lines }) {
       firstPresent(invoice, ['public_file_url']),
       firstPresent(invoice, ['external_reference']),
       altaBusinessStatus,
-      JSON.stringify(invoice),
+      JSON.stringify({
+        ...invoice,
+        _alta_import_diagnostic: lineDiagnostic || null,
+      }),
     ]
   );
 
@@ -811,9 +905,11 @@ async function syncSupplierInvoiceById(db, pennylaneClient, storeId, pennylaneIn
   if (!invoice?.id) throw new Error('Pennylane n a pas retourne de facture fournisseur exploitable');
 
   const reason = options.reason || 'sync';
-  const lines = await fetchInvoiceLines(pennylaneClient, invoice, reason);
-  logSupplierInvoiceLinesImportResult({ invoiceId: invoice.id, reason, lines });
-  const localInvoiceId = await upsertInvoice(db, { storeId, invoice, lines });
+  const apiLines = await fetchInvoiceLines(pennylaneClient, invoice, reason);
+  const { lines, diagnostic } = await resolveInvoiceLines({ invoice, apiLines });
+  logSupplierInvoiceLinesDiagnostic({ invoiceId: invoice.id, diagnostic });
+  logSupplierInvoiceLinesImportResult({ invoiceId: invoice.id, reason, lines, diagnostic });
+  const localInvoiceId = await upsertInvoice(db, { storeId, invoice, lines, lineDiagnostic: diagnostic });
 
   if (options.rerunMatching) {
     await rerunSupplierInvoiceMatching(db, {
