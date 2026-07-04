@@ -415,6 +415,24 @@ function logSupplierInvoiceLinesDiagnostic({ invoiceId, diagnostic }) {
   });
 }
 
+function logSupplierInvoiceLineSqlValues({ operation, localInvoiceId, line, normalizedLine, params }) {
+  console.log('[Pennylane supplier invoice line]', {
+    operation,
+    local_invoice_id: localInvoiceId,
+    label: normalizedLine.label,
+    quantity: normalizedLine.quantity,
+    unitPriceExVat: normalizedLine.raw_currency_unit_price,
+    lineAmountExVat: normalizedLine.amount ?? normalizedLine.currency_amount,
+    currencyAmount: normalizedLine.currency_amount,
+    amount: normalizedLine.amount,
+    currencyTax: normalizedLine.currency_tax,
+    tax: normalizedLine.tax,
+    vatRate: normalizedLine.vat_rate,
+    rawLine: line,
+  });
+  console.log('[SQL params]', params);
+}
+
 async function listStoresToSync(db, storeId = null) {
   if (storeId) return [{ store_id: storeId }];
 
@@ -696,6 +714,31 @@ async function upsertInvoiceLines(db, { storeId, localInvoiceId, lines }) {
       }
 
       if (existingLine) {
+        const params = [
+          existingLine.id,
+          storeId,
+          normalizedLine.pennylane_line_id ? String(normalizedLine.pennylane_line_id) : null,
+          normalizedLine.e_invoice_line_id ? String(normalizedLine.e_invoice_line_id) : null,
+          normalizedLine.position,
+          normalizedLine.label,
+          normalizedLine.quantity,
+          normalizedLine.unit,
+          normalizedLine.raw_currency_unit_price,
+          normalizedLine.currency_amount,
+          normalizedLine.amount,
+          normalizedLine.currency_tax,
+          normalizedLine.tax,
+          normalizedLine.vat_rate,
+          normalizedLine.ledger_account_id ? String(normalizedLine.ledger_account_id) : null,
+          JSON.stringify(normalizedLine.raw_payload),
+        ];
+        logSupplierInvoiceLineSqlValues({
+          operation: 'update',
+          localInvoiceId,
+          line,
+          normalizedLine,
+          params,
+        });
         await db.query(
           `
           UPDATE pennylane_supplier_invoice_lines
@@ -717,29 +760,37 @@ async function upsertInvoiceLines(db, { storeId, localInvoiceId, lines }) {
           WHERE id = $1
             AND store_id = $2
           `,
-          [
-            existingLine.id,
-            storeId,
-            normalizedLine.pennylane_line_id ? String(normalizedLine.pennylane_line_id) : null,
-            normalizedLine.e_invoice_line_id ? String(normalizedLine.e_invoice_line_id) : null,
-            normalizedLine.position,
-            normalizedLine.label,
-            normalizedLine.quantity,
-            normalizedLine.unit,
-            normalizedLine.raw_currency_unit_price,
-            normalizedLine.currency_amount,
-            normalizedLine.amount,
-            normalizedLine.currency_tax,
-            normalizedLine.tax,
-            normalizedLine.vat_rate,
-            normalizedLine.ledger_account_id ? String(normalizedLine.ledger_account_id) : null,
-            JSON.stringify(normalizedLine.raw_payload),
-          ]
+          params
         );
         touchedLineIds.push(existingLine.id);
         continue;
       }
 
+      const params = [
+        storeId,
+        localInvoiceId,
+        normalizedLine.pennylane_line_id ? String(normalizedLine.pennylane_line_id) : null,
+        normalizedLine.e_invoice_line_id ? String(normalizedLine.e_invoice_line_id) : null,
+        normalizedLine.position,
+        normalizedLine.label,
+        normalizedLine.quantity,
+        normalizedLine.unit,
+        normalizedLine.raw_currency_unit_price,
+        normalizedLine.currency_amount,
+        normalizedLine.amount,
+        normalizedLine.currency_tax,
+        normalizedLine.tax,
+        normalizedLine.vat_rate,
+        normalizedLine.ledger_account_id ? String(normalizedLine.ledger_account_id) : null,
+        JSON.stringify(normalizedLine.raw_payload),
+      ];
+      logSupplierInvoiceLineSqlValues({
+        operation: 'insert',
+        localInvoiceId,
+        line,
+        normalizedLine,
+        params,
+      });
       const inserted = await db.query(
         `
         INSERT INTO pennylane_supplier_invoice_lines(
@@ -756,24 +807,7 @@ async function upsertInvoiceLines(db, { storeId, localInvoiceId, lines }) {
         )
         RETURNING id
         `,
-        [
-          storeId,
-          localInvoiceId,
-          normalizedLine.pennylane_line_id ? String(normalizedLine.pennylane_line_id) : null,
-          normalizedLine.e_invoice_line_id ? String(normalizedLine.e_invoice_line_id) : null,
-          normalizedLine.position,
-          normalizedLine.label,
-          normalizedLine.quantity,
-          normalizedLine.unit,
-          normalizedLine.raw_currency_unit_price,
-          normalizedLine.currency_amount,
-          normalizedLine.amount,
-          normalizedLine.currency_tax,
-          normalizedLine.tax,
-          normalizedLine.vat_rate,
-          normalizedLine.ledger_account_id ? String(normalizedLine.ledger_account_id) : null,
-          JSON.stringify(normalizedLine.raw_payload),
-        ]
+        params
       );
       touchedLineIds.push(inserted.rows[0].id);
     }
