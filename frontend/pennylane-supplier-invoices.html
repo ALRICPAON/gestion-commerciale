@@ -41,10 +41,15 @@
             <option value="all">Tous</option>
             <option value="nouvelle">Nouvelle</option>
             <option value="a_rapprocher">À rapprocher</option>
+            <option value="analyse_automatique">Analyse automatique</option>
             <option value="en_controle">En contrôle</option>
             <option value="conforme">Conforme</option>
             <option value="ecart_prix">Écart prix</option>
             <option value="ecart_quantite">Écart quantité</option>
+            <option value="ecart_tva">Écart TVA</option>
+            <option value="bl_manquant">BL manquant</option>
+            <option value="article_inconnu">Article inconnu</option>
+            <option value="controle_manuel">Contrôle manuel</option>
             <option value="litige">Litige</option>
             <option value="refusee">Refusée</option>
             <option value="validee_a_payer">Validée à payer</option>
@@ -70,12 +75,15 @@
               <th>TTC</th>
               <th>Statut Pennylane</th>
               <th>Statut ALTA</th>
+              <th>BL candidats</th>
+              <th>Propositions</th>
+              <th>Anomalies</th>
               <th>PDF</th>
               <th>Action</th>
             </tr>
           </thead>
           <tbody id="invoices-table-body">
-            <tr><td colspan="11">Chargement...</td></tr>
+            <tr><td colspan="14">Chargement...</td></tr>
           </tbody>
         </table>
       </div>
@@ -87,19 +95,19 @@
       <div id="detail-empty" class="empty-state">Sélectionne une facture Pennylane pour voir son détail.</div>
       <div id="detail-content" class="hidden">
         <div class="detail-grid" id="invoice-summary"></div>
-        <h4>Lignes Pennylane</h4>
+        <h4>Rapprochement global proposé</h4>
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
                 <th>#</th>
-                <th>Libellé</th>
-                <th>Quantité</th>
-                <th>Unité</th>
-                <th>Prix unitaire</th>
-                <th>HT</th>
-                <th>TVA</th>
-                <th>Taux TVA</th>
+                <th>BL / achat</th>
+                <th>Quantité facturée</th>
+                <th>Quantité réceptionnée</th>
+                <th>Prix BL</th>
+                <th>Prix facture</th>
+                <th>Écart</th>
+                <th>Résultat</th>
               </tr>
             </thead>
             <tbody id="lines-table-body"></tbody>
@@ -107,13 +115,14 @@
         </div>
         <div class="page-actions-right detail-actions">
           <a id="pdf-link" class="btn btn-secondary" href="#" target="_blank" rel="noopener">Voir PDF Pennylane</a>
-          <a id="legacy-module-link" class="btn btn-primary" href="./supplier-invoices.html">Contrôler dans le module actuel</a>
+          <button id="analyze-btn" class="btn btn-secondary">Relancer analyse</button>
+          <a id="legacy-module-link" class="btn btn-primary" href="#">Ouvrir dans le module facture fournisseur</a>
         </div>
       </div>
     </section>
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/pennylane-supplier-invoices.js"></script>
+  <script src="./js/pennylane-supplier-invoices.js?v=3"></script>
 </body>
 </html>

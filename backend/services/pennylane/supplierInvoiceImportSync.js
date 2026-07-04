@@ -1,6 +1,7 @@
 const { PennylaneApiError, createPennylaneClient } = require('./client');
 const { getPennylaneConfig } = require('./config');
 const { writeSyncLog } = require('./syncQueue');
+const { analyzePennylaneSupplierInvoice } = require('../supplierInvoiceMatchingEngine');
 
 const DEFAULT_BATCH_SIZE = 50;
 const DEFAULT_CHANGELOG_LIMIT = 1000;
@@ -10,10 +11,15 @@ const SUPPLIER_INVOICE_SYNC_RESOURCE = 'supplier_invoices';
 const ALTA_STATUSES = new Set([
   'nouvelle',
   'a_rapprocher',
+  'analyse_automatique',
   'en_controle',
   'conforme',
   'ecart_prix',
   'ecart_quantite',
+  'ecart_tva',
+  'bl_manquant',
+  'article_inconnu',
+  'controle_manuel',
   'litige',
   'refusee',
   'validee_a_payer',
@@ -48,6 +54,38 @@ function sanitizePennylaneError(err) {
   return { message: err.message || 'Erreur Pennylane inattendue' };
 }
 
+function shortStack(err) {
+  return String(err?.stack || '')
+    .split('\n')
+    .slice(0, 6)
+    .join('\n');
+}
+
+function decorateSupplierInvoiceImportError(err, context = {}) {
+  err.supplierInvoiceImportContext = {
+    ...(err.supplierInvoiceImportContext || {}),
+    ...context,
+  };
+  return err;
+}
+
+function logSupplierInvoiceImportError(err, context = {}) {
+  const importContext = {
+    ...(err?.supplierInvoiceImportContext || {}),
+    ...context,
+  };
+
+  console.error('[Pennylane supplier invoice import] ERREUR', {
+    pennylane_invoice_id: importContext.pennylaneInvoiceId ? String(importContext.pennylaneInvoiceId) : null,
+    local_invoice_id: importContext.localInvoiceId || null,
+    etape: importContext.step || 'unknown',
+    message: err?.message || 'Erreur inconnue',
+    code: err?.code || null,
+    detail: err?.detail || null,
+    stack: shortStack(err),
+  });
+}
+
 function toNumberOrNull(value) {
   if (value === undefined || value === null || value === '') return null;
   const amount = Number(value);
@@ -71,12 +109,37 @@ function firstPresent(object, keys) {
   return null;
 }
 
+function nestedFirstPresent(object, keys) {
+  const direct = firstPresent(object, keys);
+  if (direct !== null && direct !== undefined && direct !== '') return direct;
+  if (!object || typeof object !== 'object') return null;
+
+  for (const value of Object.values(object)) {
+    if (value && typeof value === 'object') {
+      const nested = nestedFirstPresent(value, keys);
+      if (nested !== null && nested !== undefined && nested !== '') return nested;
+    }
+  }
+
+  return null;
+}
+
+function hasFilledText(value) {
+  return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
 function extractList(responseBody) {
   if (!responseBody || typeof responseBody !== 'object') return [];
   if (Array.isArray(responseBody.items)) return responseBody.items;
   if (Array.isArray(responseBody.data)) return responseBody.data;
   if (Array.isArray(responseBody.supplier_invoices)) return responseBody.supplier_invoices;
+  if (Array.isArray(responseBody.invoice_lines)) return responseBody.invoice_lines;
+  if (Array.isArray(responseBody.supplier_invoice_lines)) return responseBody.supplier_invoice_lines;
+  if (Array.isArray(responseBody.lines)) return responseBody.lines;
   if (Array.isArray(responseBody.changes)) return responseBody.changes;
+  if (responseBody.data && typeof responseBody.data === 'object') return extractList(responseBody.data);
+  if (responseBody.invoice_lines && typeof responseBody.invoice_lines === 'object') return extractList(responseBody.invoice_lines);
+  if (responseBody.supplier_invoice_lines && typeof responseBody.supplier_invoice_lines === 'object') return extractList(responseBody.supplier_invoice_lines);
   return [];
 }
 
@@ -132,20 +195,6 @@ function buildChangelogEndpoint({ startDate, cursor, limit }) {
   return `/changelogs/supplier_invoices?${params.toString()}`;
 }
 
-function buildLinesEndpoint(invoice) {
-  const url = invoice?.invoice_lines?.url;
-  if (url) {
-    try {
-      const parsed = new URL(url);
-      return `${parsed.pathname.replace('/api/external/v2', '')}${parsed.search || ''}`;
-    } catch {
-      // Fall back to the documented endpoint below.
-    }
-  }
-
-  return `/supplier_invoices/${encodeURIComponent(invoice.id)}/invoice_lines?limit=100`;
-}
-
 function normalizeAltaStatus(currentStatus, invoice, supplierId) {
   if (currentStatus && ALTA_STATUSES.has(currentStatus) && currentStatus !== 'nouvelle') {
     return currentStatus;
@@ -157,9 +206,33 @@ function normalizeAltaStatus(currentStatus, invoice, supplierId) {
 }
 
 function normalizeSupplierId(invoice) {
+  const direct = firstPresent(invoice, [
+    'supplier_id',
+    'pennylane_supplier_id',
+    'thirdparty_id',
+    'provider_id',
+    'vendor_id',
+    'source_id',
+    'remote_id',
+  ]);
+  if (direct) return direct;
+
   const supplier = invoice?.supplier;
-  if (!supplier || typeof supplier !== 'object') return null;
-  return firstPresent(supplier, ['id', 'supplier_id']);
+  if (typeof supplier === 'string' || typeof supplier === 'number') return supplier;
+  if (supplier && typeof supplier === 'object') {
+    return firstPresent(supplier, [
+      'id',
+      'supplier_id',
+      'pennylane_supplier_id',
+      'thirdparty_id',
+      'provider_id',
+      'vendor_id',
+      'source_id',
+      'remote_id',
+    ]);
+  }
+
+  return nestedFirstPresent(invoice, ['supplier_id']);
 }
 
 function normalizeEInvoicing(invoice) {
@@ -168,25 +241,6 @@ function normalizeEInvoicing(invoice) {
     status: firstPresent(eInvoicing, ['status']),
     reason: firstPresent(eInvoicing, ['reason']),
     flowId: firstPresent(eInvoicing.flow || {}, ['id']) || firstPresent(eInvoicing, ['flow_id']),
-  };
-}
-
-function normalizeLine(line, index) {
-  return {
-    pennylane_line_id: firstPresent(line, ['id', 'invoice_line_id']),
-    e_invoice_line_id: firstPresent(line, ['e_invoice_line_id']),
-    label: firstPresent(line, ['label', 'description', 'name']),
-    quantity: toNumberOrNull(firstPresent(line, ['quantity', 'qty'])),
-    unit: firstPresent(line, ['unit', 'price_unit']),
-    raw_currency_unit_price: toNumberOrNull(firstPresent(line, ['raw_currency_unit_price', 'unit_price'])),
-    currency_amount: toNumberOrNull(firstPresent(line, ['currency_amount', 'amount'])),
-    amount: toNumberOrNull(firstPresent(line, ['amount'])),
-    currency_tax: toNumberOrNull(firstPresent(line, ['currency_tax', 'tax'])),
-    tax: toNumberOrNull(firstPresent(line, ['tax'])),
-    vat_rate: firstPresent(line, ['vat_rate']),
-    ledger_account_id: firstPresent(line, ['ledger_account_id']),
-    position: Number(firstPresent(line, ['position', 'line_number'])) || index + 1,
-    raw_payload: line,
   };
 }
 
@@ -297,23 +351,30 @@ async function findAltaSupplier(db, storeId, pennylaneSupplierId) {
   return result.rows[0]?.id || null;
 }
 
-async function fetchInvoiceLines(pennylaneClient, invoice) {
-  const lines = [];
-  let endpoint = buildLinesEndpoint(invoice);
+async function listInvoicesMissingSupplier(db, storeId, limit = 50) {
+  const result = await db.query(
+    `
+    SELECT
+      psi.pennylane_supplier_invoice_id,
+      'missing_supplier_id' AS reason
+    FROM pennylane_supplier_invoices psi
+    WHERE psi.store_id = $1
+      AND psi.pennylane_deleted_at IS NULL
+      AND psi.supplier_id IS NULL
+      AND NULLIF(TRIM(COALESCE(psi.pennylane_supplier_id, '')), '') IS NOT NULL
+      AND (psi.invoice_date IS NULL OR psi.invoice_date >= CURRENT_DATE - INTERVAL '90 days')
+    ORDER BY psi.last_synced_at ASC NULLS FIRST, psi.created_at ASC
+    LIMIT $2
+    `,
+    [storeId, limit]
+  );
 
-  while (endpoint) {
-    const response = await pennylaneClient.get(endpoint);
-    lines.push(...extractList(response.body));
-
-    if (!hasMore(response.body)) break;
-    const cursor = nextCursor(response.body);
-    if (!cursor) break;
-
-    const separator = endpoint.includes('?') ? '&' : '?';
-    endpoint = `${endpoint}${separator}cursor=${encodeURIComponent(cursor)}`;
-  }
-
-  return lines;
+  return result.rows
+    .filter((row) => row.pennylane_supplier_invoice_id)
+    .map((row) => ({
+      pennylaneInvoiceId: row.pennylane_supplier_invoice_id,
+      reason: row.reason || 'incomplete',
+    }));
 }
 
 async function markInvoiceDeleted(db, storeId, pennylaneInvoiceId) {
@@ -331,156 +392,205 @@ async function markInvoiceDeleted(db, storeId, pennylaneInvoiceId) {
   );
 }
 
-async function upsertInvoice(db, { storeId, invoice, lines }) {
+async function upsertInvoice(db, { storeId, invoice }) {
   const pennylaneSupplierId = normalizeSupplierId(invoice);
   const supplierId = await findAltaSupplier(db, storeId, pennylaneSupplierId);
   const eInvoicing = normalizeEInvoicing(invoice);
+  let localInvoiceId = null;
+  let currentStep = 'update_invoice';
 
-  const existing = await db.query(
-    `
-    SELECT alta_business_status
-    FROM pennylane_supplier_invoices
-    WHERE store_id = $1
-      AND pennylane_supplier_invoice_id = $2
-    LIMIT 1
-    `,
-    [storeId, String(invoice.id)]
-  );
-  const altaBusinessStatus = normalizeAltaStatus(existing.rows[0]?.alta_business_status, invoice, supplierId);
-
-  const upserted = await db.query(
-    `
-    INSERT INTO pennylane_supplier_invoices(
-      id, store_id, pennylane_supplier_invoice_id, pennylane_supplier_id, supplier_id,
-      invoice_number, invoice_date, due_date, currency,
-      amount_ex_vat, amount_vat, amount_inc_vat,
-      currency_amount_ex_vat, currency_amount_vat, currency_amount_inc_vat,
-      remaining_amount_with_tax, remaining_amount_without_tax,
-      accounting_status, payment_status, paid,
-      e_invoice_status, e_invoice_reason, e_invoice_flow_id,
-      pennylane_filename, public_file_url, external_reference,
-      alta_business_status, sync_status, raw_payload, last_synced_at
-    )
-    VALUES(
-      gen_random_uuid(), $1, $2, $3, $4,
-      $5, $6::date, $7::date, $8,
-      $9, $10, $11,
-      $12, $13, $14,
-      $15, $16,
-      $17, $18, $19,
-      $20, $21, $22,
-      $23, $24, $25,
-      $26, 'synced', $27::jsonb, now()
-    )
-    ON CONFLICT (store_id, pennylane_supplier_invoice_id) DO UPDATE
-    SET pennylane_supplier_id = EXCLUDED.pennylane_supplier_id,
-      supplier_id = EXCLUDED.supplier_id,
-      invoice_number = EXCLUDED.invoice_number,
-      invoice_date = EXCLUDED.invoice_date,
-      due_date = EXCLUDED.due_date,
-      currency = EXCLUDED.currency,
-      amount_ex_vat = EXCLUDED.amount_ex_vat,
-      amount_vat = EXCLUDED.amount_vat,
-      amount_inc_vat = EXCLUDED.amount_inc_vat,
-      currency_amount_ex_vat = EXCLUDED.currency_amount_ex_vat,
-      currency_amount_vat = EXCLUDED.currency_amount_vat,
-      currency_amount_inc_vat = EXCLUDED.currency_amount_inc_vat,
-      remaining_amount_with_tax = EXCLUDED.remaining_amount_with_tax,
-      remaining_amount_without_tax = EXCLUDED.remaining_amount_without_tax,
-      accounting_status = EXCLUDED.accounting_status,
-      payment_status = EXCLUDED.payment_status,
-      paid = EXCLUDED.paid,
-      e_invoice_status = EXCLUDED.e_invoice_status,
-      e_invoice_reason = EXCLUDED.e_invoice_reason,
-      e_invoice_flow_id = EXCLUDED.e_invoice_flow_id,
-      pennylane_filename = EXCLUDED.pennylane_filename,
-      public_file_url = EXCLUDED.public_file_url,
-      external_reference = EXCLUDED.external_reference,
-      alta_business_status = CASE
-        WHEN pennylane_supplier_invoices.alta_business_status IN ('validee_a_payer', 'payee', 'litige', 'refusee')
-          THEN pennylane_supplier_invoices.alta_business_status
-        ELSE EXCLUDED.alta_business_status
-      END,
-      sync_status = 'synced',
-      pennylane_deleted_at = NULL,
-      raw_payload = EXCLUDED.raw_payload,
-      last_synced_at = now(),
-      updated_at = now()
-    RETURNING id
-    `,
-    [
-      storeId,
-      String(invoice.id),
-      pennylaneSupplierId ? String(pennylaneSupplierId) : null,
-      supplierId,
-      firstPresent(invoice, ['invoice_number', 'number']),
-      toDateOrNull(firstPresent(invoice, ['date', 'invoice_date'])),
-      toDateOrNull(firstPresent(invoice, ['deadline', 'due_date'])),
-      firstPresent(invoice, ['currency']) || 'EUR',
-      toNumberOrNull(firstPresent(invoice, ['amount_before_tax', 'amount_ex_vat'])),
-      toNumberOrNull(firstPresent(invoice, ['tax'])),
-      toNumberOrNull(firstPresent(invoice, ['amount'])),
-      toNumberOrNull(firstPresent(invoice, ['currency_amount_before_tax'])),
-      toNumberOrNull(firstPresent(invoice, ['currency_tax'])),
-      toNumberOrNull(firstPresent(invoice, ['currency_amount'])),
-      toNumberOrNull(firstPresent(invoice, ['remaining_amount_with_tax'])),
-      toNumberOrNull(firstPresent(invoice, ['remaining_amount_without_tax'])),
-      firstPresent(invoice, ['accounting_status']),
-      firstPresent(invoice, ['payment_status']),
-      invoice.paid === true,
-      eInvoicing.status,
-      eInvoicing.reason,
-      eInvoicing.flowId,
-      firstPresent(invoice, ['filename']),
-      firstPresent(invoice, ['public_file_url']),
-      firstPresent(invoice, ['external_reference']),
-      altaBusinessStatus,
-      JSON.stringify(invoice),
-    ]
-  );
-
-  const localInvoiceId = upserted.rows[0].id;
-  await db.query('DELETE FROM pennylane_supplier_invoice_lines WHERE supplier_invoice_id = $1', [localInvoiceId]);
-
-  for (const [index, line] of lines.entries()) {
-    const normalizedLine = normalizeLine(line, index);
-    await db.query(
+  try {
+    const existing = await db.query(
       `
-      INSERT INTO pennylane_supplier_invoice_lines(
-        id, store_id, supplier_invoice_id, pennylane_line_id, e_invoice_line_id,
-        line_position, label, quantity, unit, raw_currency_unit_price,
-        currency_amount, amount, currency_tax, tax, vat_rate,
-        ledger_account_id, raw_payload
+      SELECT alta_business_status
+      FROM pennylane_supplier_invoices
+      WHERE store_id = $1
+        AND pennylane_supplier_invoice_id = $2
+      LIMIT 1
+      `,
+      [storeId, String(invoice.id)]
+    );
+    const altaBusinessStatus = normalizeAltaStatus(existing.rows[0]?.alta_business_status, invoice, supplierId);
+
+    const upserted = await db.query(
+      `
+      INSERT INTO pennylane_supplier_invoices(
+        id, store_id, pennylane_supplier_invoice_id, pennylane_supplier_id, supplier_id,
+        invoice_number, invoice_date, due_date, currency,
+        amount_ex_vat, amount_vat, amount_inc_vat,
+        currency_amount_ex_vat, currency_amount_vat, currency_amount_inc_vat,
+        remaining_amount_with_tax, remaining_amount_without_tax,
+        accounting_status, payment_status, paid,
+        e_invoice_status, e_invoice_reason, e_invoice_flow_id,
+        pennylane_filename, public_file_url, external_reference,
+        alta_business_status, sync_status, raw_payload, last_synced_at
       )
       VALUES(
         gen_random_uuid(), $1, $2, $3, $4,
-        $5, $6, $7, $8, $9,
-        $10, $11, $12, $13, $14,
-        $15, $16::jsonb
+        $5, $6::date, $7::date, $8,
+        $9, $10, $11,
+        $12, $13, $14,
+        $15, $16,
+        $17, $18, $19,
+        $20, $21, $22,
+        $23, $24, $25,
+        $26, 'synced', $27::jsonb, now()
       )
+      ON CONFLICT (store_id, pennylane_supplier_invoice_id) DO UPDATE
+      SET pennylane_supplier_id = EXCLUDED.pennylane_supplier_id,
+        supplier_id = EXCLUDED.supplier_id,
+        invoice_number = EXCLUDED.invoice_number,
+        invoice_date = EXCLUDED.invoice_date,
+        due_date = EXCLUDED.due_date,
+        currency = EXCLUDED.currency,
+        amount_ex_vat = EXCLUDED.amount_ex_vat,
+        amount_vat = EXCLUDED.amount_vat,
+        amount_inc_vat = EXCLUDED.amount_inc_vat,
+        currency_amount_ex_vat = EXCLUDED.currency_amount_ex_vat,
+        currency_amount_vat = EXCLUDED.currency_amount_vat,
+        currency_amount_inc_vat = EXCLUDED.currency_amount_inc_vat,
+        remaining_amount_with_tax = EXCLUDED.remaining_amount_with_tax,
+        remaining_amount_without_tax = EXCLUDED.remaining_amount_without_tax,
+        accounting_status = EXCLUDED.accounting_status,
+        payment_status = EXCLUDED.payment_status,
+        paid = EXCLUDED.paid,
+        e_invoice_status = EXCLUDED.e_invoice_status,
+        e_invoice_reason = EXCLUDED.e_invoice_reason,
+        e_invoice_flow_id = EXCLUDED.e_invoice_flow_id,
+        pennylane_filename = EXCLUDED.pennylane_filename,
+        public_file_url = EXCLUDED.public_file_url,
+        external_reference = EXCLUDED.external_reference,
+        alta_business_status = CASE
+          WHEN pennylane_supplier_invoices.alta_business_status IN ('validee_a_payer', 'payee', 'litige', 'refusee')
+            THEN pennylane_supplier_invoices.alta_business_status
+          ELSE EXCLUDED.alta_business_status
+        END,
+        sync_status = 'synced',
+        pennylane_deleted_at = NULL,
+        raw_payload = EXCLUDED.raw_payload,
+        last_synced_at = now(),
+        updated_at = now()
+      RETURNING id
       `,
       [
         storeId,
-        localInvoiceId,
-        normalizedLine.pennylane_line_id ? String(normalizedLine.pennylane_line_id) : null,
-        normalizedLine.e_invoice_line_id ? String(normalizedLine.e_invoice_line_id) : null,
-        normalizedLine.position,
-        normalizedLine.label,
-        normalizedLine.quantity,
-        normalizedLine.unit,
-        normalizedLine.raw_currency_unit_price,
-        normalizedLine.currency_amount,
-        normalizedLine.amount,
-        normalizedLine.currency_tax,
-        normalizedLine.tax,
-        normalizedLine.vat_rate,
-        normalizedLine.ledger_account_id ? String(normalizedLine.ledger_account_id) : null,
-        JSON.stringify(normalizedLine.raw_payload),
+        String(invoice.id),
+        pennylaneSupplierId ? String(pennylaneSupplierId) : null,
+        supplierId,
+        firstPresent(invoice, ['invoice_number', 'number']),
+        toDateOrNull(firstPresent(invoice, ['date', 'invoice_date'])),
+        toDateOrNull(firstPresent(invoice, ['deadline', 'due_date'])),
+        firstPresent(invoice, ['currency']) || 'EUR',
+        toNumberOrNull(firstPresent(invoice, ['amount_before_tax', 'amount_ex_vat'])),
+        toNumberOrNull(firstPresent(invoice, ['tax'])),
+        toNumberOrNull(firstPresent(invoice, ['amount'])),
+        toNumberOrNull(firstPresent(invoice, ['currency_amount_before_tax'])),
+        toNumberOrNull(firstPresent(invoice, ['currency_tax'])),
+        toNumberOrNull(firstPresent(invoice, ['currency_amount'])),
+        toNumberOrNull(firstPresent(invoice, ['remaining_amount_with_tax'])),
+        toNumberOrNull(firstPresent(invoice, ['remaining_amount_without_tax'])),
+        firstPresent(invoice, ['accounting_status']),
+        firstPresent(invoice, ['payment_status']),
+        invoice.paid === true,
+        eInvoicing.status,
+        eInvoicing.reason,
+        eInvoicing.flowId,
+        firstPresent(invoice, ['filename']),
+        firstPresent(invoice, ['public_file_url']),
+        firstPresent(invoice, ['external_reference']),
+        altaBusinessStatus,
+        JSON.stringify(invoice),
       ]
     );
-  }
 
-  return localInvoiceId;
+    localInvoiceId = upserted.rows[0].id;
+    await db.query(
+      `
+      DELETE FROM pennylane_supplier_invoice_lines
+      WHERE supplier_invoice_id = $1
+        AND store_id = $2
+      `,
+      [localInvoiceId, storeId]
+    );
+
+    return localInvoiceId;
+  } catch (err) {
+    throw decorateSupplierInvoiceImportError(err, {
+      pennylaneInvoiceId: invoice?.id,
+      localInvoiceId,
+      step: err.supplierInvoiceImportContext?.step || currentStep,
+    });
+  }
+}
+
+async function rerunSupplierInvoiceMatching(db, { storeId, localInvoiceId, pennylaneInvoiceId, reason }) {
+  try {
+    const result = await analyzePennylaneSupplierInvoice(db, {
+      invoiceId: localInvoiceId,
+      storeId,
+    });
+    console.info('[Pennylane supplier invoice import] analyse relancee apres import entete', {
+      store_id: storeId,
+      invoice_id: String(pennylaneInvoiceId),
+      local_invoice_id: localInvoiceId,
+      reason,
+      result,
+    });
+  } catch (err) {
+    logSupplierInvoiceImportError(err, {
+      pennylaneInvoiceId,
+      localInvoiceId,
+      step: 'matching',
+    });
+    console.error('[Pennylane supplier invoice import] erreur relance analyse apres import entete', {
+      store_id: storeId,
+      invoice_id: String(pennylaneInvoiceId),
+      local_invoice_id: localInvoiceId,
+      reason,
+      message: err.message,
+    });
+  }
+}
+
+async function syncSupplierInvoiceById(db, pennylaneClient, storeId, pennylaneInvoiceId, options = {}) {
+  let invoice = null;
+  let localInvoiceId = null;
+  let currentStep = 'fetch_invoice';
+
+  try {
+    const response = await pennylaneClient.get(`/supplier_invoices/${encodeURIComponent(pennylaneInvoiceId)}`);
+    invoice = extractInvoice(response.body);
+    if (!invoice?.id) throw new Error('Pennylane n a pas retourne de facture fournisseur exploitable');
+
+    const reason = options.reason || 'sync';
+    console.info('[Pennylane supplier invoice import] header only', {
+      invoice_id: String(invoice.id),
+      reason,
+      public_file_url_present: Boolean(firstPresent(invoice, ['public_file_url'])),
+    });
+    currentStep = 'update_invoice';
+    localInvoiceId = await upsertInvoice(db, { storeId, invoice });
+
+    if (options.rerunMatching) {
+      currentStep = 'matching';
+      await rerunSupplierInvoiceMatching(db, {
+        storeId,
+        localInvoiceId,
+        pennylaneInvoiceId: invoice.id,
+        reason,
+      });
+    }
+
+    return { synced: true };
+  } catch (err) {
+    const decorated = decorateSupplierInvoiceImportError(err, {
+      pennylaneInvoiceId: invoice?.id || pennylaneInvoiceId,
+      localInvoiceId: err.supplierInvoiceImportContext?.localInvoiceId || localInvoiceId,
+      step: err.supplierInvoiceImportContext?.step || currentStep,
+    });
+    logSupplierInvoiceImportError(decorated);
+    throw decorated;
+  }
 }
 
 async function syncSupplierInvoiceChange(db, pennylaneClient, storeId, change) {
@@ -493,13 +603,9 @@ async function syncSupplierInvoiceChange(db, pennylaneClient, storeId, change) {
     return { deleted: true };
   }
 
-  const response = await pennylaneClient.get(`/supplier_invoices/${encodeURIComponent(pennylaneInvoiceId)}`);
-  const invoice = extractInvoice(response.body);
-  if (!invoice?.id) throw new Error('Pennylane n a pas retourne de facture fournisseur exploitable');
-
-  const lines = await fetchInvoiceLines(pennylaneClient, invoice);
-  await upsertInvoice(db, { storeId, invoice, lines });
-  return { synced: true };
+  return syncSupplierInvoiceById(db, pennylaneClient, storeId, pennylaneInvoiceId, {
+    reason: 'changelog',
+  });
 }
 
 async function processStoreSupplierInvoiceSync(db, pennylaneClient, storeId, options = {}) {
@@ -548,6 +654,32 @@ async function processStoreSupplierInvoiceSync(db, pennylaneClient, storeId, opt
       cursor = hasMore(response.body) ? nextCursor(response.body) : null;
       await markSyncStateSuccess(db, state, { lastProcessedAt: null, cursor });
     } while (cursor);
+
+    const invoicesMissingSupplier = await listInvoicesMissingSupplier(db, storeId);
+    for (const incompleteInvoice of invoicesMissingSupplier) {
+      processed += 1;
+      try {
+        await syncSupplierInvoiceById(db, pennylaneClient, storeId, incompleteInvoice.pennylaneInvoiceId, {
+          reason: incompleteInvoice.reason,
+          rerunMatching: true,
+        });
+        succeeded += 1;
+      } catch (err) {
+        failed += 1;
+        const error = sanitizePennylaneError(err);
+        await writeSyncLog(db, {
+          storeId,
+          status: 'failed',
+          message: 'Erreur reimport facture fournisseur Pennylane incomplete.',
+          requestPayload: {
+            pennylane_supplier_invoice_id: incompleteInvoice.pennylaneInvoiceId,
+            reason: incompleteInvoice.reason,
+          },
+          responsePayload: error.responseBody || error,
+          errorCode: error.code || (error.status ? `HTTP_${error.status}` : null),
+        });
+      }
+    }
 
     await markSyncStateSuccess(db, state, { lastProcessedAt, cursor: null });
     return { processed, succeeded, deleted, failed };

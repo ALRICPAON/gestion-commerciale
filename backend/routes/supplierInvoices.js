@@ -7,6 +7,10 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { recomputeArticleStock } = require('../services/stockService');
+const {
+  VALIDATED_PAYMENT_STATUS,
+  syncValidatedSupplierInvoiceStatusToPennylane,
+} = require('../services/pennylane');
 
 const router = express.Router();
 const DOCUMENTS_ROOT = path.join(__dirname, '..', 'uploads', 'supplier-invoices');
@@ -49,6 +53,17 @@ function jsonLines(value) {
   }
 }
 
+function jsonObject(value) {
+  if (!value) return {};
+  if (typeof value === 'object' && !Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 function invoiceDocumentUrl(invoiceId) {
   return `/api/supplier-invoices/${encodeURIComponent(invoiceId)}/document`;
 }
@@ -80,6 +95,60 @@ function buildPennylanePayload(invoice, lines) {
       vat_amount: Number(line.vat_amount || 0),
     })),
   };
+}
+
+function buildValidatedPennylanePayload(invoice, lines) {
+  const existingPayload = jsonObject(invoice.pennylane_payload);
+  const payload = buildPennylanePayload(invoice, lines);
+
+  return {
+    ...existingPayload,
+    ...payload,
+    source: existingPayload.source || payload.source,
+    pennylane_supplier_invoice_id: existingPayload.pennylane_supplier_invoice_id || null,
+    pennylane_supplier_id: existingPayload.pennylane_supplier_id || null,
+  };
+}
+
+function getPennylaneSupplierInvoiceId(invoice) {
+  const payload = jsonObject(invoice.pennylane_payload);
+  return clean(payload.pennylane_supplier_invoice_id || invoice.pennylane_supplier_invoice_id);
+}
+
+async function recordPennylaneStatusSyncFailure(db, { invoice, error, userId }) {
+  const errorPayload = error.pennylaneStatusSync || { message: error.message || 'Erreur Pennylane inattendue' };
+
+  await db.query(
+    `UPDATE supplier_invoices
+     SET pennylane_status = 'pennylane_error',
+         updated_at = NOW()
+     WHERE id = $1 AND store_id = $2`,
+    [invoice.id, invoice.store_id]
+  ).catch((updateError) => {
+    console.error('[Pennylane supplier invoice status] erreur stockage statut local', {
+      invoice_id: invoice.id,
+      message: updateError.message,
+    });
+  });
+
+  await db.query(
+    `INSERT INTO supplier_invoice_exports(id, supplier_invoice_id, store_id, export_type, status, payload, created_by)
+     VALUES(gen_random_uuid(), $1, $2, 'pennylane_status_sync', 'failed', $3::jsonb, $4)`,
+    [
+      invoice.id,
+      invoice.store_id,
+      JSON.stringify({
+        target_payment_status: VALIDATED_PAYMENT_STATUS,
+        error: errorPayload,
+      }),
+      userId,
+    ]
+  ).catch((insertError) => {
+    console.error('[Pennylane supplier invoice status] erreur stockage echec export', {
+      invoice_id: invoice.id,
+      message: insertError.message,
+    });
+  });
 }
 
 async function getInvoice(client, invoiceId, storeId) {
@@ -545,10 +614,11 @@ router.post('/supplier-invoices/:id/validate', authenticateToken, attachDbContex
       return res.status(409).json({ error: 'Validation manuelle obligatoire en cas d ecart', code: 'INVOICE_DIFFERENCE_CONFIRMATION_REQUIRED' });
     }
 
+    const pennylaneSupplierInvoiceId = getPennylaneSupplierInvoiceId(invoice);
     const adjustedLots = req.body.adjust_costs === true ? await applyCostAdjustments(client, invoice, req.user.id) : 0;
     const finalStatus = adjustedLots > 0 ? 'cost_adjusted' : 'invoice_validated';
     const lines = await getInvoiceLines(client, invoice.id);
-    const payload = buildPennylanePayload(invoice, lines);
+    const payload = buildValidatedPennylanePayload(invoice, lines);
 
     await client.query(
       `UPDATE supplier_invoices
@@ -574,7 +644,41 @@ router.post('/supplier-invoices/:id/validate', authenticateToken, attachDbContex
     );
 
     await client.query('COMMIT');
-    return res.json({ ok: true, status: finalStatus, adjusted_lots: adjustedLots, pennylane_status: 'ready_to_send' });
+
+    let pennylaneStatusSync = null;
+    let warning = null;
+    if (pennylaneSupplierInvoiceId) {
+      try {
+        pennylaneStatusSync = await syncValidatedSupplierInvoiceStatusToPennylane({
+          invoiceId: invoice.id,
+          pennylaneSupplierInvoiceId,
+          storeId: invoice.store_id,
+        });
+        await req.dbPool.query(
+          `UPDATE supplier_invoices
+           SET pennylane_status = $1,
+               updated_at = NOW()
+           WHERE id = $2 AND store_id = $3`,
+          [VALIDATED_PAYMENT_STATUS, invoice.id, invoice.store_id]
+        );
+      } catch (syncError) {
+        warning = 'Facture validee dans ALTA, mais statut Pennylane non mis a jour';
+        await recordPennylaneStatusSyncFailure(req.dbPool, {
+          invoice,
+          error: syncError,
+          userId: req.user.id,
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      status: finalStatus,
+      adjusted_lots: adjustedLots,
+      pennylane_status: pennylaneSupplierInvoiceId ? VALIDATED_PAYMENT_STATUS : 'ready_to_send',
+      pennylane_status_sync: pennylaneStatusSync,
+      warning,
+    });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erreur validation facture fournisseur :', error);

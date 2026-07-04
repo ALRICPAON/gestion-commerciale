@@ -40,6 +40,10 @@
 
 .pennylane-supplier-invoices-page .status-ecart_prix,
 .pennylane-supplier-invoices-page .status-ecart_quantite,
+.pennylane-supplier-invoices-page .status-ecart_tva,
+.pennylane-supplier-invoices-page .status-bl_manquant,
+.pennylane-supplier-invoices-page .status-article_inconnu,
+.pennylane-supplier-invoices-page .status-controle_manuel,
 .pennylane-supplier-invoices-page .status-litige,
 .pennylane-supplier-invoices-page .status-refusee {
   background: #fee2e2;
@@ -54,9 +58,17 @@
 }
 
 .pennylane-supplier-invoices-page .status-a_rapprocher,
+.pennylane-supplier-invoices-page .status-analyse_automatique,
 .pennylane-supplier-invoices-page .status-en_controle {
   background: #fef3c7;
   color: #92400e;
+}
+
+.pennylane-supplier-invoices-page td small {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+  margin-top: 3px;
 }
 
 .pennylane-supplier-invoices-page tr.is-selected {

@@ -471,6 +471,11 @@ async function openInvoiceDocument(event) {
   const documentUrl = invoiceDocumentLink?.dataset.documentUrl;
   if (!documentUrl) return;
 
+  if (/^https?:\/\//i.test(documentUrl)) {
+    window.open(documentUrl, "_blank", "noopener");
+    return;
+  }
+
   const blankWindow = window.open("about:blank", "_blank", "noopener");
   invoiceDocumentLink.classList.add("disabled");
 
@@ -557,7 +562,8 @@ async function validateSelected(adjustCosts = false) {
     method: "POST",
     body: JSON.stringify({ confirm_difference: confirmDifference, adjust_costs: adjustCosts }),
   });
-  showFeedback(detailFeedback, `Facture validée : ${statusLabel(data.status)}${data.adjusted_lots ? `, ${data.adjusted_lots} lot(s) ajusté(s)` : ""}`);
+  const warning = data.warning ? " Facture validée dans ALTA, mais statut Pennylane non mis à jour" : "";
+  showFeedback(detailFeedback, `Facture validée : ${statusLabel(data.status)}${data.adjusted_lots ? `, ${data.adjusted_lots} lot(s) ajusté(s)` : ""}${warning}`);
   await loadInvoices();
   await openInvoice(selectedInvoiceId);
 }
@@ -597,6 +603,9 @@ async function init() {
     userNameEl.textContent = sessionUser.email || "Utilisateur";
     await loadSuppliers();
     await loadInvoices();
+    const params = new URLSearchParams(window.location.search);
+    const invoiceId = params.get("invoice_id") || params.get("open");
+    if (invoiceId) await openInvoice(invoiceId);
   } catch (error) {
     showFeedback(listFeedback, error.message || "Erreur chargement", true);
   }
