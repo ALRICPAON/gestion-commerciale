@@ -212,11 +212,12 @@ function buildGlobalResult(invoice, candidate, matchStatus, anomalyCode = null, 
 function summarizeGlobal(invoice, candidates, result) {
   const isMatched = result?.match_status === 'conforme';
   const hasAmountMismatch = result?.match_status === 'ecart_prix';
+  const matchedCount = isMatched ? candidates.length : 0;
 
   return {
     line_count: 0,
-    matched_lines: isMatched ? 1 : 0,
-    conform_lines: isMatched ? 1 : 0,
+    matched_lines: matchedCount,
+    conform_lines: matchedCount,
     anomaly_count: hasAmountMismatch ? 1 : 0,
     bl_count: candidates.length,
     conformity_score: isMatched ? 100 : 0,
@@ -370,23 +371,16 @@ async function analyzePennylaneSupplierInvoice(db, { invoiceId, storeId, dateWin
 
     const candidates = await loadGlobalPurchaseCandidates(client, invoice, dateWindowDays);
     const ranked = rankGlobalCandidates(invoice, candidates, dateWindowDays);
-    const best = ranked[0] || null;
+    const matchedCandidates = ranked.filter((candidate) => candidate.exact_amount);
+    const best = matchedCandidates[0] || null;
     const result = best
-      ? buildGlobalResult(
-        invoice,
-        best,
-        best.exact_amount ? 'conforme' : 'ecart_prix',
-        best.exact_amount ? null : 'ecart_prix',
-        best.exact_amount ? null : 'Montant HT facture different du total HT receptionne'
-      )
+      ? buildGlobalResult(invoice, best, 'conforme')
       : buildGlobalResult(invoice, null, 'unmatched');
 
-    const summary = summarizeGlobal(invoice, ranked, result);
-    await persistResults(client, invoice, best ? [result, ...ranked.slice(1, 5).map((candidate) => (
-      buildGlobalResult(invoice, candidate, candidate.exact_amount ? 'conforme' : 'ecart_prix',
-        candidate.exact_amount ? null : 'ecart_prix',
-        candidate.exact_amount ? null : 'Montant HT facture different du total HT receptionne')
-    ))] : [], summary);
+    const summary = summarizeGlobal(invoice, matchedCandidates, result);
+    await persistResults(client, invoice, matchedCandidates.map((candidate) => (
+      buildGlobalResult(invoice, candidate, 'conforme')
+    )), summary);
     await client.query('COMMIT');
 
     return { ok: true, invoice_id: invoice.id, ...summary };
