@@ -138,6 +138,7 @@ async function loadPennylaneGlobalMatchResults(client, invoiceId, storeId) {
     WHERE supplier_invoice_id = $1
       AND store_id = $2
       AND purchase_id IS NOT NULL
+      AND match_status = 'conforme'
     ORDER BY confidence DESC NULLS LAST, created_at ASC
     LIMIT 20
     `,
@@ -262,8 +263,7 @@ async function replaceAltaProposedMatches(client, { altaInvoice, pennylaneInvoic
   await client.query('DELETE FROM supplier_invoice_matches WHERE supplier_invoice_id = $1', [altaInvoice.id]);
 
   let inserted = 0;
-  for (const result of matchResults) {
-    const isConform = result.match_status === 'conforme';
+  for (const result of matchResults.filter((row) => row.match_status === 'conforme')) {
     await client.query(
       `
       INSERT INTO supplier_invoice_matches(
@@ -276,8 +276,8 @@ async function replaceAltaProposedMatches(client, { altaInvoice, pennylaneInvoic
         pennylaneInvoice.store_id,
         altaInvoice.id,
         result.purchase_id,
-        isConform ? 'matched' : 'difference',
-        isConform ? null : 'amount',
+        'matched',
+        null,
         num(result.amount_difference, 0),
         'Proposition globale depuis facture fournisseur Pennylane',
       ]
