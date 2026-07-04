@@ -48,6 +48,14 @@ function num(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function toPgDate(value) {
+  if (!value) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10);
+}
+
 function summaryObject(value) {
   if (!value) return {};
   if (typeof value === 'object' && !Array.isArray(value)) return value;
@@ -89,8 +97,8 @@ function buildAltaSupplierInvoicePayload(pennylaneInvoice, matchResults) {
     pennylane_supplier_id: pennylaneInvoice.pennylane_supplier_id,
     supplier_id: pennylaneInvoice.supplier_id,
     invoice_number: pennylaneInvoice.invoice_number,
-    invoice_date: pennylaneInvoice.invoice_date,
-    due_date: pennylaneInvoice.due_date,
+    invoice_date: toPgDate(pennylaneInvoice.invoice_date),
+    due_date: toPgDate(pennylaneInvoice.due_date),
     amount_ex_vat: num(pennylaneInvoice.amount_ex_vat ?? pennylaneInvoice.currency_amount_ex_vat),
     amount_vat: num(pennylaneInvoice.amount_vat ?? pennylaneInvoice.currency_amount_vat),
     amount_inc_vat: num(pennylaneInvoice.amount_inc_vat ?? pennylaneInvoice.currency_amount_inc_vat),
@@ -198,8 +206,8 @@ async function findOrCreateAltaSupplierInvoice(client, { pennylaneInvoice, match
         existing.id,
         pennylaneInvoice.supplier_id,
         pennylaneInvoice.invoice_number,
-        clean(pennylaneInvoice.invoice_date),
-        clean(pennylaneInvoice.due_date),
+        toPgDate(pennylaneInvoice.invoice_date),
+        toPgDate(pennylaneInvoice.due_date),
         totalExVat,
         vatAmount,
         totalIncVat,
@@ -230,8 +238,8 @@ async function findOrCreateAltaSupplierInvoice(client, { pennylaneInvoice, match
       user.client_key || null,
       pennylaneInvoice.supplier_id,
       pennylaneInvoice.invoice_number,
-      clean(pennylaneInvoice.invoice_date),
-      clean(pennylaneInvoice.due_date),
+      toPgDate(pennylaneInvoice.invoice_date),
+      toPgDate(pennylaneInvoice.due_date),
       clean(pennylaneInvoice.supplier_type),
       totalExVat,
       vatAmount,
