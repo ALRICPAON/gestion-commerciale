@@ -116,12 +116,9 @@ function altaStatusLabel(status) {
 
 function matchStatusLabel(status) {
   const map = {
-    conforme: "Conforme",
-    ecart_prix: "Écart prix",
-    ecart_quantite: "Écart quantité",
-    ecart_tva: "Écart TVA",
+    conforme: "Montant proche",
+    ecart_prix: "Écart montant",
     bl_manquant: "BL manquant",
-    article_inconnu: "Article inconnu",
     unmatched: "Non rapprochée",
   };
   return map[status] || status || "-";
@@ -166,7 +163,7 @@ function renderInvoices() {
       <td>${escapeHtml(pennylaneStatus(invoice))}</td>
       <td><span class="invoice-status status-${escapeHtml(invoice.alta_business_status)}">${altaStatusLabel(invoice.alta_business_status)}</span></td>
       <td>${formatNumber(invoice.auto_bl_count, 0)}</td>
-      <td>${formatNumber(invoice.auto_matched_lines_count, 0)} / ${formatNumber(invoice.line_count, 0)}</td>
+      <td>${formatNumber(invoice.auto_matched_lines_count, 0)}</td>
       <td><span class="invoice-status ${Number(invoice.auto_anomaly_count || 0) > 0 ? "status-ecart_prix" : "status-conforme"}">${formatNumber(invoice.auto_anomaly_count, 0)}</span></td>
       <td>${invoice.public_file_url ? `<a href="${escapeHtml(invoice.public_file_url)}" target="_blank" rel="noopener">PDF</a>` : "-"}</td>
       <td><button type="button" class="btn btn-secondary btn-sm" data-invoice-control-button data-id="${escapeHtml(invoice.id)}">Contrôle</button></td>
@@ -190,9 +187,7 @@ async function openInvoice(invoiceId) {
 
 function renderDetail(data) {
   const invoice = data.invoice;
-  const lines = data.lines || [];
   const matchResults = data.match_results || [];
-  const resultByLineId = new Map(matchResults.map((result) => [result.supplier_invoice_line_id, result]));
 
   detailEmpty.classList.add("hidden");
   detailContent.classList.remove("hidden");
@@ -201,14 +196,16 @@ function renderDetail(data) {
     <div><span>Fournisseur ALTA</span><strong>${escapeHtml(invoice.supplier_name || "Non rapproché")}</strong></div>
     <div><span>Fournisseur Pennylane</span><strong>${escapeHtml(invoice.pennylane_supplier_id || "-")}</strong></div>
     <div><span>Facture</span><strong>${escapeHtml(invoice.invoice_number || "-")}</strong></div>
+    <div><span>Date facture</span><strong>${formatDate(invoice.invoice_date)}</strong></div>
     <div><span>Échéance</span><strong>${formatDate(invoice.due_date)}</strong></div>
     <div><span>Statut Pennylane</span><strong>${escapeHtml(pennylaneStatus(invoice))}</strong></div>
     <div><span>Statut métier ALTA</span><strong>${altaStatusLabel(invoice.alta_business_status)}</strong></div>
-    <div><span>BL trouvés</span><strong>${formatNumber(invoice.auto_bl_count, 0)}</strong></div>
-    <div><span>Lignes rapprochées</span><strong>${formatNumber(invoice.auto_matched_lines_count, 0)} / ${formatNumber(lines.length, 0)}</strong></div>
-    <div><span>Anomalies</span><strong>${formatNumber(invoice.auto_anomaly_count, 0)}</strong></div>
-    <div><span>Conformité</span><strong>${formatNumber(invoice.auto_conformity_score, 2)} %</strong></div>
+    <div><span>BL candidats</span><strong>${formatNumber(invoice.auto_bl_count, 0)}</strong></div>
+    <div><span>Propositions proches</span><strong>${formatNumber(invoice.auto_matched_lines_count, 0)}</strong></div>
+    <div><span>Anomalies montant</span><strong>${formatNumber(invoice.auto_anomaly_count, 0)}</strong></div>
+    <div><span>Confiance</span><strong>${formatNumber(invoice.auto_conformity_score, 2)} %</strong></div>
     <div><span>Total HT</span><strong>${formatCurrency(invoice.amount_ex_vat || invoice.currency_amount_ex_vat)}</strong></div>
+    <div><span>Total TVA</span><strong>${formatCurrency(invoice.amount_vat || invoice.currency_amount_vat)}</strong></div>
     <div><span>Total TTC</span><strong>${formatCurrency(invoice.amount_inc_vat || invoice.currency_amount_inc_vat)}</strong></div>
   `;
 
@@ -216,30 +213,26 @@ function renderDetail(data) {
   pdfLink.classList.toggle("disabled", !invoice.public_file_url);
   pdfLink.setAttribute("aria-disabled", invoice.public_file_url ? "false" : "true");
 
-  if (!lines.length) {
-    linesTableBody.innerHTML = `<tr><td colspan="8">Aucune ligne récupérée depuis Pennylane</td></tr>`;
+  if (!matchResults.length) {
+    linesTableBody.innerHTML = `<tr><td colspan="8">Aucun BL candidat trouvé pour ce fournisseur et cette période</td></tr>`;
     return;
   }
 
-  linesTableBody.innerHTML = lines.map((line) => {
-    const result = resultByLineId.get(line.id) || {};
-    const article = result.article_label || result.article_name || line.label || "-";
-    return `
+  linesTableBody.innerHTML = matchResults.map((result, index) => `
     <tr>
-      <td>${escapeHtml(line.line_position || "-")}</td>
+      <td>${index + 1}</td>
       <td>
-        <strong>${escapeHtml(article)}</strong>
-        <small>${escapeHtml(result.purchase_bl_number ? `BL ${result.purchase_bl_number}` : line.label || "")}</small>
+        <strong>${escapeHtml(result.purchase_bl_number ? `BL ${result.purchase_bl_number}` : "Achat candidat")}</strong>
+        <small>${escapeHtml(`Réception ${formatDate(result.purchase_receipt_date)}`)}</small>
       </td>
-      <td>${formatNumber(result.invoice_quantity ?? line.quantity)}</td>
-      <td>${formatNumber(result.received_quantity)}</td>
-      <td>${formatCurrency(result.purchase_unit_price_ex_vat)}</td>
-      <td>${formatCurrency(result.invoice_unit_price_ex_vat ?? line.raw_currency_unit_price)}</td>
-      <td>${formatSignedCurrency(result.amount_difference ?? result.unit_price_difference)}</td>
+      <td>-</td>
+      <td>-</td>
+      <td>${formatCurrency(result.purchase_amount_ex_vat)}</td>
+      <td>${formatCurrency(result.invoice_amount_ex_vat)}</td>
+      <td>${formatSignedCurrency(result.amount_difference)}</td>
       <td><span class="invoice-status status-${escapeHtml(result.match_status || invoice.alta_business_status)}">${matchStatusLabel(result.match_status)}</span></td>
     </tr>
-  `;
-  }).join("");
+  `).join("");
 }
 
 async function analyzeSelectedInvoice() {
@@ -249,7 +242,7 @@ async function analyzeSelectedInvoice() {
   analyzeBtn.textContent = "Analyse...";
   try {
     const result = await apiFetch(`/api/integrations/pennylane/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}/analyze`, { method: "POST" });
-    showFeedback(detailFeedback, `Analyse terminée : ${result.conform_lines || 0} conforme(s), ${result.anomaly_count || 0} anomalie(s).`);
+    showFeedback(detailFeedback, `Analyse terminée : ${result.bl_count || 0} BL candidat(s), ${result.matched_lines || 0} proposition(s) proche(s), ${result.anomaly_count || 0} écart(s).`);
     await loadInvoices();
     await openInvoice(selectedInvoiceId);
   } finally {
