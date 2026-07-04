@@ -471,6 +471,11 @@ async function openInvoiceDocument(event) {
   const documentUrl = invoiceDocumentLink?.dataset.documentUrl;
   if (!documentUrl) return;
 
+  if (/^https?:\/\//i.test(documentUrl)) {
+    window.open(documentUrl, "_blank", "noopener");
+    return;
+  }
+
   const blankWindow = window.open("about:blank", "_blank", "noopener");
   invoiceDocumentLink.classList.add("disabled");
 
@@ -597,6 +602,9 @@ async function init() {
     userNameEl.textContent = sessionUser.email || "Utilisateur";
     await loadSuppliers();
     await loadInvoices();
+    const params = new URLSearchParams(window.location.search);
+    const invoiceId = params.get("invoice_id") || params.get("open");
+    if (invoiceId) await openInvoice(invoiceId);
   } catch (error) {
     showFeedback(listFeedback, error.message || "Erreur chargement", true);
   }
