@@ -30,6 +30,8 @@ ALTER TABLE supplier_invoices
 
 CREATE OR REPLACE FUNCTION sync_supplier_invoice_local_status_from_pennylane()
 RETURNS trigger AS $$
+DECLARE
+  source_pennylane_supplier_invoice_id text;
 BEGIN
   IF NEW.pennylane_status = 'to_be_paid' THEN
     NEW.status = CASE
@@ -44,6 +46,24 @@ BEGIN
     END;
 
     NEW.pennylane_synced_at = NOW();
+
+    source_pennylane_supplier_invoice_id := NULLIF(NEW.pennylane_payload->>'pennylane_supplier_invoice_id', '');
+
+    IF source_pennylane_supplier_invoice_id IS NOT NULL THEN
+      UPDATE pennylane_supplier_invoices
+      SET alta_business_status = 'validee_a_payer',
+          match_status = 'matched',
+          auto_match_status = CASE
+            WHEN auto_match_status = 'success' THEN 'validated'
+            ELSE auto_match_status
+          END,
+          payment_status = COALESCE(NULLIF(payment_status, ''), 'to_be_paid'),
+          last_synced_at = COALESCE(last_synced_at, NOW()),
+          updated_at = NOW()
+      WHERE store_id = NEW.store_id
+        AND pennylane_supplier_invoice_id = source_pennylane_supplier_invoice_id
+        AND alta_business_status NOT IN ('payee', 'litige', 'refusee');
+    END IF;
   END IF;
 
   RETURN NEW;
@@ -55,6 +75,38 @@ CREATE TRIGGER trg_supplier_invoice_local_status_from_pennylane
 BEFORE INSERT OR UPDATE OF pennylane_status ON supplier_invoices
 FOR EACH ROW
 EXECUTE FUNCTION sync_supplier_invoice_local_status_from_pennylane();
+
+CREATE OR REPLACE FUNCTION sync_pennylane_supplier_invoice_local_status()
+RETURNS trigger AS $$
+BEGIN
+  IF NEW.payment_status = 'to_be_paid' THEN
+    NEW.alta_business_status = CASE
+      WHEN NEW.alta_business_status IN ('payee', 'litige', 'refusee') THEN NEW.alta_business_status
+      ELSE 'validee_a_payer'
+    END;
+
+    NEW.match_status = CASE
+      WHEN NEW.alta_business_status = 'validee_a_payer' THEN 'matched'
+      ELSE NEW.match_status
+    END;
+
+    NEW.auto_match_status = CASE
+      WHEN NEW.alta_business_status = 'validee_a_payer' AND NEW.auto_match_status = 'success' THEN 'validated'
+      ELSE NEW.auto_match_status
+    END;
+
+    NEW.last_synced_at = COALESCE(NEW.last_synced_at, NOW());
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_pennylane_supplier_invoice_local_status ON pennylane_supplier_invoices;
+CREATE TRIGGER trg_pennylane_supplier_invoice_local_status
+BEFORE INSERT OR UPDATE OF payment_status ON pennylane_supplier_invoices
+FOR EACH ROW
+EXECUTE FUNCTION sync_pennylane_supplier_invoice_local_status();
 
 UPDATE supplier_invoices
 SET status = CASE
@@ -70,6 +122,46 @@ SET status = CASE
     updated_at = NOW()
 WHERE pennylane_status = 'to_be_paid'
   AND (status <> 'invoice_validated' OR match_status = 'unmatched' OR pennylane_synced_at IS NULL);
+
+UPDATE pennylane_supplier_invoices psi
+SET alta_business_status = 'validee_a_payer',
+    match_status = 'matched',
+    auto_match_status = CASE
+      WHEN psi.auto_match_status = 'success' THEN 'validated'
+      ELSE psi.auto_match_status
+    END,
+    payment_status = COALESCE(NULLIF(psi.payment_status, ''), 'to_be_paid'),
+    last_synced_at = COALESCE(psi.last_synced_at, NOW()),
+    updated_at = NOW()
+FROM supplier_invoices si
+WHERE si.store_id = psi.store_id
+  AND si.pennylane_status = 'to_be_paid'
+  AND si.pennylane_payload->>'pennylane_supplier_invoice_id' = psi.pennylane_supplier_invoice_id
+  AND psi.alta_business_status NOT IN ('payee', 'litige', 'refusee')
+  AND (
+    psi.alta_business_status <> 'validee_a_payer'
+    OR psi.match_status <> 'matched'
+    OR psi.auto_match_status = 'success'
+    OR psi.last_synced_at IS NULL
+  );
+
+UPDATE pennylane_supplier_invoices
+SET alta_business_status = 'validee_a_payer',
+    match_status = 'matched',
+    auto_match_status = CASE
+      WHEN auto_match_status = 'success' THEN 'validated'
+      ELSE auto_match_status
+    END,
+    last_synced_at = COALESCE(last_synced_at, NOW()),
+    updated_at = NOW()
+WHERE payment_status = 'to_be_paid'
+  AND alta_business_status NOT IN ('payee', 'litige', 'refusee')
+  AND (
+    alta_business_status <> 'validee_a_payer'
+    OR match_status <> 'matched'
+    OR auto_match_status = 'success'
+    OR last_synced_at IS NULL
+  );
 
 CREATE OR REPLACE VIEW supplier_invoice_bl_summary AS
 WITH distinct_invoice_purchases AS (
