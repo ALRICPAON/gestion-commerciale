@@ -356,6 +356,72 @@ function selectPurchaseLine(line, resolvedArticle, candidates, invoice, usedPurc
   return best;
 }
 
+function rankPurchaseLines(line, resolvedArticle, candidates, invoice) {
+  return candidates
+    .map((purchaseLine) => ({
+      purchaseLine,
+      ...scorePurchaseLine(line, resolvedArticle, purchaseLine, invoice),
+    }))
+    .sort((left, right) => right.score - left.score);
+}
+
+function purchaseCandidateSample(candidate) {
+  return {
+    purchase_line_id: candidate.purchase_line_id,
+    purchase_id: candidate.purchase_id,
+    article_id: candidate.article_id,
+    article_name: candidate.article_name,
+    supplier_reference: candidate.supplier_reference,
+    supplier_label: candidate.supplier_label,
+    bl_number: candidate.bl_number,
+    receipt_date: candidate.receipt_date,
+    status: candidate.purchase_status,
+    ordered_quantity: candidate.ordered_quantity,
+    received_quantity: candidate.received_quantity,
+    unit_price_ex_vat: candidate.unit_price_ex_vat,
+    line_amount_ex_vat: candidate.line_amount_ex_vat,
+  };
+}
+
+function buildLineDebug(invoice, line, mappings, articles, purchaseCandidates) {
+  const resolvedArticle = resolveArticle(line, mappings, articles);
+  const rankedCandidates = rankPurchaseLines(line, resolvedArticle, purchaseCandidates, invoice);
+  const best = rankedCandidates[0] || null;
+  const reasons = [];
+
+  if (!invoice.supplier_id) reasons.push('Fournisseur Pennylane non relie a un fournisseur ALTA');
+  if (!clean(line.label)) reasons.push('Designation ligne Pennylane absente');
+  if (!purchaseCandidates.length) reasons.push('Aucune ligne achat/reception candidate trouvee pour ce fournisseur et cette periode');
+  if (best && best.score < PURCHASE_LINE_MATCH_THRESHOLD) reasons.push('Meilleure ligne achat/reception sous le seuil de rapprochement');
+  if (best && !best.purchaseLine.article_id && !resolvedArticle.articleId) reasons.push('Ligne achat/reception trouvee mais sans article ALTA exploitable');
+  if (!best && purchaseCandidates.length) reasons.push('Aucune ligne achat/reception assez proche de la ligne facture');
+
+  return {
+    supplier_invoice_line_id: line.id,
+    line_position: line.line_position,
+    label: line.label,
+    quantity: line.quantity,
+    unit_price_ex_vat: invoiceLineUnitPrice(line),
+    amount_ex_vat: line.amount ?? line.currency_amount,
+    resolved_article_id: best?.purchaseLine?.article_id || resolvedArticle.articleId || null,
+    resolved_article_label: best?.purchaseLine?.article_name || resolvedArticle.articleLabel || null,
+    resolved_article_source: best?.purchaseLine?.article_id ? best.source : resolvedArticle.source,
+    best_candidate_score: best ? round(best.score, 2) : null,
+    best_candidate_threshold: PURCHASE_LINE_MATCH_THRESHOLD,
+    best_candidate: best ? {
+      ...purchaseCandidateSample(best.purchaseLine),
+      score: round(best.score, 2),
+      source: best.source,
+      label_score: round(best.labelScore, 4),
+      quantity_score: round(best.quantityScore, 4),
+      unit_price_score: round(best.unitPriceScore, 4),
+      amount_score: round(best.amountScore, 4),
+      date_score: round(best.dateScore, 4),
+    } : null,
+    reasons_for_article_unknown: reasons,
+  };
+}
+
 function buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine) {
   const purchaseLine = selectedPurchaseLine?.purchaseLine || null;
   const effectiveArticle = {
@@ -773,7 +839,41 @@ async function processPendingPennylaneSupplierInvoiceMatching(db, options = {}) 
   return { processed, succeeded, failed, skipped: false };
 }
 
+async function buildPennylaneSupplierInvoiceMatchingDebug(db, { invoiceId, storeId, dateWindowDays = DEFAULT_DATE_WINDOW_DAYS }) {
+  const client = await db.connect();
+  try {
+    const loaded = await loadInvoice(client, invoiceId, storeId);
+    if (!loaded) return { found: false };
+
+    const { invoice, lines } = loaded;
+    const mappings = await loadMappings(client, invoice.store_id, invoice.supplier_id);
+    const articles = await loadArticleCandidates(client, invoice.store_id);
+    const purchaseCandidates = await loadPurchaseLineCandidates(client, invoice, dateWindowDays);
+    const lineDebug = lines.map((line) => buildLineDebug(invoice, line, mappings, articles, purchaseCandidates));
+    const reasons = new Set(lineDebug.flatMap((line) => line.reasons_for_article_unknown || []));
+
+    return {
+      found: true,
+      pennylane_supplier: {
+        pennylane_supplier_id: invoice.pennylane_supplier_id,
+        supplier_name: invoice.supplier_name,
+        supplier_code: invoice.supplier_code,
+      },
+      alta_supplier_id: invoice.supplier_id,
+      invoice_date: invoice.invoice_date,
+      invoice_lines_count: lines.length,
+      candidate_purchase_lines_count: purchaseCandidates.length,
+      candidates_sample: purchaseCandidates.slice(0, 10).map(purchaseCandidateSample),
+      reasons_for_article_unknown: Array.from(reasons),
+      line_debug: lineDebug,
+    };
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   analyzePennylaneSupplierInvoice,
+  buildPennylaneSupplierInvoiceMatchingDebug,
   processPendingPennylaneSupplierInvoiceMatching,
 };
