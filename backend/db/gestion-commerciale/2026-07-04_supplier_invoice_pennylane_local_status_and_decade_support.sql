@@ -58,7 +58,7 @@ BEGIN
             ELSE auto_match_status
           END,
           payment_status = 'to_be_paid',
-          last_synced_at = COALESCE(last_synced_at, NOW()),
+          last_synced_at = NOW(),
           updated_at = NOW()
       WHERE store_id = NEW.store_id
         AND pennylane_supplier_invoice_id = source_pennylane_supplier_invoice_id
@@ -95,7 +95,8 @@ BEGIN
       ELSE NEW.auto_match_status
     END;
 
-    NEW.last_synced_at = COALESCE(NEW.last_synced_at, NOW());
+    NEW.last_synced_at = NOW();
+    NEW.updated_at = NOW();
   END IF;
 
   RETURN NEW;
@@ -131,7 +132,7 @@ SET alta_business_status = 'validee_a_payer',
       ELSE psi.auto_match_status
     END,
     payment_status = 'to_be_paid',
-    last_synced_at = COALESCE(psi.last_synced_at, NOW()),
+    last_synced_at = NOW(),
     updated_at = NOW()
 FROM supplier_invoices si
 WHERE si.store_id = psi.store_id
@@ -153,7 +154,7 @@ SET alta_business_status = 'validee_a_payer',
       WHEN auto_match_status = 'success' THEN 'validated'
       ELSE auto_match_status
     END,
-    last_synced_at = COALESCE(last_synced_at, NOW()),
+    last_synced_at = NOW(),
     updated_at = NOW()
 WHERE payment_status = 'to_be_paid'
   AND alta_business_status NOT IN ('payee', 'litige', 'refusee')
