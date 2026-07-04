@@ -6,6 +6,7 @@ const { requireAdminOrManager } = require('../middleware/authorization');
 const { processPennylaneSupplierInvoiceImportSync } = require('../services/pennylane');
 const {
   analyzePennylaneSupplierInvoice,
+  buildPennylaneSupplierInvoiceMatchingDebug,
   processPendingPennylaneSupplierInvoiceMatching,
 } = require('../services/supplierInvoiceMatchingEngine');
 
@@ -130,6 +131,15 @@ router.get('/integrations/pennylane/supplier-invoices/:id', authenticateToken, a
       return res.status(400).json({ error: 'Identifiant facture fournisseur Pennylane invalide' });
     }
 
+    const analysis = await analyzePennylaneSupplierInvoice(req.dbPool, {
+      invoiceId: req.params.id,
+      storeId: req.user.store_id,
+    });
+
+    if (analysis.reason === 'NOT_FOUND') {
+      return res.status(404).json({ error: 'Facture fournisseur Pennylane introuvable' });
+    }
+
     const invoice = await req.dbPool.query(
       `
       SELECT
@@ -190,11 +200,18 @@ router.get('/integrations/pennylane/supplier-invoices/:id', authenticateToken, a
       [req.params.id, req.user.store_id]
     );
 
+    const matchingDebug = await buildPennylaneSupplierInvoiceMatchingDebug(req.dbPool, {
+      invoiceId: req.params.id,
+      storeId: req.user.store_id,
+    });
+
     return res.json({
       invoice: invoice.rows[0],
       lines: lines.rows,
       links: links.rows,
       match_results: matchResults.rows,
+      matching_analysis: analysis,
+      matching_debug: matchingDebug,
     });
   } catch (err) {
     console.error('Erreur GET /api/integrations/pennylane/supplier-invoices/:id :', err);
