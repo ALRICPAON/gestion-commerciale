@@ -75,8 +75,8 @@
               <th>TTC</th>
               <th>Statut Pennylane</th>
               <th>Statut ALTA</th>
-              <th>BL</th>
-              <th>Lignes rapprochées</th>
+              <th>BL candidats</th>
+              <th>Propositions</th>
               <th>Anomalies</th>
               <th>PDF</th>
               <th>Action</th>
@@ -95,13 +95,13 @@
       <div id="detail-empty" class="empty-state">Sélectionne une facture Pennylane pour voir son détail.</div>
       <div id="detail-content" class="hidden">
         <div class="detail-grid" id="invoice-summary"></div>
-        <h4>Lignes Pennylane</h4>
+        <h4>Rapprochement global proposé</h4>
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
                 <th>#</th>
-                <th>Article</th>
+                <th>BL / achat</th>
                 <th>Quantité facturée</th>
                 <th>Quantité réceptionnée</th>
                 <th>Prix BL</th>
@@ -116,13 +116,13 @@
         <div class="page-actions-right detail-actions">
           <a id="pdf-link" class="btn btn-secondary" href="#" target="_blank" rel="noopener">Voir PDF Pennylane</a>
           <button id="analyze-btn" class="btn btn-secondary">Relancer analyse</button>
-          <a id="legacy-module-link" class="btn btn-primary" href="./supplier-invoices.html">Contrôler dans le module actuel</a>
+          <a id="legacy-module-link" class="btn btn-primary" href="#">Ouvrir dans le module facture fournisseur</a>
         </div>
       </div>
     </section>
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/pennylane-supplier-invoices.js?v=2"></script>
+  <script src="./js/pennylane-supplier-invoices.js?v=3"></script>
 </body>
 </html>
