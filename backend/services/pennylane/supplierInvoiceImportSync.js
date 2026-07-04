@@ -441,6 +441,36 @@ async function fetchInvoiceLines(pennylaneClient, invoice) {
   return extractEmbeddedInvoiceLines(invoice);
 }
 
+async function listIncompleteLocalInvoices(db, storeId, limit = 50) {
+  const result = await db.query(
+    `
+    SELECT psi.pennylane_supplier_invoice_id
+    FROM pennylane_supplier_invoices psi
+    WHERE psi.store_id = $1
+      AND psi.pennylane_deleted_at IS NULL
+      AND (psi.invoice_date IS NULL OR psi.invoice_date >= CURRENT_DATE - INTERVAL '90 days')
+      AND NOT EXISTS (
+        SELECT 1
+        FROM pennylane_supplier_invoice_lines psil
+        WHERE psil.supplier_invoice_id = psi.id
+          AND psil.store_id = psi.store_id
+          AND (
+            NULLIF(TRIM(COALESCE(psil.label, '')), '') IS NOT NULL
+            OR psil.quantity IS NOT NULL
+            OR psil.raw_currency_unit_price IS NOT NULL
+            OR psil.amount IS NOT NULL
+            OR psil.currency_amount IS NOT NULL
+          )
+      )
+    ORDER BY psi.last_synced_at ASC NULLS FIRST, psi.created_at ASC
+    LIMIT $2
+    `,
+    [storeId, limit]
+  );
+
+  return result.rows.map((row) => row.pennylane_supplier_invoice_id).filter(Boolean);
+}
+
 async function markInvoiceDeleted(db, storeId, pennylaneInvoiceId) {
   await db.query(
     `
@@ -608,6 +638,16 @@ async function upsertInvoice(db, { storeId, invoice, lines }) {
   return localInvoiceId;
 }
 
+async function syncSupplierInvoiceById(db, pennylaneClient, storeId, pennylaneInvoiceId) {
+  const response = await pennylaneClient.get(`/supplier_invoices/${encodeURIComponent(pennylaneInvoiceId)}`);
+  const invoice = extractInvoice(response.body);
+  if (!invoice?.id) throw new Error('Pennylane n a pas retourne de facture fournisseur exploitable');
+
+  const lines = await fetchInvoiceLines(pennylaneClient, invoice);
+  await upsertInvoice(db, { storeId, invoice, lines });
+  return { synced: true };
+}
+
 async function syncSupplierInvoiceChange(db, pennylaneClient, storeId, change) {
   const pennylaneInvoiceId = extractChangeResourceId(change);
   if (!pennylaneInvoiceId) return { skipped: true };
@@ -618,13 +658,7 @@ async function syncSupplierInvoiceChange(db, pennylaneClient, storeId, change) {
     return { deleted: true };
   }
 
-  const response = await pennylaneClient.get(`/supplier_invoices/${encodeURIComponent(pennylaneInvoiceId)}`);
-  const invoice = extractInvoice(response.body);
-  if (!invoice?.id) throw new Error('Pennylane n a pas retourne de facture fournisseur exploitable');
-
-  const lines = await fetchInvoiceLines(pennylaneClient, invoice);
-  await upsertInvoice(db, { storeId, invoice, lines });
-  return { synced: true };
+  return syncSupplierInvoiceById(db, pennylaneClient, storeId, pennylaneInvoiceId);
 }
 
 async function processStoreSupplierInvoiceSync(db, pennylaneClient, storeId, options = {}) {
@@ -673,6 +707,26 @@ async function processStoreSupplierInvoiceSync(db, pennylaneClient, storeId, opt
       cursor = hasMore(response.body) ? nextCursor(response.body) : null;
       await markSyncStateSuccess(db, state, { lastProcessedAt: null, cursor });
     } while (cursor);
+
+    const incompleteInvoiceIds = await listIncompleteLocalInvoices(db, storeId);
+    for (const pennylaneInvoiceId of incompleteInvoiceIds) {
+      processed += 1;
+      try {
+        await syncSupplierInvoiceById(db, pennylaneClient, storeId, pennylaneInvoiceId);
+        succeeded += 1;
+      } catch (err) {
+        failed += 1;
+        const error = sanitizePennylaneError(err);
+        await writeSyncLog(db, {
+          storeId,
+          status: 'failed',
+          message: 'Erreur reimport facture fournisseur Pennylane incomplete.',
+          requestPayload: { pennylane_supplier_invoice_id: pennylaneInvoiceId },
+          responsePayload: error.responseBody || error,
+          errorCode: error.code || (error.status ? `HTTP_${error.status}` : null),
+        });
+      }
+    }
 
     await markSyncStateSuccess(db, state, { lastProcessedAt, cursor: null });
     return { processed, succeeded, deleted, failed };
