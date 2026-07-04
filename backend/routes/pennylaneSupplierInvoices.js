@@ -488,12 +488,15 @@ router.post('/integrations/pennylane/supplier-invoices/:id/open-alta', authentic
       return res.status(400).json({ error: 'Identifiant facture fournisseur Pennylane invalide' });
     }
 
-    await client.query('BEGIN');
-    await analyzePennylaneSupplierInvoice(client, {
+    const analysis = await analyzePennylaneSupplierInvoice(req.dbPool, {
       invoiceId: req.params.id,
       storeId: req.user.store_id,
     });
+    if (analysis.reason === 'NOT_FOUND') {
+      return res.status(404).json({ error: 'Facture fournisseur Pennylane introuvable' });
+    }
 
+    await client.query('BEGIN');
     const pennylaneInvoice = await loadPennylaneInvoiceForBridge(client, req.params.id, req.user.store_id);
     if (!pennylaneInvoice) {
       await client.query('ROLLBACK');
