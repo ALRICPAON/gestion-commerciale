@@ -529,7 +529,7 @@ async function rerunSupplierInvoiceMatching(db, { storeId, localInvoiceId, penny
       invoiceId: localInvoiceId,
       storeId,
     });
-    console.info('[Pennylane supplier invoice import] analyse relancee apres import lignes', {
+    console.info('[Pennylane supplier invoice import] analyse relancee apres import entete', {
       store_id: storeId,
       invoice_id: String(pennylaneInvoiceId),
       local_invoice_id: localInvoiceId,
@@ -542,7 +542,7 @@ async function rerunSupplierInvoiceMatching(db, { storeId, localInvoiceId, penny
       localInvoiceId,
       step: 'matching',
     });
-    console.error('[Pennylane supplier invoice import] erreur relance analyse apres import lignes', {
+    console.error('[Pennylane supplier invoice import] erreur relance analyse apres import entete', {
       store_id: storeId,
       invoice_id: String(pennylaneInvoiceId),
       local_invoice_id: localInvoiceId,
