@@ -28,6 +28,35 @@ ALTER TABLE supplier_invoices
     'pennylane_error'
   ));
 
+DO $$
+DECLARE
+  constraint_record record;
+  had_auto_match_status_check boolean := false;
+BEGIN
+  FOR constraint_record IN
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = 'pennylane_supplier_invoices'::regclass
+      AND contype = 'c'
+      AND pg_get_constraintdef(oid) ILIKE '%auto_match_status%'
+  LOOP
+    had_auto_match_status_check := true;
+    EXECUTE format('ALTER TABLE pennylane_supplier_invoices DROP CONSTRAINT IF EXISTS %I', constraint_record.conname);
+  END LOOP;
+
+  IF had_auto_match_status_check THEN
+    ALTER TABLE pennylane_supplier_invoices
+      ADD CONSTRAINT chk_pennylane_supplier_invoices_auto_match_status
+      CHECK (auto_match_status IN (
+        'pending',
+        'processing',
+        'success',
+        'validated',
+        'failed'
+      ));
+  END IF;
+END $$;
+
 CREATE OR REPLACE FUNCTION sync_supplier_invoice_local_status_from_pennylane()
 RETURNS trigger AS $$
 DECLARE
