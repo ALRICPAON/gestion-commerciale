@@ -46,7 +46,7 @@ async function syncValidatedSupplierInvoiceStatusToPennylane({
 
   try {
     const response = await client.put(endpoint, { payment_status: VALIDATED_PAYMENT_STATUS });
-    console.log('[Pennylane supplier invoice status] validation ALTA envoyee', {
+    console.log('[Pennylane supplier invoice status] validation ALTA envoyée', {
       invoice_id: invoiceId,
       pennylane_supplier_invoice_id: pennylaneSupplierInvoiceId,
       store_id: storeId,
