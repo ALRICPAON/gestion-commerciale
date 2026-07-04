@@ -169,17 +169,23 @@ function renderInvoices() {
       <td>${formatNumber(invoice.auto_matched_lines_count, 0)} / ${formatNumber(invoice.line_count, 0)}</td>
       <td><span class="invoice-status ${Number(invoice.auto_anomaly_count || 0) > 0 ? "status-ecart_prix" : "status-conforme"}">${formatNumber(invoice.auto_anomaly_count, 0)}</span></td>
       <td>${invoice.public_file_url ? `<a href="${escapeHtml(invoice.public_file_url)}" target="_blank" rel="noopener">PDF</a>` : "-"}</td>
-      <td><button class="btn btn-secondary btn-sm" data-action="open" data-id="${invoice.id}">Voir / contrôler</button></td>
+      <td><button type="button" class="btn btn-secondary btn-sm" data-invoice-control-button data-id="${escapeHtml(invoice.id)}">Contrôle</button></td>
     </tr>
   `).join("");
 }
 
 async function openInvoice(invoiceId) {
   clearFeedback(detailFeedback);
+  if (!invoiceId) {
+    showFeedback(detailFeedback, "Identifiant de facture manquant", true);
+    return;
+  }
+
   selectedInvoiceId = invoiceId;
   const data = await apiFetch(`/api/integrations/pennylane/supplier-invoices/${encodeURIComponent(invoiceId)}`);
   renderInvoices();
   renderDetail(data);
+  document.getElementById("detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderDetail(data) {
@@ -303,9 +309,10 @@ searchInput?.addEventListener("input", () => {
   }, 250);
 });
 
-invoicesTableBody?.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-action='open']");
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-invoice-control-button]");
   if (!button) return;
+  event.preventDefault();
   openInvoice(button.dataset.id).catch((error) => showFeedback(detailFeedback, error.message, true));
 });
 
