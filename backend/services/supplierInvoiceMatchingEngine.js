@@ -4,6 +4,7 @@ const QUANTITY_TOLERANCE = 0.001;
 const UNIT_PRICE_TOLERANCE = 0.01;
 const AMOUNT_TOLERANCE = 0.05;
 const VAT_TOLERANCE = 0.05;
+const PURCHASE_LINE_MATCH_THRESHOLD = 55;
 
 const FINAL_ALTA_STATUSES = new Set(['validee_a_payer', 'payee', 'litige', 'refusee']);
 
@@ -110,6 +111,23 @@ function invoiceLineUnitPrice(line) {
   const quantity = toNumber(line.quantity);
   if (quantity === 0) return 0;
   return round(toNumber(line.amount ?? line.currency_amount) / quantity, 6);
+}
+
+function scoreNumericCloseness(left, right) {
+  const leftValue = Math.abs(toNumber(left, NaN));
+  const rightValue = Math.abs(toNumber(right, NaN));
+  if (!Number.isFinite(leftValue) || !Number.isFinite(rightValue)) return 0;
+  if (leftValue === 0 && rightValue === 0) return 1;
+  if (leftValue === 0 || rightValue === 0) return 0;
+  return Math.max(0, 1 - Math.abs(leftValue - rightValue) / Math.max(leftValue, rightValue, 1));
+}
+
+function daysBetween(left, right) {
+  if (!left || !right) return null;
+  const leftDate = new Date(left);
+  const rightDate = new Date(right);
+  if (Number.isNaN(leftDate.getTime()) || Number.isNaN(rightDate.getTime())) return null;
+  return Math.abs(leftDate.getTime() - rightDate.getTime()) / 86400000;
 }
 
 async function loadInvoice(client, invoiceId, storeId) {
@@ -282,7 +300,7 @@ function resolveArticle(line, mappings, articles) {
   };
 }
 
-function scorePurchaseLine(line, resolvedArticle, purchaseLine) {
+function scorePurchaseLine(line, resolvedArticle, purchaseLine, invoice) {
   const supplierReference = normalizeReference(resolvedArticle.supplierReference);
   const purchaseReference = normalizeReference(purchaseLine.supplier_reference);
   const labelScore = Math.max(
@@ -291,46 +309,71 @@ function scorePurchaseLine(line, resolvedArticle, purchaseLine) {
   );
   const invoiceAmount = Math.abs(toNumber(line.amount ?? line.currency_amount));
   const purchaseAmount = Math.abs(toNumber(purchaseLine.line_amount_ex_vat));
-  const amountScore = invoiceAmount > 0
-    ? Math.max(0, 1 - Math.abs(invoiceAmount - purchaseAmount) / Math.max(invoiceAmount, purchaseAmount, 1))
-    : 0;
+  const amountScore = scoreNumericCloseness(invoiceAmount, purchaseAmount);
+  const quantityScore = Math.max(
+    scoreNumericCloseness(line.quantity, purchaseLine.received_quantity),
+    scoreNumericCloseness(line.quantity, purchaseLine.ordered_quantity)
+  );
+  const unitPriceScore = scoreNumericCloseness(invoiceLineUnitPrice(line), purchaseLine.unit_price_ex_vat);
+  const dateDistance = daysBetween(invoice.invoice_date, purchaseLine.receipt_date);
+  const dateScore = dateDistance === null ? 0.5 : Math.max(0, 1 - dateDistance / DEFAULT_DATE_WINDOW_DAYS);
 
   let score = 0;
-  let source = resolvedArticle.source;
+  let source = 'purchase_line';
 
-  if (resolvedArticle.articleId && purchaseLine.article_id === resolvedArticle.articleId) score += 70;
-  if (supplierReference && purchaseReference && supplierReference === purchaseReference) {
-    score += 90;
-    if (source === 'none') source = 'supplier_reference';
+  if (labelScore >= 0.72) {
+    score += labelScore * 55;
+    source = 'purchase_line_label';
   }
-  if (labelScore >= 0.72) score += labelScore * 45;
-  if (amountScore >= 0.75) score += amountScore * 20;
+  if (quantityScore >= 0.85) score += quantityScore * 15;
+  if (unitPriceScore >= 0.85) score += unitPriceScore * 15;
+  if (amountScore >= 0.75) score += amountScore * 10;
+  score += dateScore * 10;
 
-  return { score, source, labelScore, amountScore };
+  if (resolvedArticle.articleId && purchaseLine.article_id === resolvedArticle.articleId) {
+    score += 20;
+    if (resolvedArticle.source === 'af_map') source = 'purchase_line_af_map';
+  }
+  if (supplierReference && purchaseReference && supplierReference === purchaseReference) {
+    score += 25;
+    source = 'purchase_line_reference';
+  }
+
+  return { score, source, labelScore, amountScore, quantityScore, unitPriceScore, dateScore };
 }
 
-function selectPurchaseLine(line, resolvedArticle, candidates) {
+function selectPurchaseLine(line, resolvedArticle, candidates, invoice, usedPurchaseLineIds = new Set()) {
   const ranked = candidates
+    .filter((purchaseLine) => !usedPurchaseLineIds.has(purchaseLine.purchase_line_id))
     .map((purchaseLine) => ({
       purchaseLine,
-      ...scorePurchaseLine(line, resolvedArticle, purchaseLine),
+      ...scorePurchaseLine(line, resolvedArticle, purchaseLine, invoice),
     }))
     .sort((left, right) => right.score - left.score);
 
   const best = ranked[0];
-  if (!best || best.score < 60) return null;
+  if (!best || best.score < PURCHASE_LINE_MATCH_THRESHOLD) return null;
   return best;
 }
 
 function buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine) {
   const purchaseLine = selectedPurchaseLine?.purchaseLine || null;
+  const effectiveArticle = {
+    articleId: purchaseLine?.article_id || resolvedArticle.articleId || null,
+    articleLabel: purchaseLine?.article_name || resolvedArticle.articleLabel || null,
+    supplierReference: resolvedArticle.supplierReference || purchaseLine?.supplier_reference || null,
+    source: purchaseLine?.article_id ? selectedPurchaseLine.source : resolvedArticle.source,
+    confidence: purchaseLine?.article_id
+      ? Math.min(100, round(selectedPurchaseLine.score, 2))
+      : resolvedArticle.confidence,
+  };
   const invoiceQuantity = toNumber(line.quantity);
   const invoiceUnitPrice = invoiceLineUnitPrice(line);
   const invoiceAmount = toNumber(line.amount ?? line.currency_amount);
   const invoiceVat = toNumber(line.tax ?? line.currency_tax);
 
-  if (!resolvedArticle.articleId) {
-    return lineResult(invoice, line, resolvedArticle, purchaseLine, {
+  if (!effectiveArticle.articleId) {
+    return lineResult(invoice, line, effectiveArticle, purchaseLine, {
       matchStatus: 'article_inconnu',
       anomalyCode: 'article_inconnu',
       anomalyLabel: 'Article ALTA non identifie',
@@ -338,12 +381,13 @@ function buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine) {
       invoiceUnitPrice,
       invoiceAmount,
       invoiceVat,
-      confidence: 0,
+      confidence: effectiveArticle.confidence,
+      matchSource: purchaseLine ? selectedPurchaseLine.source : resolvedArticle.source,
     });
   }
 
   if (!purchaseLine) {
-    return lineResult(invoice, line, resolvedArticle, purchaseLine, {
+    return lineResult(invoice, line, effectiveArticle, purchaseLine, {
       matchStatus: 'bl_manquant',
       anomalyCode: 'bl_manquant',
       anomalyLabel: 'Aucune ligne reception/BL rapprochable',
@@ -351,7 +395,7 @@ function buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine) {
       invoiceUnitPrice,
       invoiceAmount,
       invoiceVat,
-      confidence: resolvedArticle.confidence,
+      confidence: effectiveArticle.confidence,
     });
   }
 
@@ -384,7 +428,7 @@ function buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine) {
     anomalyLabel = 'TVA ligne incoherente avec le taux Pennylane';
   }
 
-  return lineResult(invoice, line, resolvedArticle, purchaseLine, {
+  return lineResult(invoice, line, effectiveArticle, purchaseLine, {
     matchStatus,
     anomalyCode,
     anomalyLabel,
@@ -400,8 +444,8 @@ function buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine) {
     invoiceAmount,
     purchaseAmount,
     invoiceVat,
-    confidence: selectedPurchaseLine ? Math.min(100, round(selectedPurchaseLine.score, 2)) : resolvedArticle.confidence,
-    matchSource: selectedPurchaseLine?.source || resolvedArticle.source,
+    confidence: selectedPurchaseLine ? Math.min(100, round(selectedPurchaseLine.score, 2)) : effectiveArticle.confidence,
+    matchSource: selectedPurchaseLine?.source || effectiveArticle.source,
   });
 }
 
@@ -639,9 +683,13 @@ async function analyzePennylaneSupplierInvoice(db, { invoiceId, storeId, dateWin
     const articles = await loadArticleCandidates(client, invoice.store_id);
     const purchaseCandidates = await loadPurchaseLineCandidates(client, invoice, dateWindowDays);
 
+    const usedPurchaseLineIds = new Set();
     const results = lines.map((line) => {
       const resolvedArticle = resolveArticle(line, mappings, articles);
-      const selectedPurchaseLine = selectPurchaseLine(line, resolvedArticle, purchaseCandidates);
+      const selectedPurchaseLine = selectPurchaseLine(line, resolvedArticle, purchaseCandidates, invoice, usedPurchaseLineIds);
+      if (selectedPurchaseLine?.purchaseLine?.purchase_line_id) {
+        usedPurchaseLineIds.add(selectedPurchaseLine.purchaseLine.purchase_line_id);
+      }
       return buildLineResult(invoice, line, resolvedArticle, selectedPurchaseLine);
     });
 
