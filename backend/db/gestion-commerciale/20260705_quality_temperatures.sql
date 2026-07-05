@@ -45,8 +45,45 @@ CREATE TABLE IF NOT EXISTS quality_temperature_limits (
   updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT quality_temperature_limits_bounds_check CHECK (min_value IS NOT NULL OR max_value IS NOT NULL),
   CONSTRAINT quality_temperature_limits_range_check CHECK (min_value IS NULL OR max_value IS NULL OR min_value <= max_value),
-  CONSTRAINT quality_temperature_limits_frequency_check CHECK (expected_frequency_value IS NULL OR expected_frequency_value > 0)
+  CONSTRAINT quality_temperature_limits_frequency_check CHECK (
+    expected_frequency_value IS NULL OR expected_frequency_value > 0
+  )
 );
+
+ALTER TABLE quality_temperature_limits
+  ADD COLUMN IF NOT EXISTS expected_frequency_value integer;
+
+ALTER TABLE quality_temperature_limits
+  ADD COLUMN IF NOT EXISTS expected_frequency_unit text;
+
+ALTER TABLE quality_temperature_limits
+  ADD COLUMN IF NOT EXISTS target_time time;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'quality_temperature_limits_frequency_unit_check'
+      AND conrelid = 'quality_temperature_limits'::regclass
+  ) THEN
+    ALTER TABLE quality_temperature_limits
+      ADD CONSTRAINT quality_temperature_limits_frequency_unit_check
+      CHECK (expected_frequency_unit IS NULL OR expected_frequency_unit IN ('hours', 'days', 'events'));
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'quality_temperature_limits_frequency_check'
+      AND conrelid = 'quality_temperature_limits'::regclass
+  ) THEN
+    ALTER TABLE quality_temperature_limits
+      ADD CONSTRAINT quality_temperature_limits_frequency_check
+      CHECK (expected_frequency_value IS NULL OR expected_frequency_value > 0);
+  END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS idx_quality_temperature_limits_store ON quality_temperature_limits(store_id);
 CREATE INDEX IF NOT EXISTS idx_quality_temperature_limits_type ON quality_temperature_limits(type_code);
