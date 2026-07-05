@@ -8,20 +8,20 @@ Chaque sous-module Qualité doit être conçu comme un produit autonome, mais pa
 
 ## État actuel
 
-Le socle QMS est en place. Le jumeau numérique de l'atelier existe avec les zones qualité et les équipements qualité. Les dossiers documentaires permettent de rattacher photos et documents aux zones et équipements. La PR Q3 ajoute le premier module réglementaire : températures et chaîne du froid, avec saisie manuelle, limites configurables, alertes simples, historique, synthèse et préparation IoT.
+Le socle QMS est en place. Le jumeau numérique de l'atelier existe avec les zones qualité et les équipements qualité. Les dossiers documentaires permettent de rattacher photos et documents aux zones et équipements. La PR Q3 ajoute le premier module réglementaire : températures et chaîne du froid, avec deux écrans distincts Paramètres/Relevés, saisie manuelle, limites configurables, fréquences attendues, détection des relevés manquants, alertes simples, historique, synthèse et préparation IoT.
 
 ## Historique des PR Qualité
 
 - PR #170 — QMS Foundation : socle backend/frontend, permissions, services communs, placeholder Qualité.
 - PR #171 — Jumeau numérique atelier : zones et équipements qualité.
 - PR Q2 — Dossiers documentaires : photos et documents rattachés aux zones et équipements qualité, archives consultables et restaurables.
-- PR Q3 — Températures & chaîne du froid : relevés, limites configurables, alertes, historique, graphiques simples et architecture prête pour IoT/import/API.
+- PR Q3 — Températures & chaîne du froid : paramètres de suivi, fréquences attendues, relevés, alertes, relevés manquants, historique, graphiques simples et architecture prête pour IoT/import/API.
 
 ## PR en cours
 
 PR Q3 — Températures & chaîne du froid.
 
-Périmètre : tables de types/limites/relevés de température, routes API températures, page frontend de suivi, synthèse sur le tableau de bord Qualité, export CSV, préparation des sources manuel/IoT/import/API.
+Périmètre : tables de types/paramètres/relevés de température, routes API températures, pages frontend Paramètres Températures et Relevés Températures, synthèse sur le tableau de bord Qualité, export CSV, préparation des sources manuel/IoT/import/API.
 
 Hors périmètre : nettoyage, maintenance métier, étalonnage, audits, non-conformités, HACCP, QR codes, IA Qualité, intégration réelle de sondes IoT.
 
@@ -60,7 +60,7 @@ Q1 ajoute : page zones qualité, page équipements qualité, client API frontend
 
 Q2 ajoute : page `frontend/quality/pages/documents.html` et script `frontend/quality/js/documents.js`, accessibles depuis les cartes Zone et Équipement.
 
-Q3 ajoute : page `frontend/quality/pages/temperatures.html`, script `frontend/quality/js/temperatures.js`, client `frontend/quality/js/temperature-api.js`, synthèse températures sur le tableau de bord Qualité.
+Q3 ajoute : pages `frontend/quality/pages/temperature-settings.html`, `frontend/quality/pages/temperature-records.html`, page d'orientation `frontend/quality/pages/temperatures.html`, scripts `frontend/quality/js/temperature-settings.js` et `frontend/quality/js/temperature-records.js`, client `frontend/quality/js/temperature-api.js`, synthèse températures sur le tableau de bord Qualité.
 
 ## Permissions qualité
 
@@ -162,6 +162,8 @@ Températures :
 - `frontend/quality/pages/equipments.html`
 - `frontend/quality/pages/documents.html`
 - `frontend/quality/pages/temperatures.html`
+- `frontend/quality/pages/temperature-settings.html`
+- `frontend/quality/pages/temperature-records.html`
 
 ## Décisions importantes
 
@@ -174,7 +176,9 @@ Températures :
 - Les documents et photos archivés sont masqués par défaut, consultables via `include_archived=true`, et restaurables sans suppression définitive.
 - Les fichiers Q2 sont rattachés à une zone ou un équipement, mais la structure `owner_type` / `owner_id` prépare l'extension aux futurs objets QMS.
 - Les limites de température ne sont pas codées en dur : elles sont configurables par magasin, type, zone et/ou équipement.
+- Les paramètres de température portent une fréquence attendue (`hours`, `days`, `events`) afin de détecter les relevés manquants ou en retard.
 - Les alertes températures Q3 restent simples : conforme, surveillance, hors limites. Les actions correctives arriveront dans une PR dédiée.
+- La synthèse température doit compter les relevés hors limites et les relevés manquants selon les paramètres actifs.
 - Les relevés températures sont préparés pour plusieurs sources : manuel, IoT, import et API. Q3 ne contient aucune intégration IoT réelle.
 
 ## Règles de non-régression

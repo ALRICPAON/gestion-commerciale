@@ -33,6 +33,9 @@ CREATE TABLE IF NOT EXISTS quality_temperature_limits (
   min_value numeric(8, 2),
   max_value numeric(8, 2),
   unit text NOT NULL DEFAULT '°C',
+  expected_frequency_value integer,
+  expected_frequency_unit text CHECK (expected_frequency_unit IN ('hours', 'days', 'events')),
+  target_time time,
   is_active boolean NOT NULL DEFAULT true,
   valid_from date NOT NULL DEFAULT CURRENT_DATE,
   valid_until date,
@@ -41,7 +44,8 @@ CREATE TABLE IF NOT EXISTS quality_temperature_limits (
   created_by uuid REFERENCES users(id) ON DELETE SET NULL,
   updated_by uuid REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT quality_temperature_limits_bounds_check CHECK (min_value IS NOT NULL OR max_value IS NOT NULL),
-  CONSTRAINT quality_temperature_limits_range_check CHECK (min_value IS NULL OR max_value IS NULL OR min_value <= max_value)
+  CONSTRAINT quality_temperature_limits_range_check CHECK (min_value IS NULL OR max_value IS NULL OR min_value <= max_value),
+  CONSTRAINT quality_temperature_limits_frequency_check CHECK (expected_frequency_value IS NULL OR expected_frequency_value > 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_quality_temperature_limits_store ON quality_temperature_limits(store_id);

@@ -37,11 +37,45 @@ async function listTemperatureLimits(db, storeId, query = {}) {
   addFilter(where, params, query.equipment_id, (i) => `l.equipment_id = $${i}`);
   if (query.active_only !== 'false') where.push('l.is_active = true');
   const result = await db.query(
-    `SELECT l.*, t.label AS type_label, z.name AS zone_name, e.name AS equipment_name
+    `SELECT l.*, t.label AS type_label, z.name AS zone_name, e.name AS equipment_name,
+            lr.id AS last_record_id, lr.recorded_at AS last_recorded_at, lr.value AS last_value,
+            lr.unit AS last_unit, lr.alert_status AS last_alert_status,
+            CASE
+              WHEN l.expected_frequency_value IS NULL OR lr.recorded_at IS NULL THEN NULL
+              WHEN l.expected_frequency_unit = 'hours' THEN lr.recorded_at + (l.expected_frequency_value || ' hours')::interval
+              WHEN l.expected_frequency_unit = 'days' THEN lr.recorded_at + (l.expected_frequency_value || ' days')::interval
+              ELSE NULL
+            END AS next_expected_at,
+            CASE
+              WHEN l.is_active = false THEN 'inactive'
+              WHEN lr.id IS NULL THEN 'missing'
+              WHEN l.expected_frequency_value IS NOT NULL
+                AND l.expected_frequency_unit IN ('hours', 'days')
+                AND (
+                  CASE
+                    WHEN l.expected_frequency_unit = 'hours' THEN lr.recorded_at + (l.expected_frequency_value || ' hours')::interval
+                    WHEN l.expected_frequency_unit = 'days' THEN lr.recorded_at + (l.expected_frequency_value || ' days')::interval
+                  END
+                ) < now() THEN 'missing'
+              WHEN lr.alert_status = 'out_of_limits' THEN 'out_of_limits'
+              WHEN lr.alert_status = 'warning' THEN 'warning'
+              ELSE 'compliant'
+            END AS followup_status
      FROM quality_temperature_limits l
      INNER JOIN quality_temperature_types t ON t.code = l.type_code
      LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
      LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
+     LEFT JOIN LATERAL (
+       SELECT r.*
+       FROM quality_temperature_records r
+       WHERE r.store_id = l.store_id
+         AND r.type_code = l.type_code
+         AND r.deleted_at IS NULL
+         AND (l.zone_id IS NULL OR r.zone_id = l.zone_id)
+         AND (l.equipment_id IS NULL OR r.equipment_id = l.equipment_id)
+       ORDER BY r.recorded_at DESC
+       LIMIT 1
+     ) lr ON true
      WHERE ${where.join(' AND ')}
      ORDER BY l.is_active DESC, t.label ASC, z.name ASC, e.name ASC, l.created_at DESC`,
     params
@@ -62,16 +96,20 @@ async function saveTemperatureLimit(db, storeId, userId, payload, limitId = null
       ? await db.query(
         `UPDATE quality_temperature_limits
          SET type_code=$3, zone_id=$4, equipment_id=$5, min_value=$6, max_value=$7, unit=$8,
-             is_active=$9, valid_from=$10, valid_until=$11, updated_by=$12, updated_at=now()
-         WHERE id=$1 AND store_id=$2 RETURNING *`,
-        [limitId, storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.is_active, payload.valid_from, payload.valid_until, userId]
+             expected_frequency_value=$9, expected_frequency_unit=$10, target_time=$11,
+             is_active=$12, valid_from=$13, valid_until=$14, updated_by=$15, updated_at=now()
+         WHERE id=$1 AND store_id=$2
+         RETURNING *`,
+        [limitId, storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, payload.is_active, payload.valid_from, payload.valid_until, userId]
       )
       : await db.query(
         `INSERT INTO quality_temperature_limits (
           store_id, type_code, zone_id, equipment_id, min_value, max_value, unit,
+          expected_frequency_value, expected_frequency_unit, target_time,
           is_active, valid_from, valid_until, created_by, updated_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11) RETURNING *`,
-        [storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.is_active, payload.valid_from, payload.valid_until, userId]
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
+        RETURNING *`,
+        [storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, payload.is_active, payload.valid_from, payload.valid_until, userId]
       );
     await logEvent(db, storeId, userId, limitId ? 'quality.temperature.limit.updated' : 'quality.temperature.limit.created', 'quality_temperature_limit', result.rows[0].id, before, result.rows[0]);
     return result.rows[0];
@@ -84,8 +122,10 @@ async function deleteTemperatureLimit(db, storeId, userId, limitId) {
   const before = await getTemperatureLimit(db, storeId, limitId);
   if (!before) return null;
   const result = await db.query(
-    `UPDATE quality_temperature_limits SET is_active=false, updated_by=$3, updated_at=now()
-     WHERE id=$1 AND store_id=$2 RETURNING *`,
+    `UPDATE quality_temperature_limits
+     SET is_active=false, updated_by=$3, updated_at=now()
+     WHERE id=$1 AND store_id=$2
+     RETURNING *`,
     [limitId, storeId, userId]
   );
   await logEvent(db, storeId, userId, 'quality.temperature.limit.archived', 'quality_temperature_limit', limitId, before, result.rows[0]);
@@ -94,8 +134,11 @@ async function deleteTemperatureLimit(db, storeId, userId, limitId) {
 
 async function findApplicableLimit(db, storeId, payload) {
   const result = await db.query(
-    `SELECT * FROM quality_temperature_limits
-     WHERE store_id = $1 AND type_code = $2 AND is_active = true
+    `SELECT *
+     FROM quality_temperature_limits
+     WHERE store_id = $1
+       AND type_code = $2
+       AND is_active = true
        AND valid_from <= ($3::timestamptz)::date
        AND (valid_until IS NULL OR valid_until >= ($3::timestamptz)::date)
        AND (equipment_id IS NULL OR equipment_id = $4)
@@ -179,7 +222,8 @@ async function saveTemperatureRecord(db, storeId, userId, payload, recordId = nu
              source=$9, operator_user_id=$10, comment=$11, evidence_photo_id=$12, evidence_document_id=$13,
              min_limit=$14, max_limit=$15, alert_status=$16, alert_reason=$17,
              updated_by=$18, updated_at=now()
-         WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL RETURNING *`,
+         WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL
+         RETURNING *`,
         [recordId, storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.comment, payload.evidence_photo_id, payload.evidence_document_id, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
       )
       : await db.query(
@@ -187,7 +231,8 @@ async function saveTemperatureRecord(db, storeId, userId, payload, recordId = nu
           store_id, zone_id, equipment_id, type_code, value, unit, recorded_at, source,
           operator_user_id, comment, evidence_photo_id, evidence_document_id,
           min_limit, max_limit, alert_status, alert_reason, created_by, updated_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17) RETURNING *`,
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
+        RETURNING *`,
         [storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.comment, payload.evidence_photo_id, payload.evidence_document_id, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
       );
     await logEvent(db, storeId, userId, recordId ? 'quality.temperature.record.updated' : 'quality.temperature.record.created', 'quality_temperature_record', result.rows[0].id, before, result.rows[0]);
@@ -201,8 +246,10 @@ async function deleteTemperatureRecord(db, storeId, userId, recordId) {
   const before = await getTemperatureRecord(db, storeId, recordId);
   if (!before || before.deleted_at) return null;
   const result = await db.query(
-    `UPDATE quality_temperature_records SET deleted_at=now(), updated_by=$3, updated_at=now()
-     WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL RETURNING *`,
+    `UPDATE quality_temperature_records
+     SET deleted_at=now(), updated_by=$3, updated_at=now()
+     WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL
+     RETURNING *`,
     [recordId, storeId, userId]
   );
   await logEvent(db, storeId, userId, 'quality.temperature.record.archived', 'quality_temperature_record', recordId, before, result.rows[0]);
@@ -220,20 +267,60 @@ async function getTemperatureSummary(db, storeId) {
        LEFT JOIN quality_equipments e ON e.id = r.equipment_id AND e.store_id = r.store_id
        WHERE r.store_id = $1 AND r.deleted_at IS NULL
        ORDER BY COALESCE(r.equipment_id::text, r.zone_id::text, r.type_code), r.recorded_at DESC
-     ), alerts AS (
-       SELECT count(*)::int AS count FROM quality_temperature_records
+     ),
+     settings AS (
+       SELECT l.*, t.label AS type_label, z.name AS zone_name, e.name AS equipment_name,
+              lr.id AS last_record_id, lr.recorded_at AS last_recorded_at, lr.value AS last_value, lr.alert_status AS last_alert_status,
+              CASE
+                WHEN l.expected_frequency_value IS NULL OR lr.recorded_at IS NULL THEN NULL
+                WHEN l.expected_frequency_unit = 'hours' THEN lr.recorded_at + (l.expected_frequency_value || ' hours')::interval
+                WHEN l.expected_frequency_unit = 'days' THEN lr.recorded_at + (l.expected_frequency_value || ' days')::interval
+                ELSE NULL
+              END AS next_expected_at
+       FROM quality_temperature_limits l
+       INNER JOIN quality_temperature_types t ON t.code = l.type_code
+       LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
+       LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
+       LEFT JOIN LATERAL (
+         SELECT r.*
+         FROM quality_temperature_records r
+         WHERE r.store_id = l.store_id
+           AND r.type_code = l.type_code
+           AND r.deleted_at IS NULL
+           AND (l.zone_id IS NULL OR r.zone_id = l.zone_id)
+           AND (l.equipment_id IS NULL OR r.equipment_id = l.equipment_id)
+         ORDER BY r.recorded_at DESC
+         LIMIT 1
+       ) lr ON true
+       WHERE l.store_id = $1 AND l.is_active = true
+     ),
+     missing_settings AS (
+       SELECT * FROM settings
+       WHERE last_record_id IS NULL
+          OR (expected_frequency_value IS NOT NULL AND expected_frequency_unit IN ('hours', 'days') AND next_expected_at < now())
+     ),
+     alerts AS (
+       SELECT count(*)::int AS count
+       FROM quality_temperature_records
        WHERE store_id = $1 AND deleted_at IS NULL AND alert_status = 'out_of_limits'
-     ), equipment_without_records AS (
-       SELECT count(*)::int AS count FROM quality_equipments e
-       WHERE e.store_id = $1 AND e.is_temperature_controlled = true AND e.status <> 'archived' AND e.deleted_at IS NULL
-         AND NOT EXISTS (SELECT 1 FROM quality_temperature_records r WHERE r.store_id = e.store_id AND r.equipment_id = e.id AND r.deleted_at IS NULL)
+     ),
+     latest_critical AS (
+       SELECT *
+       FROM quality_temperature_records
+       WHERE store_id = $1 AND deleted_at IS NULL AND alert_status = 'out_of_limits'
+       ORDER BY recorded_at DESC
+       LIMIT 1
      )
-     SELECT COALESCE((SELECT json_agg(latest ORDER BY latest.recorded_at DESC) FROM latest), '[]'::json) AS latest,
-            (SELECT count FROM alerts) AS alert_count,
-            (SELECT count FROM equipment_without_records) AS equipment_without_records`,
+     SELECT
+       COALESCE((SELECT json_agg(latest ORDER BY latest.recorded_at DESC) FROM latest), '[]'::json) AS latest,
+       (SELECT count FROM alerts) AS out_of_limits_count,
+       (SELECT count(*)::int FROM missing_settings) AS missing_count,
+       ((SELECT count FROM alerts) + (SELECT count(*)::int FROM missing_settings)) AS alert_count,
+       COALESCE((SELECT json_agg(missing_settings ORDER BY missing_settings.next_expected_at NULLS FIRST) FROM missing_settings), '[]'::json) AS missing_items,
+       (SELECT row_to_json(latest_critical) FROM latest_critical) AS latest_critical`,
     [storeId]
   );
-  return result.rows[0] || { latest: [], alert_count: 0, equipment_without_records: 0 };
+  return result.rows[0] || { latest: [], alert_count: 0, out_of_limits_count: 0, missing_count: 0, missing_items: [], latest_critical: null };
 }
 
 module.exports = {

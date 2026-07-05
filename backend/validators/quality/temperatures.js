@@ -1,5 +1,6 @@
 const TEMPERATURE_SOURCES = Object.freeze(['manual', 'iot', 'import', 'api']);
 const TEMPERATURE_ALERT_STATUSES = Object.freeze(['compliant', 'warning', 'out_of_limits']);
+const TEMPERATURE_FREQUENCY_UNITS = Object.freeze(['hours', 'days', 'events']);
 
 function cleanUuid(value) {
   const text = String(value || '').trim();
@@ -35,6 +36,7 @@ function mapRecordPayload(body = {}) {
 }
 
 function mapLimitPayload(body = {}) {
+  const frequencyUnit = nullableText(body.expected_frequency_unit);
   return {
     type_code: nullableText(body.type_code || body.type),
     zone_id: cleanUuid(body.zone_id),
@@ -42,6 +44,9 @@ function mapLimitPayload(body = {}) {
     min_value: nullableNumber(body.min_value),
     max_value: nullableNumber(body.max_value),
     unit: nullableText(body.unit) || '°C',
+    expected_frequency_value: nullableNumber(body.expected_frequency_value),
+    expected_frequency_unit: TEMPERATURE_FREQUENCY_UNITS.includes(frequencyUnit) ? frequencyUnit : null,
+    target_time: nullableText(body.target_time),
     is_active: body.is_active !== false && body.is_active !== 'false',
     valid_from: nullableText(body.valid_from) || new Date().toISOString().slice(0, 10),
     valid_until: nullableText(body.valid_until),
@@ -58,15 +63,15 @@ function validateRecordPayload(payload) {
 function validateLimitPayload(payload) {
   if (!payload.type_code) return 'Type de température obligatoire';
   if (payload.min_value === null && payload.max_value === null) return 'Au moins une limite mini ou maxi est obligatoire';
-  if (payload.min_value !== null && payload.max_value !== null && payload.min_value > payload.max_value) {
-    return 'La limite mini ne peut pas dépasser la limite maxi';
-  }
+  if (payload.min_value !== null && payload.max_value !== null && payload.min_value > payload.max_value) return 'La limite mini ne peut pas dépasser la limite maxi';
+  if ((payload.expected_frequency_value && !payload.expected_frequency_unit) || (!payload.expected_frequency_value && payload.expected_frequency_unit)) return 'La fréquence attendue doit contenir une valeur et une unité';
   return null;
 }
 
 module.exports = {
   TEMPERATURE_SOURCES,
   TEMPERATURE_ALERT_STATUSES,
+  TEMPERATURE_FREQUENCY_UNITS,
   cleanUuid,
   mapRecordPayload,
   mapLimitPayload,

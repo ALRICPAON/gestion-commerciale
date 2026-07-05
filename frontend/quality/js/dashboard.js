@@ -33,8 +33,8 @@
       const response = await fetch(`${API_BASE_URL}/api/quality/temperatures/summary`, { headers: { Authorization: `Bearer ${authToken}` } });
       if (!response.ok) return;
       const summary = await response.json();
-      const latest = Array.isArray(summary.latest) && summary.latest.length ? new Date(summary.latest[0].recorded_at).toLocaleString('fr-FR') : '-';
-      temperatureSummaryEl.textContent = `Alertes : ${summary.alert_count || 0} · Dernier relevé : ${latest} · Sans relevé : ${summary.equipment_without_records || 0}`;
+      const critical = summary.latest_critical ? new Date(summary.latest_critical.recorded_at).toLocaleString('fr-FR') : '-';
+      temperatureSummaryEl.textContent = `Alertes : ${summary.alert_count || 0} · Manquants : ${summary.missing_count || 0} · Critique : ${critical}`;
     } catch (error) {
       temperatureSummaryEl.textContent = 'Synthèse températures indisponible';
     }

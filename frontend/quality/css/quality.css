@@ -134,6 +134,11 @@
   background: #FFF5F5;
 }
 
+.quality-temperature-missing {
+  border-color: #B9A7E8;
+  background: #F7F3FF;
+}
+
 .quality-temperature-chart {
   align-items: end;
   border: 1px solid var(--alta-border);
