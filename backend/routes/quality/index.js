@@ -10,6 +10,7 @@ const { queueQualityNotification } = require('../../services/quality/notificatio
 const { createQualityPdfDocument } = require('../../pdf/quality/generator');
 const zonesRoutes = require('./zones');
 const equipmentsRoutes = require('./equipments');
+const documentsRoutes = require('./documents');
 
 const router = express.Router();
 
@@ -51,5 +52,7 @@ router.get('/permissions', authenticateToken, (req, res) => {
     permissions: QUALITY_PERMISSION_LIST,
   });
 });
+
+router.use('/', documentsRoutes);
 
 module.exports = router;
