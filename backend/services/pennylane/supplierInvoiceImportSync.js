@@ -277,6 +277,17 @@ function buildLocalStatusSnapshot(row) {
   };
 }
 
+function summarizeChanges(changes) {
+  return changes
+    .map((change) => ({
+      resource_id: extractChangeResourceId(change) ? String(extractChangeResourceId(change)) : null,
+      operation: extractChangeOperation(change),
+      processed_at: extractProcessedAt(change) || null,
+    }))
+    .filter((change) => change.resource_id)
+    .slice(0, 20);
+}
+
 async function listStoresToSync(db, storeId = null) {
   if (storeId) return [{ store_id: storeId }];
 
@@ -709,6 +720,17 @@ async function processStoreSupplierInvoiceSync(db, pennylaneClient, storeId, opt
   const limit = Number(options.limit || process.env.PENNYLANE_SUPPLIER_INVOICE_CHANGELOG_LIMIT) || DEFAULT_CHANGELOG_LIMIT;
   const startDate = state.cursor ? null : state.last_processed_at?.toISOString?.() || state.last_processed_at || initialStartDate();
 
+  logSupplierInvoiceStatusFlow('store_sync_start', {
+    store_id: storeId,
+    worker_id: workerId,
+    resource: state.resource,
+    state_status: state.sync_status || null,
+    cursor_present: Boolean(state.cursor),
+    last_processed_at: state.last_processed_at || null,
+    start_date: startDate || null,
+    limit,
+  });
+
   await markSyncStateProcessing(db, state, workerId);
 
   let cursor = state.cursor || null;
@@ -723,6 +745,15 @@ async function processStoreSupplierInvoiceSync(db, pennylaneClient, storeId, opt
       const endpoint = buildChangelogEndpoint({ startDate, cursor, limit });
       const response = await pennylaneClient.get(endpoint);
       const changes = extractList(response.body);
+
+      logSupplierInvoiceStatusFlow('changelog_page', {
+        store_id: storeId,
+        endpoint,
+        changes_count: changes.length,
+        changes_sample: summarizeChanges(changes),
+        has_more: hasMore(response.body),
+        next_cursor_present: Boolean(nextCursor(response.body)),
+      });
 
       for (const change of changes) {
         processed += 1;
@@ -751,6 +782,12 @@ async function processStoreSupplierInvoiceSync(db, pennylaneClient, storeId, opt
     } while (cursor);
 
     const invoicesMissingSupplier = await listInvoicesMissingSupplier(db, storeId);
+    logSupplierInvoiceStatusFlow('missing_supplier_retry_candidates', {
+      store_id: storeId,
+      candidates_count: invoicesMissingSupplier.length,
+      candidates_sample: invoicesMissingSupplier.slice(0, 20),
+    });
+
     for (const incompleteInvoice of invoicesMissingSupplier) {
       processed += 1;
       try {
@@ -789,10 +826,18 @@ async function processPennylaneSupplierInvoiceImportSync(db, options = {}) {
   const batchSize = Number(options.batchSize || process.env.PENNYLANE_SUPPLIER_INVOICE_STORE_BATCH_SIZE) || DEFAULT_BATCH_SIZE;
 
   if (!pennylaneConfig.enabled) {
+    logSupplierInvoiceStatusFlow('service_skipped', {
+      reason: 'PENNYLANE_DISABLED',
+      worker_id: options.workerId || null,
+    });
     return { processed: 0, succeeded: 0, deleted: 0, failed: 0, skipped: true, reason: 'PENNYLANE_DISABLED' };
   }
 
   if (!pennylaneConfig.apiToken) {
+    logSupplierInvoiceStatusFlow('service_skipped', {
+      reason: 'PENNYLANE_TOKEN_MISSING',
+      worker_id: options.workerId || null,
+    });
     return { processed: 0, succeeded: 0, deleted: 0, failed: 0, skipped: true, reason: 'PENNYLANE_TOKEN_MISSING' };
   }
 
@@ -802,6 +847,14 @@ async function processPennylaneSupplierInvoiceImportSync(db, options = {}) {
   let succeeded = 0;
   let deleted = 0;
   let failed = 0;
+
+  logSupplierInvoiceStatusFlow('service_start', {
+    worker_id: options.workerId || null,
+    requested_store_id: options.storeId || null,
+    batch_size: batchSize,
+    stores_count: stores.length,
+    store_ids: stores.map((store) => store.store_id).slice(0, 50),
+  });
 
   for (const store of stores) {
     try {
