@@ -1,8 +1,30 @@
 (function () {
   const API_BASE_URL = window.APP_CONFIG?.API_BASE_URL || '';
-  const sessionUser = JSON.parse(localStorage.getItem('gc_user') || localStorage.getItem('grv2_user') || 'null');
-  const authToken = localStorage.getItem('gc_token') || localStorage.getItem('grv2_token');
-  if (!sessionUser || !authToken) { window.location.href = '../../login.html'; return; }
+
+  function parseStoredJson(key) {
+    try {
+      return JSON.parse(localStorage.getItem(key) || 'null');
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function currentUser() {
+    return parseStoredJson('gc_user') || parseStoredJson('grv2_user');
+  }
+
+  function currentToken() {
+    return localStorage.getItem('gc_token') || localStorage.getItem('grv2_token');
+  }
+
+  function redirectToLogin() {
+    const redirect = `${window.location.pathname}${window.location.search}`;
+    window.location.href = `/login.html?redirect=${encodeURIComponent(redirect)}`;
+  }
+
+  const sessionUser = currentUser();
+  const authToken = currentToken();
+  if (!sessionUser || !authToken) { redirectToLogin(); return; }
 
   const canManage = window.hasQualityPermission?.(sessionUser, 'quality.document.manage') || window.hasQualityPermission?.(sessionUser, 'quality.admin');
   const params = new URLSearchParams(window.location.search);
