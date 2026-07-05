@@ -10,11 +10,13 @@ const { queueQualityNotification } = require('../../services/quality/notificatio
 const { createQualityPdfDocument } = require('../../pdf/quality/generator');
 const zonesRoutes = require('./zones');
 const equipmentsRoutes = require('./equipments');
+const documentsRoutes = require('./documents');
 
 const router = express.Router();
 
 router.use('/zones', zonesRoutes);
 router.use('/equipments', equipmentsRoutes);
+router.use('/', documentsRoutes);
 
 router.get('/foundation', authenticateToken, attachDbContext, async (req, res) => {
   const eventPreview = await logQualityEvent({
