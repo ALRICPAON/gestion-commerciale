@@ -16,7 +16,6 @@ const router = express.Router();
 
 router.use('/zones', zonesRoutes);
 router.use('/equipments', equipmentsRoutes);
-router.use('/', documentsRoutes);
 
 router.get('/foundation', authenticateToken, attachDbContext, async (req, res) => {
   const eventPreview = await logQualityEvent({
@@ -53,5 +52,7 @@ router.get('/permissions', authenticateToken, (req, res) => {
     permissions: QUALITY_PERMISSION_LIST,
   });
 });
+
+router.use('/', documentsRoutes);
 
 module.exports = router;
