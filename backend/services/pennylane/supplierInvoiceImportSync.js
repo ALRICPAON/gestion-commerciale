@@ -86,6 +86,13 @@ function logSupplierInvoiceImportError(err, context = {}) {
   });
 }
 
+function logSupplierInvoiceStatusFlow(step, payload = {}) {
+  console.info('[Pennylane supplier invoice status flow]', {
+    step,
+    ...payload,
+  });
+}
+
 function toNumberOrNull(value) {
   if (value === undefined || value === null || value === '') return null;
   const amount = Number(value);
@@ -244,6 +251,32 @@ function normalizeEInvoicing(invoice) {
   };
 }
 
+function buildIncomingStatusSnapshot(invoice) {
+  return {
+    pennylane_supplier_invoice_id: invoice?.id ? String(invoice.id) : null,
+    payment_status: firstPresent(invoice, ['payment_status']),
+    paid: invoice?.paid === true,
+    raw_paid: invoice?.paid ?? null,
+    accounting_status: firstPresent(invoice, ['accounting_status']),
+  };
+}
+
+function buildLocalStatusSnapshot(row) {
+  if (!row) return null;
+
+  return {
+    local_invoice_id: row.id || null,
+    payment_status: row.payment_status || null,
+    paid: row.paid ?? null,
+    accounting_status: row.accounting_status || null,
+    alta_business_status: row.alta_business_status || null,
+    match_status: row.match_status || null,
+    auto_match_status: row.auto_match_status || null,
+    updated_at: row.updated_at || null,
+    last_synced_at: row.last_synced_at || null,
+  };
+}
+
 async function listStoresToSync(db, storeId = null) {
   if (storeId) return [{ store_id: storeId }];
 
@@ -392,17 +425,27 @@ async function markInvoiceDeleted(db, storeId, pennylaneInvoiceId) {
   );
 }
 
-async function upsertInvoice(db, { storeId, invoice }) {
+async function upsertInvoice(db, { storeId, invoice, reason }) {
   const pennylaneSupplierId = normalizeSupplierId(invoice);
   const supplierId = await findAltaSupplier(db, storeId, pennylaneSupplierId);
   const eInvoicing = normalizeEInvoicing(invoice);
+  const incomingStatus = buildIncomingStatusSnapshot(invoice);
   let localInvoiceId = null;
   let currentStep = 'update_invoice';
 
   try {
     const existing = await db.query(
       `
-      SELECT alta_business_status
+      SELECT
+        id,
+        accounting_status,
+        payment_status,
+        paid,
+        alta_business_status,
+        match_status,
+        auto_match_status,
+        updated_at,
+        last_synced_at
       FROM pennylane_supplier_invoices
       WHERE store_id = $1
         AND pennylane_supplier_invoice_id = $2
@@ -410,7 +453,27 @@ async function upsertInvoice(db, { storeId, invoice }) {
       `,
       [storeId, String(invoice.id)]
     );
-    const altaBusinessStatus = normalizeAltaStatus(existing.rows[0]?.alta_business_status, invoice, supplierId);
+    const existingRow = existing.rows[0] || null;
+    const altaBusinessStatus = normalizeAltaStatus(existingRow?.alta_business_status, invoice, supplierId);
+
+    logSupplierInvoiceStatusFlow('before_upsert', {
+      store_id: storeId,
+      reason: reason || 'sync',
+      pennylane_supplier_invoice_id: String(invoice.id),
+      received: incomingStatus,
+      existing: buildLocalStatusSnapshot(existingRow),
+      update_payload: {
+        accounting_status: firstPresent(invoice, ['accounting_status']),
+        payment_status: firstPresent(invoice, ['payment_status']),
+        paid: invoice.paid === true,
+        alta_business_status: altaBusinessStatus,
+        payment_status_included_in_upsert: true,
+        paid_included_in_upsert: true,
+        accounting_status_included_in_upsert: true,
+      },
+      payment_status_will_change: (existingRow?.payment_status || null) !== (incomingStatus.payment_status || null),
+      paid_will_change: existingRow ? existingRow.paid !== incomingStatus.paid : true,
+    });
 
     const upserted = await db.query(
       `
@@ -470,7 +533,16 @@ async function upsertInvoice(db, { storeId, invoice }) {
         raw_payload = EXCLUDED.raw_payload,
         last_synced_at = now(),
         updated_at = now()
-      RETURNING id
+      RETURNING
+        id,
+        accounting_status,
+        payment_status,
+        paid,
+        alta_business_status,
+        match_status,
+        auto_match_status,
+        updated_at,
+        last_synced_at
       `,
       [
         storeId,
@@ -503,7 +575,21 @@ async function upsertInvoice(db, { storeId, invoice }) {
       ]
     );
 
-    localInvoiceId = upserted.rows[0].id;
+    const returnedRow = upserted.rows[0];
+    localInvoiceId = returnedRow.id;
+
+    logSupplierInvoiceStatusFlow('after_upsert_returning', {
+      store_id: storeId,
+      reason: reason || 'sync',
+      pennylane_supplier_invoice_id: String(invoice.id),
+      local_invoice_id: localInvoiceId,
+      previous: buildLocalStatusSnapshot(existingRow),
+      returned: buildLocalStatusSnapshot(returnedRow),
+      payment_status_changed_in_db: (existingRow?.payment_status || null) !== (returnedRow.payment_status || null),
+      paid_changed_in_db: existingRow ? existingRow.paid !== returnedRow.paid : true,
+      alta_business_status_changed_in_db: (existingRow?.alta_business_status || null) !== (returnedRow.alta_business_status || null),
+    });
+
     await db.query(
       `
       DELETE FROM pennylane_supplier_invoice_lines
@@ -563,13 +649,22 @@ async function syncSupplierInvoiceById(db, pennylaneClient, storeId, pennylaneIn
     if (!invoice?.id) throw new Error('Pennylane n a pas retourne de facture fournisseur exploitable');
 
     const reason = options.reason || 'sync';
+    logSupplierInvoiceStatusFlow('after_pennylane_fetch', {
+      store_id: storeId,
+      reason,
+      pennylane_supplier_invoice_id: String(invoice.id),
+      payment_status: firstPresent(invoice, ['payment_status']),
+      paid: invoice.paid === true,
+      raw_paid: invoice.paid ?? null,
+      accounting_status: firstPresent(invoice, ['accounting_status']),
+    });
     console.info('[Pennylane supplier invoice import] header only', {
       invoice_id: String(invoice.id),
       reason,
       public_file_url_present: Boolean(firstPresent(invoice, ['public_file_url'])),
     });
     currentStep = 'update_invoice';
-    localInvoiceId = await upsertInvoice(db, { storeId, invoice });
+    localInvoiceId = await upsertInvoice(db, { storeId, invoice, reason });
 
     if (options.rerunMatching) {
       currentStep = 'matching';
