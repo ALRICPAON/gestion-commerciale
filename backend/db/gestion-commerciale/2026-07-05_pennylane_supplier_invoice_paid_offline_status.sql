@@ -33,7 +33,7 @@ BEGIN
     NEW.updated_at = NOW();
 
     UPDATE supplier_invoices
-    SET pennylane_status = COALESCE(NULLIF(NEW.payment_status, ''), 'paid'),
+    SET pennylane_status = 'paid',
         pennylane_synced_at = NOW(),
         updated_at = NOW()
     WHERE store_id = NEW.store_id
@@ -88,7 +88,7 @@ WHERE is_pennylane_supplier_invoice_paid(payment_status, paid)
   );
 
 UPDATE supplier_invoices si
-SET pennylane_status = COALESCE(NULLIF(psi.payment_status, ''), 'paid'),
+SET pennylane_status = 'paid',
     pennylane_synced_at = NOW(),
     updated_at = NOW()
 FROM pennylane_supplier_invoices psi
@@ -97,6 +97,6 @@ WHERE psi.store_id = si.store_id
   AND is_pennylane_supplier_invoice_paid(psi.payment_status, psi.paid)
   AND psi.alta_business_status NOT IN ('litige', 'refusee')
   AND si.status <> 'cancelled'
-  AND si.pennylane_status IS DISTINCT FROM COALESCE(NULLIF(psi.payment_status, ''), 'paid');
+  AND si.pennylane_status IS DISTINCT FROM 'paid';
 
 COMMIT;
