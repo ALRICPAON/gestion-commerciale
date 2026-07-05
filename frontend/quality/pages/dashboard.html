@@ -7,51 +7,22 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="../../css/app.css" />
-  <link rel="stylesheet" href="../css/quality.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=4" />
 </head>
 <body class="app-page quality-foundation-page">
   <header class="topbar">
-    <div class="topbar-left">
-      <h1 class="app-title">ALTA MARÉE</h1>
-      <p class="app-subtitle">Qualité</p>
-    </div>
-    <div class="topbar-right">
-      <div class="user-box"><span id="user-name">Utilisateur</span></div>
-      <button id="home-btn" class="btn btn-secondary">Accueil</button>
-      <button id="logout-btn" class="btn btn-secondary">Déconnexion</button>
-    </div>
+    <div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Qualité</p></div>
+    <div class="topbar-right"><div class="user-box"><span id="user-name">Utilisateur</span></div><button id="home-btn" class="btn btn-secondary">Accueil</button><button id="logout-btn" class="btn btn-secondary">Déconnexion</button></div>
   </header>
-
   <main class="main-content quality-placeholder">
-    <section class="welcome-card">
-      <span class="section-kicker">QMS</span>
-      <h2>Qualité</h2>
-      <p>Module en cours de construction</p>
-    </section>
-
+    <section class="welcome-card"><span class="section-kicker">QMS</span><h2>Qualité</h2><p>Module en cours de construction</p></section>
     <section class="quality-grid">
-      <a class="quality-card quality-link-card" href="./zones.html">
-        <span class="quality-badge">Jumeau numérique</span>
-        <h3>Zones qualité</h3>
-        <p>Référentiel des zones physiques et logiques de l'atelier.</p>
-      </a>
-      <a class="quality-card quality-link-card" href="./equipments.html">
-        <span class="quality-badge">Jumeau numérique</span>
-        <h3>Équipements qualité</h3>
-        <p>Référentiel des équipements rattachés aux zones qualité.</p>
-      </a>
+      <a class="quality-card quality-link-card" href="./zones.html"><span class="quality-badge">Jumeau numérique</span><h3>Zones qualité</h3><p>Référentiel des zones physiques et logiques de l'atelier.</p></a>
+      <a class="quality-card quality-link-card" href="./equipments.html"><span class="quality-badge">Jumeau numérique</span><h3>Équipements qualité</h3><p>Référentiel des équipements rattachés aux zones qualité.</p></a>
+      <a class="quality-card quality-link-card" href="./temperature-records.html"><span class="quality-badge">Chaîne du froid</span><h3>Relevés Températures</h3><p id="quality-temperature-summary">Alertes : - · Manquants : - · Critique : -</p></a>
+      <a class="quality-card quality-link-card" href="./temperature-settings.html"><span class="quality-badge">Chaîne du froid</span><h3>Paramètres Températures</h3><p>Seuils, fréquences attendues et suivis actifs.</p></a>
     </section>
   </main>
-
-  <script src="../../js/config.js"></script>
-  <script src="../js/permissions.js"></script>
-  <script src="../components/QualityCard.js"></script>
-  <script src="../components/QualityBadge.js"></script>
-  <script src="../components/QualityTimeline.js"></script>
-  <script src="../components/QualityScore.js"></script>
-  <script src="../components/QualityHeader.js"></script>
-  <script src="../components/QualityEmptyState.js"></script>
-  <script src="../components/QualityFilters.js"></script>
-  <script src="../js/dashboard.js"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../components/QualityCard.js"></script><script src="../components/QualityBadge.js"></script><script src="../components/QualityTimeline.js"></script><script src="../components/QualityScore.js"></script><script src="../components/QualityHeader.js"></script><script src="../components/QualityEmptyState.js"></script><script src="../components/QualityFilters.js"></script><script src="../js/dashboard.js?v=3"></script>
 </body>
 </html>

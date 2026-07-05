@@ -100,3 +100,58 @@
   color: #8A5A00;
   font-weight: 700;
 }
+
+.quality-table-wrapper {
+  margin-top: 14px;
+  overflow-x: auto;
+}
+
+.quality-table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.quality-table th,
+.quality-table td {
+  border-bottom: 1px solid var(--alta-border);
+  padding: 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.quality-temperature-ok {
+  border-color: #9AD5A4;
+  background: #F4FBF5;
+}
+
+.quality-temperature-warning {
+  border-color: #E6C76A;
+  background: #FFFBEA;
+}
+
+.quality-temperature-alert {
+  border-color: #E59A9A;
+  background: #FFF5F5;
+}
+
+.quality-temperature-missing {
+  border-color: #B9A7E8;
+  background: #F7F3FF;
+}
+
+.quality-temperature-chart {
+  align-items: end;
+  border: 1px solid var(--alta-border);
+  border-radius: 10px;
+  display: flex;
+  gap: 6px;
+  min-height: 180px;
+  margin-top: 16px;
+  padding: 14px;
+}
+
+.quality-temperature-bar {
+  border-radius: 6px 6px 0 0;
+  flex: 1;
+  min-width: 10px;
+}

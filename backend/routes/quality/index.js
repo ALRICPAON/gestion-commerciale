@@ -11,11 +11,13 @@ const { createQualityPdfDocument } = require('../../pdf/quality/generator');
 const zonesRoutes = require('./zones');
 const equipmentsRoutes = require('./equipments');
 const documentsRoutes = require('./documents');
+const temperaturesRoutes = require('./temperatures');
 
 const router = express.Router();
 
 router.use('/zones', zonesRoutes);
 router.use('/equipments', equipmentsRoutes);
+router.use('/temperatures', temperaturesRoutes);
 
 router.get('/foundation', authenticateToken, attachDbContext, async (req, res) => {
   const eventPreview = await logQualityEvent({

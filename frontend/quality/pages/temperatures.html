@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Températures qualité - ALTA MARÉE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=4" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Températures & chaîne du froid</p></div>
+    <div class="topbar-right"><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualité</button><button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button></div>
+  </header>
+  <main class="main-content">
+    <section class="welcome-card"><span class="section-kicker">QMS</span><h2>Températures</h2><p>Suivi de la chaîne du froid.</p></section>
+    <section class="quality-grid">
+      <a class="quality-card quality-link-card" href="./temperature-settings.html"><span class="quality-badge">Paramètres</span><h3>Paramètres Températures</h3><p>Configurer les suivis, seuils et fréquences attendues.</p></a>
+      <a class="quality-card quality-link-card" href="./temperature-records.html"><span class="quality-badge">Relevés</span><h3>Relevés Températures</h3><p>Saisir, consulter, filtrer et exporter les relevés.</p></a>
+    </section>
+  </main>
+  <script src="../../js/config.js"></script>
+  <script src="../js/permissions.js"></script>
+</body>
+</html>
