@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="../../css/app.css" />
-  <link rel="stylesheet" href="../css/quality.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=3" />
 </head>
 <body class="app-page quality-foundation-page">
   <header class="topbar">
@@ -40,6 +40,11 @@
         <h3>Équipements qualité</h3>
         <p>Référentiel des équipements rattachés aux zones qualité.</p>
       </a>
+      <a class="quality-card quality-link-card" href="./temperatures.html">
+        <span class="quality-badge">Chaîne du froid</span>
+        <h3>Températures</h3>
+        <p id="quality-temperature-summary">Alertes : - · Dernier relevé : - · Sans relevé : -</p>
+      </a>
     </section>
   </main>
 
@@ -52,6 +57,6 @@
   <script src="../components/QualityHeader.js"></script>
   <script src="../components/QualityEmptyState.js"></script>
   <script src="../components/QualityFilters.js"></script>
-  <script src="../js/dashboard.js"></script>
+  <script src="../js/dashboard.js?v=2"></script>
 </body>
 </html>
