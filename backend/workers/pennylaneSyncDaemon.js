@@ -11,6 +11,7 @@ const { processPendingPennylaneSupplierInvoiceMatching } = require('../services/
 
 const DEFAULT_INTERVAL_MS = 5000;
 const MIN_INTERVAL_MS = 1000;
+const SUPPLIER_INVOICE_IMPORT_TASK = 'factures_fournisseurs_pennylane';
 
 const syncTasks = [
   {
@@ -26,7 +27,7 @@ const syncTasks = [
     process: processPennylaneCustomerInvoiceSyncQueue,
   },
   {
-    name: 'factures_fournisseurs_pennylane',
+    name: SUPPLIER_INVOICE_IMPORT_TASK,
     process: processPennylaneSupplierInvoiceImportSync,
   },
   {
@@ -62,14 +63,28 @@ function shouldLogSkipped(result) {
   return Boolean(result?.skipped && process.env.PENNYLANE_SYNC_DAEMON_LOG_SKIPPED === 'true');
 }
 
+function shouldTraceTask(task) {
+  return task.name === SUPPLIER_INVOICE_IMPORT_TASK;
+}
+
 async function runTask(task) {
   const startedAt = Date.now();
+  const workerId = `${workerPrefix}-${task.name}`;
+
+  if (shouldTraceTask(task)) {
+    console.info('[Pennylane sync daemon] demarrage tache factures fournisseurs Pennylane', {
+      task: task.name,
+      worker_id: workerId,
+      process_function: task.process?.name || null,
+    });
+  }
+
   const result = await task.process(db, {
-    workerId: `${workerPrefix}-${task.name}`,
+    workerId,
   });
   const durationMs = Date.now() - startedAt;
 
-  if (hasActivity(result) || shouldLogSkipped(result)) {
+  if (hasActivity(result) || shouldLogSkipped(result) || shouldTraceTask(task)) {
     console.info('[Pennylane sync daemon] traitement termine', {
       task: task.name,
       duration_ms: durationMs,
