@@ -1,0 +1,52 @@
+.quality-foundation-page .quality-placeholder {
+  display: grid;
+  gap: 18px;
+}
+
+.quality-foundation-page .quality-placeholder h2 {
+  margin: 0;
+}
+
+.quality-foundation-page .quality-placeholder p {
+  margin: 0;
+  color: var(--alta-muted);
+}
+
+.quality-card,
+.quality-empty-state {
+  background: var(--alta-card);
+  border: 1px solid var(--alta-border);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: var(--alta-shadow);
+}
+
+.quality-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #E4F6F6;
+  color: var(--alta-ocean);
+  font-size: 12px;
+  font-weight: 700;
+  padding: 5px 10px;
+}
+
+.quality-score {
+  align-items: center;
+  background: #EEF3F8;
+  border-radius: 12px;
+  color: var(--alta-navy);
+  display: inline-flex;
+  font-size: 28px;
+  font-weight: 800;
+  justify-content: center;
+  min-height: 72px;
+  min-width: 72px;
+}
+
+.quality-timeline,
+.quality-filters {
+  margin: 0;
+  padding: 0;
+}
