@@ -64,16 +64,48 @@
     return data;
   }
 
-  async function openProtectedFile(path, filename) {
+  async function fetchProtectedBlob(path) {
+    const response = await fetch(`${API_BASE_URL}/api/quality${path}`, { headers: authHeaders() });
+    if (!response.ok) throw new Error('Fichier introuvable');
+    return response.blob();
+  }
+
+  async function openProtectedFile(path, filename, download = false) {
+    const blob = await fetchProtectedBlob(path);
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener';
+    if (download && filename) link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  async function hydratePhotoThumbnails() {
+    const images = Array.from(els.photoList.querySelectorAll('img[data-photo-src]'));
+    await Promise.all(images.map(async (image) => {
+      try {
+        const blob = await fetchProtectedBlob(image.dataset.photoSrc);
+        const url = URL.createObjectURL(blob);
+        image.src = url;
+        image.onload = () => URL.revokeObjectURL(url);
+      } catch (error) {
+        image.replaceWith(document.createTextNode('Aperçu indisponible'));
+      }
+    }));
+  }
+
+  async function downloadProtectedFile(path, filename) {
     const response = await fetch(`${API_BASE_URL}/api/quality${path}`, { headers: authHeaders() });
     if (!response.ok) throw new Error('Fichier introuvable');
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.target = '_blank';
-    link.rel = 'noopener';
-    if (filename) link.download = filename;
+    link.download = filename || 'document';
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -93,8 +125,9 @@
       els.photoList.innerHTML = '<div class="quality-empty-state">Aucune photo enregistrée.</div>';
       return;
     }
-    els.photoList.innerHTML = photos.map((photo) => `<article class="quality-card"><span class="quality-badge">${photo.is_primary ? 'Principale' : 'Photo'}</span><h3>${photo.caption || photo.original_filename}</h3><p class="quality-muted">${photo.photo_date || '-'} · ${photo.author || '-'}</p><p class="quality-muted">Ordre : ${photo.display_order}</p><div class="quality-actions"><button class="btn btn-secondary" data-photo-action="view" data-id="${photo.id}">Consulter</button><button class="btn btn-secondary" data-photo-action="delete" data-id="${photo.id}">Archiver</button></div></article>`).join('');
+    els.photoList.innerHTML = photos.map((photo) => `<article class="quality-card"><span class="quality-badge">${photo.is_primary ? 'Principale' : 'Photo'}</span><img data-photo-src="/photos/${photo.id}/file" alt="${photo.caption || photo.original_filename}" style="width:100%;max-height:180px;object-fit:cover;border-radius:6px;margin:8px 0;"><h3>${photo.caption || photo.original_filename}</h3><p class="quality-muted">Type : photo · Date : ${photo.photo_date || '-'} · Auteur : ${photo.author || '-'}</p><p class="quality-muted">Ordre : ${photo.display_order}</p><div class="quality-actions"><button class="btn btn-secondary" data-photo-action="view" data-id="${photo.id}">Consulter</button><button class="btn btn-secondary" data-photo-action="delete" data-id="${photo.id}">Archiver</button></div></article>`).join('');
     if (!canManage) els.photoList.querySelectorAll('button[data-photo-action="delete"]').forEach((button) => { button.disabled = true; });
+    hydratePhotoThumbnails();
   }
 
   function renderDocuments() {
@@ -102,7 +135,7 @@
       els.documentList.innerHTML = '<div class="quality-empty-state">Aucun document enregistré.</div>';
       return;
     }
-    els.documentList.innerHTML = documents.map((document) => `<article class="quality-card"><span class="quality-badge">${document.type_code}</span><h3>${document.name}</h3><p class="quality-muted">Version : ${document.version || '-'} · Date : ${document.document_date || '-'}</p><p class="quality-muted">${document.description || ''}</p><div class="quality-actions"><button class="btn btn-secondary" data-document-action="download" data-id="${document.id}">Télécharger</button><button class="btn btn-secondary" data-document-action="delete" data-id="${document.id}">Archiver</button></div></article>`).join('');
+    els.documentList.innerHTML = documents.map((document) => `<article class="quality-card"><span class="quality-badge">${document.type_code}</span><h3>${document.name}</h3><p class="quality-muted">Type : ${document.type_code} · Date : ${document.document_date || '-'} · Auteur : ${document.author || '-'}</p><p class="quality-muted">Version : ${document.version || '-'} · Fichier : ${document.original_filename || '-'}</p><p class="quality-muted">${document.description || ''}</p><div class="quality-actions"><button class="btn btn-secondary" data-document-action="open" data-id="${document.id}">Consulter</button><button class="btn btn-secondary" data-document-action="download" data-id="${document.id}">Télécharger</button><button class="btn btn-secondary" data-document-action="delete" data-id="${document.id}">Archiver</button></div></article>`).join('');
     if (!canManage) els.documentList.querySelectorAll('button[data-document-action="delete"]').forEach((button) => { button.disabled = true; });
   }
 
@@ -199,7 +232,8 @@
     const document = documents.find((item) => item.id === button.dataset.id);
     if (!document) return;
     try {
-      if (button.dataset.documentAction === 'download') await openProtectedFile(`/documents/${document.id}/download`, document.original_filename);
+      if (button.dataset.documentAction === 'open') await openProtectedFile(`/documents/${document.id}/download`, document.original_filename);
+      if (button.dataset.documentAction === 'download') await downloadProtectedFile(`/documents/${document.id}/download`, document.original_filename);
       if (button.dataset.documentAction === 'delete' && canManage && window.confirm('Archiver ce document ?')) {
         await request(`/documents/${document.id}`, { method: 'DELETE' });
         await load();
