@@ -203,14 +203,17 @@ router.post('/supplier-invoices/:id/manual-match', authenticateToken, attachDbCo
     const amountDifference = Number((invoiceTotal - selectedTotal).toFixed(4));
     const hasDifference = Math.abs(amountDifference) > AMOUNT_TOLERANCE;
     const matchStatus = hasDifference ? 'difference' : 'matched';
+    const invoiceLineMatchStatus = hasDifference ? 'price_difference' : 'matched';
+    const invoiceLineMatchError = hasDifference ? 'Ecart facture/BL confirme manuellement' : null;
 
     await client.query('DELETE FROM supplier_invoice_matches WHERE supplier_invoice_id = $1', [invoice.id]);
     await client.query(
       `UPDATE supplier_invoice_lines
-       SET match_status = NULL,
-           match_error = NULL
+       SET match_status = $2,
+           match_error = $3,
+           updated_at = NOW()
        WHERE supplier_invoice_id = $1`,
-      [invoice.id]
+      [invoice.id, invoiceLineMatchStatus, invoiceLineMatchError]
     );
 
     for (const [index, purchase] of selected.rows.entries()) {
