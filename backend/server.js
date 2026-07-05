@@ -58,6 +58,7 @@ const mcpServerRoutes = require('./routes/mcpServer');
 const intelligenceCenterRoutes = require('./routes/intelligenceCenter');
 const pennylaneIntegrationRoutes = require('./routes/pennylaneIntegration');
 const pennylaneSupplierInvoicesRoutes = require('./routes/pennylaneSupplierInvoices');
+const qualityRoutes = require('./routes/quality');
 
 const app = express();
 const PORT = process.env.PORT || 3002;
@@ -213,6 +214,7 @@ app.use('/api', statisticsRoutes);
 app.use('/api/stock', stockRegularizationRoutes);
 app.use('/api/stock', stockRoutes);
 app.use('/api/traceability', traceabilityRoutes);
+app.use('/api/quality', qualityRoutes);
 app.use('/api/transformations', transformationCreationRoutes);
 app.use('/api/transformations', transformationListRoutes);
 app.use('/api/transformations', transformationDetailsRoutes);
