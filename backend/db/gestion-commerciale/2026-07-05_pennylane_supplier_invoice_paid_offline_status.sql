@@ -39,9 +39,9 @@ BEGIN
     WHERE store_id = NEW.store_id
       AND pennylane_payload->>'pennylane_supplier_invoice_id' = NEW.pennylane_supplier_invoice_id
       AND status <> 'cancelled';
-  ELSIF NEW.payment_status = 'to_be_paid' THEN
+  ELSIF LOWER(COALESCE(NEW.payment_status, '')) = 'to_be_paid' THEN
     NEW.alta_business_status = CASE
-      WHEN NEW.alta_business_status IN ('payee', 'litige', 'refusee') THEN NEW.alta_business_status
+      WHEN NEW.alta_business_status IN ('litige', 'refusee') THEN NEW.alta_business_status
       ELSE 'validee_a_payer'
     END;
 
@@ -57,6 +57,14 @@ BEGIN
 
     NEW.last_synced_at = NOW();
     NEW.updated_at = NOW();
+
+    UPDATE supplier_invoices
+    SET pennylane_status = 'to_be_paid',
+        pennylane_synced_at = NOW(),
+        updated_at = NOW()
+    WHERE store_id = NEW.store_id
+      AND pennylane_payload->>'pennylane_supplier_invoice_id' = NEW.pennylane_supplier_invoice_id
+      AND status <> 'cancelled';
   END IF;
 
   RETURN NEW;
@@ -87,6 +95,25 @@ WHERE is_pennylane_supplier_invoice_paid(payment_status, paid)
     OR last_synced_at IS NULL
   );
 
+UPDATE pennylane_supplier_invoices
+SET alta_business_status = 'validee_a_payer',
+    match_status = 'matched',
+    auto_match_status = CASE
+      WHEN auto_match_status = 'success' THEN 'validated'
+      ELSE auto_match_status
+    END,
+    last_synced_at = NOW(),
+    updated_at = NOW()
+WHERE LOWER(COALESCE(payment_status, '')) = 'to_be_paid'
+  AND NOT is_pennylane_supplier_invoice_paid(payment_status, paid)
+  AND alta_business_status NOT IN ('litige', 'refusee')
+  AND (
+    alta_business_status <> 'validee_a_payer'
+    OR match_status <> 'matched'
+    OR auto_match_status = 'success'
+    OR last_synced_at IS NULL
+  );
+
 UPDATE supplier_invoices si
 SET pennylane_status = 'paid',
     pennylane_synced_at = NOW(),
@@ -95,8 +122,19 @@ FROM pennylane_supplier_invoices psi
 WHERE psi.store_id = si.store_id
   AND psi.pennylane_supplier_invoice_id = si.pennylane_payload->>'pennylane_supplier_invoice_id'
   AND is_pennylane_supplier_invoice_paid(psi.payment_status, psi.paid)
-  AND psi.alta_business_status NOT IN ('litige', 'refusee')
   AND si.status <> 'cancelled'
   AND si.pennylane_status IS DISTINCT FROM 'paid';
+
+UPDATE supplier_invoices si
+SET pennylane_status = 'to_be_paid',
+    pennylane_synced_at = NOW(),
+    updated_at = NOW()
+FROM pennylane_supplier_invoices psi
+WHERE psi.store_id = si.store_id
+  AND psi.pennylane_supplier_invoice_id = si.pennylane_payload->>'pennylane_supplier_invoice_id'
+  AND LOWER(COALESCE(psi.payment_status, '')) = 'to_be_paid'
+  AND NOT is_pennylane_supplier_invoice_paid(psi.payment_status, psi.paid)
+  AND si.status <> 'cancelled'
+  AND si.pennylane_status IS DISTINCT FROM 'to_be_paid';
 
 COMMIT;
