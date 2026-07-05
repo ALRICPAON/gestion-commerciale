@@ -37,6 +37,7 @@
 
     <section id="photos-panel" class="quality-card">
       <h3>Photos</h3>
+      <label><input id="photo-include-archived" type="checkbox"> Afficher les archivées</label>
       <form id="photo-form" class="quality-form-grid" enctype="multipart/form-data">
         <label>Photo * <input id="photo-file" class="form-input" type="file" accept="image/*" required></label>
         <label>Légende <input id="photo-caption" class="form-input"></label>
@@ -53,6 +54,7 @@
 
     <section id="documents-panel" class="quality-card hidden">
       <h3>Documents</h3>
+      <label><input id="document-include-archived" type="checkbox"> Afficher les archivés</label>
       <form id="document-form" class="quality-form-grid" enctype="multipart/form-data">
         <label>Fichier * <input id="document-file" class="form-input" type="file" required></label>
         <label>Type <select id="document-type" class="form-input"><option value="NOTICE">Notice</option><option value="FACTURE">Facture</option><option value="CERTIFICAT">Certificat</option><option value="GARANTIE">Garantie</option><option value="PLAN">Plan</option><option value="PHOTO">Photo</option><option value="VIDEO">Vidéo</option><option value="PROCEDURE">Procédure</option><option value="FDS">FDS</option><option value="CONTRAT">Contrat</option><option value="AUTRE">Autre</option></select></label>
@@ -71,6 +73,6 @@
 
   <script src="../../js/config.js"></script>
   <script src="../js/permissions.js?v=2"></script>
-  <script src="../js/documents.js?v=3"></script>
+  <script src="../js/documents.js?v=4"></script>
 </body>
 </html>
