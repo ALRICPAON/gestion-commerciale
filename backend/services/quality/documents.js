@@ -36,7 +36,7 @@ function listWhere(query, alias, params) {
 async function listDocuments(db, storeId, query = {}) {
   const params = [storeId];
   const where = listWhere(query, 'd', params);
-  const result = await db.query(`SELECT d.* FROM quality_documents d WHERE ${where.join(' AND ')} ORDER BY d.created_at DESC`, params);
+  const result = await db.query(`SELECT d.* FROM quality_documents d WHERE ${where.join(' AND ')} ORDER BY d.archived_at NULLS FIRST, d.created_at DESC`, params);
   return result.rows;
 }
 
@@ -68,10 +68,18 @@ async function archiveDocument(db, storeId, userId, id) {
   return result.rows[0];
 }
 
+async function restoreDocument(db, storeId, userId, id) {
+  const before = await getDocument(db, storeId, id);
+  if (!before) return null;
+  const result = await db.query('UPDATE quality_documents SET archived_at = NULL, updated_by = $3, updated_at = now() WHERE id = $1 AND store_id = $2 RETURNING *', [id, storeId, userId]);
+  await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.document.restored', targetType: 'quality_document', targetId: id, before, after: result.rows[0] });
+  return result.rows[0];
+}
+
 async function listPhotos(db, storeId, query = {}) {
   const params = [storeId];
   const where = listWhere(query, 'p', params);
-  const result = await db.query(`SELECT p.* FROM quality_photos p WHERE ${where.join(' AND ')} ORDER BY p.is_primary DESC, p.display_order ASC, p.created_at DESC`, params);
+  const result = await db.query(`SELECT p.* FROM quality_photos p WHERE ${where.join(' AND ')} ORDER BY p.archived_at NULLS FIRST, p.is_primary DESC, p.display_order ASC, p.created_at DESC`, params);
   return result.rows;
 }
 
@@ -103,13 +111,23 @@ async function archivePhoto(db, storeId, userId, id) {
   return result.rows[0];
 }
 
+async function restorePhoto(db, storeId, userId, id) {
+  const before = await getPhoto(db, storeId, id);
+  if (!before) return null;
+  const result = await db.query('UPDATE quality_photos SET archived_at = NULL, updated_by = $3, updated_at = now() WHERE id = $1 AND store_id = $2 RETURNING *', [id, storeId, userId]);
+  await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.photo.restored', targetType: 'quality_photo', targetId: id, before, after: result.rows[0] });
+  return result.rows[0];
+}
+
 module.exports = {
   listDocuments,
   getDocument,
   createDocument,
   archiveDocument,
+  restoreDocument,
   listPhotos,
   getPhoto,
   createPhoto,
   archivePhoto,
+  restorePhoto,
 };

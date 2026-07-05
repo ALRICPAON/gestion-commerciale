@@ -47,6 +47,7 @@
     photoOrder: $('photo-order'),
     photoPrimary: $('photo-primary'),
     photoSubmit: $('photo-submit'),
+    photoIncludeArchived: $('photo-include-archived'),
     photoList: $('photo-list'),
     documentForm: $('document-form'),
     documentFile: $('document-file'),
@@ -57,6 +58,7 @@
     documentAuthor: $('document-author'),
     documentDescription: $('document-description'),
     documentSubmit: $('document-submit'),
+    documentIncludeArchived: $('document-include-archived'),
     documentList: $('document-list'),
   };
   let photos = [];
@@ -71,8 +73,10 @@
     return { Authorization: `Bearer ${authToken}`, ...extra };
   }
 
-  function queryString() {
-    const query = new URLSearchParams({ owner_type: ownerType, owner_id: ownerId }).toString();
+  function queryString(includeArchived = false) {
+    const params = new URLSearchParams({ owner_type: ownerType, owner_id: ownerId });
+    if (includeArchived) params.set('include_archived', 'true');
+    const query = params.toString();
     return `?${query}`;
   }
 
@@ -147,8 +151,8 @@
       els.photoList.innerHTML = '<div class="quality-empty-state">Aucune photo enregistrée.</div>';
       return;
     }
-    els.photoList.innerHTML = photos.map((photo) => `<article class="quality-card"><span class="quality-badge">${photo.is_primary ? 'Principale' : 'Photo'}</span><img data-photo-src="/photos/${photo.id}/file" alt="${photo.caption || photo.original_filename}" style="width:100%;max-height:180px;object-fit:cover;border-radius:6px;margin:8px 0;"><h3>${photo.caption || photo.original_filename}</h3><p class="quality-muted">Type : photo · Date : ${photo.photo_date || '-'} · Auteur : ${photo.author || '-'}</p><p class="quality-muted">Ordre : ${photo.display_order}</p><div class="quality-actions"><button class="btn btn-secondary" data-photo-action="view" data-id="${photo.id}">Consulter</button><button class="btn btn-secondary" data-photo-action="delete" data-id="${photo.id}">Archiver</button></div></article>`).join('');
-    if (!canManage) els.photoList.querySelectorAll('button[data-photo-action="delete"]').forEach((button) => { button.disabled = true; });
+    els.photoList.innerHTML = photos.map((photo) => `<article class="quality-card" style="${photo.archived_at ? 'border-color:#b7791f;background:#fffaf0;' : ''}"><span class="quality-badge">${photo.archived_at ? 'Archivé' : (photo.is_primary ? 'Principale' : 'Photo')}</span><img data-photo-src="/photos/${photo.id}/file" alt="${photo.caption || photo.original_filename}" style="width:100%;max-height:180px;object-fit:cover;border-radius:6px;margin:8px 0;"><h3>${photo.caption || photo.original_filename}</h3><p class="quality-muted">Type : photo · Date : ${photo.photo_date || '-'} · Auteur : ${photo.author || '-'}</p><p class="quality-muted">Ordre : ${photo.display_order}</p>${photo.archived_at ? `<p class="quality-muted">Archivée le : ${new Date(photo.archived_at).toLocaleString('fr-FR')}</p>` : ''}<div class="quality-actions"><button class="btn btn-secondary" data-photo-action="view" data-id="${photo.id}">Consulter</button>${photo.archived_at ? `<button class="btn btn-secondary" data-photo-action="restore" data-id="${photo.id}">Restaurer</button>` : `<button class="btn btn-secondary" data-photo-action="delete" data-id="${photo.id}">Archiver</button>`}</div></article>`).join('');
+    if (!canManage) els.photoList.querySelectorAll('button[data-photo-action="delete"], button[data-photo-action="restore"]').forEach((button) => { button.disabled = true; });
     hydratePhotoThumbnails();
   }
 
@@ -157,16 +161,16 @@
       els.documentList.innerHTML = '<div class="quality-empty-state">Aucun document enregistré.</div>';
       return;
     }
-    els.documentList.innerHTML = documents.map((document) => `<article class="quality-card"><span class="quality-badge">${document.type_code}</span><h3>${document.name}</h3><p class="quality-muted">Type : ${document.type_code} · Date : ${document.document_date || '-'} · Auteur : ${document.author || '-'}</p><p class="quality-muted">Version : ${document.version || '-'} · Fichier : ${document.original_filename || '-'}</p><p class="quality-muted">${document.description || ''}</p><div class="quality-actions"><button class="btn btn-secondary" data-document-action="open" data-id="${document.id}">Consulter</button><button class="btn btn-secondary" data-document-action="download" data-id="${document.id}">Télécharger</button><button class="btn btn-secondary" data-document-action="delete" data-id="${document.id}">Archiver</button></div></article>`).join('');
-    if (!canManage) els.documentList.querySelectorAll('button[data-document-action="delete"]').forEach((button) => { button.disabled = true; });
+    els.documentList.innerHTML = documents.map((document) => `<article class="quality-card" style="${document.archived_at ? 'border-color:#b7791f;background:#fffaf0;' : ''}"><span class="quality-badge">${document.archived_at ? 'Archivé' : document.type_code}</span><h3>${document.name}</h3><p class="quality-muted">Type : ${document.type_code} · Date : ${document.document_date || '-'} · Auteur : ${document.author || '-'}</p><p class="quality-muted">Version : ${document.version || '-'} · Fichier : ${document.original_filename || '-'}</p>${document.archived_at ? `<p class="quality-muted">Archivé le : ${new Date(document.archived_at).toLocaleString('fr-FR')}</p>` : ''}<p class="quality-muted">${document.description || ''}</p><div class="quality-actions"><button class="btn btn-secondary" data-document-action="open" data-id="${document.id}">Consulter</button><button class="btn btn-secondary" data-document-action="download" data-id="${document.id}">Télécharger</button>${document.archived_at ? `<button class="btn btn-secondary" data-document-action="restore" data-id="${document.id}">Restaurer</button>` : `<button class="btn btn-secondary" data-document-action="delete" data-id="${document.id}">Archiver</button>`}</div></article>`).join('');
+    if (!canManage) els.documentList.querySelectorAll('button[data-document-action="delete"], button[data-document-action="restore"]').forEach((button) => { button.disabled = true; });
   }
 
   async function load() {
     setFeedback('Chargement du dossier documentaire...');
     try {
       [photos, documents] = await Promise.all([
-        request(`/photos${queryString()}`),
-        request(`/documents${queryString()}`),
+        request(`/photos${queryString(els.photoIncludeArchived.checked)}`),
+        request(`/documents${queryString(els.documentIncludeArchived.checked)}`),
       ]);
       renderPhotos();
       renderDocuments();
@@ -192,6 +196,8 @@
 
   els.tabPhotos.addEventListener('click', () => switchTab('photos'));
   els.tabDocuments.addEventListener('click', () => switchTab('documents'));
+  els.photoIncludeArchived.addEventListener('change', load);
+  els.documentIncludeArchived.addEventListener('change', load);
 
   els.photoForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -239,6 +245,10 @@
     if (!photo) return;
     try {
       if (button.dataset.photoAction === 'view') await openProtectedFile(`/photos/${photo.id}/file`, photo.original_filename);
+      if (button.dataset.photoAction === 'restore' && canManage) {
+        await request(`/photos/${photo.id}/restore`, { method: 'PATCH' });
+        await load();
+      }
       if (button.dataset.photoAction === 'delete' && canManage && window.confirm('Archiver cette photo ?')) {
         await request(`/photos/${photo.id}`, { method: 'DELETE' });
         await load();
@@ -256,6 +266,10 @@
     try {
       if (button.dataset.documentAction === 'open') await openProtectedFile(`/documents/${document.id}/download`, document.original_filename);
       if (button.dataset.documentAction === 'download') await downloadProtectedFile(`/documents/${document.id}/download`, document.original_filename);
+      if (button.dataset.documentAction === 'restore' && canManage) {
+        await request(`/documents/${document.id}/restore`, { method: 'PATCH' });
+        await load();
+      }
       if (button.dataset.documentAction === 'delete' && canManage && window.confirm('Archiver ce document ?')) {
         await request(`/documents/${document.id}`, { method: 'DELETE' });
         await load();

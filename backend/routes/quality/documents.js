@@ -13,10 +13,12 @@ const {
   getDocument,
   createDocument,
   archiveDocument,
+  restoreDocument,
   listPhotos,
   getPhoto,
   createPhoto,
   archivePhoto,
+  restorePhoto,
 } = require('../../services/quality/documents');
 
 const router = express.Router();
@@ -73,10 +75,20 @@ router.post('/documents', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENT_
 router.get('/documents/:id/download', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, res) => {
   try {
     const document = await getDocument(req.dbPool, req.user.store_id, req.params.id);
-    if (!document || document.archived_at) return res.status(404).json({ error: 'Document introuvable' });
+    if (!document) return res.status(404).json({ error: 'Document introuvable' });
     res.download(document.storage_path, document.original_filename);
   } catch (err) {
     handleError(res, err, 'Erreur GET /api/quality/documents/:id/download');
+  }
+});
+
+router.patch('/documents/:id/restore', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENT_MANAGE), async (req, res) => {
+  try {
+    const document = await restoreDocument(req.dbPool, req.user.store_id, req.user.id, req.params.id);
+    if (!document) return res.status(404).json({ error: 'Document introuvable' });
+    res.json({ mode: 'restored', document });
+  } catch (err) {
+    handleError(res, err, 'Erreur PATCH /api/quality/documents/:id/restore');
   }
 });
 
@@ -117,10 +129,20 @@ router.post('/photos', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENT_MAN
 router.get('/photos/:id/file', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, res) => {
   try {
     const photo = await getPhoto(req.dbPool, req.user.store_id, req.params.id);
-    if (!photo || photo.archived_at) return res.status(404).json({ error: 'Photo introuvable' });
+    if (!photo) return res.status(404).json({ error: 'Photo introuvable' });
     res.sendFile(photo.storage_path);
   } catch (err) {
     handleError(res, err, 'Erreur GET /api/quality/photos/:id/file');
+  }
+});
+
+router.patch('/photos/:id/restore', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENT_MANAGE), async (req, res) => {
+  try {
+    const photo = await restorePhoto(req.dbPool, req.user.store_id, req.user.id, req.params.id);
+    if (!photo) return res.status(404).json({ error: 'Photo introuvable' });
+    res.json({ mode: 'restored', photo });
+  } catch (err) {
+    handleError(res, err, 'Erreur PATCH /api/quality/photos/:id/restore');
   }
 });
 

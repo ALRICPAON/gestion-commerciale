@@ -114,14 +114,18 @@ Zones :
 
 Documents :
 - `GET /api/quality/documents`
+- `GET /api/quality/documents?include_archived=true`
 - `POST /api/quality/documents`
 - `GET /api/quality/documents/:id/download`
+- `PATCH /api/quality/documents/:id/restore`
 - `DELETE /api/quality/documents/:id`
 
 Photos :
 - `GET /api/quality/photos`
+- `GET /api/quality/photos?include_archived=true`
 - `POST /api/quality/photos`
 - `GET /api/quality/photos/:id/file`
+- `PATCH /api/quality/photos/:id/restore`
 - `DELETE /api/quality/photos/:id`
 
 ## Pages frontend disponibles
@@ -139,6 +143,7 @@ Photos :
 - Les zones archivées et équipements archivés ne doivent plus apparaître par défaut.
 - Une zone liée à un équipement ne doit pas être supprimée physiquement : elle est archivée.
 - Les documents et photos supprimés sont archivés afin de conserver l'historique qualité.
+- Les documents et photos archivés sont masqués par défaut, consultables via `include_archived=true`, et restaurables sans suppression définitive.
 - Les fichiers Q2 sont rattachés à une zone ou un équipement, mais la structure `owner_type` / `owner_id` prépare l'extension aux futurs objets QMS.
 
 ## Règles de non-régression
