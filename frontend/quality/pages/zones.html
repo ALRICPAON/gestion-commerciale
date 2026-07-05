@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zones qualité - ALTA MARÉE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Zones qualité</p></div>
+    <div class="topbar-right"><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualité</button><button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button></div>
+  </header>
+  <main class="main-content">
+    <section class="welcome-card"><span class="section-kicker">Jumeau numérique</span><h2>Zones qualité</h2><p>Référentiel des zones physiques et logiques du site.</p></section>
+    <section class="quality-card"><div class="quality-toolbar"><label>Recherche <input id="zone-search" class="form-input" type="search"></label><label>Statut <select id="zone-status" class="form-input"><option value="">Tous actifs</option><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archivée</option></select></label><label>Type <input id="zone-type" class="form-input"></label><label><input id="zone-archived" type="checkbox"> Afficher archivées</label><button id="zone-add-btn" class="btn btn-primary" type="button">Ajouter une zone</button></div></section>
+    <section id="zone-form-card" class="quality-card hidden"><h3 id="zone-form-title">Nouvelle zone</h3><form id="zone-form" class="quality-form-grid"><input type="hidden" id="zone-id"><label>Code * <input id="zone-code" class="form-input" required></label><label>Nom * <input id="zone-name" class="form-input" required></label><label>Type * <input id="zone-form-type" class="form-input" required></label><label>Surface m² <input id="zone-surface" class="form-input" type="number" step="0.01"></label><label>Capacité <input id="zone-capacity" class="form-input"></label><label>Statut <select id="zone-form-status" class="form-input"><option value="active">Active</option><option value="inactive">Inactive</option><option value="archived">Archivée</option></select></label><label>Description <textarea id="zone-description" class="form-input"></textarea></label><div class="quality-actions"><button class="btn btn-primary" type="submit">Enregistrer</button><button id="zone-cancel-btn" class="btn btn-secondary" type="button">Annuler</button></div></form></section>
+    <div id="zone-feedback" class="page-feedback hidden"></div><section id="zone-list" class="quality-list-grid"></section>
+  </main>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/digital-twin-api.js"></script><script src="../js/zones.js"></script>
+</body>
+</html>
