@@ -34,6 +34,4 @@
 
   appendDeferredScript("./js/branding.js?v=7");
   appendDeferredScript("./js/pennylane-actions.js?v=1");
-  appendDeferredScript("/quality/js/permissions.js?v=1");
-  appendDeferredScript("/quality/js/home-card.js?v=1");
 })();
