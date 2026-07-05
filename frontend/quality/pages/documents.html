@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dossier documentaire qualité - ALTA MARÉE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">ALTA MARÉE</h1>
+      <p class="app-subtitle">Dossier documentaire qualité</p>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualité</button>
+      <button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <span class="section-kicker">Jumeau numérique</span>
+      <h2 id="document-owner-title">Dossier documentaire</h2>
+      <p>Photos et documents rattachés à l'objet qualité sélectionné.</p>
+    </section>
+
+    <section class="quality-card">
+      <div class="quality-actions">
+        <button id="tab-photos" class="btn btn-primary" type="button">Photos</button>
+        <button id="tab-documents" class="btn btn-secondary" type="button">Documents</button>
+      </div>
+    </section>
+
+    <div id="document-feedback" class="page-feedback hidden"></div>
+
+    <section id="photos-panel" class="quality-card">
+      <h3>Photos</h3>
+      <form id="photo-form" class="quality-form-grid" enctype="multipart/form-data">
+        <label>Photo * <input id="photo-file" class="form-input" type="file" accept="image/*" required></label>
+        <label>Légende <input id="photo-caption" class="form-input"></label>
+        <label>Date <input id="photo-date" class="form-input" type="date"></label>
+        <label>Auteur <input id="photo-author" class="form-input"></label>
+        <label>Ordre <input id="photo-order" class="form-input" type="number" value="0"></label>
+        <label><input id="photo-primary" type="checkbox"> Photo principale</label>
+        <div class="quality-actions">
+          <button id="photo-submit" class="btn btn-primary" type="submit">Ajouter la photo</button>
+        </div>
+      </form>
+      <section id="photo-list" class="quality-list-grid"></section>
+    </section>
+
+    <section id="documents-panel" class="quality-card hidden">
+      <h3>Documents</h3>
+      <form id="document-form" class="quality-form-grid" enctype="multipart/form-data">
+        <label>Fichier * <input id="document-file" class="form-input" type="file" required></label>
+        <label>Type <select id="document-type" class="form-input"><option value="NOTICE">Notice</option><option value="FACTURE">Facture</option><option value="CERTIFICAT">Certificat</option><option value="GARANTIE">Garantie</option><option value="PLAN">Plan</option><option value="PHOTO">Photo</option><option value="VIDEO">Vidéo</option><option value="PROCEDURE">Procédure</option><option value="FDS">FDS</option><option value="CONTRAT">Contrat</option><option value="AUTRE">Autre</option></select></label>
+        <label>Nom <input id="document-name" class="form-input"></label>
+        <label>Version <input id="document-version" class="form-input"></label>
+        <label>Date document <input id="document-date" class="form-input" type="date"></label>
+        <label>Auteur <input id="document-author" class="form-input"></label>
+        <label>Description <textarea id="document-description" class="form-input"></textarea></label>
+        <div class="quality-actions">
+          <button id="document-submit" class="btn btn-primary" type="submit">Ajouter le document</button>
+        </div>
+      </form>
+      <section id="document-list" class="quality-list-grid"></section>
+    </section>
+  </main>
+
+  <script src="../../js/config.js"></script>
+  <script src="../js/permissions.js"></script>
+  <script src="../js/documents.js"></script>
+</body>
+</html>
