@@ -29,8 +29,8 @@
       </div>
       <div class="quality-table-wrapper">
         <table class="quality-table">
-          <thead><tr><th>Titre</th><th>Module</th><th>Responsable</th><th>Fréquence</th><th>Prochaine échéance</th><th>Statut</th><th>Actif</th><th>Actions</th></tr></thead>
-          <tbody id="tasks-list"><tr><td colspan="8">Chargement...</td></tr></tbody>
+          <thead><tr><th>Titre</th><th>Module</th><th>Objet lié</th><th>Responsable</th><th>Fréquence</th><th>Prochaine échéance</th><th>Statut</th><th>Actif</th><th>Actions</th></tr></thead>
+          <tbody id="tasks-list"><tr><td colspan="9">Chargement...</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -47,13 +47,13 @@
         <label>Prochaine échéance<input id="task-next-due-at" type="datetime-local" /></label>
         <label>Statut<select id="task-status"><option value="planned">Planifiée</option><option value="due">Du jour</option><option value="overdue">En retard</option><option value="completed">Terminée</option><option value="paused">Suspendue</option><option value="cancelled">Annulée</option></select></label>
         <label>Actif<select id="task-active"><option value="true">Oui</option><option value="false">Non</option></select></label>
-        <label>Type objet<input id="task-entity-type" placeholder="zone, equipment, audit..." /></label>
-        <label>ID objet<input id="task-entity-id" placeholder="uuid optionnel" /></label>
+        <label>Objet lié<select id="task-entity-kind"><option value="">Aucun</option><option value="zone">Zone</option><option value="equipment">Équipement</option></select></label>
+        <label id="task-linked-object-label">Zone / Équipement<select id="task-linked-object"><option value="">Aucun objet lié</option></select></label>
         <label class="quality-form-wide">Description<textarea id="task-description" rows="3"></textarea></label>
         <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Enregistrer</button><button id="cancel-task-btn" class="btn btn-secondary" type="button">Annuler</button><span id="task-form-message" class="quality-muted"></span></div>
       </form>
     </section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/tasks-api.js?v=1"></script><script src="../js/quality-tasks.js?v=1"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/tasks-api.js?v=1"></script><script src="../js/quality-tasks.js?v=2"></script>
 </body>
 </html>

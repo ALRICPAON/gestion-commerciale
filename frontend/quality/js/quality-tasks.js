@@ -31,13 +31,16 @@
     nextDueAt: document.getElementById('task-next-due-at'),
     status: document.getElementById('task-status'),
     active: document.getElementById('task-active'),
-    entityType: document.getElementById('task-entity-type'),
-    entityId: document.getElementById('task-entity-id'),
+    entityKind: document.getElementById('task-entity-kind'),
+    linkedObjectLabel: document.getElementById('task-linked-object-label'),
+    linkedObject: document.getElementById('task-linked-object'),
     description: document.getElementById('task-description'),
   };
 
   let tasks = [];
   let users = [];
+  let zones = [];
+  let equipments = [];
   let editingTaskId = null;
 
   if (els.userName) els.userName.textContent = sessionUser.email || 'Utilisateur';
@@ -67,6 +70,36 @@
     if (!task.frequency_value || !task.frequency_unit) return '-';
     const labels = { hours: 'heure(s)', days: 'jour(s)', weeks: 'semaine(s)', months: 'mois', events: 'événement(s)' };
     return `${task.frequency_value} ${labels[task.frequency_unit] || task.frequency_unit}`;
+  }
+
+  function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    }[char]));
+  }
+
+  function objectLabel(item) {
+    if (!item) return '';
+    const code = item.code ? `${item.code} - ` : '';
+    const zone = item.zone_name ? ` (${item.zone_name})` : '';
+    return `${code}${item.name || item.label || item.id}${zone}`;
+  }
+
+  function linkedObjectLabel(task) {
+    if (!task?.entity_type || !task?.entity_id) return '-';
+    if (task.entity_type === 'zone') {
+      const zone = zones.find((item) => item.id === task.entity_id);
+      return zone ? `Zone : ${objectLabel(zone)}` : `Zone : ${task.entity_id}`;
+    }
+    if (task.entity_type === 'equipment') {
+      const equipment = equipments.find((item) => item.id === task.entity_id);
+      return equipment ? `Équipement : ${objectLabel(equipment)}` : `Équipement : ${task.entity_id}`;
+    }
+    return `${task.entity_type} : ${task.entity_id}`;
   }
 
   function statusLabel(task) {
@@ -101,19 +134,36 @@
     ensureOption(els.responsible, sessionUser.id, sessionUser.email || 'Utilisateur courant');
   }
 
+  function refreshLinkedObjectSelect(selectedId = '') {
+    const kind = els.entityKind.value;
+    const label = kind === 'zone' ? 'Zone' : kind === 'equipment' ? 'Équipement' : 'Zone / Équipement';
+    const items = kind === 'zone' ? zones : kind === 'equipment' ? equipments : [];
+
+    els.linkedObjectLabel.firstChild.textContent = label;
+    els.linkedObject.innerHTML = '<option value="">Aucun objet lié</option>';
+    els.linkedObject.disabled = !kind;
+
+    items.forEach((item) => ensureOption(els.linkedObject, item.id, objectLabel(item)));
+    if (selectedId && !items.some((item) => item.id === selectedId)) {
+      ensureOption(els.linkedObject, selectedId, `Objet non actif (${selectedId})`);
+    }
+    els.linkedObject.value = selectedId || '';
+  }
+
   function renderTasks() {
     if (!tasks.length) {
-      els.tasksList.innerHTML = '<tr><td colspan="8">Aucune tâche qualité.</td></tr>';
+      els.tasksList.innerHTML = '<tr><td colspan="9">Aucune tâche qualité.</td></tr>';
       return;
     }
     els.tasksList.innerHTML = tasks.map((task) => `
       <tr>
-        <td>${task.title || '-'}</td>
-        <td>${task.module_key || '-'}</td>
-        <td>${task.responsible_email || '-'}</td>
-        <td>${frequencyLabel(task)}</td>
+        <td>${escapeHtml(task.title || '-')}</td>
+        <td>${escapeHtml(task.module_key || '-')}</td>
+        <td>${escapeHtml(linkedObjectLabel(task))}</td>
+        <td>${escapeHtml(task.responsible_email || '-')}</td>
+        <td>${escapeHtml(frequencyLabel(task))}</td>
         <td>${formatDate(task.next_due_at)}</td>
-        <td>${statusLabel(task)}</td>
+        <td>${escapeHtml(statusLabel(task))}</td>
         <td>${task.active ? 'Oui' : 'Non'}</td>
         <td><button class="btn btn-secondary" data-edit="${task.id}">Modifier</button> <button class="btn btn-secondary" data-toggle="${task.id}">${task.active ? 'Désactiver' : 'Réactiver'}</button></td>
       </tr>
@@ -138,15 +188,30 @@
     }
   }
 
+  async function loadLinkedObjects() {
+    const request = async (path) => {
+      const response = await fetch(`${API_BASE_URL}${path}`, { headers: { Authorization: `Bearer ${authToken}` } });
+      if (!response.ok) return [];
+      return response.json();
+    };
+
+    const [zoneRows, equipmentRows] = await Promise.all([
+      request('/api/quality/zones?status=active'),
+      request('/api/quality/equipments?status=active'),
+    ]);
+    zones = Array.isArray(zoneRows) ? zoneRows : [];
+    equipments = Array.isArray(equipmentRows) ? equipmentRows : [];
+  }
+
   async function loadTasks() {
-    els.tasksList.innerHTML = '<tr><td colspan="8">Chargement...</td></tr>';
+    els.tasksList.innerHTML = '<tr><td colspan="9">Chargement...</td></tr>';
     try {
       tasks = await window.QualityTasksApi.list(currentFilters());
       refreshFilterOptions();
       refreshResponsibleSelect();
       renderTasks();
     } catch (error) {
-      els.tasksList.innerHTML = `<tr><td colspan="8">${error.message}</td></tr>`;
+      els.tasksList.innerHTML = `<tr><td colspan="9">${escapeHtml(error.message)}</td></tr>`;
     }
   }
 
@@ -162,14 +227,16 @@
     els.nextDueAt.value = toDatetimeLocal(task?.next_due_at);
     els.status.value = task?.status || 'planned';
     els.active.value = task?.active === false ? 'false' : 'true';
-    els.entityType.value = task?.entity_type || '';
-    els.entityId.value = task?.entity_id || '';
+    els.entityKind.value = ['zone', 'equipment'].includes(task?.entity_type) ? task.entity_type : '';
+    refreshLinkedObjectSelect(task?.entity_id || '');
     els.description.value = task?.description || '';
     els.formMessage.textContent = '';
     els.formCard.classList.remove('hidden');
   }
 
   function buildPayload() {
+    const entityKind = els.entityKind.value;
+    const linkedObjectId = els.linkedObject.value;
     return {
       title: els.title.value,
       module_key: els.module.value,
@@ -180,14 +247,15 @@
       next_due_at: fromDatetimeLocal(els.nextDueAt.value),
       status: els.status.value,
       active: els.active.value === 'true',
-      entity_type: els.entityType.value || null,
-      entity_id: els.entityId.value || null,
+      entity_type: entityKind && linkedObjectId ? entityKind : null,
+      entity_id: entityKind && linkedObjectId ? linkedObjectId : null,
       description: els.description.value || null,
     };
   }
 
   els.newTaskBtn?.addEventListener('click', () => openForm());
   els.cancelBtn?.addEventListener('click', () => els.formCard.classList.add('hidden'));
+  els.entityKind?.addEventListener('change', () => refreshLinkedObjectSelect());
   [els.filterModule, els.filterResponsible, els.filterActive].forEach((filter) => filter?.addEventListener('change', loadTasks));
 
   els.tasksList?.addEventListener('click', async (event) => {
@@ -214,5 +282,5 @@
     }
   });
 
-  loadUsers().finally(loadTasks);
+  Promise.all([loadUsers(), loadLinkedObjects()]).finally(loadTasks);
 })();
