@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nettoyages - ALTA MARÉE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=6" />
+</head>
+<body class="app-page">
+  <header class="topbar"><div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Nettoyages</p></div><div class="topbar-right"><button class="btn btn-secondary" onclick="window.location.href='./cleaning-plans.html'">Plans</button><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualité</button><button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button></div></header>
+  <main class="main-content">
+    <section class="welcome-card"><span class="section-kicker">Nettoyage & Désinfection</span><h2>Nettoyages</h2><p>Réaliser les nettoyages attendus et consulter l'historique.</p></section>
+    <div id="cleaning-record-feedback" class="page-feedback hidden"></div>
+    <section class="quality-card"><div class="quality-section-header"><div><h3>Nettoyages attendus</h3><p class="quality-muted">Tâches cleaning dues aujourd'hui ou en retard.</p></div><label class="quality-muted"><input id="cleaning-due-include-upcoming" type="checkbox"> Inclure à venir</label></div><div id="cleaning-due-records" class="quality-list-grid"></div></section>
+    <section class="quality-card"><h3>Réalisation</h3><form id="cleaning-record-form" class="quality-form-grid"><input id="cleaning-record-quality-task-id" type="hidden"><label>Plan * <select id="cleaning-record-plan-id" class="form-input" required></select></label><label>Statut<select id="cleaning-record-status" class="form-input"><option value="done">Réalisé</option><option value="partial">Partiel</option><option value="not_done">Non réalisé</option><option value="issue">Incident</option></select></label><label>Date/heure<input id="cleaning-record-performed-at" class="form-input" type="datetime-local"></label><label class="quality-form-wide">Commentaire<textarea id="cleaning-record-comment" class="form-input" rows="3"></textarea></label><div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Enregistrer</button><button id="cleaning-record-reset-btn" class="btn btn-secondary" type="button">Réinitialiser</button></div></form></section>
+    <section class="quality-card"><h3>Historique</h3><div class="quality-table-wrapper"><table class="quality-table"><thead><tr><th>Date</th><th>Plan</th><th>Zone</th><th>Équipement</th><th>Statut</th><th>Réalisé par</th><th>Commentaire</th></tr></thead><tbody id="cleaning-record-table-body"></tbody></table></div></section>
+  </main>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/cleaning-api.js?v=1"></script><script src="../js/cleaning-records.js?v=1"></script>
+</body>
+</html>

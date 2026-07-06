@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plans de nettoyage - ALTA MARÉE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=6" />
+</head>
+<body class="app-page">
+  <header class="topbar"><div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Plans Nettoyage</p></div><div class="topbar-right"><button class="btn btn-secondary" onclick="window.location.href='./cleaning-records.html'">Réaliser</button><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualité</button><button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button></div></header>
+  <main class="main-content">
+    <section class="welcome-card"><span class="section-kicker">Nettoyage & Désinfection</span><h2>Plans de nettoyage</h2><p>Règles métier liées au planning qualité.</p></section>
+    <div id="cleaning-plans-feedback" class="page-feedback hidden"></div>
+    <section class="quality-card"><div class="quality-actions"><button id="cleaning-plan-add-btn" class="btn btn-primary" type="button">Créer un plan</button></div></section>
+    <section id="cleaning-plan-form-card" class="quality-card hidden">
+      <h3 id="cleaning-plan-form-title">Nouveau plan</h3>
+      <form id="cleaning-plan-form" class="quality-form-grid">
+        <input id="cleaning-plan-id" type="hidden">
+        <label>Titre * <input id="cleaning-plan-title" class="form-input" required></label>
+        <label>Objet lié<select id="cleaning-plan-entity-kind" class="form-input"><option value="">Aucun</option><option value="zone">Zone</option><option value="equipment">Équipement</option></select></label>
+        <label id="cleaning-plan-linked-label">Zone / Équipement<select id="cleaning-plan-linked-object" class="form-input"></select></label>
+        <label>Produit utilisé<input id="cleaning-plan-product" class="form-input"></label>
+        <label>Durée prévue (min)<input id="cleaning-plan-duration" class="form-input" type="number" min="1"></label>
+        <label><input id="cleaning-plan-active" type="checkbox" checked> Actif</label>
+        <label class="quality-form-wide">Méthode<textarea id="cleaning-plan-method" class="form-input" rows="3"></textarea></label>
+        <label class="quality-form-wide">Consignes sécurité<textarea id="cleaning-plan-safety" class="form-input" rows="2"></textarea></label>
+        <label class="quality-form-wide">Description<textarea id="cleaning-plan-description" class="form-input" rows="2"></textarea></label>
+        <fieldset class="quality-form-wide quality-inline-fieldset">
+          <legend>Planification qualité</legend>
+          <label>Mode<select id="cleaning-plan-planning-mode" class="form-input"><option value="existing">Tâche qualité existante</option><option value="new">Créer une nouvelle tâche</option><option value="none">Non planifié</option></select></label>
+          <label id="cleaning-plan-existing-task-label">Tâche existante<select id="cleaning-plan-quality-task-id" class="form-input"></select></label>
+          <label id="cleaning-plan-task-title-label">Titre tâche<input id="cleaning-plan-task-title" class="form-input"></label>
+          <label id="cleaning-plan-task-responsible-label">Responsable<select id="cleaning-plan-task-responsible" class="form-input"><option value="">Non assigné</option></select></label>
+          <label id="cleaning-plan-frequency-value-label">Fréquence<input id="cleaning-plan-frequency-value" class="form-input" type="number" min="1"></label>
+          <label id="cleaning-plan-frequency-unit-label">Unité<select id="cleaning-plan-frequency-unit" class="form-input"><option value="">Non définie</option><option value="hours">Heures</option><option value="days">Jours</option><option value="weeks">Semaines</option><option value="months">Mois</option><option value="events">Événements</option></select></label>
+          <label id="cleaning-plan-target-time-label">Heure cible<input id="cleaning-plan-target-time" class="form-input" type="time"></label>
+        </fieldset>
+        <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Enregistrer</button><button id="cleaning-plan-cancel-btn" class="btn btn-secondary" type="button">Annuler</button></div>
+      </form>
+    </section>
+    <section id="cleaning-plan-list" class="quality-list-grid"></section>
+  </main>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/digital-twin-api.js"></script><script src="../js/tasks-api.js?v=1"></script><script src="../js/cleaning-api.js?v=1"></script><script src="../js/cleaning-plans.js?v=1"></script>
+</body>
+</html>

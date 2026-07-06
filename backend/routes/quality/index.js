@@ -13,6 +13,7 @@ const equipmentsRoutes = require('./equipments');
 const documentsRoutes = require('./documents');
 const temperaturesRoutes = require('./temperatures');
 const tasksRoutes = require('./tasks');
+const cleaningRoutes = require('./cleaning');
 
 const router = express.Router();
 
@@ -20,6 +21,7 @@ router.use('/zones', zonesRoutes);
 router.use('/equipments', equipmentsRoutes);
 router.use('/temperatures', temperaturesRoutes);
 router.use('/tasks', tasksRoutes);
+router.use('/cleaning', cleaningRoutes);
 
 router.get('/foundation', authenticateToken, attachDbContext, async (req, res) => {
   const eventPreview = await logQualityEvent({
