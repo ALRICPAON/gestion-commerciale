@@ -38,12 +38,12 @@
     <section class="card course-form-card">
       <div class="course-form-grid">
         <div class="form-group">
-          <label for="target-tariff-select">Tarif cible</label>
+          <label for="target-tariff-select">Vue de prix</label>
           <select id="target-tariff-select">
-            <option value="all">Tous les tarifs</option>
-            <option value="1">Tarif 1</option>
-            <option value="2">Tarif 2</option>
-            <option value="3">Tarif 3</option>
+            <option value="all">Vue complete</option>
+            <option value="1">Vue A</option>
+            <option value="2">Vue B</option>
+            <option value="3">Vue C</option>
           </select>
         </div>
 
@@ -154,10 +154,12 @@
           <button id="preview-btn" class="btn btn-secondary">Previsualiser</button>
           <button id="print-btn" class="btn btn-secondary">Imprimer</button>
           <button id="download-pdf-btn" class="btn btn-secondary">Telecharger PDF</button>
-          <button class="btn btn-secondary" disabled>Email a venir</button>
+          <button id="email-preview-btn" class="btn btn-secondary">Preparer les emails</button>
+          <button id="email-send-btn" class="btn btn-primary">Envoyer les mercuriales</button>
           <button class="btn btn-secondary" disabled>WhatsApp a venir</button>
         </div>
       </div>
+      <div id="email-send-summary" class="page-feedback hidden"></div>
       <div id="price-list-preview" class="print-preview-placeholder">Enregistre ou previsualise le cours.</div>
     </section>
   </main>
@@ -165,6 +167,7 @@
   <script src="./js/config.js"></script>
   <script src="./js/customer-price-list-print.js?v=3"></script>
   <script src="./js/customer-price-list.js?v=4"></script>
+  <script src="./js/customer-price-list-email.js?v=1"></script>
   <script src="./js/whatsapp-business-documents.js?v=1"></script>
 </body>
 </html>
