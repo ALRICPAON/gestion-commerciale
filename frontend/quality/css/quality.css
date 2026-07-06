@@ -84,6 +84,22 @@
   font-weight: 700;
 }
 
+.quality-form-wide {
+  grid-column: 1 / -1;
+}
+
+.quality-section-header {
+  align-items: start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.quality-section-header h3 {
+  margin: 0 0 4px;
+}
+
 .quality-actions {
   display: flex;
   flex-wrap: wrap;

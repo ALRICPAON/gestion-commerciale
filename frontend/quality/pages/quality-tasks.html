@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tâches Qualité - ALTA MARÉE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=5" />
+</head>
+<body class="app-page quality-foundation-page">
+  <header class="topbar">
+    <div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Tâches Qualité</p></div>
+    <div class="topbar-right"><div class="user-box"><span id="user-name">Utilisateur</span></div><button id="dashboard-btn" class="btn btn-secondary">Dashboard Qualité</button><button id="logout-btn" class="btn btn-secondary">Déconnexion</button></div>
+  </header>
+  <main class="main-content quality-placeholder">
+    <section class="welcome-card"><span class="section-kicker">QMS</span><h2>Moteur des tâches qualité</h2><p>Planification générique par module, responsable et échéance.</p></section>
+
+    <section class="quality-card">
+      <div class="quality-section-header">
+        <div><h3>Filtres</h3><p class="quality-muted">Liste des tâches génériques du magasin.</p></div>
+        <button id="new-task-btn" class="btn btn-primary">Nouvelle tâche</button>
+      </div>
+      <div class="quality-toolbar">
+        <label>Module<select id="filter-module"><option value="">Tous</option></select></label>
+        <label>Responsable<select id="filter-responsible"><option value="">Tous</option></select></label>
+        <label>Actif<select id="filter-active"><option value="">Tous</option><option value="true">Actif</option><option value="false">Inactif</option></select></label>
+      </div>
+      <div class="quality-table-wrapper">
+        <table class="quality-table">
+          <thead><tr><th>Titre</th><th>Module</th><th>Responsable</th><th>Fréquence</th><th>Prochaine échéance</th><th>Statut</th><th>Actif</th><th>Actions</th></tr></thead>
+          <tbody id="tasks-list"><tr><td colspan="8">Chargement...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="task-form-card" class="quality-card hidden">
+      <div class="quality-section-header"><div><h3 id="task-form-title">Nouvelle tâche</h3><p class="quality-muted">Fondation générique, sans écran métier spécifique.</p></div></div>
+      <form id="task-form" class="quality-form-grid">
+        <label>Titre<input id="task-title" required /></label>
+        <label>Module<input id="task-module" required placeholder="temperature" /></label>
+        <label>Responsable<select id="task-responsible"><option value="">Non assigné</option></select></label>
+        <label>Fréquence<input id="task-frequency-value" type="number" min="1" /></label>
+        <label>Unité<select id="task-frequency-unit"><option value="">Aucune</option><option value="hours">Heures</option><option value="days">Jours</option><option value="weeks">Semaines</option><option value="months">Mois</option><option value="events">Événements</option></select></label>
+        <label>Heure cible<input id="task-target-time" type="time" /></label>
+        <label>Prochaine échéance<input id="task-next-due-at" type="datetime-local" /></label>
+        <label>Statut<select id="task-status"><option value="planned">Planifiée</option><option value="due">Du jour</option><option value="overdue">En retard</option><option value="completed">Terminée</option><option value="paused">Suspendue</option><option value="cancelled">Annulée</option></select></label>
+        <label>Actif<select id="task-active"><option value="true">Oui</option><option value="false">Non</option></select></label>
+        <label>Type objet<input id="task-entity-type" placeholder="zone, equipment, audit..." /></label>
+        <label>ID objet<input id="task-entity-id" placeholder="uuid optionnel" /></label>
+        <label class="quality-form-wide">Description<textarea id="task-description" rows="3"></textarea></label>
+        <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Enregistrer</button><button id="cancel-task-btn" class="btn btn-secondary" type="button">Annuler</button><span id="task-form-message" class="quality-muted"></span></div>
+      </form>
+    </section>
+  </main>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/tasks-api.js?v=1"></script><script src="../js/quality-tasks.js?v=1"></script>
+</body>
+</html>
