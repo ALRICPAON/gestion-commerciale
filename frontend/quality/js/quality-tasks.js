@@ -197,7 +197,7 @@
 
     const [zoneRows, equipmentRows] = await Promise.all([
       request('/api/quality/zones?status=active'),
-      request('/api/quality/equipments?status=active'),
+      request('/api/quality/equipments'),
     ]);
     zones = Array.isArray(zoneRows) ? zoneRows : [];
     equipments = Array.isArray(equipmentRows) ? equipmentRows : [];
