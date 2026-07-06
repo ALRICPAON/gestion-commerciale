@@ -1,88 +1,71 @@
-# PR EMAIL TARIFS CLIENTS / MERCURIAL
+# PR Evolution Mercurial - PDF personnalise par client
 
 ## Objectif
 
-Brancher l'envoi email de la mercuriale client en respectant strictement le tarif configure sur chaque client actif.
+Envoyer a chaque client actif disposant d'une adresse email une mercuriale PDF personnalisee en piece jointe.
 
-- Client `tariff_level = 1` : recoit uniquement les prix Tarif 1.
-- Client `tariff_level = 2` : recoit uniquement les prix Tarif 2.
-- Client `tariff_level = 3` : recoit uniquement les prix Tarif 3.
+Le niveau de prix interne du client sert uniquement au calcul cote serveur. Il n'est pas affiche dans :
 
-Le backend ne renvoie pas les trois grilles au frontend et ne construit pas d'email contenant plusieurs tarifs.
+- l'objet email ;
+- le corps email ;
+- le PDF ;
+- le nom du fichier ;
+- le resume frontend ;
+- les logs applicatifs ;
+- la reponse JSON des endpoints email.
 
-## Fichiers ajoutes
+## Fichiers inclus
 
-- `backend/services/customerTariffEmailService.js`
-  - prepare la preview,
-  - filtre les clients actifs,
-  - ignore les clients sans email ou sans tarif valide,
-  - selectionne une seule colonne de prix calculee selon le tarif client,
-  - envoie via `emailService.js`,
-  - trace chaque resultat par client.
-
+- `backend/server.js`
+  - version complete avec la route email Mercurial montee.
 - `backend/routes/customerTariffEmails.js`
   - `GET /api/customer-price-lists/email/preview`
   - `POST /api/customer-price-lists/email/send`
-
+  - `GET /api/customer-price-lists/email/history`
+- `backend/services/customerTariffEmailService.js`
+  - preview globale ;
+  - generation PDF par client ;
+  - envoi SMTP avec PDF en piece jointe ;
+  - historique d'envoi ;
+  - logs backend par client sans niveau interne.
+- `frontend/customer-price-list.html`
+  - version complete avec les boutons email.
 - `frontend/js/customer-price-list-email.js`
-  - affiche la preview,
-  - confirme les volumes par tarif,
-  - lance l'envoi,
-  - affiche le resume.
+  - preview, confirmation et resume d'envoi.
+- `backend/db/gestion-commerciale/051_customer_price_list_email_history.sql`
+  - migration idempotente pour l'historique des lots et resultats d'envoi.
 
-## Fichiers existants a patcher
+## Configuration
 
-Appliquer `patches/mercurial-email-tariffs.patch` pour :
+Aucun changement des parametres email existants.
 
-- monter la route backend dans `backend/server.js`,
-- remplacer le bouton `Email a venir` sur `frontend/customer-price-list.html`,
-- charger le nouveau script frontend.
+Le module reutilise `backend/services/emailService.js` et la configuration SMTP actuelle.
 
-## Configuration email
+## Application VPS
 
-Aucune migration SQL n'est necessaire.
+Le ZIP est directement applicable par `rsync`.
 
-Le module reutilise la configuration SMTP existante de `backend/services/emailService.js` :
-
-- `SMTP_HOST`
-- `SMTP_PORT`
-- `SMTP_SECURE`
-- `SMTP_USER`
-- `SMTP_PASS`
-- `MAIL_FROM_ADDRESS` ou `SMTP_FROM_EMAIL`
-- `MAIL_FROM_NAME` ou `SMTP_FROM_NAME`
-
-Le `replyTo` utilise, si disponible, les champs existants de `store_settings` :
-
-- `email_sender_address`
-- `contact_email`
-- `email`
-
-## Procedure d'application
-
-Depuis la racine du projet :
+Executer ensuite la migration SQL idempotente :
 
 ```bash
-cp -R files/backend/routes/customerTariffEmails.js backend/routes/customerTariffEmails.js
-cp -R files/backend/services/customerTariffEmailService.js backend/services/customerTariffEmailService.js
-cp -R files/frontend/js/customer-price-list-email.js frontend/js/customer-price-list-email.js
-git apply patches/mercurial-email-tariffs.patch
+psql "$DATABASE_URL" -f backend/db/gestion-commerciale/051_customer_price_list_email_history.sql
 ```
 
-## Verifications recommandees
+Verifier les fichiers JS :
 
 ```bash
+node --check backend/server.js
 node --check backend/routes/customerTariffEmails.js
 node --check backend/services/customerTariffEmailService.js
 node --check frontend/js/customer-price-list-email.js
 ```
 
-Tests metier :
+## Tests metier
 
-1. Client actif tarif 1 avec email : reception d'un email contenant uniquement les prix Tarif 1.
-2. Client actif tarif 2 avec email : reception d'un email contenant uniquement les prix Tarif 2.
-3. Client actif tarif 3 avec email : reception d'un email contenant uniquement les prix Tarif 3.
-4. Client actif sans email : ignore dans le resultat.
+1. Client actif avec email et prix internes A : recoit uniquement ses prix dans son PDF.
+2. Client actif avec email et prix internes B : recoit uniquement ses prix dans son PDF.
+3. Client actif avec email et prix internes C : recoit uniquement ses prix dans son PDF.
+4. Client actif sans email : ignore.
 5. Client inactif : absent de la preview et de l'envoi.
-6. SMTP incomplet ou erreur SMTP : resultat en erreur sans bloquer les logs par client.
-7. Verifier que le HTML et le JSON d'envoi ne contiennent jamais les autres tarifs.
+6. Plusieurs clients de niveaux differents : chacun recoit son propre PDF.
+7. Le PDF ne contient aucune mention de niveau interne ou de grille commerciale.

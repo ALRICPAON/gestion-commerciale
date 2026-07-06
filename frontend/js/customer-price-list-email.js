@@ -23,15 +23,12 @@
 
     const summary = preview.summary || {};
     const smtp = preview.smtp || {};
-    const byTariff = summary.by_tariff || {};
     const lines = [
-      `Clients actifs avec email : ${summary.with_email || 0}`,
+      `Clients actifs : ${summary.total_clients || 0}`,
+      `Clients avec email : ${summary.with_email || 0}`,
       `Clients sans email : ${summary.without_email || 0}`,
-      `Clients sans tarif : ${summary.without_tariff || 0}`,
-      `Tarif 1 : ${byTariff[1] || 0}`,
-      `Tarif 2 : ${byTariff[2] || 0}`,
-      `Tarif 3 : ${byTariff[3] || 0}`,
-      'Chaque client recevra uniquement la grille correspondant a son tarif.',
+      `Emails qui seront envoyes : ${summary.eligible || 0}`,
+      'Chaque client recevra une mercuriale PDF personnalisee.',
     ];
 
     if (!smtp.configured) {
@@ -45,8 +42,8 @@
   function renderSendResult(result) {
     const summary = result.summary || {};
     const message = [
-      `Emails envoyes : ${summary.sent || 0}`,
-      `Clients ignores : ${summary.skipped || 0}`,
+      `Envoyes : ${summary.sent || 0}`,
+      `Ignores : ${summary.skipped || 0}`,
       `Erreurs : ${summary.errors || 0}`,
     ].join(' | ');
 
@@ -71,10 +68,10 @@
     return data;
   }
 
-  async function previewTariffEmails() {
+  async function previewMercurialEmails() {
     showMessage('', 'Preparation de la preview email...');
     const preview = await requestJson('/api/customer-price-lists/email/preview', { method: 'GET' });
-    window.__customerTariffEmailPreview = preview;
+    window.__customerMercurialEmailPreview = preview;
     renderSummary(preview);
 
     const sendBtn = getEl('email-send-btn');
@@ -87,22 +84,20 @@
 
   function buildConfirmationMessage(preview) {
     const summary = preview.summary || {};
-    const byTariff = summary.by_tariff || {};
 
     return [
+      `Clients actifs : ${summary.total_clients || 0}`,
       `Clients avec email : ${summary.with_email || 0}`,
       `Clients sans email : ${summary.without_email || 0}`,
-      `Tarif 1 : ${byTariff[1] || 0}`,
-      `Tarif 2 : ${byTariff[2] || 0}`,
-      `Tarif 3 : ${byTariff[3] || 0}`,
+      `Emails qui seront envoyes : ${summary.eligible || 0}`,
       '',
-      'Chaque client recevra uniquement son tarif.',
-      'Confirmer l envoi des emails ?',
+      'Chaque client recevra son propre PDF personnalise.',
+      'Confirmer l envoi des mercuriales ?',
     ].join('\n');
   }
 
-  async function sendTariffEmails() {
-    const preview = window.__customerTariffEmailPreview || await previewTariffEmails();
+  async function sendMercurialEmails() {
+    const preview = window.__customerMercurialEmailPreview || await previewMercurialEmails();
 
     if (!(preview.smtp && preview.smtp.configured)) {
       showMessage('error', 'Configuration SMTP incomplete. Envoi annule.');
@@ -118,18 +113,13 @@
       return;
     }
 
-    const titleInput = getEl('price-list-title-input');
-    const payload = {
-      subject: titleInput && titleInput.value ? titleInput.value : undefined,
-    };
-
-    showMessage('', 'Envoi des emails tarifs en cours...');
+    showMessage('', 'Envoi des mercuriales en cours...');
     const result = await requestJson('/api/customer-price-lists/email/send', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({}),
     });
 
-    window.__customerTariffEmailPreview = null;
+    window.__customerMercurialEmailPreview = null;
     renderSendResult(result);
   }
 
@@ -139,14 +129,14 @@
 
     if (previewBtn) {
       previewBtn.addEventListener('click', () => {
-        previewTariffEmails().catch((err) => showMessage('error', err.message || 'Erreur preview email'));
+        previewMercurialEmails().catch((err) => showMessage('error', err.message || 'Erreur preview email'));
       });
     }
 
     if (sendBtn) {
       sendBtn.disabled = true;
       sendBtn.addEventListener('click', () => {
-        sendTariffEmails().catch((err) => showMessage('error', err.message || 'Erreur envoi email'));
+        sendMercurialEmails().catch((err) => showMessage('error', err.message || 'Erreur envoi email'));
       });
     }
   });

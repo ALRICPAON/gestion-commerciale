@@ -4,6 +4,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const {
   buildCustomerTariffEmailPreview,
+  fetchCustomerTariffEmailHistory,
   sendCustomerTariffEmails,
 } = require('../services/customerTariffEmailService');
 
@@ -29,15 +30,22 @@ router.get('/preview', authenticateToken, attachDbContext, requireTariffEmailSen
 
 router.post('/send', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
   try {
-    const result = await sendCustomerTariffEmails(req.dbPool, req.user.store_id, {
-      subject: req.body && req.body.subject,
-      intro_text: req.body && req.body.intro_text,
-    });
+    const result = await sendCustomerTariffEmails(req.dbPool, req.user.store_id, { user_id: req.user.id });
 
     res.json(result);
   } catch (err) {
     console.error('Erreur POST /api/customer-price-lists/email/send :', err);
     res.status(err.status || 500).json({ error: err.message || 'Erreur serveur envoi emails tarifs' });
+  }
+});
+
+router.get('/history', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
+  try {
+    const history = await fetchCustomerTariffEmailHistory(req.dbPool, req.user.store_id, req.query.limit);
+    res.json({ history });
+  } catch (err) {
+    console.error('Erreur GET /api/customer-price-lists/email/history :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur serveur historique emails mercuriales' });
   }
 });
 
