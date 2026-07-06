@@ -88,6 +88,22 @@
   grid-column: 1 / -1;
 }
 
+.quality-inline-fieldset {
+  border: 1px solid var(--alta-border);
+  border-radius: 10px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 0;
+  padding: 14px;
+}
+
+.quality-inline-fieldset legend {
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 8px;
+}
+
 .quality-section-header {
   align-items: start;
   display: flex;

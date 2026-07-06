@@ -47,6 +47,7 @@ function mapLimitPayload(body = {}) {
     expected_frequency_value: nullableNumber(body.expected_frequency_value),
     expected_frequency_unit: TEMPERATURE_FREQUENCY_UNITS.includes(frequencyUnit) ? frequencyUnit : null,
     target_time: nullableText(body.target_time),
+    quality_task_id: cleanUuid(body.quality_task_id),
     is_active: body.is_active !== false && body.is_active !== 'false',
     valid_from: nullableText(body.valid_from) || new Date().toISOString().slice(0, 10),
     valid_until: nullableText(body.valid_until),
@@ -64,7 +65,6 @@ function validateLimitPayload(payload) {
   if (!payload.type_code) return 'Type de température obligatoire';
   if (payload.min_value === null && payload.max_value === null) return 'Au moins une limite mini ou maxi est obligatoire';
   if (payload.min_value !== null && payload.max_value !== null && payload.min_value > payload.max_value) return 'La limite mini ne peut pas dépasser la limite maxi';
-  if ((payload.expected_frequency_value && !payload.expected_frequency_unit) || (!payload.expected_frequency_value && payload.expected_frequency_unit)) return 'La fréquence attendue doit contenir une valeur et une unité';
   return null;
 }
 

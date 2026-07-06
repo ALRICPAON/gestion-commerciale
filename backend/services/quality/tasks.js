@@ -136,7 +136,7 @@ async function updateQualityTaskStatus(db, storeId, userId, taskId, payload) {
   const before = await getQualityTask(db, storeId, taskId);
   if (!before) return null;
 
-  const completedAt = payload.status === 'completed' ? new Date() : before.last_completed_at;
+  const completedAt = payload.status === 'completed' ? new Date(payload.completed_at || new Date()) : before.last_completed_at;
   const nextDueAt = payload.next_due_at
     ? new Date(payload.next_due_at)
     : payload.status === 'completed'
@@ -160,13 +160,21 @@ async function updateQualityTaskStatus(db, storeId, userId, taskId, payload) {
   await db.query(
     `INSERT INTO quality_task_history (
       store_id, task_id, user_id, completed_at, comment, status, previous_due_at, next_due_at
-    ) VALUES ($1,$2,$3,now(),$4,$5,$6,$7)`,
-    [storeId, taskId, userId, payload.comment, payload.status, before.next_due_at, nextDueAt]
+    ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [storeId, taskId, userId, completedAt, payload.comment, payload.status, before.next_due_at, nextDueAt]
   );
 
   const task = await getQualityTask(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, 'quality.task.status.updated', task.id, before, task);
   return task;
+}
+
+async function completeQualityTask(db, storeId, userId, taskId, comment = null, completedAt = new Date()) {
+  return updateQualityTaskStatus(db, storeId, userId, taskId, {
+    status: 'completed',
+    comment,
+    completed_at: completedAt,
+  });
 }
 
 async function deactivateQualityTask(db, storeId, userId, taskId) {
@@ -210,6 +218,7 @@ async function getQualityTaskSummary(db, storeId) {
 }
 
 module.exports = {
+  completeQualityTask,
   deactivateQualityTask,
   getQualityTask,
   getQualityTaskSummary,
