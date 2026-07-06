@@ -2,7 +2,7 @@
   const apiBase = window.APP_CONFIG && window.APP_CONFIG.API_BASE_URL ? window.APP_CONFIG.API_BASE_URL : '';
 
   function getToken() {
-    return localStorage.getItem('authToken') || localStorage.getItem('token') || '';
+    return localStorage.getItem('gc_token') || localStorage.getItem('grv2_token') || localStorage.getItem('authToken') || localStorage.getItem('token') || '';
   }
 
   function getEl(id) {
