@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="../../css/app.css" />
-  <link rel="stylesheet" href="../css/quality.css?v=4" />
+  <link rel="stylesheet" href="../css/quality.css?v=5" />
 </head>
 <body class="app-page quality-foundation-page">
   <header class="topbar">
@@ -17,12 +17,16 @@
   <main class="main-content quality-placeholder">
     <section class="welcome-card"><span class="section-kicker">QMS</span><h2>Qualité</h2><p>Module en cours de construction</p></section>
     <section class="quality-grid">
+      <a class="quality-card quality-link-card" href="./quality-tasks.html"><span class="quality-badge">Planification</span><h3>Tâches du jour</h3><p id="quality-tasks-today">0</p></a>
+      <a class="quality-card quality-link-card" href="./quality-tasks.html?status=overdue"><span class="quality-badge">Planification</span><h3>Tâches en retard</h3><p id="quality-tasks-overdue">0</p></a>
+      <a class="quality-card quality-link-card" href="./quality-tasks.html"><span class="quality-badge">Planification</span><h3>Tâches à venir</h3><p id="quality-tasks-upcoming">0</p></a>
+      <a class="quality-card quality-link-card" href="./quality-tasks.html"><span class="quality-badge">Moteur générique</span><h3>Tâches qualité</h3><p>Créer, modifier, filtrer et désactiver les tâches QMS.</p></a>
       <a class="quality-card quality-link-card" href="./zones.html"><span class="quality-badge">Jumeau numérique</span><h3>Zones qualité</h3><p>Référentiel des zones physiques et logiques de l'atelier.</p></a>
       <a class="quality-card quality-link-card" href="./equipments.html"><span class="quality-badge">Jumeau numérique</span><h3>Équipements qualité</h3><p>Référentiel des équipements rattachés aux zones qualité.</p></a>
       <a class="quality-card quality-link-card" href="./temperature-records.html"><span class="quality-badge">Chaîne du froid</span><h3>Relevés Températures</h3><p id="quality-temperature-summary">Alertes : - · Manquants : - · Critique : -</p></a>
       <a class="quality-card quality-link-card" href="./temperature-settings.html"><span class="quality-badge">Chaîne du froid</span><h3>Paramètres Températures</h3><p>Seuils, fréquences attendues et suivis actifs.</p></a>
     </section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../components/QualityCard.js"></script><script src="../components/QualityBadge.js"></script><script src="../components/QualityTimeline.js"></script><script src="../components/QualityScore.js"></script><script src="../components/QualityHeader.js"></script><script src="../components/QualityEmptyState.js"></script><script src="../components/QualityFilters.js"></script><script src="../js/dashboard.js?v=3"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../components/QualityCard.js"></script><script src="../components/QualityBadge.js"></script><script src="../components/QualityTimeline.js"></script><script src="../components/QualityScore.js"></script><script src="../components/QualityHeader.js"></script><script src="../components/QualityEmptyState.js"></script><script src="../components/QualityFilters.js"></script><script src="../js/dashboard.js?v=4"></script>
 </body>
 </html>
