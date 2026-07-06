@@ -106,6 +106,68 @@ async function listTemperatureLimits(db, storeId, query = {}) {
   return result.rows.map(attachTask);
 }
 
+async function listDueTemperatureReadings(db, storeId, query = {}) {
+  const includeUpcoming = ['true', '1', 'yes'].includes(String(query.include_upcoming || '').toLowerCase());
+  const result = await db.query(
+    `SELECT l.id AS limit_id, l.id AS parameter_id, l.quality_task_id,
+            l.type_code, t.label AS type_label,
+            l.zone_id, z.code AS zone_code, z.name AS zone_name,
+            l.equipment_id, e.code AS equipment_code, e.name AS equipment_name,
+            l.min_value, l.max_value, l.unit,
+            ${taskSelectSql()}
+     FROM quality_temperature_limits l
+     INNER JOIN quality_temperature_types t ON t.code = l.type_code
+     INNER JOIN quality_tasks qt ON qt.id = l.quality_task_id AND qt.store_id = l.store_id
+     LEFT JOIN users qtu ON qtu.id = qt.responsible_user_id
+     LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
+     LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
+     WHERE l.store_id = $1
+       AND l.is_active = true
+       AND qt.active = true
+       AND ($2::boolean = true OR qt.next_due_at::date <= CURRENT_DATE)
+     ORDER BY qt.next_due_at ASC NULLS LAST, t.label ASC, z.name ASC, e.name ASC`,
+    [storeId, includeUpcoming]
+  );
+
+  return result.rows
+    .map((row) => {
+      const task = enrichTask({
+        id: row.task_id,
+        title: row.task_title,
+        frequency_value: row.task_frequency_value,
+        frequency_unit: row.task_frequency_unit,
+        target_time: row.task_target_time,
+        next_due_at: row.task_next_due_at,
+        last_completed_at: row.task_last_completed_at,
+        status: row.task_status,
+        active: row.task_active,
+        responsible_email: row.task_responsible_email,
+      });
+      return {
+        quality_task_id: row.quality_task_id,
+        limit_id: row.limit_id,
+        parameter_id: row.parameter_id,
+        type_code: row.type_code,
+        type_label: row.type_label,
+        zone_id: row.zone_id,
+        zone_code: row.zone_code,
+        zone_name: row.zone_name,
+        equipment_id: row.equipment_id,
+        equipment_code: row.equipment_code,
+        equipment_name: row.equipment_name,
+        min_value: row.min_value,
+        max_value: row.max_value,
+        unit: row.unit,
+        task_title: task.title,
+        target_time: task.target_time,
+        next_due_at: task.next_due_at,
+        computed_status: task.computed_status,
+        last_completed_at: task.last_completed_at,
+      };
+    })
+    .filter((item) => includeUpcoming || ['due', 'overdue'].includes(item.computed_status));
+}
+
 async function getTemperatureLimit(db, storeId, limitId) {
   const result = await db.query(
     `SELECT l.*, ${taskSelectSql()}
@@ -358,6 +420,7 @@ async function getTemperatureSummary(db, storeId) {
 module.exports = {
   listTemperatureTypes,
   listTemperatureLimits,
+  listDueTemperatureReadings,
   saveTemperatureLimit,
   deleteTemperatureLimit,
   listTemperatureRecords,

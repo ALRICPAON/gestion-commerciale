@@ -16,6 +16,7 @@ const {
   deleteTemperatureRecord,
   getTemperatureRecord,
   getTemperatureSummary,
+  listDueTemperatureReadings,
   listTemperatureLimits,
   listTemperatureRecords,
   listTemperatureTypes,
@@ -92,6 +93,14 @@ router.get('/summary', requireQualityPermission(QUALITY_PERMISSIONS.READ), async
     res.json(await getTemperatureSummary(req.dbPool, req.user.store_id));
   } catch (err) {
     handleError(res, err, 'Erreur GET /api/quality/temperatures/summary');
+  }
+});
+
+router.get('/due-readings', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, res) => {
+  try {
+    res.json(await listDueTemperatureReadings(req.dbPool, req.user.store_id, req.query));
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/temperatures/due-readings');
   }
 });
 

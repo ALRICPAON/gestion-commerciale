@@ -31,6 +31,7 @@
   window.QualityTemperatureApi = {
     listTypes() { return request('/types'); },
     getSummary() { return request('/summary'); },
+    listDueReadings(filters) { return request(`/due-readings${queryString(filters)}`); },
     listRecords(filters) { return request(`${queryString(filters)}`); },
     getRecord(id) { return request(`/${id}`); },
     saveRecord(payload, id = null) { return request(id ? `/${id}` : '', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); },
