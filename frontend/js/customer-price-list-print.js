@@ -54,68 +54,128 @@
     return line.price_ht;
   }
 
-  function productRow(line, tariff) {
-    return `<div class="cpl-product-row">
-      <span>${escapeHtml(line.designation_snapshot || '-')}</span>
-      <strong>${money(priceForTariff(line, tariff))}</strong>
-    </div>`;
-  }
-
-  function familyBlocks(lines, tariff) {
-    const regularLines = (lines || []).filter((line) => !line.is_featured);
-    const grouped = regularLines.reduce((acc, line) => {
-      const familyName = line.family_name || 'Autre';
-      if (!acc[familyName]) acc[familyName] = [];
-      acc[familyName].push(line);
+  /**
+   * Regroupe les produits par famille et les prépare pour une mise en page 2 colonnes
+   */
+  function groupProductsByFamilyOptimized(lines = [], tariff) {
+    const grouped = (lines || []).filter((line) => !line.is_featured).reduce((acc, line) => {
+      const family = line.family_name || 'Autre';
+      if (!acc[family]) acc[family] = [];
+      acc[family].push(line);
       return acc;
     }, {});
 
-    return Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'fr')).map((familyName) => `
-      <section class="cpl-family-section">
-        <h3>${escapeHtml(familyName)}</h3>
-        ${grouped[familyName].map((line) => productRow(line, tariff)).join('')}
-      </section>
-    `).join('');
+    const sortedFamilies = Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'fr'));
+    
+    // Créer les sections HTML pour chaque famille
+    const familySections = sortedFamilies.map((familyName) => ({
+      name: familyName,
+      html: `
+        <section class="mercuriale-family" data-family="${escapeHtml(familyName)}">
+          <h3>${escapeHtml(familyName)}</h3>
+          <table>
+            <tbody>
+              ${grouped[familyName].map((line) => `
+                <tr>
+                  <td class="mercuriale-designation">${escapeHtml(line.designation_snapshot || '-')}</td>
+                  <td class="mercuriale-unit">${escapeHtml(line.sale_unit || '')}</td>
+                  <td class="mercuriale-price">${money(priceForTariff(line, tariff))}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </section>
+      `,
+    }));
+
+    // Distribuer les familles entre les 2 colonnes
+    const leftColumn = [];
+    const rightColumn = [];
+    
+    familySections.forEach((section, index) => {
+      if (index % 2 === 0) {
+        leftColumn.push(section.html);
+      } else {
+        rightColumn.push(section.html);
+      }
+    });
+
+    return {
+      leftColumn: leftColumn.join(''),
+      rightColumn: rightColumn.join(''),
+    };
   }
 
   function featuredBlock(lines, tariff) {
     const featured = (lines || []).filter((line) => line.is_featured);
     if (!featured.length) return '';
 
-    return `<section class="cpl-featured-section">
-      <h3>Produits du moment</h3>
-      ${featured.map((line) => productRow(line, tariff)).join('')}
-    </section>`;
+    return `
+      <section class="mercuriale-featured">
+        <h3>Produits du moment</h3>
+        <table>
+          <tbody>
+            ${featured.map((line) => `
+              <tr>
+                <td class="mercuriale-designation">${escapeHtml(line.designation_snapshot || '-')}</td>
+                <td class="mercuriale-unit">${escapeHtml(line.sale_unit || '')}</td>
+                <td class="mercuriale-price">${money(priceForTariff(line, tariff))}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </section>
+    `;
   }
 
   function singleSheetHtml(priceList, lines, storeSettings, tariff) {
     const settings = storeSettings || {};
     const companyName = settings.company_name || 'Gestion Commerciale';
     const clientName = priceList.client_name || '';
+    const columnsData = groupProductsByFamilyOptimized(lines, tariff);
 
-    return `<article class="cpl-print-document">
-      <header class="cpl-print-header">
-        <div class="cpl-company">
-          ${settings.logo_url ? `<img class="cpl-logo" src="${escapeHtml(settings.logo_url)}" alt="Logo ${escapeHtml(companyName)}">` : ''}
-          <div>
-            <h1>${escapeHtml(companyName)}</h1>
-            ${addressLine(settings) ? `<p>${escapeHtml(addressLine(settings))}</p>` : ''}
-            ${companyMeta(settings) ? `<p class="cpl-company-meta">${escapeHtml(companyMeta(settings))}</p>` : ''}
+    return `
+      <article class="mercuriale-print-document">
+        <header class="mercuriale-print-header">
+          <div class="mercuriale-company">
+            ${settings.logo_url ? `<img class="mercuriale-logo" src="${escapeHtml(settings.logo_url)}" alt="Logo ${escapeHtml(companyName)}">` : ''}
+            <div>
+              <h1>${escapeHtml(companyName)}</h1>
+              ${addressLine(settings) ? `<p>${escapeHtml(addressLine(settings))}</p>` : ''}
+              ${companyMeta(settings) ? `<p class="mercuriale-company-meta">${escapeHtml(companyMeta(settings))}</p>` : ''}
+            </div>
+          </div>
+          <div class="mercuriale-document-meta">
+            <p class="mercuriale-label">Mercuriale</p>
+            <h2>Cours du jour</h2>
+            <p>Date : <strong>${formatDate(priceList.price_list_date)}</strong></p>
+            ${clientName ? `<p>Client : <strong>${escapeHtml(clientName)}</strong></p>` : ''}
+          </div>
+        </header>
+
+        <section class="mercuriale-intro">
+          ${clientName ? `<p class="mercuriale-client">Client : <strong>${escapeHtml(clientName)}</strong></p>` : ''}
+          <p class="mercuriale-subtitle">Prix net départ</p>
+        </section>
+
+        ${featuredBlock(lines, tariff)}
+
+        <div class="mercuriale-columns">
+          <div class="mercuriale-column-left">
+            ${columnsData.leftColumn || '<p class="mercuriale-empty">Aucun produit selectionne.</p>'}
+          </div>
+          <div class="mercuriale-column-right">
+            ${columnsData.rightColumn || ''}
           </div>
         </div>
-        <div class="cpl-document-meta">
-          <p class="cpl-label">Mercuriale</p>
-          <h2>Cours du jour</h2>
-          <p>Date : <strong>${formatDate(priceList.price_list_date)}</strong></p>
-          ${clientName ? `<p>Client : <strong>${escapeHtml(clientName)}</strong></p>` : ''}
-        </div>
-      </header>
 
-      ${featuredBlock(lines, tariff)}
-      <div class="cpl-course-columns">
-        ${familyBlocks(lines, tariff) || '<p class="cpl-empty">Aucun produit selectionne.</p>'}
-      </div>
-    </article>`;
+        ${settings.legal_mentions ? `
+          <section class="mercuriale-footer">
+            <p>${escapeHtml(settings.legal_mentions)}</p>
+          </section>
+        ` : ''}
+      </article>
+    `;
   }
 
   function buildHtml(priceList, lines, storeSettings = {}) {

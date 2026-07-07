@@ -1,12 +1,8 @@
 const { sendEmail, getSmtpStatus } = require('./emailService');
 const { renderHtmlToPdf } = require('./pdf/pdfRenderer');
 const {
-  companyHeader,
-  escapeHtml,
-  formatDate,
-  htmlDocument,
-  money,
-} = require('./pdf/pdfLayout');
+  renderMercurialePdf,
+} = require('./pdf/templates/mercurialePdfTemplate');
 const { priceWithRoyaleMareeCommission } = require('./royaleMareeCommission');
 
 const VALID_PRICING_LEVELS = new Set([1, 2, 3]);
@@ -253,83 +249,40 @@ function groupProductsByFamily(products = []) {
   }, {});
 }
 
-function productRow(product) {
-  return `
-    <tr>
-      <td>${escapeHtml(product.plu || '')}</td>
-      <td><strong>${escapeHtml(product.display_name || product.designation || '-')}</strong></td>
-      <td>${escapeHtml(product.sale_unit || '')}</td>
-      <td class="num price-cell">${money(product.price_ht)}</td>
-    </tr>
-  `;
-}
+/**
+ * Transforme les produits du service d'email en format compatible avec le template unifié
+ */
+function transformProductsForTemplate(products = [], tariff = null) {
+  const sorted = (products || [])
+    .sort((a, b) => {
+      const familyCompare = (a.family_name || 'Autre').localeCompare(b.family_name || 'Autre', 'fr');
+      if (familyCompare !== 0) return familyCompare;
+      return (a.designation || '').localeCompare(b.designation || '', 'fr');
+    })
+    .map((product) => ({
+      ...product,
+      designation_snapshot: product.display_name || product.designation,
+      sale_unit: product.sale_unit,
+      price_ht: product.price_ht,
+      is_featured: false,
+    }));
 
-function familySections(products) {
-  if (!products.length) {
-    return '<section class="empty-family">Aucun article disponible actuellement.</section>';
-  }
-
-  const grouped = groupProductsByFamily(products);
-  return Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'fr')).map((familyName) => `
-    <section class="cpl-family">
-      <h3>${escapeHtml(familyName)}</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Reference</th>
-            <th>Designation</th>
-            <th>Unite</th>
-            <th class="num">Prix HT</th>
-          </tr>
-        </thead>
-        <tbody>${grouped[familyName].map(productRow).join('')}</tbody>
-      </table>
-    </section>
-  `).join('');
-}
-
-function buildCustomerMercurialHtml({ client, products, storeSettings }) {
-  const clientName = client.name || client.legal_name || client.code || '';
-  const subtitle = `Date d'edition : ${formatDate(new Date())}`;
-  const clientBlock = clientName
-    ? `<section class="cpl-client"><p>Client : <strong>${escapeHtml(clientName)}</strong></p></section>`
-    : '';
-  const body = `
-    <article class="pdf-document cpl-document">
-      ${companyHeader(storeSettings, 'Mercuriale / Cours du jour', subtitle)}
-      ${clientBlock}
-      <section class="cpl-intro">
-        <p>Prix nets communiques pour la mercuriale du jour. Document strictement confidentiel.</p>
-      </section>
-      ${familySections(products)}
-      ${storeSettings.legal_mentions ? `<section class="footer-note"><h3>Mentions</h3><p>${escapeHtml(storeSettings.legal_mentions)}</p></section>` : ''}
-    </article>
-  `;
-  const styles = `
-    @page { margin: 9mm; }
-    body { background: #f5f7f9; font-size: 10.5px; }
-    .cpl-document { background: #ffffff; min-height: 277mm; padding: 0; }
-    .cpl-client, .cpl-intro { border: 1px solid #c6d0d8; margin: 0 0 10px; padding: 7px 9px; }
-    .cpl-client p, .cpl-intro p { margin: 0; }
-    .cpl-intro { background: #f7fafc; color: #52616f; }
-    .cpl-family { break-inside: avoid; margin: 0 0 10px; page-break-inside: avoid; }
-    .cpl-family h3 { background: #17212b; color: #ffffff; font-size: 11px; letter-spacing: 0; margin: 0; padding: 6px 8px; text-transform: uppercase; }
-    .cpl-family table { table-layout: fixed; }
-    .cpl-family th { background: #e8eef4; border-color: #aebdcc; color: #17212b; font-size: 8.5px; }
-    .cpl-family tbody tr:nth-child(even) { background: #f8fafc; }
-    .cpl-family td { border-color: #d5dde5; padding: 4px 5px; }
-    .cpl-family th:nth-child(1) { width: 24mm; }
-    .cpl-family th:nth-child(3) { width: 20mm; }
-    .cpl-family th:nth-child(4) { width: 28mm; }
-    .price-cell { font-size: 11px; font-weight: 800; }
-    .empty-family { border: 1px solid #c6d0d8; padding: 10px; }
-  `;
-
-  return htmlDocument('Mercuriale ALTA MAREE', body, styles);
+  return sorted;
 }
 
 async function buildCustomerMercurialPdf({ client, products, storeSettings }) {
-  const html = buildCustomerMercurialHtml({ client, products, storeSettings });
+  const transformedLines = transformProductsForTemplate(products);
+  
+  const html = renderMercurialePdf({
+    priceListOrClient: {
+      client_name: client.name || client.legal_name || client.code || '',
+      tariff_level: client.tariff_level,
+      price_list_date: new Date(),
+    },
+    lines: transformedLines,
+    storeSettings,
+  });
+  
   return renderHtmlToPdf(html, {
     format: 'A4',
     margin: { top: '9mm', right: '9mm', bottom: '9mm', left: '9mm' },

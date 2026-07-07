@@ -321,3 +321,281 @@
     padding: 2px 0;
   }
 }
+
+/* Nouveaux styles pour la mise en page 2 colonnes mercuriale */
+.mercuriale-print-document {
+  max-width: 980px;
+  margin: 0 auto 22px;
+  padding: 24px;
+  background: #ffffff;
+  color: #111827;
+  border: 1px solid #e5e7eb;
+  page-break-after: always;
+}
+
+.mercuriale-print-document:last-child {
+  page-break-after: auto;
+}
+
+.mercuriale-print-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 2px solid #005baa;
+}
+
+.mercuriale-company {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.mercuriale-logo {
+  width: 78px;
+  max-height: 56px;
+  object-fit: contain;
+}
+
+.mercuriale-company h1,
+.mercuriale-document-meta h2 {
+  margin: 0 0 4px;
+}
+
+.mercuriale-company h1 {
+  color: #003f7f;
+  font-size: 20px;
+}
+
+.mercuriale-document-meta h2 {
+  font-size: 22px;
+}
+
+.mercuriale-company p,
+.mercuriale-document-meta p {
+  margin: 2px 0;
+  color: #4b5563;
+  font-size: 12px;
+}
+
+.mercuriale-company-meta {
+  margin-top: 5px !important;
+  font-weight: 700;
+}
+
+.mercuriale-document-meta {
+  min-width: 210px;
+  text-align: right;
+}
+
+.mercuriale-label {
+  display: inline-block;
+  margin: 0 0 5px !important;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #003f7f !important;
+  font-size: 13px !important;
+  font-weight: 800;
+}
+
+/* Section intro */
+.mercuriale-intro {
+  background: #f7fafc;
+  border: 1px solid #c6d0d8;
+  margin: 0 0 8px;
+  padding: 5px 7px;
+}
+
+.mercuriale-client {
+  font-weight: 800;
+  margin: 0 0 4px;
+  padding: 0;
+}
+
+.mercuriale-subtitle {
+  font-weight: 800;
+  margin: 0;
+  padding: 0;
+}
+
+/* Produits du moment */
+.mercuriale-featured {
+  margin: 0 0 12px;
+  padding: 10px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #f8fbff;
+}
+
+.mercuriale-featured h3 {
+  margin: 0 0 6px;
+  color: #003f7f;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.mercuriale-featured table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+/* Colonnes pour la mise en page 2 colonnes */
+.mercuriale-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin: 12px 0;
+}
+
+.mercuriale-column-left,
+.mercuriale-column-right {
+  overflow: hidden;
+}
+
+/* Families */
+.mercuriale-family {
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 10px;
+  break-inside: avoid;
+  page-break-inside: avoid;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mercuriale-family h3 {
+  margin: 0;
+  padding: 6px 8px;
+  background: #003f7f;
+  color: #ffffff;
+  font-size: 12px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.mercuriale-family table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.mercuriale-family tbody tr:nth-child(even) {
+  background: #f9fafb;
+}
+
+.mercuriale-designation {
+  padding: 4px 6px;
+  text-align: left;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  word-break: break-word;
+}
+
+.mercuriale-unit {
+  padding: 4px 6px;
+  text-align: center;
+  border-right: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e5e7eb;
+  width: 50px;
+  min-width: 50px;
+}
+
+.mercuriale-price {
+  padding: 4px 6px;
+  text-align: right;
+  border-bottom: 1px solid #e5e7eb;
+  width: 70px;
+  min-width: 70px;
+  font-weight: 700;
+  color: #003f7f;
+}
+
+.mercuriale-empty {
+  color: #6b7280;
+  padding: 10px;
+}
+
+/* Footer mentions légales */
+.mercuriale-footer {
+  border-top: 1px solid #d1d5db;
+  margin-top: 12px;
+  padding-top: 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.mercuriale-footer p {
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 0;
+  padding: 0;
+  color: #6b7280;
+}
+
+@media (max-width: 1100px) {
+  .mercuriale-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  .mercuriale-print-header {
+    flex-direction: column;
+  }
+
+  .mercuriale-document-meta {
+    width: 100%;
+    text-align: left;
+  }
+
+  .mercuriale-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media print {
+  .mercuriale-print-document {
+    max-width: none;
+    margin: 0;
+    min-height: auto;
+  }
+
+  .mercuriale-logo {
+    width: 68px;
+    max-height: 48px;
+  }
+
+  .mercuriale-document-meta h2 {
+    font-size: 20px;
+  }
+
+  .mercuriale-family {
+    margin: 0 0 8px;
+  }
+
+  .mercuriale-family h3 {
+    padding: 4px 6px;
+    font-size: 11px;
+  }
+
+  .mercuriale-family table {
+    font-size: 11px;
+  }
+
+  .mercuriale-designation {
+    padding: 2px 4px;
+  }
+
+  .mercuriale-unit {
+    padding: 2px 4px;
+  }
+
+  .mercuriale-price {
+    padding: 2px 4px;
+  }
+}
