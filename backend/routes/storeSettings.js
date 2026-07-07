@@ -49,6 +49,7 @@ const STORE_SETTINGS_FIELDS = [
   'terms_and_conditions',
   'delivery_note_footer',
   'invoice_footer',
+  'royale_maree_commission_eur_per_kg',
   ...Object.keys(COMMUNICATION_DEFAULTS),
 ];
 
@@ -56,6 +57,13 @@ function normalizeText(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim();
   return text === '' ? null : text;
+}
+
+function normalizeDecimal(value, fallback = null) {
+  const text = normalizeText(value);
+  if (text === null) return fallback;
+  const parsed = Number(text.replace(',', '.'));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed.toFixed(2) : fallback;
 }
 
 function mapSettingsPayload(body = {}) {
@@ -66,6 +74,10 @@ function mapSettingsPayload(body = {}) {
   });
 
   settings.country = settings.country || 'France';
+  settings.royale_maree_commission_eur_per_kg = normalizeDecimal(
+    body.royale_maree_commission_eur_per_kg,
+    '0.50'
+  );
   Object.entries(COMMUNICATION_DEFAULTS).forEach(([field, fallback]) => {
     settings[field] = settings[field] || fallback;
   });
