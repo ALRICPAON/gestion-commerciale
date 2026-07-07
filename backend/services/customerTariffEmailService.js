@@ -202,6 +202,16 @@ async function buildCustomerTariffEmailPreview(db, storeId) {
   };
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;',
+  }[char]));
+}
+
 function buildSubject(storeSettings) {
   const companyName = clean(storeSettings.company_name) || 'ALTA MAREE';
   return `Mercuriale ${companyName}`;
