@@ -2,6 +2,7 @@ const express = require('express');
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
+const { priceWithRoyaleMareeCommission } = require('../services/royaleMareeCommission');
 
 const router = express.Router();
 
@@ -24,7 +25,7 @@ function clean(value) {
 }
 
 function isUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
     String(value || '')
   );
 }
@@ -78,11 +79,25 @@ function safeLimit(value, fallback = 1000, max = 2000) {
   return Math.min(Number.isFinite(parsed) && parsed > 0 ? parsed : fallback, max);
 }
 
-function priceForLevel(row, tariffLevel) {
+function priceForLevel(row, tariffLevel, commissionSettings = {}) {
   if (![1, 2, 3].includes(Number(tariffLevel))) return null;
   const value = row[`sale_price_level_${tariffLevel}_ht`];
-  if (value !== null && value !== undefined) return value;
-  return row.sale_price_ex_vat ?? null;
+  const basePrice = value !== null && value !== undefined ? value : row.sale_price_ex_vat ?? null;
+  return priceWithRoyaleMareeCommission(basePrice, tariffLevel, commissionSettings);
+}
+
+async function fetchCommissionSettings(db, storeId) {
+  const result = await db.query(
+    `
+    SELECT royale_maree_commission_eur_per_kg
+    FROM store_settings
+    WHERE store_id = $1
+    LIMIT 1
+    `,
+    [storeId]
+  );
+
+  return result.rows[0] || {};
 }
 
 function headerSelectSql() {
@@ -260,6 +275,7 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const clientId = normalizeUuid(req.query.client_id);
     const client = await getOptionalClient(req.dbPool, req.user.store_id, clientId);
     const targetTariffLevel = normalizeTargetTariff(req.query.target_tariff_level || req.query.tariff_level);
+    const commissionSettings = await fetchCommissionSettings(req.dbPool, req.user.store_id);
 
     const params = [req.user.store_id];
     const availableOnly = parseBool(req.query.available_only, true);
@@ -333,11 +349,11 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const rows = result.rows.map((row) => ({
       ...row,
       target_tariff_level: targetTariffLevel,
-      suggested_price_ht: targetTariffLevel ? priceForLevel(row, targetTariffLevel) : null,
+      suggested_price_ht: targetTariffLevel ? priceForLevel(row, targetTariffLevel, commissionSettings) : null,
       suggested_price_source: targetTariffLevel ? 'target_tariff' : 'none',
-      price_level_1_ht: priceForLevel(row, 1),
-      price_level_2_ht: priceForLevel(row, 2),
-      price_level_3_ht: priceForLevel(row, 3),
+      price_level_1_ht: priceForLevel(row, 1, commissionSettings),
+      price_level_2_ht: priceForLevel(row, 2, commissionSettings),
+      price_level_3_ht: priceForLevel(row, 3, commissionSettings),
     }));
 
     res.json({

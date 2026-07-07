@@ -7,6 +7,7 @@ const {
   htmlDocument,
   money,
 } = require('./pdf/pdfLayout');
+const { priceWithRoyaleMareeCommission } = require('./royaleMareeCommission');
 
 const VALID_PRICING_LEVELS = new Set([1, 2, 3]);
 
@@ -23,15 +24,6 @@ function normalizePricingLevel(value) {
 
 function hasEmail(value) {
   return Boolean(clean(value));
-}
-
-function formatQuantity(value) {
-  const amount = Number(value);
-  if (!Number.isFinite(amount)) return '';
-  return amount.toLocaleString('fr-FR', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 3,
-  });
 }
 
 function todayIsoDate() {
@@ -88,7 +80,8 @@ async function fetchStoreSettings(db, storeId) {
       sanitary_approval_number,
       legal_mentions,
       contact_email,
-      email_sender_address
+      email_sender_address,
+      royale_maree_commission_eur_per_kg
     FROM store_settings
     WHERE store_id = $1
     LIMIT 1
@@ -120,7 +113,7 @@ async function fetchActiveClients(db, storeId) {
   return result.rows;
 }
 
-async function fetchProductsForPricingLevel(db, storeId, pricingLevel) {
+async function fetchProductsForPricingLevel(db, storeId, pricingLevel, commissionSettings = {}) {
   const normalizedPricingLevel = normalizePricingLevel(pricingLevel);
   if (!normalizedPricingLevel) return [];
 
@@ -138,7 +131,7 @@ async function fetchProductsForPricingLevel(db, storeId, pricingLevel) {
         WHEN 1 THEN COALESCE(a.sale_price_level_1_ht, a.sale_price_ex_vat)
         WHEN 2 THEN COALESCE(a.sale_price_level_2_ht, a.sale_price_ex_vat)
         WHEN 3 THEN COALESCE(a.sale_price_level_3_ht, a.sale_price_ex_vat)
-      END AS price_ht
+      END AS base_price_ht
     FROM stock_summary ss
     JOIN articles a ON a.id = ss.article_id AND a.store_id = ss.store_id
     WHERE ss.store_id = $1
@@ -149,13 +142,18 @@ async function fetchProductsForPricingLevel(db, storeId, pricingLevel) {
     [storeId, normalizedPricingLevel]
   );
 
-  return result.rows.filter((row) => row.price_ht !== null && row.price_ht !== undefined);
+  return result.rows
+    .filter((row) => row.base_price_ht !== null && row.base_price_ht !== undefined)
+    .map((row) => ({
+      ...row,
+      price_ht: priceWithRoyaleMareeCommission(row.base_price_ht, normalizedPricingLevel, commissionSettings),
+    }));
 }
 
-async function fetchProductsByPricingLevel(db, storeId) {
+async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {}) {
   const entries = await Promise.all([1, 2, 3].map(async (level) => [
     level,
-    await fetchProductsForPricingLevel(db, storeId, level),
+    await fetchProductsForPricingLevel(db, storeId, level, commissionSettings),
   ]));
   return Object.fromEntries(entries);
 }
@@ -194,11 +192,11 @@ function clientPreviewRow(client, productsByPricingLevel) {
 }
 
 async function buildCustomerTariffEmailPreview(db, storeId) {
-  const [clients, productsByPricingLevel] = await Promise.all([
+  const [clients, storeSettings] = await Promise.all([
     fetchActiveClients(db, storeId),
-    fetchProductsByPricingLevel(db, storeId),
+    fetchStoreSettings(db, storeId),
   ]);
-
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
   const recipients = clients.map((client) => clientPreviewRow(client, productsByPricingLevel));
 
   return {
@@ -246,23 +244,47 @@ function buildEmailText(storeSettings) {
   ].join('\n');
 }
 
-function buildProductRows(products) {
+function groupProductsByFamily(products = []) {
+  return products.reduce((acc, product) => {
+    const family = product.family_name || 'Autre';
+    if (!acc[family]) acc[family] = [];
+    acc[family].push(product);
+    return acc;
+  }, {});
+}
+
+function productRow(product) {
+  return `
+    <tr>
+      <td>${escapeHtml(product.plu || '')}</td>
+      <td><strong>${escapeHtml(product.display_name || product.designation || '-')}</strong></td>
+      <td>${escapeHtml(product.sale_unit || '')}</td>
+      <td class="num price-cell">${money(product.price_ht)}</td>
+    </tr>
+  `;
+}
+
+function familySections(products) {
   if (!products.length) {
-    return `
-      <tr>
-        <td colspan="5">Aucun article disponible actuellement.</td>
-      </tr>
-    `;
+    return '<section class="empty-family">Aucun article disponible actuellement.</section>';
   }
 
-  return products.map((product) => `
-    <tr>
-      <td>${escapeHtml(product.plu || product.article_id || '')}</td>
-      <td>${escapeHtml(product.display_name || product.designation || '-')}</td>
-      <td>${escapeHtml(product.family_name || '')}</td>
-      <td>${escapeHtml(product.sale_unit || '')}</td>
-      <td class="num">${money(product.price_ht)}</td>
-    </tr>
+  const grouped = groupProductsByFamily(products);
+  return Object.keys(grouped).sort((a, b) => a.localeCompare(b, 'fr')).map((familyName) => `
+    <section class="cpl-family">
+      <h3>${escapeHtml(familyName)}</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Reference</th>
+            <th>Designation</th>
+            <th>Unite</th>
+            <th class="num">Prix HT</th>
+          </tr>
+        </thead>
+        <tbody>${grouped[familyName].map(productRow).join('')}</tbody>
+      </table>
+    </section>
   `).join('');
 }
 
@@ -276,33 +298,31 @@ function buildCustomerMercurialHtml({ client, products, storeSettings }) {
     <article class="pdf-document cpl-document">
       ${companyHeader(storeSettings, 'Mercuriale / Cours du jour', subtitle)}
       ${clientBlock}
-      <table>
-        <thead>
-          <tr>
-            <th>Reference</th>
-            <th>Designation</th>
-            <th>Famille</th>
-            <th>Unite</th>
-            <th class="num">Prix HT</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${buildProductRows(products)}
-        </tbody>
-      </table>
+      <section class="cpl-intro">
+        <p>Prix nets communiques pour la mercuriale du jour. Document strictement confidentiel.</p>
+      </section>
+      ${familySections(products)}
       ${storeSettings.legal_mentions ? `<section class="footer-note"><h3>Mentions</h3><p>${escapeHtml(storeSettings.legal_mentions)}</p></section>` : ''}
     </article>
   `;
   const styles = `
     @page { margin: 9mm; }
-    body { font-size: 10.5px; }
-    .cpl-document { min-height: 277mm; }
-    .cpl-client { border: 1px solid #c6d0d8; margin: 0 0 10px; padding: 7px 9px; }
-    .cpl-client p { margin: 0; }
-    th:nth-child(1) { width: 23mm; }
-    th:nth-child(3) { width: 34mm; }
-    th:nth-child(4) { width: 20mm; }
-    th:nth-child(5) { width: 27mm; }
+    body { background: #f5f7f9; font-size: 10.5px; }
+    .cpl-document { background: #ffffff; min-height: 277mm; padding: 0; }
+    .cpl-client, .cpl-intro { border: 1px solid #c6d0d8; margin: 0 0 10px; padding: 7px 9px; }
+    .cpl-client p, .cpl-intro p { margin: 0; }
+    .cpl-intro { background: #f7fafc; color: #52616f; }
+    .cpl-family { break-inside: avoid; margin: 0 0 10px; page-break-inside: avoid; }
+    .cpl-family h3 { background: #17212b; color: #ffffff; font-size: 11px; letter-spacing: 0; margin: 0; padding: 6px 8px; text-transform: uppercase; }
+    .cpl-family table { table-layout: fixed; }
+    .cpl-family th { background: #e8eef4; border-color: #aebdcc; color: #17212b; font-size: 8.5px; }
+    .cpl-family tbody tr:nth-child(even) { background: #f8fafc; }
+    .cpl-family td { border-color: #d5dde5; padding: 4px 5px; }
+    .cpl-family th:nth-child(1) { width: 24mm; }
+    .cpl-family th:nth-child(3) { width: 20mm; }
+    .cpl-family th:nth-child(4) { width: 28mm; }
+    .price-cell { font-size: 11px; font-weight: 800; }
+    .empty-family { border: 1px solid #c6d0d8; padding: 10px; }
   `;
 
   return htmlDocument('Mercuriale ALTA MAREE', body, styles);
@@ -438,11 +458,11 @@ function logTariffEmailResult(result) {
 }
 
 async function sendCustomerTariffEmails(db, storeId, options = {}) {
-  const [clients, productsByPricingLevel, storeSettings] = await Promise.all([
+  const [clients, storeSettings] = await Promise.all([
     fetchActiveClients(db, storeId),
-    fetchProductsByPricingLevel(db, storeId),
     fetchStoreSettings(db, storeId),
   ]);
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
 
   const previewSummary = buildSummary(clients);
   const batch = await createEmailBatch(db, storeId, options.user_id || null, previewSummary);

@@ -88,10 +88,6 @@
     </section>`;
   }
 
-  function documentTitle(tariff) {
-    return `Tarif ${tariff}`;
-  }
-
   function singleSheetHtml(priceList, lines, storeSettings, tariff) {
     const settings = storeSettings || {};
     const companyName = settings.company_name || 'Gestion Commerciale';
@@ -108,8 +104,8 @@
           </div>
         </div>
         <div class="cpl-document-meta">
-          <p class="cpl-label">${escapeHtml(documentTitle(tariff))}</p>
-          <h2>Mercuriale / Cours du jour</h2>
+          <p class="cpl-label">Mercuriale</p>
+          <h2>Cours du jour</h2>
           <p>Date : <strong>${formatDate(priceList.price_list_date)}</strong></p>
           ${clientName ? `<p>Client : <strong>${escapeHtml(clientName)}</strong></p>` : ''}
         </div>

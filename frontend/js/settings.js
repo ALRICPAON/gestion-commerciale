@@ -22,6 +22,7 @@ const fields = [
   'internal_email',
   'webmail_url',
   'calendar_url',
+  'royale_maree_commission_eur_per_kg',
   'siret',
   'vat_number',
   'sanitary_approval_number',
@@ -125,6 +126,9 @@ function fillForm(settings = {}) {
   currentSettings = { ...(settings || {}) };
   fields.forEach((field) => setFieldValue(field, currentSettings[field]));
   if (!currentSettings.country) setFieldValue('country', 'France');
+  if (!currentSettings.royale_maree_commission_eur_per_kg) {
+    setFieldValue('royale_maree_commission_eur_per_kg', '0.50');
+  }
   Object.entries(communicationDefaults).forEach(([field, fallback]) => {
     if (!currentSettings[field]) setFieldValue(field, fallback);
   });
@@ -137,6 +141,9 @@ function collectPayload() {
     payload[field] = getFieldValue(field);
   });
   if (!payload.country) payload.country = 'France';
+  if (!payload.royale_maree_commission_eur_per_kg) {
+    payload.royale_maree_commission_eur_per_kg = '0.50';
+  }
   Object.entries(communicationDefaults).forEach(([field, fallback]) => {
     if (!payload[field]) payload[field] = fallback;
   });

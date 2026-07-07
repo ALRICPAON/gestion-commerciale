@@ -1,0 +1,6474 @@
+--
+-- PostgreSQL database dump
+--
+
+\restrict Pl5UVQmaCMnYGJVmiOJjKRIOQX6zmkO9znMax1uItfiFUoE3pTTaLrkAvhimdjX
+
+-- Dumped from database version 16.13 (Debian 16.13-1.pgdg13+1)
+-- Dumped by pg_dump version 16.14 (Ubuntu 16.14-0ubuntu0.24.04.1)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: dblink; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS dblink WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION dblink; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION dblink IS 'connect to other PostgreSQL databases from within a database';
+
+
+--
+-- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgcrypto; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
+
+
+--
+-- Name: gc_next_sales_document_reference(uuid, text, text, date); Type: FUNCTION; Schema: public; Owner: admin
+--
+
+CREATE FUNCTION public.gc_next_sales_document_reference(p_store_id uuid, p_document_type text, p_prefix text, p_document_date date) RETURNS text
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+  v_year integer;
+  v_prefix text;
+  v_suffix_pattern text;
+  v_next integer;
+BEGIN
+  v_year := EXTRACT(YEAR FROM COALESCE(p_document_date, CURRENT_DATE))::integer;
+  v_prefix := UPPER(p_prefix) || '-' || v_year || '-';
+  v_suffix_pattern := '^' || UPPER(p_prefix) || '-' || v_year || '-([0-9]+)$';
+
+  PERFORM pg_advisory_xact_lock(hashtext('sales-reference:' || p_store_id::text || ':' || UPPER(p_document_type) || ':' || v_year)::bigint);
+
+  SELECT COALESCE(MAX((substring(reference_number FROM v_suffix_pattern))::integer), 0) + 1
+    INTO v_next
+  FROM sales_documents
+  WHERE store_id = p_store_id
+    AND UPPER(document_type) = UPPER(p_document_type)
+    AND reference_number LIKE v_prefix || '%'
+    AND substring(reference_number FROM v_suffix_pattern) IS NOT NULL;
+
+  RETURN v_prefix || LPAD(v_next::text, 5, '0');
+END;
+$_$;
+
+
+ALTER FUNCTION public.gc_next_sales_document_reference(p_store_id uuid, p_document_type text, p_prefix text, p_document_date date) OWNER TO admin;
+
+--
+-- Name: gc_sales_documents_short_reference_before_insert(); Type: FUNCTION; Schema: public; Owner: admin
+--
+
+CREATE FUNCTION public.gc_sales_documents_short_reference_before_insert() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+  IF UPPER(NEW.document_type) = 'ORDER'
+     AND (
+       NEW.reference_number IS NULL
+       OR btrim(NEW.reference_number) = ''
+       OR NEW.reference_number ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+       OR NEW.reference_number ~* '^CMD-[0-9]{4}-[0-9]{2}-[0-9]{2}-'
+     ) THEN
+    NEW.reference_number := gc_next_sales_document_reference(NEW.store_id, 'ORDER', 'CMD', COALESCE(NEW.document_date, CURRENT_DATE));
+  END IF;
+
+  IF UPPER(NEW.document_type) = 'DELIVERY_NOTE'
+     AND (
+       NEW.reference_number IS NULL
+       OR btrim(NEW.reference_number) = ''
+       OR NEW.reference_number ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+       OR NEW.reference_number ~* '^BL-[0-9]{4}-[0-9]{2}-[0-9]{2}-'
+     ) THEN
+    NEW.reference_number := gc_next_sales_document_reference(NEW.store_id, 'DELIVERY_NOTE', 'BL', COALESCE(NEW.document_date, CURRENT_DATE));
+  END IF;
+
+  RETURN NEW;
+END;
+$_$;
+
+
+ALTER FUNCTION public.gc_sales_documents_short_reference_before_insert() OWNER TO admin;
+
+--
+-- Name: set_suppliers_updated_at(); Type: FUNCTION; Schema: public; Owner: admin
+--
+
+CREATE FUNCTION public.set_suppliers_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.set_suppliers_updated_at() OWNER TO admin;
+
+--
+-- Name: set_updated_at(); Type: FUNCTION; Schema: public; Owner: admin
+--
+
+CREATE FUNCTION public.set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$;
+
+
+ALTER FUNCTION public.set_updated_at() OWNER TO admin;
+
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: ai_pending_actions; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.ai_pending_actions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    action_type text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    result jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    confirmed_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    executed_at timestamp with time zone,
+    CONSTRAINT ai_pending_actions_status_check CHECK ((status = ANY (ARRAY['collecting'::text, 'pending'::text, 'confirmed'::text, 'executed'::text, 'cancelled'::text, 'failed'::text])))
+);
+
+
+ALTER TABLE public.ai_pending_actions OWNER TO admin;
+
+--
+-- Name: ai_user_memory; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.ai_user_memory (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    user_id uuid NOT NULL,
+    memory_key text NOT NULL,
+    memory_value jsonb DEFAULT '{}'::jsonb NOT NULL,
+    confidence_score numeric(4,3) DEFAULT 0.500 NOT NULL,
+    source text DEFAULT 'update_user_memory'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT ai_user_memory_confidence_check CHECK (((confidence_score >= (0)::numeric) AND (confidence_score <= (1)::numeric))),
+    CONSTRAINT ai_user_memory_key_check CHECK ((memory_key = ANY (ARRAY['work_habits'::text, 'order_preferences'::text, 'confirmation_preferences'::text, 'negoce_preferences'::text, 'article_habits'::text, 'pricing_habits'::text])))
+);
+
+
+ALTER TABLE public.ai_user_memory OWNER TO admin;
+
+--
+-- Name: article_department_metadata; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.article_department_metadata (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    article_department_id uuid NOT NULL,
+    field_key character varying(100) DEFAULT 'business_metadata'::character varying NOT NULL,
+    field_value text,
+    category text,
+    latin_name text,
+    fao_zone text,
+    sous_zone text,
+    engin text,
+    allergenes text,
+    raw_source jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.article_department_metadata OWNER TO admin;
+
+--
+-- Name: article_departments; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.article_departments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    article_id uuid NOT NULL,
+    department_id uuid NOT NULL,
+    department_sector_id uuid,
+    display_name text,
+    purchase_unit character varying(50),
+    stock_unit character varying(50),
+    sale_unit character varying(50),
+    vat_rate numeric(5,2) DEFAULT 5.50 NOT NULL,
+    purchase_price_ex_vat numeric(12,4),
+    sale_price_ex_vat numeric(12,4),
+    sale_price_inc_vat numeric(12,4),
+    is_active boolean DEFAULT true NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.article_departments OWNER TO admin;
+
+--
+-- Name: articles; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.articles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    plu character varying(50) NOT NULL,
+    designation text NOT NULL,
+    ean character varying(100),
+    unit character varying(50) DEFAULT 'kg'::character varying NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    source_origin character varying(50) DEFAULT 'manual'::character varying,
+    source_id character varying(100),
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    latin_name text,
+    fao_zone text,
+    sous_zone text,
+    fishing_gear text,
+    allergens text,
+    production_method text,
+    display_name text,
+    purchase_unit text,
+    stock_unit text,
+    sale_unit text,
+    family_code text,
+    family_name text,
+    vat_rate numeric(5,2) DEFAULT 5.50 NOT NULL,
+    purchase_price_ex_vat numeric(12,4),
+    sale_price_ex_vat numeric(12,4),
+    sale_price_inc_vat numeric(12,4),
+    sale_price_level_1_ht numeric(12,4),
+    sale_price_level_2_ht numeric(12,4),
+    sale_price_level_3_ht numeric(12,4)
+);
+
+
+ALTER TABLE public.articles OWNER TO admin;
+
+--
+-- Name: backup_debug_purchase_line_metadata_20260606; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.backup_debug_purchase_line_metadata_20260606 (
+    id uuid,
+    purchase_line_id uuid,
+    meta_key text,
+    meta_value jsonb,
+    dlc date,
+    latin_name text,
+    fao_zone text,
+    sous_zone text,
+    fishing_gear text,
+    production_method text,
+    allergens text,
+    origin_label text,
+    supplier_lot_number text,
+    sanitary_photo_url text,
+    sanitary_photo_urls jsonb,
+    notes text,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone
+);
+
+
+ALTER TABLE public.backup_debug_purchase_line_metadata_20260606 OWNER TO admin;
+
+--
+-- Name: backup_debug_purchase_lines_20260606; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.backup_debug_purchase_lines_20260606 (
+    id uuid,
+    purchase_id uuid,
+    store_id uuid,
+    client_key text,
+    supplier_id uuid,
+    line_number integer,
+    supplier_article_mapping_id uuid,
+    article_id uuid,
+    supplier_reference text,
+    supplier_label text,
+    ordered_colis numeric(14,4),
+    ordered_pieces numeric(14,4),
+    ordered_quantity numeric(14,4),
+    received_colis numeric(14,4),
+    received_pieces numeric(14,4),
+    received_quantity numeric(14,4),
+    stock_quantity numeric(14,4),
+    unit_price_ex_vat numeric(14,4),
+    line_amount_ex_vat numeric(14,4),
+    price_unit text,
+    line_status text,
+    lot_id uuid,
+    lot_mode text,
+    received_at timestamp with time zone,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone
+);
+
+
+ALTER TABLE public.backup_debug_purchase_lines_20260606 OWNER TO admin;
+
+--
+-- Name: backup_debug_purchases_20260606; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.backup_debug_purchases_20260606 (
+    id uuid,
+    store_id uuid,
+    client_key text,
+    supplier_id uuid,
+    purchase_date date,
+    status text,
+    purchase_type text,
+    order_date date,
+    receipt_date date,
+    bl_number text,
+    invoice_number text,
+    notes text,
+    total_amount_ex_vat numeric(14,4),
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone,
+    updated_at timestamp with time zone,
+    source_document_url text,
+    source_document_storage_path text,
+    source_document_original_name text,
+    source_document_mime_type text,
+    source_document_uploaded_at timestamp with time zone,
+    source_document_uploaded_by uuid
+);
+
+
+ALTER TABLE public.backup_debug_purchases_20260606 OWNER TO admin;
+
+--
+-- Name: clients; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.clients (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    code text,
+    name text NOT NULL,
+    legal_name text,
+    client_type text DEFAULT 'standard'::text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    contact_name text,
+    phone text,
+    mobile text,
+    email text,
+    address_line1 text,
+    address_line2 text,
+    postal_code text,
+    city text,
+    country text DEFAULT 'France'::text,
+    vat_number text,
+    siret text,
+    payment_terms text,
+    delivery_terms text,
+    notes text,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    tariff_level integer DEFAULT 1 NOT NULL,
+    vat_rate numeric(5,2) DEFAULT 5.50 NOT NULL,
+    is_vat_exempt boolean DEFAULT false NOT NULL,
+    billed_client_id uuid,
+    store_identifier text,
+    CONSTRAINT chk_clients_tariff_level CHECK ((tariff_level = ANY (ARRAY[1, 2, 3])))
+);
+
+
+ALTER TABLE public.clients OWNER TO admin;
+
+--
+-- Name: customer_price_list_lines; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.customer_price_list_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    price_list_id uuid NOT NULL,
+    article_id uuid,
+    family_code text,
+    family_name text,
+    display_order integer DEFAULT 0 NOT NULL,
+    is_featured boolean DEFAULT false NOT NULL,
+    designation_snapshot text NOT NULL,
+    caliber_info text,
+    origin_label text,
+    fao_zone text,
+    sous_zone text,
+    sale_unit text,
+    stock_quantity_snapshot numeric(14,4),
+    price_ht numeric(14,4),
+    price_level_1_ht numeric(14,4),
+    price_level_2_ht numeric(14,4),
+    price_level_3_ht numeric(14,4),
+    price_source text DEFAULT 'manual'::text NOT NULL,
+    tariff_level integer,
+    line_note text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_customer_price_list_lines_price_source CHECK ((price_source = ANY (ARRAY['target_tariff'::text, 'client_tariff'::text, 'manual'::text, 'none'::text]))),
+    CONSTRAINT chk_customer_price_list_lines_tariff_level CHECK (((tariff_level IS NULL) OR (tariff_level = ANY (ARRAY[1, 2, 3]))))
+);
+
+
+ALTER TABLE public.customer_price_list_lines OWNER TO admin;
+
+--
+-- Name: customer_price_lists; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.customer_price_lists (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    client_id uuid,
+    course_type text DEFAULT 'general'::text NOT NULL,
+    title text,
+    price_list_date date DEFAULT CURRENT_DATE NOT NULL,
+    valid_until date,
+    status text DEFAULT 'draft'::text NOT NULL,
+    tariff_level integer,
+    notes text,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_customer_price_lists_course_type CHECK ((course_type = ANY (ARRAY['general'::text, 'client'::text, 'promotion'::text, 'daily_arrival'::text]))),
+    CONSTRAINT chk_customer_price_lists_status CHECK ((status = ANY (ARRAY['draft'::text, 'ready'::text, 'archived'::text]))),
+    CONSTRAINT chk_customer_price_lists_tariff_level CHECK (((tariff_level IS NULL) OR (tariff_level = ANY (ARRAY[1, 2, 3]))))
+);
+
+
+ALTER TABLE public.customer_price_lists OWNER TO admin;
+
+--
+-- Name: department_sectors; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.department_sectors (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    department_id uuid NOT NULL,
+    code character varying(50) NOT NULL,
+    name character varying(120) NOT NULL,
+    description text,
+    color_hex character varying(20),
+    display_order integer DEFAULT 0 NOT NULL,
+    is_active boolean DEFAULT true NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.department_sectors OWNER TO admin;
+
+--
+-- Name: departments; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.departments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    code character varying(50) NOT NULL,
+    name character varying(100) NOT NULL,
+    business_type character varying(50) NOT NULL,
+    created_at timestamp without time zone DEFAULT now()
+);
+
+
+ALTER TABLE public.departments OWNER TO admin;
+
+--
+-- Name: lots; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.lots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    article_id uuid NOT NULL,
+    purchase_id uuid,
+    purchase_line_id uuid,
+    supplier_id uuid,
+    lot_code text NOT NULL,
+    supplier_lot_number text,
+    source_type text DEFAULT 'purchase'::text NOT NULL,
+    qty_initial numeric(14,4) DEFAULT 0 NOT NULL,
+    qty_remaining numeric(14,4) DEFAULT 0 NOT NULL,
+    unit_cost_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    dlc date,
+    traceability_data jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.lots OWNER TO admin;
+
+--
+-- Name: purchase_line_metadata; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.purchase_line_metadata (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    purchase_line_id uuid NOT NULL,
+    meta_key text DEFAULT 'gc_line'::text NOT NULL,
+    meta_value jsonb DEFAULT '{}'::jsonb NOT NULL,
+    dlc date,
+    latin_name text,
+    fao_zone text,
+    sous_zone text,
+    fishing_gear text,
+    production_method text,
+    allergens text,
+    origin_label text,
+    supplier_lot_number text,
+    sanitary_photo_url text,
+    sanitary_photo_urls jsonb DEFAULT '[]'::jsonb,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT purchase_line_metadata_sanitary_photo_urls_array_chk CHECK (((sanitary_photo_urls IS NULL) OR (jsonb_typeof(sanitary_photo_urls) = 'array'::text)))
+);
+
+
+ALTER TABLE public.purchase_line_metadata OWNER TO admin;
+
+--
+-- Name: purchase_lines; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.purchase_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    purchase_id uuid NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    supplier_id uuid NOT NULL,
+    line_number integer DEFAULT 1 NOT NULL,
+    supplier_article_mapping_id uuid,
+    article_id uuid,
+    supplier_reference text,
+    supplier_label text,
+    ordered_colis numeric(14,4),
+    ordered_pieces numeric(14,4),
+    ordered_quantity numeric(14,4) DEFAULT 0,
+    received_colis numeric(14,4),
+    received_pieces numeric(14,4),
+    received_quantity numeric(14,4) DEFAULT 0,
+    stock_quantity numeric(14,4) DEFAULT 0,
+    unit_price_ex_vat numeric(14,4) DEFAULT 0,
+    line_amount_ex_vat numeric(14,4) DEFAULT 0,
+    price_unit text DEFAULT 'kg'::text NOT NULL,
+    line_status text DEFAULT 'pending'::text NOT NULL,
+    lot_id uuid,
+    lot_mode text DEFAULT 'auto'::text,
+    received_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT purchase_lines_line_status_check CHECK ((line_status = ANY (ARRAY['pending'::text, 'received'::text, 'cancelled'::text]))),
+    CONSTRAINT purchase_lines_price_unit_check CHECK ((price_unit = ANY (ARRAY['kg'::text, 'piece'::text, 'colis'::text])))
+);
+
+
+ALTER TABLE public.purchase_lines OWNER TO admin;
+
+--
+-- Name: purchases; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.purchases (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    supplier_id uuid NOT NULL,
+    purchase_date date DEFAULT CURRENT_DATE NOT NULL,
+    status text DEFAULT 'ordered'::text NOT NULL,
+    purchase_type text DEFAULT 'order'::text NOT NULL,
+    order_date date DEFAULT CURRENT_DATE,
+    receipt_date date,
+    bl_number text,
+    invoice_number text,
+    notes text,
+    total_amount_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    source_document_url text,
+    source_document_storage_path text,
+    source_document_original_name text,
+    source_document_mime_type text,
+    source_document_uploaded_at timestamp with time zone,
+    source_document_uploaded_by uuid,
+    CONSTRAINT chk_purchases_status_supplier_invoice_flow CHECK ((status = ANY (ARRAY['draft'::text, 'ordered'::text, 'receiving'::text, 'received'::text, 'received_pending_invoice'::text, 'invoice_matched'::text, 'invoice_difference'::text, 'invoice_validated'::text, 'cost_adjusted'::text, 'sent_pennylane'::text, 'closed'::text, 'cancelled'::text]))),
+    CONSTRAINT purchases_purchase_type_check CHECK ((purchase_type = ANY (ARRAY['order'::text, 'direct_bl'::text, 'invoice_only'::text])))
+);
+
+
+ALTER TABLE public.purchases OWNER TO admin;
+
+--
+-- Name: sale_line_allocations; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.sale_line_allocations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sales_line_id uuid NOT NULL,
+    lot_id uuid NOT NULL,
+    quantity numeric(14,4) NOT NULL,
+    unit_cost_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.sale_line_allocations OWNER TO admin;
+
+--
+-- Name: sales_documents; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.sales_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    client_id uuid,
+    document_date date DEFAULT CURRENT_DATE NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    document_type text DEFAULT 'manual_sale'::text NOT NULL,
+    origin text DEFAULT 'manual'::text NOT NULL,
+    reference_number text,
+    notes text,
+    total_amount_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    total_amount_inc_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    total_vat_amount numeric(14,2) DEFAULT 0 NOT NULL,
+    tariff_level_snapshot integer,
+    vat_rate_snapshot numeric(5,2),
+    is_vat_exempt_snapshot boolean DEFAULT false NOT NULL,
+    source_order_id uuid,
+    billed_client_id uuid,
+    delivered_client_name_snapshot text,
+    delivered_client_code_snapshot text,
+    delivered_client_store_identifier text,
+    billed_client_name_snapshot text,
+    billed_client_code_snapshot text,
+    validated_at timestamp with time zone,
+    printed_at timestamp with time zone,
+    source_delivery_note_id uuid,
+    source_invoice_id uuid,
+    locked_at timestamp with time zone,
+    invoiced_at timestamp with time zone,
+    credit_note_reason text,
+    returns_to_stock boolean DEFAULT false NOT NULL,
+    pennylane_status text DEFAULT 'not_sent'::text NOT NULL,
+    pennylane_invoice_id text,
+    pennylane_synced_at timestamp with time zone,
+    pennylane_error text,
+    CONSTRAINT sales_documents_document_type_check CHECK ((document_type = ANY (ARRAY['ORDER'::text, 'DELIVERY_NOTE'::text, 'INVOICE'::text, 'CREDIT_NOTE'::text, 'manual_sale'::text, 'inventory_sale'::text, 'transfer_out'::text, 'waste'::text]))),
+    CONSTRAINT sales_documents_pennylane_status_check CHECK ((pennylane_status = ANY (ARRAY['not_sent'::text, 'pending'::text, 'sent'::text, 'error'::text]))),
+    CONSTRAINT sales_documents_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'pending'::text, 'validated'::text, 'delivered'::text, 'invoiced'::text, 'cancelled'::text, 'credited'::text])))
+);
+
+
+ALTER TABLE public.sales_documents OWNER TO admin;
+
+--
+-- Name: sales_lines; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.sales_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    sales_document_id uuid NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    article_id uuid,
+    line_number integer DEFAULT 1 NOT NULL,
+    ean text,
+    article_label text,
+    sold_quantity numeric(14,4) DEFAULT 0 NOT NULL,
+    sale_unit text DEFAULT 'kg'::text NOT NULL,
+    unit_sale_price_ttc numeric(14,4) DEFAULT 0,
+    unit_sale_price_ht numeric(14,4) DEFAULT 0,
+    unit_cost_ex_vat numeric(14,4) DEFAULT 0,
+    line_amount_ttc numeric(14,4) DEFAULT 0,
+    line_amount_ht numeric(14,4) DEFAULT 0,
+    line_margin_ex_vat numeric(14,4) DEFAULT 0,
+    line_reason text,
+    line_status text DEFAULT 'pending'::text NOT NULL,
+    source_inventory_line jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    article_plu text,
+    package_count numeric(12,3) DEFAULT 0 NOT NULL,
+    weight_per_package numeric(12,3) DEFAULT 0 NOT NULL,
+    total_weight numeric(14,3) DEFAULT 0 NOT NULL,
+    vat_rate numeric(5,2) DEFAULT 5.50 NOT NULL,
+    line_vat_amount numeric(14,2) DEFAULT 0 NOT NULL,
+    selected_lot_id uuid,
+    suggested_lot_id uuid,
+    traceability_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    source_invoice_line_id uuid,
+    CONSTRAINT sales_lines_line_status_check CHECK ((line_status = ANY (ARRAY['pending'::text, 'draft'::text, 'ordered'::text, 'validated'::text, 'delivered'::text, 'invoiced'::text, 'cancelled'::text, 'credited'::text]))),
+    CONSTRAINT sales_lines_sale_unit_check CHECK ((sale_unit = ANY (ARRAY['kg'::text, 'piece'::text, 'colis'::text])))
+);
+
+
+ALTER TABLE public.sales_lines OWNER TO admin;
+
+--
+-- Name: stock_movements; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.stock_movements (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    article_id uuid NOT NULL,
+    lot_id uuid,
+    movement_type text NOT NULL,
+    quantity numeric(14,4) NOT NULL,
+    unit_cost_ex_vat numeric(14,4) DEFAULT 0,
+    source_table text,
+    source_id uuid,
+    notes text,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.stock_movements OWNER TO admin;
+
+--
+-- Name: stock_snapshot_lines; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.stock_snapshot_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    snapshot_id uuid NOT NULL,
+    article_id uuid,
+    lot_id uuid,
+    quantity numeric(14,4) DEFAULT 0 NOT NULL,
+    unit_cost_ht numeric(14,4) DEFAULT 0 NOT NULL,
+    total_value_ht numeric(14,4) DEFAULT 0 NOT NULL
+);
+
+
+ALTER TABLE public.stock_snapshot_lines OWNER TO admin;
+
+--
+-- Name: stock_snapshots; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.stock_snapshots (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    snapshot_date timestamp with time zone DEFAULT now() NOT NULL,
+    snapshot_type text DEFAULT 'manual'::text NOT NULL,
+    total_value_ht numeric(14,4) DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by uuid,
+    CONSTRAINT stock_snapshots_snapshot_type_check CHECK ((snapshot_type = ANY (ARRAY['manual'::text, 'automatic'::text])))
+);
+
+
+ALTER TABLE public.stock_snapshots OWNER TO admin;
+
+--
+-- Name: stock_summary; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.stock_summary (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    article_id uuid NOT NULL,
+    stock_quantity numeric(14,4) DEFAULT 0 NOT NULL,
+    stock_value_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    pma numeric(14,4) DEFAULT 0 NOT NULL,
+    next_dlc date,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.stock_summary OWNER TO admin;
+
+--
+-- Name: store_settings; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.store_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    company_name text,
+    logo_url text,
+    address_line1 text,
+    address_line2 text,
+    postal_code text,
+    city text,
+    country text DEFAULT 'France'::text NOT NULL,
+    phone text,
+    email text,
+    siret text,
+    vat_number text,
+    sanitary_approval_number text,
+    iban text,
+    bic text,
+    payment_terms text,
+    legal_mentions text,
+    terms_and_conditions text,
+    delivery_note_footer text,
+    invoice_footer text,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    favicon_url text
+);
+
+
+ALTER TABLE public.store_settings OWNER TO admin;
+
+--
+-- Name: stores; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.stores (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    code character varying(50) NOT NULL,
+    name character varying(150) NOT NULL,
+    created_at timestamp without time zone DEFAULT now(),
+    client_key text
+);
+
+
+ALTER TABLE public.stores OWNER TO admin;
+
+--
+-- Name: supplier_article_mappings; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.supplier_article_mappings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    supplier_id uuid NOT NULL,
+    article_id uuid NOT NULL,
+    supplier_ref text NOT NULL,
+    supplier_label text,
+    is_active boolean DEFAULT true NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    purchase_unit text DEFAULT 'kg'::text,
+    price_unit text DEFAULT 'kg'::text
+);
+
+
+ALTER TABLE public.supplier_article_mappings OWNER TO admin;
+
+--
+-- Name: supplier_invoice_cost_adjustments; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.supplier_invoice_cost_adjustments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    supplier_invoice_id uuid NOT NULL,
+    purchase_id uuid,
+    purchase_line_id uuid,
+    lot_id uuid,
+    article_id uuid,
+    old_unit_cost_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    new_unit_cost_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    quantity_reference numeric(14,3) DEFAULT 0 NOT NULL,
+    adjustment_amount_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    reason text,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.supplier_invoice_cost_adjustments OWNER TO admin;
+
+--
+-- Name: supplier_invoice_documents; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.supplier_invoice_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    supplier_invoice_id uuid,
+    purchase_id uuid,
+    store_id uuid NOT NULL,
+    document_type text DEFAULT 'invoice'::text NOT NULL,
+    original_name text,
+    mime_type text,
+    storage_path text NOT NULL,
+    public_url text,
+    uploaded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.supplier_invoice_documents OWNER TO admin;
+
+--
+-- Name: supplier_invoice_exports; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.supplier_invoice_exports (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    supplier_invoice_id uuid NOT NULL,
+    store_id uuid NOT NULL,
+    export_type text DEFAULT 'pennylane_payload'::text NOT NULL,
+    status text DEFAULT 'ready_to_send'::text NOT NULL,
+    payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    external_id text,
+    error text,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    sent_at timestamp with time zone
+);
+
+
+ALTER TABLE public.supplier_invoice_exports OWNER TO admin;
+
+--
+-- Name: supplier_invoice_lines; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.supplier_invoice_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    supplier_invoice_id uuid NOT NULL,
+    store_id uuid NOT NULL,
+    supplier_id uuid NOT NULL,
+    line_number integer DEFAULT 1 NOT NULL,
+    article_id uuid,
+    supplier_reference text,
+    supplier_label text,
+    quantity numeric(14,3) DEFAULT 0 NOT NULL,
+    colis numeric(14,3),
+    pieces numeric(14,3),
+    price_unit text DEFAULT 'kg'::text NOT NULL,
+    unit_price_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    line_amount_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    vat_rate numeric(6,3) DEFAULT 0 NOT NULL,
+    vat_amount numeric(14,4) DEFAULT 0 NOT NULL,
+    line_amount_inc_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    match_status text DEFAULT 'unmatched'::text NOT NULL,
+    match_error text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    parsed_payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT chk_supplier_invoice_lines_match_status CHECK ((match_status = ANY (ARRAY['unmatched'::text, 'matched'::text, 'quantity_difference'::text, 'price_difference'::text, 'missing_purchase_line'::text])))
+);
+
+
+ALTER TABLE public.supplier_invoice_lines OWNER TO admin;
+
+--
+-- Name: supplier_invoice_matches; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.supplier_invoice_matches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    supplier_invoice_id uuid NOT NULL,
+    supplier_invoice_line_id uuid,
+    purchase_id uuid,
+    purchase_line_id uuid,
+    lot_id uuid,
+    match_status text DEFAULT 'matched'::text NOT NULL,
+    difference_type text,
+    quantity_difference numeric(14,3) DEFAULT 0 NOT NULL,
+    price_difference numeric(14,4) DEFAULT 0 NOT NULL,
+    amount_difference numeric(14,4) DEFAULT 0 NOT NULL,
+    notes text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_supplier_invoice_matches_status CHECK ((match_status = ANY (ARRAY['matched'::text, 'partial'::text, 'difference'::text, 'manual_validated'::text])))
+);
+
+
+ALTER TABLE public.supplier_invoice_matches OWNER TO admin;
+
+--
+-- Name: supplier_invoices; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.supplier_invoices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    supplier_id uuid NOT NULL,
+    invoice_number text NOT NULL,
+    invoice_date date,
+    due_date date,
+    status text DEFAULT 'draft'::text NOT NULL,
+    match_status text DEFAULT 'unmatched'::text NOT NULL,
+    supplier_type text,
+    total_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    product_total_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    fees_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    vat_amount numeric(14,4) DEFAULT 0 NOT NULL,
+    total_inc_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    document_url text,
+    pennylane_status text DEFAULT 'ready_to_send'::text NOT NULL,
+    pennylane_id text,
+    pennylane_payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    pennylane_synced_at timestamp with time zone,
+    pennylane_error text,
+    notes text,
+    created_by uuid,
+    validated_by uuid,
+    validated_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    supplier_invoice_bl_number text,
+    customer_code text,
+    parsed_payload jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT chk_supplier_invoices_match_status CHECK ((match_status = ANY (ARRAY['unmatched'::text, 'partial'::text, 'matched'::text, 'discrepancy'::text]))),
+    CONSTRAINT chk_supplier_invoices_pennylane_status CHECK ((pennylane_status = ANY (ARRAY['not_ready'::text, 'ready_to_send'::text, 'pending'::text, 'sent_to_pennylane'::text, 'error'::text]))),
+    CONSTRAINT chk_supplier_invoices_status CHECK ((status = ANY (ARRAY['draft'::text, 'matched'::text, 'invoice_difference'::text, 'invoice_validated'::text, 'cost_adjusted'::text, 'ready_to_send'::text, 'sent_to_pennylane'::text, 'pennylane_error'::text, 'cancelled'::text])))
+);
+
+
+ALTER TABLE public.supplier_invoices OWNER TO admin;
+
+--
+-- Name: suppliers; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.suppliers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    code character varying(50),
+    name character varying(255) NOT NULL,
+    legal_name character varying(255),
+    supplier_type character varying(50) DEFAULT 'standard'::character varying NOT NULL,
+    status character varying(30) DEFAULT 'active'::character varying NOT NULL,
+    contact_name character varying(255),
+    phone character varying(50),
+    mobile character varying(50),
+    email character varying(255),
+    address_line1 character varying(255),
+    address_line2 character varying(255),
+    postal_code character varying(20),
+    city character varying(120),
+    country character varying(120) DEFAULT 'France'::character varying,
+    vat_number character varying(80),
+    siret character varying(80),
+    payment_terms character varying(120),
+    delivery_terms character varying(120),
+    notes text,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp without time zone DEFAULT now() NOT NULL,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    CONSTRAINT suppliers_status_check CHECK (((status)::text = ANY ((ARRAY['active'::character varying, 'inactive'::character varying, 'blocked'::character varying])::text[]))),
+    CONSTRAINT suppliers_type_check CHECK (((supplier_type)::text = ANY ((ARRAY['standard'::character varying, 'mareyeur'::character varying, 'criee'::character varying, 'importateur'::character varying, 'transporteur'::character varying, 'emballage'::character varying, 'autre'::character varying])::text[])))
+);
+
+
+ALTER TABLE public.suppliers OWNER TO admin;
+
+--
+-- Name: transformation_inputs; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.transformation_inputs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    transformation_id uuid NOT NULL,
+    store_id uuid NOT NULL,
+    department_id uuid,
+    client_key text,
+    article_id uuid NOT NULL,
+    source_lot_id uuid,
+    line_number integer DEFAULT 1 NOT NULL,
+    article_plu text,
+    article_label text,
+    input_quantity numeric(14,3) DEFAULT 0 NOT NULL,
+    input_unit text DEFAULT 'kg'::text NOT NULL,
+    unit_cost_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    total_cost_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    line_status text DEFAULT 'pending'::text NOT NULL,
+    traceability_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    source_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_transformation_inputs_quantity CHECK ((input_quantity >= (0)::numeric)),
+    CONSTRAINT chk_transformation_inputs_status CHECK ((line_status = ANY (ARRAY['pending'::text, 'validated'::text, 'cancelled'::text]))),
+    CONSTRAINT chk_transformation_inputs_unit CHECK ((input_unit = ANY (ARRAY['kg'::text, 'piece'::text, 'colis'::text])))
+);
+
+
+ALTER TABLE public.transformation_inputs OWNER TO admin;
+
+--
+-- Name: transformation_metadata; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.transformation_metadata (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    transformation_id uuid NOT NULL,
+    store_id uuid NOT NULL,
+    client_key text,
+    meta_key text DEFAULT 'creation'::text NOT NULL,
+    meta_value jsonb DEFAULT '{}'::jsonb NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    notes text,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+ALTER TABLE public.transformation_metadata OWNER TO admin;
+
+--
+-- Name: transformation_outputs; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.transformation_outputs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    transformation_id uuid NOT NULL,
+    store_id uuid NOT NULL,
+    department_id uuid,
+    client_key text,
+    article_id uuid NOT NULL,
+    created_lot_id uuid,
+    line_number integer DEFAULT 1 NOT NULL,
+    article_plu text,
+    article_label text,
+    output_quantity numeric(14,3) DEFAULT 0 NOT NULL,
+    output_unit text DEFAULT 'kg'::text NOT NULL,
+    unit_cost_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    total_cost_ex_vat numeric(14,4) DEFAULT 0 NOT NULL,
+    line_status text DEFAULT 'pending'::text NOT NULL,
+    traceability_snapshot jsonb DEFAULT '{}'::jsonb NOT NULL,
+    output_metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_by uuid,
+    updated_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_transformation_outputs_quantity CHECK ((output_quantity >= (0)::numeric)),
+    CONSTRAINT chk_transformation_outputs_status CHECK ((line_status = ANY (ARRAY['pending'::text, 'validated'::text, 'cancelled'::text]))),
+    CONSTRAINT chk_transformation_outputs_unit CHECK ((output_unit = ANY (ARRAY['kg'::text, 'piece'::text, 'colis'::text])))
+);
+
+
+ALTER TABLE public.transformation_outputs OWNER TO admin;
+
+--
+-- Name: transformations; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.transformations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    department_id uuid,
+    client_key text,
+    transformation_date date DEFAULT CURRENT_DATE NOT NULL,
+    status text DEFAULT 'draft'::text NOT NULL,
+    transformation_type text DEFAULT 'simple'::text NOT NULL,
+    source_type text DEFAULT 'transformation'::text NOT NULL,
+    reference_number text,
+    notes text,
+    validated_at timestamp with time zone,
+    cancelled_at timestamp with time zone,
+    created_by uuid,
+    updated_by uuid,
+    validated_by uuid,
+    cancelled_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chk_transformations_status CHECK ((status = ANY (ARRAY['draft'::text, 'validated'::text, 'cancelled'::text]))),
+    CONSTRAINT chk_transformations_type CHECK ((transformation_type = 'simple'::text))
+);
+
+
+ALTER TABLE public.transformations OWNER TO admin;
+
+--
+-- Name: user_departments; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.user_departments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    user_id uuid NOT NULL,
+    department_id uuid NOT NULL,
+    is_default boolean DEFAULT false
+);
+
+
+ALTER TABLE public.user_departments OWNER TO admin;
+
+--
+-- Name: users; Type: TABLE; Schema: public; Owner: admin
+--
+
+CREATE TABLE public.users (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    store_id uuid NOT NULL,
+    email character varying(150) NOT NULL,
+    password_hash text NOT NULL,
+    role character varying(50) DEFAULT 'employee'::character varying,
+    created_at timestamp without time zone DEFAULT now(),
+    is_active boolean DEFAULT true
+);
+
+
+ALTER TABLE public.users OWNER TO admin;
+
+--
+-- Data for Name: ai_pending_actions; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.ai_pending_actions (id, store_id, user_id, action_type, status, payload, result, created_at, confirmed_at, cancelled_at, executed_at) FROM stdin;
+408fa7a3-2f4b-43cc-98e6-b786536d61c6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	executed	{"lines": [{"quantity": 10, "vat_rate": 5.5, "sale_unit": "kg", "article_id": "1732a336-2afd-4376-ad2e-034c34d5afd3", "article_plu": "3168", "article_label": "PAVES DE QUEUE DE CABILLAUD", "line_amount_ht": 0, "line_amount_ttc": 0, "line_vat_amount": 0, "unit_cost_ex_vat": 0, "line_margin_ex_vat": 0, "unit_sale_price_ht": 0, "unit_sale_price_ttc": 0}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "code": "10003", "name": "Sodivardiere", "vat_rate": "5.50", "tariff_level": 1, "is_vat_exempt": false}, "source_prompt": "Prépare une commande pour Sodivardière avec 10 kg de pavés de saumon."}	{"lines": [{"id": "eeb3a849-1b74-45e2-b182-32bb3d97808b", "sale_unit": "kg", "article_label": "PAVES DE QUEUE DE CABILLAUD", "sold_quantity": "10.0000", "line_amount_ht": "0.0000"}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "name": "Sodivardiere"}, "status": "draft", "sale_id": "255aa28e-3245-46f6-b7a8-a3d58c204e6f", "document_type": "ORDER"}	2026-06-13 15:18:26.603681+00	2026-06-13 15:18:39.140248+00	\N	2026-06-13 15:18:39.140248+00
+5904bc78-aaf0-4b97-bae4-8eada00d2ef7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	executed	{"lines": [{"quantity": 10, "vat_rate": 5.5, "sale_unit": "kg", "article_id": "5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8", "article_plu": "3065", "article_label": "PAVES DE SAUMON GROS", "line_amount_ht": 161.1, "line_amount_ttc": 169.96, "line_vat_amount": 8.86, "unit_cost_ex_vat": 14.5, "line_margin_ex_vat": 16.1, "unit_sale_price_ht": 16.11, "unit_sale_price_ttc": 16.996}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "city": "challans", "code": "10003", "name": "Sodivardiere", "email": null, "vat_rate": "5.50", "tariff_level": 1, "is_vat_exempt": false, "confidence_score": 1}, "source_prompt": "Prépare une commande pour Sodivardière avec 10 kg de saumon."}	{"lines": [{"id": "e519da23-5e20-4411-b317-bb8e99e654db", "sale_unit": "kg", "article_label": "PAVES DE SAUMON GROS", "sold_quantity": "10.0000", "line_amount_ht": "161.1000"}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "name": "Sodivardiere"}, "status": "draft", "sale_id": "c834a413-ebd8-486a-be1c-2f2df1af68f9", "document_type": "ORDER"}	2026-06-13 16:05:36.275577+00	2026-06-13 16:05:44.672091+00	\N	2026-06-13 16:05:44.672091+00
+51808779-f9aa-4dd1-88e2-a27fd2d9cc09	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	cancelled	{"source": "ai_agent_chat", "short_memory": {"prix": [{"price": null, "article_search": "amande"}], "client": {"search": "Royale Marée"}, "statut": "collecting", "produits": [{"unit": "kg", "price": null, "quantity": 3, "article_search": "amande"}], "quantites": [{"unit": "kg", "quantity": 3, "article_search": "amande"}], "updated_at": "2026-06-14T06:48:50.847Z", "clarification": "Je n ai pas de stock disponible sur \\"AMANDE\\".\\nPeux-tu preciser l article exact ?", "missing_fields": [], "derniere_action_pending": null}, "last_question": "Fais une commande pour Royale Marée avec 3 kg d'amande"}	{"completed_by_action_id": "ebeaa751-bff1-4a66-8416-f7ea1c82969a"}	2026-06-14 06:48:50.847861+00	\N	2026-06-14 06:49:31.219144+00	\N
+ebeaa751-bff1-4a66-8416-f7ea1c82969a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	executed	{"lines": [{"quantity": 3, "vat_rate": 5.5, "is_negoce": true, "sale_unit": "kg", "article_id": "cd4f7c91-8a11-42f0-bb80-c35dd0043567", "article_plu": "3316", "article_label": "AMANDE - NEGOCE A APPROVISIONNER", "package_count": 0, "supply_status": "a_approvisionner", "line_amount_ht": 8.7, "line_amount_ttc": 9.18, "line_vat_amount": 0.48, "unit_cost_ex_vat": 0, "line_margin_ex_vat": 8.7, "unit_sale_price_ht": 2.9, "weight_per_package": 0, "unit_sale_price_ttc": 3.06}], "client": {"id": "4424c69f-0b7c-445c-b7f0-fb6019d11075", "city": null, "code": "10002", "name": "ROYALE MAREE", "email": null, "vat_rate": "5.50", "tariff_level": 1, "is_vat_exempt": false, "confidence_score": 1}, "source_prompt": "user: Fais une commande pour Royale Marée avec 3 kg d'amande\\nassistant: Je n'ai pas de stock disponible sur \\"AMANDE\\". Peux-tu préciser l'article exact ?\\nuser: oui regarde dans la base article et fais lui a 2.90e\\nuser: Prepare une commande pour Royale Marée avec 3kg de amande prix 2.9", "has_negoce_lines": true}	{"lines": [{"id": "06e1bbae-f523-47b4-82de-5d7fc51f4ee1", "sale_unit": "kg", "article_label": "AMANDE - NEGOCE A APPROVISIONNER", "sold_quantity": "3.0000", "line_amount_ht": "8.7000"}], "client": {"id": "4424c69f-0b7c-445c-b7f0-fb6019d11075", "name": "ROYALE MAREE"}, "status": "draft", "sale_id": "ecc51a10-9d42-42a6-b84c-23cd7a01edb6", "document_type": "ORDER"}	2026-06-14 06:49:31.214883+00	2026-06-14 06:49:45.760347+00	\N	2026-06-14 06:49:45.760347+00
+56d8c2f7-d3af-473c-8b6a-c6b09207031c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	cancelled	{"source": "update_action_memory_tool", "short_memory": {"status": "collecting", "quantity": 15, "action_type": "customer_order_draft", "article_plu": null, "colis_count": 5, "client_search": "Royale Marée", "unit_price_ht": 12.9, "article_search": "langoustine 20/30", "missing_fields": ["article_plu"], "weight_per_colis": 3}, "last_question": "Commande Royale Marée\\n5x3kg langoustine 20/30\\n12.90"}	{"completed_by_action_id": "dd4eb001-01c7-4a39-bf32-4d0dc3628330"}	2026-06-14 06:52:07.935077+00	\N	2026-06-14 07:32:51.967019+00	\N
+dd4eb001-01c7-4a39-bf32-4d0dc3628330	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	executed	{"lines": [{"quantity": 15, "vat_rate": 5.5, "is_negoce": true, "sale_unit": "kg", "article_id": "ab91289c-1726-4716-85bc-a92255177546", "article_plu": "3135", "article_label": "LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER", "package_count": 5, "supply_status": "a_approvisionner", "line_amount_ht": 193.5, "line_amount_ttc": 204.14, "line_vat_amount": 10.64, "unit_cost_ex_vat": 0, "line_margin_ex_vat": 193.5, "unit_sale_price_ht": 12.9, "weight_per_package": 3, "unit_sale_price_ttc": 13.6093}], "client": {"id": "4424c69f-0b7c-445c-b7f0-fb6019d11075", "city": null, "code": "10002", "name": "ROYALE MAREE", "email": null, "vat_rate": "5.50", "tariff_level": 1, "is_vat_exempt": false, "confidence_score": 1}, "source_prompt": null, "has_negoce_lines": true}	{"lines": [{"id": "15dd790b-bf8f-4ab8-bf03-c42bee4988b9", "sale_unit": "kg", "article_label": "LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER", "sold_quantity": "15.0000", "line_amount_ht": "193.5000"}], "client": {"id": "4424c69f-0b7c-445c-b7f0-fb6019d11075", "name": "ROYALE MAREE"}, "status": "draft", "sale_id": "532618b4-0dae-4981-9a70-a1f4e4a4c073", "document_type": "ORDER"}	2026-06-14 07:32:51.961921+00	2026-06-14 07:33:03.334854+00	\N	2026-06-14 07:33:03.334854+00
+92b08333-99af-47df-ad76-7c72c057a01d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	cancelled	{"source": "update_action_memory_tool", "short_memory": {"status": "collecting", "quantity": 15, "action_type": "customer_order_draft", "article_plu": "3135", "colis_count": 5, "client_search": "sodivardiere", "unit_price_ht": 15.5, "article_search": "langoustine glacee 21/30", "missing_fields": ["article"], "weight_per_colis": 3}, "last_question": "3135"}	{"completed_by_action_id": "e717b9ac-faf9-4294-816f-6d5653111dfb"}	2026-06-14 07:45:56.740126+00	\N	2026-06-14 07:47:42.273343+00	\N
+e717b9ac-faf9-4294-816f-6d5653111dfb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	executed	{"lines": [{"quantity": 15, "vat_rate": 5.5, "is_negoce": true, "sale_unit": "kg", "article_id": "ab91289c-1726-4716-85bc-a92255177546", "article_plu": "3135", "article_label": "LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER", "package_count": 5, "supply_status": "a_approvisionner", "line_amount_ht": 232.5, "line_amount_ttc": 245.29, "line_vat_amount": 12.79, "unit_cost_ex_vat": 0, "line_margin_ex_vat": 232.5, "unit_sale_price_ht": 15.5, "weight_per_package": 3, "unit_sale_price_ttc": 16.3527}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "city": "challans", "code": "10003", "name": "Sodivardiere", "email": null, "vat_rate": "5.50", "tariff_level": 1, "is_vat_exempt": false, "confidence_score": 1}, "source_prompt": null, "has_negoce_lines": true}	{"lines": [{"id": "39759d00-139e-4288-9d1f-b4791ad886a1", "sale_unit": "kg", "article_label": "LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER", "sold_quantity": "15.0000", "line_amount_ht": "232.5000"}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "name": "Sodivardiere"}, "status": "draft", "sale_id": "5239a768-2a19-49ad-8bd8-810dc1e85936", "document_type": "ORDER"}	2026-06-14 07:47:42.267466+00	2026-06-14 07:47:49.380931+00	\N	2026-06-14 07:47:49.380931+00
+47cd764f-4a16-440e-a9f5-b29ff9f3d27d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	cancelled	{"source": "update_action_memory_tool", "short_memory": {"status": "collecting", "quantity": 15, "action_type": "customer_order_draft", "article_plu": null, "colis_count": 5, "client_search": "sodivardiere", "unit_price_ht": 15.5, "article_search": "langoustine glacée 21/30", "missing_fields": [], "weight_per_colis": 3}, "last_question": "créer une commande pour sodivardiere de 5x3kg de langoustine glacée 21/30 à 15.50"}	{"completed_by_action_id": "7472e7ff-0539-4824-8630-2f086d15b389"}	2026-06-14 07:58:43.946594+00	\N	2026-06-14 08:20:00.120706+00	\N
+7472e7ff-0539-4824-8630-2f086d15b389	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	executed	{"lines": [{"quantity": 15, "vat_rate": 5.5, "is_negoce": true, "sale_unit": "kg", "article_id": "ab91289c-1726-4716-85bc-a92255177546", "article_plu": "3135", "article_label": "LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER", "package_count": 5, "supply_status": "a_approvisionner", "line_amount_ht": 232.5, "line_amount_ttc": 245.29, "line_vat_amount": 12.79, "unit_cost_ex_vat": 0, "line_margin_ex_vat": 232.5, "unit_sale_price_ht": 15.5, "weight_per_package": 3, "unit_sale_price_ttc": 16.3527}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "city": "challans", "code": "10003", "name": "Sodivardiere", "email": null, "vat_rate": "5.50", "tariff_level": 1, "is_vat_exempt": false, "confidence_score": 1}, "source_prompt": null, "has_negoce_lines": true}	{"lines": [{"id": "9d812842-d936-4174-a662-1ae1ef4e3d6b", "sale_unit": "kg", "article_label": "LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER", "sold_quantity": "15.0000", "line_amount_ht": "232.5000"}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "name": "Sodivardiere"}, "status": "draft", "sale_id": "0b9b5788-88c9-40da-b5b1-d86281a61950", "document_type": "ORDER"}	2026-06-14 08:20:00.111519+00	2026-06-14 08:20:07.732777+00	\N	2026-06-14 08:20:07.732777+00
+3a26aa41-e519-4ebb-bb64-5c9c50acc3d3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	executed	{"lines": [{"quantity": 10, "vat_rate": 5.5, "is_negoce": true, "sale_unit": "kg", "article_id": "030633a4-3781-42b5-88c2-68344f82517a", "article_plu": "3529", "article_label": "PAVE DE SAUMON MARINEE THYM CITRON - NEGOCE A APPROVISIONNER", "package_count": 1, "supply_status": "a_approvisionner", "line_amount_ht": 178, "line_amount_ttc": 187.79, "line_vat_amount": 9.79, "unit_cost_ex_vat": 0, "line_margin_ex_vat": 178, "unit_sale_price_ht": 17.8, "weight_per_package": 10, "unit_sale_price_ttc": 18.779}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "city": "challans", "code": "10003", "name": "Sodivardiere", "email": null, "vat_rate": "5.50", "tariff_level": 1, "is_vat_exempt": false, "confidence_score": 1}, "source_prompt": null, "has_negoce_lines": true}	{"lines": [{"id": "46838b45-b7af-48de-97af-739a02afc66a", "sale_unit": "kg", "article_label": "PAVE DE SAUMON MARINEE THYM CITRON - NEGOCE A APPROVISIONNER", "sold_quantity": "10.0000", "line_amount_ht": "178.0000"}], "client": {"id": "8393e046-31a6-41a1-9a46-860e15797249", "name": "Sodivardiere"}, "status": "draft", "sale_id": "3b768572-1c2d-4512-89ad-e02f3d5ad415", "document_type": "ORDER"}	2026-06-14 08:39:37.327437+00	2026-06-14 08:39:45.935677+00	\N	2026-06-14 08:39:45.935677+00
+09a7792c-0f9e-4cb2-866c-b7de8fbd70f5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	cancelled	{"source": "update_action_memory_tool", "short_memory": {"status": "collecting", "quantity": 10, "action_type": "customer_order_draft", "article_plu": null, "colis_count": 1, "client_search": "Sodivardiere", "unit_price_ht": 17.8, "article_search": "pave de saumon", "missing_fields": [], "resolution_error": {"details": {"log": {"store_id": "dbc17f4c-8ef7-4247-b13f-603e4c58f622", "client_id": "8393e046-31a6-41a1-9a46-860e15797249", "candidates": 8}, "reason": "article_ambigu", "requested": "pave de saumon", "candidates": [{"id": "030633a4-3781-42b5-88c2-68344f82517a", "ean": "0203529000000", "plu": "3529", "pma": "0", "unit": "€/kg", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "€/kg", "designation": "PAVE DE SAUMON MARINEE THYM CITRON", "display_name": "PAVE DE SAUMON MARINEE THYM CITRON", "stock_quantity": "0", "confidence_score": 0.97, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}, {"id": "98800143-ab87-4391-b385-d97b9102060f", "ean": "0203211000000", "plu": "3211", "pma": "0", "unit": "PIECE", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "PIECE", "designation": "PAVES DE SAUMON", "display_name": "PAVES DE SAUMON", "stock_quantity": "0", "confidence_score": 0.9, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}, {"id": "f535dd79-1a78-4a4c-8671-a73cab5a6756", "ean": "0203306000000", "plu": "3306", "pma": "0", "unit": "€/kg", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "€/kg", "designation": "PAVES DE SAUMON \\"CHEMINEE\\"", "display_name": "PAVES DE SAUMON \\"CHEMINEE\\"", "stock_quantity": "0", "confidence_score": 0.9, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}, {"id": "cca4bba8-5596-4b0d-8555-13348aa4eae9", "ean": "0203305000000", "plu": "3305", "pma": "0", "unit": "€/kg", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "€/kg", "designation": "PAVES DE SAUMON \\"FICELLE\\"", "display_name": "PAVES DE SAUMON \\"FICELLE\\"", "stock_quantity": "0", "confidence_score": 0.9, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}, {"id": "6c3881aa-2c5f-4c13-ba84-03f10cf9c804", "ean": "0203092000000", "plu": "3092", "pma": "0", "unit": "PIECE", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "PIECE", "designation": "PAVES DE SAUMON DESARETE", "display_name": "PAVES DE SAUMON DESARETE", "stock_quantity": "0", "confidence_score": 0.9, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}]}, "message": "J ai trouve plusieurs articles saumon :\\n1. PAVE DE SAUMON MARINEE THYM CITRON - PLU 3529 - stock 0 €/kg\\n2. PAVES DE SAUMON - PLU 3211 - stock 0 PIECE\\n3. PAVES DE SAUMON \\"CHEMINEE\\" - PLU 3306 - stock 0 €/kg\\n4. PAVES DE SAUMON \\"FICELLE\\" - PLU 3305 - stock 0 €/kg\\n5. PAVES DE SAUMON DESARETE - PLU 3092 - stock 0 PIECE\\nLequel veux-tu utiliser ?"}, "weight_per_colis": 10}, "last_question": "oui 1x10kg de pave de saumon a 17.80"}	{"completed_by_action_id": "3a26aa41-e519-4ebb-bb64-5c9c50acc3d3"}	2026-06-14 08:38:00.415148+00	\N	2026-06-14 08:39:37.333161+00	\N
+d5dcc01f-4271-4717-b74e-38d365f28e47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	customer_order_draft	collecting	{"source": "update_action_memory_tool", "short_memory": {"status": "collecting", "quantity": 10, "action_type": "customer_order_draft", "article_plu": null, "colis_count": 1, "client_search": "Sodivardiere", "unit_price_ht": 17.8, "article_search": "pave de saumon", "missing_fields": [], "resolution_error": {"details": {"log": {"store_id": "dbc17f4c-8ef7-4247-b13f-603e4c58f622", "client_id": "8393e046-31a6-41a1-9a46-860e15797249", "candidates": 8}, "reason": "article_ambigu", "requested": "pave de saumon", "candidates": [{"id": "030633a4-3781-42b5-88c2-68344f82517a", "ean": "0203529000000", "plu": "3529", "pma": "0", "unit": "€/kg", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "€/kg", "designation": "PAVE DE SAUMON MARINEE THYM CITRON", "display_name": "PAVE DE SAUMON MARINEE THYM CITRON", "stock_quantity": "0", "confidence_score": 0.97, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}, {"id": "98800143-ab87-4391-b385-d97b9102060f", "ean": "0203211000000", "plu": "3211", "pma": "0", "unit": "PIECE", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "PIECE", "designation": "PAVES DE SAUMON", "display_name": "PAVES DE SAUMON", "stock_quantity": "0", "confidence_score": 0.9, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}, {"id": "f535dd79-1a78-4a4c-8671-a73cab5a6756", "ean": "0203306000000", "plu": "3306", "pma": "0", "unit": "€/kg", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "€/kg", "designation": "PAVES DE SAUMON \\"CHEMINEE\\"", "display_name": "PAVES DE SAUMON \\"CHEMINEE\\"", "stock_quantity": "0", "confidence_score": 0.9, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}, {"id": "cca4bba8-5596-4b0d-8555-13348aa4eae9", "ean": "0203305000000", "plu": "3305", "pma": "0", "unit": "€/kg", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "€/kg", "designation": "PAVES DE SAUMON \\"FICELLE\\"", "display_name": "PAVES DE SAUMON \\"FICELLE\\"", "stock_quantity": "0", "confidence_score": 0.9, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}, {"id": "6c3881aa-2c5f-4c13-ba84-03f10cf9c804", "ean": "0203092000000", "plu": "3092", "pma": "0", "unit": "PIECE", "next_dlc": null, "vat_rate": "5.50", "sale_unit": "PIECE", "designation": "PAVES DE SAUMON DESARETE", "display_name": "PAVES DE SAUMON DESARETE", "stock_quantity": "0", "confidence_score": 0.9, "has_stock_summary": false, "sale_price_ex_vat": null, "client_history_count": 0, "last_client_sale_date": null, "sale_price_level_1_ht": null, "sale_price_level_2_ht": null, "sale_price_level_3_ht": null}]}, "message": "J ai trouve plusieurs articles saumon :\\n1. PAVE DE SAUMON MARINEE THYM CITRON - PLU 3529 - stock 0 €/kg\\n2. PAVES DE SAUMON - PLU 3211 - stock 0 PIECE\\n3. PAVES DE SAUMON \\"CHEMINEE\\" - PLU 3306 - stock 0 €/kg\\n4. PAVES DE SAUMON \\"FICELLE\\" - PLU 3305 - stock 0 €/kg\\n5. PAVES DE SAUMON DESARETE - PLU 3092 - stock 0 PIECE\\nLequel veux-tu utiliser ?"}, "weight_per_colis": 10}, "last_question": "non je veux 1x10kg de pave de saumon qui est en stock"}	\N	2026-06-14 08:46:33.214344+00	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: ai_user_memory; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.ai_user_memory (id, store_id, user_id, memory_key, memory_value, confidence_score, source, created_at, updated_at) FROM stdin;
+5aa8a810-5263-4f34-8030-c2e18d359303	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3200f2be-f337-4cbd-8ca2-aa752bd61be5	order_preferences	{"default_order_type": "10kg de pave de saumon"}	1.000	non je veux 1x10kg de pave de saumon qui est en stock	2026-06-14 08:38:00.014248+00	2026-06-14 08:59:33.265975+00
+\.
+
+
+--
+-- Data for Name: article_department_metadata; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.article_department_metadata (id, article_department_id, field_key, field_value, category, latin_name, fao_zone, sous_zone, engin, allergenes, raw_source, created_at, updated_at) FROM stdin;
+929148b3-e92a-496e-b274-4afa04849d7b	2c810867-6078-4e7c-b9cb-2cf111d57613	business_metadata	\N	Pêché en	NEPHROPS NORVEGICUS	FAO 27 VIa	\N	CASIER ET PIEGES	\N	{}	2026-05-28 14:41:12.206672+00	2026-05-28 14:41:12.206672+00
+f3459fbc-6094-47ec-9c01-cb038bc64d79	ebe5dc25-2781-4dae-aa7f-e8f6cd25f4fa	business_metadata	\N	Pêché en	CANCER PAGURUS	FAO 27 - VII	\N	CASIER ET PIEGES	\N	{}	2026-05-30 19:45:45.21496+00	2026-05-30 19:45:53.815297+00
+\.
+
+
+--
+-- Data for Name: article_departments; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.article_departments (id, article_id, department_id, department_sector_id, display_name, purchase_unit, stock_unit, sale_unit, vat_rate, purchase_price_ex_vat, sale_price_ex_vat, sale_price_inc_vat, is_active, created_by, updated_by, created_at, updated_at) FROM stdin;
+2c810867-6078-4e7c-b9cb-2cf111d57613	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	bf9edbc2-3558-4cd1-89e3-4be30819b42a	ec012b7d-6c64-4b27-a91e-772271ef24dd	langoustine vivante	kg	kg	kg	5.50	\N	\N	\N	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-28 14:41:12.206672+00	2026-05-28 14:41:12.206672+00
+ebe5dc25-2781-4dae-aa7f-e8f6cd25f4fa	3de15f27-7e6c-4207-9086-99b5397b25b5	bf9edbc2-3558-4cd1-89e3-4be30819b42a	ec012b7d-6c64-4b27-a91e-772271ef24dd	1/2 TOURTEAUX CUIT	kg	kg	kg	5.50	\N	\N	\N	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-30 19:45:45.21496+00	2026-05-30 19:45:53.815297+00
+\.
+
+
+--
+-- Data for Name: articles; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.articles (id, store_id, plu, designation, ean, unit, is_active, source_origin, source_id, created_by, updated_by, created_at, updated_at, latin_name, fao_zone, sous_zone, fishing_gear, allergens, production_method, display_name, purchase_unit, stock_unit, sale_unit, family_code, family_name, vat_rate, purchase_price_ex_vat, sale_price_ex_vat, sale_price_inc_vat, sale_price_level_1_ht, sale_price_level_2_ht, sale_price_level_3_ht) FROM stdin;
+3de15f27-7e6c-4207-9086-99b5397b25b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3163	1/2 TOURTEAUX CUIT	0203163000000	kg	t	firebase_v1	3163	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.750096+00	2026-05-31 05:54:00.334252+00	CANCER PAGURUS	FAO 27 - VII	\N	CASIER ET PIEGES	\N	Pêché en	1/2 TOURTEAUX CUIT	kg	kg	kg	CRUSTACE	Crustacé	5.50	\N	\N	\N	\N	\N	\N
+2cf25564-754e-4e68-aace-e2f278690d86	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3885	BAR COMMUN DE LIGNE	0203885000000	€/kg	t	firebase_v1	3885	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.804176+00	2026-06-07 09:41:09.646515+00	Dicentrarchus labrax	FAO 27 - VIII	\N	lignes et hamecons	\N	Pêché en	BAR COMMUN DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	31.1600	32.9900	35.0500
+357cc017-7dc3-47e0-aff2-af7cf95bb822	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3587	BAR TACHETE DE LIGNE	0203587000000	€/kg	t	firebase_v1	3587	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.550001+00	2026-06-07 09:41:09.68548+00	Dicentrarchus punctatus	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	BAR TACHETE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	11.2800	11.9500	12.7000
+2fd4817f-3c62-4d32-81ee-8043e300e327	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3912	EMISSOLE ENTIERE	0203912000000	€/kg	t	firebase_v1	3912	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.862481+00	2026-06-07 09:41:09.992319+00	Mustelus ASTERIA	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	EMISSOLE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	2.4600	2.6100	2.7700
+4c092e26-16d0-463a-b01b-5a4703fbb9c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3361	ENCORNET ROUGE	0203361000000	€/kg	t	firebase_v1	3361	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.200288+00	2026-06-07 09:41:10.065264+00	Illex coindetii	FAO 27 VIII	\N	CHALUT	\N	Pêché en	ENCORNET ROUGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	4.3500	4.6000	4.8900
+24336843-3546-4088-9153-515acd22a23c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3372	FILET DE QUEUE DE LINGUE BLEUE	0203372000000	€/kg	t	firebase_v1	3372	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.226176+00	2026-06-07 09:41:10.139648+00	MOLVA DYPTERYGIA	FAO 27-Via	\N	CHALUT	\N	Pêché en	FILET DE QUEUE DE LINGUE BLEUE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	18.3300	19.4100	20.6300
+fcd65a7e-4e57-42fe-b3fd-c08f2d545850	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3151	LANGOUSTINE VIVANTE 25/35	0203151000000	kg	t	firebase_v1	3151	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-28 14:41:12.206672+00	2026-06-07 09:41:10.401591+00	NEPHROPS NORVEGICUS	FAO 27 -IV-aVI-a	\N	CASIERS/NASSE	\N	Pêché en	LANGOUSTINE VIVANTE 25/35	kg	kg	kg	CRUSTACE	Crustacé	5.50	\N	\N	\N	22.2200	23.5300	25.0000
+de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3273	LANGOUSTINE VIVANTE 6/10	0203273000000	€/kg	t	firebase_v1	3273	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.040046+00	2026-06-07 09:41:10.440268+00	NEPHROPS NORVEGICUS	FAO 27 -IVa-VIa	\N	CASIER ET PIEGES	\N	Pêché en	LANGOUSTINE VIVANTE 6/10	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	38.8900	41.1800	43.7500
+546505b1-799b-42df-9fac-fe4c55c36970	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3131	NOIX DE ST JACQUES AVEC CORAIL	0203131000000	€/kg	t	firebase_v1	3131	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.66218+00	2026-06-07 09:41:10.552814+00	PECTEN MAXIMUS	FAO 27 IV VIa VII a,d,e,f,g,h	\N	DRAGUES	\N	Pêché en	NOIX DE ST JACQUES AVEC CORAIL	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	31.6700	33.5300	35.6300
+78a1d86e-d5cf-4d33-9af2-3335a32fba9d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3450	QUEUE DE LOTTE 2/500	0203450000000	€/kg	t	firebase_v1	3450	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.356394+00	2026-06-07 09:41:10.664299+00	LOPHIUS PISCATORIUS/BUDEGASSA	FAO 27 VII	\N	CHALUT LLS GNS SDN	\N	Pêché en	QUEUE DE LOTTE 2/500	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	22.1100	23.4100	24.8700
+a5c29017-f6d8-47d9-9ad7-5e0aaf547443	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3986	SOLE	0203986000000	€/kg	t	firebase_v1	3986	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:45.020469+00	2026-06-07 09:41:10.775947+00	Solea solea	FAO 27 - VIII	\N	chaluts	\N	Pêché en	SOLE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	16.6600	17.6400	18.7500
+e9c664ce-d4ce-4f87-a732-7715a3fffb51	dbc17f4c-8ef7-4247-b13f-603e4c58f622	4567	test COPIE	0201234000000	kg	t	duplicate	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-31 05:56:00.893874+00	2026-05-31 05:56:52.196997+00	\N	FAO 27 - VII	\N	CASIER ET PIEGES	\N	Pêché en	\N	kg	kg	kg	CEPHALOPODE	Céphalopode	10.00	5.0000	10.0000	11.0000	\N	\N	\N
+291aab1a-f8ba-4169-8279-80c00d7b7dcc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	1234	test	0201234000000	kg	t	manual	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-31 05:55:47.023079+00	2026-05-31 05:56:53.067818+00	\N	FAO 27 - VII	\N	CASIER ET PIEGES	\N	Pêché en	\N	kg	kg	kg	CEPHALOPODE	Céphalopode	10.00	5.0000	10.0000	11.0000	\N	\N	\N
+326c4b69-a1b2-4bdd-9be0-087cb43451f3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3761	AILE DE RAIE	0203761000000	kg	f	firebase_v1	3761	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.716969+00	2026-05-31 07:42:21.356668+00	RAJA MONTAGUI	FAO 27 - VIII	\N	filet maillants et similaires/chaluts/ligne et hamecons	\N	Pêché en	AILE DE RAIE	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7314c3b9-7d71-497e-b6b9-525273bd2ca7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3045	AILE DE RAIE	0203045000000	kg	t	firebase_v1	3045	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.444881+00	2026-05-31 08:07:44.199124+00	RAJA NAEVUS	FAO 27 - VII-	\N	CHALUT	\N	Pêché en	AILE DE RAIE	kg	kg	kg	FILET_POISSON	Filet de poisson	5.50	\N	\N	\N	9.5600	10.1200	10.7500
+d24e8232-46d9-4254-b1fc-8d04b2b5e0be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3932		0203932000000	€/kg	f	firebase_v1	3932	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.902653+00	2026-05-31 07:41:48.105097+00	Molva molva	FAO 27 - VIII	\N	\N	\N	Pêché en	\N	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+44147114-6de6-475e-a232-7abb178ad0a7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3365	ALOSE	0203365000000	kg	t	firebase_v1	3365	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.210432+00	2026-05-31 07:42:49.162829+00	Alosa spp	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	ALOSE	kg	kg	kg	POISSON_ENTIER	Poisson entier	5.50	\N	\N	\N	\N	\N	\N
+cd4f7c91-8a11-42f0-bb80-c35dd0043567	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3316	AMANDE	0203316000000	kg	t	firebase_v1	3316	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.1113+00	2026-05-31 07:43:26.701331+00	Glycymeris glycymeris	FAO 27 - VII-MANCHE ET MERS CELTIQUES	\N	DRAGUES	\N	Pêché en	AMANDE	kg	kg	kg	COQUILLAGE	Coquillage	5.50	\N	\N	\N	\N	\N	\N
+19a1e000-e604-4de3-a730-272a06c3a104	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3882	ANCHOIS	0203882000000	kg	f	firebase_v1	3882	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.797863+00	2026-05-31 15:04:21.092183+00	Engraulis encrasicolus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	ANCHOIS	kg	kg	kg	POISSON_ENTIER	Poisson entier	5.50	\N	\N	\N	\N	\N	\N
+e4714943-1c94-4439-a519-4423042155f1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3144	ANCHOIS	0203144000000	kg	t	firebase_v1	3144	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.698515+00	2026-05-31 07:44:10.838288+00	\N	FAO 27 VII VIII	\N	SENNE COULISSENTE(BOLINCHE)	\N	Pêché en	ANCHOIS	kg	kg	kg	POISSON_ENTIER	Poisson entier	5.50	\N	\N	\N	\N	\N	\N
+05f46a02-bda4-4fb3-9f7e-563294d4e470	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3436	QUEUE DE LOTTE 1/2	0203436000000	€/kg	t	firebase_v1	3436	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.338712+00	2026-05-31 08:07:44.400575+00	LOPHIUS PISCATORIUS/BUDEGASSA	FAO 27 - IV	\N	CHALUT	\N	Pêché en	QUEUE DE LOTTE 1/2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	15.4400	16.3500	17.3800
+6b5031b8-02bf-4603-9d7c-5bc91f8820bd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3215	QUEUE DE LOTTE 5/1000	0203215000000	€/kg	t	firebase_v1	3215	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.89437+00	2026-05-31 08:07:44.438494+00	LOPHIUS PISCATORIUS ET BUDEGASSA	FAO 27 VII	\N	CHALUT	\N	Pêché en	QUEUE DE LOTTE 5/1000	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	15.4400	16.3500	17.3800
+50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3072	FILET DE JULIENNE	0203072000000	€/kg	t	firebase_v1	3072	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.526875+00	2026-05-31 08:09:41.185313+00	MOLVA MOLVA	FAO 27 III	\N	FILETS MAILLANTS/LIGNES ET HAMECONS	\N	Pêché en	FILET DE JULIENNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	15.5000	16.9000	17.9000
+736679c3-a884-4108-8859-955daa6c012d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3589	BAR COMMUN DE LIGNE	0203589000000	€/kg	t	firebase_v1	3589	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.554775+00	2026-05-31 08:09:23.98089+00	Dicentrarchus labrax	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	BAR COMMUN DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	24.9000	26.9000	28.5000
+a5129f95-d071-483e-afec-32d5f7353eb6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3604	DORADE GRISE	0203604000000	€/kg	t	firebase_v1	3604	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.57883+00	2026-05-31 08:09:33.175407+00	Spondyliosoma cantharus	FAO 27 - VII D	\N	CHALUT	\N	Pêché en	DORADE GRISE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	8.2000	8.9000	9.2300
+ee66bb6c-2061-48ac-a254-153c7ad3658d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3628	MAIGRE DE LIGNE	0203628000000	€/kg	t	firebase_v1	3628	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.601634+00	2026-05-31 08:09:43.740285+00	Argyrosomus regius	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	MAIGRE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	16.8900	17.8900	19.0100
+5c214e96-f8ed-44e1-bbd5-6b96662fb98a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3377	RAIE ENTIERE	0203377000000	€/kg	t	firebase_v1	3377	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.235917+00	2026-05-31 08:09:43.818291+00	RAJA MICROOCELLATA	FAO 27 - VIII	\N	SENNES	\N	Pêché en	RAIE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	1.6900	1.7900	1.9100
+fea072a6-8c3b-44c0-9721-ecbf962ce60f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3483	ROUSSETTE ENTIERE	0203483000000	€/kg	t	firebase_v1	3483	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.409178+00	2026-05-31 08:09:43.854195+00	Scyliorhinus spp	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)-LIGNES(LLS)	\N	Pêché en	ROUSSETTE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	0.6900	0.7300	0.7700
+bf77f28a-0e62-46dd-a0c3-343968557980	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3893	BARBUE	0203893000000	kg	t	firebase_v1	3893	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.821218+00	2026-05-31 15:12:54.298729+00	Scophthalmus rhombus	FAO 27 - VIII	\N	fileyeurs(GNS)	\N	Pêché en	BARBUE	kg	kg	kg	POISSON_ENTIER	Poisson entier	5.50	\N	\N	\N	\N	\N	\N
+f255adfd-76ff-467b-8c3e-5b8a79a0942a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3024	TURBOT VIDE	0203024000000	€/kg	t	firebase_v1	3024	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.386906+00	2026-05-31 08:09:43.890179+00	PSETTE MAXIMA	FAO 27 - 3C MER DU BELT	\N	FILETS MAILLANTS ET SIMILAIRES	\N	Pêché en	TURBOT VIDE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	28.1400	29.7900	31.6600
+6d3a150a-4462-4f90-9b18-b74ac2da3245	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3000195284190	ALGUE DECO	0203000195284190000000	kg	t	firebase_v1	3000195284190	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:45.18295+00	2026-05-31 15:03:34.175575+00	\N	\N	\N	\N	\N	Autre	ALGUE DECO	kg	kg	kg	AUTRE	Autre	5.50	\N	\N	\N	\N	\N	\N
+486a6d50-f0da-4666-b5c0-be523ae0827d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3025	AILE DE RAIE	0203025000000	kg	t	firebase_v1	3025	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.390909+00	2026-06-03 14:58:42.670437+00	RAJA CLAVATA-NAEVUS-MONTAGUI-CIRCUL-XXR	FAO 27 - VII MANCHES ET MERS CELTIQUES	\N	CHALUT	\N	Pêché en	AILE DE RAIE	kg	kg	kg	FILET_POISSON	Filet de poisson	5.50	\N	\N	\N	10.9000	10.4700	11.1300
+62efd755-a71b-46d4-aea9-1035b3aaacec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3027	SAINT PIERRE	0203027000000	€/kg	t	firebase_v1	3027	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.394981+00	2026-06-07 09:41:10.740052+00	Zeus faber	FAO 27 -VII	\N	CHALUT	\N	Pêché en	SAINT PIERRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	18.4200	19.5100	20.7200
+86bb7bb5-b64b-4895-a782-af5563c65dc7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3019	TACAUD	0203019000000	€/kg	t	firebase_v1	3019	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.367051+00	2026-06-07 09:41:10.812191+00	Trisopterus luscus	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	TACAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	3.3900	3.5900	3.8200
+796cc80c-32f2-470c-b6b6-f4652d648af0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2001	huitre 2dz n3	0202001000000	€/kg	t	firebase_v1	2001	\N	\N	2026-05-17 09:42:43.287688+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	huitre 2dz n3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e7713460-343f-4227-a8cf-c71287ff25f4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2002	huitre 2dz n2	0202002000000	€/kg	t	firebase_v1	2002	\N	\N	2026-05-17 09:42:43.291509+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	huitre 2dz n2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8e7522c5-30d5-43d7-ae47-025424b52a65	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2003	huitre 2dz n4	0202003000000	€/kg	t	firebase_v1	2003	\N	\N	2026-05-17 09:42:43.295299+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	huitre 2dz n4	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6e623dfe-4bc7-427f-ac25-9089e5926cde	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2005	htr normandie N3	0202005000000	€/kg	t	firebase_v1	2005	\N	\N	2026-05-17 09:42:43.299448+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	htr normandie N3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+01ff6bc0-dc1f-4801-9802-a5ec83d264a4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2006	htr mar/ole N3	0202006000000	€/kg	t	firebase_v1	2006	\N	\N	2026-05-17 09:42:43.303669+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	htr mar/ole N3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6eb0c8e8-bada-4f6c-9269-b420bf9e165a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3001	BOUFFIS	0203001000000	€/kg	t	firebase_v1	3001	\N	\N	2026-05-17 09:42:43.307727+00	2026-05-29 18:41:21.011484+00	CLUPEA HARENGUS	FAO 27, II IV	\N	CHALUT	\N	Pêché en	BOUFFIS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2bca7b5c-6719-4370-bf78-b31f73eebed0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3002	HARENG SAUR	0203002000000	€/kg	t	firebase_v1	3002	\N	\N	2026-05-17 09:42:43.311577+00	2026-05-29 18:41:21.011484+00	\N	ATLANTIQUE NORD EST	\N	CHALUT	\N	Pêché en	HARENG SAUR	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cec40e9b-dd48-45e5-bfd6-52f30f6b3bc4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3003	SARDINE SALéE PRESSéE	0203003000000	€/kg	t	firebase_v1	3003	\N	\N	2026-05-17 09:42:43.315165+00	2026-05-29 18:41:21.011484+00	SARDINA PILCHARDUS	FAO 34 ATLANTIQUE CENTRE EST	\N	SENNES	\N	Pêché en	SARDINE SALéE PRESSéE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a1cfd95b-c66d-48be-9f23-2dfa2c68c3e4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3004	PINCES DE TOURTEAUX CUITES 4/8	0203004000000	€/kg	t	firebase_v1	3004	\N	\N	2026-05-17 09:42:43.319291+00	2026-05-29 18:41:21.011484+00	CANCER PAGURUS	FAO 27 ANE VIa VII a b g Iva	\N	CASIERS ET PIEGES	\N	Pêché en	PINCES DE TOURTEAUX CUITES 4/8	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+068761ab-6988-482e-a605-341ae910d37c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3005	CREVETTE CUITE 80/100	0203005000000	€/kg	t	firebase_v1	3005	\N	\N	2026-05-17 09:42:43.322955+00	2026-05-29 18:41:21.011484+00	PANAEUS VANNAMEI	VENEZUELA ET AUTRES PAYS	\N	\N	\N	Elevé en	CREVETTE CUITE 80/100	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+670d8c1c-3be3-4cfb-ab15-7ffc6547dfd5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3008	THON GERMON	0203008000000	€/kg	t	firebase_v1	3008	\N	\N	2026-05-17 09:42:43.330427+00	2026-05-29 18:41:21.011484+00	Thunnus alalunga	FAO 37.1 MEDITERARANEE ET MER NOIR	\N	FILET MAILLANTS/FILET SIMILAIRE LIGNE ET HAMECON	\N	Pêché en	THON GERMON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+16f6d6f5-0e6a-4efe-beaa-bdc808045e6c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3009	THONINE COMMUNE	0203009000000	€/kg	t	firebase_v1	3009	\N	\N	2026-05-17 09:42:43.335394+00	2026-05-29 18:41:21.011484+00	EUTHYNNUS ALLETTERATUS	FAO 37- 37,1 MEDITERRANEE ET MER NOIR MEDITERANEE OCCIDENTAL	\N	FILETS TOURNANTS ET FILETS SOULEV2S	\N	Pêché en	THONINE COMMUNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+497dfa60-242a-41cf-a896-a2f5aaa8bc7b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3011	SAUMON ENTIER	0203011000000	€/kg	t	firebase_v1	3011	\N	\N	2026-05-17 09:42:43.339187+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	SAUMON ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2857ec7b-3965-49e4-9f7b-2d952cbfbf14	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3013	QUEUE DE LOTTE	0203013000000	€/kg	t	firebase_v1	3013	\N	\N	2026-05-17 09:42:43.347451+00	2026-05-29 18:41:21.011484+00	LOPHIUS PISCATTORIUS/BUDEGASSA	FAO 27 IVA	\N	CHALUT SENNES	\N	Pêché en	QUEUE DE LOTTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+eb10da5d-a0ae-4d54-ba4f-cce96b510c9a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3015	MERLAN	0203015000000	€/kg	t	firebase_v1	3015	\N	\N	2026-05-17 09:42:43.3514+00	2026-05-29 18:41:21.011484+00	MERLANGIUS MERLANGUS	IV MER DU NORD VII MANCHES ET MERS CELTIQUES	\N	CHALUT/SENNES	\N	Pêché en	MERLAN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+00729a62-7e96-4ad2-82cc-0dba17958572	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3016	MERLU PORTION	0203016000000	€/kg	t	firebase_v1	3016	\N	\N	2026-05-17 09:42:43.35516+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - III a	\N	CHALUT	\N	Pêché en	MERLU PORTION	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0a1a9a19-4c79-41b4-acea-9fab3d52266f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3017	MAQUEREAU	0203017000000	€/kg	t	firebase_v1	3017	\N	\N	2026-05-17 09:42:43.359431+00	2026-05-29 18:41:21.011484+00	SCOMBER SCOMBRUS	FAO 27 - IV	\N	LIGNE	\N	Pêché en	MAQUEREAU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+06367c87-d184-4bf8-b917-cad7799cb1c8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3018	MULET	0203018000000	€/kg	t	firebase_v1	3018	\N	\N	2026-05-17 09:42:43.363236+00	2026-05-29 18:41:21.011484+00	LIZA RAMADA	FAO 27 – VIII	\N	filet maillant	\N	Pêché en	MULET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+68f21e78-5b9f-4782-a924-1aecc9db84be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3020	SOLE BLONDE	0203020000000	€/kg	t	firebase_v1	3020	\N	\N	2026-05-17 09:42:43.371155+00	2026-05-29 18:41:21.011484+00	PEGUSA LASCARIS	FAO 27 -VII-	\N	CHALUT	\N	Pêché en	SOLE BLONDE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6d4bc718-0056-49f3-8d5a-b847367258ff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3021	DORADE GRISE	0203021000000	€/kg	t	firebase_v1	3021	\N	\N	2026-05-17 09:42:43.375021+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - VII	\N	CHALUT	\N	Pêché en	DORADE GRISE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+32d758db-4e04-4e64-9817-422db1ae319b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3022	MOULE DE BOUCHOT	0203022000000	€/kg	t	firebase_v1	3022	\N	\N	2026-05-17 09:42:43.37918+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	FRANCE	\N	\N	\N	Elevé en	MOULE DE BOUCHOT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f20d45c7-e2a2-450d-83f8-f1a18ed2ece0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3023	SOLE BLONDE PORTION	0203023000000	€/kg	t	firebase_v1	3023	\N	\N	2026-05-17 09:42:43.383039+00	2026-05-29 18:41:21.011484+00	pegusa lascaris	FAO 27 - VIII	\N	FILET MAILLANTS	\N	Pêché en	SOLE BLONDE PORTION	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3bdbbc7e-11b1-4cfe-af2b-aa9270e010e6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3028	LONGE D'ESPADON PROVENCAL	0203028000000	€/kg	t	firebase_v1	3028	\N	\N	2026-05-17 09:42:43.39904+00	2026-05-29 18:41:21.011484+00	XIPHIAS GLADIUS	FAO 57	\N	LIGNES ET HAMECONS	\N	Pêché en	LONGE D'ESPADON PROVENCAL	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+31137cf1-8896-4f7e-9dc4-d842c30f10da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3007	TETE SEICHE	0203007000000	€/kg	t	firebase_v1	3007	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.326727+00	2026-06-07 09:41:10.860283+00	Sepia officinalis	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	TETE SEICHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	8.0300	8.5100	9.0400
+1c0167d9-0701-4e11-bf0d-8e1b896c887b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3030	THON ALBACORE	0203030000000	€/kg	t	firebase_v1	3030	\N	\N	2026-05-17 09:42:43.407908+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	Pêché en	THON ALBACORE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c981cf21-9434-4363-9bf9-d815306ffdd2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3032	VIVE	0203032000000	€/kg	t	firebase_v1	3032	\N	\N	2026-05-17 09:42:43.412193+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - VII	\N	CHALUT	\N	Pêché en	VIVE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+71abfc77-e6b5-43b4-8c31-47facf18a3bc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3033	VIEILLE	0203033000000	€/kg	t	firebase_v1	3033	\N	\N	2026-05-17 09:42:43.416253+00	2026-05-29 18:41:21.011484+00	Labrus bergylta	FAO 27 - VIII	\N	Filets maillants et similaires	\N	Pêché en	VIEILLE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+094efb1c-fe60-4e50-8df5-e536763ab60c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3035	PRETRE	0203035000000	€/kg	t	firebase_v1	3035	\N	\N	2026-05-17 09:42:43.420012+00	2026-05-29 18:41:21.011484+00	ATHERINA PRESBYTER	FAO 27 - VIII a	\N	CHALUT	\N	Pêché en	PRETRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+fff55f1e-93ba-4f54-9e0b-249b3339c448	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3040	SOLE VIDEE	0203040000000	€/kg	t	firebase_v1	3040	\N	\N	2026-05-17 09:42:43.428242+00	2026-05-29 18:41:21.011484+00	SOLEA SOLEA	FAO 27 -VII-	\N	CHALUT	\N	Pêché en	SOLE VIDEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+aa8dd004-97e2-4d50-a44e-45ba6f60ac3f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3042	HARENG	0203042000000	€/kg	t	firebase_v1	3042	\N	\N	2026-05-17 09:42:43.432293+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - VII-	\N	CHALUT	\N	Pêché en	HARENG	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f3df46f5-ac91-4b15-9171-a041d771b2b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3043	HUITRE MARENNE OLERON N"3	0203043000000	€/kg	t	firebase_v1	3043	\N	\N	2026-05-17 09:42:43.436986+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE MARENNE OLERON N"3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3b224636-ae9b-4d7d-a283-19462049cc83	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3044	ENCORNET BLANC	0203044000000	€/kg	t	firebase_v1	3044	\N	\N	2026-05-17 09:42:43.440914+00	2026-05-29 18:41:21.011484+00	LOLIGO VULGARIS	FAO 27 -IV-V-VI-VII-	\N	CHALUT(OTB)	\N	Pêché en	ENCORNET BLANC	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+aaf71b15-3ba4-4f74-8f0a-6eadf1487aa7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3046	BLANC DE SEICHE	0203046000000	€/kg	t	firebase_v1	3046	\N	\N	2026-05-17 09:42:43.448934+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - VIII	\N	FILETS MAILLANTS	\N	Pêché en	BLANC DE SEICHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+bf1f9769-7e58-410f-ae33-fb4e96c7a68a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3047	ROUSSETTE PELEE	0203047000000	€/kg	t	firebase_v1	3047	\N	\N	2026-05-17 09:42:43.452916+00	2026-05-29 18:41:21.011484+00	SCYLIORHINUS CANICULA	FAO 27 - VII manches et mers celtiques	\N	CHALUT	\N	Pêché en	ROUSSETTE PELEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b349aeb3-fbc1-4f6a-bccc-0c7984ae28b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3049	BROCHET	0203049000000	€/kg	t	firebase_v1	3049	\N	\N	2026-05-17 09:42:43.461163+00	2026-05-29 18:41:21.011484+00	ESOX LUCIUS	FAO 5	\N	FILETS MAILLANTS /FILETS MAILLANTS CALES	\N	Pêché en eaux douces	BROCHET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+93cf561d-1b61-4aac-8ab9-0367d33ca607	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3050	BIGORNEAU CUIT	0203050000000	€/kg	t	firebase_v1	3050	\N	\N	2026-05-17 09:42:43.464655+00	2026-05-29 18:41:21.011484+00	LITTORINA LITTOREA	FAO 27 - VII	\N	PECHE A PIEDS	\N	Pêché en	BIGORNEAU CUIT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e7a7ecc4-1525-4d71-8971-4e282e7ba0d4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3051	TRUITE PORTION BLANCHE VIDEE	0203051000000	€/kg	t	firebase_v1	3051	\N	\N	2026-05-17 09:42:43.468076+00	2026-05-29 18:41:21.011484+00	ONCORHYNCHUS MYKISS	FRANCE	\N	\N	\N	Elevé en	TRUITE PORTION BLANCHE VIDEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9cceef87-c6b9-4c8c-bcdf-b44a25108f5f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3052	LIEU JAUNE ENTIER	0203052000000	€/kg	t	firebase_v1	3052	\N	\N	2026-05-17 09:42:43.47157+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	filets maillants	\N	Pêché en	LIEU JAUNE ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+568ae64e-17fd-4181-91ee-d100b1dbc357	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3053	MORCEAU LIEU NOIR	0203053000000	€/kg	t	firebase_v1	3053	\N	\N	2026-05-17 09:42:43.474983+00	2026-05-29 18:41:21.011484+00	POLLACCHIUS VIRENS	FAO 27 - I	\N	CHALUT	\N	Pêché en	MORCEAU LIEU NOIR	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+fafbe068-b484-40cf-b487-66480a31082e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3054	PINCE CRABE ROYAL CUIT	0203054000000	€/kg	t	firebase_v1	3054	\N	\N	2026-05-17 09:42:43.478927+00	2026-05-29 18:41:21.011484+00	Paralithodes camtschaticus	FAO 27 - VIII	\N	CASIER ET PIEGES	\N	Pêché en	PINCE CRABE ROYAL CUIT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2df24e04-f616-43fe-b54e-5cadabdc4605	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3055	CABILLAUD A LA COUPE	0203055000000	€/kg	t	firebase_v1	3055	\N	\N	2026-05-17 09:42:43.482846+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	NORVEGE	\N	\N	\N	Elevé en	CABILLAUD A LA COUPE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7304dd84-ff46-44f5-aa64-abd307e7ee7a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3056	MERLU ENTIER	0203056000000	€/kg	t	firebase_v1	3056	\N	\N	2026-05-17 09:42:43.486894+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	MERLU ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e63fbff9-c966-4249-8cf7-1a7488e99d91	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3059	FILET MORUE SALEE	0203059000000	€/kg	t	firebase_v1	3059	\N	\N	2026-05-17 09:42:43.490926+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	FAO 21 ATLANTIQUE NORD OUEST	\N	CHALUT	\N	Pêché en	FILET MORUE SALEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+753759a2-a44c-4bf8-92ef-1ff7ab1ec282	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3060	HADDOCK	0203060000000	€/kg	t	firebase_v1	3060	\N	\N	2026-05-17 09:42:43.494926+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 -V-	\N	CHALUT	\N	Pêché en	HADDOCK	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d3936b7a-3659-423a-a4fa-57acf711a5a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3061	LANGOUSTINE CUITE 41/50	0203061000000	€/kg	t	firebase_v1	3061	\N	\N	2026-05-17 09:42:43.498844+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 -IV-	\N	CHALUT	\N	Pêché en	LANGOUSTINE CUITE 41/50	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+031902f5-3e25-48f0-9e5c-562a8f6bf930	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3067	ESTURGEON SIBERIEN	0203067000000	€/kg	t	firebase_v1	3067	\N	\N	2026-05-17 09:42:43.510166+00	2026-05-29 18:41:21.011484+00	ACIPENSER BAERII	EN FRANCE-SOLOGNE-	\N	\N	\N	Pêché en eaux douces	ESTURGEON SIBERIEN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5020f538-0781-4a33-a1b4-4f9ed5c4d685	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3069	FILET DE SABRE	0203069000000	€/kg	t	firebase_v1	3069	\N	\N	2026-05-17 09:42:43.513717+00	2026-05-29 18:41:21.011484+00	APHANOPUS CARBO	FAO 27-VI-	\N	CHALUT	\N	Pêché en	FILET DE SABRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+34b35d10-28ed-434a-8380-ef2e92bf3a30	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3073	FILET DE CABILLAUD	0203073000000	€/kg	t	firebase_v1	3073	\N	\N	2026-05-17 09:42:43.530605+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	NORVEGE	\N	\N	\N	Elevé en	FILET DE CABILLAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6286f7ee-d47f-4747-8303-0b741a19847a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3074	FILET DE MERLAN PAPILLON	0203074000000	€/kg	t	firebase_v1	3074	\N	\N	2026-05-17 09:42:43.534681+00	2026-05-29 18:41:21.011484+00	MERLANGIUS MERLANGUS	FAO 27 IV-a	\N	CHALUT	\N	Pêché en	FILET DE MERLAN PAPILLON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c2ca1867-e141-43bc-8f05-1fe80a78739d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3075	FILET DE FLETAN	0203075000000	€/kg	t	firebase_v1	3075	\N	\N	2026-05-17 09:42:43.538434+00	2026-05-29 18:41:21.011484+00	REINHARDITUS HIPPOGLOSSOIDES	FAO 27 -V	\N	FILET MAILLANTS ET SIMILAIRES	\N	Pêché en	FILET DE FLETAN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2c6ad426-4755-42db-9a16-0b967db0ddbc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3076	FILET DE LIEU JAUNE	0203076000000	€/kg	t	firebase_v1	3076	\N	\N	2026-05-17 09:42:43.54235+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	ligne	\N	Pêché en	FILET DE LIEU JAUNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+67eee58a-db9e-454b-ab08-e7f4a351d03c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3071	FILET DE LIEU NOIR	0203071000000	€/kg	t	firebase_v1	3071	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.522965+00	2026-05-31 08:07:44.325563+00	POLLACCHIUS VIRENS	FAO 27 -IVab	\N	CHALUT OTB	\N	Pêché en	FILET DE LIEU NOIR	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	13.5600	14.3500	15.2500
+2eb84882-ba8b-4b02-8cb0-7395270bbd32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3048	CONGRE ENTIER	0203048000000	€/kg	t	firebase_v1	3048	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.457255+00	2026-06-07 09:41:09.805772+00	Conger conger	FAO 27 - VIII	\N	CHALUTS	\N	Pêché en	CONGRE ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	2.6300	2.7900	2.9600
+984aac3f-583f-4ec2-8743-9f4a14520ea3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3063	DOS DE CABILLAUD	0203063000000	kg	t	firebase_v1	3063	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.50265+00	2026-06-07 09:41:09.917573+00	GADUS MORHUA	FAO 27 V	\N	CHALUT	\N	Pêché en	DOS DE CABILLAUD	\N	\N	\N	FILET_POISSON	Filet de poisson	5.50	\N	\N	\N	28.7800	30.4700	32.3700
+5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3065	PAVES DE SAUMON GROS	0203065000000	€/kg	t	firebase_v1	3065	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.5066+00	2026-06-07 09:41:10.628401+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	PAVES DE SAUMON GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	16.1100	17.0600	18.1300
+7a686fcf-41d6-4012-8714-fe2f11510119	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3029	ROUGET BARBET	0203029000000	€/kg	t	firebase_v1	3029	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.40341+00	2026-06-07 09:41:10.702784+00	MULLUS SURMULETUS	FAO 27 - VII	\N	SENNES	\N	Pêché en	ROUGET BARBET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	6.8700	7.2800	7.7300
+a49d9610-8a21-491b-b4e7-22eff482d790	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3077	PAVE DE TRUITE	0203077000000	€/kg	t	firebase_v1	3077	\N	\N	2026-05-17 09:42:43.546056+00	2026-05-29 18:41:21.011484+00	ONCORHYNCHUS MYKISS	FRANCE	\N	\N	\N	Elevé en	PAVE DE TRUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+263ab669-ccdd-4ef3-929d-315d94ab7526	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3078	FILET DE SAUMON ENTIER	0203078000000	€/kg	t	firebase_v1	3078	\N	\N	2026-05-17 09:42:43.549609+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	FILET DE SAUMON ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c4668575-cd81-4fd6-a44e-352fec1f648c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3081	FILET DE CARRELET/PLIE	0203081000000	€/kg	t	firebase_v1	3081	\N	\N	2026-05-17 09:42:43.561989+00	2026-05-29 18:41:21.011484+00	PLEURONECTES PLATESSA	FAO 27 - IVA-B	\N	CHALUT	\N	Pêché en	FILET DE CARRELET/PLIE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8853dd40-3cd6-4ba1-9a42-738d442a549f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3083	SARDINE PRÊT A CUIRE	0203083000000	€/kg	t	firebase_v1	3083	\N	\N	2026-05-17 09:42:43.56586+00	2026-05-29 18:41:21.011484+00	SARDINA PILCHARDUS	FAO 27 -VIIb	\N	CHALUT	\N	Pêché en	SARDINE PRÊT A CUIRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+20832da1-1ee4-4a49-b259-423830f803cf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3087	HUITRE BEAUVOIR N°3	0203087000000	€/kg	t	firebase_v1	3087	\N	\N	2026-05-17 09:42:43.569613+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE BEAUVOIR N°3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+bc69349f-ac3d-4276-9faa-c2d4a66461e9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3089	HOMARD CUIT AMERICAIN	0203089000000	€/kg	t	firebase_v1	3089	\N	\N	2026-05-17 09:42:43.573329+00	2026-05-29 18:41:21.011484+00	HOMARUS AMERICANUS	FAO 21	\N	CASIER	\N	Pêché en	HOMARD CUIT AMERICAIN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6c3881aa-2c5f-4c13-ba84-03f10cf9c804	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3092	PAVES DE SAUMON DESARETE	0203092000000	PIECE	t	firebase_v1	3092	\N	\N	2026-05-17 09:42:43.580533+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	PAVES DE SAUMON DESARETE	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5acd0c21-25b5-40c9-910e-9418abff7707	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3095	KING CRAB	0203095000000	€/kg	t	firebase_v1	3095	\N	\N	2026-05-17 09:42:43.584009+00	2026-05-29 18:41:21.011484+00	Paralithodes camtschaticus	FAO 27.IV	\N	CASIER ET PIEGES	\N	Pêché en	KING CRAB	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b66e0545-ccd1-487a-87d3-b00c2c4ed07a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3102	LANGOUSTE CUITS REFRIGEREES	0203102000000	€/kg	t	firebase_v1	3102	\N	\N	2026-05-17 09:42:43.594876+00	2026-05-29 18:41:21.011484+00	\N	FAO 031	\N	CASIER ET PIEGES	\N	Pêché en	LANGOUSTE CUITS REFRIGEREES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4697c40d-1923-4203-93e5-ed6754f65da8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3103	FILET DE ROUGET	0203103000000	€/kg	t	firebase_v1	3103	\N	\N	2026-05-17 09:42:43.598524+00	2026-05-29 18:41:21.011484+00	PSEUDUPENEUS PRAYENSIS	FAO 34 - ATLANTIQUE CENTRE EST	\N	CHALUT	\N	Pêché en	FILET DE ROUGET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+fe9114f0-0ec8-4f1c-9bf1-b872735ceb40	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3107	FILET DE TACAUD	0203107000000	€/kg	t	firebase_v1	3107	\N	\N	2026-05-17 09:42:43.606164+00	2026-05-29 18:41:21.011484+00	TRISOPTERUS LUSCUS	FAO-VII-ETAUTRES SOUS ZONES	\N	CHALUT	\N	Pêché en	FILET DE TACAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+07742142-8a45-4fa1-ac67-0ef1f98d292c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3110	BROCHETTE SAUMON/CABILLAUD	0203110000000	€/PIECE	t	firebase_v1	3110	\N	\N	2026-05-17 09:42:43.610233+00	2026-05-29 18:41:21.011484+00	\N	MARINADE PROVENCALE	\N	(MINIMUM 100GR/PIECE)	\N	\N	BROCHETTE SAUMON/CABILLAUD	€/PIECE	€/PIECE	€/PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6864a186-96b0-47fa-92a3-f79daad9810f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3112	DORADE ROYALE	0203112000000	€/kg	t	firebase_v1	3112	\N	\N	2026-05-17 09:42:43.614181+00	2026-05-29 18:41:21.011484+00	SPARUS AURATA	Turquie	\N	\N	\N	Elevé en	DORADE ROYALE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+273acdec-70e7-4de6-af94-c69401b16ae5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3114	MOULE DE BOUCHOT "ST MICHEL"	0203114000000	€/kg	t	firebase_v1	3114	\N	\N	2026-05-17 09:42:43.618383+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	France-BAIE DU MONT ST MICHEL	\N	A-O-P	\N	Elevé en	MOULE DE BOUCHOT "ST MICHEL"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f8f5faa5-c51b-4566-80b4-d3d1fdebf19a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3115	CREVETTE CUITE 60/80	0203115000000	€/kg	t	firebase_v1	3115	\N	\N	2026-05-17 09:42:43.622328+00	2026-05-29 18:41:21.011484+00	PANAEUS VANNAMEI	CUBA	\N	\N	\N	Elevé en	CREVETTE CUITE 60/80	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4b22e4b9-3d47-4d4d-b5e2-46f319821ee1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3116	DARNE DE THON GERMON	0203116000000	€/kg	t	firebase_v1	3116	\N	\N	2026-05-17 09:42:43.626288+00	2026-05-29 18:41:21.011484+00	Thunnus alalunga	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	DARNE DE THON GERMON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+335c2d1a-2654-4797-a099-424faf7e1b83	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3118	CREVETTE CUITE 60/80 SAUVAGE	0203118000000	€/kg	t	firebase_v1	3118	\N	\N	2026-05-17 09:42:43.630461+00	2026-05-29 18:41:21.011484+00	\N	FAO 51-OCEAN INDIEN	\N	CHALUT	\N	Pêché en	CREVETTE CUITE 60/80 SAUVAGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ea7557ca-6830-48f1-81ee-8a166b82418f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3121	FILET GRONDIN	0203121000000	€/kg	t	firebase_v1	3121	\N	\N	2026-05-17 09:42:43.634059+00	2026-05-29 18:41:21.011484+00	CHELIDONICHTHYS LUCERNA-EUTRIGLA GURNADUS	FAO 27 - VIII	\N	FILETS MAILLANTS ET SIMILAIRES	\N	Pêché en	FILET GRONDIN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a2c5bae2-7ae1-479e-9589-a90dde8b6755	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3122	HUITRE BEAUVOIR N°2	0203122000000	€/kg	t	firebase_v1	3122	\N	\N	2026-05-17 09:42:43.63801+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE BEAUVOIR N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3c382dbb-836e-4c89-ab84-c079cbd853e8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3123	MORUE SECHEE ENTIERE	0203123000000	€/kg	t	firebase_v1	3123	\N	\N	2026-05-17 09:42:43.641692+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	FAO 27-II-MER DE NORVEGE	\N	FILETS MAILLANTS ET SIMILAIRES	\N	Pêché en	MORUE SECHEE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e7de341b-8de6-480b-9d2e-7931e93ae1f0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3126	LANCON	0203126000000	€/kg	t	firebase_v1	3126	\N	\N	2026-05-17 09:42:43.645233+00	2026-05-29 18:41:21.011484+00	AMMODYTES TOBIANUS	fao 27 -VII	\N	CHALUT	\N	Pêché en	LANCON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0720ebdc-0067-4d8e-8aa1-35d96b9b58de	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3127	NOIX DE PETONCLE	0203127000000	€/kg	t	firebase_v1	3127	\N	\N	2026-05-17 09:42:43.648417+00	2026-05-29 18:41:21.011484+00	CHLAMYS OPERCULARIS	FAO 27 - VII-a	\N	CHALUTS	\N	Pêché en	NOIX DE PETONCLE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+772155da-8c2b-4fdc-92f1-093fc54e71fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3128	FILET DE TURBO	0203128000000	€/kg	t	firebase_v1	3128	\N	\N	2026-05-17 09:42:43.651861+00	2026-05-29 18:41:21.011484+00	Rombo Chiodato	FAO 27 - VIII	\N	Espagne	\N	Elevé en	FILET DE TURBO	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+663947d4-db1d-4762-95ad-07479e36c051	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3134	BROCHETTE SAUMON	0203134000000	€/PIECE	t	firebase_v1	3134	\N	\N	2026-05-17 09:42:43.674339+00	2026-05-29 18:41:21.011484+00	\N	MARINADE AIL DES OURS	\N	(MINIMUM 100GR/PIECE)	\N	Elevé en	BROCHETTE SAUMON	€/PIECE	€/PIECE	€/PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ab91289c-1726-4716-85bc-a92255177546	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3135	LANGOUSTINE GLACEE 21/30	0203135000000	€/kg	t	firebase_v1	3135	\N	\N	2026-05-17 09:42:43.678252+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 VII	\N	CHALUT	\N	Pêché en	LANGOUSTINE GLACEE 21/30	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+dee0ce2e-48ee-4c91-8d33-b8ff6f7b3a5b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3137	HUITRE BEAUVOIR N°4	0203137000000	€/kg	t	firebase_v1	3137	\N	\N	2026-05-17 09:42:43.682312+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE BEAUVOIR N°4	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0d2e71dd-b832-4bf4-a50a-a7534638af62	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3140	FILET DE HARENG	0203140000000	€/kg	t	firebase_v1	3140	\N	\N	2026-05-17 09:42:43.69025+00	2026-05-29 18:41:21.011484+00	CLUPEA HARENGUS	FAO 27-VII	\N	CHALUT/SENNES	\N	Pêché en	FILET DE HARENG	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1fa17555-bc04-40fe-ac54-4b60d884493c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3142	SALADE DES CARAIBES	0203142000000	€/kg	t	firebase_v1	3142	\N	\N	2026-05-17 09:42:43.694188+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	SALADE DES CARAIBES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+009c9571-bdc0-4007-bc90-beb916dd56a6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3145	LANGOUSTE ROUGE VIVANTE EPATTE	0203145000000	€/kg	t	firebase_v1	3145	\N	\N	2026-05-17 09:42:43.70265+00	2026-05-29 18:41:21.011484+00	Palinurus elephas	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	LANGOUSTE ROUGE VIVANTE EPATTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+be15b6f7-3e5c-4638-aa20-2430a2e90e06	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3146	PINCES TOURTEAUX CUITES 12/20	0203146000000	€/kg	t	firebase_v1	3146	\N	\N	2026-05-17 09:42:43.70653+00	2026-05-29 18:41:21.011484+00	CANCER PAGURUS	FAO 27 Ivb -VI	\N	CASIERS ET PIEGES	\N	Pêché en	PINCES TOURTEAUX CUITES 12/20	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f7f3a3c8-2600-4e10-a9c0-8450b36d5c6e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3519	LE MATELOT AV BULOT	0203519000000	kg	t	firebase_v1	3519	\N	\N	2026-05-17 09:42:44.45389+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE MATELOT AV BULOT	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4a169f96-5cc0-4ddc-b23a-1981e2c50eea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3149	HOMARD EUROPEEN CUIT	0203149000000	€/kg	t	firebase_v1	3149	\N	\N	2026-05-17 09:42:43.71037+00	2026-05-29 18:41:21.011484+00	Homarus gammarus	FAO 27 -VII-	\N	filet maillants et similaires	\N	Pêché en	HOMARD EUROPEEN CUIT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4a69c003-8ba1-4408-abfe-54f93173dce5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3154	HOMARD AMERICAIN VIVANT (2PINCES)	0203154000000	€/kg	t	firebase_v1	3154	\N	\N	2026-05-17 09:42:43.722304+00	2026-05-29 18:41:21.011484+00	HOMARUS AMERICANUS	FAO 21-ATLANTIQUE NORD OUEST	\N	CASIER ET PIEGES	\N	Pêché en	HOMARD AMERICAIN VIVANT (2PINCES)	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+19649f64-0482-41e6-84cd-37f05fdbd71c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3156	LANGOUSTINE glacee 10/15	0203156000000	€/kg	t	firebase_v1	3156	\N	\N	2026-05-17 09:42:43.730005+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 - Iva b VIa VIIa	\N	CHALUT	\N	Pêché en	LANGOUSTINE glacee 10/15	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7a47c4bd-9372-4f6b-8819-30869192465f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3158	CREVETTE GRISE CUITE PAYS	0203158000000	€/kg	t	firebase_v1	3158	\N	\N	2026-05-17 09:42:43.734059+00	2026-05-29 18:41:21.011484+00	CRANGON VUIGARIS	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	CREVETTE GRISE CUITE PAYS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1dc3ab73-2c7b-4770-a62d-00f533b9df74	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3160	CREVETTE ROSE BOUQUET VIVANTE	0203160000000	€/kg	t	firebase_v1	3160	\N	\N	2026-05-17 09:42:43.742195+00	2026-05-29 18:41:21.011484+00	PALAEMON SERRATUS	FAO 27 - VIII	\N	casiers et pieges	\N	Pêché en	CREVETTE ROSE BOUQUET VIVANTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3a29e4c3-df5f-439d-8038-7b0449e5f689	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3162	TOURTEAU VIVANT (2 PINCES)	0203162000000	€/kg	t	firebase_v1	3162	\N	\N	2026-05-17 09:42:43.746113+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 -VII-	\N	CASIERS ET PIEGES ET FILETS	\N	Pêché en	TOURTEAU VIVANT (2 PINCES)	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b0e176ed-348e-471c-aa7c-7ebd97129cf4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3166	ETRILLE VIVANTE	0203166000000	€/kg	t	firebase_v1	3166	\N	\N	2026-05-17 09:42:43.761844+00	2026-05-29 18:41:21.011484+00	NECORA PIPUS PUBER	FAO 27 -VII-MANCHE ET MERS CELTIQUES	\N	CASIER	\N	Pêché en	ETRILLE VIVANTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8f934771-77fa-4b13-93b9-54d4000cbf00	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3167	HUITRE NOIRMOUTIER N°3	0203167000000	€/kg	t	firebase_v1	3167	\N	\N	2026-05-17 09:42:43.765891+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE NOIRMOUTIER N°3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1732a336-2afd-4376-ad2e-034c34d5afd3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3168	PAVES DE QUEUE DE CABILLAUD	0203168000000	€/kg	t	firebase_v1	3168	\N	\N	2026-05-17 09:42:43.769919+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	NORVEGE	\N	\N	\N	Elevé en	PAVES DE QUEUE DE CABILLAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+46496720-d5a0-44fe-adee-79281696232e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3171	PETONCLE VANNEAU	0203171000000	€/kg	t	firebase_v1	3171	\N	\N	2026-05-17 09:42:43.777442+00	2026-05-29 18:41:21.011484+00	CHLAMYS OPERCULARIS	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	PETONCLE VANNEAU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d577a5c8-57f7-4e5f-a861-922e41c1e4e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3172	BULOT CUIT	0203172000000	€/kg	t	firebase_v1	3172	\N	\N	2026-05-17 09:42:43.781377+00	2026-05-29 18:41:21.011484+00	BUCCINUM UNDATUM	2	\N	CASIER ET PIEGES	\N	Pêché en	BULOT CUIT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a6ed1b5b-71eb-4d8e-98ba-c32d1d280a46	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3177	COUTEAU	0203177000000	€/kg	t	firebase_v1	3177	\N	\N	2026-05-17 09:42:43.785108+00	2026-05-29 18:41:21.011484+00	ENSIS DIRECTUS	FAO 27 -IV -C	\N	DRAGUE	\N	Pêché en	COUTEAU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+665043f6-93cd-4c95-85e0-4bf4166b2ff0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3179	PALOURDE 	0203179000000	€/kg	t	firebase_v1	3179	\N	\N	2026-05-17 09:42:43.789172+00	2026-05-29 18:41:21.011484+00	RUDITAPES PHILIPPINARUM	FAO VIII VII	\N	PECHE A PIEDS	\N	Pêché en	PALOURDE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e4023222-aa86-4123-b75c-017d1da79525	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3180	COQUES GROSSES	0203180000000	€/kg	t	firebase_v1	3180	\N	\N	2026-05-17 09:42:43.792976+00	2026-05-29 18:41:21.011484+00	CERASTODERMA EDULE	FAO 27 VII MER DU NORD	\N	PECHE A PIEDS	\N	Pêché en	COQUES GROSSES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+620c1cc1-7ea1-42dc-bad9-59ee97bde88c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3181	BULOT VIVANT	0203181000000	€/kg	t	firebase_v1	3181	\N	\N	2026-05-17 09:42:43.796175+00	2026-05-29 18:41:21.011484+00	BUCCINUM UNDATUM	FAO 27 VII	\N	CASIERS et PIEGES	\N	Pêché en	BULOT VIVANT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0ecc12e0-dea8-4608-9a38-3c3c48de1c85	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3182	BIGORNEAU VIVANT GROS	0203182000000	€/kg	t	firebase_v1	3182	\N	\N	2026-05-17 09:42:43.799983+00	2026-05-29 18:41:21.011484+00	LITTORINA LITTOREA	FAO 27 - VII VI	\N	PECHE A PIEDS	\N	Pêché en	BIGORNEAU VIVANT GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e8cb55f9-49c8-4c05-888d-15694e918090	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3183	MOULE DE BOUCHOT "LES MOULES OCEANES"	0203183000000	€/kg	t	firebase_v1	3183	\N	\N	2026-05-17 09:42:43.80387+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	FRANCE	\N	\N	\N	Elevé en	MOULE DE BOUCHOT "LES MOULES OCEANES"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5ddbcb94-14c1-4bf4-a1a3-1773ab79d3c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3184	cannelé boursin crevette	0203184000000	PIECE	t	firebase_v1	3184	\N	\N	2026-05-17 09:42:43.807441+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	cannelé boursin crevette	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+86e6dab7-20cb-4d89-82c0-c36a01f2fcd3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3185	FILET DE QUEUE DE CABILLAUD	0203185000000	€/kg	t	firebase_v1	3185	\N	\N	2026-05-17 09:42:43.810987+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	FAO I-II-	\N	SENNES/LIGNES ET HAMECONS/FILETS MAILLANTS	\N	Pêché en	FILET DE QUEUE DE CABILLAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3079dbc7-6d7d-437f-8640-ad703af6f6e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3186	CREVETTE CUITE 50/70	0203186000000	€/kg	t	firebase_v1	3186	\N	\N	2026-05-17 09:42:43.815111+00	2026-05-29 18:41:21.011484+00	PENAEUS VANNAMEI	equate ET AUTRES PAYS	\N	\N	\N	Elevé en	CREVETTE CUITE 50/70	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cd8c97f2-a849-4f90-a4fa-50524a8c2848	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3187	PLATEAU ST VALENTIN	0203187000000	PIECE	t	firebase_v1	3187	\N	\N	2026-05-17 09:42:43.81936+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	PLATEAU ST VALENTIN	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+35097fd1-a7aa-4754-9250-5a55ed62000f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3188	CREVETTE CUITE 30/40	0203188000000	€/kg	t	firebase_v1	3188	\N	\N	2026-05-17 09:42:43.823311+00	2026-05-29 18:41:21.011484+00	PENAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTE CUITE 30/40	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a4a196d5-8afc-4f06-9c58-ae426e3d728a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3189	TELLINE VIVANTE	0203189000000	€/kg	t	firebase_v1	3189	\N	\N	2026-05-17 09:42:43.827131+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - VII	\N	PECHE A PIEDS	\N	Pêché en	TELLINE VIVANTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+917ff0cb-599d-45a4-964a-97e745a4ea9f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3190	Melva Lampareau	0203190000000	€/kg	t	firebase_v1	3190	\N	\N	2026-05-17 09:42:43.831084+00	2026-05-29 18:41:21.011484+00	AUXIS ROCHEI blt	FAO 37-1-	\N	FILETS TOURNANTS ET FILET SOULEVES	\N	Pêché en	Melva Lampareau	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6e30cbd2-17e8-4cd7-84aa-89dcfe7c714e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3191	SANDRE	0203191000000	€/kg	t	firebase_v1	3191	\N	\N	2026-05-17 09:42:43.834646+00	2026-05-29 18:41:21.011484+00	SANDER LUCIOPERCA	\N	\N	\N	\N	Elevé	SANDRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+87ff6c84-a27b-4c8f-ae2a-6d3e07d24fee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3522	LE ROYALE	0203522000000	kg	t	firebase_v1	3522	\N	\N	2026-05-17 09:42:44.455839+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE ROYALE	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9dfaf596-b8ae-4604-9705-38b26b464b14	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3169	AMANDE	0203169000000	kg	f	firebase_v1	3169	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.773759+00	2026-05-31 15:03:53.273198+00	GIycymeris glycymeris	FAO 27 - VII-MANCHE ET MERS CELTIQUES ET ANE	\N	DRAGUES	\N	Pêché en	AMANDE	kg	kg	kg	COQUILLAGE	Coquillage	5.50	\N	\N	\N	\N	\N	\N
+c6d7dcd8-edd0-4ccf-8783-d4e1030d3104	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3165	ARAIGNEE CUITE	0203165000000	kg	t	firebase_v1	3165	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.758018+00	2026-05-31 15:05:12.221389+00	Maja BRACHYDACTYLA	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	ARAIGNEE CUITE	kg	kg	kg	CRUSTACE	Crustacé	5.50	\N	\N	\N	\N	\N	\N
+ee333a34-81c2-4ca7-aab4-79664542dc47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3164	ARAIGNEE VIVANTE gros male	0203164000000	kg	t	firebase_v1	3164	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.754063+00	2026-05-31 15:12:28.494525+00	Maja BRACHYDACTYLA	FAO 27 - VIII	\N	FILET MAILLANT	\N	Pêché en	ARAIGNEE VIVANTE gros male	kg	kg	kg	CRUSTACE	Crustacé	5.50	\N	\N	\N	\N	\N	\N
+f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3153	HOMARD EUROPEEN VIVANT	0203153000000	€/kg	t	firebase_v1	3153	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.718173+00	2026-06-07 09:41:10.211534+00	Homarus gammarus	FAO 27 - VIII	\N	CASIER	\N	Pêché en	HOMARD EUROPEEN VIVANT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	24.5300	25.9700	27.6000
+cf014bf1-5197-4f7b-9e69-b0d174a826d1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3155	LANGOUSTINE GLACEE 16/20	0203155000000	€/kg	t	firebase_v1	3155	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.726272+00	2026-06-07 09:41:10.320578+00	NEPHROPS NORVEGICUS	FAO 27 IIIa	\N	CHALUT	\N	Pêché en	LANGOUSTINE GLACEE 16/20	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	17.7800	18.8200	20.0000
+5f12ba5c-c997-4215-a339-ae771331a131	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3192	MOULE DE BOUCHOT "LA PLAINAISE" LES CHALLANDISES	0203192000000	€/kg	t	firebase_v1	3192	\N	\N	2026-05-17 09:42:43.838198+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	FRANCE	\N	NETTOYEE	\N	Elevé en	MOULE DE BOUCHOT "LA PLAINAISE" LES CHALLANDISES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+23677730-0dd3-4cfc-8802-98670fb199fc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3195	DOS D'EGLEFIN	0203195000000	€/kg	t	firebase_v1	3195	\N	\N	2026-05-17 09:42:43.84643+00	2026-05-29 18:41:21.011484+00	MELANOGRAMMUS AEGLEFINUS	FAO 27 V	\N	LIGNE/SENNES FILET MAILLANTS	\N	Pêché en	DOS D'EGLEFIN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+75549ac7-f8ea-4115-b39f-e7fe385b42af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3196	LIMANDE SOLE	0203196000000	€/kg	t	firebase_v1	3196	\N	\N	2026-05-17 09:42:43.851188+00	2026-05-29 18:41:21.011484+00	MICROSTOMUS KITT	FAO 27 - VII	\N	CHALUT	\N	Pêché en	LIMANDE SOLE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9bf62459-67b1-4538-a03d-ad1165d1adaa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3197	LANGOUSTINE VIVANTE 10/15	0203197000000	kg	t	firebase_v1	3197	\N	\N	2026-05-17 09:42:43.855178+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 -IVa-VIa	\N	CASIER ET PIEGES	\N	Pêché en	LANGOUSTINE VIVANTE 10/15	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2eaf46ed-86f7-4fd3-9cd3-1977c020c56b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3198	BOGUE	0203198000000	€/kg	t	firebase_v1	3198	\N	\N	2026-05-17 09:42:43.858804+00	2026-05-29 18:41:21.011484+00	BOOPS BOOPS	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	BOGUE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f7dadb4e-47f2-4cbc-a459-73fa9ceba856	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3199	FLET	0203199000000	€/kg	t	firebase_v1	3199	\N	\N	2026-05-17 09:42:43.86253+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - VII-d	\N	CHALUT	\N	Pêché en	FLET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f9960e7c-288b-4c1b-ae24-3aec66f49655	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3201	PAGEOT ACARNE	0203201000000	€/kg	t	firebase_v1	3201	\N	\N	2026-05-17 09:42:43.866324+00	2026-05-29 18:41:21.011484+00	PAGELLUS ACARNE	FAO 27 - VII	\N	FILET	\N	Pêché en	PAGEOT ACARNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a303eed0-e7a8-44b2-87a0-68ca3a611327	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3202	RASCASSE ROUGE	0203202000000	€/kg	t	firebase_v1	3202	\N	\N	2026-05-17 09:42:43.869834+00	2026-05-29 18:41:21.011484+00	\N	FAO 34-ATLANTIQUE CENTRE EST	\N	LIGNES ET HAMECONS	\N	Pêché en	RASCASSE ROUGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b165ce90-4f63-432e-9b50-9c4d8ab101ba	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3208	HUITRE BEAUVOIR N°1	0203208000000	€/kg	t	firebase_v1	3208	\N	\N	2026-05-17 09:42:43.87684+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE BEAUVOIR N°1	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5b5b51cb-6577-440f-b0a3-e77336425e85	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3209	SPRAT	0203209000000	€/kg	t	firebase_v1	3209	\N	\N	2026-05-17 09:42:43.880318+00	2026-05-29 18:41:21.011484+00	SPRATTUS SPRATTUS	FAO 27 - IV	\N	FILETS TOURNANTS ET SOULEVES	\N	Pêché en	SPRAT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d4b273cd-6c02-4b55-8f91-fedff0914bc7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3210	JOUE DE RAIE	0203210000000	€/kg	t	firebase_v1	3210	\N	\N	2026-05-17 09:42:43.883898+00	2026-05-29 18:41:21.011484+00	RAJA CLAVATA	FAO 27 - VII-	\N	CHALUT	\N	Pêché en	JOUE DE RAIE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+98800143-ab87-4391-b385-d97b9102060f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3211	PAVES DE SAUMON	0203211000000	PIECE	t	firebase_v1	3211	\N	\N	2026-05-17 09:42:43.887383+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	PAVES DE SAUMON	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0c512126-6cb1-478e-8abd-7770542e688b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3213	OURSIN VIVANT	0203213000000	€/kg	t	firebase_v1	3213	\N	\N	2026-05-17 09:42:43.890793+00	2026-05-29 18:41:21.011484+00	SPHAERECHINUS GRANULARIS	FAO 27 - VIII-GOLFE DE GASCOGNE	\N	DRAGUE	\N	Pêché en	OURSIN VIVANT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5135e208-82ca-484e-9a1e-fe3a5e47aa6d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3217	DORADE SEBASTE	0203217000000	€/kg	t	firebase_v1	3217	\N	\N	2026-05-17 09:42:43.901455+00	2026-05-29 18:41:21.011484+00	HELICOLENUS DACTYLOPTERUS	FAO 27 - VI	\N	CHALUT	\N	Pêché en	DORADE SEBASTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+53ece447-6db9-4bcc-90d7-b4260a78193f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3218	DOS DE LIEU NOIR	0203218000000	€/kg	t	firebase_v1	3218	\N	\N	2026-05-17 09:42:43.904767+00	2026-05-29 18:41:21.011484+00	POLLACCHIUS VIRENS	FAO 27 I	\N	CHALUT	\N	Pêché en	DOS DE LIEU NOIR	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+eda87ea3-0a21-4c62-b496-09ccf5450bfd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3220	TRUITE ARC EN CIEL VIDéE	0203220000000	€/kg	t	firebase_v1	3220	\N	\N	2026-05-17 09:42:43.912302+00	2026-05-29 18:41:21.011484+00	ONCORHYNCHUS MYKISS	FRANCE	\N	\N	\N	Elevé en	TRUITE ARC EN CIEL VIDéE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a91f443a-e544-4853-b9ff-3636ffce4d3f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3221	crepes de saumon	0203221000000	pièce	t	firebase_v1	3221	\N	\N	2026-05-17 09:42:43.91576+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	\N	\N	\N	\N	Elevé en	crepes de saumon	pièce	pièce	pièce	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2e60a942-eb75-4e84-afcb-bccabbfdecfa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3223	HARENG BUCKLING	0203223000000	€/kg	t	firebase_v1	3223	\N	\N	2026-05-17 09:42:43.919052+00	2026-05-29 18:41:21.011484+00	CLUPEA HARENGUS	ATLANTIQUE NORD EST IV MER DU NORD	\N	CHALUT	\N	Pêché en	HARENG BUCKLING	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b5563340-464d-4a26-aa8a-1b747b6c2aeb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3225	FILET DE LOUP DE MER	0203225000000	€/kg	t	firebase_v1	3225	\N	\N	2026-05-17 09:42:43.92567+00	2026-05-29 18:41:21.011484+00	ANARHICHAS LUPUS	FAO 27 -V-a	\N	CHALUT	\N	Pêché en	FILET DE LOUP DE MER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+02095206-c298-4f04-b776-951ee1a32d12	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3226	POELEE DE LA MER MARINEE THYM CITRON	0203226000000	€/kg	t	firebase_v1	3226	\N	\N	2026-05-17 09:42:43.928913+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	POELEE DE LA MER MARINEE THYM CITRON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6a1288d9-0c9a-4734-b088-2e90b1a14416	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3227	DOS DE LINGUE BLEUE	0203227000000	€/kg	t	firebase_v1	3227	\N	\N	2026-05-17 09:42:43.932186+00	2026-05-29 18:41:21.011484+00	MOLVA DYPTERYGIA	FAO 27 -IV	\N	CHALUT(OTB)	\N	Pêché en	DOS DE LINGUE BLEUE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0e6c02d0-e3bb-4630-a782-c6f846909074	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3228	MOULES HOLLANDE	0203228000000	€/kg	t	firebase_v1	3228	\N	\N	2026-05-17 09:42:43.935471+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	HOLLANDE/DANEMARK	\N	\N	\N	Elevé en	MOULES HOLLANDE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+32a6d8c1-6468-45a1-ba00-478802dc73c6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3229	Burger	0203229000000	pièce	t	firebase_v1	3229	\N	\N	2026-05-17 09:42:43.938634+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	\N	\N	\N	\N	Elevé en	Burger	pièce	pièce	pièce	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4d22aae5-e56d-45ca-8b84-eeb6210c4e15	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3230	TRUITE DE MER 1/2	0203230000000	€/PIECE	t	firebase_v1	3230	\N	\N	2026-05-17 09:42:43.94175+00	2026-05-29 18:41:21.011484+00	SALMO TRUTTA	ECOSSE	\N	\N	\N	Elevé en	TRUITE DE MER 1/2	€/PIECE	€/PIECE	€/PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c1448984-deb1-4f7d-967b-02a8814382b8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3231	DORADE SEBASTE	0203231000000	€/kg	t	firebase_v1	3231	\N	\N	2026-05-17 09:42:43.944877+00	2026-05-29 18:41:21.011484+00	HELICOLENUS DACTYLOPTERUS	FAO 27 - VII	\N	CHALUT	\N	Pêché en	DORADE SEBASTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0a414fca-2fe8-4644-9055-4d06d108efad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3233	MOULE DE BOUCHOT "LES MOULES OCEANES"	0203233000000	€/kg	t	firebase_v1	3233	\N	\N	2026-05-17 09:42:43.948125+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	FRANCE	\N	NETTOYEE	\N	Elevé en	MOULE DE BOUCHOT "LES MOULES OCEANES"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e10a75e0-cbe4-4e21-8a78-5d38f964d54a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3234	SALADE DE POULPE	0203234000000	€/kg	t	firebase_v1	3234	\N	\N	2026-05-17 09:42:43.951352+00	2026-05-29 18:41:21.011484+00	DOSIDICUS GIGAS	FAO 87 - OCEAN PACIFIQUE SUD EST	\N	\N	\N	Pêché en	SALADE DE POULPE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+da36402b-2557-4d88-841a-48d58666d7da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3235	HUITRE N3 BOURGNEUF	0203235000000	kg	t	firebase_v1	3235	\N	\N	2026-05-17 09:42:43.954558+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	élevé en	HUITRE N3 BOURGNEUF	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9812f172-5418-4207-8208-9433fe2a0bd3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3205	CREVETTE GRISE VIVANTE DU PAYS	0203205000000	€/kg	t	firebase_v1	3205	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.873379+00	2026-06-07 09:41:09.844228+00	CRANGON CRANGON	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	CREVETTE GRISE VIVANTE DU PAYS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	21.2800	22.5300	23.9400
+ab0fb31e-be20-4002-8170-9004eada1825	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3216	FILET D EGLEFIN	0203216000000	€/kg	t	firebase_v1	3216	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.898004+00	2026-06-07 09:41:10.101072+00	MELANOGRAMMUS AEGLEFINUS	FAO27-IVa	\N	CHALUT ET SEINE	\N	péché en	FILET D EGLEFIN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	17.6700	18.7100	19.8800
+4ca18ee3-6cbe-48ff-a300-306183707747	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3219	LANGOUSTINE GLACEE 31/40	0203219000000	€/kg	t	firebase_v1	3219	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.908641+00	2026-06-07 09:41:10.36001+00	NEPHROPS NORVEGICUS	FAO 27 - IIIa	\N	CHALUT	\N	Pêché en	LANGOUSTINE GLACEE 31/40	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	8.3300	8.8200	9.3800
+07300211-c58c-4518-809f-663efc1e50c2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3224	OMBRINE	0203224000000	€/kg	t	firebase_v1	3224	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:43.922367+00	2026-06-07 09:41:10.590431+00	Umbrina CANARIENSIS	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	OMBRINE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	6.0100	6.3600	6.7600
+f93e8ef6-9f77-4f59-9eac-6180f10cfd0b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3236	FILET DE CONGRE	0203236000000	€/kg	t	firebase_v1	3236	\N	\N	2026-05-17 09:42:43.957677+00	2026-05-29 18:41:21.011484+00	Conger conger	FAO 27 - VIII	\N	LIGNES ET HAMECONS	\N	Pêché en	FILET DE CONGRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+71bacd7e-775c-42a9-bede-2bf6c22ae6b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3238	TURBOT	0203238000000	€/kg	t	firebase_v1	3238	\N	\N	2026-05-17 09:42:43.960616+00	2026-05-29 18:41:21.011484+00	\N	ESPAGNE	\N	\N	\N	Elevé en	TURBOT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d27b0005-6335-46fe-911c-f0d01d579ec8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3240	BRO.CREV.CUITE MARINE PROVENçALE	0203240000000	PIECE	t	firebase_v1	3240	\N	\N	2026-05-17 09:42:43.963945+00	2026-05-29 18:41:21.011484+00	PENAEUS VANNAMEI	.	\N	\N	\N	Elevé en	BRO.CREV.CUITE MARINE PROVENçALE	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+962da7a2-950f-4c82-8df3-db60ee1f4160	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3241	HUITRE N2 BOURGNEUF	0203241000000	kg	t	firebase_v1	3241	\N	\N	2026-05-17 09:42:43.967099+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	élevé en	HUITRE N2 BOURGNEUF	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1d2cf6a6-acee-4b34-b5f5-a74931ca282a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3244	CREVETTE CUITE U10 "SAUVAGE"	0203244000000	€/kg	t	firebase_v1	3244	\N	\N	2026-05-17 09:42:43.976909+00	2026-05-29 18:41:21.011484+00	PENAEUS MONODON	ATLANTIQUE CENTRE EST	\N	CHALUT	\N	Pêché en	CREVETTE CUITE U10 "SAUVAGE"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1678a258-97a3-47b5-a14f-816e62a23efb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3245	SEICHE ENTIERE	0203245000000	€/kg	t	firebase_v1	3245	\N	\N	2026-05-17 09:42:43.980119+00	2026-05-29 18:41:21.011484+00	SEPIA PHARAONIS	FAO 27- MANCHE ET MERS CELTIQUES	\N	CHALUT	\N	Pêché en	SEICHE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+69d4db38-6549-40cf-a2d8-5b01983e5ab1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3246	SAUMONETTE/GRANDE ROUSSETTE PELLEE	0203246000000	€/kg	t	firebase_v1	3246	\N	\N	2026-05-17 09:42:43.983064+00	2026-05-29 18:41:21.011484+00	SCYLIORHINUS STELLARIS	FAO 27 - VII	\N	CHALUT	\N	Pêché en	SAUMONETTE/GRANDE ROUSSETTE PELLEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5422df6f-509d-4095-a3b8-95cd2888fe6e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3247	BLANC DE SEICHE"FRAIS"	0203247000000	€/kg	t	firebase_v1	3247	\N	\N	2026-05-17 09:42:43.986233+00	2026-05-29 18:41:21.011484+00	SEPIA OFFICINALIS	FAO 27 - VII-	\N	CHALUT	\N	Pêché en	BLANC DE SEICHE"FRAIS"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+463edd90-dc8c-4219-9b3c-0c059003e84a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3248	BROCHETTE SAUMON/CABILLAUD	0203248000000	€/kg	t	firebase_v1	3248	\N	\N	2026-05-17 09:42:43.989869+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	\N	\N	\N	\N	Elevé en	BROCHETTE SAUMON/CABILLAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8db5c5bd-3d12-42fa-8b6a-d56a831d4d7b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3249	CREVETTE CUITE 40/60	0203249000000	€/kg	t	firebase_v1	3249	\N	\N	2026-05-17 09:42:43.992744+00	2026-05-29 18:41:21.011484+00	PANAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTE CUITE 40/60	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+23e09330-658f-4d6f-9908-323af42a23ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3251	HUITRE N4 BOURGNEUF	0203251000000	kg	t	firebase_v1	3251	\N	\N	2026-05-17 09:42:43.995679+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	élevé en	HUITRE N4 BOURGNEUF	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+29f53205-2e49-4d3a-b478-8fc387827575	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3252	FILET DE QUEUE DE LIEU NOIR	0203252000000	€/kg	t	firebase_v1	3252	\N	\N	2026-05-17 09:42:43.998482+00	2026-05-29 18:41:21.011484+00	POLLACCHIUS VIRENS	FAO 27 - IV-IIIA-	\N	CHALUTS	\N	Pêché en	FILET DE QUEUE DE LIEU NOIR	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+57821235-f3d8-49f5-a3cd-62e140624140	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3253	HUITRE LONGUE BOURGNEUF	0203253000000	€/kg	t	firebase_v1	3253	\N	\N	2026-05-17 09:42:44.001353+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE LONGUE BOURGNEUF	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c2c1411e-8762-4f86-87bb-b5839ca964c5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3255	LANGOUSTINE VIVANTE 16/25	0203255000000	kg	t	firebase_v1	3255	\N	\N	2026-05-17 09:42:44.004086+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 -Ivb	\N	CASIER	\N	Pêché en	LANGOUSTINE VIVANTE 16/25	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+62d9b493-5d05-431c-a757-193c8b9f8858	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3257	brochette TEX MEX	0203257000000	PIECE	t	firebase_v1	3257	\N	\N	2026-05-17 09:42:44.006705+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	brochette TEX MEX	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+79ff2750-4a35-4e9d-a6db-aaf8f877dea3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3258	Quiche de saumon 2 personnes	0203258000000	pièce	t	firebase_v1	3258	\N	\N	2026-05-17 09:42:44.009529+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	\N	\N	\N	\N	Elevé en	Quiche de saumon 2 personnes	pièce	pièce	pièce	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f2fd71ab-ea52-4c90-b89b-e45926fcf273	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3259	CREVETTE U10 CRUE	0203259000000	€/kg	t	firebase_v1	3259	\N	\N	2026-05-17 09:42:44.012296+00	2026-05-29 18:41:21.011484+00	PENAEUS MONODON	\N	\N	\N	\N	Pêché en	CREVETTE U10 CRUE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cad38cd6-7730-4fa2-888f-3169d8fc4cf3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3261	LE MATELOT AV BIG	0203261000000	kg	t	firebase_v1	3261	\N	\N	2026-05-17 09:42:44.015+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE MATELOT AV BIG	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6c733baf-1a06-412a-ae36-f60a65fe5bec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3262	LE PETIT MOUSSE AV BULOT	0203262000000	kg	t	firebase_v1	3262	\N	\N	2026-05-17 09:42:44.017832+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE PETIT MOUSSE AV BULOT	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+40810c23-72b0-435b-89b6-893e04350b69	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3263	LE CLIPPER	0203263000000	kg	t	firebase_v1	3263	\N	\N	2026-05-17 09:42:44.020762+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE CLIPPER	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+21929e42-227a-4e32-a804-7131574ea67c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3264	LE PETIT MOUSSE AV HUITRE ET BULOT	0203264000000	kg	t	firebase_v1	3264	\N	\N	2026-05-17 09:42:44.023773+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE PETIT MOUSSE AV HUITRE ET BULOT	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7ecccd18-195b-43fc-9562-73c2d25207a2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3267	BRO.CREV.CUITE MARINE AIL/PERSIL	0203267000000	PIECE	t	firebase_v1	3267	\N	\N	2026-05-17 09:42:44.026691+00	2026-05-29 18:41:21.011484+00	PENAEUS VANNAMEI	\N	\N	\N	\N	Elevé en	BRO.CREV.CUITE MARINE AIL/PERSIL	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cb6ea493-b3fc-4def-8f7f-e356df859b4f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3268	BRO.CREV.CUITE MARINE INDIENNE	0203268000000	PIECE	t	firebase_v1	3268	\N	\N	2026-05-17 09:42:44.029674+00	2026-05-29 18:41:21.011484+00	PENAEUS VANNAMEI	\N	\N	\N	\N	Elevé en	BRO.CREV.CUITE MARINE INDIENNE	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+fbb6c626-143c-46f7-b03a-0fbdfbd4121e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3269	Quiche de saumon 1 personne	0203269000000	pièce	t	firebase_v1	3269	\N	\N	2026-05-17 09:42:44.032007+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	\N	\N	\N	\N	Elevé en	Quiche de saumon 1 personne	pièce	pièce	pièce	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+de0b6e95-0ca5-41d8-9c65-465833be12f5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3270	FILET DE TRUITE	0203270000000	€/kg	t	firebase_v1	3270	\N	\N	2026-05-17 09:42:44.03468+00	2026-05-29 18:41:21.011484+00	ONCORHYNCHUS MYKISS	FRANCE	\N	\N	\N	Elevé en	FILET DE TRUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c8ca85ac-de19-42b3-97ce-c9c8d1038706	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3272	brochette PROVENCAL	0203272000000	PIECE	t	firebase_v1	3272	\N	\N	2026-05-17 09:42:44.037121+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	brochette PROVENCAL	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+abaa9a01-21e3-4550-a258-92ad6d8d952e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3274	Friand au saumon	0203274000000	pièce	t	firebase_v1	3274	\N	\N	2026-05-17 09:42:44.042561+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	\N	\N	\N	\N	Elevé en	Friand au saumon	pièce	pièce	pièce	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+19016a32-b059-4e0d-ab4a-64c71d469cbd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3276	HUITRES DE L'ILE DE RE N°1	0203276000000	€/kg	t	firebase_v1	3276	\N	\N	2026-05-17 09:42:44.045033+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRES DE L'ILE DE RE N°1	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f23ee5d2-8239-445d-b345-594c78ace542	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3277	CREVETTE CUITE 80/100	0203277000000	€/kg	t	firebase_v1	3277	\N	\N	2026-05-17 09:42:44.047697+00	2026-05-29 18:41:21.011484+00	PANAEUS VANNAMEI	CUBA ET AUTRES PAYS	\N	\N	\N	Elevé en	CREVETTE CUITE 80/100	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c410bbb1-53ad-41dd-b093-f61e1c871ee0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3278	HUITRE MARENNE OLERON N°1	0203278000000	€/kg	t	firebase_v1	3278	\N	\N	2026-05-17 09:42:44.050096+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE MARENNE OLERON N°1	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+650d4ba5-d63d-4bb1-8ad8-aa51fc429562	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3279	SALADE GAMBAS MANDARINE	0203279000000	€/kg	t	firebase_v1	3279	\N	\N	2026-05-17 09:42:44.052491+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	SALADE GAMBAS MANDARINE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+40bc083e-3141-458c-9ecd-cbf21a98ae82	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3280	CREVETTE CUITE 20/30	0203280000000	€/kg	t	firebase_v1	3280	\N	\N	2026-05-17 09:42:44.054989+00	2026-05-29 18:41:21.011484+00	PANAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTE CUITE 20/30	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+44a27af1-352f-42be-af52-b1258d4ea8e5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3282	PAVES DE SAUMON FUME CHMINEE	0203282000000	€/kg	t	firebase_v1	3282	\N	\N	2026-05-17 09:42:44.057425+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	PAVES DE SAUMON FUME CHMINEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+11799696-1fb4-49a7-867c-77bf7029122e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3286	SALDE DE LA MER	0203286000000	€/kg	t	firebase_v1	3286	\N	\N	2026-05-17 09:42:44.059878+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	SALDE DE LA MER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d1e606d3-1a8d-43b6-a57e-0d788df800b8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3289	FILET DE BROSME	0203289000000	€/kg	t	firebase_v1	3289	\N	\N	2026-05-17 09:42:44.062566+00	2026-05-29 18:41:21.011484+00	BROSME BROSME	FAO 27 - VI-	\N	CHALUT	\N	Pêché en	FILET DE BROSME	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0543b62c-e94a-48b4-93a1-42f14a586f27	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3290	LIMANDE SOLE PAC	0203290000000	€/kg	t	firebase_v1	3290	\N	\N	2026-05-17 09:42:44.065196+00	2026-05-29 18:41:21.011484+00	MICROSTOMUS KITT	FAO 27 - VII	\N	CHALUT	\N	Pêché en	LIMANDE SOLE PAC	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c22e3880-883f-41a6-824c-49d8d1b5f54b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3291	SOLE RUARDON	0203291000000	€/kg	t	firebase_v1	3291	\N	\N	2026-05-17 09:42:44.067659+00	2026-05-29 18:41:21.011484+00	\N	FAO 34-ATLANTIQUE CENTRE EST	\N	FILETS MAILLANTS DERIVANTS	\N	Pêché en	SOLE RUARDON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+da280228-caca-455d-81fc-4e88673bd636	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3292	DARNE THON GERMON	0203292000000	€/kg	t	firebase_v1	3292	\N	\N	2026-05-17 09:42:44.069835+00	2026-05-29 18:41:21.011484+00	Thunnus alalunga	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	DARNE THON GERMON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4e2d31c9-6931-4b15-b6dc-242dad6c8546	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3293	HUITRE LONGUE NOIRMOUTIER	0203293000000	€/kg	t	firebase_v1	3293	\N	\N	2026-05-17 09:42:44.072002+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE LONGUE NOIRMOUTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d9b0616a-b439-45c4-82c7-11eac14ca662	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3294	LANGOUSTINE GLACEE 40/50	0203294000000	€/kg	t	firebase_v1	3294	\N	\N	2026-05-17 09:42:44.074579+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 - IV-	\N	CHALUT(OTB)	\N	Pêché en	LANGOUSTINE GLACEE 40/50	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+82e491a8-4b2d-4787-8e3f-189e2f7f2ead	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3295	HUITRE NOIRMOUTIER N°4	0203295000000	€/kg	t	firebase_v1	3295	\N	\N	2026-05-17 09:42:44.076975+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE NOIRMOUTIER N°4	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e4a0664c-026f-417b-b957-8494f6019028	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3296	HUITRE LA GUITTIERE LONGUES	0203296000000	€/kg	t	firebase_v1	3296	\N	\N	2026-05-17 09:42:44.07955+00	2026-05-29 18:41:21.011484+00	CRASDSOSTREA GIGAS	FRANCE	\N	\N	\N	\N	HUITRE LA GUITTIERE LONGUES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e87eda19-32f1-46b9-82c2-7f5519e18a6b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3297	HUITRE LA GUITTIERE N°2	0203297000000	€/kg	t	firebase_v1	3297	\N	\N	2026-05-17 09:42:44.081943+00	2026-05-29 18:41:21.011484+00	CRASDSOSTREA GIGAS	FRANCE	\N	\N	\N	\N	HUITRE LA GUITTIERE N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3da8a43e-8a58-48b9-8836-baeafbf85a2f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3298	HUITRE LA GUITTIERE N°3	0203298000000	€/kg	t	firebase_v1	3298	\N	\N	2026-05-17 09:42:44.084279+00	2026-05-29 18:41:21.011484+00	CRASDSOSTREA GIGAS	FRANCE	\N	\N	\N	\N	HUITRE LA GUITTIERE N°3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8cc42525-88aa-4b41-9d5d-e50cf933128f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3299	LONGE DE THON GERMON	0203299000000	€/kg	t	firebase_v1	3299	\N	\N	2026-05-17 09:42:44.08672+00	2026-05-29 18:41:21.011484+00	THUNNUS ALALUNGA	FAO 71	\N	LIGNE ET HAMECONS	\N	Pêché en	LONGE DE THON GERMON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+316750f6-ef36-4d13-a54f-3f40c0e6c30d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3300	POULPES ROCA	0203300000000	€/kg	t	firebase_v1	3300	\N	\N	2026-05-17 09:42:44.089065+00	2026-05-29 18:41:21.011484+00	OCTOPUS VULGARI	FAO ANE	\N	CHALUT	\N	Pêché en	POULPES ROCA	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+08470f5e-2a0b-4d9b-9faf-295c192c65ad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3304	OEUFS CABILLAUD FUMES	0203304000000	€/kg	t	firebase_v1	3304	\N	\N	2026-05-17 09:42:44.091575+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - V -	\N	LIGNE	\N	Pêché en	OEUFS CABILLAUD FUMES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cca4bba8-5596-4b0d-8555-13348aa4eae9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3305	PAVES DE SAUMON "FICELLE"	0203305000000	€/kg	t	firebase_v1	3305	\N	\N	2026-05-17 09:42:44.093974+00	2026-05-29 18:41:21.011484+00	\N	NORVEGE	\N	JAMAIS CONGELé	\N	Elevé en	PAVES DE SAUMON "FICELLE"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f535dd79-1a78-4a4c-8671-a73cab5a6756	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3306	PAVES DE SAUMON "CHEMINEE"	0203306000000	€/kg	t	firebase_v1	3306	\N	\N	2026-05-17 09:42:44.096643+00	2026-05-29 18:41:21.011484+00	\N	NORVEGE	\N	\N	\N	Elevé en	PAVES DE SAUMON "CHEMINEE"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+59e1d243-dcb7-4bdf-8259-7150d74d0be3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3308	FILET MAQUEREAU FUMé OIGNON	0203308000000	€/kg	t	firebase_v1	3308	\N	\N	2026-05-17 09:42:44.099118+00	2026-05-29 18:41:21.011484+00	SCOMBER SCOMBRUS	FAO 27 - VII-MANCHE ET MER CELTIQUE,MER D'IRLANDE	\N	CHALUT	\N	Pêché en	FILET MAQUEREAU FUMé OIGNON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+05d8ec34-34e9-4b50-814e-69f70bc6c484	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3310	FILET MAQUEREAU FUMé AU POIVRE	0203310000000	€/kg	t	firebase_v1	3310	\N	\N	2026-05-17 09:42:44.101499+00	2026-05-29 18:41:21.011484+00	SCOMBER SCOMBRUS	FAO 27 - IV-MER DU NORD	\N	SENNES	\N	Pêché en	FILET MAQUEREAU FUMé AU POIVRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a324925c-a224-4557-b538-b9e9ec17f88f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3311	FILET MAQUEREAU FUMé PROVENCALE	0203311000000	€/kg	t	firebase_v1	3311	\N	\N	2026-05-17 09:42:44.103845+00	2026-05-29 18:41:21.011484+00	SCOMBER SCOMBRUS	FAO 27 - IV-MER DU NORD	\N	CHALUT	\N	Pêché en	FILET MAQUEREAU FUMé PROVENCALE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e7ee5bae-3106-42f9-b549-53ce45fafd62	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3312	MAQUEREAU BUCKLING	0203312000000	€/kg	t	firebase_v1	3312	\N	\N	2026-05-17 09:42:44.106396+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - MER DU NORD	\N	CHALUT	\N	Pêché en	MAQUEREAU BUCKLING	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ba241afa-bf19-46e2-9a85-870837fe32f6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3314	KIPPERS	0203314000000	€/kg	t	firebase_v1	3314	\N	\N	2026-05-17 09:42:44.108992+00	2026-05-29 18:41:21.011484+00	CLUPEA HARENGUS	ATLANTIQUE NORD EST II MER DE NORVEGE	\N	FILET TOURNANTS	\N	Pêché en	KIPPERS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+84972aa2-f9ef-4b65-a83c-5247d99b7346	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3318	BIGORNEAU VIVANT	0203318000000	€/kg	t	firebase_v1	3318	\N	\N	2026-05-17 09:42:44.113782+00	2026-05-29 18:41:21.011484+00	LITTORINA LITTOREA	FAO 27 - VII-	\N	PECHE A PIEDS	\N	Pêché en	BIGORNEAU VIVANT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+adde262d-4e84-4b8b-826f-657a93a391e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3319	LAVIGNON	0203319000000	€/kg	t	firebase_v1	3319	\N	\N	2026-05-17 09:42:44.116225+00	2026-05-29 18:41:21.011484+00	SCROBICULIRIA PLANA	FAO 27 - VII	\N	PECHE A PIEDS	\N	Pêché en	LAVIGNON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+321f9d2f-98cd-4ee3-a156-fa3273df7737	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3320	BULOT CUIT AROMATISé PROVENCALE	0203320000000	€/kg	t	firebase_v1	3320	\N	\N	2026-05-17 09:42:44.118634+00	2026-05-29 18:41:21.011484+00	BUCCINUM UNDATUM	FAO 27 - IV-VII-	\N	CASIER	\N	Pêché en	BULOT CUIT AROMATISé PROVENCALE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e1f6ecb7-7606-4445-a7e3-b2bb74ad73d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3321	BULOT CUIT PIMENTé	0203321000000	€/kg	t	firebase_v1	3321	\N	\N	2026-05-17 09:42:44.120991+00	2026-05-29 18:41:21.011484+00	BUCCINUM UNDATUM	FAO 27 -VII-IV-	\N	CASIER	\N	Pêché en	BULOT CUIT PIMENTé	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+875f7e63-ab5b-4f69-ba63-fc71fe4dcda9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3322	PINCES DE TOURTEAUX CUITES 8/12	0203322000000	€/kg	t	firebase_v1	3322	\N	\N	2026-05-17 09:42:44.123466+00	2026-05-29 18:41:21.011484+00	CANCER PAGURUS	FAO 27 VII/27 IV/27 II	\N	CASIERS ET PIEGES	\N	Pêché en	PINCES DE TOURTEAUX CUITES 8/12	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8efbe519-67e3-485b-83db-75632e0c4445	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3323	HUITRE MARENNE OLERON N°2	0203323000000	€/kg	t	firebase_v1	3323	\N	\N	2026-05-17 09:42:44.125807+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE MARENNE OLERON N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+fd3bd915-d856-4de6-873b-cc111aa8b7b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3324	BULOT CUIT	0203324000000	€/kg	t	firebase_v1	3324	\N	\N	2026-05-17 09:42:44.128103+00	2026-05-29 18:41:21.011484+00	BUCCINUM UNDATUM	FAO 27 III	\N	CASIER	\N	Pêché en	BULOT CUIT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+200c484b-f6f4-4f8b-8c1c-88ff51285366	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3326	MINI ROTI SAUMON ST JACQUES	0203326000000	piece	t	firebase_v1	3326	\N	\N	2026-05-17 09:42:44.130588+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	trad	MINI ROTI SAUMON ST JACQUES	piece	piece	piece	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+db596243-76cf-4617-a82c-b22e43f5b81e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3327	COQUILLE ST JACQUES BLANCHE	0203327000000	€/kg	t	firebase_v1	3327	\N	\N	2026-05-17 09:42:44.132869+00	2026-05-29 18:41:21.011484+00	Pecten maximus	FAO 27 - VII	\N	DRAGUES	\N	Pêché en	COQUILLE ST JACQUES BLANCHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f167ab39-92b6-4a1c-a2cb-dfc5ebbd7e08	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3328	TOURTEAUX CUITS PASTEURISES	0203328000000	€/kg	t	firebase_v1	3328	\N	\N	2026-05-17 09:42:44.135228+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - VIII	\N	\N	\N	Pêché en	TOURTEAUX CUITS PASTEURISES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+37905d68-6413-4f06-b8ba-dca4a1036719	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3329	CREVETTE CUITE GRISE	0203329000000	€/kg	t	firebase_v1	3329	\N	\N	2026-05-17 09:42:44.137523+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - IV- MER DU NORD	\N	CHALUT	\N	Pêché en	CREVETTE CUITE GRISE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+bbbfb9f8-8321-4529-83a5-d5960aa82c64	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3330	CREV.SAUVAGE "MADAGASCAR"60/80	0203330000000	€/kg	t	firebase_v1	3330	\N	\N	2026-05-17 09:42:44.139943+00	2026-05-29 18:41:21.011484+00	\N	FAO 51-OCEAN INDIEN	\N	CHALUT	\N	Pêché en	CREV.SAUVAGE "MADAGASCAR"60/80	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8127605b-e8d5-4e53-a6fb-59019b93842e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3331	SALICORNE	0203331000000	€/kg	t	firebase_v1	3331	\N	\N	2026-05-17 09:42:44.142462+00	2026-05-29 18:41:21.011484+00	SALICORNIA EUROPAEA	FAO 27 VII	\N	PECHE A PIEDS	\N	Pêché en	SALICORNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1c10f398-7822-4122-91eb-8ead458c27df	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3332	CREV.SAUVAGE "MADAGASCAR"40/60	0203332000000	€/kg	t	firebase_v1	3332	\N	\N	2026-05-17 09:42:44.144842+00	2026-05-29 18:41:21.011484+00	\N	FAO 51-OCEAN INDIEN	\N	CHALUT	\N	Pêché en	CREV.SAUVAGE "MADAGASCAR"40/60	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+027e8e28-f2ac-4fea-9d94-17713bc99e1d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3333	CREV.SAUVAGE "MADAGASCAR"20/30	0203333000000	€/kg	t	firebase_v1	3333	\N	\N	2026-05-17 09:42:44.147228+00	2026-05-29 18:41:21.011484+00	PENAEUS SEMISUICATUS	FAO 51-OCEAN INDIEN	\N	CHALUT(OTB)	\N	Pêché en	CREV.SAUVAGE "MADAGASCAR"20/30	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+662b048a-8319-4ead-9085-bcaf6cfe566f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3334	CREV.SAUVAGE "MADAGASCAR"10/20	0203334000000	€/kg	t	firebase_v1	3334	\N	\N	2026-05-17 09:42:44.149616+00	2026-05-29 18:41:21.011484+00	\N	FAO 51-OCEAN INDIEN	\N	CHALUT(OTB)	\N	Pêché en	CREV.SAUVAGE "MADAGASCAR"10/20	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4305b668-45cf-4a8e-aaca-941cc616bc17	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3335	CREV.NIGERIA BLACK TIGER 10/15	0203335000000	€/kg	t	firebase_v1	3335	\N	\N	2026-05-17 09:42:44.151886+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - III	\N	\N	\N	Pêché en	CREV.NIGERIA BLACK TIGER 10/15	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c921e23f-954b-472e-98a4-b9cb09859bec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3336374800227	LANGOUSTINE CUITE X1KG	3336374800227	PIECE	t	firebase_v1	3336374800227	\N	\N	2026-05-17 09:42:45.489319+00	2026-05-29 18:41:21.011484+00	Nephrops norvegicus	\N	\N	\N	\N	Pêché en	LANGOUSTINE CUITE X1KG	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a8eb0bb6-153e-4755-bb4e-e9ab62aaf6df	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3337	BROCHETTE LAMELLE ENCORNET SAUMUREE EAU AJOUTE MARINEE PROVENCAL	0203337000000	€/kg	t	firebase_v1	3337	\N	\N	2026-05-17 09:42:44.154439+00	2026-05-29 18:41:21.011484+00	DOSIDICUS GIGAD	FAO 87 - OCEAN PACIFIQUE SUD EST	\N	LIGNES ET HAMECONS	\N	Pêché en	BROCHETTE LAMELLE ENCORNET SAUMUREE EAU AJOUTE MARINEE PROVENCAL	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+344287ba-696a-4373-bc7a-947eaeda609e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3339	THON GERMON	0203339000000	€/kg	t	firebase_v1	3339	\N	\N	2026-05-17 09:42:44.156671+00	2026-05-29 18:41:21.011484+00	Thunnus alalunga	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	THON GERMON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5b3ba206-b034-455c-8bcc-0f502ea5f2a8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3340	THON GERMON DE LIGNE	0203340000000	€/kg	t	firebase_v1	3340	\N	\N	2026-05-17 09:42:44.159123+00	2026-05-29 18:41:21.011484+00	Thunnus alalunga	FAO 27 - VIII	\N	Lignes	\N	Pêché en	THON GERMON DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+690c61b2-f403-41da-88b9-7ff0f5dfa5f9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3343	FILET DE DORADE SEBASTES	0203343000000	€/kg	t	firebase_v1	3343	\N	\N	2026-05-17 09:42:44.161661+00	2026-05-29 18:41:21.011484+00	SEBASTES NORVEGICUS/SEBASTES MARINUS	FAO 27-Va-	\N	CHALUT	\N	Pêché en	FILET DE DORADE SEBASTES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+510b620d-4f2e-49a4-b270-6a57fe295ad7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3345	THON OBESE	0203345000000	€/kg	t	firebase_v1	3345	\N	\N	2026-05-17 09:42:44.166457+00	2026-05-29 18:41:21.011484+00	Thunnus obesus	FAO 27 - VIII	\N	\N	\N	Pêché en	THON OBESE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cbfc98a3-4457-4e63-bf66-644902cb4cbe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3347	MAIGRE COMMUN	0203347000000	€/kg	t	firebase_v1	3347	\N	\N	2026-05-17 09:42:44.168777+00	2026-05-29 18:41:21.011484+00	Argyrosomus regius	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	MAIGRE COMMUN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2c6ed08d-83fc-45e9-b7b8-da7458e1cc38	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3348	DARNE DE SAUMON SAUVAGE	0203348000000	€/kg	t	firebase_v1	3348	\N	\N	2026-05-17 09:42:44.171181+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	FAO 27 IV	\N	\N	\N	Péché en	DARNE DE SAUMON SAUVAGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0498e3d2-ebf7-4129-994d-e31a4479da6c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3349	THONINE ENTIERE BLESSEE	0203349000000	€/kg	t	firebase_v1	3349	\N	\N	2026-05-17 09:42:44.173562+00	2026-05-29 18:41:21.011484+00	Euthynnus alletteratus	FAO 27 - VIII	\N	\N	\N	Pêché en	THONINE ENTIERE BLESSEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+37223d50-e5c1-4954-b74f-3cfe5b8bc014	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3350	THONINE ENTIERE	0203350000000	€/kg	t	firebase_v1	3350	\N	\N	2026-05-17 09:42:44.175808+00	2026-05-29 18:41:21.011484+00	Euthynnus alletteratus	FAO 27 - VIII	\N	Lignes	\N	Pêché en	THONINE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+729d0094-a5d8-473b-9580-e789e596b2a5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3351	LONGE THON ROUGE	0203351000000	€/kg	t	firebase_v1	3351	\N	\N	2026-05-17 09:42:44.17792+00	2026-05-29 18:41:21.011484+00	Thunnus thynnus	FAO 27 - VIII	\N	chaluts	\N	Pêché en	LONGE THON ROUGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7734faf9-2761-4576-a67d-ab6a8eed2624	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3352	VIEILLE commune	0203352000000	€/kg	t	firebase_v1	3352	\N	\N	2026-05-17 09:42:44.180292+00	2026-05-29 18:41:21.011484+00	Labrus bergylta	FAO 27 - VIII	\N	Filets maillants et similaires	\N	Pêché en	VIEILLE commune	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+48f771db-da7c-4374-b4f3-6219e6d6911b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3353	TURBOT	0203353000000	€/kg	t	firebase_v1	3353	\N	\N	2026-05-17 09:42:44.182788+00	2026-05-29 18:41:21.011484+00	Psetta maxima	FAO 27 - VIII	\N	Filets maillants et similaires	\N	Pêché en	TURBOT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f82978bc-738b-4157-bca4-2edd34b2fc8d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3356	DOS DE MERLU	0203356000000	€/kg	t	firebase_v1	3356	\N	\N	2026-05-17 09:42:44.187544+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	DOS DE MERLU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b5f35c81-ef9b-40a0-b6f9-c17ef923f166	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3357	GRANDE VIVE	0203357000000	€/kg	t	firebase_v1	3357	\N	\N	2026-05-17 09:42:44.190111+00	2026-05-29 18:41:21.011484+00	Trachinus draco	FAO 27 - VII	\N	Filets maillants et similaires	\N	Pêché en	GRANDE VIVE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+eec0d866-44f4-48be-8ab0-d46850efab4f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3358	CALAMAR	0203358000000	€/kg	t	firebase_v1	3358	\N	\N	2026-05-17 09:42:44.192727+00	2026-05-29 18:41:21.011484+00	LOLIGINIDAE	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	CALAMAR	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4aeb69a6-318c-49a7-86a7-2b149808af98	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3359	ENCORNET BLANC PETIT	0203359000000	€/kg	t	firebase_v1	3359	\N	\N	2026-05-17 09:42:44.195318+00	2026-05-29 18:41:21.011484+00	LOLIGINIDAE	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	ENCORNET BLANC PETIT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+232ffae3-74da-4921-bf6c-5459bf0a3814	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3360	BOGUE	0203360000000	€/kg	t	firebase_v1	3360	\N	\N	2026-05-17 09:42:44.197745+00	2026-05-29 18:41:21.011484+00	Boops boops	FAO 27 - VIII	\N	CHALUTS	\N	Pêché en	BOGUE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3c3bf9f7-b07c-4149-9c33-18ff4f3c43f7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3362	LANCON	0203362000000	€/kg	t	firebase_v1	3362	\N	\N	2026-05-17 09:42:44.20282+00	2026-05-29 18:41:21.011484+00	Hyperoplus lanceolatus	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	LANCON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b59413d5-d854-430f-aab3-57e2c7a3d2b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3363	DRAGONNET LYRE	0203363000000	€/kg	t	firebase_v1	3363	\N	\N	2026-05-17 09:42:44.205598+00	2026-05-29 18:41:21.011484+00	Callionymus lyra	FAO 27 - VIII	\N	\N	\N	Pêché en	DRAGONNET LYRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9d647b28-ed31-4361-9c54-5e58051947e5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3364	BAUDROIE ENTIERE (lotte)	0203364000000	€/kg	t	firebase_v1	3364	\N	\N	2026-05-17 09:42:44.207947+00	2026-05-29 18:41:21.011484+00	Lophius piscatorius	FAO 27 - VIII	\N	SENNEUR	\N	Pêché en	BAUDROIE ENTIERE (lotte)	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ae3350e5-595a-4173-96a2-6a70c7778beb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3366	LOCHE	0203366000000	€/kg	t	firebase_v1	3366	\N	\N	2026-05-17 09:42:44.212634+00	2026-05-29 18:41:21.011484+00	Gaidropsarus vulgaris	FAO 27 - VIII	\N	CHALUT5OTB)	\N	Pêché en	LOCHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f12a2f1d-c998-46c0-8e98-7f25aafd974b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3367	ORPHIE	0203367000000	€/kg	t	firebase_v1	3367	\N	\N	2026-05-17 09:42:44.215005+00	2026-05-29 18:41:21.011484+00	Belone belone	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	ORPHIE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f0cf6ca9-d072-430d-8f4f-feb3c00eb17e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3368	TORPILLE / DALITE ENTIERE	0203368000000	€/kg	t	firebase_v1	3368	\N	\N	2026-05-17 09:42:44.217146+00	2026-05-29 18:41:21.011484+00	Torpedo MARMCRATA	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	TORPILLE / DALITE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d31d3312-3136-41f7-8728-028910eee60d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3369	PRETRE / ATHERINE	0203369000000	€/kg	t	firebase_v1	3369	\N	\N	2026-05-17 09:42:44.219521+00	2026-05-29 18:41:21.011484+00	ATHERINA PRESBYTER	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	PRETRE / ATHERINE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+374b9933-b4e1-4828-a867-1f12cf2f216d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3355	ENCORNET	0203355000000	€/kg	t	firebase_v1	3355	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.185026+00	2026-06-07 09:41:10.029355+00	LOLIGO VULGARIS	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	ENCORNET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	15.1300	16.0200	17.0300
+21b675f7-4e75-4151-b143-f0b42029d695	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3370	BAR DE LIGNE	0203370000000	€/kg	t	firebase_v1	3370	\N	\N	2026-05-17 09:42:44.221664+00	2026-05-29 18:41:21.011484+00	DICENTRARCHUS LABRAX	FAO 27 - VII-	\N	LIGNE	\N	Pêché en	BAR DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ab3e525b-eab2-41fb-865a-4a34b910e70f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3371	SERRAN CHEVRE	0203371000000	€/kg	t	firebase_v1	3371	\N	\N	2026-05-17 09:42:44.223914+00	2026-05-29 18:41:21.011484+00	Serranus cabrilla	FAO 27 - VIII	\N	PALANGRIERS(LLD)	\N	Pêché en	SERRAN CHEVRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+706f29aa-5b6e-4a87-a1a4-2a9755d080fc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3373	CREVETTE GRISE CUITE	0203373000000	€/kg	t	firebase_v1	3373	\N	\N	2026-05-17 09:42:44.228648+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 - IV	\N	CHALUT	\N	Pêché en	CREVETTE GRISE CUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4cee2daa-adff-40d2-816c-edb123570e3b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3375	COQUETTE	0203375000000	€/kg	t	firebase_v1	3375	\N	\N	2026-05-17 09:42:44.231408+00	2026-05-29 18:41:21.011484+00	LABRUS MIXTUS	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	COQUETTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7c89442f-f1b7-4232-9cd1-0dea8bfb86ca	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3376	SAUPE DE LIGNE	0203376000000	€/kg	t	firebase_v1	3376	\N	\N	2026-05-17 09:42:44.233733+00	2026-05-29 18:41:21.011484+00	Sarpa salpa	FAO 27 - VIII	\N	Lignes et Hameçons(LLS)	\N	Pêché en	SAUPE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+952f6224-51d6-4505-86cd-0df29c6f33f0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3378	RAIE TERRE	0203378000000	€/kg	t	firebase_v1	3378	\N	\N	2026-05-17 09:42:44.238015+00	2026-05-29 18:41:21.011484+00	RAJA NAEVUS	FAO 27 - VIII	\N	\N	\N	Pêché en	RAIE TERRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ff2b2781-f1f7-440f-87be-7d9319b17436	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3379	RAIE PASTEUNAGUE	0203379000000	€/kg	t	firebase_v1	3379	\N	\N	2026-05-17 09:42:44.240177+00	2026-05-29 18:41:21.011484+00	DASYATIS PASTINACA	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	RAIE PASTEUNAGUE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ba0cf550-ef3c-46a1-83bf-4777b9168128	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3380	POULPE BLANC	0203380000000	€/kg	t	firebase_v1	3380	\N	\N	2026-05-17 09:42:44.242315+00	2026-05-29 18:41:21.011484+00	ELEDONE CIRRHOSA	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	POULPE BLANC	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+29616d28-6a28-49ae-b96c-bf2305dad679	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3381	POULPE	0203381000000	€/kg	t	firebase_v1	3381	\N	\N	2026-05-17 09:42:44.244635+00	2026-05-29 18:41:21.011484+00	Octopus VULGARIS	FAO 27 - VIII	\N	Lignes et Hameçons/FILets maillants et similaires	\N	Pêché en	POULPE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6c0f6d8b-ebc5-4aa7-8bf5-ab235e2261ef	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3382	BONITE	0203382000000	€/kg	t	firebase_v1	3382	\N	\N	2026-05-17 09:42:44.24684+00	2026-05-29 18:41:21.011484+00	AUXIS ROCHEI	FAO 37-MEDITERRANEE EST	\N	FILETS MAILLANTS ET SIMILAIRES	\N	Pêché en	BONITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3383	SAR COMMUN	0203383000000	€/kg	t	firebase_v1	3383	\N	\N	2026-05-17 09:42:44.249406+00	2026-05-29 18:41:21.011484+00	Diplodus sargus	FAO 27 - VIII	\N	CHALUT/FILets maillants et similaires	\N	Pêché en	SAR COMMUN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2aa28435-6a32-417a-921f-f72c4a8add04	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3384	SAR GROS DE LIGNE	0203384000000	€/kg	t	firebase_v1	3384	\N	\N	2026-05-17 09:42:44.25228+00	2026-05-29 18:41:21.011484+00	Diplodus sargus	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	SAR GROS DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+34bd7706-ea94-427c-ba62-28961f8e300e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3385	SAR DE LIGNE	0203385000000	€/kg	t	firebase_v1	3385	\N	\N	2026-05-17 09:42:44.254733+00	2026-05-29 18:41:21.011484+00	Diplodus sargus	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	SAR DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ac7fd503-a4ce-4e7d-9c42-b00f5868608d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3386	DOS DE SAUMON	0203386000000	€/kg	t	firebase_v1	3386	\N	\N	2026-05-17 09:42:44.257029+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	DOS DE SAUMON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cc576515-592a-4c81-b77e-917efec9d64c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3388	BRANDADE DE MORUE ET A L'EGLEFIN	0203388000000	kg	t	firebase_v1	3388	\N	\N	2026-05-17 09:42:44.26171+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	BRANDADE DE MORUE ET A L'EGLEFIN	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+70c81f47-7a23-4c29-a5e2-3425350acc2f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3389	LONGE DE THON ALBACORE SAUMURE	0203389000000	€/kg	t	firebase_v1	3389	\N	\N	2026-05-17 09:42:44.263834+00	2026-05-29 18:41:21.011484+00	THUNNUS ALBACARES	FAO 71 77 OECEAN PACIFIQUE	\N	FILET TOURNANTS ET FILET SOULEVES	\N	Pêché en	LONGE DE THON ALBACORE SAUMURE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8199c931-6649-4420-bc4b-d4f185079619	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3390	SEICHE CASSERON	0203390000000	€/kg	t	firebase_v1	3390	\N	\N	2026-05-17 09:42:44.266013+00	2026-05-29 18:41:21.011484+00	Sepia officinalis	FAO 27 - VIII	\N	SENNEURS	\N	Pêché en	SEICHE CASSERON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ebf31195-77c5-4654-baaa-7ee37a9454b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3391	SEICHE COMMUNE	0203391000000	€/kg	t	firebase_v1	3391	\N	\N	2026-05-17 09:42:44.268266+00	2026-05-29 18:41:21.011484+00	Sepia officinalis	FAO 27 - VIII	\N	SENNEURS	\N	Pêché en	SEICHE COMMUNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3e3dc00a-afb4-4a61-842c-35908ddcc943	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3392	POULPE BLANC	0203392000000	€/kg	t	firebase_v1	3392	\N	\N	2026-05-17 09:42:44.270431+00	2026-05-29 18:41:21.011484+00	Sepia officinalis	FAO 27 - VIII	\N	SENNEURS	\N	Pêché en	POULPE BLANC	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b55ee6e5-75c3-4d51-988f-88bbd5a4a628	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3393	TETE SEICHE	0203393000000	€/kg	t	firebase_v1	3393	\N	\N	2026-05-17 09:42:44.272713+00	2026-05-29 18:41:21.011484+00	Sepia officinalis	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	TETE SEICHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7963f2c8-bdc7-4507-bea1-3ab19506f5a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3394	POULPE	0203394000000	€/kg	t	firebase_v1	3394	\N	\N	2026-05-17 09:42:44.274796+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	\N	\N	Pêché en	POULPE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+718ea040-231e-4ffe-bf27-07277c37f94e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3395	LAMELLES D'ENCORNET geant du pacifique saumures avec eau ajoutee DECONGELEES	0203395000000	€/kg	t	firebase_v1	3395	\N	\N	2026-05-17 09:42:44.276981+00	2026-05-29 18:41:21.011484+00	DOSIDICUS GIGAS	FAO 87 - OCEAN PACIFIQUE SUD EST	\N	LIGNES ET HAMECONS	\N	Pêché en	LAMELLES D'ENCORNET geant du pacifique saumures avec eau ajoutee DECONGELEES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+39e3e4b5-038e-463c-89c3-d9a8718fd7d7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3397	SEICHE ENTIERE	0203397000000	€/kg	t	firebase_v1	3397	\N	\N	2026-05-17 09:42:44.279184+00	2026-05-29 18:41:21.011484+00	Sepia officinalis	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	SEICHE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ab641c46-0fac-4941-b71b-3fb390a5a791	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3398	OEUFS CABILLAUD	0203398000000	€/kg	t	firebase_v1	3398	\N	\N	2026-05-17 09:42:44.281415+00	2026-05-29 18:41:21.011484+00	Gadus morhua	FAO 27 - VIII	\N	\N	\N	Pêché en	OEUFS CABILLAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7ce84454-864b-4ee7-85b9-c00b5afa80fd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3399	OEUFS DE MERLU	0203399000000	€/kg	t	firebase_v1	3399	\N	\N	2026-05-17 09:42:44.283561+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	\N	\N	Pêché en	OEUFS DE MERLU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ee604f04-1b27-4608-bfe1-9e8dff5e40b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3400	OEUFS DE MULET	0203400000000	€/kg	t	firebase_v1	3400	\N	\N	2026-05-17 09:42:44.285719+00	2026-05-29 18:41:21.011484+00	Paramugil parmatus	FAO 27 - VIII	\N	\N	\N	Pêché en	OEUFS DE MULET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+57ac2ebe-e333-4b6a-a531-c5af2e0d4cfa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3401	OEUFS DE MERLAN	0203401000000	€/kg	t	firebase_v1	3401	\N	\N	2026-05-17 09:42:44.287851+00	2026-05-29 18:41:21.011484+00	Merlangius merlangus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	OEUFS DE MERLAN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+dc2756d3-aa7a-4aee-ac60-3c1862ddc922	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3403	LANGOUSTINE CUITE 30/40	0203403000000	€/kg	t	firebase_v1	3403	\N	\N	2026-05-17 09:42:44.290004+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 -IVb Iva Via VIIa	\N	CHALUT	\N	Pêché en	LANGOUSTINE CUITE 30/40	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8f0df988-132c-4289-9fba-50ef35e6a7ad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3404	SEBASTE ENTIERE	0203404000000	€/kg	t	firebase_v1	3404	\N	\N	2026-05-17 09:42:44.292125+00	2026-05-29 18:41:21.011484+00	SEBASTES NORVEGICUS	FAO 27 - IV	\N	LIGNES ET HAMECONS	\N	Pêché en	SEBASTE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b9c7d633-a490-454c-8a32-a58e95b97163	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3406	LANGOUSTINE CUITE 21/30	0203406000000	€/kg	t	firebase_v1	3406	\N	\N	2026-05-17 09:42:44.29441+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 -IV-	\N	CHALUT	\N	Pêché en	LANGOUSTINE CUITE 21/30	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4a09ae2d-dc0f-4f3a-8f44-e5c139e27bc8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3517	LE PETIT MOUSSE AV HUITRE ET BIG	0203517000000	kg	t	firebase_v1	3517	\N	\N	2026-05-17 09:42:44.449463+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE PETIT MOUSSE AV HUITRE ET BIG	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9a1611e8-654c-41e7-8277-62a7896c7cff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3408	LANGOUSTINE CUITE 10/15	0203408000000	€/kg	t	firebase_v1	3408	\N	\N	2026-05-17 09:42:44.296563+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 -IIVa-Via	\N	CHALUT	\N	Pêché en	LANGOUSTINE CUITE 10/15	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d15f57e3-59e6-4ebf-9df7-2ea49d1a51d0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3409	CREVETTE CUITE 25/35	0203409000000	€/kg	t	firebase_v1	3409	\N	\N	2026-05-17 09:42:44.298681+00	2026-05-29 18:41:21.011484+00	PENAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTE CUITE 25/35	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+91b4d4f3-b364-4b87-8208-88c3985cd78a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3410	OURSIN VIVANT(DROEBACHIENSIS)	0203410000000	€/kg	t	firebase_v1	3410	\N	\N	2026-05-17 09:42:44.300871+00	2026-05-29 18:41:21.011484+00	STRONGYLOCENTROTUS	FAO 27 - V	\N	DRAGUE	\N	Pêché en	OURSIN VIVANT(DROEBACHIENSIS)	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+da72c0bb-3cf2-4714-b9e9-2fe8825e1aa1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3412	CREVETTES CUITES 30/50	0203412000000	€/kg	t	firebase_v1	3412	\N	\N	2026-05-17 09:42:44.303017+00	2026-05-29 18:41:21.011484+00	PANAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTES CUITES 30/50	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7b451db7-aa84-4979-af87-9f2c7703c634	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3413	SEICHE ENTIERE	0203413000000	€/kg	t	firebase_v1	3413	\N	\N	2026-05-17 09:42:44.305259+00	2026-05-29 18:41:21.011484+00	SEPIA PHARAONIS	FAO 51 - OCEAN INDIEN OCCIDENTALE	\N	CHALUT(PTB)	\N	Pêché en	SEICHE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+245b1357-7a90-43a7-915d-9b0641550519	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3414	PAVéS DE MORUE SALéE "SANS PEAU"	0203414000000	€/kg	t	firebase_v1	3414	\N	\N	2026-05-17 09:42:44.307417+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	FAO 61-PACIFIQUE NORD OUEST	\N	LIGNES	\N	Pêché en	PAVéS DE MORUE SALéE "SANS PEAU"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4e24a72a-b6f4-4a92-8c19-47227cdf3eed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3418	LANGOUSTINE CUITE	0203418000000	€/kg	t	firebase_v1	3418	\N	\N	2026-05-17 09:42:44.311858+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 -III	\N	CHALUT	\N	Pêché en	LANGOUSTINE CUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7f5e9c63-e454-4f21-abc4-58b600893cfe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3419	LANGOUSTINE vivante CUITE	0203419000000	€/kg	t	firebase_v1	3419	\N	\N	2026-05-17 09:42:44.314035+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 -IV-aVI-a	\N	CASIER/NASSE	\N	Pêché en	LANGOUSTINE vivante CUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9b7c73df-250f-4b4b-b2f1-7a7eb5333297	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3420	MOULES DE CORDE	0203420000000	€/kg	t	firebase_v1	3420	\N	\N	2026-05-17 09:42:44.316299+00	2026-05-29 18:41:21.011484+00	MYTILUS GALLOPROVINCIALIS	ESPAGNE	\N	\N	\N	Elevé en	MOULES DE CORDE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+06982793-2e73-49be-a042-65723e9cbbc2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3421	MOULES DE CORDE TRES GROSSE	0203421000000	€/kg	t	firebase_v1	3421	\N	\N	2026-05-17 09:42:44.318509+00	2026-05-29 18:41:21.011484+00	MYTILUS GALLOPROVINCIALIS	ESPAGNE	\N	\N	\N	Elevé en	MOULES DE CORDE TRES GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b32d08d2-303a-4541-ad95-c3a93259fd57	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3422	CREVETTE CUITE SAUVAGE 40/60	0203422000000	€/kg	t	firebase_v1	3422	\N	\N	2026-05-17 09:42:44.320987+00	2026-05-29 18:41:21.011484+00	\N	ATLANTIQUE CENTRE EST	\N	CHALUT	\N	Pêché en	CREVETTE CUITE SAUVAGE 40/60	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e51a37ec-ae4d-4024-a9f9-496b8727a691	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3424	HARENG BUCKLING	0203424000000	€/kg	t	firebase_v1	3424	\N	\N	2026-05-17 09:42:44.323149+00	2026-05-29 18:41:21.011484+00	CLUPEA HARENGUS	FAO 27 - VIII	\N	\N	\N	Pêché en	HARENG BUCKLING	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f7d5d41f-11b7-40c8-b8b9-ba5a1be1f7ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3425	MAQUEREAU BUCKILING	0203425000000	€/kg	t	firebase_v1	3425	\N	\N	2026-05-17 09:42:44.325501+00	2026-05-29 18:41:21.011484+00	SCOMBER SCOMBRUS	FAO 27 – IV MER DU NORD	\N	CHALUT	\N	Pêché en	MAQUEREAU BUCKILING	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8fb3b634-0436-4abf-ae2d-f4bf7c317984	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3426	FILET MORUE SALéE "AVEC PEAU"	0203426000000	€/kg	t	firebase_v1	3426	\N	\N	2026-05-17 09:42:44.327697+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	FAO 67 PACIFIQUE NORD	\N	CHALUT	\N	Pêché en	FILET MORUE SALéE "AVEC PEAU"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7055bedd-e960-4b9e-9c77-f6e7eeddc36f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3430	SAUMON VIDé ENTIER	0203430000000	€/kg	t	firebase_v1	3430	\N	\N	2026-05-17 09:42:44.329926+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	SAUMON VIDé ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cf9499b3-be6c-4de0-a383-3313a9006d80	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3431	HUITRE SPECIALE MARENNE OLERON N2	0203431000000	€/kg	t	firebase_v1	3431	\N	\N	2026-05-17 09:42:44.332078+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE SPECIALE MARENNE OLERON N2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9654e273-4a63-40c4-8578-e9b426798c52	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3432	TOURTEAU VIVANT (2 PINCES)	0203432000000	€/kg	t	firebase_v1	3432	\N	\N	2026-05-17 09:42:44.334283+00	2026-05-29 18:41:21.011484+00	CANCER PAGURUS	FAO 27 -VII-	\N	CASIER ET PIEGES -FILETS	\N	Pêché en	TOURTEAU VIVANT (2 PINCES)	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c7c6a978-f79c-4ecd-bed2-55661528c226	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3435	JOUE DE CABILLAUD	0203435000000	€/kg	t	firebase_v1	3435	\N	\N	2026-05-17 09:42:44.336521+00	2026-05-29 18:41:21.011484+00	GADUS MORHUA	FAO 27 - IV -	\N	CHALUT	\N	Pêché en	JOUE DE CABILLAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f066af8a-c25f-4ca0-a082-7d45573405d6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3438	BAR ENTIER	0203438000000	€/kg	t	firebase_v1	3438	\N	\N	2026-05-17 09:42:44.340875+00	2026-05-29 18:41:21.011484+00	DICENTRARCHUS LABRAX	France	\N	\N	\N	Elevé en	BAR ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+44566c43-3f14-44d9-afcb-f236c8f253c2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3439	FARCI SAUMON/ST JACQUES	0203439000000	PIECE	t	firebase_v1	3439	\N	\N	2026-05-17 09:42:44.343003+00	2026-05-29 18:41:21.011484+00	\N	transforme en france	\N	\N	\N	\N	FARCI SAUMON/ST JACQUES	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+df9c6dc8-1a52-49e7-b513-68ad7ff5d571	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3440	MOULE DE CORDE GROSSE	0203440000000	€/kg	t	firebase_v1	3440	\N	\N	2026-05-17 09:42:44.345276+00	2026-05-29 18:41:21.011484+00	MYTILUS GALLOPROVINCIALIS	ESPAGNE	\N	\N	\N	Elevé en	MOULE DE CORDE GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c9204f7f-a0f3-49e2-a372-039e397ddbc0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3442	TOURTEAU VIVANT (1 PINCE)	0203442000000	€/kg	t	firebase_v1	3442	\N	\N	2026-05-17 09:42:44.347432+00	2026-05-29 18:41:21.011484+00	\N	FAO 27 -VIII	\N	CASIERS	\N	Pêché en	TOURTEAU VIVANT (1 PINCE)	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+81bca9c0-d8e2-439a-97a1-afd59464712e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3444	BAR ENTIER	0203444000000	€/kg	t	firebase_v1	3444	\N	\N	2026-05-17 09:42:44.349648+00	2026-05-29 18:41:21.011484+00	DICENTRARCHUS LABRAX	Elevé en	\N	TURQUIE	\N	Elevé en	BAR ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+88affd4e-71ab-40be-9bca-03325d368f97	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3445	JOUE DE LOTTE	0203445000000	€/kg	t	firebase_v1	3445	\N	\N	2026-05-17 09:42:44.351879+00	2026-05-29 18:41:21.011484+00	LOPHIUS PISCATORIUS-BUDEGASSA/MONK CHEEK	FAO 27-VIa	\N	CHALUT	\N	Pêché en	JOUE DE LOTTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4754dfb9-386e-4160-b643-05bb0b4ca1b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3447	FILET D'HADDOCK	0203447000000	€/kg	t	firebase_v1	3447	\N	\N	2026-05-17 09:42:44.354155+00	2026-05-29 18:41:21.011484+00	MELANOGRAMMUS AEGLEFINUS	FAO 27 - IV-VI -	\N	CHALUT-SENNES	\N	Pêché en	FILET D'HADDOCK	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+94d82c9a-3c65-46fd-ac04-9cc60250a1b8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3451	CREVETTE CUITE 80/100	0203451000000	€/kg	t	firebase_v1	3451	\N	\N	2026-05-17 09:42:44.358651+00	2026-05-29 18:41:21.011484+00	PANAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTE CUITE 80/100	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+967b7e71-5169-43f0-97f5-35e18f32cb6b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3452	COQUILLE ST JACQUES BLANCHE	0203452000000	€/kg	t	firebase_v1	3452	\N	\N	2026-05-17 09:42:44.361116+00	2026-05-29 18:41:21.011484+00	Pecten maximus	FAO 27 - VII d- MANCHE /MER CELTIQUES	\N	DRAGUES	\N	Pêché en	COQUILLE ST JACQUES BLANCHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b793a0e2-1c5f-4f67-908f-ac6a3daeaf35	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3453	HUITRES MARENNE OLERON N°2	0203453000000	€/kg	t	firebase_v1	3453	\N	\N	2026-05-17 09:42:44.36375+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRES MARENNE OLERON N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5442082d-d9b8-45e8-88d4-5067b7f15e94	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3454	VERNIS	0203454000000	€/kg	t	firebase_v1	3454	\N	\N	2026-05-17 09:42:44.366147+00	2026-05-29 18:41:21.011484+00	CALLITA CHIONE	FAO 27 - VIII	\N	DRAGUE	\N	Pêché en	VERNIS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4445ce66-bf2d-4494-92d1-db068beebc12	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3455	CREVETTE CUITE 10/20	0203455000000	€/kg	t	firebase_v1	3455	\N	\N	2026-05-17 09:42:44.368524+00	2026-05-29 18:41:21.011484+00	PENAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTE CUITE 10/20	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a0baaf59-b720-4ac0-af53-f7c3536b9c2b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3518	LE PETIT MOUSSE AV BIG	0203518000000	kg	t	firebase_v1	3518	\N	\N	2026-05-17 09:42:44.45162+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE PETIT MOUSSE AV BIG	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1aeb7381-96b6-4269-940f-d96919db0f59	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3456	TENTACULE D'ENCORNET GEANT SAUMURE AVEC EAU AJOUTéE DECONGELé	0203456000000	€/kg	t	firebase_v1	3456	\N	\N	2026-05-17 09:42:44.370771+00	2026-05-29 18:41:21.011484+00	DOSIDICUS GIGAS	FAO 87 - OCEAN PACIFIQUE SUD EST	\N	LIGNES ET HAMECONS	\N	Pêché en	TENTACULE D'ENCORNET GEANT SAUMURE AVEC EAU AJOUTéE DECONGELé	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+006a68e1-fe41-494e-bdde-dd0c0a542aa1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3458	BIGORNEAU VIVANT SUPER JUMBO	0203458000000	€/kg	t	firebase_v1	3458	\N	\N	2026-05-17 09:42:44.37535+00	2026-05-29 18:41:21.011484+00	LITTORINA LITTOREA	FAO 27 - VIIe	\N	PECHE A PIEDS	\N	Pêché en	BIGORNEAU VIVANT SUPER JUMBO	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cd6bd11d-f977-41d1-b9b3-3f00494cb8d6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3459	HUITRE ISIGNY N°2	0203459000000	€/kg	t	firebase_v1	3459	\N	\N	2026-05-17 09:42:44.377712+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE ISIGNY N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f8cebd64-6b4e-4cd8-b450-29dc996a72e6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3462	HUITRES DE L'ILE DE RE N°3	0203462000000	€/kg	t	firebase_v1	3462	\N	\N	2026-05-17 09:42:44.382568+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	France	\N	\N	\N	Elevé en	HUITRES DE L'ILE DE RE N°3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+58ea99c3-245f-4d00-8aec-e9ebf947b1f1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3466	HUITRES CANCALE N°3	0203466000000	€/kg	t	firebase_v1	3466	\N	\N	2026-05-17 09:42:44.384973+00	2026-05-29 18:41:21.011484+00	MAGALLANA GIGAS	France	\N	\N	\N	Elevé en	HUITRES CANCALE N°3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d4d1e193-dc38-448f-b871-ff15d32bd271	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3467	CREVETTE CUITE BIO MADAGASCAR 40/60	0203467000000	€/kg	t	firebase_v1	3467	\N	\N	2026-05-17 09:42:44.38797+00	2026-05-29 18:41:21.011484+00	PENAEUS MONODON	MADASGASCAR	\N	\N	\N	Elevé en	CREVETTE CUITE BIO MADAGASCAR 40/60	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1c98b26a-1259-42cd-8d6a-486e9c11ae32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3469	HUITRE MARENNE OLERON N"4	0203469000000	€/kg	t	firebase_v1	3469	\N	\N	2026-05-17 09:42:44.390377+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE MARENNE OLERON N"4	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7fd19731-e1dd-4f10-b748-1027780e06e1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3471	FOIE DE LOTTE	0203471000000	€/kg	t	firebase_v1	3471	\N	\N	2026-05-17 09:42:44.392895+00	2026-05-29 18:41:21.011484+00	LOPHIUS PISCATORIUS	FAO 27 -VII	\N	CHALUT	\N	Pêché en	FOIE DE LOTTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+dea4543a-c6c0-41be-913e-feaea9395888	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3472	CREV.SAUVAGE "MADAGASCAR"100/120	0203472000000	€/kg	t	firebase_v1	3472	\N	\N	2026-05-17 09:42:44.395292+00	2026-05-29 18:41:21.011484+00	PENAEUS SEMISUICATUS	FAO 51-OCEAN INDIEN	\N	CHALUT (OTB)	\N	Pêché en	CREV.SAUVAGE "MADAGASCAR"100/120	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+beaeafe4-08cd-43d1-bfdb-20fbdc525e53	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3473	CREVETTE CUITE "LABEL ROUGE" 20/30	0203473000000	€/kg	t	firebase_v1	3473	\N	\N	2026-05-17 09:42:44.397681+00	2026-05-29 18:41:21.011484+00	\N	MADASGASCAR	\N	\N	\N	Elevé en	CREVETTE CUITE "LABEL ROUGE" 20/30	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f31a2a20-d5d9-4dc6-88c4-367e2914c3f3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3474	CREVETTE CRUE 30/40	0203474000000	€/kg	t	firebase_v1	3474	\N	\N	2026-05-17 09:42:44.400011+00	2026-05-29 18:41:21.011484+00	LITOPENAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTE CRUE 30/40	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5c9709cd-f3b4-4950-a6ba-5299330754ff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3477	FILET EGLEFIN	0203477000000	€/kg	t	firebase_v1	3477	\N	\N	2026-05-17 09:42:44.402229+00	2026-05-29 18:41:21.011484+00	MELANOGRAMMUS AEGLEFINUS	FAO 27 - VIII	\N	Filets maillants et similaires	\N	Pêché en	FILET EGLEFIN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3bcf05aa-429d-48d3-bef6-5bef7df45820	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3478	BAR ENTIER	0203478000000	€/kg	t	firebase_v1	3478	\N	\N	2026-05-17 09:42:44.404507+00	2026-05-29 18:41:21.011484+00	DICENTRARCHUS TABRAX	TURQUIE	\N	\N	\N	Elevé en	BAR ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+09d5739c-6999-4b35-98ef-66d0510b969f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3480	MOULE DE BOUCHOT	0203480000000	€/kg	t	firebase_v1	3480	\N	\N	2026-05-17 09:42:44.406745+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	FRANCE	\N	NON NETTOYEE	\N	Elevé en	MOULE DE BOUCHOT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+533f6d34-4963-4426-a88c-6c42ad96aa42	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3484	MIETTES DE MORUE SALEE	0203484000000	€/kg	t	firebase_v1	3484	\N	\N	2026-05-17 09:42:44.411761+00	2026-05-29 18:41:21.011484+00	GADUS MACROCEPHALUS	FAO67: PACIFIQUE NORD EST	\N	CHALUTS	\N	Pêché en	MIETTES DE MORUE SALEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b6262d9e-6c66-45ab-9476-cd07e4da62e2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3492	COQUILLE ST JACQUES CORAILLEE	0203492000000	€/kg	t	firebase_v1	3492	\N	\N	2026-05-17 09:42:44.41867+00	2026-05-29 18:41:21.011484+00	Pecten maximus	FAO 27 - IV-VI-a-VII-a-d-VII-f-g-h	\N	DRAGUE	\N	Pêché en	COQUILLE ST JACQUES CORAILLEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+388cf709-a21a-4b2d-8de6-533e133a3520	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3493	HUITRES DE L'ILE DE RE N°2	0203493000000	€/kg	t	firebase_v1	3493	\N	\N	2026-05-17 09:42:44.420828+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRES DE L'ILE DE RE N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cceed6e6-d143-42b4-b946-7fa9b7dd69f2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3494	FILET DE SOLE TROPICALE	0203494000000	€/kg	t	firebase_v1	3494	\N	\N	2026-05-17 09:42:44.423175+00	2026-05-29 18:41:21.011484+00	CYNOGLOSSUS SENEGALENSIS	FAO 34 - ATLANTIQUE CENTRE EST	\N	FILETS SOULEVES	\N	Pêché en	FILET DE SOLE TROPICALE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e275074c-361d-409e-9253-0ed7806359db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3495	PRAIRE	0203495000000	€/kg	t	firebase_v1	3495	\N	\N	2026-05-17 09:42:44.425664+00	2026-05-29 18:41:21.011484+00	VENUS VERRUCOSA	FAO 27 - VII	\N	DRAGUES	\N	Pêché en	PRAIRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d5f73e58-5555-4971-9349-dc09f3350aba	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3496	DOS DE MERLU	0203496000000	€/kg	t	firebase_v1	3496	\N	\N	2026-05-17 09:42:44.427713+00	2026-05-29 18:41:21.011484+00	MERLUCCIUS MERLUCCIUS	FAO 27 -IV-III	\N	CHALUT FILETS MAILLANTS/SENNES	\N	Pêché en	DOS DE MERLU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+716e8b63-2143-48ad-9e5c-57446c24e4d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3499	OURSIN VIVANT	0203499000000	€/kg	t	firebase_v1	3499	\N	\N	2026-05-17 09:42:44.430085+00	2026-05-29 18:41:21.011484+00	ECHINUIDEA	FAO 27 - VIII	\N	LIGNE	\N	Pêché en	OURSIN VIVANT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+99594672-a5a8-46ba-acc5-135aef61af9b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3502	VENUS	0203502000000	€/kg	t	firebase_v1	3502	\N	\N	2026-05-17 09:42:44.432159+00	2026-05-29 18:41:21.011484+00	SPISULA solida	FAO 27 - VII	\N	DRAGUES	\N	Pêché en	VENUS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6dec74ae-cb1a-4182-a012-6ea2157ce633	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3503	HUITRE CHARENTE MARITIME N°2	0203503000000	€/kg	t	firebase_v1	3503	\N	\N	2026-05-17 09:42:44.434175+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE CHARENTE MARITIME N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6c08906e-c2ca-43ae-b2db-2c5404910269	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3504	SOLE PRET A CUIRE	0203504000000	€/kg	t	firebase_v1	3504	\N	\N	2026-05-17 09:42:44.436189+00	2026-05-29 18:41:21.011484+00	PEGUSEA LASCARIS	FAO 27 - VIII	\N	FILETS MAILLANTS ET SIMILAIRES	\N	Pêché en	SOLE PRET A CUIRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+bd21cf65-f0fb-4c30-9bd7-c1ca1901e80f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3506	HUITRE NOIRMOUTIER N°2	0203506000000	€/kg	t	firebase_v1	3506	\N	\N	2026-05-17 09:42:44.438307+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE NOIRMOUTIER N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f35fc7f4-d2c7-41de-89fb-f4f6af1abd50	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3508	MOULE DE BOUCHOT "AIGUILLON"	0203508000000	€/kg	t	firebase_v1	3508	\N	\N	2026-05-17 09:42:44.440329+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	FRANCE	\N	NETTOYEE	\N	Elevé en	MOULE DE BOUCHOT "AIGUILLON"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d739900a-bab7-45af-8fae-6556b047c8ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3509	FILET DE MAQUEAREAU	0203509000000	€/kg	t	firebase_v1	3509	\N	\N	2026-05-17 09:42:44.442639+00	2026-05-29 18:41:21.011484+00	SCOMBER SCOMBRUS	FAO 27- VII	\N	CHALUT	\N	Pêché en	FILET DE MAQUEAREAU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2f50bb50-eb7a-4eb9-8f81-1507eec9acce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3510	PAVES DE SAUMON SANS PEAU/SANS ARETE	0203510000000	€/kg	t	firebase_v1	3510	\N	\N	2026-05-17 09:42:44.444894+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	ECOSSE	\N	\N	\N	Elevé en	PAVES DE SAUMON SANS PEAU/SANS ARETE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b0c2b82b-6ba6-4cc8-8d0c-eefd5a15bc05	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3512	FILET DE MERLU	0203512000000	€/kg	t	firebase_v1	3512	\N	\N	2026-05-17 09:42:44.447194+00	2026-05-29 18:41:21.011484+00	MERLUCCIUS MERLUCCIUS	FAO 27 -VIII-	\N	CHALUT(OTB)	\N	Pêché en	FILET DE MERLU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4aadbd09-dcbd-4e97-9711-c71e90ba5cec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3461	anneaux d'encornet geant du pacifique saumures avec eau ajoutee DECONGELEES	0203461000000	kg	t	firebase_v1	3461	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.380095+00	2026-05-31 15:04:49.211163+00	DOSIDICUS GIGAS	FAO 87 - OCEAN PACIFIQUE SUD EST PEROU	\N	LIGNES ET HAMECONS(LHP)	\N	Pêché en	anneaux d'encornet geant du pacifique saumures avec eau ajoutee DECONGELEES	kg	kg	kg	CEPHALOPODE	Céphalopode	5.50	\N	\N	\N	\N	\N	\N
+9acabbf2-4cd2-4498-a94e-3a87a19fa373	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3524	HUITRE NOIRMOUTIER N°1	0203524000000	€/kg	t	firebase_v1	3524	\N	\N	2026-05-17 09:42:44.458171+00	2026-05-29 18:41:21.011484+00	CRASSOSTREA GIGAS	FRANCE	\N	\N	\N	Elevé en	HUITRE NOIRMOUTIER N°1	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7a0d0341-1d09-4457-8e5c-3841424744ea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3526	HUITRES CANCALE N°2	0203526000000	€/kg	t	firebase_v1	3526	\N	\N	2026-05-17 09:42:44.460148+00	2026-05-29 18:41:21.011484+00	MAGALLANA GIGAS	France	\N	\N	\N	Elevé en	HUITRES CANCALE N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+69c75a9b-6627-4f5b-b3d8-8dbfd4e21b95	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3527	HUITRE PRAT ARCOUM N°3	0203527000000	€/kg	t	firebase_v1	3527	\N	\N	2026-05-17 09:42:44.46241+00	2026-05-29 18:41:21.011484+00	MAGALLANA GIGAS	France	\N	\N	\N	Elevé en	HUITRE PRAT ARCOUM N°3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c1f69ffd-3033-4ce9-84d4-782de204c54b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3528	ORMEAUX	0203528000000	€/kg	t	firebase_v1	3528	\N	\N	2026-05-17 09:42:44.464435+00	2026-05-29 18:41:21.011484+00	Haliotis haliotis	FAO 27 VII	\N	PLONGE	\N	Pêché en	ORMEAUX	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+030633a4-3781-42b5-88c2-68344f82517a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3529	PAVE DE SAUMON MARINEE THYM CITRON	0203529000000	€/kg	t	firebase_v1	3529	\N	\N	2026-05-17 09:42:44.466672+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	ECOSSE/NORVEGE	\N	\N	\N	Elevé en	PAVE DE SAUMON MARINEE THYM CITRON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+41844db8-3dbf-4d9a-a6b1-2e92936cdd6d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3531	MOULE DE BOUCHOT	0203531000000	€/kg	t	firebase_v1	3531	\N	\N	2026-05-17 09:42:44.468895+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	France-STG-	\N	COTE D'EMERAUDE	\N	Elevé en	MOULE DE BOUCHOT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2076b089-5d7c-4491-9823-b3119401bcb5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3533	HUITRE NORMANDIE ST VAAST N°2	0203533000000	€/kg	t	firebase_v1	3533	\N	\N	2026-05-17 09:42:44.471003+00	2026-05-29 18:41:21.011484+00	MAGALLANA GIGAS	France	\N	\N	\N	Elevé en	HUITRE NORMANDIE ST VAAST N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d3bfb056-413c-43da-b15f-5ebc2c941586	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3534	HUITRE NORMANDIE UTAH BEACH N°2	0203534000000	€/kg	t	firebase_v1	3534	\N	\N	2026-05-17 09:42:44.47331+00	2026-05-29 18:41:21.011484+00	MAGALLANA GIGAS	France	\N	\N	\N	Elevé en	HUITRE NORMANDIE UTAH BEACH N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+fbec7c68-615a-402d-988c-44e2b51bdde4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3535	HUITRE NORMANDIE ST VAAST N°3	0203535000000	€/kg	t	firebase_v1	3535	\N	\N	2026-05-17 09:42:44.475577+00	2026-05-29 18:41:21.011484+00	MAGALLANA GIGAS	France	\N	\N	\N	Elevé en	HUITRE NORMANDIE ST VAAST N°3	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cb76d0eb-f449-4cc6-b27c-3fa7b32c456d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3536	HUITRE PRAT ARCOUM N°2	0203536000000	€/kg	t	firebase_v1	3536	\N	\N	2026-05-17 09:42:44.477893+00	2026-05-29 18:41:21.011484+00	MAGALLANA GIGAS	France	\N	\N	\N	Elevé en	HUITRE PRAT ARCOUM N°2	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7fa5851c-1ad4-4a89-9d98-b2bb3630f25c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3541	LANGOUSTINE GLACEE 6/9	0203541000000	€/kg	t	firebase_v1	3541	\N	\N	2026-05-17 09:42:44.479781+00	2026-05-29 18:41:21.011484+00	NEPHROPS NORVEGICUS	FAO 27 - III-	\N	CHALUT	\N	Pêché en	LANGOUSTINE GLACEE 6/9	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+02d92c5d-922c-4c7d-a20f-14bcb7016339	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3542	LANGOUSTE ROUGE CUITE	0203542000000	€/kg	t	firebase_v1	3542	\N	\N	2026-05-17 09:42:44.481919+00	2026-05-29 18:41:21.011484+00	Palinurus elephas	FAO 27 - VIII	\N	CASIER	\N	Pêché en	LANGOUSTE ROUGE CUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4083f4b7-f738-4de8-b066-f645e8916b1a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3543	ECREVISSE VIVANTE	0203543000000	€/kg	t	firebase_v1	3543	\N	\N	2026-05-17 09:42:44.483933+00	2026-05-29 18:41:21.011484+00	ASTACUS LEPTODACTYLUS	FAO ROUMANIE	\N	CASIERS ET PIEGES(FPO)	\N	Pêché en	ECREVISSE VIVANTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e1ad6303-0518-4bb5-bc37-a9800038622f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3544	ENCORNETS ROUGE	0203544000000	€/kg	t	firebase_v1	3544	\N	\N	2026-05-17 09:42:44.486068+00	2026-05-29 18:41:21.011484+00	IIIEX COINDETII	FAO27-VII	\N	CHALUT	\N	\N	ENCORNETS ROUGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1e26632f-3715-4ceb-b7fb-750a5d2a3020	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3545	POUCE PIEDS	0203545000000	€/kg	t	firebase_v1	3545	\N	\N	2026-05-17 09:42:44.488168+00	2026-05-29 18:41:21.011484+00	POLLIOPES POLLIOPES	FAO 27 - VIII	\N	PECHE A PIEDS	\N	Pêché en	POUCE PIEDS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+eec15c02-9215-434c-bd9b-ed964fa6eca4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3546	FILET DE TRUITE "FUMAISON"	0203546000000	€/kg	t	firebase_v1	3546	\N	\N	2026-05-17 09:42:44.490512+00	2026-05-29 18:41:21.011484+00	ONCORHYNCHUS MYKISS	France	\N	\N	\N	Pêché en eaux douces	FILET DE TRUITE "FUMAISON"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cf982e06-fde7-4836-a4f9-15381a958302	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3551	PAVES DE TRUITE	0203551000000	€/PIECE	t	firebase_v1	3551	\N	\N	2026-05-17 09:42:44.494847+00	2026-05-29 18:41:21.011484+00	ONCORHYNCHUS MYKISS	FRANCE	\N	\N	\N	Elevé en	PAVES DE TRUITE	€/PIECE	€/PIECE	€/PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d0d7cc26-ec20-432b-8fed-4432a0c09aa0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3553	CREVETTE CUITE 30/50	0203553000000	€/kg	t	firebase_v1	3553	\N	\N	2026-05-17 09:42:44.496944+00	2026-05-29 18:41:21.011484+00	PENAEUS VANNAMEI	EQUATEUR	\N	\N	\N	Elevé en	CREVETTE CUITE 30/50	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+62f2fe07-9149-4084-99bc-c2b7c7c7c3c2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3554	DARNE DE SAUMON	0203554000000	€/kg	t	firebase_v1	3554	\N	\N	2026-05-17 09:42:44.499094+00	2026-05-29 18:41:21.011484+00	SALMO SALAR	NORVEGE	\N	\N	\N	Elevé en	DARNE DE SAUMON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+53cef3ed-6b01-4bbd-a307-3cbe0525be88	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3563243012829	noix st jacque blanche 0,400G	3563243012829	kg	t	firebase_v1	3563243012829	\N	\N	2026-05-17 09:42:45.717612+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	noix st jacque blanche 0,400G	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f0a55fb8-c399-4e25-b3f0-f0da546d2375	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3565	BOULETTE DE PIOSSON 10GR	0203565000000	KG	t	firebase_v1	3565	\N	\N	2026-05-17 09:42:44.509784+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	BOULETTE DE PIOSSON 10GR	KG	KG	KG	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a7fd8e2b-eb7d-45cc-ad61-7f81c6faed08	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3566	BOULETTE DE POISSON 20GR	0203566000000	KG	t	firebase_v1	3566	\N	\N	2026-05-17 09:42:44.512489+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	BOULETTE DE POISSON 20GR	KG	KG	KG	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+95056c99-7bb4-45a3-add2-0e4aeb4d9f1b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3567	BOULETTE DE POISSON 40GR	0203567000000	KG	t	firebase_v1	3567	\N	\N	2026-05-17 09:42:44.514718+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	BOULETTE DE POISSON 40GR	KG	KG	KG	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+381b21f3-3108-4d53-adaf-d95924f83be1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3568	STEACK HACHE DE SAUMON	0203568000000	PIECE	t	firebase_v1	3568	\N	\N	2026-05-17 09:42:44.516902+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	STEACK HACHE DE SAUMON	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+dbb684b4-77d1-4e92-9ed1-dc848e08ab33	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3574	MOULE DE BOUCHOT "LA PLAINAISE"	0203574000000	€/kg	t	firebase_v1	3574	\N	\N	2026-05-17 09:42:44.530805+00	2026-05-29 18:41:21.011484+00	MYTILUS EDULIS	FRANCE	\N	NETTOYEE	\N	Elevé en	MOULE DE BOUCHOT "LA PLAINAISE"	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9aac7686-218b-484f-a9d7-3e6d8eff1e7a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3580	BAR TACHETE DE LIGNE	0203580000000	€/kg	t	firebase_v1	3580	\N	\N	2026-05-17 09:42:44.533006+00	2026-05-29 18:41:21.011484+00	Dicentrarchus punctatus	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	BAR TACHETE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+67804e18-18c8-4c91-bd1d-663160bc8245	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3581	CORDON POISSON BOURSIN CHORIZO	0203581000000	PIECE	t	firebase_v1	3581	\N	\N	2026-05-17 09:42:44.535467+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	CORDON POISSON BOURSIN CHORIZO	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e72d50b1-6c82-4fd8-b2da-f028d7ebc394	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3582	CORDON POISSON BACON CHEDAR	0203582000000	PIECE	t	firebase_v1	3582	\N	\N	2026-05-17 09:42:44.537848+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	CORDON POISSON BACON CHEDAR	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e95c9b1e-62b6-45cb-90ef-784b1c838646	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3583	PANIER GARNI BOURSIN CHORIZO	0203583000000	PIECE	t	firebase_v1	3583	\N	\N	2026-05-17 09:42:44.540291+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	PANIER GARNI BOURSIN CHORIZO	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f63d22df-854c-4ad4-8a8d-33b4f6fcd055	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3584	PANIER GARNI BOURSIN CREVETTE	0203584000000	PIECE	t	firebase_v1	3584	\N	\N	2026-05-17 09:42:44.542799+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	PANIER GARNI BOURSIN CREVETTE	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+11b0ff87-c5c4-48e5-a38a-be58deef845d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3585	PANIER GARNI CREME SAUMON	0203585000000	PIECE	t	firebase_v1	3585	\N	\N	2026-05-17 09:42:44.545122+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	PANIER GARNI CREME SAUMON	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b91eb754-29f5-47b0-814b-6a0b05bf6ef1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3588	PETITE BROCHE DE POISSON	0203588000000	PIECE	t	firebase_v1	3588	\N	\N	2026-05-17 09:42:44.552322+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	PETITE BROCHE DE POISSON	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3c3ecce0-095a-4411-9e37-8b887c30ea37	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3572	DOS DE JULIENNE	0203572000000	€/kg	t	firebase_v1	3572	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.526019+00	2026-06-07 09:41:09.95325+00	MOLVA MOLVA	FAO 27-IV	\N	CHALUT	\N	Pêché en	DOS DE JULIENNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	22.1700	23.4700	24.9400
+103d5c19-b161-48ba-82bc-ba42fe4cea8a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3590	BAR COMMUN BLESSE DE LIGNE	0203590000000	€/kg	t	firebase_v1	3590	\N	\N	2026-05-17 09:42:44.557159+00	2026-05-29 18:41:21.011484+00	Dicentrarchus labrax	FAO 27 - VIII	\N	Lignes et Hameçons (LLS)	\N	Pêché en	BAR COMMUN BLESSE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+16af41be-4e4c-4866-a840-edd82b52b329	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3592	NOIX DE ST JACQUES x 500gr	0203592000000	piece	t	firebase_v1	3592	\N	\N	2026-05-17 09:42:44.561828+00	2026-05-29 18:41:21.011484+00	Pecten maximus	FAO27 - VIIA	\N	DRAGUE	\N	péché en	NOIX DE ST JACQUES x 500gr	piece	piece	piece	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+343db7b2-c3be-43d5-9140-3b4df50d9964	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3593	BURGER DE POISSON	0203593000000	PIECE	t	firebase_v1	3593	\N	\N	2026-05-17 09:42:44.564417+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	BURGER DE POISSON	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5a038388-970e-49e2-b2e3-3d213240cd24	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3595	BAR COMMUN DE FILET	0203595000000	€/kg	t	firebase_v1	3595	\N	\N	2026-05-17 09:42:44.566933+00	2026-05-29 18:41:21.011484+00	Dicentrarchus labrax	FAO 27 - VIII	\N	filets maillants et similaires	\N	Pêché en	BAR COMMUN DE FILET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+63d97873-138c-42ed-9258-b4c37127446f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3598	COQUILLE ST JACQUES BLANCHE	0203598000000	€/kg	t	firebase_v1	3598	\N	\N	2026-05-17 09:42:44.56945+00	2026-05-29 18:41:21.011484+00	Pecten maximus	FAO 27 - VII d- MANCHE /MER CELTIQUES	\N	DRAGUES	\N	Pêché en	COQUILLE ST JACQUES BLANCHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c6b21386-0360-4f62-86b0-6b8775da416b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3599	CARDINE	0203599000000	€/kg	t	firebase_v1	3599	\N	\N	2026-05-17 09:42:44.571775+00	2026-05-29 18:41:21.011484+00	Lepidorhombus whiffiagonis	FAO 27 - VII	\N	chalut	\N	Pêché en	CARDINE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+353ce5f5-8746-45ee-a0a6-74544d110126	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3602	SOLE promo	0203602000000	piece	t	firebase_v1	3602	\N	\N	2026-05-17 09:42:44.574031+00	2026-05-29 18:41:21.011484+00	Solea solea	FAO 27 - VIII	\N	chaluts	\N	Pêché en	SOLE promo	piece	piece	piece	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a3e6eb44-7381-4039-b95b-c73fc2ea4260	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3603	CONGRE DE LIGNE	0203603000000	€/kg	t	firebase_v1	3603	\N	\N	2026-05-17 09:42:44.576334+00	2026-05-29 18:41:21.011484+00	Conger conger	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	CONGRE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+451be0f7-a914-4c88-9e48-23cc65c38f60	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3605	LANGOUSTINE 17/20 X3KG	0203605000000	piece	t	firebase_v1	3605	\N	\N	2026-05-17 09:42:44.58106+00	2026-05-29 18:41:21.011484+00	Nephrops norvegicus	FAO27 - VIA	\N	Chalut OTB	\N	Péché en	LANGOUSTINE 17/20 X3KG	piece	piece	piece	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5be5c639-c4b2-46ea-9362-003c0ef593a7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3607	DORADE GRISE PORTION DE LIGNE	0203607000000	€/kg	t	firebase_v1	3607	\N	\N	2026-05-17 09:42:44.583363+00	2026-05-29 18:41:21.011484+00	Spondyliosoma cantharus	FAO 27 - VII	\N	Lignes et Hameçons	\N	Pêché en	DORADE GRISE PORTION DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+754bbb2f-884d-40a5-9143-e790393cc10b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3612	GRONDIN ROUGE	0203612000000	€/kg	t	firebase_v1	3612	\N	\N	2026-05-17 09:42:44.58574+00	2026-05-29 18:41:21.011484+00	Aspitrigla cuculus	FAO 27 - VII	\N	CHALUT	\N	Pêché en	GRONDIN ROUGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1b439d6c-0137-4c95-b9cc-a38f5db4ea9d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3614	GRONDIN GRIS	0203614000000	€/kg	t	firebase_v1	3614	\N	\N	2026-05-17 09:42:44.587919+00	2026-05-29 18:41:21.011484+00	Eutrigla gurnardus	FAO 27 - VIII	\N	LIGNE	\N	Pêché en	GRONDIN GRIS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cc44417f-9229-4fa2-9d62-c5bf06d77171	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3633	MAQUEREAU BLANC DE LIGNE	0203633000000	€/kg	t	firebase_v1	3633	\N	\N	2026-05-17 09:42:44.605729+00	2026-05-29 18:41:21.011484+00	SCOMBER JAPONICUS	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	MAQUEREAU BLANC DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1a380298-4c40-43b8-9357-0567a7f16084	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3640	MERLU PORTION DE LIGNE	0203640000000	€/kg	t	firebase_v1	3640	\N	\N	2026-05-17 09:42:44.609787+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	MERLU PORTION DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1aa3ac34-0bd0-466f-9e19-10bf383c6844	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3641	MERLU ENTIER GROS	0203641000000	€/kg	t	firebase_v1	3641	\N	\N	2026-05-17 09:42:44.611905+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	MERLU ENTIER GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e8a704fc-3293-4b68-beda-b9ced3eff7fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3643	QUEUE DE MERLU ENTIERE	0203643000000	€/kg	t	firebase_v1	3643	\N	\N	2026-05-17 09:42:44.613874+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	QUEUE DE MERLU ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8df2574a-772c-4a4d-b7de-14202b2edf71	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3644	MERLU ENTIER DE LIGNE	0203644000000	€/kg	t	firebase_v1	3644	\N	\N	2026-05-17 09:42:44.615756+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	MERLU ENTIER DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+83e2faf9-3891-45d0-87e5-7f9b0cc6b6ef	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3648	MULET LIPPU	0203648000000	€/kg	t	firebase_v1	3648	\N	\N	2026-05-17 09:42:44.619748+00	2026-05-29 18:41:21.011484+00	Chelon labrosus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	MULET LIPPU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c1240137-1647-41af-b302-9fe13bbe3125	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3650	OMBRINE DE LIGNE	0203650000000	€/kg	t	firebase_v1	3650	\N	\N	2026-05-17 09:42:44.623641+00	2026-05-29 18:41:21.011484+00	Umbrina cirrosa	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	OMBRINE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+95c20c14-8e70-407e-b693-3ab227d05793	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3657	FLET	0203657000000	€/kg	t	firebase_v1	3657	\N	\N	2026-05-17 09:42:44.625685+00	2026-05-29 18:41:21.011484+00	Platichthys flesus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	FLET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+caa492f9-646e-45f3-a990-61a25662af78	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3666	brochette AIL ET PERSIL	0203666000000	PIECE	t	firebase_v1	3666	\N	\N	2026-05-17 09:42:44.63179+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	brochette AIL ET PERSIL	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+77e0aa4a-978b-4c43-a9e5-02ed8942d7e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3668	SEBASTE CHEVRE	0203668000000	€/kg	t	firebase_v1	3668	\N	\N	2026-05-17 09:42:44.633663+00	2026-05-29 18:41:21.011484+00	HELICOLENUS DACTYLOPTERUS	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	SEBASTE CHEVRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c6142efe-77b6-45ff-854a-0796e549a15a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3669	SOLE GROSSE	0203669000000	€/kg	t	firebase_v1	3669	\N	\N	2026-05-17 09:42:44.6356+00	2026-05-29 18:41:21.011484+00	Solea solea	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	SOLE GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+bff6028a-6190-4e81-812d-76b5d356e4ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3672	CHIRURGIEN DE LIGNE	0203672000000	€/kg	t	firebase_v1	3672	\N	\N	2026-05-17 09:42:44.637553+00	2026-05-29 18:41:21.011484+00	\N	FAO 34 ATLANTIQUE CENTRE EST	\N	LIGNES ET HAMECONS	\N	Pêché en	CHIRURGIEN DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9199e243-36bd-435c-8c7f-21470582b01f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3764	FILET DE MOSTELLE	0203764000000	kg	t	firebase_v1	3764	\N	\N	2026-05-17 09:42:44.719289+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	FILET DE MOSTELLE	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+70350ad4-e848-4d05-b9d8-8f08af7ad582	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3621	LIEU JAUNE DE LIGNE	0203621000000	€/kg	t	firebase_v1	3621	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.590228+00	2026-05-31 08:09:43.698736+00	Pollachius pollachius	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	LIEU JAUNE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	18.4300	19.5200	20.7400
+f84214e4-02b2-4690-80df-2d70d5b0436b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3636	MERLAN DE LIGNE	0203636000000	€/kg	t	firebase_v1	3636	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.60776+00	2026-05-31 08:09:43.779443+00	Merlangius merlangus	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	MERLAN DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	8.7900	9.3100	9.8900
+799a9436-5d05-4951-a424-51c2a4094cdc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3591	BAR COMMUN	0203591000000	kg	t	firebase_v1	3591	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.55958+00	2026-06-07 09:41:09.598357+00	Dicentrarchus labrax	FAO 27 - VIII	\N	Chalut	\N	Pêché en	BAR COMMUN	kg	kg	kg	POISSON_ENTIER	Poisson entier	5.50	\N	\N	\N	19.8200	20.9800	22.2900
+e23bf4a9-ac36-4668-87d8-9cb22010c562	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3649	JOUE DE RAIE	0203649000000	€/kg	t	firebase_v1	3649	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.621679+00	2026-06-07 09:41:10.283681+00	RAJA MICROOCELLATA	FAO 27 - VII	\N	filets maillants et similaires	\N	Pêché en	JOUE DE RAIE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	55.5600	58.8200	62.5000
+6ecc824c-d57d-40a8-9134-1a466fc77ddc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3629	MAQUEREAU	0203629000000	€/kg	t	firebase_v1	3629	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.603638+00	2026-06-07 09:41:10.478189+00	Scomber scombrus	FAO 27 - VIII	\N	CHALUT/SENNEURS	\N	Pêché en	MAQUEREAU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	6.8000	7.2000	7.6500
+0fca7821-36e3-4ce2-b93a-a14e6314e70e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3646	MULET	0203646000000	€/kg	t	firebase_v1	3646	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.617782+00	2026-06-07 09:41:10.514645+00	LIZA RAMADA	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	MULET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	6.6800	7.0700	7.5200
+de45bb0e-46a3-4f60-8699-89e117610b8e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3677	TACAUD DE LIGNE	0203677000000	€/kg	t	firebase_v1	3677	\N	\N	2026-05-17 09:42:44.639442+00	2026-05-29 18:41:21.011484+00	Trisopterus luscus	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	TACAUD DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f9ad9c39-c61f-4ad2-9a5c-76dac22b0d47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3679	THON BLANC ENTIER GERMON	0203679000000	€/kg	t	firebase_v1	3679	\N	\N	2026-05-17 09:42:44.641674+00	2026-05-29 18:41:21.011484+00	Thunnus alalunga	FAO 27 - VIII	\N	CHALUT/PELAGIQUE	\N	Pêché en	THON BLANC ENTIER GERMON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5ad4eb33-3981-4aad-9204-b5f5bd5b74ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3680	LONGE THON OBESE	0203680000000	€/kg	t	firebase_v1	3680	\N	\N	2026-05-17 09:42:44.643808+00	2026-05-29 18:41:21.011484+00	Thunnus obesus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	LONGE THON OBESE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+60cbce37-16ee-4fd8-9cb2-df05f8a8196f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3683	VIEILLE DE LIGNE	0203683000000	€/kg	t	firebase_v1	3683	\N	\N	2026-05-17 09:42:44.645916+00	2026-05-29 18:41:21.011484+00	Labrus bergylta	FAO 27 - VIII	\N	LIGNES ET HAMECONS	\N	Pêché en	VIEILLE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7ab05ac9-9d06-47e8-8e87-228b754d6350	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3689	BAUDROIE ENTIERE	0203689000000	€/kg	t	firebase_v1	3689	\N	\N	2026-05-17 09:42:44.649993+00	2026-05-29 18:41:21.011484+00	Lophius piscatorius	FAO 27 - VIII	\N	chaluts	\N	Pêché en	BAUDROIE ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+39914310-bc02-4670-9085-ddb934c0a484	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3692	ORPHIE	0203692000000	€/kg	t	firebase_v1	3692	\N	\N	2026-05-17 09:42:44.652138+00	2026-05-29 18:41:21.011484+00	Belone belone	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	ORPHIE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2be3801a-2f72-4bf0-aadd-6947534e9bc2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3702	BONITE A DOS RAYE	0203702000000	€/kg	t	firebase_v1	3702	\N	\N	2026-05-17 09:42:44.654526+00	2026-05-29 18:41:21.011484+00	SARDA SARDA	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	BONITE A DOS RAYE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+00d74386-90c7-407f-b7e2-d943864ac0f6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3703	SAR COMMUN	0203703000000	€/kg	t	firebase_v1	3703	\N	\N	2026-05-17 09:42:44.656616+00	2026-05-29 18:41:21.011484+00	Diplodus sargus	FAO 27 - VIII	\N	Lignes et Hameçons	\N	Pêché en	SAR COMMUN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1d2d11f7-9958-4313-911e-a09d92ad1b45	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3708	FILET DE BAR MOUCHETE TACHETE	0203708000000	€/kg	t	firebase_v1	3708	\N	\N	2026-05-17 09:42:44.658769+00	2026-05-29 18:41:21.011484+00	Dicentrarchus punctatus	FAO 27 - VIII	\N	filet maillants et similaires(GNS)	\N	Pêché en	FILET DE BAR MOUCHETE TACHETE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a2b867c6-bc1a-4192-bcf2-6f344eccc86c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3709	FILET DE BAR	0203709000000	€/kg	t	firebase_v1	3709	\N	\N	2026-05-17 09:42:44.660975+00	2026-05-29 18:41:21.011484+00	DICENTRARCHUS LABRAX	Turquie	\N	\N	\N	Elevé en	FILET DE BAR	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d5d3f0fb-b4f9-413b-a3a2-bb9073678720	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3710	FILET DE BROSME	0203710000000	€/kg	t	firebase_v1	3710	\N	\N	2026-05-17 09:42:44.663279+00	2026-05-29 18:41:21.011484+00	BROSME BROSME	FAO 27 - VI-	\N	CHALUT	\N	Pêché en	FILET DE BROSME	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f1387fbe-7806-44b6-beab-759082a22ddf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3715	FILET DE DORADE ROYALE	0203715000000	€/kg	t	firebase_v1	3715	\N	\N	2026-05-17 09:42:44.665759+00	2026-05-29 18:41:21.011484+00	SPARUS AURATA	Turquie	\N	\N	\N	Elevé en	FILET DE DORADE ROYALE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d43e2460-4e00-422c-9bbb-62b449a70a50	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3716	FILET DE DORADE ROYALE	0203716000000	€/kg	t	firebase_v1	3716	\N	\N	2026-05-17 09:42:44.668048+00	2026-05-29 18:41:21.011484+00	Sparus aurata	GRECE	\N	\N	\N	Elevé en	FILET DE DORADE ROYALE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+635fee33-c40d-4c07-8fd0-3d22e3ee97fc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3719	LONGE ESPADON	0203719000000	€/kg	t	firebase_v1	3719	\N	\N	2026-05-17 09:42:44.670464+00	2026-05-29 18:41:21.011484+00	XIPHIAS GLADIUS	FAO 87	\N	LIGNES ET HAMECONS	\N	Pêché en	LONGE ESPADON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2f655b54-6293-48db-8028-db6b9889ffe5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3725	FILET DE MAIGRE	0203725000000	€/kg	t	firebase_v1	3725	\N	\N	2026-05-17 09:42:44.672609+00	2026-05-29 18:41:21.011484+00	Argyrosomus regius	FAO 27 - VIII	\N	ligne	\N	Pêché en	FILET DE MAIGRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f6805d06-1191-485a-be73-07320a808cd0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3734	DARNE DE MERLU	0203734000000	€/kg	t	firebase_v1	3734	\N	\N	2026-05-17 09:42:44.679113+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	filet maillants et similaires(GNS)	\N	Pêché en	DARNE DE MERLU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+578d6079-6e60-4918-9c75-5127119e1444	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3735	FILET DE MULET	0203735000000	€/kg	t	firebase_v1	3735	\N	\N	2026-05-17 09:42:44.68156+00	2026-05-29 18:41:21.011484+00	LIZA RAMADA	FAO 27 - VIII	\N	chalut	\N	Pêché en	FILET DE MULET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+95aa9b58-b71b-48c4-b96a-d5c13b7be4b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3736	FILET D'OMBRINE	0203736000000	€/kg	t	firebase_v1	3736	\N	\N	2026-05-17 09:42:44.684143+00	2026-05-29 18:41:21.011484+00	Umbrina cirrosa	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	FILET D'OMBRINE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+fed74fa9-dd4b-4619-8c2b-79ade87958ec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3738	FILET DE SAINT PIERRE	0203738000000	€/kg	t	firebase_v1	3738	\N	\N	2026-05-17 09:42:44.686637+00	2026-05-29 18:41:21.011484+00	Zeus faber	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	FILET DE SAINT PIERRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8366b013-14ea-46f2-bf2b-6bf0b0806120	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3739	SOLE PRET A CUIRE	0203739000000	€/kg	t	firebase_v1	3739	\N	\N	2026-05-17 09:42:44.689167+00	2026-05-29 18:41:21.011484+00	pegusa lascaris	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	SOLE PRET A CUIRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4d75f064-8148-4852-b704-8f405b245088	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3743	HOMARD EPATE VIVANT	0203743000000	piece	t	firebase_v1	3743	\N	\N	2026-05-17 09:42:44.69176+00	2026-05-29 18:41:21.011484+00	Homarus gammarus	FAO 27 - VII	\N	CASIER	\N	Pêché en	HOMARD EPATE VIVANT	piece	piece	piece	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f71e21a7-47e4-4556-8961-a7c58103c78e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3746	DARNE BONITE	0203746000000	kg	t	firebase_v1	3746	\N	\N	2026-05-17 09:42:44.694009+00	2026-05-29 18:41:21.011484+00	AUXIS ROCHEI	FAO 37-1-MEDITERRANEE	\N	FILETS TOURNANTS ET SOULEVES	\N	Pêché en	DARNE BONITE	kg	kg	kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d82d5a1d-e21c-43ae-bdb6-f70c482d27bf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3748	LONGE DE THON ROUGE	0203748000000	€/kg	t	firebase_v1	3748	\N	\N	2026-05-17 09:42:44.696407+00	2026-05-29 18:41:21.011484+00	Thunnus thynnus	FAO37,1,2	\N	LIGNE	\N	Pêché en	LONGE DE THON ROUGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+74519560-f1b4-4cc1-ab72-5fc72235d479	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3750	FILET DE VIEILLE	0203750000000	€/kg	t	firebase_v1	3750	\N	\N	2026-05-17 09:42:44.700586+00	2026-05-29 18:41:21.011484+00	Labrus bergylta	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	FILET DE VIEILLE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4150ce42-3705-4272-95c6-ae59828cce8b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3751	FILET DE TURBOT	0203751000000	€/kg	t	firebase_v1	3751	\N	\N	2026-05-17 09:42:44.703217+00	2026-05-29 18:41:21.011484+00	SCOPhthalmus MAXIMUS	FAO 27 - VIII	\N	filet maillants et similaires(GNS)	\N	Pêché en	FILET DE TURBOT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+507c65a6-370a-4757-8b3d-7e27201b1801	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3753	CALMARS	0203753000000	€/kg	t	firebase_v1	3753	\N	\N	2026-05-17 09:42:44.705769+00	2026-05-29 18:41:21.011484+00	LOLIGINIDAE	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	CALMARS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5977bf6d-6e17-42d0-9dec-4c95a0823cff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3754	QUEUE DE LOTTE	0203754000000	€/kg	t	firebase_v1	3754	\N	\N	2026-05-17 09:42:44.70785+00	2026-05-29 18:41:21.011484+00	Lophius PISCATORIUS	FAO 27 - VIII	\N	chaluts	\N	Pêché en	QUEUE DE LOTTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+300f1aa8-8121-45a8-b6d1-ba6e75d5b8d9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3757	TORPILLE/DALITE PELEE	0203757000000	€/kg	t	firebase_v1	3757	\N	\N	2026-05-17 09:42:44.71+00	2026-05-29 18:41:21.011484+00	Torpedo MARMCRATA	FAO 27 - VIII	\N	filet maillants et similaires	\N	Pêché en	TORPILLE/DALITE PELEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+20d2c0f6-1cd8-42cd-beea-f5dc76850154	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3758	ROUSSETTE PELEE	0203758000000	€/kg	t	firebase_v1	3758	\N	\N	2026-05-17 09:42:44.712261+00	2026-05-29 18:41:21.011484+00	Scyliorhinus CANICULA	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	ROUSSETTE PELEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b45b3e41-218f-4641-ba46-98352dd41d30	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3759	LANGOUSTINE 20/40 x 3KG	0203759000000	piece	t	firebase_v1	3759	\N	\N	2026-05-17 09:42:44.714657+00	2026-05-29 18:41:21.011484+00	Nephrops norvegicus	FAO 27 -VII-	\N	filet maillants et similaires	\N	Pêché en	LANGOUSTINE 20/40 x 3KG	piece	piece	piece	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3730	FILET DE MERLAN	0203730000000	€/kg	t	firebase_v1	3730	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.674706+00	2026-05-31 08:07:44.363934+00	MERLANGIUS MERLANGUS	FAO 27 IV-V-VI-VII	\N	CHALUT	\N	Pêché en	FILET DE MERLAN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	15.0000	15.8800	16.8800
+c5e4d501-9c7c-44fc-a1f7-8976600b988c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3686	BOGUE	0203686000000	€/kg	t	firebase_v1	3686	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.647901+00	2026-06-07 09:41:09.727938+00	Boops boops	FAO 27 - VIII	\N	chalut	\N	Pêché en	BOGUE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	4.8500	5.1300	5.4500
+964c2022-36e5-4b77-b98a-730a358a03d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3765	BLANC DE SEICHE	0203765000000	€/kg	t	firebase_v1	3765	\N	\N	2026-05-17 09:42:44.721445+00	2026-05-29 18:41:21.011484+00	Sepia officinalis	FAO 27 - VIII	\N	filet maillants et similaires(GNS)	\N	Pêché en	BLANC DE SEICHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+bc8a4551-b853-4440-8850-2e3e7c94c6b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3766	oeuf de lieu jaune	0203766000000	€/kg	t	firebase_v1	3766	\N	\N	2026-05-17 09:42:44.723672+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	filets maillants	\N	Pêché en	oeuf de lieu jaune	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3771	LANGOUSTINE VIVANTE T20	0203771000000	€/kg	t	firebase_v1	3771	\N	\N	2026-05-17 09:42:44.72856+00	2026-05-29 18:41:21.011484+00	Nephrops norvegicus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	LANGOUSTINE VIVANTE T20	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c4dff0de-fbd9-4c50-b030-54d5790b1f1f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3772	ETRILLE CUITE	0203772000000	€/kg	t	firebase_v1	3772	\N	\N	2026-05-17 09:42:44.730991+00	2026-05-29 18:41:21.011484+00	NECORA PIPUS PUBER	FAO 27 -VIII	\N	CASIER	\N	Pêché en	ETRILLE CUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5afc1125-7dcd-4390-be6f-a46a7ea0ea58	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3775	BOUQUET GROSSE ROSE VIVANTE	0203775000000	€/kg	t	firebase_v1	3775	\N	\N	2026-05-17 09:42:44.737253+00	2026-05-29 18:41:21.011484+00	PALAEMON SERRATUS	FAO 27 - VIII	\N	casiers	\N	Pêché en	BOUQUET GROSSE ROSE VIVANTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f81cecb7-d1da-455b-85d7-7221ddd4b74c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3776	CREVETTE ROSE BOUQUET CUITE	0203776000000	€/kg	t	firebase_v1	3776	\N	\N	2026-05-17 09:42:44.739277+00	2026-05-29 18:41:21.011484+00	PALAEMON SERRATUS	FAO 27 - VIII	\N	CASIER	\N	Pêché en	CREVETTE ROSE BOUQUET CUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+857e9c88-b3cd-4a99-8dd0-61c008d2687b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3777	PINCE DE TOURTEAU CUITE	0203777000000	€/kg	t	firebase_v1	3777	\N	\N	2026-05-17 09:42:44.741367+00	2026-05-29 18:41:21.011484+00	Cancer pagurus	FAO 27 - VIII	\N	filet maillants et similaires(GNS)	\N	Pêché en	PINCE DE TOURTEAU CUITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f1467561-4cfc-49d1-a48a-01672419e095	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3779	PINCE D'ARAIGNEE CUITE 4/8	0203779000000	€/kg	t	firebase_v1	3779	\N	\N	2026-05-17 09:42:44.743447+00	2026-05-29 18:41:21.011484+00	Maja SQUINADO	ANE-MANCHE ET MERS CELTIQUES	\N	casiers et pieges	\N	Pêché en	PINCE D'ARAIGNEE CUITE 4/8	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c58ea817-fd06-4891-a4b6-4dc5f9e4a19f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3784	FILET DE BAR SAUVAGE	0203784000000	€/kg	t	firebase_v1	3784	\N	\N	2026-05-17 09:42:44.748933+00	2026-05-29 18:41:21.011484+00	Dicentrarchus labrax	FAO 27 - VIII	\N	LIGNE	\N	Pêché en	FILET DE BAR SAUVAGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ace4aa66-931e-46b0-9b21-5b744038f60e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3792	DARNE DE CONGRE	0203792000000	€/kg	t	firebase_v1	3792	\N	\N	2026-05-17 09:42:44.753412+00	2026-05-29 18:41:21.011484+00	Conger conger	FAO 27 - VIII	\N	LIGNES ET HAMECONS	\N	Pêché en	DARNE DE CONGRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0fc919c6-7923-4774-90d8-a99abe169bb0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3797	EPERLAN	0203797000000	€/kg	t	firebase_v1	3797	\N	\N	2026-05-17 09:42:44.758372+00	2026-05-29 18:41:21.011484+00	Osmerus eperlanus	FAO 27 - VIII	\N	\N	\N	Pêché en	EPERLAN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3e1c8a68-c31e-4ca5-89de-08b2de656728	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3803	MAQUEREAU PRÊT A CUIRE	0203803000000	€/kg	t	firebase_v1	3803	\N	\N	2026-05-17 09:42:44.76345+00	2026-05-29 18:41:21.011484+00	Scomber scombrus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	MAQUEREAU PRÊT A CUIRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+44c65071-01f8-4e6b-9260-a64a273e6cab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3807	MAQUEREAU ESPANOL	0203807000000	€/kg	t	firebase_v1	3807	\N	\N	2026-05-17 09:42:44.765853+00	2026-05-29 18:41:21.011484+00	SCOMBER JAPONICUS	FAO 27 - 37,1	\N	FILETS TOURNANTS ET SOULEVES	\N	Pêché en	MAQUEREAU ESPANOL	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6372f544-9c4b-4417-8481-6faa4c604124	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3810	MERLAN PORTION	0203810000000	€/kg	t	firebase_v1	3810	\N	\N	2026-05-17 09:42:44.768129+00	2026-05-29 18:41:21.011484+00	Merlangius merlangus	FAO 27 - VI	\N	CHALUT	\N	Pêché en	MERLAN PORTION	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+82f3f26a-289a-4815-b256-f3853d85883f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3827	brochette SAUCE INDIENNE	0203827000000	PIECE	t	firebase_v1	3827	\N	\N	2026-05-17 09:42:44.772798+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	brochette SAUCE INDIENNE	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1d445638-355e-417a-9d63-5a9d9fecc40a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3828	PAGEOT COMMUN	0203828000000	€/kg	t	firebase_v1	3828	\N	\N	2026-05-17 09:42:44.775396+00	2026-05-29 18:41:21.011484+00	Pagellus erythrinus	FAO 27 - VII	\N	filet maillants et similaires(GNS)	\N	Pêché en	PAGEOT COMMUN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+51881b1d-d4eb-46d0-82d3-7b747829993b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3830	NUGGETS DE POISSON	0203830000000	€/kg	t	firebase_v1	3830	\N	\N	2026-05-17 09:42:44.77756+00	2026-05-29 18:41:21.011484+00	POLLACCHIUS VIRENS	\N	\N	\N	\N	\N	NUGGETS DE POISSON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+049ab5e2-18a5-4165-bb87-b3bdec4eb3da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3834	CARRELET/PLIE	0203834000000	€/kg	t	firebase_v1	3834	\N	\N	2026-05-17 09:42:44.779704+00	2026-05-29 18:41:21.011484+00	Pleuronectes platessa	FAO 27 - VIId	\N	filet maillants et similaires	\N	Pêché en	CARRELET/PLIE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2d5b7518-7c07-494c-b312-1711376feb6a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3835	PLIE PRET A CUIRE	0203835000000	€/kg	t	firebase_v1	3835	\N	\N	2026-05-17 09:42:44.78202+00	2026-05-29 18:41:21.011484+00	GLYPTOCEPHALUS CYNOGLOSSUS	FAO27 VII-VIII	\N	CHALUT	\N	Pêché en	PLIE PRET A CUIRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+515d4dff-9961-4316-9eac-e1133769525d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3844	SARDINE ST GILLES	0203844000000	€/kg	t	firebase_v1	3844	\N	\N	2026-05-17 09:42:44.784287+00	2026-05-29 18:41:21.011484+00	Sardina pilchardus	FAO 27 - VIII	\N	\N	\N	Pêché en	SARDINE ST GILLES	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3ccd0276-ffcf-43eb-a109-dc4a22e2d1b6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3854	VIEILLE COMMUNE	0203854000000	€/kg	t	firebase_v1	3854	\N	\N	2026-05-17 09:42:44.789082+00	2026-05-29 18:41:21.011484+00	Labrus bergylta	FAO 27 - VIII	\N	filets maillants et similaires	\N	Pêché en	VIEILLE COMMUNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e5016ffe-93e5-4fd5-9ced-ee4eb97c5e34	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3858	dos de sebaste	0203858000000	€/kg	t	firebase_v1	3858	\N	\N	2026-05-17 09:42:44.791425+00	2026-05-29 18:41:21.011484+00	sebastes marinus	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	dos de sebaste	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+46e7ce67-b2e7-4508-8cdb-43b067ff299d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3883	BAR MOUCHETE DE LIGNE	0203883000000	€/kg	t	firebase_v1	3883	\N	\N	2026-05-17 09:42:44.799899+00	2026-05-29 18:41:21.011484+00	Dicentrarchus punctatus	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	BAR MOUCHETE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3884	BAR TACHETE	0203884000000	€/kg	t	firebase_v1	3884	\N	\N	2026-05-17 09:42:44.802092+00	2026-05-29 18:41:21.011484+00	Dicentrarchus punctatus	FAO 27 - VIII	\N	filets maillants et similaires	\N	Pêché en	BAR TACHETE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+08b57995-3c14-46d5-9be9-aa8eb24df989	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3886	BAR COMMUN BLESSE DE LIGNE	0203886000000	€/kg	t	firebase_v1	3886	\N	\N	2026-05-17 09:42:44.806311+00	2026-05-29 18:41:21.011484+00	Dicentrarchus labrax	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	BAR COMMUN BLESSE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6c2c8a05-49d6-46e3-9937-c320b65ffcda	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3887	BAR COMMUN CHALUT	0203887000000	€/kg	t	firebase_v1	3887	\N	\N	2026-05-17 09:42:44.808413+00	2026-05-29 18:41:21.011484+00	Dicentrarchus labrax	FAO 27 - VIII	\N	Chaluts	\N	Pêché en	BAR COMMUN CHALUT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8e4b8a19-46d6-43f2-99aa-71d13ab1729f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3774	ARAIGNEE GROS MALE CUITE	0203774000000	kg	t	firebase_v1	3774	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.735096+00	2026-05-31 15:11:50.865901+00	Maja BRACHYDACTYLA	FAO 27 - VII-	\N	filet maillants et similaires(GNS)	\N	Pêché en	ARAIGNEE GROS MALE CUITE	kg	kg	kg	CRUSTACE	Crustacé	5.50	\N	\N	\N	\N	\N	\N
+9a78723c-66e1-4e0f-ad35-f967c0ff5c42	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3773	ARAIGNEE VIVANTE	0203773000000	kg	t	firebase_v1	3773	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.732912+00	2026-05-31 15:12:12.034194+00	Maja BRACHYDACTYLA	FAO 27 - VII-	\N	filet maillants et similaires(GNS)	\N	Pêché en	ARAIGNEE VIVANTE	kg	kg	kg	CRUSTACE	Crustacé	5.50	\N	\N	\N	\N	\N	\N
+ce180a78-209b-4f30-8616-211b889e7486	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3790	CHINCHARD	0203790000000	€/kg	t	firebase_v1	3790	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.751019+00	2026-06-07 09:41:09.769019+00	Trachurus trachurus,	\N	\N	\N	\N	Pêché en	CHINCHARD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	6.7900	7.1900	7.6300
+6c608d22-1b2b-465b-8f5d-cde10ab84494	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3770	HOMARD EUROPEEN VIVANT EPATTE	0203770000000	€/kg	t	firebase_v1	3770	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.726146+00	2026-06-07 09:41:10.247551+00	Homarus gammarus	FAO 27 - VIII-	\N	CASIER	\N	Pêché en	HOMARD EUROPEEN VIVANT EPATTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	30.0000	31.7600	33.7500
+d59be29c-0802-47bb-bebd-fe200a2ab74d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3889	BAR COMMUN IKEJIME	0203889000000	€/kg	t	firebase_v1	3889	\N	\N	2026-05-17 09:42:44.812547+00	2026-05-29 18:41:21.011484+00	Dicentrarchus labrax	FAO 27 - VIII	\N	\N	\N	Pêché en	BAR COMMUN IKEJIME	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+46de6e02-a491-4063-8ac8-9f6c455926fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3890	LONGE THONINE commune	0203890000000	€/kg	t	firebase_v1	3890	\N	\N	2026-05-17 09:42:44.814798+00	2026-05-29 18:41:21.011484+00	EUTHYNNUS ALLETTERATUS	FAO 34-MER ATLANTIQUE CENTRE EST	\N	LIGNES ET HAMECONS	\N	Pêché en	LONGE THONINE commune	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3891	BAR COMMUN DE FILET	0203891000000	€/kg	t	firebase_v1	3891	\N	\N	2026-05-17 09:42:44.816702+00	2026-05-29 18:41:21.011484+00	Dicentrarchus labrax	FAO 27 - VIII	\N	Filets maillants et similaires	\N	Pêché en	BAR COMMUN DE FILET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ce253eef-2a41-450a-9e78-9f6d67ed68d4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3892	BAR COMMUN BLESSE DE FILET	0203892000000	€/kg	t	firebase_v1	3892	\N	\N	2026-05-17 09:42:44.819081+00	2026-05-29 18:41:21.011484+00	Dicentrarchus labrax	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	BAR COMMUN BLESSE DE FILET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+45db41fe-6339-48a1-b985-c65a04385612	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3895	CARDINE	0203895000000	€/kg	t	firebase_v1	3895	\N	\N	2026-05-17 09:42:44.825802+00	2026-05-29 18:41:21.011484+00	Lepidorhombus whiffiagonis	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	CARDINE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3897	CETAUX	0203897000000	€/kg	t	firebase_v1	3897	\N	\N	2026-05-17 09:42:44.828138+00	2026-05-29 18:41:21.011484+00	Heteromycteris proboscideus	FAO 27 - VIII	\N	Filets maillants et similaires	\N	Pêché en	CETAUX	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f4fc92b4-dd85-4a78-b76d-500971e4b27f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3901	DOS DE CONGRE	0203901000000	€/kg	t	firebase_v1	3901	\N	\N	2026-05-17 09:42:44.837686+00	2026-05-29 18:41:21.011484+00	Conger conger	FAO 27 - VIII	\N	CHALUTS	\N	Pêché en	DOS DE CONGRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+951e264f-b719-436a-a75e-7cee32f15627	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3902	CONGRE DE LIGNE	0203902000000	€/kg	t	firebase_v1	3902	\N	\N	2026-05-17 09:42:44.839725+00	2026-05-29 18:41:21.011484+00	Conger conger	FAO 27 - VIII	\N	chalut(OTB)	\N	Pêché en	CONGRE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+600d1be7-dc2c-4508-92ba-e810febdcefe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3903	DORADE GRISE GROSSE	0203903000000	€/kg	t	firebase_v1	3903	\N	\N	2026-05-17 09:42:44.842094+00	2026-05-29 18:41:21.011484+00	Spondyliosoma cantharus	FAO 27 - VIII	\N	CHALUT/SENNEURS	\N	Pêché en	DORADE GRISE GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3904	DORADE GRISE	0203904000000	€/kg	t	firebase_v1	3904	\N	\N	2026-05-17 09:42:44.844191+00	2026-05-29 18:41:21.011484+00	Spondyliosoma cantharus	FAO 27 – VIII	\N	CHALUT/SENNEURS	\N	Pêché en	DORADE GRISE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+97fc7b9e-e58c-4570-9324-aff7869fb0a3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3905	DORADE GRISE BLESSEE PORTION	0203905000000	€/kg	t	firebase_v1	3905	\N	\N	2026-05-17 09:42:44.846571+00	2026-05-29 18:41:21.011484+00	Spondyliosoma cantharus	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	DORADE GRISE BLESSEE PORTION	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0dd6d830-3d01-42bb-86f2-0fb4b6a64d66	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3906	DORADE GRISE BLESSEE GROSSE	0203906000000	€/kg	t	firebase_v1	3906	\N	\N	2026-05-17 09:42:44.848868+00	2026-05-29 18:41:21.011484+00	Spondyliosoma cantharus	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	DORADE GRISE BLESSEE GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f9b983c9-1b39-42a0-b664-9a64d0543780	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3907	DORADE GRISE PORTION DE LIGNE	0203907000000	€/kg	t	firebase_v1	3907	\N	\N	2026-05-17 09:42:44.851179+00	2026-05-29 18:41:21.011484+00	Spondyliosoma cantharus	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	DORADE GRISE PORTION DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6c9f05bb-da84-42aa-ad0b-4d235a245759	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3908	DORADE GRISE GROSSE DE LIGNE	0203908000000	€/kg	t	firebase_v1	3908	\N	\N	2026-05-17 09:42:44.853392+00	2026-05-29 18:41:21.011484+00	Spondyliosoma cantharus	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	DORADE GRISE GROSSE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5efd5f3c-d873-43ca-9194-12d832a08cd8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3910	DORADE ROYALE GROSSE	0203910000000	€/kg	t	firebase_v1	3910	\N	\N	2026-05-17 09:42:44.857944+00	2026-05-29 18:41:21.011484+00	Sparus aurata	FAO 27 - VIII	\N	\N	\N	Pêché en	DORADE ROYALE GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+013fd206-5c81-49d2-95d3-ef135ccbcfab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3911	DORADE ROYALE GROSSE BLESSEE	0203911000000	€/kg	t	firebase_v1	3911	\N	\N	2026-05-17 09:42:44.860168+00	2026-05-29 18:41:21.011484+00	Sparus aurata	FAO 27 - VIII	\N	PALANGRIERS(LLD)	\N	Pêché en	DORADE ROYALE GROSSE BLESSEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+82e81774-46fd-4cfe-b3a0-33cba2607934	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3914	ESPADON ENTIER	0203914000000	€/kg	t	firebase_v1	3914	\N	\N	2026-05-17 09:42:44.864752+00	2026-05-29 18:41:21.011484+00	Xiphias gladius	FAO 27 - VIII	\N	\N	\N	Pêché en	ESPADON ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9a4fda71-fc53-4805-bb53-0195352c16d4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3915	GRONDIN	0203915000000	€/kg	t	firebase_v1	3915	\N	\N	2026-05-17 09:42:44.867027+00	2026-05-29 18:41:21.011484+00	CHELIDONICHTHYS LUCERNA	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	GRONDIN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+a1bd46fd-ea13-4126-85b3-775ef35cb985	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3917	GRONDIN CAMARD	0203917000000	€/kg	t	firebase_v1	3917	\N	\N	2026-05-17 09:42:44.869159+00	2026-05-29 18:41:21.011484+00	Chelidonichthys lastoviza	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	GRONDIN CAMARD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+647c813c-297e-4bb3-9458-a45f040b6e02	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3918	GRONDIN GRIS	0203918000000	€/kg	t	firebase_v1	3918	\N	\N	2026-05-17 09:42:44.871389+00	2026-05-29 18:41:21.011484+00	Eutrigla gurnardus	FAO 27 - VIII	\N	SENNEURS	\N	Pêché en	GRONDIN GRIS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5aec7463-b21a-4fbe-a7ab-b683507f947e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3920	GRONDIN GROS	0203920000000	€/kg	t	firebase_v1	3920	\N	\N	2026-05-17 09:42:44.875818+00	2026-05-29 18:41:21.011484+00	chelidonichthys lucerna	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	GRONDIN GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+13b5a0b0-bd36-4410-a748-a43efbf6fce3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3921	GRONDIN DE LIGNE	0203921000000	€/kg	t	firebase_v1	3921	\N	\N	2026-05-17 09:42:44.878107+00	2026-05-29 18:41:21.011484+00	Prionotus spp	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	GRONDIN DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7c3ac50b-e044-4be4-ae70-71490a3188b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3922	HARENG COTIER	0203922000000	€/kg	t	firebase_v1	3922	\N	\N	2026-05-17 09:42:44.8802+00	2026-05-29 18:41:21.011484+00	Clupea harengus	FAO 27 - VIII	\N	\N	\N	Pêché en	HARENG COTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+c1927d85-bf42-422c-99e8-2376b0845bd3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3923	LIEU JAUNE ENTIER	0203923000000	€/kg	t	firebase_v1	3923	\N	\N	2026-05-17 09:42:44.882545+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	SENNEURS	\N	Pêché en	LIEU JAUNE ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8679a682-e4df-498d-af1c-d9403a05dd86	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3924	LIEU JAUNE BLESSE	0203924000000	€/kg	t	firebase_v1	3924	\N	\N	2026-05-17 09:42:44.884849+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	LIEU JAUNE BLESSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+db12b5f3-871e-4bb4-9099-389becece013	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3894	BARBUE GROS	0203894000000	kg	t	firebase_v1	3894	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.823528+00	2026-05-31 15:13:13.5252+00	Scophthalmus rhombus	FAO 27 - VIII	\N	\N	\N	Pêché en	BARBUE GROS	kg	kg	kg	POISSON_ENTIER	Poisson entier	5.50	\N	\N	\N	\N	\N	\N
+f232a6ee-5c34-4cfb-893c-06067dc5a5a2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3888	BAR COMMUN BLESSE CHALUT	0203888000000	€/kg	f	firebase_v1	3888	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.810419+00	2026-05-31 15:16:17.501013+00	Dicentrarchus labrax	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	BAR COMMUN BLESSE CHALUT	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d8cc0865-90d5-4195-961b-665ba8e14bfd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3909	DORADE ROYALE PORTION SAUVAGE	0203909000000	€/kg	t	firebase_v1	3909	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.855533+00	2026-06-07 09:41:09.880942+00	Sparus aurata	FAO 27 - VIII	\N	filets maillants et similaires	\N	Pêché en	DORADE ROYALE PORTION SAUVAGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	22.7200	24.0600	25.5700
+d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3919	GRONDIN PERLON	0203919000000	€/kg	t	firebase_v1	3919	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-17 09:42:44.873577+00	2026-06-07 09:41:10.17643+00	chelidonichthys lucerna	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	GRONDIN PERLON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	6.5700	6.9500	7.3900
+0a1a52cd-4488-45ab-807e-37b2de41a7c6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3925	LIEU JAUNE DE LIGNE	0203925000000	€/kg	t	firebase_v1	3925	\N	\N	2026-05-17 09:42:44.886895+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	LIEU JAUNE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0661d2b3-ca43-40be-98a4-ec04e5d0a2e4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3926	LIEU JAUNE BLESSE DE LIGNE	0203926000000	€/kg	t	firebase_v1	3926	\N	\N	2026-05-17 09:42:44.889084+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	LIEU JAUNE BLESSE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+871fd846-e581-4837-a030-462756cdff1f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3927	LIEU JAUNE IKEJIME	0203927000000	€/kg	t	firebase_v1	3927	\N	\N	2026-05-17 09:42:44.891447+00	2026-05-29 18:41:21.011484+00	Pollachius pollachius	FAO 27 - VIII	\N	\N	\N	Pêché en	LIEU JAUNE IKEJIME	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3928	LIEU NOIR ENTIER	0203928000000	€/kg	t	firebase_v1	3928	\N	\N	2026-05-17 09:42:44.893698+00	2026-05-29 18:41:21.011484+00	Pollachius virens	FAO 27 - VIII	\N	\N	\N	Pêché en	LIEU NOIR ENTIER	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8b430e17-49b0-40e6-aaf5-a8b09f298d04	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3929	LIEU NOIR DE LIGNE	0203929000000	€/kg	t	firebase_v1	3929	\N	\N	2026-05-17 09:42:44.895935+00	2026-05-29 18:41:21.011484+00	Pollachius virens	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	LIEU NOIR DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+205bf491-f72d-410e-aa6f-275b96f93de4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3930	LIMANDE SOLE	0203930000000	€/kg	t	firebase_v1	3930	\N	\N	2026-05-17 09:42:44.898163+00	2026-05-29 18:41:21.011484+00	Microstomus kitt	FAO 27 - VIII	\N	SENNEURS(SDN)	\N	Pêché en	LIMANDE SOLE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4538b39a-4f0c-42df-9357-4169f18772d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3931	LIMANDE SOLE GROSSE	0203931000000	€/kg	t	firebase_v1	3931	\N	\N	2026-05-17 09:42:44.900196+00	2026-05-29 18:41:21.011484+00	Microstomus kitt	FAO 27 - VIII	\N	SENNEURS(SDN)	\N	Pêché en	LIMANDE SOLE GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ea00bccd-06f6-4d93-b50e-fc0674c50885	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3933	JULIENNE DE LIGNE	0203933000000	€/kg	t	firebase_v1	3933	\N	\N	2026-05-17 09:42:44.904902+00	2026-05-29 18:41:21.011484+00	Molva molva	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	JULIENNE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e24129d5-8f4f-46da-be77-2e57a2b32782	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3934	MAIGRE COMMUN	0203934000000	€/kg	t	firebase_v1	3934	\N	\N	2026-05-17 09:42:44.907171+00	2026-05-29 18:41:21.011484+00	Argyrosomus regius	FAO 27 - VIII	\N	chalut(OTB)	\N	Pêché en	MAIGRE COMMUN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0ba6fc45-0398-4d01-ac99-8878cd72ec10	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3935	MAIGRE DE LIGNE	0203935000000	€/kg	t	firebase_v1	3935	\N	\N	2026-05-17 09:42:44.909431+00	2026-05-29 18:41:21.011484+00	Argyrosomus regius	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	MAIGRE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+294a3580-5a47-4c00-abf5-162c1d0b1733	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3936	MAQUEREAU	0203936000000	€/kg	t	firebase_v1	3936	\N	\N	2026-05-17 09:42:44.911611+00	2026-05-29 18:41:21.011484+00	Scomber scombrus	FAO 27 - VIII	\N	CHALUTS	\N	Pêché en	MAQUEREAU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9157845c-65cc-450a-810e-96e1671326cc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3937	MAQUEREAU GROS	0203937000000	€/kg	t	firebase_v1	3937	\N	\N	2026-05-17 09:42:44.914099+00	2026-05-29 18:41:21.011484+00	Scomber scombrus	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	MAQUEREAU GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0d65b442-9805-4f9d-a0d5-dbb80392dd46	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3938	MAQUEREAU/LISETTE	0203938000000	€/kg	t	firebase_v1	3938	\N	\N	2026-05-17 09:42:44.916264+00	2026-05-29 18:41:21.011484+00	Scomber scombrus	FAO 27 - VIII	\N	CHALUT(OTB),SENNEURS(SDN),FILETS(GNS)	\N	Pêché en	MAQUEREAU/LISETTE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ada42c11-b23d-477b-ae38-f8e7a9202fc0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3939	MAQUEREAU DE LIGNE	0203939000000	€/kg	t	firebase_v1	3939	\N	\N	2026-05-17 09:42:44.918703+00	2026-05-29 18:41:21.011484+00	Scomber scombrus	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	MAQUEREAU DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+92cda577-3743-4e3f-a408-aa782f1ab2e1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3940	MAQUEREAUESPAGNOL	0203940000000	€/kg	t	firebase_v1	3940	\N	\N	2026-05-17 09:42:44.920787+00	2026-05-29 18:41:21.011484+00	SCOMBER TAPONICUS	FAO 27 - VIII	\N	SENNEURS	\N	Pêché en	MAQUEREAUESPAGNOL	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8ee935b5-e9e3-4074-926f-be8aca16b53f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3941	MAQUEREAU BLANC DE LIGNE	0203941000000	€/kg	t	firebase_v1	3941	\N	\N	2026-05-17 09:42:44.923052+00	2026-05-29 18:41:21.011484+00	Scomber scombrus	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	MAQUEREAU BLANC DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d884f1dc-e159-4659-823a-b758e62d2e0a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3942	MERLAN PORTION	0203942000000	€/kg	t	firebase_v1	3942	\N	\N	2026-05-17 09:42:44.92539+00	2026-05-29 18:41:21.011484+00	Merlangius merlangus	FAO 27 - VIII	\N	Filets maillants et similaireS/chalut	\N	Pêché en	MERLAN PORTION	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8ddd7485-545e-4f1e-8add-933b6ac68a88	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3943	MERLAN GROS	0203943000000	€/kg	t	firebase_v1	3943	\N	\N	2026-05-17 09:42:44.927742+00	2026-05-29 18:41:21.011484+00	Merlangius merlangus	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	MERLAN GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+977ee446-7073-4f8b-b02b-07c97f86a54a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3944	MERLAN PORTION DE LIGNE	0203944000000	€/kg	t	firebase_v1	3944	\N	\N	2026-05-17 09:42:44.930123+00	2026-05-29 18:41:21.011484+00	Merlangius merlangus	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	MERLAN PORTION DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+57cab449-6034-4e3f-a90e-664b912ed9b8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3945	MERLAN GROS DE LIGNE	0203945000000	€/kg	t	firebase_v1	3945	\N	\N	2026-05-17 09:42:44.932293+00	2026-05-29 18:41:21.011484+00	Merlangius merlangus	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	MERLAN GROS DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+886d469f-bd80-4f1e-84c6-5744bc5eac3f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3946	MERLAN BLEU	0203946000000	€/kg	t	firebase_v1	3946	\N	\N	2026-05-17 09:42:44.934599+00	2026-05-29 18:41:21.011484+00	Micromesistius poutassou	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	MERLAN BLEU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+e335fc8e-831f-4761-b2f5-160a993c838f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3947	MERLU PORTION	0203947000000	€/kg	t	firebase_v1	3947	\N	\N	2026-05-17 09:42:44.936826+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	CHALUT/SENNES	\N	Pêché en	MERLU PORTION	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f17f2e69-9d4b-449f-bdda-adb04b77d959	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3949	MERLU PORTION DE LIGNE	0203949000000	€/kg	t	firebase_v1	3949	\N	\N	2026-05-17 09:42:44.939083+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	lignes et hamecons (LLS)	\N	Pêché en	MERLU PORTION DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5d8b4d4f-09af-493d-82ea-9e28732767a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3950	MERLU PORTION BLESSE	0203950000000	€/kg	t	firebase_v1	3950	\N	\N	2026-05-17 09:42:44.941471+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	MERLU PORTION BLESSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+942a6131-ec02-4fba-8d6f-24f99fad56df	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3951	MERLU ENTIER BLESSE	0203951000000	€/kg	t	firebase_v1	3951	\N	\N	2026-05-17 09:42:44.943828+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	MERLU ENTIER BLESSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ae7b0025-ff9f-4d4f-8548-a11e349d98ac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3952	MERLU ENTIER GROS	0203952000000	€/kg	t	firebase_v1	3952	\N	\N	2026-05-17 09:42:44.946473+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	MERLU ENTIER GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0c902988-d746-4817-b968-3df2fd702253	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3953	MERLU AVEC TETE + QUEUE COUPEE	0203953000000	€/kg	t	firebase_v1	3953	\N	\N	2026-05-17 09:42:44.948588+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	\N	\N	Pêché en	MERLU AVEC TETE + QUEUE COUPEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7c81b096-69ce-4e0d-9cb4-77b9108fbc2b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3954	QUEUE DE MERLU ENTIERE	0203954000000	€/kg	t	firebase_v1	3954	\N	\N	2026-05-17 09:42:44.950974+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	QUEUE DE MERLU ENTIERE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+65723612-9981-4b4f-b94d-d5f2840d75fb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3955	MERLU ENTIER DE LIGNE	0203955000000	€/kg	t	firebase_v1	3955	\N	\N	2026-05-17 09:42:44.953112+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	LIGNES ET HAMECONS (LLS)	\N	Pêché en	MERLU ENTIER DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+6ff6ca3b-19b1-4d33-ba98-7f7e1c0fd90c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3956	MERLU GROS DE LIGNE	0203956000000	€/kg	t	firebase_v1	3956	\N	\N	2026-05-17 09:42:44.955509+00	2026-05-29 18:41:21.011484+00	Merluccius merluccius	FAO 27 - VIII	\N	LIGNES ET HAMECONS (LLS)	\N	Pêché en	MERLU GROS DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+28c3a430-a59d-4895-8fbd-0c5795fe45dc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3958	MULET GROS	0203958000000	€/kg	t	firebase_v1	3958	\N	\N	2026-05-17 09:42:44.957789+00	2026-05-29 18:41:21.011484+00	Paramugil parmatus	FAO 27 - VIII	\N	\N	\N	Pêché en	MULET GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ea76e40d-865f-4a34-a25c-351350f6ce74	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3959	MULET LIPPU	0203959000000	€/kg	t	firebase_v1	3959	\N	\N	2026-05-17 09:42:44.960299+00	2026-05-29 18:41:21.011484+00	Chelon labrosus	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	MULET LIPPU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3ad4c0a1-7371-4627-acd1-2ddb53d54e74	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3960	MULET GROS LIPPU	0203960000000	€/kg	t	firebase_v1	3960	\N	\N	2026-05-17 09:42:44.962731+00	2026-05-29 18:41:21.011484+00	Chelon labrosus	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	MULET GROS LIPPU	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7a1b2067-66fb-46d6-a06b-dea3a20da4bd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3961	OMBRINE BRONZE	0203961000000	€/kg	t	firebase_v1	3961	\N	\N	2026-05-17 09:42:44.964983+00	2026-05-29 18:41:21.011484+00	Umbrina CANARIENSIS	FAO 27 - VIII	\N	SENNES	\N	Pêché en	OMBRINE BRONZE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0566ec78-5f8c-4e11-8374-51826efaeb7b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3962	OMBRINE DE LIGNE	0203962000000	€/kg	t	firebase_v1	3962	\N	\N	2026-05-17 09:42:44.96734+00	2026-05-29 18:41:21.011484+00	Umbrina cirrosa	FAO 27 - VIII	\N	LIGNES ET HAMECONS (LLS)	\N	Pêché en	OMBRINE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+59277cf7-5582-4172-b9ce-ece5503d2d0a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3963	PAGEOT COMMUN	0203963000000	€/kg	t	firebase_v1	3963	\N	\N	2026-05-17 09:42:44.969848+00	2026-05-29 18:41:21.011484+00	Pagellus erythrinus	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	PAGEOT COMMUN	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+351eaf51-b8c1-4b2a-b45e-b6f26a196646	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3964	PAGEOT GROS	0203964000000	€/kg	t	firebase_v1	3964	\N	\N	2026-05-17 09:42:44.972318+00	2026-05-29 18:41:21.011484+00	Pagellus erythrinus	FAO 27 - VIII	\N	\N	\N	Pêché en	PAGEOT GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d1732412-263c-4614-9974-87a1d7588544	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3965	PAGEOT ACARNE	0203965000000	€/kg	t	firebase_v1	3965	\N	\N	2026-05-17 09:42:44.974805+00	2026-05-29 18:41:21.011484+00	Pagellus acarne	FAO 27 - VIII	\N	CHALUT(PTM)	\N	Pêché en	PAGEOT ACARNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f3d28d52-b720-401b-af7b-cc505227efc4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3966	PAGEOT ACARNE DE LIGNE	0203966000000	€/kg	t	firebase_v1	3966	\N	\N	2026-05-17 09:42:44.97706+00	2026-05-29 18:41:21.011484+00	Pagellus acarne	FAO 27 - VIII	\N	LIGNES ET HAMECONS (LLS)	\N	Pêché en	PAGEOT ACARNE DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d8007de4-4cb5-43c0-8dc9-ca460ae07593	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3967	CARRELET/PLIE	0203967000000	€/kg	t	firebase_v1	3967	\N	\N	2026-05-17 09:42:44.979485+00	2026-05-29 18:41:21.011484+00	Pleuronectes platessa	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	CARRELET/PLIE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b82f6e54-b6b1-4466-ac6c-974baf1a4bf1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3968	CARRELET/PLIE GROSSE	0203968000000	€/kg	t	firebase_v1	3968	\N	\N	2026-05-17 09:42:44.981725+00	2026-05-29 18:41:21.011484+00	Pleuronectes platessa	FAO 27 - VIII	\N	SENNES(SDN)	\N	Pêché en	CARRELET/PLIE GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+9a72ebd2-2801-4602-9222-1ad00682e1e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3969	FLET	0203969000000	€/kg	t	firebase_v1	3969	\N	\N	2026-05-17 09:42:44.98405+00	2026-05-29 18:41:21.011484+00	Platichthys flesus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	FLET	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1cb5f738-49bc-48ac-903b-87152a32feb4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3970	RASCASSE	0203970000000	€/kg	t	firebase_v1	3970	\N	\N	2026-05-17 09:42:44.986153+00	2026-05-29 18:41:21.011484+00	Scorpaena spp	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	RASCASSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+85a09413-d01c-4021-86af-c2497f9d4d7a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3971	ROUGET BARBET DE ROCHE	0203971000000	€/kg	t	firebase_v1	3971	\N	\N	2026-05-17 09:42:44.988316+00	2026-05-29 18:41:21.011484+00	Mullus surmuletus	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	ROUGET BARBET DE ROCHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0fc5a519-7e11-45c3-9064-a1a0671b24ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3972	ROUGET BARBET (GRATTE)	0203972000000	€/kg	t	firebase_v1	3972	\N	\N	2026-05-17 09:42:44.990655+00	2026-05-29 18:41:21.011484+00	Mullus surmuletus	FAO 27 - VIII	\N	SENNEURS(SDN)	\N	Pêché en	ROUGET BARBET (GRATTE)	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1733d473-ff50-4763-b5a9-f4791a77a025	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3973	ROUGET BARBET DE ROCHE	0203973000000	€/kg	t	firebase_v1	3973	\N	\N	2026-05-17 09:42:44.993121+00	2026-05-29 18:41:21.011484+00	Mullus surmuletus	FAO 27 - VIII	\N	SENNEURS	\N	Pêché en	ROUGET BARBET DE ROCHE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+f36a5040-e40f-4aec-820e-351e4913ca35	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3974	ROUGET BARBET GROS	0203974000000	€/kg	t	firebase_v1	3974	\N	\N	2026-05-17 09:42:44.995404+00	2026-05-29 18:41:21.011484+00	Mullus surmuletus	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	ROUGET BARBET GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+754c1a1d-9c70-47fd-970d-45ac57d457ec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3975	SAINT PIERRE	0203975000000	€/kg	t	firebase_v1	3975	\N	\N	2026-05-17 09:42:44.997652+00	2026-05-29 18:41:21.011484+00	Zeus faber	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	SAINT PIERRE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+1159ae83-276d-4698-a815-cfa794990390	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3976	SAINT PIERRE FRITURE	0203976000000	€/kg	t	firebase_v1	3976	\N	\N	2026-05-17 09:42:44.999937+00	2026-05-29 18:41:21.011484+00	Zeus faber	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	SAINT PIERRE FRITURE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+3ff669db-9846-463a-b045-70d9d30ec800	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3977	SAINT PIERRE GROS	0203977000000	€/kg	t	firebase_v1	3977	\N	\N	2026-05-17 09:42:45.002169+00	2026-05-29 18:41:21.011484+00	Zeus faber	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	SAINT PIERRE GROS	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+4c0d68cb-7004-410f-b52e-5696fd2d57ad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3979	SARDINE PETITE	0203979000000	€/kg	t	firebase_v1	3979	\N	\N	2026-05-17 09:42:45.004446+00	2026-05-29 18:41:21.011484+00	Sardina pilchardus	FAO 27 - VIII	\N	\N	\N	Pêché en	SARDINE PETITE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0242067f-5fa8-4cc4-9440-3677c968b3bb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3980	SARDINE	0203980000000	€/kg	t	firebase_v1	3980	\N	\N	2026-05-17 09:42:45.006813+00	2026-05-29 18:41:21.011484+00	SARDEINA PILCHARDUS	FAO 27 - VII-VIII	\N	FILETS TOURNANTS ET SOULEVES	\N	Pêché en	SARDINE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+fe957bf0-1b66-41ca-9d25-e61c0d39e6b3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3981	SARDINE SALEE	0203981000000	€/kg	t	firebase_v1	3981	\N	\N	2026-05-17 09:42:45.009138+00	2026-05-29 18:41:21.011484+00	Sardina pilchardus	FAO 27 - VIII	\N	\N	\N	Pêché en	SARDINE SALEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+0a840e39-2dac-4f78-b194-44dd27bd0534	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3982	SARDINE PROMO	0203982000000	€/kg	t	firebase_v1	3982	\N	\N	2026-05-17 09:42:45.011311+00	2026-05-29 18:41:21.011484+00	Sardina pilchardus	FAO 27 - VIII	\N	\N	\N	Pêché en	SARDINE PROMO	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+93c60e83-16df-4699-90e4-9cc343f41a0a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3983	SAUMON ATLANTIQUE SAUVAGE	0203983000000	€/kg	t	firebase_v1	3983	\N	\N	2026-05-17 09:42:45.013385+00	2026-05-29 18:41:21.011484+00	Salmo salar	FAO 27 - VIII	\N	\N	\N	Pêché en	SAUMON ATLANTIQUE SAUVAGE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+b6299ea8-be6c-400b-bf98-bc145ab5541c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3985	SOLE GROSSE	0203985000000	€/kg	t	firebase_v1	3985	\N	\N	2026-05-17 09:42:45.018359+00	2026-05-29 18:41:21.011484+00	Solea solea	FAO 27 - VIII	\N	chaluts	\N	Pêché en	SOLE GROSSE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+29f86909-cd3c-4670-8da4-97e6aaddcf9f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3987	SOLE PORTION	0203987000000	€/kg	t	firebase_v1	3987	\N	\N	2026-05-17 09:42:45.023037+00	2026-05-29 18:41:21.011484+00	Solea solea	FAO 27 - VIII	\N	\N	\N	Pêché en	SOLE PORTION	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+7aa683c4-31d8-44a9-bb19-64ff2dbe5460	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3988	SOLE GROSSE BLESSEE	0203988000000	€/kg	t	firebase_v1	3988	\N	\N	2026-05-17 09:42:45.025338+00	2026-05-29 18:41:21.011484+00	Solea solea	FAO 27 - VIII	\N	Filets maillants et similaires(GNS)	\N	Pêché en	SOLE GROSSE BLESSEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+846576bb-e4fc-4c0a-b54b-03942b6ef7d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3989	SOLE PORTION GRATTEE	0203989000000	€/kg	t	firebase_v1	3989	\N	\N	2026-05-17 09:42:45.027552+00	2026-05-29 18:41:21.011484+00	Solea solea	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	SOLE PORTION GRATTEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+5df2e221-08f2-4049-aae0-768c33937180	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3990	SOLE GROSSE GRATTEE	0203990000000	€/kg	t	firebase_v1	3990	\N	\N	2026-05-17 09:42:45.029835+00	2026-05-29 18:41:21.011484+00	Solea solea	FAO 27 - VIII	\N	CHALUT(OTB)	\N	Pêché en	SOLE GROSSE GRATTEE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+38687bf9-0158-4f33-9343-b7a1e2a653ec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3991	SOLE BLONDE	0203991000000	€/kg	t	firebase_v1	3991	\N	\N	2026-05-17 09:42:45.032409+00	2026-05-29 18:41:21.011484+00	PEGUSEA LASCARIS	FAO 27 - VIII	\N	Filets maillants et similaires/CHALUT	\N	Pêché en	SOLE BLONDE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+d8cf635e-9c89-4022-90aa-c28f57db8924	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3992	SOLE BLONDE	0203992000000	€/kg	t	firebase_v1	3992	\N	\N	2026-05-17 09:42:45.034517+00	2026-05-29 18:41:21.011484+00	PEGUSEA LASCARIS	FAO 27 - VIII	\N	FILEYEURS	\N	Pêché en	SOLE BLONDE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+8be8de38-5872-44e6-8ce8-a855fa651f5e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3993	SOLE PERDRIX	0203993000000	€/kg	t	firebase_v1	3993	\N	\N	2026-05-17 09:42:45.036347+00	2026-05-29 18:41:21.011484+00	Microchirus VARIEGGATUS	FAO 27 - VIII	\N	CHALUT	\N	Pêché en	SOLE PERDRIX	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3994	TACAUD	0203994000000	€/kg	t	firebase_v1	3994	\N	\N	2026-05-17 09:42:45.038143+00	2026-05-29 18:41:21.011484+00	Trisopterus luscus	FAO 27 - VIId	\N	CHALUT5OTB)	\N	Pêché en	TACAUD	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+cf244b2b-a980-4760-9d7c-6bbc06f9eda3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	3997	TACAUD DE LIGNE	0203997000000	€/kg	t	firebase_v1	3997	\N	\N	2026-05-17 09:42:45.039742+00	2026-05-29 18:41:21.011484+00	Trisopterus luscus	FAO 27 - VIII	\N	LIGNES ET HAMECONS (LLS)	\N	Pêché en	TACAUD DE LIGNE	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+24cb2404-7326-416b-b200-390dafdb43c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	7537	LE PIT'S BURGER X 4,280G,PAIN L	0207537000000	PIECE	t	firebase_v1	7537	\N	\N	2026-05-17 09:42:45.041544+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	LE PIT'S BURGER X 4,280G,PAIN L	PIECE	PIECE	PIECE	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+ef0d1fa0-16a9-41fc-a47e-7f678dd911f6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	CUISSON	CUISSON	CUISSON	€/kg	t	firebase_v1	CUISSON	\N	\N	2026-05-17 09:42:46.233648+00	2026-05-29 18:41:21.011484+00	\N	\N	\N	\N	\N	\N	CUISSON	€/kg	€/kg	€/kg	\N	\N	5.50	\N	\N	\N	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: backup_debug_purchase_line_metadata_20260606; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.backup_debug_purchase_line_metadata_20260606 (id, purchase_line_id, meta_key, meta_value, dlc, latin_name, fao_zone, sous_zone, fishing_gear, production_method, allergens, origin_label, supplier_lot_number, sanitary_photo_url, sanitary_photo_urls, notes, created_at, updated_at) FROM stdin;
+35c1ca26-b862-4b5e-99d9-f937f4404bd6	e0be548a-03ce-4be7-9124-3f7ec0e78020	gc_line	{"dlc": null, "fao_zone": "ÉLEVAGE", "allergens": null, "line_kind": "TRAD", "sous_zone": "ELEVÈ EN MER ATLANTIQUE NORD EST", "latin_name": "Salmo salar Lot N∞ :", "price_unit": "kg", "article_plu": null, "designation": "filet de saumon 1.5/2 ECOSSE", "fishing_gear": "ELEVAGE", "origin_label": "Lecri Marée", "needs_mapping": true, "ordered_colis": 4, "ordered_pieces": null, "supplier_label": "filet de saumon 1.5/2 ECOSSE", "ordered_quantity": 49.59, "unit_price_ex_vat": 14.5, "line_amount_ex_vat": 719.06, "supplier_reference": "000001560", "supplier_lot_number": null}	\N	Salmo salar Lot N∞ :	ÉLEVAGE	ELEVÈ EN MER ATLANTIQUE NORD EST	ELEVAGE	\N	\N	Lecri Marée	\N	/uploads/sanitary-photos/sanitary-1780757917584-944202909.jpg	["/uploads/sanitary-photos/sanitary-1780757917584-944202909.jpg"]	\N	2026-06-06 14:55:40.126772+00	2026-06-06 14:58:37.62146+00
+99aee6fb-8b6d-4a53-a680-5e68c9c3e84a	d61e2ec5-60b9-4cae-bd97-956283bc59b3	gc_line	{"dlc": null, "fao_zone": "FAO27", "allergens": null, "line_kind": "TRAD", "sous_zone": null, "latin_name": "Molva molva Lot N∞ :", "price_unit": "kg", "article_plu": null, "designation": "dos de julienne 300+ \\"MSC\\" isl", "fishing_gear": "LIGNES, HAMECONS ET AUTRES", "origin_label": "Lecri Marée", "needs_mapping": true, "ordered_colis": 5, "ordered_pieces": null, "supplier_label": "dos de julienne 300+ \\"MSC\\" isl", "ordered_quantity": 15, "unit_price_ex_vat": 19.95, "line_amount_ex_vat": 299.25, "supplier_reference": "000000875", "supplier_lot_number": null}	\N	Molva molva Lot N∞ :	FAO27	\N	LIGNES, HAMECONS ET AUTRES	\N	\N	Lecri Marée	\N	/uploads/sanitary-photos/sanitary-1780757928328-940897242.jpg	["/uploads/sanitary-photos/sanitary-1780757928328-940897242.jpg"]	\N	2026-06-06 14:55:40.126772+00	2026-06-06 14:58:48.354139+00
+a08b3ced-22be-4512-99a5-5a7c05fbfa11	92fd084d-0076-4adb-945f-e373eea0ef73	gc_line	{"dlc": null, "fao_zone": "FAO27", "allergens": null, "line_kind": "TRAD", "sous_zone": "V", "latin_name": "Gadus morhua Lot N∞ :", "price_unit": "kg", "article_plu": null, "designation": "dos cabio 400+ LEO \\"MSC\\" islande", "fishing_gear": "LIGNES, HAMECONS ET AUTRES", "origin_label": "Lecri Marée", "needs_mapping": true, "ordered_colis": 6, "ordered_pieces": null, "supplier_label": "dos cabio 400+ LEO \\"MSC\\" islande", "ordered_quantity": 18, "unit_price_ex_vat": 25.9, "line_amount_ex_vat": 466.2, "supplier_reference": "000000576", "supplier_lot_number": null}	\N	Gadus morhua Lot N∞ :	FAO27	V	LIGNES, HAMECONS ET AUTRES	\N	\N	Lecri Marée	\N	/uploads/sanitary-photos/sanitary-1780757942882-982230624.jpg	["/uploads/sanitary-photos/sanitary-1780757933539-983981357.jpg", "/uploads/sanitary-photos/sanitary-1780757942882-982230624.jpg"]	\N	2026-06-06 14:55:40.126772+00	2026-06-06 14:59:02.901567+00
+d5a28f6f-300f-4d20-a4ac-5aaef0dd2c6b	76feeafa-ab22-4233-81da-f6e382167946	gc_line	{"dlc": null, "fao_zone": "FAO27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VII", "latin_name": "Pecten maximus Lot N∞ :", "price_unit": "kg", "article_plu": null, "designation": "noix st jacques Grosse france", "fishing_gear": "DRAGUES ET AUTRES", "origin_label": "Lecri Marée", "needs_mapping": true, "ordered_colis": 3, "ordered_pieces": null, "supplier_label": "noix st jacques Grosse france", "ordered_quantity": 6, "unit_price_ex_vat": 28.5, "line_amount_ex_vat": 171, "supplier_reference": "000001050", "supplier_lot_number": null}	\N	Pecten maximus Lot N∞ :	FAO27	VII	DRAGUES ET AUTRES	\N	\N	Lecri Marée	\N	/uploads/sanitary-photos/sanitary-1780757923460-893564790.jpg	["/uploads/sanitary-photos/sanitary-1780757923460-893564790.jpg"]	\N	2026-06-06 14:55:40.126772+00	2026-06-06 14:58:43.490035+00
+0e71bdf6-24cf-4d1c-b1d1-19e1b3a3741c	cb08bd39-6771-4456-ae9e-69cb9e83cb56	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "latin_name": "Molva dypterygia", "price_unit": "kg", "article_plu": null, "designation": "FILET LINGUE BLEUE 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": true, "ordered_colis": 3, "ordered_pieces": null, "supplier_label": "FILET LINGUE BLEUE 3 KG", "ordered_quantity": 9, "unit_price_ex_vat": 16.5, "line_amount_ex_vat": 148.5, "supplier_reference": "FILLINB_03", "supplier_lot_number": "05050102514"}	\N	Molva dypterygia	FAO 27	VI	CHALUT	\N	\N	SOGELMER	05050102514	\N	[]	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+2bbb5151-9fb6-4687-9213-482c98216b6f	50720cdc-5ed0-4e09-9388-4d8bab004a2a	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VII", "latin_name": "Melanogrammus aeglefinus", "price_unit": "kg", "article_plu": null, "designation": "FILET EGLEFIN 100/200 GR 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": true, "ordered_colis": 3, "ordered_pieces": null, "supplier_label": "FILET EGLEFIN 100/200 GR 3 KG", "ordered_quantity": 9, "unit_price_ex_vat": 15.9, "line_amount_ex_vat": 143.1, "supplier_reference": "FILEG120", "supplier_lot_number": "05050103081"}	\N	Melanogrammus aeglefinus	FAO 27	VII	CHALUT	\N	\N	SOGELMER	05050103081	\N	[]	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+1003a2b0-9388-44ea-9e6e-898ed84d2dee	d8e66e70-1d39-4dcb-989d-9cb049ca08ca	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "latin_name": "Pollachius virens", "price_unit": "kg", "article_plu": null, "designation": "FILET LIEU NOIR 200/400 GR 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": true, "ordered_colis": 2, "ordered_pieces": null, "supplier_label": "FILET LIEU NOIR 200/400 GR 3 KG", "ordered_quantity": 6, "unit_price_ex_vat": 12.5, "line_amount_ex_vat": 75, "supplier_reference": "FILLIEUN", "supplier_lot_number": "05050100443"}	\N	Pollachius virens	FAO 27	VI	CHALUT	\N	\N	SOGELMER	05050100443	\N	[]	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+17308ca9-7699-4391-a6aa-7acbbb39cda8	a3a8a931-359c-4d39-b671-771b66137c90	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VII", "latin_name": "Raja naevus-clavata-montagui-microocellata-circula", "price_unit": "kg", "article_plu": null, "designation": "AILE RAIE 2/500 GR PELE 1F 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": true, "ordered_colis": 2, "ordered_pieces": null, "supplier_label": "AILE RAIE 2/500 GR PELE 1F 3 KG", "ordered_quantity": 6, "unit_price_ex_vat": 11.9, "line_amount_ex_vat": 71.4, "supplier_reference": "RAI25001", "supplier_lot_number": "05050103027"}	\N	Raja naevus-clavata-montagui-microocellata-circula	FAO 27	VII	CHALUT	\N	\N	SOGELMER	05050103027	\N	[]	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+4022a62c-cfc6-4bcb-82c1-73886528e42e	3298289e-ab53-44ba-8286-31c1f1ee8f0d	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "latin_name": "Lophius piscatorius-lophius budegassa", "price_unit": "kg", "article_plu": null, "designation": "QUEUE LOTTE 200/500 GR 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": true, "ordered_colis": 1, "ordered_pieces": null, "supplier_label": "QUEUE LOTTE 200/500 GR 3 KG", "ordered_quantity": 3, "unit_price_ex_vat": 19.9, "line_amount_ex_vat": 59.7, "supplier_reference": "QLO2500_3", "supplier_lot_number": "05050102995"}	\N	Lophius piscatorius-lophius budegassa	FAO 27	VI	CHALUT	\N	\N	SOGELMER	05050102995	\N	[]	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+685730a9-07a8-4719-b2ee-c79e39a8481f	eecd0e7f-a582-4dce-8071-a467f205d448	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VIa", "latin_name": "Nephrops norvegicus", "price_unit": "kg", "article_plu": null, "designation": "LANGOUSTINE GLACEE 15/20 3 KG", "fishing_gear": "CHALUT", "origin_label": "DISTRIMER", "needs_mapping": true, "ordered_colis": 3, "ordered_pieces": null, "supplier_label": "LANGOUSTINE GLACEE 15/20 3 KG", "ordered_quantity": 9, "unit_price_ex_vat": 16, "line_amount_ex_vat": 144, "supplier_reference": "LANGGL01", "supplier_lot_number": "140290108005"}	\N	Nephrops norvegicus	FAO 27	VIa	CHALUT	\N	\N	DISTRIMER	140290108005	\N	[]	\N	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.014675+00
+586e60b9-3155-4c56-b5cf-bdd2bd12f62f	62a163d2-ae3c-46ed-96b4-e8de71527ab0	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "latin_name": "Nephrops norvegicus", "price_unit": "kg", "article_plu": null, "designation": "LANGOUSTINE VIVANTE 5/10 4 KG", "fishing_gear": "CASIER", "origin_label": "DISTRIMER", "needs_mapping": true, "ordered_colis": 1, "ordered_pieces": null, "supplier_label": "LANGOUSTINE VIVANTE 5/10 4 KG", "ordered_quantity": 4, "unit_price_ex_vat": 36, "line_amount_ex_vat": 144, "supplier_reference": "LANGV51", "supplier_lot_number": "140290108118"}	\N	Nephrops norvegicus	FAO 27	VI	CASIER	\N	\N	DISTRIMER	140290108118	\N	[]	\N	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.097486+00
+d150ee7e-217b-4607-ba86-4efc75a0146f	8c57aeea-7ffa-475c-b2f0-cb902d6135df	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VIa", "latin_name": "Nephrops norvegicus", "price_unit": "kg", "article_plu": null, "designation": "LANGOUSTINE GLACEE 20/40 3 KG", "fishing_gear": "CHALUT", "origin_label": "DISTRIMER", "needs_mapping": true, "ordered_colis": 10, "ordered_pieces": null, "supplier_label": "LANGOUSTINE GLACEE 20/40 3 KG", "ordered_quantity": 30, "unit_price_ex_vat": 8, "line_amount_ex_vat": 240, "supplier_reference": "LANGGL02", "supplier_lot_number": "140290108204"}	\N	Nephrops norvegicus	FAO 27	VIa	CHALUT	\N	\N	DISTRIMER	140290108204	\N	[]	\N	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:15.911518+00
+bec5c53f-65a0-4de1-9aed-df6273c7a34d	287e4f0a-ed53-4085-9ea1-051ef91790b9	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "latin_name": "Nephrops norvegicus", "price_unit": "kg", "article_plu": null, "designation": "LANGOUSTINE VIVANTE 25/35 4 KG", "fishing_gear": "CASIER", "origin_label": "DISTRIMER", "needs_mapping": true, "ordered_colis": 3, "ordered_pieces": null, "supplier_label": "LANGOUSTINE VIVANTE 25/35 4 KG", "ordered_quantity": 12, "unit_price_ex_vat": 19, "line_amount_ex_vat": 228, "supplier_reference": "LANGV25", "supplier_lot_number": "140290108105"}	\N	Nephrops norvegicus	FAO 27	VI	CASIER	\N	\N	DISTRIMER	140290108105	\N	[]	\N	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.177993+00
+67443e61-8f0c-482a-8ba1-b01962532387	3713630b-bfab-4936-92c1-784709e72f7e	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VIa", "latin_name": "Homarus gammarus", "price_unit": "kg", "article_plu": null, "designation": "HOMARD ÉPATÉ 10 KG", "fishing_gear": "CASIER", "origin_label": "DISTRIMER", "needs_mapping": true, "ordered_colis": 2, "ordered_pieces": null, "supplier_label": "HOMARD ÉPATÉ 10 KG", "ordered_quantity": 20, "unit_price_ex_vat": 27, "line_amount_ex_vat": 540, "supplier_reference": "HOMEP_01", "supplier_lot_number": "140290108149"}	\N	Homarus gammarus	FAO 27	VIa	CASIER	\N	\N	DISTRIMER	140290108149	\N	[]	\N	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.251622+00
+\.
+
+
+--
+-- Data for Name: backup_debug_purchase_lines_20260606; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.backup_debug_purchase_lines_20260606 (id, purchase_id, store_id, client_key, supplier_id, line_number, supplier_article_mapping_id, article_id, supplier_reference, supplier_label, ordered_colis, ordered_pieces, ordered_quantity, received_colis, received_pieces, received_quantity, stock_quantity, unit_price_ex_vat, line_amount_ex_vat, price_unit, line_status, lot_id, lot_mode, received_at, created_at, updated_at) FROM stdin;
+e0be548a-03ce-4be7-9124-3f7ec0e78020	d417de24-aece-4f8a-bbf8-72a4629ee2db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	1	\N	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	000001560	filet de saumon 1.5/2 ECOSSE	4.0000	\N	49.5900	\N	\N	0.0000	0.0000	14.5000	719.0600	kg	pending	\N	auto	\N	2026-06-06 14:55:40.126772+00	2026-06-06 14:55:40.126772+00
+76feeafa-ab22-4233-81da-f6e382167946	d417de24-aece-4f8a-bbf8-72a4629ee2db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	2	\N	546505b1-799b-42df-9fac-fe4c55c36970	000001050	noix st jacques Grosse france	3.0000	\N	6.0000	\N	\N	0.0000	0.0000	28.5000	171.0000	kg	pending	\N	auto	\N	2026-06-06 14:55:40.126772+00	2026-06-06 14:55:40.126772+00
+d61e2ec5-60b9-4cae-bd97-956283bc59b3	d417de24-aece-4f8a-bbf8-72a4629ee2db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	3	\N	3c3ecce0-095a-4411-9e37-8b887c30ea37	000000875	dos de julienne 300+ "MSC" isl	5.0000	\N	15.0000	\N	\N	0.0000	0.0000	19.9500	299.2500	kg	pending	\N	auto	\N	2026-06-06 14:55:40.126772+00	2026-06-06 14:55:40.126772+00
+92fd084d-0076-4adb-945f-e373eea0ef73	d417de24-aece-4f8a-bbf8-72a4629ee2db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	4	\N	984aac3f-583f-4ec2-8743-9f4a14520ea3	000000576	dos cabio 400+ LEO "MSC" islande	6.0000	\N	18.0000	\N	\N	0.0000	0.0000	25.9000	466.2000	kg	pending	\N	auto	\N	2026-06-06 14:55:40.126772+00	2026-06-06 14:55:40.126772+00
+cb08bd39-6771-4456-ae9e-69cb9e83cb56	8650d413-3082-48b2-9283-e9d819bf857c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	1	\N	24336843-3546-4088-9153-515acd22a23c	FILLINB_03	FILET LINGUE BLEUE 3 KG	3.0000	\N	9.0000	\N	\N	0.0000	0.0000	16.5000	148.5000	kg	pending	\N	auto	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+50720cdc-5ed0-4e09-9388-4d8bab004a2a	8650d413-3082-48b2-9283-e9d819bf857c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	2	\N	ab0fb31e-be20-4002-8170-9004eada1825	FILEG120	FILET EGLEFIN 100/200 GR 3 KG	3.0000	\N	9.0000	\N	\N	0.0000	0.0000	15.9000	143.1000	kg	pending	\N	auto	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+d8e66e70-1d39-4dcb-989d-9cb049ca08ca	8650d413-3082-48b2-9283-e9d819bf857c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3	\N	67eee58a-db9e-454b-ab08-e7f4a351d03c	FILLIEUN	FILET LIEU NOIR 200/400 GR 3 KG	2.0000	\N	6.0000	\N	\N	0.0000	0.0000	12.5000	75.0000	kg	pending	\N	auto	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+a3a8a931-359c-4d39-b671-771b66137c90	8650d413-3082-48b2-9283-e9d819bf857c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	4	\N	7314c3b9-7d71-497e-b6b9-525273bd2ca7	RAI25001	AILE RAIE 2/500 GR PELE 1F 3 KG	2.0000	\N	6.0000	\N	\N	0.0000	0.0000	11.9000	71.4000	kg	pending	\N	auto	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+3298289e-ab53-44ba-8286-31c1f1ee8f0d	8650d413-3082-48b2-9283-e9d819bf857c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	5	\N	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	QLO2500_3	QUEUE LOTTE 200/500 GR 3 KG	1.0000	\N	3.0000	\N	\N	0.0000	0.0000	19.9000	59.7000	kg	pending	\N	auto	\N	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00
+8c57aeea-7ffa-475c-b2f0-cb902d6135df	7732899a-dff9-4ea3-85f3-348655b27c9e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	1	\N	4ca18ee3-6cbe-48ff-a300-306183707747	LANGGL02	LANGOUSTINE GLACEE 20/40 3 KG	10.0000	\N	30.0000	10.0000	0.0000	30.0000	0.0000	8.0000	2400.0000	kg	received	cfe241a2-b9d8-47f7-9edd-eea78952b75f	auto	2026-06-06 15:22:16.327761+00	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.327761+00
+eecd0e7f-a582-4dce-8071-a467f205d448	7732899a-dff9-4ea3-85f3-348655b27c9e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	2	\N	cf014bf1-5197-4f7b-9e69-b0d174a826d1	LANGGL01	LANGOUSTINE GLACEE 15/20 3 KG	3.0000	\N	9.0000	3.0000	0.0000	9.0000	0.0000	16.0000	432.0000	kg	received	dfd813f2-3d53-4e7f-a458-a6b5b5e1a6ca	auto	2026-06-06 15:22:16.327761+00	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.327761+00
+62a163d2-ae3c-46ed-96b4-e8de71527ab0	7732899a-dff9-4ea3-85f3-348655b27c9e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	3	\N	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	LANGV51	LANGOUSTINE VIVANTE 5/10 4 KG	1.0000	\N	4.0000	1.0000	0.0000	4.0000	0.0000	36.0000	144.0000	kg	received	d796e33d-4659-49d3-9912-d1e6a20f6ce0	auto	2026-06-06 15:22:16.327761+00	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.327761+00
+287e4f0a-ed53-4085-9ea1-051ef91790b9	7732899a-dff9-4ea3-85f3-348655b27c9e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	4	\N	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	LANGV25	LANGOUSTINE VIVANTE 25/35 4 KG	3.0000	\N	12.0000	3.0000	0.0000	12.0000	0.0000	19.0000	684.0000	kg	received	c5dede76-5405-4c0b-a42a-15e38afa9bd6	auto	2026-06-06 15:22:16.327761+00	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.327761+00
+3713630b-bfab-4936-92c1-784709e72f7e	7732899a-dff9-4ea3-85f3-348655b27c9e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	5	\N	6c608d22-1b2b-465b-8f5d-cde10ab84494	HOMEP_01	HOMARD ÉPATÉ 10 KG	2.0000	\N	20.0000	2.0000	0.0000	20.0000	0.0000	27.0000	1080.0000	kg	received	1363493c-9c49-475c-bd92-15bf1fb536a2	auto	2026-06-06 15:22:16.327761+00	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.327761+00
+\.
+
+
+--
+-- Data for Name: backup_debug_purchases_20260606; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.backup_debug_purchases_20260606 (id, store_id, client_key, supplier_id, purchase_date, status, purchase_type, order_date, receipt_date, bl_number, invoice_number, notes, total_amount_ex_vat, created_by, updated_by, created_at, updated_at, source_document_url, source_document_storage_path, source_document_original_name, source_document_mime_type, source_document_uploaded_at, source_document_uploaded_by) FROM stdin;
+8650d413-3082-48b2-9283-e9d819bf857c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	2026-06-06	ordered	order	2026-06-06	\N	\N	\N	Import Sogelmer	497.7000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-06 15:21:12.91787+00	2026-06-06 15:21:12.91787+00	/api/purchases/8650d413-3082-48b2-9283-e9d819bf857c/document	/var/www/gestion-commerciale/backend/uploads/purchase-documents/293d6c0ce22bfbb758783bc8834f7857	511-00075465.PDF	application/pdf	2026-06-06 15:21:12.91787+00	3200f2be-f337-4cbd-8ca2-aa752bd61be5
+7732899a-dff9-4ea3-85f3-348655b27c9e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	2026-06-06	received_pending_invoice	direct_bl	2026-06-06	2026-06-06	\N	\N	Import Distrimer	4740.0000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-06 15:21:54.613264+00	2026-06-06 15:22:16.327761+00	/api/purchases/7732899a-dff9-4ea3-85f3-348655b27c9e/document	/var/www/gestion-commerciale/backend/uploads/purchase-documents/31582646b2b42eaedf58e78a44d0273f	551-00012780.PDF	application/pdf	2026-06-06 15:21:54.613264+00	3200f2be-f337-4cbd-8ca2-aa752bd61be5
+d417de24-aece-4f8a-bbf8-72a4629ee2db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	2026-06-06	ordered	order	2026-06-06	\N	\N	\N	Import Lecri Marée	1655.5100	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-06 14:55:40.126772+00	2026-06-06 14:55:40.126772+00	/api/purchases/d417de24-aece-4f8a-bbf8-72a4629ee2db/document	/var/www/gestion-commerciale/backend/uploads/purchase-documents/3a314d24badecc6fca941b8aec1468b8	confirm111413.PDF	application/pdf	2026-06-06 14:55:40.126772+00	3200f2be-f337-4cbd-8ca2-aa752bd61be5
+\.
+
+
+--
+-- Data for Name: clients; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.clients (id, store_id, code, name, legal_name, client_type, status, contact_name, phone, mobile, email, address_line1, address_line2, postal_code, city, country, vat_number, siret, payment_terms, delivery_terms, notes, created_by, updated_by, created_at, updated_at, tariff_level, vat_rate, is_vat_exempt, billed_client_id, store_identifier) FROM stdin;
+4424c69f-0b7c-445c-b7f0-fb6019d11075	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10002	ROYALE MAREE	ROYALE MAREE	gms	active	fabrice	\N	\N	\N	\N	\N	\N	\N	France	\N	\N	\N	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-31 12:47:18.277235+00	2026-05-31 12:47:18.277235+00	1	5.50	f	4424c69f-0b7c-445c-b7f0-fb6019d11075	\N
+8393e046-31a6-41a1-9a46-860e15797249	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10003	Sodivardiere	Leclerc challans	gms	active	\N	\N	\N	\N	\N	\N	\N	challans	France	\N	\N	\N	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-31 12:57:25.339647+00	2026-05-31 12:57:25.339647+00	1	5.50	f	4424c69f-0b7c-445c-b7f0-fb6019d11075	88
+6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	1234	alric paon	test	gms	active	alric paon	0687343455	\N	paonalric@gmail.com	28 rue du corbon	\N	44115	basse goulaine	France	FR71800165177	80016517700026	30	franco	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-28 19:01:17.015962+00	2026-05-28 19:01:17.015962+00	2	5.50	f	4424c69f-0b7c-445c-b7f0-fb6019d11075	88
+\.
+
+
+--
+-- Data for Name: customer_price_list_lines; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.customer_price_list_lines (id, store_id, price_list_id, article_id, family_code, family_name, display_order, is_featured, designation_snapshot, caliber_info, origin_label, fao_zone, sous_zone, sale_unit, stock_quantity_snapshot, price_ht, price_level_1_ht, price_level_2_ht, price_level_3_ht, price_source, tariff_level, line_note, created_at, updated_at) FROM stdin;
+555154cb-0e8b-407f-9b9f-458b486adf00	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	\N	Autre	1	f	FILET DE JULIENNE	FILET DE JULIENNE	Royale Marée	FAO27	IV	€/kg	3.0000	\N	15.5000	16.9000	17.9000	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+c047ebcd-64f5-484a-97e7-6b251b84bad4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	67eee58a-db9e-454b-ab08-e7f4a351d03c	\N	Autre	2	f	FILET DE LIEU NOIR	FILET DE LIEU NOIR	Royale Marée	FAO27	IV	€/kg	5.0000	\N	13.5600	14.3500	15.2500	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+773abfca-183a-46b4-b990-a182c3fbcf2a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	\N	Autre	3	f	FILET DE MERLAN	FILET DE MERLAN	Royale Marée	FAO27	\N	€/kg	6.1000	\N	15.0000	15.8800	16.8800	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+bd6515ea-8e1a-40fb-aae3-062f91733c16	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	70350ad4-e848-4d05-b9d8-8f08af7ad582	\N	Autre	4	f	LIEU JAUNE DE LIGNE	LIEU JAUNE DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	1.2000	\N	18.4300	19.5200	20.7400	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+fadcff21-63d4-42b5-8968-4b9c0ad2e602	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	ee66bb6c-2061-48ac-a254-153c7ad3658d	\N	Autre	5	f	MAIGRE DE LIGNE	MAIGRE DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	1.8000	\N	16.8900	17.8900	19.0100	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+189c1304-04fa-4fe0-bfc6-568e15a8d1f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	f84214e4-02b2-4690-80df-2d70d5b0436b	\N	Autre	6	f	MERLAN DE LIGNE	MERLAN DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	10.0000	\N	8.7900	9.3100	9.8900	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+8c75b09b-3ca7-417e-9aa2-29d8628e88d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	05f46a02-bda4-4fb3-9f7e-563294d4e470	\N	Autre	7	f	QUEUE DE LOTTE 1/2	QUEUE DE LOTTE 1/2	Royale Marée	FAO27	\N	€/kg	6.0000	\N	15.4400	16.3500	17.3800	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+b9f38f99-ddfd-4a76-9e67-bcc5a1388a33	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	6b5031b8-02bf-4603-9d7c-5bc91f8820bd	\N	Autre	8	f	QUEUE DE LOTTE 5/1000	QUEUE DE LOTTE 5/1000	Royale Marée	FAO27	VIII	€/kg	6.0000	\N	15.4400	16.3500	17.3800	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+160d8f38-ac2f-4a6d-b540-f25300a1f250	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	\N	Autre	9	f	RAIE ENTIERE	RAIE ENTIERE	Pêché en	FAO27 VIII	VIII	€/kg	7.1000	\N	1.6900	1.7900	1.9100	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+f2209896-5b65-494e-ac91-90f6ab518dc4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	fea072a6-8c3b-44c0-9721-ecbf962ce60f	\N	Autre	10	f	ROUSSETTE ENTIERE	ROUSSETTE ENTIERE	Pêché en	FAO27 VIII	VIII	€/kg	19.0000	\N	0.6900	0.7300	0.7700	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+221a33a1-126f-4128-96d5-ed6ee44b67e0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	f255adfd-76ff-467b-8c3e-5b8a79a0942a	\N	Autre	11	f	TURBOT VIDE	TURBOT VIDE	Pêché en	FAO27 VIII	VIII	€/kg	0.7000	\N	28.1400	29.7900	31.6600	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+1a8cca1b-9716-450d-8098-4fc14bb76264	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	486a6d50-f0da-4666-b5c0-be523ae0827d	FILET_POISSON	Filet de poisson	12	f	AILE DE RAIE	AILE DE RAIE	Pêché en	FAO 27 - VII MANCHES ET MERS CELTIQUES	\N	kg	15.0000	\N	10.9000	10.4700	11.1300	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+65be8f0a-06e3-4d73-90ff-76a0a868d930	dbc17f4c-8ef7-4247-b13f-603e4c58f622	a2e5b248-8244-4258-8b2b-c5526d8e9f2e	984aac3f-583f-4ec2-8743-9f4a14520ea3	FILET_POISSON	Filet de poisson	13	f	DOS DE CABILLAUD	DOS DE CABILLAUD	Pêché en	FAO 27 V	\N	kg	1.0000	\N	\N	\N	\N	none	\N	\N	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+7b41faf0-8661-41a5-830f-c18ce8ca9c6c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	\N	Autre	1	f	FILET DE JULIENNE	FILET DE JULIENNE	Royale Marée	FAO27	IV	€/kg	3.0000	\N	15.5000	16.9000	17.9000	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+78faafa9-fdf4-46ff-9005-38e90d60900d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	67eee58a-db9e-454b-ab08-e7f4a351d03c	\N	Autre	2	f	FILET DE LIEU NOIR	FILET DE LIEU NOIR	Royale Marée	FAO27	IV	€/kg	5.0000	\N	13.5600	14.3500	15.2500	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+4ae1529d-01bc-4b38-860f-9299f8413ac1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	\N	Autre	3	f	FILET DE MERLAN	FILET DE MERLAN	Royale Marée	FAO27	\N	€/kg	6.1000	\N	15.0000	15.8800	16.8800	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+2b079106-ea0c-4178-8112-a851c08014fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	70350ad4-e848-4d05-b9d8-8f08af7ad582	\N	Autre	4	f	LIEU JAUNE DE LIGNE	LIEU JAUNE DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	1.2000	\N	18.4300	19.5200	20.7400	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+c3e371f0-38ab-43ae-86db-a76883f67049	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	ee66bb6c-2061-48ac-a254-153c7ad3658d	\N	Autre	5	f	MAIGRE DE LIGNE	MAIGRE DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	1.8000	\N	16.8900	17.8900	19.0100	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+f4376987-af75-430b-8142-380d9b7ca7d0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	f84214e4-02b2-4690-80df-2d70d5b0436b	\N	Autre	6	f	MERLAN DE LIGNE	MERLAN DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	10.0000	\N	8.7900	9.3100	9.8900	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+b97e0010-35b5-44d9-9e9f-04c4b121561e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	05f46a02-bda4-4fb3-9f7e-563294d4e470	\N	Autre	7	f	QUEUE DE LOTTE 1/2	QUEUE DE LOTTE 1/2	Royale Marée	FAO27	\N	€/kg	6.0000	\N	15.4400	16.3500	17.3800	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+3c2f253c-b93a-433e-9025-2107e4fa37c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	6b5031b8-02bf-4603-9d7c-5bc91f8820bd	\N	Autre	8	f	QUEUE DE LOTTE 5/1000	QUEUE DE LOTTE 5/1000	Royale Marée	FAO27	VIII	€/kg	6.0000	\N	15.4400	16.3500	17.3800	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+b86099da-d044-40cf-922b-fbf7ec45ec6d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	\N	Autre	9	f	RAIE ENTIERE	RAIE ENTIERE	Pêché en	FAO27 VIII	VIII	€/kg	7.1000	\N	1.6900	1.7900	1.9100	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+d06b6364-5b86-4330-bed8-25dbd822a313	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	fea072a6-8c3b-44c0-9721-ecbf962ce60f	\N	Autre	10	f	ROUSSETTE ENTIERE	ROUSSETTE ENTIERE	Pêché en	FAO27 VIII	VIII	€/kg	19.0000	\N	0.6900	0.7300	0.7700	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+8923bbce-0a1d-44c5-ab77-f771830915f2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	f255adfd-76ff-467b-8c3e-5b8a79a0942a	\N	Autre	11	f	TURBOT VIDE	TURBOT VIDE	Pêché en	FAO27 VIII	VIII	€/kg	0.7000	\N	28.1400	29.7900	31.6600	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+0a5a9929-b2b8-46ff-9a1c-9d50eff5d2c6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	486a6d50-f0da-4666-b5c0-be523ae0827d	FILET_POISSON	Filet de poisson	12	f	AILE DE RAIE	AILE DE RAIE	Pêché en	FAO 27 - VII MANCHES ET MERS CELTIQUES	\N	kg	15.0000	\N	10.9000	10.4700	11.1300	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+c4848a6c-119c-46aa-b37c-72f33cadbf9f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ba312d11-0e87-4eb1-8995-f9b98ebff2a1	984aac3f-583f-4ec2-8743-9f4a14520ea3	FILET_POISSON	Filet de poisson	13	f	DOS DE CABILLAUD	DOS DE CABILLAUD	Pêché en	FAO 27 V	\N	kg	1.0000	\N	\N	\N	\N	none	\N	\N	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+0f99ca2b-a777-4149-87a7-f696791343a8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	\N	Autre	1	f	FILET DE JULIENNE	FILET DE JULIENNE	Royale Marée	FAO27	IV	€/kg	3.0000	\N	15.5000	16.9000	17.9000	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+a977245a-25f3-4efe-86bd-073980e5c923	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	67eee58a-db9e-454b-ab08-e7f4a351d03c	\N	Autre	2	f	FILET DE LIEU NOIR	FILET DE LIEU NOIR	Royale Marée	FAO27	IV	€/kg	5.0000	\N	13.5600	14.3500	15.2500	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+93915e37-27fd-482b-a1a5-807a869e338c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	\N	Autre	3	f	FILET DE MERLAN	FILET DE MERLAN	Royale Marée	FAO27	\N	€/kg	6.1000	\N	15.0000	15.8800	16.8800	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+d533f24c-23ed-4837-beb7-bb33dd054fe5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	70350ad4-e848-4d05-b9d8-8f08af7ad582	\N	Autre	4	f	LIEU JAUNE DE LIGNE	LIEU JAUNE DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	1.2000	\N	18.4300	19.5200	20.7400	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+49ee58cd-a281-431e-a4d8-3764816a9a78	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	ee66bb6c-2061-48ac-a254-153c7ad3658d	\N	Autre	5	f	MAIGRE DE LIGNE	MAIGRE DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	1.8000	\N	16.8900	17.8900	19.0100	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+81b8d244-ab9a-4a75-b135-c5e38a78edf8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	f84214e4-02b2-4690-80df-2d70d5b0436b	\N	Autre	6	f	MERLAN DE LIGNE	MERLAN DE LIGNE	Pêché en	FAO27 VIII	VIII	€/kg	10.0000	\N	8.7900	9.3100	9.8900	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+33be4fc7-cf1d-4854-9046-b739c2b8b511	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	05f46a02-bda4-4fb3-9f7e-563294d4e470	\N	Autre	7	f	QUEUE DE LOTTE 1/2	QUEUE DE LOTTE 1/2	Royale Marée	FAO27	\N	€/kg	6.0000	\N	15.4400	16.3500	17.3800	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+74510a22-6a21-4be2-9cd0-e0b63ecd946c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	6b5031b8-02bf-4603-9d7c-5bc91f8820bd	\N	Autre	8	f	QUEUE DE LOTTE 5/1000	QUEUE DE LOTTE 5/1000	Royale Marée	FAO27	VIII	€/kg	6.0000	\N	15.4400	16.3500	17.3800	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+bf152601-1c87-459a-8030-499bdb2abee9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	\N	Autre	9	f	RAIE ENTIERE	RAIE ENTIERE	Pêché en	FAO27 VIII	VIII	€/kg	7.1000	\N	1.6900	1.7900	1.9100	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+0044a505-9294-46b4-96c0-39699171e41d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	fea072a6-8c3b-44c0-9721-ecbf962ce60f	\N	Autre	10	f	ROUSSETTE ENTIERE	ROUSSETTE ENTIERE	Pêché en	FAO27 VIII	VIII	€/kg	19.0000	\N	0.6900	0.7300	0.7700	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+ed837b4f-6010-4629-a3fd-28d3fc0416c8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	f255adfd-76ff-467b-8c3e-5b8a79a0942a	\N	Autre	11	f	TURBOT VIDE	TURBOT VIDE	Pêché en	FAO27 VIII	VIII	€/kg	0.7000	\N	28.1400	29.7900	31.6600	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+b03a8c4f-b34d-4ae0-9e4e-43d8dc3f6ad3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	486a6d50-f0da-4666-b5c0-be523ae0827d	FILET_POISSON	Filet de poisson	12	f	AILE DE RAIE	AILE DE RAIE	Pêché en	FAO 27 - VII MANCHES ET MERS CELTIQUES	\N	kg	15.0000	\N	10.9000	10.4700	11.1300	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+3d85c267-c36e-4166-b61c-1a7680859317	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ab4ee726-8e73-4965-8634-d96ec43cfe5b	984aac3f-583f-4ec2-8743-9f4a14520ea3	FILET_POISSON	Filet de poisson	13	f	DOS DE CABILLAUD	DOS DE CABILLAUD	Pêché en	FAO 27 V	\N	kg	1.0000	\N	\N	\N	\N	none	\N	\N	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+\.
+
+
+--
+-- Data for Name: customer_price_lists; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.customer_price_lists (id, store_id, client_id, course_type, title, price_list_date, valid_until, status, tariff_level, notes, created_by, updated_by, created_at, updated_at) FROM stdin;
+a2e5b248-8244-4258-8b2b-c5526d8e9f2e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	general	Cours general multi-tarifs	2026-06-03	\N	draft	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-03 16:03:11.011466+00	2026-06-03 16:03:11.011466+00
+ba312d11-0e87-4eb1-8995-f9b98ebff2a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	general	Cours general multi-tarifs	2026-06-03	\N	draft	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-03 16:05:56.040488+00	2026-06-03 16:05:56.040488+00
+ab4ee726-8e73-4965-8634-d96ec43cfe5b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	general	Cours general multi-tarifs	2026-06-03	\N	draft	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-03 16:54:48.834352+00	2026-06-03 16:54:48.834352+00
+\.
+
+
+--
+-- Data for Name: department_sectors; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.department_sectors (id, department_id, code, name, description, color_hex, display_order, is_active, created_at, updated_at) FROM stdin;
+db623f88-bca7-4253-9e74-be4254bb7d1f	bf9edbc2-3558-4cd1-89e3-4be30819b42a	POISSON_ENTIER	Poisson entier	Poissons vendus entiers ou vidés	#005BAA	10	t	2026-05-27 18:34:29.645315+00	2026-05-27 18:34:29.645315+00
+41e81c97-67ac-4906-b044-029227ed7597	bf9edbc2-3558-4cd1-89e3-4be30819b42a	FILET_POISSON	Filet de poisson	Filets, dos, pavés et portions de poisson	#0077CC	20	t	2026-05-27 18:34:29.645315+00	2026-05-27 18:34:29.645315+00
+ec012b7d-6c64-4b27-a91e-772271ef24dd	bf9edbc2-3558-4cd1-89e3-4be30819b42a	CRUSTACE	Crustacé	Crevettes, langoustines, crabes, homards, araignées	#FF7A00	30	t	2026-05-27 18:34:29.645315+00	2026-05-27 18:34:29.645315+00
+b462d7d5-0357-4619-bdd5-d22267f734e7	bf9edbc2-3558-4cd1-89e3-4be30819b42a	COQUILLAGE	Coquillage	Huîtres, moules, palourdes, coques, coquilles	#00A676	40	t	2026-05-27 18:34:29.645315+00	2026-05-27 18:34:29.645315+00
+adb04d12-cf7e-44b5-ba74-bc593ad8b5f4	bf9edbc2-3558-4cd1-89e3-4be30819b42a	CEPHALOPODE	Céphalopode	Encornets, seiches, poulpes, calamars	#7B61FF	50	t	2026-05-27 18:34:29.645315+00	2026-05-27 18:34:29.645315+00
+386a00ff-5e2f-4b17-93ac-20d540f8d6df	bf9edbc2-3558-4cd1-89e3-4be30819b42a	PRODUIT_ELABORE	Produit élaboré	Produits préparés, transformés ou prêts à vendre	#D97706	60	t	2026-05-27 18:34:29.645315+00	2026-05-27 18:34:29.645315+00
+cd191ee2-562d-4fce-87c1-f9d8256e0ae1	bf9edbc2-3558-4cd1-89e3-4be30819b42a	AUTRE	Autre	Autres produits de la mer	#6B7280	999	t	2026-05-27 18:34:29.645315+00	2026-05-27 18:34:29.645315+00
+\.
+
+
+--
+-- Data for Name: departments; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.departments (id, store_id, code, name, business_type, created_at) FROM stdin;
+bf9edbc2-3558-4cd1-89e3-4be30819b42a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	COM	Gestion Commerciale	commercial	2026-05-27 18:00:00.106178
+\.
+
+
+--
+-- Data for Name: lots; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.lots (id, store_id, client_key, article_id, purchase_id, purchase_line_id, supplier_id, lot_code, supplier_lot_number, source_type, qty_initial, qty_remaining, unit_cost_ex_vat, dlc, traceability_data, created_at, updated_at) FROM stdin;
+2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4ca18ee3-6cbe-48ff-a300-306183707747	e4a68085-357d-4c8d-a3b0-b67e836beb72	73337a07-bbec-41bb-bcfd-73b4c9aa05bd	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	3219-26158-96DEE3-73337A	140020208007	purchase	30.0000	30.0000	7.5000	\N	{"fao_zone": "FAO 27", "allergens": null, "sous_zone": "VIa", "latin_name": "Nephrops norvegicus", "fishing_gear": "CHALUT", "origin_label": "DISTRIMER", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 08:17:03.307477+00	2026-06-07 08:17:03.307477+00
+86bf8178-e99d-4db2-ab1c-cbfa375fc650	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	e4a68085-357d-4c8d-a3b0-b67e836beb72	c521639f-c0b0-433f-962a-da619a8465d0	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	3273-26158-96DEE3-C52163	140020208118	purchase	4.0000	4.0000	35.0000	\N	{"fao_zone": "FAO 27", "allergens": null, "sous_zone": "VI", "latin_name": "Nephrops norvegicus", "fishing_gear": "CASIER", "origin_label": "DISTRIMER", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 08:17:03.307477+00	2026-06-07 08:17:03.307477+00
+db2f2e6f-808a-47fc-9015-e922da3b5d54	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	24336843-3546-4088-9153-515acd22a23c	c462d3f9-44d9-4776-88cb-afe863042043	fe4d93a3-5134-492b-9745-2b729f97fcb5	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3372-26158-F7D3BE-FE4D93	05050102514	purchase	9.0000	9.0000	16.5000	\N	{"fao_zone": "FAO 27", "allergens": null, "sous_zone": "VI", "latin_name": "Molva dypterygia", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 08:39:38.332265+00	2026-06-07 08:39:38.332265+00
+71145093-7854-416c-85ce-8a266d4981e2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	ab0fb31e-be20-4002-8170-9004eada1825	c462d3f9-44d9-4776-88cb-afe863042043	64c086ff-9c5b-4f0f-b6ea-d08e6d521d01	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3216-26158-F7D3BE-64C086	05050103081	purchase	9.0000	9.0000	15.9000	\N	{"fao_zone": "FAO 27", "allergens": null, "sous_zone": "VII", "latin_name": "Melanogrammus aeglefinus", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 08:39:38.332265+00	2026-06-07 08:39:38.332265+00
+b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	c462d3f9-44d9-4776-88cb-afe863042043	88a1bf1e-e484-421d-a028-004287f3d171	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3450-26158-F7D3BE-88A1BF	05050102995	purchase	3.0000	3.0000	19.9000	\N	{"fao_zone": "FAO 27", "allergens": null, "sous_zone": "VI", "latin_name": "Lophius piscatorius-lophius budegassa", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 08:39:38.332265+00	2026-06-07 08:39:38.332265+00
+5723d92e-0838-42eb-9869-b08c786a75e8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	67eee58a-db9e-454b-ab08-e7f4a351d03c	c462d3f9-44d9-4776-88cb-afe863042043	e822547b-8e2a-408d-8b64-f7271063bc2f	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3071-26158-F7D3BE-E82254	05050100443	purchase	9.0000	9.0000	8.3333	\N	{"fao_zone": "FAO 27", "allergens": null, "sous_zone": "VI", "latin_name": "Pollachius virens", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 08:39:38.332265+00	2026-06-07 08:42:48.200823+00
+95058d09-4b80-4e3d-a1a1-15c53b903bf1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	6528afc6-5b4d-4efc-89d9-ee62ab025e76	7c489e25-5983-4e0f-8f63-bd1071c3c7db	3f19cdbc-05b1-48c2-996e-6263dc6141fc	3065-26158-3F19CD-7C489E	\N	purchase	49.5920	49.5920	14.5000	\N	{"fao_zone": "ÉLEVAGE", "allergens": null, "sous_zone": "ELEVÈ EN MER ATLANTIQUE NORD EST", "latin_name": "Salmo salar Lot N∞ :", "fishing_gear": "ELEVAGE", "origin_label": "Lecri Marée", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 09:23:38.88902+00	2026-06-07 09:23:38.88902+00
+253677a9-b401-4034-9311-492720bd778b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	546505b1-799b-42df-9fac-fe4c55c36970	6528afc6-5b4d-4efc-89d9-ee62ab025e76	f7319d03-17f4-4f03-a923-9cfdca290018	3f19cdbc-05b1-48c2-996e-6263dc6141fc	3131-26158-3F19CD-F7319D	\N	purchase	6.0000	6.0000	28.5000	\N	{"fao_zone": "FAO27", "allergens": null, "sous_zone": "VII", "latin_name": "Pecten maximus Lot N∞ :", "fishing_gear": "DRAGUES ET AUTRES", "origin_label": "Lecri Marée", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 09:23:38.88902+00	2026-06-07 09:23:38.88902+00
+dbbe0e08-3181-45a7-b80c-077d8eac1639	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3c3ecce0-095a-4411-9e37-8b887c30ea37	6528afc6-5b4d-4efc-89d9-ee62ab025e76	ec1c496b-19a4-4feb-97c6-d11fa0e6b331	3f19cdbc-05b1-48c2-996e-6263dc6141fc	3572-26158-3F19CD-EC1C49	\N	purchase	15.0000	15.0000	19.9500	\N	{"fao_zone": "FAO27", "allergens": null, "sous_zone": null, "latin_name": "Molva molva Lot N∞ :", "fishing_gear": "LIGNES, HAMECONS ET AUTRES", "origin_label": "Lecri Marée", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 09:23:38.88902+00	2026-06-07 09:23:38.88902+00
+f75757ab-73e9-45ca-af52-4e230ea31fc2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	984aac3f-583f-4ec2-8743-9f4a14520ea3	6528afc6-5b4d-4efc-89d9-ee62ab025e76	8078758f-bb50-4532-93c3-d6c1a758dc3a	3f19cdbc-05b1-48c2-996e-6263dc6141fc	3063-26158-3F19CD-807875	\N	purchase	18.0000	18.0000	25.9000	\N	{"fao_zone": "FAO27", "allergens": null, "sous_zone": "V", "latin_name": "Gadus morhua Lot N∞ :", "fishing_gear": "LIGNES, HAMECONS ET AUTRES", "origin_label": "Lecri Marée", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 09:23:38.88902+00	2026-06-07 09:23:38.88902+00
+796aa0b0-416e-46db-8861-605e81a067a4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	e4a68085-357d-4c8d-a3b0-b67e836beb72	9dd01bd8-aefc-4ec8-a43b-e8fe22e2397b	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	3151-26158-96DEE3-9DD01B	140020208105	purchase	8.0000	0.0000	20.0000	\N	{"fao_zone": "FAO 27", "allergens": null, "sous_zone": "VI", "latin_name": "Nephrops norvegicus", "fishing_gear": "CASIER", "origin_label": "DISTRIMER", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 08:17:03.307477+00	2026-06-07 11:18:01.343274+00
+94e7e1da-dac8-4493-8aff-c2e3d9f3f99e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	4d99e9f1-87be-4604-9751-f39862dd0a9b	79df392f-dd4b-4660-8fd4-d2b10c6b833c	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	3151-26158-96DEE3-79DF39	\N	purchase	4.0000	0.0000	10.0000	\N	{"fao_zone": "FAO 27 -IV-aVI-a", "allergens": null, "sous_zone": null, "latin_name": "NEPHROPS NORVEGICUS", "fishing_gear": "CASIERS/NASSE", "origin_label": "Pêché en", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 11:17:39.517263+00	2026-06-07 11:18:35.133429+00
+545e0ea6-cf1e-467d-9f99-3a31bfa92169	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	\N	\N	\N	FORCE-26158-1d761eaf	\N	forced_sale	0.0000	0.0000	10.0000	\N	{"note": "Sortie forcée BL client — stock insuffisant", "source_id": "e3f1eb0a-482d-4cc1-b69f-3a94d3717488", "line_number": 1, "source_table": "sales_documents", "sales_line_id": "c47d3180-19be-44bd-8d04-18f5f0848ec8", "forced_stock_exit": true}	2026-06-07 11:18:35.133429+00	2026-06-07 11:18:49.881126+00
+4f9526f4-cfe9-41e3-bc1b-fabed5824b79	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	486a6d50-f0da-4666-b5c0-be523ae0827d	\N	\N	\N	FORCE-26158-ae904470	\N	forced_sale	0.0000	0.0000	8.9000	\N	{"note": "Sortie forcée BL client — stock insuffisant", "source_id": "d2df09b1-996d-49d8-bbb2-100ec447f796", "line_number": 2, "source_table": "sales_documents", "sales_line_id": "1e029499-58fb-4942-bf53-ddcd925ef1d8", "forced_stock_exit": true}	2026-06-07 13:39:01.920805+00	2026-06-07 13:39:36.46488+00
+3c892426-3c83-4e4f-badc-d428997aeb23	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	\N	\N	\N	FORCE-26158-82e83295	\N	forced_sale	0.0000	0.0000	0.0000	\N	{"note": "Sortie forcée BL client — stock insuffisant", "source_id": "d2df09b1-996d-49d8-bbb2-100ec447f796", "line_number": 1, "source_table": "sales_documents", "sales_line_id": "68908f26-aca8-40a7-a178-1d708c630c6b", "forced_stock_exit": true}	2026-06-07 13:39:01.920805+00	2026-06-07 13:39:38.546004+00
+7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	c462d3f9-44d9-4776-88cb-afe863042043	1a7b56f3-e117-48d1-a94c-8374dd19af0f	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3045-26158-F7D3BE-1A7B56	05050103027	purchase	6.0000	0.0000	11.9000	\N	{"fao_zone": "FAO 27", "allergens": null, "sous_zone": "VII", "latin_name": "Raja naevus-clavata-montagui-microocellata-circula", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "production_method": null, "sanitary_photo_url": null, "sanitary_photo_urls": []}	2026-06-07 08:39:38.332265+00	2026-06-11 18:49:53.72248+00
+\.
+
+
+--
+-- Data for Name: purchase_line_metadata; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.purchase_line_metadata (id, purchase_line_id, meta_key, meta_value, dlc, latin_name, fao_zone, sous_zone, fishing_gear, production_method, allergens, origin_label, supplier_lot_number, sanitary_photo_url, sanitary_photo_urls, notes, created_at, updated_at) FROM stdin;
+99aa0683-7e04-4a96-ba2b-33ba1bd1fc6d	73337a07-bbec-41bb-bcfd-73b4c9aa05bd	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VIa", "article_id": "4ca18ee3-6cbe-48ff-a300-306183707747", "latin_name": "Nephrops norvegicus", "price_unit": "kg", "article_plu": "3219", "designation": "LANGOUSTINE GLACEE 30/40 3 KG", "fishing_gear": "CHALUT", "origin_label": "DISTRIMER", "needs_mapping": false, "ordered_colis": 10, "ordered_pieces": null, "supplier_label": "LANGOUSTINE GLACEE 30/40 3 KG", "total_weight_kg": 30, "ordered_quantity": 3, "unit_price_ex_vat": 7.5, "line_amount_ex_vat": 225, "supplier_reference": "LANGGL03", "supplier_lot_number": "140020208007"}	\N	Nephrops norvegicus	FAO 27	VIa	CHALUT	\N	\N	DISTRIMER	140020208007	\N	[]	\N	2026-06-07 08:17:00.402841+00	2026-06-07 08:17:00.402841+00
+74f4e14d-d17f-4e6c-ad26-7e35347a7ffa	c521639f-c0b0-433f-962a-da619a8465d0	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "article_id": "de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e", "latin_name": "Nephrops norvegicus", "price_unit": "kg", "article_plu": "3273", "designation": "LANGOUSTINE VIVANTE 5/10 4 KG", "fishing_gear": "CASIER", "origin_label": "DISTRIMER", "needs_mapping": false, "ordered_colis": 1, "ordered_pieces": null, "supplier_label": "LANGOUSTINE VIVANTE 5/10 4 KG", "total_weight_kg": 4, "ordered_quantity": 4, "unit_price_ex_vat": 35, "line_amount_ex_vat": 140, "supplier_reference": "LANGV51", "supplier_lot_number": "140020208118"}	\N	Nephrops norvegicus	FAO 27	VI	CASIER	\N	\N	DISTRIMER	140020208118	\N	[]	\N	2026-06-07 08:17:00.402841+00	2026-06-07 08:17:00.402841+00
+d215ce4b-1c6d-4b74-b1e3-a216152d1581	9dd01bd8-aefc-4ec8-a43b-e8fe22e2397b	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "article_id": "fcd65a7e-4e57-42fe-b3fd-c08f2d545850", "latin_name": "Nephrops norvegicus", "price_unit": "kg", "article_plu": "3151", "designation": "LANGOUSTINE VIVANTE 25/35 4 KG", "fishing_gear": "CASIER", "origin_label": "DISTRIMER", "needs_mapping": false, "ordered_colis": 2, "ordered_pieces": null, "supplier_label": "LANGOUSTINE VIVANTE 25/35 4 KG", "total_weight_kg": 8, "ordered_quantity": 4, "unit_price_ex_vat": 20, "line_amount_ex_vat": 160, "supplier_reference": "LANGV25", "supplier_lot_number": "140020208105"}	\N	Nephrops norvegicus	FAO 27	VI	CASIER	\N	\N	DISTRIMER	140020208105	\N	[]	\N	2026-06-07 08:17:00.402841+00	2026-06-07 08:17:00.402841+00
+e7cd9f6c-c53e-4fd8-b286-e63a5921aa60	fe4d93a3-5134-492b-9745-2b729f97fcb5	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "article_id": "24336843-3546-4088-9153-515acd22a23c", "latin_name": "Molva dypterygia", "price_unit": "kg", "article_plu": "3372", "designation": "FILET LINGUE BLEUE 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": false, "ordered_colis": 3, "ordered_pieces": null, "supplier_label": "FILET LINGUE BLEUE 3 KG", "total_weight_kg": 9, "ordered_quantity": 3, "unit_price_ex_vat": 16.5, "line_amount_ex_vat": 148.5, "supplier_reference": "FILLINB_03", "supplier_lot_number": "05050102514"}	\N	Molva dypterygia	FAO 27	VI	CHALUT	\N	\N	SOGELMER	05050102514	\N	[]	\N	2026-06-07 08:39:18.297929+00	2026-06-07 08:39:18.297929+00
+710cfb90-796d-4b73-8761-46f513361657	64c086ff-9c5b-4f0f-b6ea-d08e6d521d01	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VII", "article_id": "ab0fb31e-be20-4002-8170-9004eada1825", "latin_name": "Melanogrammus aeglefinus", "price_unit": "kg", "article_plu": "3216", "designation": "FILET EGLEFIN 100/200 GR 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": false, "ordered_colis": 3, "ordered_pieces": null, "supplier_label": "FILET EGLEFIN 100/200 GR 3 KG", "total_weight_kg": 9, "ordered_quantity": 3, "unit_price_ex_vat": 15.9, "line_amount_ex_vat": 143.1, "supplier_reference": "FILEG120", "supplier_lot_number": "05050103081"}	\N	Melanogrammus aeglefinus	FAO 27	VII	CHALUT	\N	\N	SOGELMER	05050103081	\N	[]	\N	2026-06-07 08:39:18.297929+00	2026-06-07 08:39:18.297929+00
+beb6f295-9a2a-4036-aa83-58b67bea3fc2	1a7b56f3-e117-48d1-a94c-8374dd19af0f	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VII", "article_id": "7314c3b9-7d71-497e-b6b9-525273bd2ca7", "latin_name": "Raja naevus-clavata-montagui-microocellata-circula", "price_unit": "kg", "article_plu": "3045", "designation": "AILE RAIE 2/500 GR PELE 1F 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": false, "ordered_colis": 2, "ordered_pieces": null, "supplier_label": "AILE RAIE 2/500 GR PELE 1F 3 KG", "total_weight_kg": 6, "ordered_quantity": 3, "unit_price_ex_vat": 11.9, "line_amount_ex_vat": 71.4, "supplier_reference": "RAI25001", "supplier_lot_number": "05050103027"}	\N	Raja naevus-clavata-montagui-microocellata-circula	FAO 27	VII	CHALUT	\N	\N	SOGELMER	05050103027	\N	[]	\N	2026-06-07 08:39:18.297929+00	2026-06-07 08:39:18.297929+00
+656d5694-9fe1-48dc-b6c3-97145e140f0d	88a1bf1e-e484-421d-a028-004287f3d171	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "article_id": "78a1d86e-d5cf-4d33-9af2-3335a32fba9d", "latin_name": "Lophius piscatorius-lophius budegassa", "price_unit": "kg", "article_plu": "3450", "designation": "QUEUE LOTTE 200/500 GR 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": false, "ordered_colis": 1, "ordered_pieces": null, "supplier_label": "QUEUE LOTTE 200/500 GR 3 KG", "total_weight_kg": 3, "ordered_quantity": 3, "unit_price_ex_vat": 19.9, "line_amount_ex_vat": 59.7, "supplier_reference": "QLO2500_3", "supplier_lot_number": "05050102995"}	\N	Lophius piscatorius-lophius budegassa	FAO 27	VI	CHALUT	\N	\N	SOGELMER	05050102995	\N	[]	\N	2026-06-07 08:39:18.297929+00	2026-06-07 08:39:18.297929+00
+f7c583c2-be27-4e69-bd5a-93f3036907cd	7c489e25-5983-4e0f-8f63-bd1071c3c7db	gc_line	{"dlc": null, "fao_zone": "ÉLEVAGE", "allergens": null, "line_kind": "TRAD", "sous_zone": "ELEVÈ EN MER ATLANTIQUE NORD EST", "article_id": "5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8", "latin_name": "Salmo salar Lot N∞ :", "price_unit": "kg", "article_plu": "3065", "designation": "filet de saumon 1.5/2 ECOSSE", "fishing_gear": "ELEVAGE", "origin_label": "Lecri Marée", "needs_mapping": false, "ordered_colis": 4, "ordered_pieces": null, "supplier_label": "filet de saumon 1.5/2 ECOSSE", "total_weight_kg": 49.59, "ordered_quantity": 12.398, "unit_price_ex_vat": 14.5, "line_amount_ex_vat": 719.06, "supplier_reference": "000001560", "supplier_lot_number": null}	\N	Salmo salar Lot N∞ :	ÉLEVAGE	ELEVÈ EN MER ATLANTIQUE NORD EST	ELEVAGE	\N	\N	Lecri Marée	\N	\N	[]	\N	2026-06-07 09:23:34.335304+00	2026-06-07 09:23:34.335304+00
+4d011e7e-6492-42a9-9874-ee821dab0cc8	e822547b-8e2a-408d-8b64-f7271063bc2f	gc_line	{"dlc": null, "fao_zone": "FAO 27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VI", "article_id": "67eee58a-db9e-454b-ab08-e7f4a351d03c", "latin_name": "Pollachius virens", "price_unit": "kg", "article_plu": "3071", "designation": "FILET LIEU NOIR 200/400 GR 3 KG", "fishing_gear": "CHALUT", "origin_label": "SOGELMER", "needs_mapping": false, "ordered_colis": 2, "ordered_pieces": null, "supplier_label": "FILET LIEU NOIR 200/400 GR 3 KG", "total_weight_kg": 6, "ordered_quantity": 3, "unit_price_ex_vat": 12.5, "line_amount_ex_vat": 75, "supplier_reference": "FILLIEUN", "supplier_lot_number": "05050100443"}	\N	Pollachius virens	FAO 27	VI	CHALUT	\N	\N	SOGELMER	05050100443	\N	[]	\N	2026-06-07 08:39:18.297929+00	2026-06-07 08:40:59.639554+00
+3daa02f3-ec03-4c1b-857e-a8e9323aaad3	f7319d03-17f4-4f03-a923-9cfdca290018	gc_line	{"dlc": null, "fao_zone": "FAO27", "allergens": null, "line_kind": "TRAD", "sous_zone": "VII", "article_id": "546505b1-799b-42df-9fac-fe4c55c36970", "latin_name": "Pecten maximus Lot N∞ :", "price_unit": "kg", "article_plu": "3131", "designation": "noix st jacques Grosse france", "fishing_gear": "DRAGUES ET AUTRES", "origin_label": "Lecri Marée", "needs_mapping": false, "ordered_colis": 3, "ordered_pieces": null, "supplier_label": "noix st jacques Grosse france", "total_weight_kg": 6, "ordered_quantity": 2, "unit_price_ex_vat": 28.5, "line_amount_ex_vat": 171, "supplier_reference": "000001050", "supplier_lot_number": null}	\N	Pecten maximus Lot N∞ :	FAO27	VII	DRAGUES ET AUTRES	\N	\N	Lecri Marée	\N	\N	[]	\N	2026-06-07 09:23:34.335304+00	2026-06-07 09:23:34.335304+00
+32542e20-cbbd-49f4-a826-905cf1fb37d5	ec1c496b-19a4-4feb-97c6-d11fa0e6b331	gc_line	{"dlc": null, "fao_zone": "FAO27", "allergens": null, "line_kind": "TRAD", "sous_zone": null, "article_id": "3c3ecce0-095a-4411-9e37-8b887c30ea37", "latin_name": "Molva molva Lot N∞ :", "price_unit": "kg", "article_plu": "3572", "designation": "dos de julienne 300+ \\"MSC\\" isl", "fishing_gear": "LIGNES, HAMECONS ET AUTRES", "origin_label": "Lecri Marée", "needs_mapping": false, "ordered_colis": 5, "ordered_pieces": null, "supplier_label": "dos de julienne 300+ \\"MSC\\" isl", "total_weight_kg": 15, "ordered_quantity": 3, "unit_price_ex_vat": 19.95, "line_amount_ex_vat": 299.25, "supplier_reference": "000000875", "supplier_lot_number": null}	\N	Molva molva Lot N∞ :	FAO27	\N	LIGNES, HAMECONS ET AUTRES	\N	\N	Lecri Marée	\N	\N	[]	\N	2026-06-07 09:23:34.335304+00	2026-06-07 09:23:34.335304+00
+73f82a5c-3e1e-4cac-9395-88b1abbca42f	8078758f-bb50-4532-93c3-d6c1a758dc3a	gc_line	{"dlc": null, "fao_zone": "FAO27", "allergens": null, "line_kind": "TRAD", "sous_zone": "V", "article_id": "984aac3f-583f-4ec2-8743-9f4a14520ea3", "latin_name": "Gadus morhua Lot N∞ :", "price_unit": "kg", "article_plu": "3063", "designation": "dos cabio 400+ LEO \\"MSC\\" islande", "fishing_gear": "LIGNES, HAMECONS ET AUTRES", "origin_label": "Lecri Marée", "needs_mapping": false, "ordered_colis": 6, "ordered_pieces": null, "supplier_label": "dos cabio 400+ LEO \\"MSC\\" islande", "total_weight_kg": 18, "ordered_quantity": 3, "unit_price_ex_vat": 25.9, "line_amount_ex_vat": 466.2, "supplier_reference": "000000576", "supplier_lot_number": null}	\N	Gadus morhua Lot N∞ :	FAO27	V	LIGNES, HAMECONS ET AUTRES	\N	\N	Lecri Marée	\N	\N	[]	\N	2026-06-07 09:23:34.335304+00	2026-06-07 09:23:34.335304+00
+dcad46f8-2813-42a8-9dcc-eaf122050244	79df392f-dd4b-4660-8fd4-d2b10c6b833c	gc_line	{}	\N	NEPHROPS NORVEGICUS	FAO 27 -IV-aVI-a	\N	CASIERS/NASSE	\N	\N	Pêché en	\N	\N	[]	\N	2026-06-07 11:17:25.16599+00	2026-06-07 11:17:36.703292+00
+\.
+
+
+--
+-- Data for Name: purchase_lines; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.purchase_lines (id, purchase_id, store_id, client_key, supplier_id, line_number, supplier_article_mapping_id, article_id, supplier_reference, supplier_label, ordered_colis, ordered_pieces, ordered_quantity, received_colis, received_pieces, received_quantity, stock_quantity, unit_price_ex_vat, line_amount_ex_vat, price_unit, line_status, lot_id, lot_mode, received_at, created_at, updated_at) FROM stdin;
+73337a07-bbec-41bb-bcfd-73b4c9aa05bd	e4a68085-357d-4c8d-a3b0-b67e836beb72	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	1	\N	4ca18ee3-6cbe-48ff-a300-306183707747	LANGGL03	LANGOUSTINE GLACEE 30/40 3 KG	10.0000	\N	3.0000	10.0000	0.0000	3.0000	0.0000	7.5000	225.0000	kg	received	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	auto	2026-06-07 08:17:03.307477+00	2026-06-07 08:17:00.402841+00	2026-06-07 08:17:03.307477+00
+c521639f-c0b0-433f-962a-da619a8465d0	e4a68085-357d-4c8d-a3b0-b67e836beb72	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	2	\N	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	LANGV51	LANGOUSTINE VIVANTE 5/10 4 KG	1.0000	\N	4.0000	1.0000	0.0000	4.0000	0.0000	35.0000	140.0000	kg	received	86bf8178-e99d-4db2-ab1c-cbfa375fc650	auto	2026-06-07 08:17:03.307477+00	2026-06-07 08:17:00.402841+00	2026-06-07 08:17:03.307477+00
+9dd01bd8-aefc-4ec8-a43b-e8fe22e2397b	e4a68085-357d-4c8d-a3b0-b67e836beb72	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	3	\N	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	LANGV25	LANGOUSTINE VIVANTE 25/35 4 KG	2.0000	\N	4.0000	2.0000	0.0000	4.0000	0.0000	20.0000	160.0000	kg	received	796aa0b0-416e-46db-8861-605e81a067a4	auto	2026-06-07 08:17:03.307477+00	2026-06-07 08:17:00.402841+00	2026-06-07 08:17:03.307477+00
+fe4d93a3-5134-492b-9745-2b729f97fcb5	c462d3f9-44d9-4776-88cb-afe863042043	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	1	\N	24336843-3546-4088-9153-515acd22a23c	FILLINB_03	FILET LINGUE BLEUE 3 KG	3.0000	\N	3.0000	3.0000	0.0000	3.0000	0.0000	16.5000	148.5000	kg	received	db2f2e6f-808a-47fc-9015-e922da3b5d54	auto	2026-06-07 08:39:38.332265+00	2026-06-07 08:39:18.297929+00	2026-06-07 08:39:38.332265+00
+64c086ff-9c5b-4f0f-b6ea-d08e6d521d01	c462d3f9-44d9-4776-88cb-afe863042043	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	2	\N	ab0fb31e-be20-4002-8170-9004eada1825	FILEG120	FILET EGLEFIN 100/200 GR 3 KG	3.0000	\N	3.0000	3.0000	0.0000	3.0000	0.0000	15.9000	143.1000	kg	received	71145093-7854-416c-85ce-8a266d4981e2	auto	2026-06-07 08:39:38.332265+00	2026-06-07 08:39:18.297929+00	2026-06-07 08:39:38.332265+00
+1a7b56f3-e117-48d1-a94c-8374dd19af0f	c462d3f9-44d9-4776-88cb-afe863042043	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	4	\N	7314c3b9-7d71-497e-b6b9-525273bd2ca7	RAI25001	AILE RAIE 2/500 GR PELE 1F 3 KG	2.0000	\N	3.0000	2.0000	0.0000	3.0000	0.0000	11.9000	71.4000	kg	received	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	auto	2026-06-07 08:39:38.332265+00	2026-06-07 08:39:18.297929+00	2026-06-07 08:39:38.332265+00
+88a1bf1e-e484-421d-a028-004287f3d171	c462d3f9-44d9-4776-88cb-afe863042043	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	5	\N	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	QLO2500_3	QUEUE LOTTE 200/500 GR 3 KG	1.0000	\N	3.0000	1.0000	0.0000	3.0000	0.0000	19.9000	59.7000	kg	received	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	auto	2026-06-07 08:39:38.332265+00	2026-06-07 08:39:18.297929+00	2026-06-07 08:39:38.332265+00
+e822547b-8e2a-408d-8b64-f7271063bc2f	c462d3f9-44d9-4776-88cb-afe863042043	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3	\N	67eee58a-db9e-454b-ab08-e7f4a351d03c	FILLIEUN	FILET LIEU NOIR 200/400 GR 3 KG	2.0000	\N	3.0000	3.0000	0.0000	3.0000	0.0000	12.5000	75.0000	kg	received	5723d92e-0838-42eb-9869-b08c786a75e8	auto	2026-06-07 08:39:38.332265+00	2026-06-07 08:39:18.297929+00	2026-06-07 08:40:59.639554+00
+7c489e25-5983-4e0f-8f63-bd1071c3c7db	6528afc6-5b4d-4efc-89d9-ee62ab025e76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	1	\N	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	000001560	filet de saumon 1.5/2 ECOSSE	4.0000	\N	12.3980	4.0000	0.0000	12.3980	0.0000	14.5000	719.0840	kg	received	95058d09-4b80-4e3d-a1a1-15c53b903bf1	auto	2026-06-07 09:23:38.88902+00	2026-06-07 09:23:34.335304+00	2026-06-07 09:23:38.88902+00
+f7319d03-17f4-4f03-a923-9cfdca290018	6528afc6-5b4d-4efc-89d9-ee62ab025e76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	2	\N	546505b1-799b-42df-9fac-fe4c55c36970	000001050	noix st jacques Grosse france	3.0000	\N	2.0000	3.0000	0.0000	2.0000	0.0000	28.5000	171.0000	kg	received	253677a9-b401-4034-9311-492720bd778b	auto	2026-06-07 09:23:38.88902+00	2026-06-07 09:23:34.335304+00	2026-06-07 09:23:38.88902+00
+ec1c496b-19a4-4feb-97c6-d11fa0e6b331	6528afc6-5b4d-4efc-89d9-ee62ab025e76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	3	\N	3c3ecce0-095a-4411-9e37-8b887c30ea37	000000875	dos de julienne 300+ "MSC" isl	5.0000	\N	3.0000	5.0000	0.0000	3.0000	0.0000	19.9500	299.2500	kg	received	dbbe0e08-3181-45a7-b80c-077d8eac1639	auto	2026-06-07 09:23:38.88902+00	2026-06-07 09:23:34.335304+00	2026-06-07 09:23:38.88902+00
+8078758f-bb50-4532-93c3-d6c1a758dc3a	6528afc6-5b4d-4efc-89d9-ee62ab025e76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	4	\N	984aac3f-583f-4ec2-8743-9f4a14520ea3	000000576	dos cabio 400+ LEO "MSC" islande	6.0000	\N	3.0000	6.0000	0.0000	3.0000	0.0000	25.9000	466.2000	kg	received	f75757ab-73e9-45ca-af52-4e230ea31fc2	auto	2026-06-07 09:23:38.88902+00	2026-06-07 09:23:34.335304+00	2026-06-07 09:23:38.88902+00
+79df392f-dd4b-4660-8fd4-d2b10c6b833c	4d99e9f1-87be-4604-9751-f39862dd0a9b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	1	\N	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	\N	\N	1.0000	\N	4.0000	1.0000	0.0000	4.0000	0.0000	10.0000	40.0000	kg	received	94e7e1da-dac8-4493-8aff-c2e3d9f3f99e	auto	2026-06-07 11:17:39.517263+00	2026-06-07 11:17:25.16599+00	2026-06-07 11:17:39.517263+00
+\.
+
+
+--
+-- Data for Name: purchases; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.purchases (id, store_id, client_key, supplier_id, purchase_date, status, purchase_type, order_date, receipt_date, bl_number, invoice_number, notes, total_amount_ex_vat, created_by, updated_by, created_at, updated_at, source_document_url, source_document_storage_path, source_document_original_name, source_document_mime_type, source_document_uploaded_at, source_document_uploaded_by) FROM stdin;
+e4a68085-357d-4c8d-a3b0-b67e836beb72	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	2026-06-07	invoice_validated	direct_bl	2026-06-07	2026-06-07	551-00012803	\N	Import Distrimer	525.0000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:17:00.402841+00	2026-06-07 08:28:14.705056+00	/api/purchases/e4a68085-357d-4c8d-a3b0-b67e836beb72/document	/var/www/gestion-commerciale/backend/uploads/purchase-documents/c4fe298c85ac71206de5f041c1be2feb	551-00012803.PDF	application/pdf	2026-06-07 08:17:00.402841+00	3200f2be-f337-4cbd-8ca2-aa752bd61be5
+6528afc6-5b4d-4efc-89d9-ee62ab025e76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	2026-06-07	invoice_validated	direct_bl	2026-06-07	2026-06-07	\N	\N	Import Lecri Marée	1655.5340	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:23:34.335304+00	2026-06-07 09:36:49.867381+00	/api/purchases/6528afc6-5b4d-4efc-89d9-ee62ab025e76/document	/var/www/gestion-commerciale/backend/uploads/purchase-documents/bf8e66698ec87a115f0962fcbf4f85ee	confirm111413 (1).PDF	application/pdf	2026-06-07 09:23:34.335304+00	3200f2be-f337-4cbd-8ca2-aa752bd61be5
+c462d3f9-44d9-4776-88cb-afe863042043	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	2026-06-07	cost_adjusted	direct_bl	2026-06-07	2026-06-07	511-00075465	\N	Import Sogelmer	497.7000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:39:18.297929+00	2026-06-07 08:42:48.200823+00	/api/purchases/c462d3f9-44d9-4776-88cb-afe863042043/document	/var/www/gestion-commerciale/backend/uploads/purchase-documents/db2f007bb90b042ed7b5db3c8b9af7b1	511-00075465 (1).PDF	application/pdf	2026-06-07 08:39:18.297929+00	3200f2be-f337-4cbd-8ca2-aa752bd61be5
+4d99e9f1-87be-4604-9751-f39862dd0a9b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	2026-06-07	received_pending_invoice	direct_bl	2026-06-07	2026-06-07	\N	\N	\N	40.0000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:17:21.405457+00	2026-06-07 11:17:39.517263+00	\N	\N	\N	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: sale_line_allocations; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.sale_line_allocations (id, sales_line_id, lot_id, quantity, unit_cost_ex_vat, created_at) FROM stdin;
+9a4d50bb-0e06-4804-9a30-fd77b692daee	071459b4-a9e7-44b2-afd5-7f1927234f0b	796aa0b0-416e-46db-8861-605e81a067a4	8.0000	20.0000	2026-06-07 11:15:18.910503+00
+373fc71d-9237-4f48-95b0-02d89e2b5a5a	071459b4-a9e7-44b2-afd5-7f1927234f0b	796aa0b0-416e-46db-8861-605e81a067a4	1.0000	20.0000	2026-06-07 11:15:18.910503+00
+6c388327-9343-41bb-90a9-8655eaaa5218	b409ef7c-13fe-4281-baa0-7c3f01ff2e6d	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	3.0000	11.9000	2026-06-07 11:17:01.827963+00
+d851a443-dae7-4fe9-bcc5-86947e6c9c89	c47d3180-19be-44bd-8d04-18f5f0848ec8	94e7e1da-dac8-4493-8aff-c2e3d9f3f99e	3.0000	10.0000	2026-06-07 11:18:35.133429+00
+2a3aba9a-e3f6-4462-9bb9-32c1c65829d7	c47d3180-19be-44bd-8d04-18f5f0848ec8	545e0ea6-cf1e-467d-9f99-3a31bfa92169	13.0000	10.0000	2026-06-07 11:18:35.133429+00
+29eec0d8-801a-48e4-b92d-b6b4cda34f83	68908f26-aca8-40a7-a178-1d708c630c6b	3c892426-3c83-4e4f-badc-d428997aeb23	3.0000	0.0000	2026-06-07 13:39:01.920805+00
+82d5735c-483c-4f1d-88a4-a1cc71153638	1e029499-58fb-4942-bf53-ddcd925ef1d8	4f9526f4-cfe9-41e3-bc1b-fabed5824b79	3.0000	8.9000	2026-06-07 13:39:01.920805+00
+b3900e30-77fe-4282-8330-fa872a4d5d6e	c412955c-3ed9-41ad-928f-e1e7ea90e01b	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	3.0000	11.9000	2026-06-11 18:49:53.72248+00
+\.
+
+
+--
+-- Data for Name: sales_documents; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.sales_documents (id, store_id, client_key, client_id, document_date, status, document_type, origin, reference_number, notes, total_amount_ex_vat, total_amount_inc_vat, created_by, updated_by, created_at, updated_at, total_vat_amount, tariff_level_snapshot, vat_rate_snapshot, is_vat_exempt_snapshot, source_order_id, billed_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot, delivered_client_store_identifier, billed_client_name_snapshot, billed_client_code_snapshot, validated_at, printed_at, source_delivery_note_id, source_invoice_id, locked_at, invoiced_at, credit_note_reason, returns_to_stock, pennylane_status, pennylane_invoice_id, pennylane_synced_at, pennylane_error) FROM stdin;
+615e736f-2e48-4d7b-a92a-7a6eda3a2c59	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4424c69f-0b7c-445c-b7f0-fb6019d11075	2026-06-11	invoiced	DELIVERY_NOTE	order	BL-2026-00006	\N	28.6800	30.2600	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-11 18:49:53.72248+00	2026-06-11 18:50:10.76144+00	1.58	1	5.50	f	2425e16d-745e-4d4c-8ecf-716dbda8aa0b	4424c69f-0b7c-445c-b7f0-fb6019d11075	ROYALE MAREE	10002	\N	ROYALE MAREE	10002	2026-06-11 18:49:53.72248+00	\N	\N	\N	\N	2026-06-11 18:50:10.76144+00	\N	f	not_sent	\N	\N	\N
+d2df09b1-996d-49d8-bbb2-100ec447f796	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	validated	DELIVERY_NOTE	order	BL-2026-00005	\N	61.4100	64.7900	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 13:39:01.920805+00	2026-06-07 13:39:01.920805+00	3.38	2	5.50	f	b3baf353-4c9d-46de-be82-e91cdbe6f335	4424c69f-0b7c-445c-b7f0-fb6019d11075	alric paon	1234	88	ROYALE MAREE	10002	2026-06-07 13:39:01.920805+00	2026-06-07 15:06:09.373275+00	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+255aa28e-3245-46f6-b7a8-a3d58c204e6f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	8393e046-31a6-41a1-9a46-860e15797249	2026-06-13	draft	ORDER	ai_confirmed_action	CMD-2026-00014	Commande brouillon preparee par ALTA - action IA 408fa7a3-2f4b-43cc-98e6-b786536d61c6	0.0000	0.0000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-13 15:18:39.140248+00	2026-06-13 15:18:39.140248+00	0.00	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+2425e16d-745e-4d4c-8ecf-716dbda8aa0b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4424c69f-0b7c-445c-b7f0-fb6019d11075	2026-06-11	delivered	ORDER	manual	CMD-2026-00013	\N	28.6800	30.2600	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-11 18:49:29.718574+00	2026-06-11 18:49:53.72248+00	1.58	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	2026-06-11 18:49:53.72248+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+a4d316c0-c6f0-42ec-b9cf-9d45bc2c3349	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4424c69f-0b7c-445c-b7f0-fb6019d11075	2026-06-11	validated	INVOICE	delivery_note	FAC-2026-00001	\N	28.6800	30.2600	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-11 18:50:10.76144+00	2026-06-11 18:50:10.76144+00	1.58	1	5.50	f	2425e16d-745e-4d4c-8ecf-716dbda8aa0b	4424c69f-0b7c-445c-b7f0-fb6019d11075	ROYALE MAREE	10002	\N	ROYALE MAREE	10002	2026-06-11 18:50:10.76144+00	\N	615e736f-2e48-4d7b-a92a-7a6eda3a2c59	\N	2026-06-11 18:50:10.76144+00	\N	\N	f	not_sent	\N	\N	\N
+f98b3adb-a6d3-4739-ba5d-a6c5742b1fac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	validated	DELIVERY_NOTE	negoce	BL-2026-00001	Commande Négoce	180.0000	189.9000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:43:25.116469+00	2026-06-07 09:43:25.116469+00	9.90	2	5.50	f	c5f91474-a503-49e6-b9e5-6a61f04c2918	4424c69f-0b7c-445c-b7f0-fb6019d11075	alric paon	1234	88	ROYALE MAREE	10002	2026-06-07 09:43:25.116469+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+c5f91474-a503-49e6-b9e5-6a61f04c2918	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	delivered	ORDER	negoce	CMD-2026-00002	Commande Négoce	180.0000	189.9000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:42:44.619641+00	2026-06-07 09:43:25.116469+00	9.90	2	5.50	f	\N	\N	\N	\N	\N	\N	\N	2026-06-07 09:43:25.116469+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+c834a413-ebd8-486a-be1c-2f2df1af68f9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	8393e046-31a6-41a1-9a46-860e15797249	2026-06-13	draft	ORDER	ai_confirmed_action	CMD-2026-00015	Commande brouillon preparee par ALTA - action IA 5904bc78-aaf0-4b97-bae4-8eada00d2ef7	161.1000	169.9600	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-13 16:05:44.672091+00	2026-06-13 16:05:44.672091+00	8.86	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+ecc51a10-9d42-42a6-b84c-23cd7a01edb6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4424c69f-0b7c-445c-b7f0-fb6019d11075	2026-06-14	draft	ORDER	ai_confirmed_action	CMD-2026-00016	Commande brouillon preparee par ALTA - action IA ebeaa751-bff1-4a66-8416-f7ea1c82969a - negoce a approvisionner, sans lot alloue, sans destockage	8.7000	9.1800	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-14 06:49:45.760347+00	2026-06-14 06:49:45.760347+00	0.48	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+982cff98-0e68-4869-8588-5cfe1c1d2dc1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	draft	ORDER	negoce	CMD-2026-00005	Commande Négoce	180.0000	189.9000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 10:29:02.847792+00	2026-06-07 10:29:18.477692+00	9.90	2	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+532618b4-0dae-4981-9a70-a1f4e4a4c073	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4424c69f-0b7c-445c-b7f0-fb6019d11075	2026-06-14	draft	ORDER	ai_confirmed_action	CMD-2026-00017	Commande brouillon preparee par ALTA - action IA dd4eb001-01c7-4a39-bf32-4d0dc3628330 - negoce a approvisionner, sans lot alloue, sans destockage	193.5000	204.1400	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-14 07:33:03.334854+00	2026-06-14 07:33:03.334854+00	10.64	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+5239a768-2a19-49ad-8bd8-810dc1e85936	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	8393e046-31a6-41a1-9a46-860e15797249	2026-06-14	draft	ORDER	ai_confirmed_action	CMD-2026-00018	Commande brouillon preparee par ALTA - action IA e717b9ac-faf9-4294-816f-6d5653111dfb - negoce a approvisionner, sans lot alloue, sans destockage	232.5000	245.2900	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-14 07:47:49.380931+00	2026-06-14 07:47:49.380931+00	12.79	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+10030fff-dd86-4978-914f-7dbf4ded2f6c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4424c69f-0b7c-445c-b7f0-fb6019d11075	2026-06-07	draft	ORDER	manual	CMD-2026-00003	\N	199.9800	210.9800	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 10:27:58.180662+00	2026-06-07 10:28:19.472912+00	11.00	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+0b9b5788-88c9-40da-b5b1-d86281a61950	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	8393e046-31a6-41a1-9a46-860e15797249	2026-06-14	draft	ORDER	ai_confirmed_action	CMD-2026-00019	Commande brouillon preparee par ALTA - action IA 7472e7ff-0539-4824-8630-2f086d15b389 - negoce a approvisionner, sans lot alloue, sans destockage	232.5000	245.2900	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-14 08:20:07.732777+00	2026-06-14 08:20:07.732777+00	12.79	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+06a0f113-8ba8-4450-8600-ecf4a4b8d328	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	8393e046-31a6-41a1-9a46-860e15797249	2026-06-07	draft	ORDER	manual	CMD-2026-00004	\N	199.9800	210.9800	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 10:28:38.875492+00	2026-06-07 10:28:52.402331+00	11.00	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+a27c2590-a346-414d-aa73-de06aa9188cd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	validated	DELIVERY_NOTE	order	BL-2026-00002	\N	211.7700	223.4200	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:15:18.910503+00	2026-06-07 11:15:18.910503+00	11.65	2	5.50	f	cbfbc657-6645-41e4-9a77-22dfae8c4519	4424c69f-0b7c-445c-b7f0-fb6019d11075	alric paon	1234	88	ROYALE MAREE	10002	2026-06-07 11:15:18.910503+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+cbfbc657-6645-41e4-9a77-22dfae8c4519	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	delivered	ORDER	manual	CMD-2026-00006	\N	211.7700	223.4200	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:14:53.475863+00	2026-06-07 11:15:18.910503+00	11.65	2	5.50	f	\N	\N	\N	\N	\N	\N	\N	2026-06-07 11:15:18.910503+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+876e6c33-3dfc-4bd4-bd43-66ad142bd52e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4424c69f-0b7c-445c-b7f0-fb6019d11075	2026-06-07	draft	ORDER	manual	CMD-2026-00007	\N	32.7000	34.5000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:15:41.659041+00	2026-06-07 11:16:14.569462+00	1.80	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+eb58635e-2a6f-4b2e-b87d-1c465b9c3040	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	validated	DELIVERY_NOTE	order	BL-2026-00003	\N	30.3600	32.0300	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:17:01.827963+00	2026-06-07 11:17:01.827963+00	1.67	2	5.50	f	1e1ac004-2645-432c-a1cf-a919697e701c	4424c69f-0b7c-445c-b7f0-fb6019d11075	alric paon	1234	88	ROYALE MAREE	10002	2026-06-07 11:17:01.827963+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+1e1ac004-2645-432c-a1cf-a919697e701c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	delivered	ORDER	manual	CMD-2026-00008	\N	30.3600	32.0300	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:16:39.413446+00	2026-06-07 11:17:01.827963+00	1.67	2	5.50	f	\N	\N	\N	\N	\N	\N	\N	2026-06-07 11:17:01.827963+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+ddf020bb-1b0b-48e6-aa0b-6ec71a5ef9c8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	draft	ORDER	manual	CMD-2026-00011	\N	0.0000	0.0000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 13:29:31.458691+00	2026-06-07 13:30:16.333183+00	0.00	2	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+e3f1eb0a-482d-4cc1-b69f-3a94d3717488	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	validated	DELIVERY_NOTE	order	BL-2026-00004	\N	376.4800	397.1900	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:18:35.133429+00	2026-06-07 11:18:35.133429+00	20.71	2	5.50	f	49702733-98ac-4264-b47b-d6652a6bf452	4424c69f-0b7c-445c-b7f0-fb6019d11075	alric paon	1234	88	ROYALE MAREE	10002	2026-06-07 11:18:35.133429+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+49702733-98ac-4264-b47b-d6652a6bf452	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	delivered	ORDER	manual	CMD-2026-00009	\N	376.4800	397.1900	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:18:19.490623+00	2026-06-07 11:18:35.133429+00	20.71	2	5.50	f	\N	\N	\N	\N	\N	\N	\N	2026-06-07 11:18:35.133429+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+3662a9bf-cc9a-405b-a852-64a83465bda6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	draft	ORDER	manual	CMD-2026-00010	\N	0.0000	0.0000	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 13:28:54.021636+00	2026-06-07 13:28:59.460633+00	0.00	2	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+b3baf353-4c9d-46de-be82-e91cdbe6f335	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	6f12021f-b72b-4b42-b48a-bcd2ef6ab4e1	2026-06-07	delivered	ORDER	manual	CMD-2026-00012	\N	61.4100	64.7900	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 13:38:08.497819+00	2026-06-07 13:39:01.920805+00	3.38	2	5.50	f	\N	\N	\N	\N	\N	\N	\N	2026-06-07 13:39:01.920805+00	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+3b768572-1c2d-4512-89ad-e02f3d5ad415	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	8393e046-31a6-41a1-9a46-860e15797249	2026-06-14	draft	ORDER	ai_confirmed_action	CMD-2026-00020	Commande brouillon preparee par ALTA - action IA 3a26aa41-e519-4ebb-bb64-5c9c50acc3d3 - negoce a approvisionner, sans lot alloue, sans destockage	178.0000	187.7900	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-14 08:39:45.935677+00	2026-06-14 08:39:45.935677+00	9.79	1	5.50	f	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	\N	f	not_sent	\N	\N	\N
+\.
+
+
+--
+-- Data for Name: sales_lines; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.sales_lines (id, sales_document_id, store_id, client_key, article_id, line_number, ean, article_label, sold_quantity, sale_unit, unit_sale_price_ttc, unit_sale_price_ht, unit_cost_ex_vat, line_amount_ttc, line_amount_ht, line_margin_ex_vat, line_reason, line_status, source_inventory_line, created_at, updated_at, article_plu, package_count, weight_per_package, total_weight, vat_rate, line_vat_amount, selected_lot_id, suggested_lot_id, traceability_snapshot, created_by, updated_by, source_invoice_line_id) FROM stdin;
+77e5a3b0-2c9e-4704-9bbc-d84cd54ecac5	c5f91474-a503-49e6-b9e5-6a61f04c2918	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	9.0000	kg	21.1000	20.0000	20.0000	189.9000	180.0000	0.0000	\N	ordered	{}	2026-06-07 09:43:11.932274+00	2026-06-07 09:43:25.116469+00	3151	1.000	9.000	9.000	5.50	9.90	\N	796aa0b0-416e-46db-8861-605e81a067a4	{"dlc": null, "lot_id": "fcd65a7e-4e57-42fe-b3fd-c08f2d545850", "fao_zone": "FAO 27 -IV-aVI-a", "lot_code": null, "allergens": null, "sous_zone": null, "latin_name": "NEPHROPS NORVEGICUS", "fishing_gear": "CASIERS/NASSE", "production_method": "Pêché en", "available_quantity": null, "supplier_lot_number": null}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+620429ae-3b72-43cd-8bf4-0875725c136a	f98b3adb-a6d3-4739-ba5d-a6c5742b1fac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	9.0000	kg	21.1000	20.0000	20.0000	189.9000	180.0000	0.0000	\N	validated	{}	2026-06-07 09:43:25.116469+00	2026-06-07 09:43:25.116469+00	3151	1.000	9.000	9.000	5.50	9.90	\N	796aa0b0-416e-46db-8861-605e81a067a4	{"dlc": null, "lot_id": "fcd65a7e-4e57-42fe-b3fd-c08f2d545850", "fao_zone": "FAO 27 -IV-aVI-a", "lot_code": null, "allergens": null, "sous_zone": null, "latin_name": "NEPHROPS NORVEGICUS", "fishing_gear": "CASIERS/NASSE", "production_method": "Pêché en", "available_quantity": null, "supplier_lot_number": null}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+e8e4e713-19f1-4010-9bf7-e79b2ef8bbfa	10030fff-dd86-4978-914f-7dbf4ded2f6c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	9.0000	kg	23.4422	22.2200	20.0000	210.9800	199.9800	19.9800	\N	pending	{}	2026-06-07 10:28:02.466174+00	2026-06-07 10:28:19.472912+00	3151	1.000	9.000	9.000	5.50	11.00	796aa0b0-416e-46db-8861-605e81a067a4	796aa0b0-416e-46db-8861-605e81a067a4	{"dlc": null, "lot_id": "796aa0b0-416e-46db-8861-605e81a067a4", "fao_zone": "FAO 27", "lot_code": "3151-26158-96DEE3-9DD01B", "allergens": null, "sous_zone": "VI", "latin_name": "Nephrops norvegicus", "fishing_gear": "CASIER", "production_method": "Pêché en", "available_quantity": 8, "supplier_lot_number": "140020208105"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+a383169b-3f68-4fda-8c90-566fcb802224	06a0f113-8ba8-4450-8600-ecf4a4b8d328	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	9.0000	kg	23.4422	22.2200	20.0000	210.9800	199.9800	19.9800	\N	pending	{}	2026-06-07 10:28:44.454933+00	2026-06-07 10:28:52.402331+00	3151	1.000	9.000	9.000	5.50	11.00	\N	796aa0b0-416e-46db-8861-605e81a067a4	{"dlc": null, "lot_id": "796aa0b0-416e-46db-8861-605e81a067a4", "fao_zone": "FAO 27", "lot_code": "3151-26158-96DEE3-9DD01B", "allergens": null, "sous_zone": "VI", "latin_name": "Nephrops norvegicus", "fishing_gear": "CASIER", "production_method": "Pêché en", "available_quantity": 8, "supplier_lot_number": "140020208105"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+bbb29f8f-48bc-47ec-9a53-d1b02927306d	982cff98-0e68-4869-8588-5cfe1c1d2dc1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	9.0000	kg	21.1000	20.0000	20.0000	189.9000	180.0000	0.0000	\N	pending	{}	2026-06-07 10:29:09.306392+00	2026-06-07 10:29:18.477692+00	3151	1.000	9.000	9.000	5.50	9.90	\N	796aa0b0-416e-46db-8861-605e81a067a4	{"dlc": null, "lot_id": "fcd65a7e-4e57-42fe-b3fd-c08f2d545850", "fao_zone": "FAO 27 -IV-aVI-a", "lot_code": null, "allergens": null, "sous_zone": null, "latin_name": "NEPHROPS NORVEGICUS", "fishing_gear": "CASIERS/NASSE", "production_method": "Pêché en", "available_quantity": null, "supplier_lot_number": null}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+071459b4-a9e7-44b2-afd5-7f1927234f0b	a27c2590-a346-414d-aa73-de06aa9188cd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	9.0000	kg	24.8244	23.5300	20.0000	223.4200	211.7700	31.7700	\N	validated	{}	2026-06-07 11:15:18.910503+00	2026-06-07 11:15:18.910503+00	3151	1.000	9.000	9.000	5.50	11.65	796aa0b0-416e-46db-8861-605e81a067a4	796aa0b0-416e-46db-8861-605e81a067a4	{"dlc": null, "lot_id": "796aa0b0-416e-46db-8861-605e81a067a4", "fao_zone": "FAO 27", "lot_code": "3151-26158-96DEE3-9DD01B", "allergens": null, "sous_zone": "VI", "latin_name": "Nephrops norvegicus", "fishing_gear": "CASIER", "production_method": "Pêché en", "available_quantity": 8, "supplier_lot_number": "140020208105"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+09be7e1f-65bb-4930-9517-9f02c470574a	cbfbc657-6645-41e4-9a77-22dfae8c4519	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	9.0000	kg	24.8244	23.5300	20.0000	223.4200	211.7700	31.7700	\N	ordered	{}	2026-06-07 11:14:58.405915+00	2026-06-07 11:15:18.910503+00	3151	1.000	9.000	9.000	5.50	11.65	796aa0b0-416e-46db-8861-605e81a067a4	796aa0b0-416e-46db-8861-605e81a067a4	{"dlc": null, "lot_id": "796aa0b0-416e-46db-8861-605e81a067a4", "fao_zone": "FAO 27", "lot_code": "3151-26158-96DEE3-9DD01B", "allergens": null, "sous_zone": "VI", "latin_name": "Nephrops norvegicus", "fishing_gear": "CASIER", "production_method": "Pêché en", "available_quantity": 8, "supplier_lot_number": "140020208105"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+e6062a8a-56e3-4236-b4d9-3be1280ecc83	876e6c33-3dfc-4bd4-bd43-66ad142bd52e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	486a6d50-f0da-4666-b5c0-be523ae0827d	1	\N	AILE DE RAIE	3.0000	kg	11.5000	10.9000	8.9000	34.5000	32.7000	6.0000	\N	pending	{}	2026-06-07 11:15:46.079713+00	2026-06-07 11:16:14.569462+00	3025	1.000	3.000	3.000	5.50	1.80	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+d56fac86-025a-4dd9-b727-59d32757ce28	1e1ac004-2645-432c-a1cf-a919697e701c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	1	\N	AILE DE RAIE	3.0000	kg	10.6767	10.1200	11.9000	32.0300	30.3600	-5.3400	\N	ordered	{}	2026-06-07 11:16:42.945766+00	2026-06-07 11:17:01.827963+00	3045	1.000	3.000	3.000	5.50	1.67	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	{"dlc": null, "lot_id": "7d86e266-adfc-4f0c-bfa8-b64c2a8a3334", "fao_zone": "FAO 27", "lot_code": "3045-26158-F7D3BE-1A7B56", "allergens": null, "sous_zone": "VII", "latin_name": "Raja naevus-clavata-montagui-microocellata-circula", "fishing_gear": "CHALUT", "production_method": "Pêché en", "available_quantity": 6, "supplier_lot_number": "05050103027"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+b409ef7c-13fe-4281-baa0-7c3f01ff2e6d	eb58635e-2a6f-4b2e-b87d-1c465b9c3040	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	1	\N	AILE DE RAIE	3.0000	kg	10.6767	10.1200	11.9000	32.0300	30.3600	-5.3400	\N	validated	{}	2026-06-07 11:17:01.827963+00	2026-06-07 11:17:01.827963+00	3045	1.000	3.000	3.000	5.50	1.67	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	{"dlc": null, "lot_id": "7d86e266-adfc-4f0c-bfa8-b64c2a8a3334", "fao_zone": "FAO 27", "lot_code": "3045-26158-F7D3BE-1A7B56", "allergens": null, "sous_zone": "VII", "latin_name": "Raja naevus-clavata-montagui-microocellata-circula", "fishing_gear": "CHALUT", "production_method": "Pêché en", "available_quantity": 6, "supplier_lot_number": "05050103027"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+43eefec9-2c7f-468c-8af1-dad890a30935	49702733-98ac-4264-b47b-d6652a6bf452	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	16.0000	kg	24.8244	23.5300	10.0000	397.1900	376.4800	216.4800	\N	ordered	{}	2026-06-07 11:18:23.727809+00	2026-06-07 11:18:35.133429+00	3151	4.000	4.000	16.000	5.50	20.71	\N	94e7e1da-dac8-4493-8aff-c2e3d9f3f99e	{"dlc": null, "lot_id": "94e7e1da-dac8-4493-8aff-c2e3d9f3f99e", "fao_zone": "FAO 27 -IV-aVI-a", "lot_code": "3151-26158-96DEE3-79DF39", "allergens": null, "sous_zone": null, "latin_name": "NEPHROPS NORVEGICUS", "fishing_gear": "CASIERS/NASSE", "production_method": "Pêché en", "available_quantity": 3, "supplier_lot_number": null}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+c47d3180-19be-44bd-8d04-18f5f0848ec8	e3f1eb0a-482d-4cc1-b69f-3a94d3717488	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	16.0000	kg	24.8244	23.5300	10.0000	397.1900	376.4800	216.4800	\N	validated	{}	2026-06-07 11:18:35.133429+00	2026-06-07 11:18:35.133429+00	3151	4.000	4.000	16.000	5.50	20.71	\N	94e7e1da-dac8-4493-8aff-c2e3d9f3f99e	{"dlc": null, "lot_id": "94e7e1da-dac8-4493-8aff-c2e3d9f3f99e", "fao_zone": "FAO 27 -IV-aVI-a", "lot_code": "3151-26158-96DEE3-79DF39", "allergens": null, "sous_zone": null, "latin_name": "NEPHROPS NORVEGICUS", "fishing_gear": "CASIERS/NASSE", "production_method": "Pêché en", "available_quantity": 3, "supplier_lot_number": null}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+bae7c03f-5d3a-4d92-a89f-743cca589af7	3662a9bf-cc9a-405b-a852-64a83465bda6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	\N	1	\N	\N	0.0000	kg	0.0000	0.0000	0.0000	0.0000	0.0000	0.0000	\N	pending	{}	2026-06-07 13:28:59.460633+00	2026-06-07 13:28:59.460633+00	\N	0.000	0.000	0.000	5.50	0.00	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+5bce9ccd-b138-4d88-8edf-1dd9ead40d6b	ddf020bb-1b0b-48e6-aa0b-6ec71a5ef9c8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	\N	1	\N	\N	0.0000	kg	0.0000	0.0000	0.0000	0.0000	0.0000	0.0000	\N	pending	{}	2026-06-07 13:30:16.333183+00	2026-06-07 13:30:16.333183+00	\N	0.000	0.000	0.000	5.50	0.00	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+84f1103a-36bc-4ccf-bfe2-e641a8364ec4	a4d316c0-c6f0-42ec-b9cf-9d45bc2c3349	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	1	\N	AILE DE RAIE	3.0000	kg	10.0867	9.5600	11.9000	30.2600	28.6800	-7.0200	\N	invoiced	{}	2026-06-11 18:50:10.76144+00	2026-06-11 18:50:10.76144+00	3045	1.000	3.000	3.000	5.50	1.58	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	{"dlc": null, "lot_id": "7d86e266-adfc-4f0c-bfa8-b64c2a8a3334", "fao_zone": "FAO 27", "lot_code": "3045-26158-F7D3BE-1A7B56", "allergens": null, "sous_zone": "VII", "latin_name": "Raja naevus-clavata-montagui-microocellata-circula", "fishing_gear": "CHALUT", "production_method": "Pêché en", "available_quantity": 3, "supplier_lot_number": "05050103027"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+eeb3a849-1b74-45e2-b182-32bb3d97808b	255aa28e-3245-46f6-b7a8-a3d58c204e6f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	1732a336-2afd-4376-ad2e-034c34d5afd3	1	\N	PAVES DE QUEUE DE CABILLAUD	10.0000	kg	0.0000	0.0000	0.0000	0.0000	0.0000	0.0000	\N	pending	{}	2026-06-13 15:18:39.140248+00	2026-06-13 15:18:39.140248+00	3168	0.000	0.000	10.000	5.50	0.00	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+9a8c4f48-14f3-4e15-ad8e-ed6a69116bc6	b3baf353-4c9d-46de-be82-e91cdbe6f335	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	3.0000	kg	10.5500	10.0000	0.0000	31.6500	30.0000	30.0000	\N	ordered	{}	2026-06-07 13:38:18.307012+00	2026-06-07 13:39:01.920805+00	3151	1.000	3.000	3.000	5.50	1.65	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+72e78c8f-85e2-428a-a116-89416422b967	b3baf353-4c9d-46de-be82-e91cdbe6f335	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	486a6d50-f0da-4666-b5c0-be523ae0827d	2	\N	AILE DE RAIE	3.0000	kg	11.0467	10.4700	8.9000	33.1400	31.4100	4.7100	\N	ordered	{}	2026-06-07 13:38:31.560407+00	2026-06-07 13:39:01.920805+00	3025	1.000	3.000	3.000	5.50	1.73	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+68908f26-aca8-40a7-a178-1d708c630c6b	d2df09b1-996d-49d8-bbb2-100ec447f796	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1	\N	LANGOUSTINE VIVANTE 25/35	3.0000	kg	10.5500	10.0000	0.0000	31.6500	30.0000	30.0000	\N	validated	{}	2026-06-07 13:39:01.920805+00	2026-06-07 13:39:01.920805+00	3151	1.000	3.000	3.000	5.50	1.65	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+1e029499-58fb-4942-bf53-ddcd925ef1d8	d2df09b1-996d-49d8-bbb2-100ec447f796	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	486a6d50-f0da-4666-b5c0-be523ae0827d	2	\N	AILE DE RAIE	3.0000	kg	11.0467	10.4700	8.9000	33.1400	31.4100	4.7100	\N	validated	{}	2026-06-07 13:39:01.920805+00	2026-06-07 13:39:01.920805+00	3025	1.000	3.000	3.000	5.50	1.73	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+f8865bb7-895e-4b80-b7c0-61eeae39e95c	2425e16d-745e-4d4c-8ecf-716dbda8aa0b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	1	\N	AILE DE RAIE	3.0000	kg	10.0867	9.5600	11.9000	30.2600	28.6800	-7.0200	\N	ordered	{}	2026-06-11 18:49:35.878416+00	2026-06-11 18:49:53.72248+00	3045	1.000	3.000	3.000	5.50	1.58	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	{"dlc": null, "lot_id": "7d86e266-adfc-4f0c-bfa8-b64c2a8a3334", "fao_zone": "FAO 27", "lot_code": "3045-26158-F7D3BE-1A7B56", "allergens": null, "sous_zone": "VII", "latin_name": "Raja naevus-clavata-montagui-microocellata-circula", "fishing_gear": "CHALUT", "production_method": "Pêché en", "available_quantity": 3, "supplier_lot_number": "05050103027"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+c412955c-3ed9-41ad-928f-e1e7ea90e01b	615e736f-2e48-4d7b-a92a-7a6eda3a2c59	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	1	\N	AILE DE RAIE	3.0000	kg	10.0867	9.5600	11.9000	30.2600	28.6800	-7.0200	\N	validated	{}	2026-06-11 18:49:53.72248+00	2026-06-11 18:49:53.72248+00	3045	1.000	3.000	3.000	5.50	1.58	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	{"dlc": null, "lot_id": "7d86e266-adfc-4f0c-bfa8-b64c2a8a3334", "fao_zone": "FAO 27", "lot_code": "3045-26158-F7D3BE-1A7B56", "allergens": null, "sous_zone": "VII", "latin_name": "Raja naevus-clavata-montagui-microocellata-circula", "fishing_gear": "CHALUT", "production_method": "Pêché en", "available_quantity": 3, "supplier_lot_number": "05050103027"}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+e519da23-5e20-4411-b317-bb8e99e654db	c834a413-ebd8-486a-be1c-2f2df1af68f9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	1	\N	PAVES DE SAUMON GROS	10.0000	kg	16.9960	16.1100	14.5000	169.9600	161.1000	16.1000	\N	pending	{}	2026-06-13 16:05:44.672091+00	2026-06-13 16:05:44.672091+00	3065	0.000	0.000	10.000	5.50	8.86	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+06e1bbae-f523-47b4-82de-5d7fc51f4ee1	ecc51a10-9d42-42a6-b84c-23cd7a01edb6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	cd4f7c91-8a11-42f0-bb80-c35dd0043567	1	\N	AMANDE - NEGOCE A APPROVISIONNER	3.0000	kg	3.0600	2.9000	0.0000	9.1800	8.7000	8.7000	\N	pending	{}	2026-06-14 06:49:45.760347+00	2026-06-14 06:49:45.760347+00	3316	0.000	0.000	3.000	5.50	0.48	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+15dd790b-bf8f-4ab8-bf03-c42bee4988b9	532618b4-0dae-4981-9a70-a1f4e4a4c073	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	ab91289c-1726-4716-85bc-a92255177546	1	\N	LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER	15.0000	kg	13.6093	12.9000	0.0000	204.1400	193.5000	193.5000	\N	pending	{}	2026-06-14 07:33:03.334854+00	2026-06-14 07:33:03.334854+00	3135	5.000	3.000	15.000	5.50	10.64	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+39759d00-139e-4288-9d1f-b4791ad886a1	5239a768-2a19-49ad-8bd8-810dc1e85936	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	ab91289c-1726-4716-85bc-a92255177546	1	\N	LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER	15.0000	kg	16.3527	15.5000	0.0000	245.2900	232.5000	232.5000	\N	pending	{}	2026-06-14 07:47:49.380931+00	2026-06-14 07:47:49.380931+00	3135	5.000	3.000	15.000	5.50	12.79	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+9d812842-d936-4174-a662-1ae1ef4e3d6b	0b9b5788-88c9-40da-b5b1-d86281a61950	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	ab91289c-1726-4716-85bc-a92255177546	1	\N	LANGOUSTINE GLACEE 21/30 - NEGOCE A APPROVISIONNER	15.0000	kg	16.3527	15.5000	0.0000	245.2900	232.5000	232.5000	\N	pending	{}	2026-06-14 08:20:07.732777+00	2026-06-14 08:20:07.732777+00	3135	5.000	3.000	15.000	5.50	12.79	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+46838b45-b7af-48de-97af-739a02afc66a	3b768572-1c2d-4512-89ad-e02f3d5ad415	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	030633a4-3781-42b5-88c2-68344f82517a	1	\N	PAVE DE SAUMON MARINEE THYM CITRON - NEGOCE A APPROVISIONNER	10.0000	kg	18.7790	17.8000	0.0000	187.7900	178.0000	178.0000	\N	pending	{}	2026-06-14 08:39:45.935677+00	2026-06-14 08:39:45.935677+00	3529	1.000	10.000	10.000	5.50	9.79	\N	\N	{}	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	\N
+\.
+
+
+--
+-- Data for Name: stock_movements; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.stock_movements (id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by, created_at) FROM stdin;
+56c3594b-485a-4029-bab9-6a956e80dea7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	purchase_in	30.0000	7.5000	purchase_lines	73337a07-bbec-41bb-bcfd-73b4c9aa05bd	Reception achat e4a68085-357d-4c8d-a3b0-b67e836beb72	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:17:03.307477+00
+91b0ac13-d5af-4deb-9cd6-96c900c7006e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	purchase_in	4.0000	35.0000	purchase_lines	c521639f-c0b0-433f-962a-da619a8465d0	Reception achat e4a68085-357d-4c8d-a3b0-b67e836beb72	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:17:03.307477+00
+8f59df63-d587-40b6-9d10-59d491b73655	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	796aa0b0-416e-46db-8861-605e81a067a4	purchase_in	8.0000	20.0000	purchase_lines	9dd01bd8-aefc-4ec8-a43b-e8fe22e2397b	Reception achat e4a68085-357d-4c8d-a3b0-b67e836beb72	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:17:03.307477+00
+2fee3fe7-bf8e-4be8-9d6e-4e8ffa34ee0b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	purchase_in	9.0000	16.5000	purchase_lines	fe4d93a3-5134-492b-9745-2b729f97fcb5	Reception achat c462d3f9-44d9-4776-88cb-afe863042043	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:39:38.332265+00
+82ce1204-64b6-4269-9a44-3a5d406f470a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	purchase_in	9.0000	15.9000	purchase_lines	64c086ff-9c5b-4f0f-b6ea-d08e6d521d01	Reception achat c462d3f9-44d9-4776-88cb-afe863042043	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:39:38.332265+00
+dcc20a90-e043-4c0c-9191-f8fa444080a3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	purchase_in	9.0000	12.5000	purchase_lines	e822547b-8e2a-408d-8b64-f7271063bc2f	Reception achat c462d3f9-44d9-4776-88cb-afe863042043	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:39:38.332265+00
+c1904fe9-2305-42bc-abb5-ac2c81e41447	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	purchase_in	6.0000	11.9000	purchase_lines	1a7b56f3-e117-48d1-a94c-8374dd19af0f	Reception achat c462d3f9-44d9-4776-88cb-afe863042043	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:39:38.332265+00
+3aee6a17-f626-438b-80aa-5661da61ea53	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	purchase_in	3.0000	19.9000	purchase_lines	88a1bf1e-e484-421d-a028-004287f3d171	Reception achat c462d3f9-44d9-4776-88cb-afe863042043	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:39:38.332265+00
+0ecbc394-a82e-49ab-98f6-07a66ebc36b3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	cost_adjustment	0.0000	8.3333	supplier_invoices	bed74747-6c63-4da5-9c2b-c04670bd2ebb	Ajustement cout reel facture fournisseur 511260000046	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:42:48.200823+00
+139b0b03-c679-4c40-b83e-7aa3a62c237f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	purchase_in	49.5920	14.5000	purchase_lines	7c489e25-5983-4e0f-8f63-bd1071c3c7db	Reception achat 6528afc6-5b4d-4efc-89d9-ee62ab025e76	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:23:38.88902+00
+5a800a50-c88d-4e5b-997c-e6f2045176ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	purchase_in	6.0000	28.5000	purchase_lines	f7319d03-17f4-4f03-a923-9cfdca290018	Reception achat 6528afc6-5b4d-4efc-89d9-ee62ab025e76	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:23:38.88902+00
+e72d8f5f-42df-4b58-ac81-7bfc75f6ec84	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	purchase_in	15.0000	19.9500	purchase_lines	ec1c496b-19a4-4feb-97c6-d11fa0e6b331	Reception achat 6528afc6-5b4d-4efc-89d9-ee62ab025e76	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:23:38.88902+00
+5a7fde1d-92b4-41f0-bc89-fddcbc5b5012	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	purchase_in	18.0000	25.9000	purchase_lines	8078758f-bb50-4532-93c3-d6c1a758dc3a	Reception achat 6528afc6-5b4d-4efc-89d9-ee62ab025e76	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:23:38.88902+00
+c1e82140-7312-427d-8b26-27525df2e8b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	796aa0b0-416e-46db-8861-605e81a067a4	sale_out	-8.0000	20.0000	sales_documents	a27c2590-a346-414d-aa73-de06aa9188cd	Validation BL BL-2026-00002	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:15:18.910503+00
+2d647de4-5eef-43d4-bf44-e12b9cf66051	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	796aa0b0-416e-46db-8861-605e81a067a4	sale_out	-1.0000	20.0000	sales_documents	a27c2590-a346-414d-aa73-de06aa9188cd	Sortie forcée BL client — stock insuffisant	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:15:18.910503+00
+eeff2e3a-d4e0-427c-89d4-02340954a68a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	sale_out	-3.0000	11.9000	sales_documents	eb58635e-2a6f-4b2e-b87d-1c465b9c3040	Validation BL BL-2026-00003	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:17:01.827963+00
+9b718b86-d689-4773-aa19-ea308199a0eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	94e7e1da-dac8-4493-8aff-c2e3d9f3f99e	purchase_in	4.0000	10.0000	purchase_lines	79df392f-dd4b-4660-8fd4-d2b10c6b833c	Reception achat 4d99e9f1-87be-4604-9751-f39862dd0a9b	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:17:39.517263+00
+5896ac2a-1cf3-4502-96f7-cbd4611f93d7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	94e7e1da-dac8-4493-8aff-c2e3d9f3f99e	regularization	-1.0000	10.0000	stock_regularization	796aa0b0-416e-46db-8861-605e81a067a4	Régularisation stock négatif suite sortie forcée - compensation depuis lot positif	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:18:01.343274+00
+850e2f13-5558-4e28-ac15-6807cdead2ae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	796aa0b0-416e-46db-8861-605e81a067a4	regularization	1.0000	20.0000	stock_regularization	796aa0b0-416e-46db-8861-605e81a067a4	Régularisation stock négatif suite sortie forcée - compensation vers lot négatif	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:18:01.343274+00
+12c531d7-190d-4b2f-a3d8-b20d5e58f9ff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	94e7e1da-dac8-4493-8aff-c2e3d9f3f99e	sale_out	-3.0000	10.0000	sales_documents	e3f1eb0a-482d-4cc1-b69f-3a94d3717488	Validation BL BL-2026-00004	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:18:35.133429+00
+11f3fa89-1509-4b46-9c58-aa784bc15f73	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	545e0ea6-cf1e-467d-9f99-3a31bfa92169	sale_out	-13.0000	10.0000	sales_documents	e3f1eb0a-482d-4cc1-b69f-3a94d3717488	Sortie forcée BL client — stock insuffisant	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:18:35.133429+00
+9591fd8e-2263-4fa5-9a10-022c70e8d90b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	545e0ea6-cf1e-467d-9f99-3a31bfa92169	regularization	13.0000	10.0000	stock_regularization	545e0ea6-cf1e-467d-9f99-3a31bfa92169	Régularisation interne stock négatif sans lot positif disponible	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 11:18:49.881126+00
+ad5f3c8d-8097-49d2-8a86-046a5a0b28b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	3c892426-3c83-4e4f-badc-d428997aeb23	sale_out	-3.0000	0.0000	sales_documents	d2df09b1-996d-49d8-bbb2-100ec447f796	Sortie forcée BL client — stock insuffisant	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 13:39:01.920805+00
+e9eedc69-3c66-488b-b6f6-5bf463a045b9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	486a6d50-f0da-4666-b5c0-be523ae0827d	4f9526f4-cfe9-41e3-bc1b-fabed5824b79	sale_out	-3.0000	8.9000	sales_documents	d2df09b1-996d-49d8-bbb2-100ec447f796	Sortie forcée BL client — stock insuffisant	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 13:39:01.920805+00
+ef33b41e-a77c-43a7-bf25-b44eb41384c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	486a6d50-f0da-4666-b5c0-be523ae0827d	4f9526f4-cfe9-41e3-bc1b-fabed5824b79	regularization	3.0000	8.9000	stock_regularization	4f9526f4-cfe9-41e3-bc1b-fabed5824b79	Régularisation interne stock négatif sans lot positif disponible	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 13:39:36.46488+00
+5222f110-aba8-455b-a3d3-255735d797ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	3c892426-3c83-4e4f-badc-d428997aeb23	regularization	3.0000	0.0000	stock_regularization	3c892426-3c83-4e4f-badc-d428997aeb23	Régularisation interne stock négatif sans lot positif disponible	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 13:39:38.546004+00
+c4e154de-5b12-4874-bebf-64f744a05507	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	7314c3b9-7d71-497e-b6b9-525273bd2ca7	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	sale_out	-3.0000	11.9000	sales_documents	615e736f-2e48-4d7b-a92a-7a6eda3a2c59	Validation BL BL-2026-00006	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-11 18:49:53.72248+00
+\.
+
+
+--
+-- Data for Name: stock_snapshot_lines; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.stock_snapshot_lines (id, snapshot_id, article_id, lot_id, quantity, unit_cost_ht, total_value_ht) FROM stdin;
+1dff6dc3-d9aa-42cf-9076-4685e0567cbc	3a613a2f-7bef-426d-a797-d51a77568714	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	30.0000	7.5000	225.0000
+08d5de92-7ebd-4f1d-a1aa-525093ee4e23	3a613a2f-7bef-426d-a797-d51a77568714	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	4.0000	35.0000	140.0000
+66c68f00-34cd-4e65-bbca-7a50df8ae4f5	3a613a2f-7bef-426d-a797-d51a77568714	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	9.0000	16.5000	148.5000
+16a4fd6d-26f8-47d4-b2a2-5395ee7323d4	3a613a2f-7bef-426d-a797-d51a77568714	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	9.0000	15.9000	143.1000
+c25d1c29-3cce-4c3e-bcd0-e01527cdddc8	3a613a2f-7bef-426d-a797-d51a77568714	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	3.0000	19.9000	59.7000
+1944cdfe-dcc9-4472-9584-810cef0df645	3a613a2f-7bef-426d-a797-d51a77568714	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	9.0000	8.3333	74.9997
+0b115136-1ceb-488c-9758-e11589c5f5ea	3a613a2f-7bef-426d-a797-d51a77568714	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	49.5920	14.5000	719.0840
+e4946ba0-6a45-4791-a617-8707ad656e2b	3a613a2f-7bef-426d-a797-d51a77568714	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	6.0000	28.5000	171.0000
+e4e849c4-24da-441d-b860-68ea350ae6b8	3a613a2f-7bef-426d-a797-d51a77568714	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	15.0000	19.9500	299.2500
+be2a0b4a-04c9-450b-9f89-9fc2159060cb	3a613a2f-7bef-426d-a797-d51a77568714	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	18.0000	25.9000	466.2000
+93d37423-4f5e-4bbe-acb8-0bfb564e77f6	3a613a2f-7bef-426d-a797-d51a77568714	7314c3b9-7d71-497e-b6b9-525273bd2ca7	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	3.0000	11.9000	35.7000
+b788278f-d48e-4101-80e7-0cd478bd22bf	9495ae79-552e-4ec4-9899-80e08ea04297	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	30.0000	7.5000	225.0000
+8679f29e-57dc-46e5-b816-3f68dba9b754	9495ae79-552e-4ec4-9899-80e08ea04297	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	4.0000	35.0000	140.0000
+4a5ba169-591c-464d-a959-dfa09f3c39ee	9495ae79-552e-4ec4-9899-80e08ea04297	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	9.0000	16.5000	148.5000
+49dcb69c-9c95-47dd-8cdd-2786d7940b98	9495ae79-552e-4ec4-9899-80e08ea04297	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	9.0000	15.9000	143.1000
+7d461816-04aa-4abb-ab55-7085a5be7bf6	9495ae79-552e-4ec4-9899-80e08ea04297	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	3.0000	19.9000	59.7000
+aa2bc6a2-5e4a-4015-9e2d-f88ab9a99786	9495ae79-552e-4ec4-9899-80e08ea04297	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	9.0000	8.3333	74.9997
+941eddf0-f1eb-48a0-8f98-4855a477cef9	9495ae79-552e-4ec4-9899-80e08ea04297	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	49.5920	14.5000	719.0840
+c8aed374-0235-4541-afe1-8167495cb6cc	9495ae79-552e-4ec4-9899-80e08ea04297	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	6.0000	28.5000	171.0000
+6a70ad7e-f75e-4752-a8dd-78e928eed1f7	9495ae79-552e-4ec4-9899-80e08ea04297	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	15.0000	19.9500	299.2500
+4d28726a-63d8-4310-be64-e8411e710eaa	9495ae79-552e-4ec4-9899-80e08ea04297	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	18.0000	25.9000	466.2000
+e8ccf3b7-34db-41f3-8eb7-137f749e6aec	9495ae79-552e-4ec4-9899-80e08ea04297	7314c3b9-7d71-497e-b6b9-525273bd2ca7	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	3.0000	11.9000	35.7000
+1285bd15-2358-4646-bf50-cc74774d892c	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	30.0000	7.5000	225.0000
+c6de25b1-723a-4564-a131-11c6eadf4fac	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	4.0000	35.0000	140.0000
+45eb9595-173d-4344-8209-ec74bfdff6e2	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	9.0000	16.5000	148.5000
+fdb87719-3fcb-4741-b68a-53c322622f1b	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	9.0000	15.9000	143.1000
+fb49671d-3219-48ff-bef9-57b6d1348e84	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	3.0000	19.9000	59.7000
+91fc3f8e-3381-4d5e-9bee-728d3f6b4e38	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	9.0000	8.3333	74.9997
+4d7687bf-ea70-45ed-ba1a-ca17dc38afef	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	49.5920	14.5000	719.0840
+018b79f6-9223-4964-89f5-df69fa255da5	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	6.0000	28.5000	171.0000
+381e90af-b937-4324-9d40-03bfc73db336	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	15.0000	19.9500	299.2500
+4c845c78-9954-4135-bc0b-79e881c446d8	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	18.0000	25.9000	466.2000
+8440e9c0-dda2-42c2-aba5-96647cdbc32e	6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	7314c3b9-7d71-497e-b6b9-525273bd2ca7	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	3.0000	11.9000	35.7000
+b5b402a9-8d95-4145-aa73-538e0661c366	3989d92f-8f22-40c3-b74b-e71315798b67	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	30.0000	7.5000	225.0000
+00027004-85cc-49a6-9b10-1ec0842cf542	3989d92f-8f22-40c3-b74b-e71315798b67	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	4.0000	35.0000	140.0000
+73ab775e-6687-4a09-b174-664e0ba7ae18	3989d92f-8f22-40c3-b74b-e71315798b67	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	9.0000	16.5000	148.5000
+794c2c70-6798-4fac-a80e-2eee2bf9bf54	3989d92f-8f22-40c3-b74b-e71315798b67	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	9.0000	15.9000	143.1000
+db28e24d-aff0-4b53-a2e7-60e6b467c4bc	3989d92f-8f22-40c3-b74b-e71315798b67	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	3.0000	19.9000	59.7000
+5226a02d-9a20-4cce-9cdf-c635c154debc	3989d92f-8f22-40c3-b74b-e71315798b67	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	9.0000	8.3333	74.9997
+0395bddf-4b47-4e39-bd31-78fb51c53c30	3989d92f-8f22-40c3-b74b-e71315798b67	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	49.5920	14.5000	719.0840
+3c413416-de43-46c3-8e94-3dba715070a3	3989d92f-8f22-40c3-b74b-e71315798b67	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	6.0000	28.5000	171.0000
+66e52ec7-63c5-4e0a-bd03-3080881587f5	3989d92f-8f22-40c3-b74b-e71315798b67	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	15.0000	19.9500	299.2500
+61b7bb32-9680-4b21-8dbc-5758e751b2d5	3989d92f-8f22-40c3-b74b-e71315798b67	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	18.0000	25.9000	466.2000
+387bd7ca-4469-4064-9e5a-2e4d9691238b	3989d92f-8f22-40c3-b74b-e71315798b67	7314c3b9-7d71-497e-b6b9-525273bd2ca7	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	3.0000	11.9000	35.7000
+a262544f-e7c2-4c18-a0cc-87eeaa58b027	bd23924b-f0c6-4371-be9f-24ec09933342	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	30.0000	7.5000	225.0000
+2b7bbed7-3525-4df6-86d8-63cc0c515fdc	bd23924b-f0c6-4371-be9f-24ec09933342	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	4.0000	35.0000	140.0000
+dbb65798-8f78-4c71-a760-bdcd314c7b6b	bd23924b-f0c6-4371-be9f-24ec09933342	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	9.0000	16.5000	148.5000
+4cadd0a0-4150-4a41-a544-de225df7902a	bd23924b-f0c6-4371-be9f-24ec09933342	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	9.0000	15.9000	143.1000
+0344e446-502c-43eb-9809-cb3d9f1a079a	bd23924b-f0c6-4371-be9f-24ec09933342	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	3.0000	19.9000	59.7000
+3de51a9e-6dcc-4e4a-ab2d-daf915956390	bd23924b-f0c6-4371-be9f-24ec09933342	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	9.0000	8.3333	74.9997
+36b3977a-557e-407c-ad29-4f9c2ec0a0df	bd23924b-f0c6-4371-be9f-24ec09933342	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	49.5920	14.5000	719.0840
+4c5a0207-1ce6-4b26-a6d9-bf405ae9d946	bd23924b-f0c6-4371-be9f-24ec09933342	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	6.0000	28.5000	171.0000
+f79c820a-183a-4ae3-8bf8-9bdd995c950b	bd23924b-f0c6-4371-be9f-24ec09933342	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	15.0000	19.9500	299.2500
+5973ae40-ba05-4ca6-8e38-a2b04248ad16	bd23924b-f0c6-4371-be9f-24ec09933342	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	18.0000	25.9000	466.2000
+66a6d53c-fe8d-470f-bbe5-fcecd43b8b26	bd23924b-f0c6-4371-be9f-24ec09933342	7314c3b9-7d71-497e-b6b9-525273bd2ca7	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	3.0000	11.9000	35.7000
+9f051530-994d-41bb-8e36-46f435fd1497	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	30.0000	7.5000	225.0000
+6570032d-43e1-4075-8b0f-6331d0f1f3bd	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	4.0000	35.0000	140.0000
+1ef38087-c460-47d5-b333-b89790726211	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	9.0000	16.5000	148.5000
+4e632dc6-8a2d-457f-8d5c-68fa726356ec	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	9.0000	15.9000	143.1000
+11102e6b-bd86-4c19-8eac-159857e72df1	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	3.0000	19.9000	59.7000
+487fc4bd-5290-4fcf-b713-82297c8936a3	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	9.0000	8.3333	74.9997
+8a0be075-90d8-4a05-9c5f-08b09a234772	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	49.5920	14.5000	719.0840
+c1a003f2-11a9-4d02-8ab9-73923e46a490	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	6.0000	28.5000	171.0000
+e04e6e74-434e-4c7b-8815-a5ff545b80a8	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	15.0000	19.9500	299.2500
+338c8408-64f7-47ce-b910-bceaecae63a7	e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	18.0000	25.9000	466.2000
+5a47ad33-3edb-499a-9536-6527426d3d6b	eabe309c-d403-4d31-b9f2-fdb467b94617	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	30.0000	7.5000	225.0000
+f0f0dfb7-bbc4-47ba-8193-73327220174e	eabe309c-d403-4d31-b9f2-fdb467b94617	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	4.0000	35.0000	140.0000
+c617ddf8-738a-4b61-9160-ab353bc5deb0	eabe309c-d403-4d31-b9f2-fdb467b94617	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	9.0000	16.5000	148.5000
+e7d5366c-599c-4122-8ea3-5d63eb898db5	eabe309c-d403-4d31-b9f2-fdb467b94617	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	9.0000	15.9000	143.1000
+e47bd39e-89e8-4d40-ad94-ce9473ba1552	eabe309c-d403-4d31-b9f2-fdb467b94617	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	3.0000	19.9000	59.7000
+1a8aca70-130b-4236-9d2a-5461b5f56a06	eabe309c-d403-4d31-b9f2-fdb467b94617	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	9.0000	8.3333	74.9997
+87dfa99c-dd68-408f-9611-a311c9375c7b	eabe309c-d403-4d31-b9f2-fdb467b94617	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	49.5920	14.5000	719.0840
+d53c279e-ac81-4539-b94f-342ddbc59249	eabe309c-d403-4d31-b9f2-fdb467b94617	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	6.0000	28.5000	171.0000
+e3a702b4-95e3-4283-ac6f-978a0760b70b	eabe309c-d403-4d31-b9f2-fdb467b94617	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	15.0000	19.9500	299.2500
+49274e5c-cd39-4da1-bcba-d4c411efbcbb	eabe309c-d403-4d31-b9f2-fdb467b94617	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	18.0000	25.9000	466.2000
+f5011dd3-473f-48d6-9ed9-bc027d50bbf3	623a4b12-82c2-460b-93af-8073b42d6bd0	4ca18ee3-6cbe-48ff-a300-306183707747	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	30.0000	7.5000	225.0000
+9be80487-ce97-49e6-a8e5-89818745dcc4	623a4b12-82c2-460b-93af-8073b42d6bd0	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	86bf8178-e99d-4db2-ab1c-cbfa375fc650	4.0000	35.0000	140.0000
+66c3e990-5ffc-4833-842a-c539bdaaf1eb	623a4b12-82c2-460b-93af-8073b42d6bd0	24336843-3546-4088-9153-515acd22a23c	db2f2e6f-808a-47fc-9015-e922da3b5d54	9.0000	16.5000	148.5000
+fcfdd94f-b25c-4129-863c-f368f6371b41	623a4b12-82c2-460b-93af-8073b42d6bd0	ab0fb31e-be20-4002-8170-9004eada1825	71145093-7854-416c-85ce-8a266d4981e2	9.0000	15.9000	143.1000
+fe26f7cb-b301-4732-a007-13f792ee4a36	623a4b12-82c2-460b-93af-8073b42d6bd0	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	3.0000	19.9000	59.7000
+afe9c80d-b883-499d-8b4c-30cd0278bef5	623a4b12-82c2-460b-93af-8073b42d6bd0	67eee58a-db9e-454b-ab08-e7f4a351d03c	5723d92e-0838-42eb-9869-b08c786a75e8	9.0000	8.3333	74.9997
+4bb0aba1-d58e-451e-a5e2-4b492d6169af	623a4b12-82c2-460b-93af-8073b42d6bd0	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	95058d09-4b80-4e3d-a1a1-15c53b903bf1	49.5920	14.5000	719.0840
+6791b53f-a3bd-454f-9dcc-605a882e60eb	623a4b12-82c2-460b-93af-8073b42d6bd0	546505b1-799b-42df-9fac-fe4c55c36970	253677a9-b401-4034-9311-492720bd778b	6.0000	28.5000	171.0000
+3e0b77c3-342d-46bf-8401-8637597a6576	623a4b12-82c2-460b-93af-8073b42d6bd0	3c3ecce0-095a-4411-9e37-8b887c30ea37	dbbe0e08-3181-45a7-b80c-077d8eac1639	15.0000	19.9500	299.2500
+dabee275-fbf6-43cb-8876-458103d847ca	623a4b12-82c2-460b-93af-8073b42d6bd0	984aac3f-583f-4ec2-8743-9f4a14520ea3	f75757ab-73e9-45ca-af52-4e230ea31fc2	18.0000	25.9000	466.2000
+\.
+
+
+--
+-- Data for Name: stock_snapshots; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.stock_snapshots (id, store_id, snapshot_date, snapshot_type, total_value_ht, created_at, created_by) FROM stdin;
+3a613a2f-7bef-426d-a797-d51a77568714	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-07 13:58:27.433+00	manual	2482.5337	2026-06-07 13:58:27.462171+00	3200f2be-f337-4cbd-8ca2-aa752bd61be5
+2735f987-9884-4c98-a741-f520dfc795eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-06 00:00:00+00	manual	2000.0000	2026-06-07 14:01:17.890245+00	\N
+9495ae79-552e-4ec4-9899-80e08ea04297	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-07 20:05:59.297+00	automatic	2482.5337	2026-06-07 20:05:59.298546+00	\N
+6f17d302-c2b8-4c7b-8ea5-c9e2d01ae66c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-08 20:14:59.984+00	automatic	2482.5337	2026-06-08 20:14:59.986058+00	\N
+3989d92f-8f22-40c3-b74b-e71315798b67	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-09 20:15:00.003+00	automatic	2482.5337	2026-06-09 20:15:00.003721+00	\N
+bd23924b-f0c6-4371-be9f-24ec09933342	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-10 20:00:00.061+00	automatic	2482.5337	2026-06-10 20:00:00.062615+00	\N
+e9b1989c-58c9-48d3-8fb4-02e30ae5ef65	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-11 20:10:12.741+00	automatic	2446.8337	2026-06-11 20:10:12.743092+00	\N
+eabe309c-d403-4d31-b9f2-fdb467b94617	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-12 20:14:19.615+00	automatic	2446.8337	2026-06-12 20:14:19.616792+00	\N
+623a4b12-82c2-460b-93af-8073b42d6bd0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	2026-06-13 20:01:30.696+00	automatic	2446.8337	2026-06-13 20:01:30.697355+00	\N
+\.
+
+
+--
+-- Data for Name: stock_summary; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.stock_summary (id, store_id, client_key, article_id, stock_quantity, stock_value_ex_vat, pma, next_dlc, updated_at) FROM stdin;
+f9216986-1602-4a6d-914f-0480290aa030	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	d8cc0865-90d5-4195-961b-665ba8e14bfd	13.3000	272.0116	20.4520	\N	2026-06-07 06:08:58.7999+00
+0d8d30f6-318d-4e3b-9022-fcb94850e284	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	6c608d22-1b2b-465b-8f5d-cde10ab84494	40.0000	1080.0000	27.0000	\N	2026-06-06 15:22:16.327761+00
+79272f5c-f577-4c82-ab1b-cb2b77ac2353	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	3de15f27-7e6c-4207-9086-99b5397b25b5	0.0000	0.0000	0.0000	\N	2026-05-31 14:57:42.662469+00
+7f7476e3-caa2-44d0-9cb1-cc7aa1cf8971	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	6.1000	82.3500	13.5000	\N	2026-06-07 05:23:55.874398+00
+67f3023f-5249-43bf-ae34-bbebb48f439b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	6.0000	82.8000	13.8000	\N	2026-06-07 05:23:55.874398+00
+51e0133e-8c24-4895-bb2a-a4aaf66104ca	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	e23bf4a9-ac36-4668-87d8-9cb22010c562	1.0000	50.0000	50.0000	\N	2026-06-05 14:12:29.496661+00
+4443332c-b90d-4e78-a04d-d8cb657ccb59	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	bf77f28a-0e62-46dd-a0c3-343968557980	0.0000	0.0000	0.0000	\N	2026-06-05 15:02:42.13725+00
+b0cffc57-798c-45d8-aaa7-0d5ebc2fb64b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	4ca18ee3-6cbe-48ff-a300-306183707747	30.0000	225.0000	7.5000	\N	2026-06-07 08:17:03.307477+00
+a83b375d-f036-4e1a-a2c9-2294475ecd1b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	4.0000	140.0000	35.0000	\N	2026-06-07 08:17:03.307477+00
+65106974-6ef5-4594-af09-e01b2bb2a37e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	ce180a78-209b-4f30-8616-211b889e7486	1.4000	8.5512	6.1080	\N	2026-06-07 06:08:58.7999+00
+f82cfc2e-9ad9-408a-b5c6-9d177e03dec9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	67eee58a-db9e-454b-ab08-e7f4a351d03c	9.0000	74.9997	8.3333	\N	2026-06-07 08:42:48.200823+00
+b03ca7c4-6acb-4ce5-a349-4cfb1ea8c5b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	984aac3f-583f-4ec2-8743-9f4a14520ea3	18.0000	466.2000	25.9000	\N	2026-06-07 09:23:38.88902+00
+b54ab137-8915-4d6f-bd26-c2a5de41986b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	486a6d50-f0da-4666-b5c0-be523ae0827d	0.0000	0.0000	0.0000	\N	2026-06-07 13:39:36.46488+00
+02d7877a-6fcc-4012-b8da-0b693ee7aff7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	f84214e4-02b2-4690-80df-2d70d5b0436b	10.0000	79.1200	7.9120	\N	2026-06-07 06:09:44.374504+00
+63d18a66-9e2a-42ea-bab9-a0e56385bd47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	2cf25564-754e-4e68-aace-e2f278690d86	2.5000	70.1050	28.0420	\N	2026-06-07 06:08:58.7999+00
+c29ccd2c-3b76-4662-83e9-237dba1356db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	0.0000	0.0000	0.0000	\N	2026-06-07 13:39:38.546004+00
+1aad9b84-726a-4497-972a-baa692dbfc7a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	374b9933-b4e1-4828-a867-1f12cf2f216d	1.6000	21.7936	13.6210	\N	2026-06-07 06:08:58.7999+00
+fd061a87-501b-4d07-a641-41d5588b912b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	a5129f95-d071-483e-afec-32d5f7353eb6	14.9000	113.1544	7.5943	\N	2026-06-07 06:09:44.374504+00
+adca45a4-d087-404d-a0c2-8a71bac9fc1f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	70350ad4-e848-4d05-b9d8-8f08af7ad582	1.2000	19.9092	16.5910	\N	2026-06-07 06:09:44.374504+00
+73d65488-12d4-475d-acb3-dad8e56b804a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	31137cf1-8896-4f7e-9dc4-d842c30f10da	15.7000	113.5110	7.2300	\N	2026-06-07 06:08:58.7999+00
+8b092ab9-77cd-4c1c-92ac-daeb7d4e92ab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	7314c3b9-7d71-497e-b6b9-525273bd2ca7	0.0000	0.0000	0.0000	\N	2026-06-11 18:49:53.72248+00
+67c22678-c34a-410a-b837-5d43aed0ac76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	ee66bb6c-2061-48ac-a254-153c7ad3658d	1.8000	27.3690	15.2050	\N	2026-06-07 06:09:44.374504+00
+49835686-0128-462d-9083-284fe6fe8309	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	736679c3-a884-4108-8859-955daa6c012d	1.5000	33.5325	22.3550	\N	2026-06-07 06:09:44.374504+00
+121b5e14-cbe2-4028-bcf2-3515c957c86d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	fea072a6-8c3b-44c0-9721-ecbf962ce60f	19.0000	11.7610	0.6190	\N	2026-06-07 06:09:44.374504+00
+55ed2380-4d3f-4a23-9463-af2ff188f22b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	f255adfd-76ff-467b-8c3e-5b8a79a0942a	11.3000	321.6475	28.4644	\N	2026-06-07 06:09:44.374504+00
+bd394a67-f9a1-4a6d-81f0-e25f4d2b9cba	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	cf014bf1-5197-4f7b-9e69-b0d174a826d1	27.0000	432.0000	16.0000	\N	2026-06-06 15:22:16.327761+00
+324b051d-4abe-4fd0-9e9d-5d0a9cad29f2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	6b5031b8-02bf-4603-9d7c-5bc91f8820bd	6.0000	83.4000	13.9000	\N	2026-06-07 05:23:55.874398+00
+3fcf70d8-3ca1-401d-be74-295859388639	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	05f46a02-bda4-4fb3-9f7e-563294d4e470	6.0000	83.4000	13.9000	\N	2026-06-07 05:23:55.874398+00
+1576c891-626d-4bc2-b358-4a282a2fdaf1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	2.1000	31.4916	14.9960	\N	2026-06-07 06:08:58.7999+00
+dc5acd9e-b545-49be-b489-60237466173c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	9812f172-5418-4207-8208-9433fe2a0bd3	4.7000	90.0238	19.1540	\N	2026-06-07 06:08:58.7999+00
+f5e380e6-401e-45bd-a15e-c6a4b66ef589	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	4c092e26-16d0-463a-b01b-5a4703fbb9c7	14.6000	57.1316	3.9131	\N	2026-06-07 06:08:58.7999+00
+a9511684-51c4-4cc1-ae4c-be3b1af53cb9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	86bb7bb5-b64b-4895-a782-af5563c65dc7	8.4000	25.6420	3.0526	\N	2026-06-07 06:08:58.7999+00
+772dcb65-01c6-4ead-9040-0d247cac564a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	6.9000	152.3322	22.0771	\N	2026-06-07 06:08:58.7999+00
+0c956db5-46e7-48f4-bf6f-cf994653133c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	357cc017-7dc3-47e0-aff2-af7cf95bb822	16.0000	162.4960	10.1560	\N	2026-06-07 06:08:58.7999+00
+a280f2a0-c1f5-465e-aa6b-9b7c28898131	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	24336843-3546-4088-9153-515acd22a23c	9.0000	148.5000	16.5000	\N	2026-06-07 08:39:38.332265+00
+0efada8b-131c-4db9-a5da-b7e4f829cec7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	2fd4817f-3c62-4d32-81ee-8043e300e327	13.5000	29.9132	2.2158	\N	2026-06-07 06:08:58.7999+00
+26131c56-e51f-45fd-84d1-6c46c839c023	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	c5e4d501-9c7c-44fc-a1f7-8976600b988c	6.0000	26.1650	4.3608	\N	2026-06-07 06:08:58.7999+00
+f5562626-789b-4bad-bfac-10e50f03b3f7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	ab0fb31e-be20-4002-8170-9004eada1825	9.0000	143.1000	15.9000	\N	2026-06-07 08:39:38.332265+00
+2c506e7d-a611-46eb-ab9e-cd2542d97b72	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	6ecc824c-d57d-40a8-9134-1a466fc77ddc	10.9000	66.7488	6.1237	\N	2026-06-07 06:08:58.7999+00
+a9a66567-592f-407f-bede-8dbd7b2d7840	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	62efd755-a71b-46d4-aea9-1035b3aaacec	2.7000	44.7660	16.5800	\N	2026-06-07 06:08:58.7999+00
+d6f9ee85-6aca-42b4-8e04-899e62f9139c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	3.0000	59.7000	19.9000	\N	2026-06-07 08:39:38.332265+00
+6768a235-9536-4392-88f7-872c3c047f58	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	49.5920	719.0840	14.5000	\N	2026-06-07 09:23:38.88902+00
+15d6e2fe-5a11-4579-93dd-2dde3a6bf38b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	7a686fcf-41d6-4012-8714-fe2f11510119	48.2000	298.1038	6.1847	\N	2026-06-07 06:08:58.7999+00
+7f616ae8-4507-4f38-b4e0-221201d41406	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	5.6000	33.0960	5.9100	\N	2026-06-07 06:08:58.7999+00
+a1fe4ab7-b4f6-44c1-8453-8991c6cd2ba1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	0fca7821-36e3-4ce2-b93a-a14e6314e70e	13.6000	81.7719	6.0126	\N	2026-06-07 06:08:58.7999+00
+b61860b7-11f3-4bdb-beb7-8ddb07e4cf72	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	2eb84882-ba8b-4b02-8cb0-7395270bbd32	6.5000	15.3920	2.3680	\N	2026-06-07 06:08:58.7999+00
+44e0cf36-8ba4-4d51-ba06-023b6737eaf0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	07300211-c58c-4518-809f-663efc1e50c2	14.6000	78.9666	5.4087	\N	2026-06-07 06:08:58.7999+00
+823cbb4b-84f1-4777-8b69-080eaa7ffadb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	799a9436-5d05-4951-a424-51c2a4094cdc	1.0000	17.8340	17.8340	\N	2026-06-07 06:08:58.7999+00
+31748611-a20f-45a3-bff3-259f0b97e559	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	546505b1-799b-42df-9fac-fe4c55c36970	6.0000	171.0000	28.5000	\N	2026-06-07 09:23:38.88902+00
+68dc6923-4bda-4592-a9e1-ffbe4f2627f2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	42.5000	144.8490	3.4082	\N	2026-06-07 06:09:44.374504+00
+2e8b3dd9-cb19-446f-a1f5-a57360a79fa9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	\N	3c3ecce0-095a-4411-9e37-8b887c30ea37	15.0000	299.2500	19.9500	\N	2026-06-07 09:23:38.88902+00
+\.
+
+
+--
+-- Data for Name: store_settings; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.store_settings (id, store_id, company_name, logo_url, address_line1, address_line2, postal_code, city, country, phone, email, siret, vat_number, sanitary_approval_number, iban, bic, payment_terms, legal_mentions, terms_and_conditions, delivery_note_footer, invoice_footer, created_by, updated_by, created_at, updated_at, favicon_url) FROM stdin;
+d5bde53e-7aa6-41c3-81ef-7d690db5ae05	dbc17f4c-8ef7-4247-b13f-603e4c58f622	ALTA MAREE	http://api.altamaree.fr/uploads/store-logos/dbc17f4c-8ef7-4247-b13f-603e4c58f622-1780844378681-65563b354ca7857a.png	28 rue du corbon	\N	44115	basse goulaine	France	+33687343455	paonalric@gmail.com	111111111111111111	FR71800165177	44.125.122	FR0223332222222	AFDGQFGF	A RECEPTION	TEST1	TEST2	TEST3	TEST4	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-01 18:16:30.388197+00	2026-06-07 16:50:17.570261+00	http://api.altamaree.fr/uploads/store-favicons/dbc17f4c-8ef7-4247-b13f-603e4c58f622-1780851015734-3e52ae192314ab65.png
+\.
+
+
+--
+-- Data for Name: stores; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.stores (id, code, name, created_at, client_key) FROM stdin;
+dbc17f4c-8ef7-4247-b13f-603e4c58f622	SCORPA	Scorpa Seafood	2026-05-27 18:00:00.103345	scorpa
+\.
+
+
+--
+-- Data for Name: supplier_article_mappings; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.supplier_article_mappings (id, store_id, client_key, supplier_id, article_id, supplier_ref, supplier_label, is_active, created_by, updated_by, created_at, updated_at, purchase_unit, price_unit) FROM stdin;
+2987b2ec-b20c-40d2-8651-10774264d9ec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6eb0c8e8-bada-4f6c-9269-b420bf9e165a	16100172	HARENG FACON BOUFFI P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.635447+00	2026-05-29 18:29:31.386716+00	kg	kg
+a3ea3633-8ac9-4e2b-b489-189ccb963957	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6eb0c8e8-bada-4f6c-9269-b420bf9e165a	16100173	BOUFFIS	t	\N	\N	2026-05-17 09:42:46.637112+00	2026-05-29 18:29:31.386716+00	kg	kg
+ec40bd76-c1af-44b3-b279-5d7cdfb58198	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6eb0c8e8-bada-4f6c-9269-b420bf9e165a	26103059	BOUFFIS	t	\N	\N	2026-05-17 09:42:46.693414+00	2026-05-29 18:29:31.386716+00	kg	kg
+e602ca3e-24f6-4cdf-9e67-9604ae52f5b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	2bca7b5c-6719-4370-bf78-b31f73eebed0	16103400	HARENG SAUR	t	\N	\N	2026-05-17 09:42:46.64707+00	2026-05-29 18:29:31.386716+00	kg	kg
+30901427-2531-4ad9-bdb2-f6db69caa090	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	cec40e9b-dd48-45e5-bfd6-52f30f6b3bc4	16000010	SARDINE PRESS ACW X6K PFX	t	\N	\N	2026-05-17 09:42:46.632065+00	2026-05-29 18:29:31.386716+00	kg	kg
+a1858715-f476-4706-b27d-0213bd98f172	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	a1cfd95b-c66d-48be-9f23-2dfa2c68c3e4	12101015	PINCES DE TOURTEAUX CUITES 4/8	t	\N	\N	2026-05-17 09:42:46.325769+00	2026-05-29 18:29:31.386716+00	kg	kg
+b16bf66c-5ef2-4914-b0dc-37cddeeacf25	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	a1cfd95b-c66d-48be-9f23-2dfa2c68c3e4	12101060	PINCES DE TOURTEAUX CUITES 4/8	t	\N	\N	2026-05-17 09:42:46.326872+00	2026-05-29 18:29:31.386716+00	kg	kg
+f47febb4-b6d7-48f3-835f-04a23b900de6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	068761ab-6988-482e-a605-341ae910d37c	12201605	CREVETTE CUITE 80/100	t	\N	\N	2026-05-17 09:42:46.345907+00	2026-05-29 18:29:31.386716+00	kg	kg
+acf4bc59-5150-47bf-b26f-3676bf5ad2e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	068761ab-6988-482e-a605-341ae910d37c	12201632	CREVETTE CUITE 80/100	t	\N	\N	2026-05-17 09:42:46.348155+00	2026-05-29 18:29:31.386716+00	kg	kg
+a524dc99-0cbe-4bf2-a231-f965df7dcd7a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	068761ab-6988-482e-a605-341ae910d37c	12201634	CREVETTE CUITE 80/100	t	\N	\N	2026-05-17 09:42:46.349579+00	2026-05-29 18:29:31.386716+00	kg	kg
+27e9b40c-1c89-4dd4-890c-51f41df35080	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	068761ab-6988-482e-a605-341ae910d37c	12201815	CREV CUIT 80/100 EL/VZ++ X2K PFX	t	\N	\N	2026-05-17 09:42:46.350778+00	2026-05-29 18:29:31.386716+00	kg	kg
+e8f97471-f232-4cd0-b0f9-e287187f95c5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	068761ab-6988-482e-a605-341ae910d37c	12201920	CREVETTE CUITE 80/100	t	\N	\N	2026-05-17 09:42:46.351758+00	2026-05-29 18:29:31.386716+00	kg	kg
+a7c0552a-8a4e-497a-8866-324b0746d98d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	16f6d6f5-0e6a-4efe-beaa-bdc808045e6c	13453205	THONINE COMMUNE 4/10 P/MED X1P PVA	t	\N	\N	2026-05-17 09:42:46.441087+00	2026-05-29 18:29:31.386716+00	kg	kg
+fbdb144e-8491-4beb-99fa-d01ba0bd9717	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	497dfa60-242a-41cf-a896-a2f5aaa8bc7b	14100110	SAUMON SUP VIDE 1/2 EL/EC X20K PVA	t	\N	\N	2026-05-17 09:42:46.570237+00	2026-05-29 18:29:31.386716+00	kg	kg
+0a6a0e1a-8ceb-4ea0-ad3f-a8612b4f03be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	497dfa60-242a-41cf-a896-a2f5aaa8bc7b	14110100	SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:46.576952+00	2026-05-29 18:29:31.386716+00	kg	kg
+ff029be3-836f-46dd-9b31-709adf75a729	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	497dfa60-242a-41cf-a896-a2f5aaa8bc7b	14110110	SAUMON SUP VIDE 1/3 EL/NVG X20KG PVA	t	\N	\N	2026-05-17 09:42:46.57878+00	2026-05-29 18:29:31.386716+00	kg	kg
+927c0455-2032-486e-bb86-98704ae3a40c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	497dfa60-242a-41cf-a896-a2f5aaa8bc7b	14110210	SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:46.58035+00	2026-05-29 18:29:31.386716+00	kg	kg
+834301e7-1e5a-4af1-b561-8238a0e6e290	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	eb10da5d-a0ae-4d54-ba4f-cce96b510c9a	13153110	MERLAN	t	\N	\N	2026-05-17 09:42:46.41105+00	2026-05-29 18:29:31.386716+00	kg	kg
+5b790108-55de-4b9b-bd64-ea9bf7cd4cd9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	00729a62-7e96-4ad2-82cc-0dba17958572	13154112	MERLU PORTION	t	\N	\N	2026-05-17 09:42:46.412703+00	2026-05-29 18:29:31.386716+00	kg	kg
+a0669885-63af-4eae-afbc-3e0c6d7a0ecf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0a1a9a19-4c79-41b4-acea-9fab3d52266f	13104312	MAQUEREAU	t	\N	\N	2026-05-17 09:42:46.37306+00	2026-05-29 18:29:31.386716+00	kg	kg
+b75077fa-4df1-46d6-bcf9-fedcface5beb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	06367c87-d184-4bf8-b917-cad7799cb1c8	13150912	MULET	t	\N	\N	2026-05-17 09:42:46.393697+00	2026-05-29 18:29:31.386716+00	kg	kg
+cbb7fe8e-b14a-4821-b97b-9a92961984f3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	06367c87-d184-4bf8-b917-cad7799cb1c8	13150950	MULET	t	\N	\N	2026-05-17 09:42:46.395119+00	2026-05-29 18:29:31.386716+00	kg	kg
+f0711078-90d3-474a-800f-cdeba0585603	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	06367c87-d184-4bf8-b917-cad7799cb1c8	13150951	MULET	t	\N	\N	2026-05-17 09:42:46.396573+00	2026-05-29 18:29:31.386716+00	kg	kg
+6464807b-23ae-4b9f-8354-3a46c791066b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	68f21e78-5b9f-4782-a924-1aecc9db84be	13204300	SOLE BLONDE 120/300 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.42464+00	2026-05-29 18:29:31.386716+00	kg	kg
+8e5f1620-0f8b-4a1e-b5bb-0ef6e95f5d9b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	32d758db-4e04-4e64-9817-422db1ae319b	11101350	MOULE BOUCHOT STG ST BRIEUC EL/Fr X15K PFX	t	\N	\N	2026-05-17 09:42:46.285931+00	2026-05-29 18:29:31.386716+00	kg	kg
+1a75aef7-b2cb-4426-bc09-18e040e84c1e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f255adfd-76ff-467b-8c3e-5b8a79a0942a	13205120	TURBOT VIDE 0,5/1 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.42629+00	2026-05-29 18:29:31.386716+00	kg	kg
+4f937953-4234-41a2-b930-325e121e1fa9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	486a6d50-f0da-4666-b5c0-be523ae0827d	13602143	RAIE PELEE 1,2/+ PAVILLON FRANCE P/ANE X6K PVA	t	\N	\N	2026-05-17 09:42:46.54587+00	2026-05-29 18:29:31.386716+00	kg	kg
+d8aaaec4-b557-45f6-86e9-97a84f7a2021	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	62efd755-a71b-46d4-aea9-1035b3aaacec	13150702	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:46.388347+00	2026-05-29 18:29:31.386716+00	kg	kg
+eb247f8a-8d12-41aa-a950-d4042f2744da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3bdbbc7e-11b1-4cfe-af2b-aa9270e010e6	13457336	LONGE D'ESPADON PROVENCAL	t	\N	\N	2026-05-17 09:42:46.442553+00	2026-05-29 18:29:31.386716+00	kg	kg
+78ea036d-1797-4f72-a229-aa04125f7995	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3bdbbc7e-11b1-4cfe-af2b-aa9270e010e6	13457337	LONGE ESPADON S/ARETES A/PEAU DECONGELEE 1.5/3 P/OP X2P PVA	t	\N	\N	2026-05-17 09:42:46.443966+00	2026-05-29 18:29:31.386716+00	kg	kg
+35ec635c-ae15-46bd-848e-f31cf79c4572	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	7a686fcf-41d6-4012-8714-fe2f11510119	13155110	ROUGET BARBET	t	\N	\N	2026-05-17 09:42:46.417865+00	2026-05-29 18:29:31.386716+00	kg	kg
+d6285de4-a06a-4811-b9b7-6bfcf994b51e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	7a686fcf-41d6-4012-8714-fe2f11510119	13155112	ROUGET BARBET 100/200 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.41963+00	2026-05-29 18:29:31.386716+00	kg	kg
+c74b6258-f41f-490a-a716-2c276f3811fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	aa8dd004-97e2-4d50-a44e-45ba6f60ac3f	13103015	HARENG P/ANE X10K PFX	t	\N	\N	2026-05-17 09:42:46.36456+00	2026-05-29 18:29:31.386716+00	kg	kg
+c784609c-f8d1-445c-a75c-ed5a80984d91	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	aa8dd004-97e2-4d50-a44e-45ba6f60ac3f	13103020	HARENG P/ANE X6K PFX	t	\N	\N	2026-05-17 09:42:46.365846+00	2026-05-29 18:29:31.386716+00	kg	kg
+087a5dcb-bd6b-4c49-af77-69eb075549b4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	aa8dd004-97e2-4d50-a44e-45ba6f60ac3f	13103022	HARENG	t	\N	\N	2026-05-17 09:42:46.367529+00	2026-05-29 18:29:31.386716+00	kg	kg
+120fa49e-c49a-43fe-a1df-b64df8de7f16	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	aa8dd004-97e2-4d50-a44e-45ba6f60ac3f	13103031	HARENG	t	\N	\N	2026-05-17 09:42:46.368555+00	2026-05-29 18:29:31.386716+00	kg	kg
+a1d5b59f-e086-430f-8242-6cb41f3f9202	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f3df46f5-ac91-4b15-9171-a041d771b2b0	11204329	HUITRE MARENNE OLERON N	t	\N	\N	2026-05-17 09:42:46.301343+00	2026-05-29 18:29:31.386716+00	kg	kg
+30701c98-3fc2-4f89-be5e-53cb6fa4106f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3b224636-ae9b-4d7d-a283-19462049cc83	13801112	ENCORNET FRAIS 100/- PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.559162+00	2026-05-29 18:29:31.386716+00	kg	kg
+5d3b1a02-b24a-426d-81ec-95510200b72e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3b224636-ae9b-4d7d-a283-19462049cc83	13801122	ENCORNET FRAIS 100/200 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.560697+00	2026-05-29 18:29:31.386716+00	kg	kg
+5077a792-65d7-4e62-8a3f-f96c66d42f36	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	7314c3b9-7d71-497e-b6b9-525273bd2ca7	13602100	RAIE PELEE 300/500 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.542413+00	2026-05-29 18:29:31.386716+00	kg	kg
+e2071145-3078-4da9-9ace-6395b3783eac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	7314c3b9-7d71-497e-b6b9-525273bd2ca7	13602102	RAIE PELEE 300/500 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.544049+00	2026-05-29 18:29:31.386716+00	kg	kg
+5bbed41a-1abd-4bb5-9016-21794139a090	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	bf1f9769-7e58-410f-ae33-fb4e96c7a68a	13603100	ROUSSETTE PELEE	t	\N	\N	2026-05-17 09:42:46.547623+00	2026-05-29 18:29:31.386716+00	kg	kg
+cb3836cc-74fe-4966-b0bb-d6a03b5ead02	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	bf1f9769-7e58-410f-ae33-fb4e96c7a68a	13603102	SAUMONETTE ROUSSETTE PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.549333+00	2026-05-29 18:29:31.386716+00	kg	kg
+90640a14-6da7-439e-8fd6-cc26f6601e34	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b349aeb3-fbc1-4f6a-bccc-0c7984ae28b5	13701200	BROCHET	t	\N	\N	2026-05-17 09:42:46.554262+00	2026-05-29 18:29:31.386716+00	kg	kg
+0c683a07-17b0-49ee-89bb-4771345212e5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	93cf561d-1b61-4aac-8ab9-0367d33ca607	11302120	BIGORNEAU CUIT GROS P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.308555+00	2026-05-29 18:29:31.386716+00	kg	kg
+d21ea0e8-0879-49aa-8808-02ed0a5a5dc8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	93cf561d-1b61-4aac-8ab9-0367d33ca607	11302211	BIGORNEAU CUIT JUMBO P/ANE X1K PFX	t	\N	\N	2026-05-17 09:42:46.309746+00	2026-05-29 18:29:31.386716+00	kg	kg
+69079adc-8a84-4430-aba3-89d79b6571b3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	93cf561d-1b61-4aac-8ab9-0367d33ca607	11302240	BIGORNEAU CUIT	t	\N	\N	2026-05-17 09:42:46.310734+00	2026-05-29 18:29:31.386716+00	kg	kg
+1b31a8ee-611c-416c-a128-f93cc41a9d3f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	93cf561d-1b61-4aac-8ab9-0367d33ca607	11302400	BIGORNEAU CUIT	t	\N	\N	2026-05-17 09:42:46.311885+00	2026-05-29 18:29:31.386716+00	kg	kg
+2c8904ae-517b-400d-a17a-ae6c86251b25	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e7a7ecc4-1525-4d71-8971-4e282e7ba0d4	14200301	TRUITE PORTION BLANCHE VIDEE	t	\N	\N	2026-05-17 09:42:46.601244+00	2026-05-29 18:29:31.386716+00	kg	kg
+f3a1562f-75e7-4e1a-873a-da296ddffc69	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	2df24e04-f616-43fe-b54e-5cadabdc4605	13150852	CAB VAT 1/2 P/ANE X2P PMO	t	\N	\N	2026-05-17 09:42:46.391752+00	2026-05-29 18:29:31.386716+00	kg	kg
+ea8a30b5-c8e4-41da-86ed-3ba2760c6ff7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	2df24e04-f616-43fe-b54e-5cadabdc4605	13401110	CABILLAUD A LA COUPE	t	\N	\N	2026-05-17 09:42:46.431318+00	2026-05-29 18:29:31.386716+00	kg	kg
+791dfb33-ea46-4082-9694-379d131fe399	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	2df24e04-f616-43fe-b54e-5cadabdc4605	13401210	CABILLAUD A LA COUPE	t	\N	\N	2026-05-17 09:42:46.433024+00	2026-05-29 18:29:31.386716+00	kg	kg
+4f9901df-ffba-434e-9ba3-0e18c81956ac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	2df24e04-f616-43fe-b54e-5cadabdc4605	23561011	CABILLAUD A LA COUPE	t	\N	\N	2026-05-17 09:42:46.684098+00	2026-05-29 18:29:31.386716+00	kg	kg
+132f2ff1-09cf-490e-a0af-544a8d451730	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e63fbff9-c966-4249-8cf7-1a7488e99d91	16301000	FILET MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.6526+00	2026-05-29 18:29:31.386716+00	kg	kg
+c9738b95-fb71-4311-9a21-cc9b94fa8129	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e63fbff9-c966-4249-8cf7-1a7488e99d91	16301001	FILET MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.654408+00	2026-05-29 18:29:31.386716+00	kg	kg
+79ddd12b-4c10-4e9c-8d61-6704ef603bc0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e63fbff9-c966-4249-8cf7-1a7488e99d91	16301100	FLT MORUE SALEE 400/700 P/ANE X5K PFX	t	\N	\N	2026-05-17 09:42:46.656115+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b0f0e9f-36ee-44b2-8ee8-447b7f512d25	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e63fbff9-c966-4249-8cf7-1a7488e99d91	16301200	FLT MORUE SALEE 400/700 P/OP X5K PFX	t	\N	\N	2026-05-17 09:42:46.657737+00	2026-05-29 18:29:31.386716+00	kg	kg
+97c6d0dc-5aa0-43e6-9d62-f97109b65683	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e63fbff9-c966-4249-8cf7-1a7488e99d91	16301300	FILET MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.659457+00	2026-05-29 18:29:31.386716+00	kg	kg
+6710daf3-e630-4d4d-8d67-f3a6bd782490	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e63fbff9-c966-4249-8cf7-1a7488e99d91	16301400	FLT MORUE SALEE 400/700 P/ANO X5K PFX	t	\N	\N	2026-05-17 09:42:46.6614+00	2026-05-29 18:29:31.386716+00	kg	kg
+cdf79e08-a9a6-4d81-aef6-8479d8859892	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e63fbff9-c966-4249-8cf7-1a7488e99d91	16302101	FILET MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.663161+00	2026-05-29 18:29:31.386716+00	kg	kg
+d66323cb-509b-4416-a437-5646f6da97a6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e63fbff9-c966-4249-8cf7-1a7488e99d91	16302103	FILET MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.664914+00	2026-05-29 18:29:31.386716+00	kg	kg
+3aed0a6c-6544-462e-9b0c-5e0b86be0ef2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	753759a2-a44c-4bf8-92ef-1ff7ab1ec282	16101100	HADDOCK 300/500 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.640229+00	2026-05-29 18:29:31.386716+00	kg	kg
+53221585-ddb2-4d5e-ad42-6518031bf861	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	984aac3f-583f-4ec2-8743-9f4a14520ea3	13511210	DOS CABILLAUD 200/+ P/ANE X5K PFX	t	\N	\N	2026-05-17 09:42:46.497739+00	2026-05-29 18:29:31.386716+00	kg	kg
+4f491f16-48d2-4b22-9e4f-9df3e124c6c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	984aac3f-583f-4ec2-8743-9f4a14520ea3	13511320	DOS DE CABILLAUD	t	\N	\N	2026-05-17 09:42:46.499246+00	2026-05-29 18:29:31.386716+00	kg	kg
+31aece41-f337-4fe8-b3c1-8a4eb1c48fc0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	984aac3f-583f-4ec2-8743-9f4a14520ea3	13511500	DOS CABILLAUD 400/+ P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.500947+00	2026-05-29 18:29:31.386716+00	kg	kg
+33a4bb77-867d-4560-8445-d8712164f4f4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	984aac3f-583f-4ec2-8743-9f4a14520ea3	13511620	DOS DE CABILLAUD	t	\N	\N	2026-05-17 09:42:46.50279+00	2026-05-29 18:29:31.386716+00	kg	kg
+9a31d727-2af2-4f2e-9238-3d594cdf0e47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	14101024	FLT SAUMON TRIM D 2/+ EL/EC X10K PMO	t	\N	\N	2026-05-17 09:42:46.573856+00	2026-05-29 18:29:31.386716+00	kg	kg
+70ba8c75-aee6-4b84-8ebb-81640f57d672	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	14102014	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:46.57545+00	2026-05-29 18:29:31.386716+00	kg	kg
+fef6e40c-464b-4ee2-b8a0-77ff2c2e8955	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	14112014	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:46.587496+00	2026-05-29 18:29:31.386716+00	kg	kg
+ac776042-3a56-4dda-a6a6-418426b0071b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	14112019	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:46.592588+00	2026-05-29 18:29:31.386716+00	kg	kg
+808bca3a-a986-4ea6-b0db-beb81a56f0eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	14131022	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:46.595919+00	2026-05-29 18:29:31.386716+00	kg	kg
+e13e017e-d612-423c-a23a-b15965c0d57c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	14192220	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:46.597756+00	2026-05-29 18:29:31.386716+00	kg	kg
+b9209ec8-9fcc-4584-82e5-d384a048edda	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5020f538-0781-4a33-a1b4-4f9ed5c4d685	13530500	FILET DE SABRE	t	\N	\N	2026-05-17 09:42:46.521061+00	2026-05-29 18:29:31.386716+00	kg	kg
+7fcabc2c-228a-4af2-82b0-70685ae63c73	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5020f538-0781-4a33-a1b4-4f9ed5c4d685	13530502	FILET DE SABRE	t	\N	\N	2026-05-17 09:42:46.52274+00	2026-05-29 18:29:31.386716+00	kg	kg
+ea24f6cf-b0c3-49e1-8615-30da094c1a1a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	67eee58a-db9e-454b-ab08-e7f4a351d03c	13505032	FILET DE LIEU NOIR	t	\N	\N	2026-05-17 09:42:46.477246+00	2026-05-29 18:29:31.386716+00	kg	kg
+96e02c34-807f-4c37-a24f-2f5da5ca1bf8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	67eee58a-db9e-454b-ab08-e7f4a351d03c	13505100	FLT LIEU NOIR MACHINE 150/400 P/ANE X5K PFX	t	\N	\N	2026-05-17 09:42:46.478807+00	2026-05-29 18:29:31.386716+00	kg	kg
+4cb67932-0654-448b-b52c-fdb06a0da145	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	67eee58a-db9e-454b-ab08-e7f4a351d03c	13505110	FLT LIEU NOIR MAIN 200/400 P/ANE X5K PFX	t	\N	\N	2026-05-17 09:42:46.48035+00	2026-05-29 18:29:31.386716+00	kg	kg
+30f247a6-53aa-4972-92bd-b4963aad1f96	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	67eee58a-db9e-454b-ab08-e7f4a351d03c	13505210	FILET DE LIEU NOIR	t	\N	\N	2026-05-17 09:42:46.481969+00	2026-05-29 18:29:31.386716+00	kg	kg
+38000db9-bcb5-424f-8e40-c65fe70bca32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	13504120	FLT JULIENNE 0,5/1 P/ANE X6K PFX	t	\N	\N	2026-05-17 09:42:46.473871+00	2026-05-29 18:29:31.386716+00	kg	kg
+efb96305-b213-4fe3-a2c0-4b1cdb678d98	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	13504150	FILET DE JULIENNE	t	\N	\N	2026-05-17 09:42:46.475611+00	2026-05-29 18:29:31.386716+00	kg	kg
+1e7d9673-b508-4928-9f4d-df2588c99bf6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	34b35d10-28ed-434a-8380-ef2e92bf3a30	13501475	FILET DE CABILLAUD	t	\N	\N	2026-05-17 09:42:46.462807+00	2026-05-29 18:29:31.386716+00	kg	kg
+c681fc9f-5269-4475-8562-6c147e26fa88	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	34b35d10-28ed-434a-8380-ef2e92bf3a30	13501601	FLT Q CABILLAUD P/ANE X5K PFX	t	\N	\N	2026-05-17 09:42:46.464168+00	2026-05-29 18:29:31.386716+00	kg	kg
+129e96b6-e719-4e6a-a1ff-31123d021513	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	c2ca1867-e141-43bc-8f05-1fe80a78739d	13503010	FILET DE FLETAN	t	\N	\N	2026-05-17 09:42:46.470599+00	2026-05-29 18:29:31.386716+00	kg	kg
+e4db297b-69ad-4123-93a5-7bee532979e5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	c2ca1867-e141-43bc-8f05-1fe80a78739d	13503012	FLT FLETAN NOIR 150/500 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.472152+00	2026-05-29 18:29:31.386716+00	kg	kg
+80226d1e-2c59-4318-9dc3-58fb8890c773	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	a49d9610-8a21-491b-b4e7-22eff482d790	14291252	FLT TRUITE AEC PARE EXTRA SANS/ARETES 500/1000 LCQ EL/FR X6K PVA	t	\N	\N	2026-05-17 09:42:46.60789+00	2026-05-29 18:29:31.386716+00	kg	kg
+0d2b8ef3-0878-4d92-baae-a55ee83e4237	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	263ab669-ccdd-4ef3-929d-315d94ab7526	14111014	FILET DE SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:46.581975+00	2026-05-29 18:29:31.386716+00	kg	kg
+38d8e4e9-5388-4c7e-b512-7e684f79932a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	263ab669-ccdd-4ef3-929d-315d94ab7526	14111016	FLT SAUMON TRIM B 1/2 EL/NVG X10KG PMO	t	\N	\N	2026-05-17 09:42:46.583771+00	2026-05-29 18:29:31.386716+00	kg	kg
+3336625c-d0ca-4b93-9f0c-4c46f288a26b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	263ab669-ccdd-4ef3-929d-315d94ab7526	14111026	FILET DE SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:46.58555+00	2026-05-29 18:29:31.386716+00	kg	kg
+22169060-4e82-42e9-bf70-299522c16625	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	c4668575-cd81-4fd6-a44e-352fec1f648c	13500000	FLT CARRELET 80/120 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.445712+00	2026-05-29 18:29:31.386716+00	kg	kg
+1225ca50-5ce7-43c7-95f2-15c0a67b62c3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	8853dd40-3cd6-4ba1-9a42-738d442a549f	13500602	FLT SARDINE MACHINE PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.450476+00	2026-05-29 18:29:31.386716+00	kg	kg
+1d1d17c8-ada3-4dce-b31c-9e3725d9878c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	8853dd40-3cd6-4ba1-9a42-738d442a549f	13500612	FLT SARDINE MAIN PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.45208+00	2026-05-29 18:29:31.386716+00	kg	kg
+db5efee2-5db9-44a0-b15b-43ca95da25d0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	bc69349f-ac3d-4276-9faa-c2d4a66461e9	12102018	HOMARD CUIT AMERICAIN	t	\N	\N	2026-05-17 09:42:46.330221+00	2026-05-29 18:29:31.386716+00	kg	kg
+328f78a9-a7c5-4e52-833f-c88dd8be68f5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6c3881aa-2c5f-4c13-ba84-03f10cf9c804	14101006	PAVES DE SAUMON DESARETE	t	\N	\N	2026-05-17 09:42:46.572001+00	2026-05-29 18:29:31.386716+00	kg	kg
+df32c94f-0493-4c00-9f58-61da5eaaf4ca	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b66e0545-ccd1-487a-87d3-b00c2c4ed07a	12103536	LANGOUSTE CARAIBE CUITE REFRIGEREE 400/800 P/ACO X5K PMO	t	\N	\N	2026-05-17 09:42:46.331411+00	2026-05-29 18:29:31.386716+00	kg	kg
+832ff144-5746-42a0-b9a9-61c19e20924e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	fe9114f0-0ec8-4f1c-9bf1-b872735ceb40	13530602	FILET DE TACAUD	t	\N	\N	2026-05-17 09:42:46.524223+00	2026-05-29 18:29:31.386716+00	kg	kg
+f762bbaf-1bae-4873-9158-e6af938ce68d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6864a186-96b0-47fa-92a3-f79daad9810f	14312350	DORADE ROYALE 300/600 EL/GRECE X6K PFX	t	\N	\N	2026-05-17 09:42:46.619698+00	2026-05-29 18:29:31.386716+00	kg	kg
+2069c79a-455c-4a9b-8e39-99be528d8a16	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6864a186-96b0-47fa-92a3-f79daad9810f	14312401	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:46.621413+00	2026-05-29 18:29:31.386716+00	kg	kg
+a325f108-b542-4ee4-beff-0c9c1cd5c872	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6864a186-96b0-47fa-92a3-f79daad9810f	14312600	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:46.623242+00	2026-05-29 18:29:31.386716+00	kg	kg
+018dd39a-bb74-49d9-9ffb-603ca327590b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6864a186-96b0-47fa-92a3-f79daad9810f	14314350	DORADE ROYALE 300/600 EL/TURQUIE X6K PFX	t	\N	\N	2026-05-17 09:42:46.624802+00	2026-05-29 18:29:31.386716+00	kg	kg
+6e649ce6-213a-4e2f-b368-c1bef8a665a3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6864a186-96b0-47fa-92a3-f79daad9810f	14314600	DORADE ROYALE 600/800 EL/TURQUIE X6K PFX	t	\N	\N	2026-05-17 09:42:46.626723+00	2026-05-29 18:29:31.386716+00	kg	kg
+4db38c73-8241-48ea-8d13-005c4e945913	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	273acdec-70e7-4de6-af94-c69401b16ae5	11101050	MOULE BOUCHOT ST MICHEL AOP EL/Fr X15K PFX	t	\N	\N	2026-05-17 09:42:46.283548+00	2026-05-29 18:29:31.386716+00	kg	kg
+c225eb2b-8c26-410f-a820-e2b87de71524	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	273acdec-70e7-4de6-af94-c69401b16ae5	11101100	MOULE BOUCHOT ST MICHEL AOP NETTOYEE EL/Fr X15K PFX	t	\N	\N	2026-05-17 09:42:46.284687+00	2026-05-29 18:29:31.386716+00	kg	kg
+5ed8872e-05a8-4fb7-b043-1f06105d0ec7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	335c2d1a-2654-4797-a099-424faf7e1b83	12205675	CREVETTE CUITE 60/80 SAUVAGE	t	\N	\N	2026-05-17 09:42:46.355103+00	2026-05-29 18:29:31.386716+00	kg	kg
+298a0ede-c80f-4536-9c98-6ff1fbbaae73	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	335c2d1a-2654-4797-a099-424faf7e1b83	12205875	CREV SAUVAGE CUIT 80/100 P/OI X2K PFX	t	\N	\N	2026-05-17 09:42:46.356129+00	2026-05-29 18:29:31.386716+00	kg	kg
+21ae818e-4073-417f-9935-9018d172647c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	ea7557ca-6830-48f1-81ee-8a166b82418f	13530202	FILET GRONDIN	t	\N	\N	2026-05-17 09:42:46.514928+00	2026-05-29 18:29:31.386716+00	kg	kg
+bce30b84-667e-478b-9896-d48941854daf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	ea7557ca-6830-48f1-81ee-8a166b82418f	13530203	FILET GRONDIN	t	\N	\N	2026-05-17 09:42:46.516603+00	2026-05-29 18:29:31.386716+00	kg	kg
+cb5f0b96-0882-450b-9c1e-7edee2f44ebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3c382dbb-836e-4c89-ab84-c079cbd853e8	16200350	MORUE SECHEE ENTIERE	t	\N	\N	2026-05-17 09:42:46.650663+00	2026-05-29 18:29:31.386716+00	kg	kg
+c7bd1ccf-6c1d-4b22-81c4-d9e04dbd5e1e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	546505b1-799b-42df-9fac-fe4c55c36970	11401100	NOIX SAINT JACQUES P/ANE X2K PFX	t	\N	\N	2026-05-17 09:42:46.313029+00	2026-05-29 18:29:31.386716+00	kg	kg
+452d7150-6315-48bb-a534-dcfe4c215552	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	546505b1-799b-42df-9fac-fe4c55c36970	11401102	NOIX SAINT-JACQUES PAVILLON FRANCE P/ANE X2K PFX	t	\N	\N	2026-05-17 09:42:46.31423+00	2026-05-29 18:29:31.386716+00	kg	kg
+8c93abce-8b67-46e1-977b-7b459f5a0a01	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	546505b1-799b-42df-9fac-fe4c55c36970	51401408	NOIX DE ST JACQUES AVEC CORAIL	t	\N	\N	2026-05-17 09:42:46.694993+00	2026-05-29 18:29:31.386716+00	kg	kg
+43e05ffb-defc-4666-890f-4e2063d4f7ea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	ab91289c-1726-4716-85bc-a92255177546	12401025	LANGOUSTINE GLACEE 21/30	t	\N	\N	2026-05-17 09:42:46.359792+00	2026-05-29 18:29:31.386716+00	kg	kg
+34688447-6242-461c-9d7a-9d8389a37262	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0d2e71dd-b832-4bf4-a50a-a7534638af62	13508010	FILET DE HARENG	t	\N	\N	2026-05-17 09:42:46.489985+00	2026-05-29 18:29:31.386716+00	kg	kg
+f2047059-aa5f-499c-9121-c62a579b7b60	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	009c9571-bdc0-4007-bc90-beb916dd56a6	12003020	LANGOUSTE ROUGE VIVANTE EPATTE	t	\N	\N	2026-05-17 09:42:46.31953+00	2026-05-29 18:29:31.386716+00	kg	kg
+8e143d7a-749a-49cb-81cd-2bc407ae39e6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	be15b6f7-3e5c-4638-aa20-2430a2e90e06	12101160	PINCES TOURTEAUX CUITES 12/20	t	\N	\N	2026-05-17 09:42:46.329097+00	2026-05-29 18:29:31.386716+00	kg	kg
+8ffc4175-384b-4951-b8b8-dd7970ed0ac1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	19649f64-0482-41e6-84cd-37f05fdbd71c	12401015	TINE CRUE 11/15 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.358638+00	2026-05-29 18:29:31.386716+00	kg	kg
+0cc1d5c8-131d-4a02-b18c-6aa56ead02c9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3a29e4c3-df5f-439d-8038-7b0449e5f689	12001200	TOURTEAU VIVANT (2 PINCES)	t	\N	\N	2026-05-17 09:42:46.318121+00	2026-05-29 18:29:31.386716+00	kg	kg
+f10aa9f1-4e2a-496e-84ea-1ce695fed3ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b0e176ed-348e-471c-aa7c-7ebd97129cf4	12000200	ETRILLE VIVANTE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.315484+00	2026-05-29 18:29:31.386716+00	kg	kg
+b7c87a4d-8cad-4f35-9624-6394439dfe6c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b0e176ed-348e-471c-aa7c-7ebd97129cf4	12000202	ETRILLE VIVANTE	t	\N	\N	2026-05-17 09:42:46.316804+00	2026-05-29 18:29:31.386716+00	kg	kg
+13be5abc-56ef-4b22-abfa-6e064784ddad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	9dfaf596-b8ae-4604-9705-38b26b464b14	11000102	AMANDE VIVANT PAVILLON FRANCE P/ANE X3KG PFX	t	\N	\N	2026-05-17 09:42:46.23877+00	2026-05-29 18:29:31.386716+00	kg	kg
+6e8ed8e4-cfa3-4cb2-bc9d-3cb58c02329a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	9dfaf596-b8ae-4604-9705-38b26b464b14	11000110	AMANDE	t	\N	\N	2026-05-17 09:42:46.242135+00	2026-05-29 18:29:31.386716+00	kg	kg
+ddd619fe-0aa4-4706-9d91-8ae2ef452817	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d577a5c8-57f7-4e5f-a861-922e41c1e4e3	11301130	BULOT CUIT NATURE SEL POIVRE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.302538+00	2026-05-29 18:29:31.386716+00	kg	kg
+0970df45-7dff-4c11-9b0c-b2b0d92069af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d577a5c8-57f7-4e5f-a861-922e41c1e4e3	11301132	BULOT CUIT NATURE SEL PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.303675+00	2026-05-29 18:29:31.386716+00	kg	kg
+0919b9ed-f816-4c8b-9d90-59759732d78f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	a6ed1b5b-71eb-4d8e-98ba-c32d1d280a46	11000870	COUTEAU VIVANT MOYEN P/ANE X3KG PFX	t	\N	\N	2026-05-17 09:42:46.272789+00	2026-05-29 18:29:31.386716+00	kg	kg
+c2ac2193-e73d-4028-bb2d-623c9831d64a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	665043f6-93cd-4c95-85e0-4bf4166b2ff0	11000960	PALOURDE JAPONAISE VIVANT GROS P/ANE X3KG PFX	t	\N	\N	2026-05-17 09:42:46.274278+00	2026-05-29 18:29:31.386716+00	kg	kg
+d83ea851-3740-40dc-8841-caf53eb7779a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	665043f6-93cd-4c95-85e0-4bf4166b2ff0	11000972	PALOURDE JAPONAISE VIVANT MOYENNE PAVILLON FRANCE P/ANE X3KG PFX	t	\N	\N	2026-05-17 09:42:46.275552+00	2026-05-29 18:29:31.386716+00	kg	kg
+dba8f312-ada7-4a24-a5ca-93f4aaf50402	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	665043f6-93cd-4c95-85e0-4bf4166b2ff0	11000980	PALOURDE 	t	\N	\N	2026-05-17 09:42:46.276756+00	2026-05-29 18:29:31.386716+00	kg	kg
+d057fd77-1ead-4c7e-9667-07e20a817f3a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e4023222-aa86-4123-b75c-017d1da79525	11000400	COQUE VIVANT GROSSE P/ANE X3KG PFX	t	\N	\N	2026-05-17 09:42:46.255064+00	2026-05-29 18:29:31.386716+00	kg	kg
+1ef7166e-523d-4639-8566-d1a988089dff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e4023222-aa86-4123-b75c-017d1da79525	11000402	COQUES GROSSES	t	\N	\N	2026-05-17 09:42:46.256639+00	2026-05-29 18:29:31.386716+00	kg	kg
+688b5d69-ad0d-41a7-82f7-ffb9fabee8c4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e4023222-aa86-4123-b75c-017d1da79525	11000431	COQUES GROSSES	t	\N	\N	2026-05-17 09:42:46.258252+00	2026-05-29 18:29:31.386716+00	kg	kg
+f72c0b0b-bcdb-49dd-b3c0-b31e76935a16	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e4023222-aa86-4123-b75c-017d1da79525	11000442	COQUES GROSSES	t	\N	\N	2026-05-17 09:42:46.259972+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b2d0f81-c87f-45e2-9780-fbc5a6b15a44	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	620c1cc1-7ea1-42dc-bad9-59ee97bde88c	11000242	BULOT VIVANT PAVILLON FRANCE P/ANE X3KG PFX	t	\N	\N	2026-05-17 09:42:46.250716+00	2026-05-29 18:29:31.386716+00	kg	kg
+6293ebbe-ebe2-465f-8a85-cf673e64d06b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	620c1cc1-7ea1-42dc-bad9-59ee97bde88c	11000252	BULOT VIVANT PAVILLON FRANCE P/ANE X6KG PFX	t	\N	\N	2026-05-17 09:42:46.252193+00	2026-05-29 18:29:31.386716+00	kg	kg
+71949852-6f69-46ac-b77f-dde1b641f9c5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	620c1cc1-7ea1-42dc-bad9-59ee97bde88c	11000260	BULOT VIVANT	t	\N	\N	2026-05-17 09:42:46.253596+00	2026-05-29 18:29:31.386716+00	kg	kg
+9348ff67-18a7-416f-bccc-34c4e6bc4089	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0ecc12e0-dea8-4608-9a38-3c3c48de1c85	11000200	BIGORNEAU VIVANT GROS	t	\N	\N	2026-05-17 09:42:46.243803+00	2026-05-29 18:29:31.386716+00	kg	kg
+c83e05d6-997f-41a3-92c1-2ef80faa0846	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0ecc12e0-dea8-4608-9a38-3c3c48de1c85	11000220	BIGORNEAU VIVANT JUMBO P/ANE X3KG PFX	t	\N	\N	2026-05-17 09:42:46.247263+00	2026-05-29 18:29:31.386716+00	kg	kg
+9c6f4aeb-9b0b-4ad4-ae9e-12fe7e2298ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	86e6dab7-20cb-4d89-82c0-c36a01f2fcd3	13501610	FLT Q CABILLAUD EL/NVG X5K PFX	t	\N	\N	2026-05-17 09:42:46.465661+00	2026-05-29 18:29:31.386716+00	kg	kg
+3cafac15-9b2d-4c95-a7a6-321551f43644	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3079dbc7-6d7d-437f-8640-ad703af6f6e7	12201330	CREVETTE CUITE 50/70	t	\N	\N	2026-05-17 09:42:46.338865+00	2026-05-29 18:29:31.386716+00	kg	kg
+978961d6-4a84-4838-a1c0-bf73cc97cc92	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3079dbc7-6d7d-437f-8640-ad703af6f6e7	12201500	CREVETTE CUITE 50/70	t	\N	\N	2026-05-17 09:42:46.342496+00	2026-05-29 18:29:31.386716+00	kg	kg
+76f28e54-e6ee-46c1-be64-78b4d55d07f3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3079dbc7-6d7d-437f-8640-ad703af6f6e7	12201505	CREV CUIT 50/70 EL/EQ++ X2K PFX	t	\N	\N	2026-05-17 09:42:46.343661+00	2026-05-29 18:29:31.386716+00	kg	kg
+92a1e385-bc47-4114-bf24-d6ec33621e0f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3079dbc7-6d7d-437f-8640-ad703af6f6e7	12201517	CREVETTE CUITE 50/70	t	\N	\N	2026-05-17 09:42:46.34465+00	2026-05-29 18:29:31.386716+00	kg	kg
+7420b93b-540d-4ab7-931b-637b5eb18aa6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	35097fd1-a7aa-4754-9250-5a55ed62000f	12201300	CREV CUIT 30/40 EL/EQ X2K PFX	t	\N	\N	2026-05-17 09:42:46.337614+00	2026-05-29 18:29:31.386716+00	kg	kg
+3fd5148b-1076-4054-8f53-2309913c6d04	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6e30cbd2-17e8-4cd7-84aa-89dcfe7c714e	13702210	FILET DE SANDRE SAUVAGE	t	\N	\N	2026-05-17 09:42:46.555912+00	2026-05-29 18:29:31.386716+00	kg	kg
+125d7138-3de8-41f9-bc19-5c6cca90c257	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6e30cbd2-17e8-4cd7-84aa-89dcfe7c714e	13702310	SANDRE	t	\N	\N	2026-05-17 09:42:46.557623+00	2026-05-29 18:29:31.386716+00	kg	kg
+5f2af558-5b3f-4156-906f-9d652093e087	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	23677730-0dd3-4cfc-8802-98670fb199fc	13512010	DOS EGLEFIN 100/+ P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.504354+00	2026-05-29 18:29:31.386716+00	kg	kg
+f5f1950c-1564-41ae-9cad-968dcca4bf63	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	23677730-0dd3-4cfc-8802-98670fb199fc	13512080	DOS D'EGLEFIN	t	\N	\N	2026-05-17 09:42:46.50593+00	2026-05-29 18:29:31.386716+00	kg	kg
+40bb7041-c7e7-43a7-9e47-4fc363f7a9c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	9bf62459-67b1-4538-a03d-ad1165d1adaa	12004150	LANGOUSTINE VIVANTE 10/15	t	\N	\N	2026-05-17 09:42:46.320943+00	2026-05-29 18:29:31.386716+00	kg	kg
+523fe7ef-2e51-4b5a-a47c-39e4652745a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	a303eed0-e7a8-44b2-87a0-68ca3a611327	13300200	RASCASSE ROUGE	t	\N	\N	2026-05-17 09:42:46.427928+00	2026-05-29 18:29:31.386716+00	kg	kg
+62c4774b-4a47-4b74-9b19-3e64963fc078	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	5b5b51cb-6577-440f-b0a3-e77336425e85	16100150	SPRAT FUME P/ANE X1K PFX	t	\N	\N	2026-05-17 09:42:46.633796+00	2026-05-29 18:29:31.386716+00	kg	kg
+ce4d957b-de40-4060-b4bf-142f43678aa6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	98800143-ab87-4391-b385-d97b9102060f	14112017	PAVE SAUMON TRIM B 40 PCE X125G EL/NVG X5KG PFX	t	\N	\N	2026-05-17 09:42:46.589075+00	2026-05-29 18:29:31.386716+00	kg	kg
+95d2670e-86f3-4415-b64e-34337eb11197	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	98800143-ab87-4391-b385-d97b9102060f	14112018	PAVES DE SAUMON	t	\N	\N	2026-05-17 09:42:46.590799+00	2026-05-29 18:29:31.386716+00	kg	kg
+5c4b17ea-dfda-46e6-ac75-0c8c6e8f3a53	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0c512126-6cb1-478e-8abd-7770542e688b	11000549	OURSIN VIVANT	t	\N	\N	2026-05-17 09:42:46.261643+00	2026-05-29 18:29:31.386716+00	kg	kg
+090d4eaa-a674-4412-9aca-d3df6dc4e0ec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0c512126-6cb1-478e-8abd-7770542e688b	11000552	OURSIN VIVANT	t	\N	\N	2026-05-17 09:42:46.263186+00	2026-05-29 18:29:31.386716+00	kg	kg
+b447aced-a003-455c-abcc-99977f5ba5e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	ab0fb31e-be20-4002-8170-9004eada1825	13502010	FILET D EGLEFIN	t	\N	\N	2026-05-17 09:42:46.467161+00	2026-05-29 18:29:31.386716+00	kg	kg
+39d3ffb7-3bb9-4967-88cc-391555be6431	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	ab0fb31e-be20-4002-8170-9004eada1825	13502050	FLT EGLEFIN 100/+ PROMO P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.468819+00	2026-05-29 18:29:31.386716+00	kg	kg
+8eda27e5-dfe7-4ed2-b2f9-174dbcb06e42	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	53ece447-6db9-4bcc-90d7-b4260a78193f	13515100	DOS LIEU NOIR 150/300 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.509167+00	2026-05-29 18:29:31.386716+00	kg	kg
+8eee78c0-9858-484c-8c8e-1e3dcf0c23bf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	53ece447-6db9-4bcc-90d7-b4260a78193f	13515102	DOS LIEU NOIR 100/+ P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.51066+00	2026-05-29 18:29:31.386716+00	kg	kg
+43b44064-9f3e-46c9-bf74-03e7b8cd97ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	53ece447-6db9-4bcc-90d7-b4260a78193f	13515103	DOS LIEU NOIR 150/+ NORVEGE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.512064+00	2026-05-29 18:29:31.386716+00	kg	kg
+08bd8ab4-5f09-444c-b13e-237436033803	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	53ece447-6db9-4bcc-90d7-b4260a78193f	13515200	DOS DE LIEU NOIR	t	\N	\N	2026-05-17 09:42:46.513608+00	2026-05-29 18:29:31.386716+00	kg	kg
+cccfe81a-440b-4533-a617-b567cb1dbd55	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	eda87ea3-0a21-4c62-b496-09ccf5450bfd	14290051	TRUITE ARC EN CIEL VIDéE	t	\N	\N	2026-05-17 09:42:46.602947+00	2026-05-29 18:29:31.386716+00	kg	kg
+b1ba8a68-7d96-4b04-b14a-686087f6fabc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	eda87ea3-0a21-4c62-b496-09ccf5450bfd	14290701	TRUITE ARC EN CIEL VIDE 0,7/2 LCQ EL/FR X6K PFX	t	\N	\N	2026-05-17 09:42:46.604605+00	2026-05-29 18:29:31.386716+00	kg	kg
+f36132bd-82ea-438b-a623-c855f2d2b9db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	2e60a942-eb75-4e84-afcb-bccabbfdecfa	16103300	HARENG BUCKLING P/ANE X2K PFX	t	\N	\N	2026-05-17 09:42:46.645478+00	2026-05-29 18:29:31.386716+00	kg	kg
+5ea785ad-847b-4787-aca9-177a76cdd572	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b5563340-464d-4a26-aa8a-1b747b6c2aeb	13536010	FILET DE LOUP DE MER	t	\N	\N	2026-05-17 09:42:46.527634+00	2026-05-29 18:29:31.386716+00	kg	kg
+2210ea6a-716a-4c60-b7d3-46245af78070	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6a1288d9-0c9a-4734-b088-2e90b1a14416	13510100	DOS LINGUE BLEUE 200/+ P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.49315+00	2026-05-29 18:29:31.386716+00	kg	kg
+b54c036b-97ca-4e31-9115-ca43ec5e3694	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0e6c02d0-e3bb-4630-a782-c6f846909074	11103309	MOULES HOLLANDE	t	\N	\N	2026-05-17 09:42:46.290749+00	2026-05-29 18:29:31.386716+00	kg	kg
+7dc59c55-1b16-4e23-bb0b-1aca4403d224	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0e6c02d0-e3bb-4630-a782-c6f846909074	21103115	MOULES HOLLANDE	t	\N	\N	2026-05-17 09:42:46.675153+00	2026-05-29 18:29:31.386716+00	kg	kg
+a6e1331a-8dcc-466c-b774-fb5f3c864e3c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	1d2cf6a6-acee-4b34-b5f5-a74931ca282a	12205000	CREVETTE CUITE U10 	t	\N	\N	2026-05-17 09:42:46.353998+00	2026-05-29 18:29:31.386716+00	kg	kg
+9e892118-176d-424e-a3e3-ba2a2529f72b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	69d4db38-6549-40cf-a2d8-5b01983e5ab1	13603112	SAUMONETTE/GRANDE ROUSSETTE PELLEE	t	\N	\N	2026-05-17 09:42:46.551017+00	2026-05-29 18:29:31.386716+00	kg	kg
+26bdb531-eb11-46b2-91aa-2700ba798c56	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	69d4db38-6549-40cf-a2d8-5b01983e5ab1	13603202	SAUMONETTE/GRANDE ROUSSETTE PELLEE	t	\N	\N	2026-05-17 09:42:46.552613+00	2026-05-29 18:29:31.386716+00	kg	kg
+3ca11a87-5c5c-464d-9ce9-604e3409b576	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	c2c1411e-8762-4f86-87bb-b5839ca964c5	12004200	LANGOUSTINE VIVANTE 16/25	t	\N	\N	2026-05-17 09:42:46.322096+00	2026-05-29 18:29:31.386716+00	kg	kg
+17f99baa-fe03-4c39-886f-ad5ff1282508	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	62d9b493-5d05-431c-a757-193c8b9f8858	22307221	brochette TEX MEX	t	\N	\N	2026-05-17 09:42:46.67869+00	2026-05-29 18:29:31.386716+00	kg	kg
+11dacd24-19cf-4a27-8360-d4ee7a0c34a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	de0b6e95-0ca5-41d8-9c65-465833be12f5	14291201	FILET DE TRUITE	t	\N	\N	2026-05-17 09:42:46.606271+00	2026-05-29 18:29:31.386716+00	kg	kg
+37f03bbc-d64b-4867-bac2-0202518bcb3a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	c8ca85ac-de19-42b3-97ce-c9c8d1038706	22307211	brochette PROVENCAL	t	\N	\N	2026-05-17 09:42:46.676988+00	2026-05-29 18:29:31.386716+00	kg	kg
+696ee3f4-f05d-45e9-8044-21369e1efcb7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f23ee5d2-8239-445d-b345-594c78ace542	12201608	CREVETTE CUITE 80/100	t	\N	\N	2026-05-17 09:42:46.347043+00	2026-05-29 18:29:31.386716+00	kg	kg
+06c69551-f954-4ab2-b268-a60fbd6d9074	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0543b62c-e94a-48b4-93a1-42f14a586f27	13550302	LIMANDE SOLE PAC	t	\N	\N	2026-05-17 09:42:46.533867+00	2026-05-29 18:29:31.386716+00	kg	kg
+598af82b-746b-407b-ba65-b966d282143a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	cca4bba8-5596-4b0d-8555-13348aa4eae9	16100513	PAVE SAUMON FUME FICELLE ELEVE EN NORVEGE X500GR X2UV PFX	t	\N	\N	2026-05-17 09:42:46.638756+00	2026-05-29 18:29:31.386716+00	kg	kg
+fb0a899c-6a6a-4199-a45d-9d9c024fbac4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	05d8ec34-34e9-4b50-814e-69f70bc6c484	16102006	FLT MAQUEREAU POIVRE P/ANE X2K PFX	t	\N	\N	2026-05-17 09:42:46.64203+00	2026-05-29 18:29:31.386716+00	kg	kg
+23003fb1-df37-4d8c-a065-7a057998a784	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	ba241afa-bf19-46e2-9a85-870837fe32f6	16103452	HARENG FACON KIPPER P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.648795+00	2026-05-29 18:29:31.386716+00	kg	kg
+b6d6d3f9-bdf4-44fa-b329-0925a44db8f1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	84972aa2-f9ef-4b65-a83c-5247d99b7346	11000210	BIGORNEAU VIVANT	t	\N	\N	2026-05-17 09:42:46.245587+00	2026-05-29 18:29:31.386716+00	kg	kg
+72e5e7f9-11fb-4bcc-b098-11654bd6f7de	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	84972aa2-f9ef-4b65-a83c-5247d99b7346	11000230	BIGORNEAU VIVANT	t	\N	\N	2026-05-17 09:42:46.248902+00	2026-05-29 18:29:31.386716+00	kg	kg
+24130ded-9116-45fd-9f26-3eb148fdbc22	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	321f9d2f-98cd-4ee3-a156-fa3273df7737	11301482	BULOT CUIT AROMATISé PROVENCALE	t	\N	\N	2026-05-17 09:42:46.307338+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b01ffda-8b90-49ae-8efa-3d19b9ac9242	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e1f6ecb7-7606-4445-a7e3-b2bb74ad73d8	11301470	BULOT CUIT PIMENTE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.304934+00	2026-05-29 18:29:31.386716+00	kg	kg
+1cab1c01-479d-4220-8cc3-009cf97abaec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e1f6ecb7-7606-4445-a7e3-b2bb74ad73d8	11301480	BULOT CUIT A LA PROVENCALE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.306185+00	2026-05-29 18:29:31.386716+00	kg	kg
+f1efcbfc-a8a3-40c0-917c-4fc127f41b07	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	875f7e63-ab5b-4f69-ba63-fc71fe4dcda9	12101110	PINCES DE TOURTEAUX CUITES 8/12	t	\N	\N	2026-05-17 09:42:46.327988+00	2026-05-29 18:29:31.386716+00	kg	kg
+914ab97f-a483-4a43-8924-7f0dddd45fa3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	8efbe519-67e3-485b-83db-75632e0c4445	11204240	HUITRE MARENNE OLERON N°2	t	\N	\N	2026-05-17 09:42:46.30015+00	2026-05-29 18:29:31.386716+00	kg	kg
+1c9a581d-452b-40f8-a5c5-4fca62bfa624	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	200c484b-f6f4-4f8b-8c1c-88ff51285366	15208100	MINI ROTI SAUMON ST JACQUES	t	\N	\N	2026-05-17 09:42:46.630265+00	2026-05-29 18:29:31.386716+00	kg	kg
+8ba62444-f632-47de-a664-faca9a802c28	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	8127605b-e8d5-4e53-a6fb-59019b93842e	11000653	SALICORNE EL/FR X2.5KG PFX	t	\N	\N	2026-05-17 09:42:46.271351+00	2026-05-29 18:29:31.386716+00	kg	kg
+5799db10-f875-4c84-a393-5d12e2a1e65a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	344287ba-696a-4373-bc7a-947eaeda609e	13451030	THON BLANC 10/15 P/ANE X1P PVA	t	\N	\N	2026-05-17 09:42:46.436242+00	2026-05-29 18:29:31.386716+00	kg	kg
+09c8a45b-c62b-418a-9c12-abbc09769f67	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	690c61b2-f403-41da-88b9-7ff0f5dfa5f9	13530247	FILET DE DORADE SEBASTES	t	\N	\N	2026-05-17 09:42:46.518171+00	2026-05-29 18:29:31.386716+00	kg	kg
+30bfe040-37d1-4abe-92fd-ebc811c03e3b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	690c61b2-f403-41da-88b9-7ff0f5dfa5f9	13530249	FLT SEBASTE MAIN S/FLANC 100/300 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.519615+00	2026-05-29 18:29:31.386716+00	kg	kg
+98247c97-32b9-494d-8cd1-1900585a9490	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	cbfc98a3-4457-4e63-bf66-644902cb4cbe	13150401	MAIGRE COMMUN	t	\N	\N	2026-05-17 09:42:46.380354+00	2026-05-29 18:29:31.386716+00	kg	kg
+db7197c9-9c2d-4447-94c7-ed66b9ad8480	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f82978bc-738b-4157-bca4-2edd34b2fc8d	13510001	DOS DE MERLU	t	\N	\N	2026-05-17 09:42:46.491574+00	2026-05-29 18:29:31.386716+00	kg	kg
+6a368a41-0f7a-4068-a2ea-6f882302bf67	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	24336843-3546-4088-9153-515acd22a23c	13500930	FLT LINGUE BLEUE 0,5/1 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.459871+00	2026-05-29 18:29:31.386716+00	kg	kg
+d5fc9441-3407-46d8-872e-b30d849d1db1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	24336843-3546-4088-9153-515acd22a23c	13500935	FLT LINGUE BLEUE 0,5/1 P/ANE X6K PFX	t	\N	\N	2026-05-17 09:42:46.461397+00	2026-05-29 18:29:31.386716+00	kg	kg
+aef3e0a0-c642-401c-88d1-8b265692b434	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	29616d28-6a28-49ae-b96c-bf2305dad679	13802213	POULPE	t	\N	\N	2026-05-17 09:42:46.562075+00	2026-05-29 18:29:31.386716+00	kg	kg
+365e2cd2-8128-457e-bdbd-f1c3448eff15	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	29616d28-6a28-49ae-b96c-bf2305dad679	13852015	POULPE	t	\N	\N	2026-05-17 09:42:46.568582+00	2026-05-29 18:29:31.386716+00	kg	kg
+33cf7950-779a-4a1a-9c5b-d225b82ecd4c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6c0f6d8b-ebc5-4aa7-8bf5-ab235e2261ef	13453010	BONITE	t	\N	\N	2026-05-17 09:42:46.437857+00	2026-05-29 18:29:31.386716+00	kg	kg
+8b451cc5-4116-489f-80a9-8f989807c475	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6c0f6d8b-ebc5-4aa7-8bf5-ab235e2261ef	13453151	MELVA 0,8/2 P/MED X5K PVA	t	\N	\N	2026-05-17 09:42:46.439565+00	2026-05-29 18:29:31.386716+00	kg	kg
+2195fa0e-3762-421d-99a7-9fb4447000ff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	718ea040-231e-4ffe-bf27-07277c37f94e	13851305	LAMELLE ENCORNET GEANT DCG SAUMURE P/OP X5K PFX	t	\N	\N	2026-05-17 09:42:46.565379+00	2026-05-29 18:29:31.386716+00	kg	kg
+caed91ab-4a2b-4666-8bbe-e8f02582d0cf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	8f0df988-132c-4289-9fba-50ef35e6a7ad	13150810	SEBASTE CHEVRE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.390067+00	2026-05-29 18:29:31.386716+00	kg	kg
+9016e7fe-5bfb-4f31-b000-b0f48db10b05	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b9c7d633-a490-454c-8a32-a58e95b97163	12105020	LANGOUSTINE CUITE 21/30	t	\N	\N	2026-05-17 09:42:46.332646+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b9f1285-f454-4716-bae8-f4af5330da9b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d15f57e3-59e6-4ebf-9df7-2ea49d1a51d0	12201250	CREVETTE CUITE 25/35	t	\N	\N	2026-05-17 09:42:46.334161+00	2026-05-29 18:29:31.386716+00	kg	kg
+61d45792-6f94-4b36-9e93-6e8db8c5868f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d15f57e3-59e6-4ebf-9df7-2ea49d1a51d0	12201251	CREVETTE CUITE 25/35	t	\N	\N	2026-05-17 09:42:46.33533+00	2026-05-29 18:29:31.386716+00	kg	kg
+888c244b-f072-4abf-9589-ec091e2b8d7a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d15f57e3-59e6-4ebf-9df7-2ea49d1a51d0	12201254	CREV CUIT 25/35 EL/EQ X2K PFX	t	\N	\N	2026-05-17 09:42:46.336436+00	2026-05-29 18:29:31.386716+00	kg	kg
+6c649b68-0caf-44af-90ec-c946363457c5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	da72c0bb-3cf2-4714-b9e9-2fe8825e1aa1	12201333	CREVETTES CUITES 30/50	t	\N	\N	2026-05-17 09:42:46.34005+00	2026-05-29 18:29:31.386716+00	kg	kg
+4e965d78-16ca-4769-a451-1eb0f47ba6df	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	9b7c73df-250f-4b4b-b2f1-7a7eb5333297	11102100	MOULES DE CORDE	t	\N	\N	2026-05-17 09:42:46.289449+00	2026-05-29 18:29:31.386716+00	kg	kg
+00af9891-52b9-4c08-9fb0-40643f36745f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f7d5d41f-11b7-40c8-b8b9-ba5a1be1f7ed	16102010	MAQ BUCKLING P/ANE X2K PFX	t	\N	\N	2026-05-17 09:42:46.64375+00	2026-05-29 18:29:31.386716+00	kg	kg
+22771f73-4b2d-4063-9adc-1320f6f6df00	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	05f46a02-bda4-4fb3-9f7e-563294d4e470	13601100	QUEUE DE LOTTE 1/2	t	\N	\N	2026-05-17 09:42:46.537281+00	2026-05-29 18:29:31.386716+00	kg	kg
+c9d6f66a-f25e-432d-bdb9-5a7f76a75a77	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	05f46a02-bda4-4fb3-9f7e-563294d4e470	13601120	QUEUE LOTTE 0,5/2 P/ANE X10K PFX	t	\N	\N	2026-05-17 09:42:46.540649+00	2026-05-29 18:29:31.386716+00	kg	kg
+81bdc88d-0d4b-4762-8d47-20ebdf201b9b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f066af8a-c25f-4ca0-a082-7d45573405d6	14302100	BAR ENTIER	t	\N	\N	2026-05-17 09:42:46.611159+00	2026-05-29 18:29:31.386716+00	kg	kg
+b5b5fd76-7bf2-4619-b2f1-5ce7379ed98b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f066af8a-c25f-4ca0-a082-7d45573405d6	14302350	BAR ENTIER	t	\N	\N	2026-05-17 09:42:46.612784+00	2026-05-29 18:29:31.386716+00	kg	kg
+20fa84e1-155f-4cd3-9e33-91fb81f0e26c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	44566c43-3f14-44d9-afcb-f236c8f253c2	25208050	FARCI SAUMON/ST JACQUES	t	\N	\N	2026-05-17 09:42:46.691647+00	2026-05-29 18:29:31.386716+00	kg	kg
+284f1c37-3635-4427-973e-09453ddb7b29	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	81bca9c0-d8e2-439a-97a1-afd59464712e	14304350	BAR 300/600 EL/TURQUIE X6K PFX	t	\N	\N	2026-05-17 09:42:46.614498+00	2026-05-29 18:29:31.386716+00	kg	kg
+fbf6cddf-f69d-4a93-bb29-2ee93261fa99	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	81bca9c0-d8e2-439a-97a1-afd59464712e	14304850	BAR ENTIER	t	\N	\N	2026-05-17 09:42:46.617852+00	2026-05-29 18:29:31.386716+00	kg	kg
+7d577838-b5b7-4114-9758-8b5a1570e83d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	13601112	QUEUE LOTTE 1/2 PAVILLON FRANCE P/ANE X6K PFX	t	\N	\N	2026-05-17 09:42:46.538991+00	2026-05-29 18:29:31.386716+00	kg	kg
+cb5557ae-8f7d-4762-a898-14605af8f6b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	967b7e71-5169-43f0-97f5-35e18f32cb6b	11001012	COQ ST JACQ BLANCHE ST BRIEUC PAVILLON FRANCE P/ANE X12KG PFX	t	\N	\N	2026-05-17 09:42:46.280454+00	2026-05-29 18:29:31.386716+00	kg	kg
+af24b518-83df-497b-acc5-dd74019f442f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	967b7e71-5169-43f0-97f5-35e18f32cb6b	11001015	COQ ST JACQ BLANCHE PAVILLON FRANCE P/ANE X25KG PMO	t	\N	\N	2026-05-17 09:42:46.282547+00	2026-05-29 18:29:31.386716+00	kg	kg
+e235a2fc-a252-4af0-bb5e-702c60f88b5c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	1aeb7381-96b6-4269-940f-d96919db0f59	13851425	TENTACULE ENCORNET GEANT DCG SAUMURE P/OP X5K PFX	t	\N	\N	2026-05-17 09:42:46.567017+00	2026-05-29 18:29:31.386716+00	kg	kg
+5b28e9f7-b669-4f99-85c9-c9ed9580256d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	4aadbd09-dcbd-4e97-9711-c71e90ba5cec	13851105	ANNEAU ENCORNET GEANT DCG SAUMURE P/OP X5K PFX	t	\N	\N	2026-05-17 09:42:46.563759+00	2026-05-29 18:29:31.386716+00	kg	kg
+e2b18af1-899c-4243-a2e6-efba61eda7eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	7fd19731-e1dd-4f10-b748-1027780e06e1	13560402	FOIE DE LOTTE	t	\N	\N	2026-05-17 09:42:46.535647+00	2026-05-29 18:29:31.386716+00	kg	kg
+11bc6e1b-2e6a-415b-be2c-cd7d2fa3d8f0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f31a2a20-d5d9-4dc6-88c4-367e2914c3f3	12402240	CREVETTE CRUE 30/40	t	\N	\N	2026-05-17 09:42:46.360878+00	2026-05-29 18:29:31.386716+00	kg	kg
+4f9aee20-8007-4552-bdb7-e0c739494191	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f31a2a20-d5d9-4dc6-88c4-367e2914c3f3	12402330	GAMBAS CRUE DCG ASC 30/40 EL/EQ X2K X1UV PFX	t	\N	\N	2026-05-17 09:42:46.362092+00	2026-05-29 18:29:31.386716+00	kg	kg
+edcf59b1-7307-4323-9ac3-3d360274d914	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3bcf05aa-429d-48d3-bef6-5bef7df45820	14304650	BAR 600/800 EL/TURQUIE X6K PFX	t	\N	\N	2026-05-17 09:42:46.61624+00	2026-05-29 18:29:31.386716+00	kg	kg
+6c2da86f-a670-4f5d-a9b3-a9fe5278fda5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	09d5739c-6999-4b35-98ef-66d0510b969f	11101355	MOULE BOUCHOT STG ST BRIEUC PAC EL/Fr X15K PFX	t	\N	\N	2026-05-17 09:42:46.287091+00	2026-05-29 18:29:31.386716+00	kg	kg
+5bfea94f-e3b6-45c6-864e-3436d3bb611c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	533f6d34-4963-4426-a88c-6c42ad96aa42	16303300	MIETTE MORUE SALEE P/OP X5K PFX	t	\N	\N	2026-05-17 09:42:46.666536+00	2026-05-29 18:29:31.386716+00	kg	kg
+0e15c3e1-71aa-4d68-a5fa-0313603c72ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	533f6d34-4963-4426-a88c-6c42ad96aa42	16303301	MIETTES DE MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.668255+00	2026-05-29 18:29:31.386716+00	kg	kg
+2e89c657-96d5-464c-8518-d63d167919cf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	533f6d34-4963-4426-a88c-6c42ad96aa42	16303302	MIETTES DE MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.669883+00	2026-05-29 18:29:31.386716+00	kg	kg
+dd88a5cf-30f9-4124-aa54-162888ae0838	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	533f6d34-4963-4426-a88c-6c42ad96aa42	16303303	MIETTES DE MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.671681+00	2026-05-29 18:29:31.386716+00	kg	kg
+752de496-0ea4-4e6a-ab50-74873e67d716	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	533f6d34-4963-4426-a88c-6c42ad96aa42	16303310	MIETTES DE MORUE SALEE	t	\N	\N	2026-05-17 09:42:46.673382+00	2026-05-29 18:29:31.386716+00	kg	kg
+51f0ea37-24ed-4194-8997-730335822413	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b6262d9e-6c66-45ab-9476-cd07e4da62e2	11001005	COQ ST JACQ CORAILLEE P/ANE X12KG PFX	t	\N	\N	2026-05-17 09:42:46.278025+00	2026-05-29 18:29:31.386716+00	kg	kg
+1f843166-adb9-4b7a-bc2c-2d477f9b0e02	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b6262d9e-6c66-45ab-9476-cd07e4da62e2	11001008	COQ ST JACQ CORAILLEE PAVILLON FRANCE P/ANE X12KG PFX	t	\N	\N	2026-05-17 09:42:46.279228+00	2026-05-29 18:29:31.386716+00	kg	kg
+fcb0166a-c0f9-40ea-9d98-e072c2d7d290	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b6262d9e-6c66-45ab-9476-cd07e4da62e2	11001013	COQUILLE ST JACQUES CORAILLEE	t	\N	\N	2026-05-17 09:42:46.281578+00	2026-05-29 18:29:31.386716+00	kg	kg
+c36f05d0-5095-4abc-bd93-33bbb89e4fb4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e275074c-361d-409e-9253-0ed7806359db	11000600	PRAIRE	t	\N	\N	2026-05-17 09:42:46.266527+00	2026-05-29 18:29:31.386716+00	kg	kg
+634ce289-8885-47fb-9272-e618e8e58faf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e275074c-361d-409e-9253-0ed7806359db	11000602	PRAIRE VIVANTE PAVILLON FRANCE P/ANE X3KG PFX	t	\N	\N	2026-05-17 09:42:46.268157+00	2026-05-29 18:29:31.386716+00	kg	kg
+f34c882b-b7a4-458a-8ee5-2489ea4eeebd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e275074c-361d-409e-9253-0ed7806359db	11000610	PRAIRE	t	\N	\N	2026-05-17 09:42:46.269784+00	2026-05-29 18:29:31.386716+00	kg	kg
+2eaa2c00-4171-4dd6-89dd-468c4fcc1cab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	716e8b63-2143-48ad-9e5c-57446c24e4d5	11000570	OURSIN VIVANT P/ANE X3KG ISLANDE PFX	t	\N	\N	2026-05-17 09:42:46.26483+00	2026-05-29 18:29:31.386716+00	kg	kg
+c85127c6-5160-46c8-8e72-f1f3033ee75f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d739900a-bab7-45af-8fae-6556b047c8ed	13500850	FLT MAQUEREAU MAIN 80/100 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.456861+00	2026-05-29 18:29:31.386716+00	kg	kg
+c4e1456c-db2d-4690-b5b6-2a3f0646c257	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d739900a-bab7-45af-8fae-6556b047c8ed	13500852	FLT MAQUEREAU MAIN 80/100 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.458312+00	2026-05-29 18:29:31.386716+00	kg	kg
+61864c05-04c7-4670-8e55-e5f9b128870e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b0c2b82b-6ba6-4cc8-8d0c-eefd5a15bc05	13500700	FLT MERLU A/PEAU 200/500 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.453792+00	2026-05-29 18:29:31.386716+00	kg	kg
+b4aed885-4a3b-49f2-af74-f2fbfb5148b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	b0c2b82b-6ba6-4cc8-8d0c-eefd5a15bc05	13500702	FILET DE MERLU	t	\N	\N	2026-05-17 09:42:46.455377+00	2026-05-29 18:29:31.386716+00	kg	kg
+86e1fcd0-56fc-4714-83d0-3fd3317fb889	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	7a0d0341-1d09-4457-8e5c-3841424744ea	11201222	HUITRES CANCALE N°2	t	\N	\N	2026-05-17 09:42:46.297854+00	2026-05-29 18:29:31.386716+00	kg	kg
+f8e0df1f-dacd-4520-9813-4b68df38e223	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	41844db8-3dbf-4d9a-a6b1-2e92936cdd6d	11101601	MOULE BOUCHOT STG EL/Fr X15K PFX	t	\N	\N	2026-05-17 09:42:46.288175+00	2026-05-29 18:29:31.386716+00	kg	kg
+007bc91a-f211-4e35-a36d-a11b7ed83baf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	2076b089-5d7c-4491-9823-b3119401bcb5	11200210	HUITRE NORMANDIE ST VAAST N°2	t	\N	\N	2026-05-17 09:42:46.291814+00	2026-05-29 18:29:31.386716+00	kg	kg
+80c055ea-8778-4b6a-bb18-936a541b83ab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	2076b089-5d7c-4491-9823-b3119401bcb5	11200220	HUITRE NORMANDIE ST VAAST N°2	t	\N	\N	2026-05-17 09:42:46.293016+00	2026-05-29 18:29:31.386716+00	kg	kg
+a25d7c77-533f-4543-b6e6-2b44d4778f12	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d3bfb056-413c-43da-b15f-5ebc2c941586	11200320	HUITRE NORMANDIE UTAH BEACH N°2	t	\N	\N	2026-05-17 09:42:46.295408+00	2026-05-29 18:29:31.386716+00	kg	kg
+e6678980-38f9-43a3-b7cf-4c2dba3b645d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	fbec7c68-615a-402d-988c-44e2b51bdde4	11200230	HUITRE NORMANDIE ST VAAST N°3	t	\N	\N	2026-05-17 09:42:46.294149+00	2026-05-29 18:29:31.386716+00	kg	kg
+0e345482-e4de-4d9f-90d2-2340a4c4a0c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	fbec7c68-615a-402d-988c-44e2b51bdde4	11200433	HUITRE NORMANDIE ST VAAST N°3	t	\N	\N	2026-05-17 09:42:46.2966+00	2026-05-29 18:29:31.386716+00	kg	kg
+214d6cab-b28a-4f0b-8cc8-94d27a1f6201	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	cb76d0eb-f449-4cc6-b27c-3fa7b32c456d	11201327	HUITRE PRAT ARCOUM N°2	t	\N	\N	2026-05-17 09:42:46.299051+00	2026-05-29 18:29:31.386716+00	kg	kg
+0f0861a5-fe51-4b0e-9113-0f254cc511ff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	7fa5851c-1ad4-4a89-9d98-b2bb3630f25c	12401010	LANGOUSTINE GLACEE 6/9	t	\N	\N	2026-05-17 09:42:46.357272+00	2026-05-29 18:29:31.386716+00	kg	kg
+965f90b2-0938-4513-a94c-ee36ec8c1d43	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	cf982e06-fde7-4836-a4f9-15381a958302	14292102	PAVE TRUITE ARC EN CIEL LCQ EL/FR X20P X125G PFX	t	\N	\N	2026-05-17 09:42:46.609643+00	2026-05-29 18:29:31.386716+00	kg	kg
+a080f4e2-b69f-4a07-b68d-2b10a1205304	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d0d7cc26-ec20-432b-8fed-4432a0c09aa0	12201335	CREV CUIT 30/50 EL/EQ+ X2K PFX	t	\N	\N	2026-05-17 09:42:46.341294+00	2026-05-29 18:29:31.386716+00	kg	kg
+f0205dc3-0805-460d-a2cc-bacea9f4bb1a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d0d7cc26-ec20-432b-8fed-4432a0c09aa0	12204350	CREVETTE CUITE 30/50	t	\N	\N	2026-05-17 09:42:46.352767+00	2026-05-29 18:29:31.386716+00	kg	kg
+6c459816-a633-4aff-95c0-44805f2e24c5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	62f2fe07-9149-4084-99bc-c2b7c7c7c3c2	14113011	DARNE DE SAUMON	t	\N	\N	2026-05-17 09:42:46.59423+00	2026-05-29 18:29:31.386716+00	kg	kg
+d462cac5-8b59-458f-9078-57d2652ecebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	62f2fe07-9149-4084-99bc-c2b7c7c7c3c2	14193210	DARNE SAUMON A/QUEUE LCQ EL/NVG X5K PFX	t	\N	\N	2026-05-17 09:42:46.599576+00	2026-05-29 18:29:31.386716+00	kg	kg
+5d0b88e7-957b-4f08-873a-b0e53ee0d408	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	3c3ecce0-095a-4411-9e37-8b887c30ea37	13514100	DOS DE JULIENNE	t	\N	\N	2026-05-17 09:42:46.507636+00	2026-05-29 18:29:31.386716+00	kg	kg
+ccdb8755-ecd7-4698-aa4f-0279582e0187	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	799a9436-5d05-4951-a424-51c2a4094cdc	13151122	BAR COMMUN 	t	\N	\N	2026-05-17 09:42:46.399699+00	2026-05-29 18:29:31.386716+00	kg	kg
+8d91fc00-6a61-48d9-9e83-69a335bf8409	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	a5129f95-d071-483e-afec-32d5f7353eb6	13152509	DORADE GRISE 200/300 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.409501+00	2026-05-29 18:29:31.386716+00	kg	kg
+4bcee09a-5e75-4074-b844-275d7c6987b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	70350ad4-e848-4d05-b9d8-8f08af7ad582	13150058	LIEU JAUNE DE LIGNE	t	\N	\N	2026-05-17 09:42:46.378654+00	2026-05-29 18:29:31.386716+00	kg	kg
+93ef6e1f-c2b8-4856-b4c8-a353ab626682	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6ecc824c-d57d-40a8-9134-1a466fc77ddc	13104100	MAQ 150/300 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.370086+00	2026-05-29 18:29:31.386716+00	kg	kg
+fd568f1a-e8cc-4ee4-b533-068c4a59dab2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	caa492f9-646e-45f3-a990-61a25662af78	22307225	brochette AIL ET PERSIL	t	\N	\N	2026-05-17 09:42:46.680522+00	2026-05-29 18:29:31.386716+00	kg	kg
+4c5b2ac5-ee29-4e66-a186-fa6e68cd0906	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	a2b867c6-bc1a-4192-bcf2-6f344eccc86c	14401801	FLT BAR AVEC PEAU / SANS ARETES GRATTE 90G/110G EL/TURQUIE X2K PFX	t	\N	\N	2026-05-17 09:42:46.628475+00	2026-05-29 18:29:31.386716+00	kg	kg
+389075a9-9725-4c5a-a42a-7bcdcf5d41cf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	13507010	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:46.483612+00	2026-05-29 18:29:31.386716+00	kg	kg
+f40372a8-5624-4fb6-96ae-bc02d6648ad9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	13507013	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:46.485177+00	2026-05-29 18:29:31.386716+00	kg	kg
+53ce19ce-baea-4992-9d74-f7d04a6d6325	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	13507020	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:46.486778+00	2026-05-29 18:29:31.386716+00	kg	kg
+48556d25-4210-4aed-a4a0-fb1d9472b91c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	13507040	FLT MERLAN PAPILLON 80/+ PROMO P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.488326+00	2026-05-29 18:29:31.386716+00	kg	kg
+1f7f111e-d4ea-4183-aed5-e7fcc00ca693	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	13537001	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:46.529284+00	2026-05-29 18:29:31.386716+00	kg	kg
+18a2807d-0ac7-446f-8983-63222c51047c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	13537003	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:46.53075+00	2026-05-29 18:29:31.386716+00	kg	kg
+5d66c7f6-2333-465c-a8f4-68245326236e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	13537009	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:46.53217+00	2026-05-29 18:29:31.386716+00	kg	kg
+9c6974af-cac4-42b5-b775-9472a8db747c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	8366b013-14ea-46f2-bf2b-6bf0b0806120	13304100	SOLE PRET A CUIRE	t	\N	\N	2026-05-17 09:42:46.429682+00	2026-05-29 18:29:31.386716+00	kg	kg
+82e3dcc9-0547-47d0-a512-9b5291f49ae3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	9199e243-36bd-435c-8c7f-21470582b01f	13500552	FILET DE MOSTELLE	t	\N	\N	2026-05-17 09:42:46.447198+00	2026-05-29 18:29:31.386716+00	kg	kg
+55de77e7-b6cf-4002-adb4-d66908651449	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	9199e243-36bd-435c-8c7f-21470582b01f	13500554	FLT MOSTELLE DE FOND PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.448889+00	2026-05-29 18:29:31.386716+00	kg	kg
+70c79c8d-85d2-4489-b841-fd3ff66641f2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f1467561-4cfc-49d1-a48a-01672419e095	12100220	PINCE ARAIGNEE CUIT 8/12 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.323177+00	2026-05-29 18:29:31.386716+00	kg	kg
+b70afd7e-4c51-42fb-a1c8-eb5916db0d53	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f1467561-4cfc-49d1-a48a-01672419e095	12100221	PINCE ARAIGNEE CUIT 4/8 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.324591+00	2026-05-29 18:29:31.386716+00	kg	kg
+008c6bce-3c7e-4fca-a263-6f01a9c29fb8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	ce180a78-209b-4f30-8616-211b889e7486	13102032	CHINCHARD	t	\N	\N	2026-05-17 09:42:46.363262+00	2026-05-29 18:29:31.386716+00	kg	kg
+b2367ff9-456e-4476-95e9-a0a0aeb13df7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0fc919c6-7923-4774-90d8-a99abe169bb0	13150500	EPERLAN	t	\N	\N	2026-05-17 09:42:46.383447+00	2026-05-29 18:29:31.386716+00	kg	kg
+32a551de-aa4e-4637-a1bc-23eed953dfa2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	82f3f26a-289a-4815-b256-f3853d85883f	22307231	brochette SAUCE INDIENNE	t	\N	\N	2026-05-17 09:42:46.682337+00	2026-05-29 18:29:31.386716+00	kg	kg
+3a9a6883-b90a-4240-a766-63c792d82f49	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e5016ffe-93e5-4fd5-9ced-ee4eb97c5e34	13510200	dos de sebaste	t	\N	\N	2026-05-17 09:42:46.494677+00	2026-05-29 18:29:31.386716+00	kg	kg
+cb7f8a7f-ecaf-4da8-8b2b-b8888cd10a23	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	6c2c8a05-49d6-46e3-9937-c320b65ffcda	13151102	BAR 0,5/1 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.398143+00	2026-05-29 18:29:31.386716+00	kg	kg
+8c272acb-1e9a-4e8f-8841-039bb488d852	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	f4fc92b4-dd85-4a78-b76d-500971e4b27f	13510900	DOS DE CONGRE	t	\N	\N	2026-05-17 09:42:46.496178+00	2026-05-29 18:29:31.386716+00	kg	kg
+e6206cb5-9d22-498a-8f11-9365022ce529	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d8cc0865-90d5-4195-961b-665ba8e14bfd	13152412	DORADE ROYALE PORTION SAUVAGE	t	\N	\N	2026-05-17 09:42:46.402835+00	2026-05-29 18:29:31.386716+00	kg	kg
+c5c3da49-8786-4ded-9a30-a8770bd1e6f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d8cc0865-90d5-4195-961b-665ba8e14bfd	13152422	DORADE ROYALE PORTION SAUVAGE	t	\N	\N	2026-05-17 09:42:46.404447+00	2026-05-29 18:29:31.386716+00	kg	kg
+88b85c0f-b6c4-46d2-a0c4-04813702ab0a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d8cc0865-90d5-4195-961b-665ba8e14bfd	13152431	DORADE ROYALE 1/+ PAVILLON FRANCE P/ANE X2P PVA	t	\N	\N	2026-05-17 09:42:46.406147+00	2026-05-29 18:29:31.386716+00	kg	kg
+4f7ebdcf-f81f-44a5-9be5-88b3eec9ef15	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d8cc0865-90d5-4195-961b-665ba8e14bfd	13152451	DORADE ROYALE PORTION SAUVAGE	t	\N	\N	2026-05-17 09:42:46.407783+00	2026-05-29 18:29:31.386716+00	kg	kg
+6776cbc7-100a-484d-bd38-8255e83faded	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	13150614	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:46.385041+00	2026-05-29 18:29:31.386716+00	kg	kg
+cad14312-a16d-4abf-8d90-ec4cb7bc0db2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	13150623	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:46.386648+00	2026-05-29 18:29:31.386716+00	kg	kg
+a38b89c6-f645-4f2d-9f97-93a40c257ca4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	13404005	LIEU NOIR ENTIER	t	\N	\N	2026-05-17 09:42:46.434702+00	2026-05-29 18:29:31.386716+00	kg	kg
+4c644e7e-dc43-4486-8021-427746c3130c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e24129d5-8f4f-46da-be77-2e57a2b32782	13150412	MAIGRE 0,5/1 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.381818+00	2026-05-29 18:29:31.386716+00	kg	kg
+fdd9f879-d97a-42a0-be15-193bf8a60b32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	294a3580-5a47-4c00-abf5-162c1d0b1733	13104112	MAQUEREAU	t	\N	\N	2026-05-17 09:42:46.371522+00	2026-05-29 18:29:31.386716+00	kg	kg
+1eaf7dc0-e242-4092-9767-6e925f4c9baf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e335fc8e-831f-4761-b2f5-160a993c838f	13154120	MERLU (CHON) 300/600 P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.414404+00	2026-05-29 18:29:31.386716+00	kg	kg
+423be379-5832-423a-b4ea-5514cd69711b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	e335fc8e-831f-4761-b2f5-160a993c838f	13154122	MERLU (CHON) 300/600 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.416123+00	2026-05-29 18:29:31.386716+00	kg	kg
+9cb34242-2ce3-42f8-8115-42b6bb40982e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	351eaf51-b8c1-4b2a-b45e-b6f26a196646	13152075	PAGEOT GROS	t	\N	\N	2026-05-17 09:42:46.401266+00	2026-05-29 18:29:31.386716+00	kg	kg
+fd8ba6cd-0f9b-4abd-bf3b-41951deb72f5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0242067f-5fa8-4cc4-9440-3677c968b3bb	13105315	SARDINE	t	\N	\N	2026-05-17 09:42:46.374703+00	2026-05-29 18:29:31.386716+00	kg	kg
+c99cc4e1-8c87-41a2-9e37-6d39d756d775	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	0242067f-5fa8-4cc4-9440-3677c968b3bb	13105317	SARDINE (DE CUVE) PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.37672+00	2026-05-29 18:29:31.386716+00	kg	kg
+2e9a248f-6996-4353-b7d8-a8612092c4a0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	13204100	SOLE VIDE 170/220 PAVILLON FRANCE P/ANE X3K PFX	t	\N	\N	2026-05-17 09:42:46.421266+00	2026-05-29 18:29:31.386716+00	kg	kg
+1bccb92a-ee92-4f1a-8e14-a67b590ccc32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	a3af69c0-58a7-4545-89ae-4ef18a9c0611	29f86909-cd3c-4670-8da4-97e6aaddcf9f	13204110	SOLE PORTION	t	\N	\N	2026-05-17 09:42:46.422887+00	2026-05-29 18:29:31.386716+00	kg	kg
+34673059-5aae-4b5e-b265-9a0dcb62a5ff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	a1cfd95b-c66d-48be-9f23-2dfa2c68c3e4	PTTX14_0	PINCES DE TOURTEAUX CUITES 1/4	t	\N	\N	2026-05-17 09:42:46.743999+00	2026-05-29 18:29:31.386716+00	kg	kg
+c4bf4131-9edb-49c2-9c88-a08518b3b826	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	LANGV25	LANGOUSTINE VIVANTE 25/35 4 KG	t	\N	\N	2026-05-17 09:42:46.738958+00	2026-05-29 18:29:31.386716+00	kg	kg
+a10c26e6-6023-4662-a8a1-bf1934ff3443	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	HOM_00	HOMARD EUROPEEN VIVANT	t	\N	\N	2026-05-17 09:42:46.723532+00	2026-05-29 18:29:31.386716+00	kg	kg
+ae43f79e-6b58-40d9-be15-8529f6aebbee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	HOM_10	HOMARD SELECT 10kg	t	\N	\N	2026-05-17 09:42:46.725252+00	2026-05-29 18:29:31.386716+00	kg	kg
+03fea6bb-9bd8-483c-bdaf-3b18054e57d2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	HOM4800_	HOMARD EUROPEEN VIVANT	t	\N	\N	2026-05-17 09:42:46.716495+00	2026-05-29 18:29:31.386716+00	kg	kg
+f3b980e4-6ff2-411b-895c-099e1de749eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	HOM8120	HOMARD EUROPEEN VIVANT	t	\N	\N	2026-05-17 09:42:46.718257+00	2026-05-29 18:29:31.386716+00	kg	kg
+d4e87287-61e4-4cd3-b2ea-ea7153f5014c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	cf014bf1-5197-4f7b-9e69-b0d174a826d1	LANGGL01	LANGOUSTINE GLACEE 16/20	t	\N	\N	2026-05-17 09:42:46.72686+00	2026-05-29 18:29:31.386716+00	kg	kg
+b22e9d3e-53ed-494f-b341-3eabe2f6d536	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	9bf62459-67b1-4538-a03d-ad1165d1adaa	LANGV10	LANGOUSTINE VIVANTE 10/15 4 KG	t	\N	\N	2026-05-17 09:42:46.735714+00	2026-05-29 18:29:31.386716+00	kg	kg
+d2ddc2a9-bf2e-42d4-af2e-a65d0835ee36	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	4ca18ee3-6cbe-48ff-a300-306183707747	LANGGL02	LANGOUSTINE GLACEE 31/40	t	\N	\N	2026-05-17 09:42:46.72856+00	2026-05-29 18:29:31.386716+00	kg	kg
+6d38b1f5-f6d0-4f60-be2a-11424119f60c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	4ca18ee3-6cbe-48ff-a300-306183707747	LANGGL03	LANGOUSTINE GLACEE 31/40	t	\N	\N	2026-05-17 09:42:46.730303+00	2026-05-29 18:29:31.386716+00	kg	kg
+e99873b8-bec4-4e41-85b7-5eb6e17de04c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	4ca18ee3-6cbe-48ff-a300-306183707747	LANGGL2	LANGOUSTINE GLACEE 20/40 3 KG	t	\N	\N	2026-05-17 09:42:46.732149+00	2026-05-29 18:29:31.386716+00	kg	kg
+47bf01d7-7977-4c7d-b779-386131fe5de0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	4ca18ee3-6cbe-48ff-a300-306183707747	LANGGL3	LANGOUSTINE GLACEE 30/40 3 KG	t	\N	\N	2026-05-17 09:42:46.733998+00	2026-05-29 18:29:31.386716+00	kg	kg
+ed45175d-e579-4257-8887-4e766d6b8644	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	c2c1411e-8762-4f86-87bb-b5839ca964c5	LANGV15	LANGOUSTINE VIVANTE 15/25 4 KG	t	\N	\N	2026-05-17 09:42:46.737342+00	2026-05-29 18:29:31.386716+00	kg	kg
+f3cac7f0-5845-4fcb-a896-10890334f2cc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	de3ab41b-54f7-4ef4-a9ad-5c96ed9fd26e	LANGV51	LANGOUSTINE VIVANTE 5/10 4 KG	t	\N	\N	2026-05-17 09:42:46.74075+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b1e1c2c-85e9-4d00-a417-1543d9ff7767	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	875f7e63-ab5b-4f69-ba63-fc71fe4dcda9	PTTCR81	PINCES DE TOURTEAUX CUITES 8/12	t	\N	\N	2026-05-17 09:42:46.742424+00	2026-05-29 18:29:31.386716+00	kg	kg
+a7d4394f-246b-4ce2-8aae-544ff151e47d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	875f7e63-ab5b-4f69-ba63-fc71fe4dcda9	PTTX812_	PINCES DE TOURTEAUX CUITES 8/12	t	\N	\N	2026-05-17 09:42:46.745682+00	2026-05-29 18:29:31.386716+00	kg	kg
+ca24cbba-8af7-42b8-8617-ae4872a388fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	6c608d22-1b2b-465b-8f5d-cde10ab84494	HOMEP_00	HOMARD EUROPEEN VIVANT EPATTE	t	\N	\N	2026-05-17 09:42:46.71997+00	2026-05-29 18:29:31.386716+00	kg	kg
+9a687ae4-5063-4485-8b9a-5480dad67b1b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	6c608d22-1b2b-465b-8f5d-cde10ab84494	HOMEP_01	HOMARD EUROPEEN VIVANT EPATTE	t	\N	\N	2026-05-17 09:42:46.721735+00	2026-05-29 18:29:31.386716+00	kg	kg
+6671d720-2c2a-48e8-bb32-e64aefb37bb0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	6d4bc718-0056-49f3-8d5a-b847367258ff	DORG350	DORADE GRISE	t	\N	\N	2026-05-17 09:42:46.752552+00	2026-05-29 18:29:31.386716+00	kg	kg
+23d9072a-777a-4ed4-a114-b41422ce23dd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	6d4bc718-0056-49f3-8d5a-b847367258ff	DORG580	DORADE GRISE	t	\N	\N	2026-05-17 09:42:46.753926+00	2026-05-29 18:29:31.386716+00	kg	kg
+2457554b-1daf-4c8e-8e74-66a7eac22c26	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	486a6d50-f0da-4666-b5c0-be523ae0827d	RAI121F_0	AILE DE RAIE	t	\N	\N	2026-05-17 09:42:46.820755+00	2026-05-29 18:29:31.386716+00	kg	kg
+6d389a3a-37ad-4ff2-9954-395d416b3502	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	486a6d50-f0da-4666-b5c0-be523ae0827d	RAI121F_06	AILE DE RAIE	t	\N	\N	2026-05-17 09:42:46.822567+00	2026-05-29 18:29:31.386716+00	kg	kg
+d62b607a-c9d5-481e-a314-dd8d904ab57e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	486a6d50-f0da-4666-b5c0-be523ae0827d	RAI121F_6	AILE RAIE 1/2 KG PELE 1F 6 KG	t	\N	\N	2026-05-17 09:42:46.824258+00	2026-05-29 18:29:31.386716+00	kg	kg
+d7f3803a-af3c-4c02-86e4-3f2f8b806510	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	486a6d50-f0da-4666-b5c0-be523ae0827d	RAI5001_3	AILE DE RAIE	t	\N	\N	2026-05-17 09:42:46.827774+00	2026-05-29 18:29:31.386716+00	kg	kg
+a002a3f1-62d3-43e0-9066-0ba0fc384a0c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	486a6d50-f0da-4666-b5c0-be523ae0827d	RAI5001_6	AILE DE RAIE	t	\N	\N	2026-05-17 09:42:46.829271+00	2026-05-29 18:29:31.386716+00	kg	kg
+a63bf60c-7958-4e1d-a28e-6721ef4e7694	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	7a686fcf-41d6-4012-8714-fe2f11510119	ROUGFRI_	ROUGET BARBET FRITURE 3KG	t	\N	\N	2026-05-17 09:42:46.832482+00	2026-05-29 18:29:31.386716+00	kg	kg
+c20a6d93-3403-43a7-8ea6-9ef9a48ae379	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	71abfc77-e6b5-43b4-8c31-47facf18a3bc	VIEIL_03	VIEILLE	t	\N	\N	2026-05-17 09:42:46.835846+00	2026-05-29 18:29:31.386716+00	kg	kg
+ba5979e4-4f44-4bf4-b9cc-4d6108523921	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3b224636-ae9b-4d7d-a283-19462049cc83	ENC10020	ENCORNET 1/200 3	t	\N	\N	2026-05-17 09:42:46.765336+00	2026-05-29 18:29:31.386716+00	kg	kg
+196317c6-1262-4319-a758-772529775f0f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3b224636-ae9b-4d7d-a283-19462049cc83	ENC100_3	ENCORNET - 100 G 3 KG	t	\N	\N	2026-05-17 09:42:46.766954+00	2026-05-29 18:29:31.386716+00	kg	kg
+0e3d94fd-337b-4e7b-b126-902c6faa9d8a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	7314c3b9-7d71-497e-b6b9-525273bd2ca7	RAI25001	AILE RAIE 2/500 GR PELE 1F 3 KG	t	\N	\N	2026-05-17 09:42:46.826053+00	2026-05-29 18:29:31.386716+00	kg	kg
+347c7f27-f4dc-4875-b82b-4bb7cac8fd65	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	7314c3b9-7d71-497e-b6b9-525273bd2ca7	RAIL1300_	AILE DE RAIE	t	\N	\N	2026-05-17 09:42:46.830969+00	2026-05-29 18:29:31.386716+00	kg	kg
+935b4ecb-8dec-4d78-8567-8603d4051635	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	7304dd84-ff46-44f5-aa64-abd307e7ee7a	MERLU12	MERLU ENTIER	t	\N	\N	2026-05-17 09:42:46.807354+00	2026-05-29 18:29:31.386716+00	kg	kg
+1e349d57-d4f6-49c1-b741-6a3f249f3bd1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	7304dd84-ff46-44f5-aa64-abd307e7ee7a	MERLU12_	MERLU 1/2 KG 10KG	t	\N	\N	2026-05-17 09:42:46.808667+00	2026-05-29 18:29:31.386716+00	kg	kg
+eecda76f-df56-4f8f-86c8-1e1ea7e9db7b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	67eee58a-db9e-454b-ab08-e7f4a351d03c	FILLIEUN	FILET LIEU NOIR 1/2 KG 3 KG	t	\N	\N	2026-05-17 09:42:46.783155+00	2026-05-29 18:29:31.386716+00	kg	kg
+51e9228d-0aa8-4205-8e25-12bb2c42f10b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	FILJUL_03	FILET DE JULIENNE	t	\N	\N	2026-05-17 09:42:46.779684+00	2026-05-29 18:29:31.386716+00	kg	kg
+ea1fef65-bc0e-4c80-a19f-9b44bcb98073	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	FILJUL58	FILET DE JULIENNE	t	\N	\N	2026-05-17 09:42:46.776503+00	2026-05-29 18:29:31.386716+00	kg	kg
+dda4e101-4374-4e03-b49d-7fb293ac9ce5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	FILJUL5800_	FILET DE JULIENNE	t	\N	\N	2026-05-17 09:42:46.778003+00	2026-05-29 18:29:31.386716+00	kg	kg
+af6e0bce-d28b-4af8-a3f7-099c9a229543	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	34b35d10-28ed-434a-8380-ef2e92bf3a30	FILCAB24	FILET DE CABILLAUD	t	\N	\N	2026-05-17 09:42:46.77338+00	2026-05-29 18:29:31.386716+00	kg	kg
+3a264f93-214b-46a2-9fc4-bf850a2154d0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	2c6ad426-4755-42db-9a16-0b967db0ddbc	FILLIEUJ05	FILET DE LIEU JAUNE	t	\N	\N	2026-05-17 09:42:46.781428+00	2026-05-29 18:29:31.386716+00	kg	kg
+7866b827-61dc-4d2b-bf8f-7919957b05da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	d4b273cd-6c02-4b55-8f91-fedff0914bc7	JOURAI_02	JOUE DE RAIE	t	\N	\N	2026-05-17 09:42:46.800697+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f8fa2ca-dda1-402b-a745-d1f4bac70073	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	d4b273cd-6c02-4b55-8f91-fedff0914bc7	JOURAI_03	JOUE DE RAIE	t	\N	\N	2026-05-17 09:42:46.802332+00	2026-05-29 18:29:31.386716+00	kg	kg
+cc82ff1e-beae-4307-b6ac-d7f33e05c853	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	d4b273cd-6c02-4b55-8f91-fedff0914bc7	JOURAI_2	JOUE DE RAIE 2	t	\N	\N	2026-05-17 09:42:46.803946+00	2026-05-29 18:29:31.386716+00	kg	kg
+52b26dd7-7b71-4c51-ad76-891d0439ce90	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	6b5031b8-02bf-4603-9d7c-5bc91f8820bd	QLO4+_P	QUEUE DE LOTTE	t	\N	\N	2026-05-17 09:42:46.818641+00	2026-05-29 18:29:31.386716+00	kg	kg
+3aeadf95-3539-42b8-bf2c-58c064fc14b4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	ab0fb31e-be20-4002-8170-9004eada1825	FILEG120	FILET EGLEFIN 100/200 GR 3 KG	t	\N	\N	2026-05-17 09:42:46.775025+00	2026-05-29 18:29:31.386716+00	kg	kg
+a0c236f8-0dc1-42ec-ab80-8d1782979806	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	69d4db38-6549-40cf-a2d8-5b01983e5ab1	EMISP_03	SAUMONETTE EMISSOLE PELE 3 KG	t	\N	\N	2026-05-17 09:42:46.760523+00	2026-05-29 18:29:31.386716+00	kg	kg
+c0a6bb82-e625-4ed9-b431-a0589e219604	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	69d4db38-6549-40cf-a2d8-5b01983e5ab1	EMISP_06	SAUMONETTE/GRANDE ROUSSETTE PELLEE	t	\N	\N	2026-05-17 09:42:46.7621+00	2026-05-29 18:29:31.386716+00	kg	kg
+7bb08f97-f241-4d3c-8974-7353125aea17	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	da280228-caca-455d-81fc-4e88673bd636	DTHONBL	DARNE DE THON ENTIER LIGNE 2/4 x 4 PIECE	t	\N	\N	2026-05-17 09:42:46.758825+00	2026-05-29 18:29:31.386716+00	kg	kg
+bdf4ac70-ce4e-4922-9304-72ad9b49f312	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	24336843-3546-4088-9153-515acd22a23c	FILLINB_03	FILET DE QUEUE DE LINGUE BLEUE	t	\N	\N	2026-05-17 09:42:46.789299+00	2026-05-29 18:29:31.386716+00	kg	kg
+27c1f979-bcd8-4034-8663-3fab14a5619b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	24336843-3546-4088-9153-515acd22a23c	FILLINB46	FILET DE QUEUE DE LINGUE BLEUE	t	\N	\N	2026-05-17 09:42:46.784766+00	2026-05-29 18:29:31.386716+00	kg	kg
+69ebfc29-779c-429b-878d-fe73ecd4b5d0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	24336843-3546-4088-9153-515acd22a23c	FILLINB51	FILET LINGUE BLEUE 500/1000 3 KG	t	\N	\N	2026-05-17 09:42:46.786346+00	2026-05-29 18:29:31.386716+00	kg	kg
+1c509008-ec62-4c5b-a049-860bc7b37bbb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	24336843-3546-4088-9153-515acd22a23c	FILLINB61	FILET LINGUE BLEUE 600/1500 GR 3 KG	t	\N	\N	2026-05-17 09:42:46.787833+00	2026-05-29 18:29:31.386716+00	kg	kg
+47a17b76-a153-4fe7-9649-b58de392c905	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	05f46a02-bda4-4fb3-9f7e-563294d4e470	QLO12_3	QUEUE LOTTE 1/2 3 KG	t	\N	\N	2026-05-17 09:42:46.811789+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b75ecc7-d225-4881-b02b-83bdff9e9bf5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	05f46a02-bda4-4fb3-9f7e-563294d4e470	QLO12_6	QUEUE DE LOTTE 1/2	t	\N	\N	2026-05-17 09:42:46.81342+00	2026-05-29 18:29:31.386716+00	kg	kg
+d52a980b-ef92-49c2-9fcd-09b794076174	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	88affd4e-71ab-40be-9bca-03325d368f97	JOUELO_03	JOUE DE LOTTE	t	\N	\N	2026-05-17 09:42:46.797572+00	2026-05-29 18:29:31.386716+00	kg	kg
+8773f08a-24e2-4917-a398-949f2ff7dcca	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	88affd4e-71ab-40be-9bca-03325d368f97	JOUELO_3	JOUE LOTTE 3 KG	t	\N	\N	2026-05-17 09:42:46.799102+00	2026-05-29 18:29:31.386716+00	kg	kg
+1ff3f7eb-8278-4e1b-a567-d5efa60b93be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	QLO2500_	QUEUE LOTTE 200/500 GR 3 KG	t	\N	\N	2026-05-17 09:42:46.81504+00	2026-05-29 18:29:31.386716+00	kg	kg
+94554016-7382-4005-a098-0ba2879398ea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	QLO2500_3	QUEUE LOTTE 200/500 GR 3 KG	t	\N	\N	2026-05-17 09:42:46.816729+00	2026-05-29 18:29:31.386716+00	kg	kg
+b5db140e-0d23-42af-8e07-f4b7e4c28874	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	b0c2b82b-6ba6-4cc8-8d0c-eefd5a15bc05	FILMERLU	FILET MERLU 200/500 A/P 3 KG	t	\N	\N	2026-05-17 09:42:46.793979+00	2026-05-29 18:29:31.386716+00	kg	kg
+30a44fc6-6a91-45b2-8bdf-126ab014d94e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	b0c2b82b-6ba6-4cc8-8d0c-eefd5a15bc05	FILMERLU02	FILET DE MERLU	t	\N	\N	2026-05-17 09:42:46.795693+00	2026-05-29 18:29:31.386716+00	kg	kg
+f5cadd0e-e6de-4afb-a44d-ab660eecf0d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	6ecc824c-d57d-40a8-9134-1a466fc77ddc	MAQ3500	MAQUEREAU 3/500 GR LIGNE 5KG	t	\N	\N	2026-05-17 09:42:46.805751+00	2026-05-29 18:29:31.386716+00	kg	kg
+1709c529-9a93-47c9-a941-0b3c951d30ff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	77e0aa4a-978b-4c43-a9e5-02ed8942d7e7	SEBCHE_00	SEBASTE CHEVRE	t	\N	\N	2026-05-17 09:42:46.834104+00	2026-05-29 18:29:31.386716+00	kg	kg
+6d684b9e-52e2-46fa-9533-e9963a2f0e5d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	d5d3f0fb-b4f9-413b-a3a2-bb9073678720	FILBRO25	FILET DE BROSME	t	\N	\N	2026-05-17 09:42:46.771776+00	2026-05-29 18:29:31.386716+00	kg	kg
+3a18f5ef-b07b-4d7c-87e6-9aa98d1ae61d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	FILMERL01	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:46.790727+00	2026-05-29 18:29:31.386716+00	kg	kg
+9816a4f1-534f-43bd-8b3d-a1839e03175c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	FILMERL1	FILET MERLAN S/FLC 120 GR+ 3 KG	t	\N	\N	2026-05-17 09:42:46.792139+00	2026-05-29 18:29:31.386716+00	kg	kg
+289a5ddf-cafd-455f-83a7-e5271606ae02	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	ace4aa66-931e-46b0-9b21-5b744038f60e	DARCON	DARNE CONGRE 3 KG	t	\N	\N	2026-05-17 09:42:46.750908+00	2026-05-29 18:29:31.386716+00	kg	kg
+8e81dde8-92fb-4816-a779-bc887a573de7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	0fc919c6-7923-4774-90d8-a99abe169bb0	ATHE_02	EPERLAN	t	\N	\N	2026-05-17 09:42:46.747594+00	2026-05-29 18:29:31.386716+00	kg	kg
+508c76af-3bfe-40e5-9aa3-33d219aed863	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	0fc919c6-7923-4774-90d8-a99abe169bb0	ATHE_03	EPERLAN	t	\N	\N	2026-05-17 09:42:46.74928+00	2026-05-29 18:29:31.386716+00	kg	kg
+7f0bf905-5f6c-4a04-98ab-eee282b36bab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	0fc919c6-7923-4774-90d8-a99abe169bb0	EPER_03	EPERLAN	t	\N	\N	2026-05-17 09:42:46.768534+00	2026-05-29 18:29:31.386716+00	kg	kg
+6a406476-fec2-4601-8a70-b2ccf349e27e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	0fc919c6-7923-4774-90d8-a99abe169bb0	EPER_3	EPERLAN 3 KG	t	\N	\N	2026-05-17 09:42:46.769998+00	2026-05-29 18:29:31.386716+00	kg	kg
+8afbd959-f15b-4e69-ab1f-8e9458bece38	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	f4fc92b4-dd85-4a78-b76d-500971e4b27f	DOSCON	DOS DE CONGRE	t	\N	\N	2026-05-17 09:42:46.757058+00	2026-05-29 18:29:31.386716+00	kg	kg
+e904887c-bff9-41cb-aa57-c2c6cd114109	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	d8cc0865-90d5-4195-961b-665ba8e14bfd	DORR510	DORADE ROYALE 5/1000	t	\N	\N	2026-05-17 09:42:46.755483+00	2026-05-29 18:29:31.386716+00	kg	kg
+4330123b-7746-459e-bbd7-6ac3f5a0cf08	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	e335fc8e-831f-4761-b2f5-160a993c838f	MERLU13	MERLU 100/300 GR 3 KG	t	\N	\N	2026-05-17 09:42:46.810062+00	2026-05-29 18:29:31.386716+00	kg	kg
+69c0225d-3ecc-4801-9b3c-b4ddcc5cc796	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	16f6d6f5-0e6a-4efe-beaa-bdc808045e6c	01664	THONINE COMMUNE	t	\N	\N	2026-05-17 09:42:46.967992+00	2026-05-29 18:29:31.386716+00	kg	kg
+276e2370-79f5-4696-9b00-966fc4d80745	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	497dfa60-242a-41cf-a896-a2f5aaa8bc7b	02721	SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:46.993677+00	2026-05-29 18:29:31.386716+00	kg	kg
+351d8b5a-2ed4-40f6-8b34-8518775da0c1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	497dfa60-242a-41cf-a896-a2f5aaa8bc7b	02786	SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:47.003949+00	2026-05-29 18:29:31.386716+00	kg	kg
+ef6c980f-a72d-47c0-b108-917f8dab18ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	eb10da5d-a0ae-4d54-ba4f-cce96b510c9a	00776	MERLAN	t	\N	\N	2026-05-17 09:42:46.889296+00	2026-05-29 18:29:31.386716+00	kg	kg
+b6603393-bc73-42db-8730-01771d249a31	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	00729a62-7e96-4ad2-82cc-0dba17958572	00371	MERLU PORTION	t	\N	\N	2026-05-17 09:42:46.850919+00	2026-05-29 18:29:31.386716+00	kg	kg
+fe57a85e-5930-421f-a96f-a24c02a18093	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	0a1a9a19-4c79-41b4-acea-9fab3d52266f	01060	MAQUEREAU	t	\N	\N	2026-05-17 09:42:46.923926+00	2026-05-29 18:29:31.386716+00	kg	kg
+2a559721-de5d-46a9-8f0d-e4873f3d2ed3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	06367c87-d184-4bf8-b917-cad7799cb1c8	01107	MULET	t	\N	\N	2026-05-17 09:42:46.925393+00	2026-05-29 18:29:31.386716+00	kg	kg
+02b6d9eb-1fa2-4e81-9cb5-6ca4b771b230	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	86bb7bb5-b64b-4895-a782-af5563c65dc7	01594	TACAUD	t	\N	\N	2026-05-17 09:42:46.958937+00	2026-05-29 18:29:31.386716+00	kg	kg
+24c314b0-6fa4-4002-a56a-4ddcc1900521	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	68f21e78-5b9f-4782-a924-1aecc9db84be	01551	SOLE BLONDE 150/250 PF	t	\N	\N	2026-05-17 09:42:46.953857+00	2026-05-29 18:29:31.386716+00	kg	kg
+9e176521-1329-477f-83bd-0651b6624cf9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	68f21e78-5b9f-4782-a924-1aecc9db84be	01553	SOLE BLONDE 200/400 PF	t	\N	\N	2026-05-17 09:42:46.95559+00	2026-05-29 18:29:31.386716+00	kg	kg
+1d101319-6d9c-4a40-afc5-7dd8d99ff948	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	6d4bc718-0056-49f3-8d5a-b847367258ff	00407	DORADE GRISE	t	\N	\N	2026-05-17 09:42:46.855865+00	2026-05-29 18:29:31.386716+00	kg	kg
+15474d67-b00b-4d62-85e6-edb53a6eb15d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	32d758db-4e04-4e64-9817-422db1ae319b	04089	MOULE DE BOUCHOT	t	\N	\N	2026-05-17 09:42:47.030082+00	2026-05-29 18:29:31.386716+00	kg	kg
+c589672c-d195-4279-a106-5e76e80417f3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	486a6d50-f0da-4666-b5c0-be523ae0827d	01355	RAIE +800	t	\N	\N	2026-05-17 09:42:46.928648+00	2026-05-29 18:29:31.386716+00	kg	kg
+601189da-9002-4054-994e-703bf9e3b2ab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	486a6d50-f0da-4666-b5c0-be523ae0827d	01405	RAIE 500/800 PF	t	\N	\N	2026-05-17 09:42:46.933235+00	2026-05-29 18:29:31.386716+00	kg	kg
+690dd011-5f33-4e3b-a1e3-491d510ff661	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	62efd755-a71b-46d4-aea9-1035b3aaacec	01489	SAINT PIERRE 500/1KG PF	t	\N	\N	2026-05-17 09:42:46.94434+00	2026-05-29 18:29:31.386716+00	kg	kg
+19a62b03-89d4-47c1-952c-4ef63f87ec44	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	7a686fcf-41d6-4012-8714-fe2f11510119	01475	ROUGET BARBET 100/200 PF	t	\N	\N	2026-05-17 09:42:46.936057+00	2026-05-29 18:29:31.386716+00	kg	kg
+48d93c3c-1c23-420d-b070-a6f8f65fda7c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	7a686fcf-41d6-4012-8714-fe2f11510119	01476	ROUGET BARBET	t	\N	\N	2026-05-17 09:42:46.93767+00	2026-05-29 18:29:31.386716+00	kg	kg
+578d107f-9824-473b-82e3-2f0afbbfe7ba	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	c981cf21-9434-4363-9bf9-d815306ffdd2	02100	VIVES PF	t	\N	\N	2026-05-17 09:42:46.974745+00	2026-05-29 18:29:31.386716+00	kg	kg
+5714ecee-1bb3-4af8-93e2-72bd841c9131	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	fff55f1e-93ba-4f54-9e0b-249b3339c448	01511	SOLE VIDEE	t	\N	\N	2026-05-17 09:42:46.947663+00	2026-05-29 18:29:31.386716+00	kg	kg
+9da106c1-c38a-40c4-96bc-4efe75225c0b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	7314c3b9-7d71-497e-b6b9-525273bd2ca7	01401	AILE DE RAIE	t	\N	\N	2026-05-17 09:42:46.930223+00	2026-05-29 18:29:31.386716+00	kg	kg
+a20aff3f-1159-4162-80dd-49fb812b7055	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	7314c3b9-7d71-497e-b6b9-525273bd2ca7	01403	RAIE 250/500	t	\N	\N	2026-05-17 09:42:46.931723+00	2026-05-29 18:29:31.386716+00	kg	kg
+6c9d2d4d-6682-4f13-8579-3666bf5ecd4d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	aaf71b15-3ba4-4f74-8f0a-6eadf1487aa7	00603	BLANC DE SEICHE	t	\N	\N	2026-05-17 09:42:46.882672+00	2026-05-29 18:29:31.386716+00	kg	kg
+532de3bc-c520-4c98-999e-226712ddeff7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	bf1f9769-7e58-410f-ae33-fb4e96c7a68a	01481	ROUSSETTE DECOUPE MAIN PF	t	\N	\N	2026-05-17 09:42:46.940841+00	2026-05-29 18:29:31.386716+00	kg	kg
+abfefca3-cdc2-4ca5-b71f-ff5c6a516950	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	bf1f9769-7e58-410f-ae33-fb4e96c7a68a	01482	ROUSSETTE GROSSE BICHE DECOUPE MAINPF	t	\N	\N	2026-05-17 09:42:46.942649+00	2026-05-29 18:29:31.386716+00	kg	kg
+6a634b18-29bb-4e8f-8d90-745f5653a662	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	93cf561d-1b61-4aac-8ab9-0367d33ca607	05087	BIGORNEAU CUIT	t	\N	\N	2026-05-17 09:42:47.052876+00	2026-05-29 18:29:31.386716+00	kg	kg
+f48d82db-ae21-46a5-ad75-1adac741d970	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	93cf561d-1b61-4aac-8ab9-0367d33ca607	05904	BIGORNEAU CUIT	t	\N	\N	2026-05-17 09:42:47.055708+00	2026-05-29 18:29:31.386716+00	kg	kg
+a52b1c79-e5a8-453e-a432-aa9a5ff67751	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	9cceef87-c6b9-4c8c-bcdf-b44a25108f5f	00806	LIEU JAUNE 5/1000 PF	t	\N	\N	2026-05-17 09:42:46.8925+00	2026-05-29 18:29:31.386716+00	kg	kg
+085a34a4-8fed-42d4-a1de-19d2a163382c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	9cceef87-c6b9-4c8c-bcdf-b44a25108f5f	02669	LIEU JAUNE ENTIER	t	\N	\N	2026-05-17 09:42:46.986561+00	2026-05-29 18:29:31.386716+00	kg	kg
+289a64e0-3874-4382-96aa-aef13b08f2c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	2df24e04-f616-43fe-b54e-5cadabdc4605	00517	CABILLAUD 5/1	t	\N	\N	2026-05-17 09:42:46.874244+00	2026-05-29 18:29:31.386716+00	kg	kg
+9b617bbe-b353-487e-91fb-32d59bd39c53	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	7304dd84-ff46-44f5-aa64-abd307e7ee7a	00951	MERLU 800/1.2 PF	t	\N	\N	2026-05-17 09:42:46.906025+00	2026-05-29 18:29:31.386716+00	kg	kg
+2c7992f5-cf45-4440-b65c-e16d412215f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	7304dd84-ff46-44f5-aa64-abd307e7ee7a	00952	MERLU ENTIER	t	\N	\N	2026-05-17 09:42:46.907683+00	2026-05-29 18:29:31.386716+00	kg	kg
+d86d9814-d904-4893-b682-6d7dfa80cd69	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	753759a2-a44c-4bf8-92ef-1ff7ab1ec282	02472	HADDOCK *3 KG	t	\N	\N	2026-05-17 09:42:46.979287+00	2026-05-29 18:29:31.386716+00	kg	kg
+07225bbd-f3fd-47ce-a380-487e46892f22	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	984aac3f-583f-4ec2-8743-9f4a14520ea3	02872	DOS CABILLAUD 400+	t	\N	\N	2026-05-17 09:42:47.012337+00	2026-05-29 18:29:31.386716+00	kg	kg
+3ae0f05c-1709-4ed8-9188-845b6c7a0da9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	984aac3f-583f-4ec2-8743-9f4a14520ea3	02874	DOS CABILLAUD 200/400	t	\N	\N	2026-05-17 09:42:47.013876+00	2026-05-29 18:29:31.386716+00	kg	kg
+7a88dcd7-b498-4cc7-9ea7-7a487e561f1c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	984aac3f-583f-4ec2-8743-9f4a14520ea3	02899	DOS DE CABILLAUD	t	\N	\N	2026-05-17 09:42:47.015358+00	2026-05-29 18:29:31.386716+00	kg	kg
+8f34c976-c491-4e77-9dbb-99a8d59dcbc4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	984aac3f-583f-4ec2-8743-9f4a14520ea3	02972	DOS DE CABILLAUD	t	\N	\N	2026-05-17 09:42:47.027293+00	2026-05-29 18:29:31.386716+00	kg	kg
+470eb780-22f0-4c30-97b8-585f6a5c283b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	02701	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:46.990872+00	2026-05-29 18:29:31.386716+00	kg	kg
+1cd11883-9db5-4a92-b62f-e0b9ab867d85	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	02754	FILET SAUMON +1.8 TD ECOSSE	t	\N	\N	2026-05-17 09:42:46.996514+00	2026-05-29 18:29:31.386716+00	kg	kg
+2a6b1e8b-8fe3-4770-8c54-0c7502a44fa7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	02779	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:46.9997+00	2026-05-29 18:29:31.386716+00	kg	kg
+b9e1e19c-928a-444c-88c6-dc4361df1d46	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	02782	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:47.001219+00	2026-05-29 18:29:31.386716+00	kg	kg
+b43799c2-421c-468d-934e-38f21d0dfceb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	02783	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:47.002642+00	2026-05-29 18:29:31.386716+00	kg	kg
+278a8acb-6efd-49bf-be8a-348afb150547	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	02799	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:47.006747+00	2026-05-29 18:29:31.386716+00	kg	kg
+58d21b6a-63de-4404-8f1d-caefb115fe29	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5020f538-0781-4a33-a1b4-4f9ed5c4d685	02924	FILET DE SABRE	t	\N	\N	2026-05-17 09:42:47.018664+00	2026-05-29 18:29:31.386716+00	kg	kg
+b1840a42-9211-4bc0-822a-09b873b115da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	67eee58a-db9e-454b-ab08-e7f4a351d03c	00864	FILET DE LIEU NOIR	t	\N	\N	2026-05-17 09:42:46.897683+00	2026-05-29 18:29:31.386716+00	kg	kg
+f3fbbc4c-5b4b-4e9c-b282-ad57adf7f387	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	67eee58a-db9e-454b-ab08-e7f4a351d03c	02608	FILET DE LIEU NOIR	t	\N	\N	2026-05-17 09:42:46.982316+00	2026-05-29 18:29:31.386716+00	kg	kg
+564a5b24-792e-438d-b63f-226be905c93c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	00721	FILET JULIENNE MOYENNE DECOUPE MAIN	t	\N	\N	2026-05-17 09:42:46.884229+00	2026-05-29 18:29:31.386716+00	kg	kg
+28e769c8-5a06-4c1e-993d-145af1054468	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	34b35d10-28ed-434a-8380-ef2e92bf3a30	00509	FILET DE MORUETTE 300/500 DECOUPE MAIN	t	\N	\N	2026-05-17 09:42:46.872619+00	2026-05-29 18:29:31.386716+00	kg	kg
+ed64c98a-54da-44d5-9720-84c60adaaefd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	2c6ad426-4755-42db-9a16-0b967db0ddbc	00830	FILET DE LIEU JAUNE	t	\N	\N	2026-05-17 09:42:46.894157+00	2026-05-29 18:29:31.386716+00	kg	kg
+3d0a3127-3ff1-4dcb-bf4b-b490ccc928e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	263ab669-ccdd-4ef3-929d-315d94ab7526	02606	FILET DE SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:46.980794+00	2026-05-29 18:29:31.386716+00	kg	kg
+1ffa7433-0621-4e73-bfc2-9ac9288593a7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	263ab669-ccdd-4ef3-929d-315d94ab7526	02709	FILET DE SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:46.992243+00	2026-05-29 18:29:31.386716+00	kg	kg
+2e9433b2-52e1-40d4-86f5-c3ba2309217f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	263ab669-ccdd-4ef3-929d-315d94ab7526	02738	FILET SAUMON 1.5/2 ECOSSE TD	t	\N	\N	2026-05-17 09:42:46.995072+00	2026-05-29 18:29:31.386716+00	kg	kg
+39b712eb-7a4b-46ed-84f3-92ecad8e0bab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	263ab669-ccdd-4ef3-929d-315d94ab7526	02774	FILET DE SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:46.998021+00	2026-05-29 18:29:31.386716+00	kg	kg
+497440e5-ec1a-4ca5-8255-f560beddd8ad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	263ab669-ccdd-4ef3-929d-315d94ab7526	02787	FILET DE SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:47.005334+00	2026-05-29 18:29:31.386716+00	kg	kg
+a12ce829-c5a0-4ce1-8d92-bba9b393b2f4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	6864a186-96b0-47fa-92a3-f79daad9810f	08072	DORADE ROYALE ELEVAGE TURQUIE PAT	t	\N	\N	2026-05-17 09:42:47.070563+00	2026-05-29 18:29:31.386716+00	kg	kg
+e062a954-e304-4c25-a1d4-047c397f626a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	ea7557ca-6830-48f1-81ee-8a166b82418f	00559	FILET GRONDIN DECOUPE MAIN PF	t	\N	\N	2026-05-17 09:42:46.875908+00	2026-05-29 18:29:31.386716+00	kg	kg
+2b268e87-bf6d-4027-999d-bb481e0de8bc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	546505b1-799b-42df-9fac-fe4c55c36970	02254	NOIX DE ST JACQUES AVEC CORAIL	t	\N	\N	2026-05-17 09:42:46.977727+00	2026-05-29 18:29:31.386716+00	kg	kg
+d0759a74-3217-409c-8003-7e5d5f531a3b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	be15b6f7-3e5c-4638-aa20-2430a2e90e06	02929	PINCES TOURTEAUX CUITES 12/20	t	\N	\N	2026-05-17 09:42:47.022367+00	2026-05-29 18:29:31.386716+00	kg	kg
+dd125448-9891-44fe-a7f3-6a671ddcfb08	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	7a47c4bd-9372-4f6b-8819-30869192465f	02997	CREVETTE GRISE CUITE PAYS	t	\N	\N	2026-05-17 09:42:47.028639+00	2026-05-29 18:29:31.386716+00	kg	kg
+34fad934-5797-48f8-a885-c62b1eb6776e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	3a29e4c3-df5f-439d-8038-7b0449e5f689	01696	TOURTEAU VIVANT (2 PINCES)	t	\N	\N	2026-05-17 09:42:46.971651+00	2026-05-29 18:29:31.386716+00	kg	kg
+b3384a4a-188e-469e-a305-dcfe87bbf87e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	3de15f27-7e6c-4207-9086-99b5397b25b5	02834	1/2 TOURTEAUX CUIT	t	\N	\N	2026-05-17 09:42:47.008047+00	2026-05-29 18:29:31.386716+00	kg	kg
+733414d3-a51f-44a0-9e96-745c9ac530a5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	c6d7dcd8-edd0-4ccf-8783-d4e1030d3104	02840	ARAIGNEE CUITE	t	\N	\N	2026-05-17 09:42:47.009539+00	2026-05-29 18:29:31.386716+00	kg	kg
+73077883-2d34-4489-9b9f-3ac7248918da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	b0e176ed-348e-471c-aa7c-7ebd97129cf4	05056	ETRILLE VIVANTE	t	\N	\N	2026-05-17 09:42:47.047121+00	2026-05-29 18:29:31.386716+00	kg	kg
+255f3c85-1b20-4f48-9185-ecb683150f88	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	46496720-d5a0-44fe-adee-79281696232e	05044	PETONCLE VANNEAU	t	\N	\N	2026-05-17 09:42:47.044523+00	2026-05-29 18:29:31.386716+00	kg	kg
+a745f886-a0a5-4d99-a95b-14038cd73a32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	d577a5c8-57f7-4e5f-a861-922e41c1e4e3	05067	BULOT CUIT	t	\N	\N	2026-05-17 09:42:47.050061+00	2026-05-29 18:29:31.386716+00	kg	kg
+f0297782-056e-43f5-9993-3692352754b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	a6ed1b5b-71eb-4d8e-98ba-c32d1d280a46	05014	COUTEAU	t	\N	\N	2026-05-17 09:42:47.036039+00	2026-05-29 18:29:31.386716+00	kg	kg
+007c4226-af5b-4ad2-a784-6f9cbaa7c569	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	665043f6-93cd-4c95-85e0-4bf4166b2ff0	05040	PALOURDE 	t	\N	\N	2026-05-17 09:42:47.04316+00	2026-05-29 18:29:31.386716+00	kg	kg
+93d5910a-6a1d-4b1c-af64-f3219de4b988	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	e4023222-aa86-4123-b75c-017d1da79525	05000	COQUES GROSSES	t	\N	\N	2026-05-17 09:42:47.034545+00	2026-05-29 18:29:31.386716+00	kg	kg
+f1bc64f5-0c72-4269-8451-8e6df6738e61	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	e4023222-aa86-4123-b75c-017d1da79525	05024	COQUES GROSSES	t	\N	\N	2026-05-17 09:42:47.038849+00	2026-05-29 18:29:31.386716+00	kg	kg
+9e219f2b-da38-44fb-9a6f-94c9aeb40c01	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	e4023222-aa86-4123-b75c-017d1da79525	05026	COQUES GROSSES	t	\N	\N	2026-05-17 09:42:47.040313+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b3c0cf3-5a13-4f09-a5d6-5f7cb78ec50c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	620c1cc1-7ea1-42dc-bad9-59ee97bde88c	05019	BULOTS *6KG	t	\N	\N	2026-05-17 09:42:47.037455+00	2026-05-29 18:29:31.386716+00	kg	kg
+c9a47e8b-e052-4f27-8a9c-61e91407e845	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	86e6dab7-20cb-4d89-82c0-c36a01f2fcd3	02680	FILET QUEUE DE CABILLAUD	t	\N	\N	2026-05-17 09:42:46.987878+00	2026-05-29 18:29:31.386716+00	kg	kg
+c8d3f9f2-907c-4205-8de8-2a9720f1de84	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	23677730-0dd3-4cfc-8802-98670fb199fc	02616	DOS D'EGLEFIN	t	\N	\N	2026-05-17 09:42:46.983736+00	2026-05-29 18:29:31.386716+00	kg	kg
+9c8cb43c-6c39-4ae1-86e4-5ce9e8aac213	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	23677730-0dd3-4cfc-8802-98670fb199fc	02869	DOS EGLEFIN 120+ LIGNE	t	\N	\N	2026-05-17 09:42:47.010985+00	2026-05-29 18:29:31.386716+00	kg	kg
+b08dc856-c191-4324-8ca1-beb157d84b10	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	23677730-0dd3-4cfc-8802-98670fb199fc	02938	DOS D'EGLEFIN	t	\N	\N	2026-05-17 09:42:47.024161+00	2026-05-29 18:29:31.386716+00	kg	kg
+8993d14d-d630-4a23-9c1c-3df30a871f24	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	2eaf46ed-86f7-4fd3-9cd3-1977c020c56b	00401	BOGUE	t	\N	\N	2026-05-17 09:42:46.854306+00	2026-05-29 18:29:31.386716+00	kg	kg
+d1bf40e7-b267-40e4-9ae8-200cd211a2b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	f9960e7c-288b-4c1b-ae24-3aec66f49655	00435	PAGEOT ACARNE	t	\N	\N	2026-05-17 09:42:46.864065+00	2026-05-29 18:29:31.386716+00	kg	kg
+1aed18c1-df54-48d3-8c9b-1a02c217c487	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	0c512126-6cb1-478e-8abd-7770542e688b	05028	OURSIN VIVANT	t	\N	\N	2026-05-17 09:42:47.041797+00	2026-05-29 18:29:31.386716+00	kg	kg
+774f7908-d8cc-4b5b-9108-895195d555c8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	6b5031b8-02bf-4603-9d7c-5bc91f8820bd	00922	QUEUE DE LOTTE 5/1000	t	\N	\N	2026-05-17 09:42:46.901061+00	2026-05-29 18:29:31.386716+00	kg	kg
+655b75dd-8ed5-4b9c-a0c8-fdda18d7e61c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	ab0fb31e-be20-4002-8170-9004eada1825	00061	FILET D EGLEFIN	t	\N	\N	2026-05-17 09:42:46.845974+00	2026-05-29 18:29:31.386716+00	kg	kg
+d81b792d-248a-44a4-abfc-ade3971c8d78	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	ab0fb31e-be20-4002-8170-9004eada1825	02624	FILET D EGLEFIN	t	\N	\N	2026-05-17 09:42:46.985177+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b9d51ac-6874-448a-b11f-8f01ebfcc363	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	53ece447-6db9-4bcc-90d7-b4260a78193f	02902	DOS LIEU NOIR	t	\N	\N	2026-05-17 09:42:47.016878+00	2026-05-29 18:29:31.386716+00	kg	kg
+5f591306-85f1-4006-ab53-3458fffa5afd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	53ece447-6db9-4bcc-90d7-b4260a78193f	02949	DOS DE LIEU NOIR	t	\N	\N	2026-05-17 09:42:47.025722+00	2026-05-29 18:29:31.386716+00	kg	kg
+601bac7f-cdfa-464b-880f-bfb78d77c25f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	07300211-c58c-4518-809f-663efc1e50c2	00411	OMBRINE 200/500PF	t	\N	\N	2026-05-17 09:42:46.858975+00	2026-05-29 18:29:31.386716+00	kg	kg
+d1508926-37b0-46f5-8bb8-878a1cc6dacb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	1d2cf6a6-acee-4b34-b5f5-a74931ca282a	06003	CREVETTE CUITE U10 	t	\N	\N	2026-05-17 09:42:47.061332+00	2026-05-29 18:29:31.386716+00	kg	kg
+41183532-010a-4686-be05-9b8bc0e32e99	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5422df6f-509d-4095-a3b8-95cd2888fe6e	00601	BLANC DE SEICHE frais	t	\N	\N	2026-05-17 09:42:46.88083+00	2026-05-29 18:29:31.386716+00	kg	kg
+1cf6b800-fb54-43cb-8f98-78840d302d87	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	40bc083e-3141-458c-9ecd-cbf21a98ae82	10034	CREVETTE CUITE 20/30	t	\N	\N	2026-05-17 09:42:47.077761+00	2026-05-29 18:29:31.386716+00	kg	kg
+0f5ece3c-d5e7-4476-a374-cc90e881cbba	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	316750f6-ef36-4d13-a54f-3f40c0e6c30d	01321	POULPE GROS PF	t	\N	\N	2026-05-17 09:42:46.927008+00	2026-05-29 18:29:31.386716+00	kg	kg
+2acc418a-eb0d-4636-976e-f8c43eded1ad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	84972aa2-f9ef-4b65-a83c-5247d99b7346	05065	BIGORNEAU VIVANT	t	\N	\N	2026-05-17 09:42:47.048586+00	2026-05-29 18:29:31.386716+00	kg	kg
+a565d780-e796-4098-9f69-5f14e528fa4d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	e1f6ecb7-7606-4445-a7e3-b2bb74ad73d8	05071	BULOT CUIT PIMENTé	t	\N	\N	2026-05-17 09:42:47.051476+00	2026-05-29 18:29:31.386716+00	kg	kg
+2dd2bbe5-5f83-4f9e-9ae9-4fb67eeb7da9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	e1f6ecb7-7606-4445-a7e3-b2bb74ad73d8	05098	BULOT CUIT PIMENTé	t	\N	\N	2026-05-17 09:42:47.054292+00	2026-05-29 18:29:31.386716+00	kg	kg
+5b8c00e6-849d-4303-8ec3-3668d45ff349	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	875f7e63-ab5b-4f69-ba63-fc71fe4dcda9	02928	PINCES DE TOURTEAUX CUITES 8/12	t	\N	\N	2026-05-17 09:42:47.020564+00	2026-05-29 18:29:31.386716+00	kg	kg
+dff431d3-6b98-4502-84d3-97202a840e98	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	4305b668-45cf-4a8e-aaca-941cc616bc17	06004	CREVETTE SAUVAGE TIGER 16/20 *2KG	t	\N	\N	2026-05-17 09:42:47.062795+00	2026-05-29 18:29:31.386716+00	kg	kg
+4263aeb1-ed0f-40c9-aa97-085c02fc246c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	344287ba-696a-4373-bc7a-947eaeda609e	01609	THON BLANC 2/4 LIGNE	t	\N	\N	2026-05-17 09:42:46.960711+00	2026-05-29 18:29:31.386716+00	kg	kg
+81fe7b36-e4dd-44de-bf60-2b0f52e3dbf3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	cbfc98a3-4457-4e63-bf66-644902cb4cbe	01001	MAIGRE COMMUN	t	\N	\N	2026-05-17 09:42:46.914293+00	2026-05-29 18:29:31.386716+00	kg	kg
+90a8aa98-da6b-4e25-9c91-7c5bc918b49b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	cbfc98a3-4457-4e63-bf66-644902cb4cbe	01002	MAIGRE 500/1000 PF	t	\N	\N	2026-05-17 09:42:46.916116+00	2026-05-29 18:29:31.386716+00	kg	kg
+9c0d0a32-e584-44d8-8da6-e9523fc14cd2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	37223d50-e5c1-4954-b74f-3cfe5b8bc014	01662	THONINE ENTIERE	t	\N	\N	2026-05-17 09:42:46.96624+00	2026-05-29 18:29:31.386716+00	kg	kg
+866f6b92-8d9e-41f7-b810-47b6d165f4f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	729d0094-a5d8-473b-9580-e789e596b2a5	08065	LONGE THON ROUGE	t	\N	\N	2026-05-17 09:42:47.068783+00	2026-05-29 18:29:31.386716+00	kg	kg
+630f205e-5930-436d-bd7b-10be34ceb626	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	374b9933-b4e1-4828-a867-1f12cf2f216d	00454	ENCORNET	t	\N	\N	2026-05-17 09:42:46.867649+00	2026-05-29 18:29:31.386716+00	kg	kg
+7345c082-cc9d-4b5d-86d0-47f1653b0701	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	374b9933-b4e1-4828-a867-1f12cf2f216d	00463	ENCORNET 100/200 PF	t	\N	\N	2026-05-17 09:42:46.870833+00	2026-05-29 18:29:31.386716+00	kg	kg
+319c0d9e-4806-406d-a86b-6be3caff14ef	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	4c092e26-16d0-463a-b01b-5a4703fbb9c7	00456	ENCORNET ROUGE	t	\N	\N	2026-05-17 09:42:46.869251+00	2026-05-29 18:29:31.386716+00	kg	kg
+9d330813-ab2a-471c-9a03-448c8c277269	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	952f6224-51d6-4505-86cd-0df29c6f33f0	01459	RAIE TERRE	t	\N	\N	2026-05-17 09:42:46.934713+00	2026-05-29 18:29:31.386716+00	kg	kg
+c9b4e6c2-8669-4706-9a1e-ee8ab0f53b20	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	70c81f47-7a23-4c29-a5e2-3425350acc2f	08037	LONGE THON ALB SAUMUREE AVEC GLACE SV 1P	t	\N	\N	2026-05-17 09:42:47.065847+00	2026-05-29 18:29:31.386716+00	kg	kg
+ec112df7-4eb7-40ad-8454-59cae85912ba	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	718ea040-231e-4ffe-bf27-07277c37f94e	02693	LAMELLE - ENCORNET GEANT SAUMURE	t	\N	\N	2026-05-17 09:42:46.989387+00	2026-05-29 18:29:31.386716+00	kg	kg
+50f70273-f0ec-4906-8908-cb98175701a7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	7b451db7-aa84-4979-af87-9f2c7703c634	00600	SEICHE ENTIERE PF	t	\N	\N	2026-05-17 09:42:46.879271+00	2026-05-29 18:29:31.386716+00	kg	kg
+ea58fb52-5b30-41c1-86a4-c2ab5133db88	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	05f46a02-bda4-4fb3-9f7e-563294d4e470	00924	QUEUE DE LOTTE 1/2	t	\N	\N	2026-05-17 09:42:46.902685+00	2026-05-29 18:29:31.386716+00	kg	kg
+c6fa456c-59d7-4355-bd8a-3711051afd5f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	05f46a02-bda4-4fb3-9f7e-563294d4e470	QLO12_3	QUEUE LOTTE 1/2 3 KG	t	\N	\N	2026-05-17 09:42:47.081165+00	2026-05-29 18:29:31.386716+00	kg	kg
+5abf9f8c-da72-4c34-a57b-f52626239595	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	df9c6dc8-1a52-49e7-b513-68ad7ff5d571	04300	MOULE DE CORDE GROSSE	t	\N	\N	2026-05-17 09:42:47.03296+00	2026-05-29 18:29:31.386716+00	kg	kg
+ccedb7ab-dec8-43f8-bf6a-10acf697eee4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	81bca9c0-d8e2-439a-97a1-afd59464712e	08076	BAR ELEVAGE TURQUIE PAT	t	\N	\N	2026-05-17 09:42:47.072095+00	2026-05-29 18:29:31.386716+00	kg	kg
+35771897-7033-46c3-9a71-8499a605f292	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	88affd4e-71ab-40be-9bca-03325d368f97	00925	JOUE DE LOTTE DECOUPE MAIN	t	\N	\N	2026-05-17 09:42:46.904352+00	2026-05-29 18:29:31.386716+00	kg	kg
+aa510c16-c589-4f3e-b93a-4b509bab3626	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	78a1d86e-d5cf-4d33-9af2-3335a32fba9d	00921	LOTTE 200/500 PF	t	\N	\N	2026-05-17 09:42:46.899536+00	2026-05-29 18:29:31.386716+00	kg	kg
+e2449bec-6c5f-4eb1-a1a6-d63d89c0bd7d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	1aeb7381-96b6-4269-940f-d96919db0f59	08082	TENTACULES ENCORNET GEANT SAUMURES *5KG	t	\N	\N	2026-05-17 09:42:47.073904+00	2026-05-29 18:29:31.386716+00	kg	kg
+53a3f0a0-bb98-498b-84d7-98eed0bce10b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	4aadbd09-dcbd-4e97-9711-c71e90ba5cec	08038	anneaux d'encornet geant du pacifique saumures avec eau ajoutee DECONGELEES	t	\N	\N	2026-05-17 09:42:47.067412+00	2026-05-29 18:29:31.386716+00	kg	kg
+77532135-381c-41ab-b14a-ec855ad0f829	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	e275074c-361d-409e-9253-0ed7806359db	05046	PRAIRE	t	\N	\N	2026-05-17 09:42:47.04583+00	2026-05-29 18:29:31.386716+00	kg	kg
+a32359c1-6829-4ec7-a1ab-9500b91c4cfa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	f35fc7f4-d2c7-41de-89fb-f4f6af1abd50	04263	MLE BOUCHOT PAC *15KG	t	\N	\N	2026-05-17 09:42:47.031627+00	2026-05-29 18:29:31.386716+00	kg	kg
+f7ad6570-6349-43e6-a4fb-b827f86b8709	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	b0c2b82b-6ba6-4cc8-8d0c-eefd5a15bc05	00980	FILET DE MERLU	t	\N	\N	2026-05-17 09:42:46.91098+00	2026-05-29 18:29:31.386716+00	kg	kg
+3c1c1598-bc6a-4eb0-940c-41e2136b8607	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	b0c2b82b-6ba6-4cc8-8d0c-eefd5a15bc05	00983	FILET DE MERLU	t	\N	\N	2026-05-17 09:42:46.912737+00	2026-05-29 18:29:31.386716+00	kg	kg
+5d1bd36a-7362-48a5-be03-b73789174bfe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	53cef3ed-6b01-4bbd-a307-3cbe0525be88	15005	NOIX ST JAC LR MSC 15*400G	t	\N	\N	2026-05-17 09:42:47.079501+00	2026-05-29 18:29:31.386716+00	kg	kg
+e2225622-1d0e-4a9c-a792-10233800c01d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	3c3ecce0-095a-4411-9e37-8b887c30ea37	08101	DOS DE JULIENNE	t	\N	\N	2026-05-17 09:42:47.075813+00	2026-05-29 18:29:31.386716+00	kg	kg
+147be384-d4db-42c4-a716-762cccfa9ac6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	736679c3-a884-4108-8859-955daa6c012d	00009	BAR LIGNE 5/800 PF	t	\N	\N	2026-05-17 09:42:46.837713+00	2026-05-29 18:29:31.386716+00	kg	kg
+5f690509-0d18-4d38-8692-d890c1aae406	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	799a9436-5d05-4951-a424-51c2a4094cdc	00022	BAR COMMUN CHALUT	t	\N	\N	2026-05-17 09:42:46.841138+00	2026-05-29 18:29:31.386716+00	kg	kg
+63847dfd-eb87-4a28-a7e3-77c75283b7ae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5a038388-970e-49e2-b2e3-3d213240cd24	00020	BAR COMMUN DE FILET	t	\N	\N	2026-05-17 09:42:46.839558+00	2026-05-29 18:29:31.386716+00	kg	kg
+53a775f3-392e-428f-ac44-2f7dad5b9d29	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5be5c639-c4b2-46ea-9362-003c0ef593a7	00408	DORADE GRISE PORTION DE LIGNE	t	\N	\N	2026-05-17 09:42:46.857483+00	2026-05-29 18:29:31.386716+00	kg	kg
+2b7e3a1b-7d65-4b9b-9a48-9dbcd71c50ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	5be5c639-c4b2-46ea-9362-003c0ef593a7	00447	DORADE GRISE 300/500 LIGNE PF	t	\N	\N	2026-05-17 09:42:46.865855+00	2026-05-29 18:29:31.386716+00	kg	kg
+6dd74191-f72f-40e7-9d3f-5bd090cc78ec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	70350ad4-e848-4d05-b9d8-8f08af7ad582	00801	LIEU JAUNE DE LIGNE	t	\N	\N	2026-05-17 09:42:46.890925+00	2026-05-29 18:29:31.386716+00	kg	kg
+6e1fabb7-0e40-43bd-a3f8-7b7674a92bb1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	ee66bb6c-2061-48ac-a254-153c7ad3658d	01004	MAIGRE 500/800 LIGNE PF	t	\N	\N	2026-05-17 09:42:46.917843+00	2026-05-29 18:29:31.386716+00	kg	kg
+19c049fb-8c0f-44f4-871e-34fc393607a8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	ee66bb6c-2061-48ac-a254-153c7ad3658d	01010	MAIGRE DE LIGNE	t	\N	\N	2026-05-17 09:42:46.919385+00	2026-05-29 18:29:31.386716+00	kg	kg
+f183261a-49e9-46e9-b1f4-48a9f7b341fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	ee66bb6c-2061-48ac-a254-153c7ad3658d	01011	MAIGRE LIGNE 5/1 PF	t	\N	\N	2026-05-17 09:42:46.920845+00	2026-05-29 18:29:31.386716+00	kg	kg
+7947b699-79c0-4474-925f-54e4722d0a10	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	6ecc824c-d57d-40a8-9134-1a466fc77ddc	01054	MAQUEREAU PF	t	\N	\N	2026-05-17 09:42:46.922454+00	2026-05-29 18:29:31.386716+00	kg	kg
+299e5deb-3dd7-45dc-a826-921300181655	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	f84214e4-02b2-4690-80df-2d70d5b0436b	00759	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:46.88584+00	2026-05-29 18:29:31.386716+00	kg	kg
+350df973-4931-42ba-a5a3-fdd356b82f16	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	1a380298-4c40-43b8-9357-0567a7f16084	00373	MERLU PORTION DE LIGNE	t	\N	\N	2026-05-17 09:42:46.85259+00	2026-05-29 18:29:31.386716+00	kg	kg
+ecb49a4e-ed42-4ff9-9e8b-21c59b999148	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	8df2574a-772c-4a4d-b7de-14202b2edf71	00960	MERLU ENTIER DE LIGNE	t	\N	\N	2026-05-17 09:42:46.909286+00	2026-05-29 18:29:31.386716+00	kg	kg
+584c943b-5e9c-4d38-b864-4eb87fd0a1ae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	c6142efe-77b6-45ff-854a-0796e549a15a	01514	SOLE GROSSE	t	\N	\N	2026-05-17 09:42:46.952312+00	2026-05-29 18:29:31.386716+00	kg	kg
+de50ad28-c891-4b05-9add-8cdfc538c0aa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	2be3801a-2f72-4bf0-aadd-6947534e9bc2	01641	BONITE A DOS RAYE 400/600	t	\N	\N	2026-05-17 09:42:46.962678+00	2026-05-29 18:29:31.386716+00	kg	kg
+06696b1e-1b7d-4213-a075-82305a9cf2b8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	2be3801a-2f72-4bf0-aadd-6947534e9bc2	01683	BONITE MELVA 300/500	t	\N	\N	2026-05-17 09:42:46.969878+00	2026-05-29 18:29:31.386716+00	kg	kg
+dcd493a0-7c28-4550-9e48-a861aa0e61bb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	2be3801a-2f72-4bf0-aadd-6947534e9bc2	08006	BONITE MELVA 0.6/0.8 kg	t	\N	\N	2026-05-17 09:42:47.064166+00	2026-05-29 18:29:31.386716+00	kg	kg
+8ee89ecc-1065-4f06-b888-61acb6c565bf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	635fee33-c40d-4c07-8fd0-3d22e3ee97fc	02151	LONGE ESPADON	t	\N	\N	2026-05-17 09:42:46.976248+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f98c451-2702-46d4-a791-4e9de8301ad2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	00767	FILET MERLAN GROS DECOUPE MAIN	t	\N	\N	2026-05-17 09:42:46.887645+00	2026-05-29 18:29:31.386716+00	kg	kg
+0aada403-c77a-4659-9d04-e7d14ab4eb21	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	d82d5a1d-e21c-43ae-bdb6-f70c482d27bf	01660	LONGE DE THON ROUGE	t	\N	\N	2026-05-17 09:42:46.964417+00	2026-05-29 18:29:31.386716+00	kg	kg
+6ab2d45a-e4b5-463e-9f0e-c84f75eb1690	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	f1467561-4cfc-49d1-a48a-01672419e095	05913	PINCE D'ARAIGNEE CUITE 4/8	t	\N	\N	2026-05-17 09:42:47.057085+00	2026-05-29 18:29:31.386716+00	kg	kg
+318bca0e-2770-4201-b9c4-8b0368e89cac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	f1467561-4cfc-49d1-a48a-01672419e095	05914	PINCES ARAIGNEE DE MER CUITES MOYENNE 9/12 *3KG	t	\N	\N	2026-05-17 09:42:47.058541+00	2026-05-29 18:29:31.386716+00	kg	kg
+ae489318-4d3f-4e5b-bbb4-74eca376b0ac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	f1467561-4cfc-49d1-a48a-01672419e095	05916	PINCE D'ARAIGNEE CUITE 4/8	t	\N	\N	2026-05-17 09:42:47.059902+00	2026-05-29 18:29:31.386716+00	kg	kg
+7a8aab0b-36f4-4392-9d57-341e911a8742	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	ce180a78-209b-4f30-8616-211b889e7486	00301	CHINCHARD	t	\N	\N	2026-05-17 09:42:46.847663+00	2026-05-29 18:29:31.386716+00	kg	kg
+4fa4f1b7-79f5-4e80-a9c0-69763776e5fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	bf77f28a-0e62-46dd-a0c3-343968557980	00051	BARBUE 500/1000 PF	t	\N	\N	2026-05-17 09:42:46.842798+00	2026-05-29 18:29:31.386716+00	kg	kg
+46d6cef0-844a-45fb-b0c8-9228661d7f48	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	bf77f28a-0e62-46dd-a0c3-343968557980	00052	BARBUE	t	\N	\N	2026-05-17 09:42:46.844333+00	2026-05-29 18:29:31.386716+00	kg	kg
+43ed22eb-4aac-4788-bd47-448a9fce45ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	d8cc0865-90d5-4195-961b-665ba8e14bfd	00417	DORADE ROYALE 5/1 PF	t	\N	\N	2026-05-17 09:42:46.86071+00	2026-05-29 18:29:31.386716+00	kg	kg
+317e3e0b-e606-417c-90f8-d93c7fd35735	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	d8cc0865-90d5-4195-961b-665ba8e14bfd	00431	DORADE ROYALE PORTION SAUVAGE	t	\N	\N	2026-05-17 09:42:46.862384+00	2026-05-29 18:29:31.386716+00	kg	kg
+2829faa0-1fa0-4024-a6bf-3510887d3c86	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	00562	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:46.87763+00	2026-05-29 18:29:31.386716+00	kg	kg
+e5dbc121-59d5-412c-9ed3-cb5d3e7afd0e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	00862	LIEU NOIR ENTIER	t	\N	\N	2026-05-17 09:42:46.895832+00	2026-05-29 18:29:31.386716+00	kg	kg
+560e085f-7906-4564-ad9b-0c956bff89b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	e335fc8e-831f-4761-b2f5-160a993c838f	00370	MERLU 100/300 PF	t	\N	\N	2026-05-17 09:42:46.849267+00	2026-05-29 18:29:31.386716+00	kg	kg
+9200a5d0-9a67-4686-91ca-cd37e67d5ad8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	f36a5040-e40f-4aec-820e-351e4913ca35	01478	ROUGET BARBET 500/800 PF	t	\N	\N	2026-05-17 09:42:46.939253+00	2026-05-29 18:29:31.386716+00	kg	kg
+51023a73-45e8-4c6a-a575-d1cefc6a596b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	0242067f-5fa8-4cc4-9440-3677c968b3bb	02016	SARDINE	t	\N	\N	2026-05-17 09:42:46.973246+00	2026-05-29 18:29:31.386716+00	kg	kg
+f9fc21e6-8c6b-4737-ab74-a89d2c8a1998	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	01510	SOLE 120/160 PF	t	\N	\N	2026-05-17 09:42:46.945976+00	2026-05-29 18:29:31.386716+00	kg	kg
+cc11138f-0986-41cf-9600-49558ba5a261	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	29f86909-cd3c-4670-8da4-97e6aaddcf9f	01512	SOLE 200/300 PF	t	\N	\N	2026-05-17 09:42:46.949264+00	2026-05-29 18:29:31.386716+00	kg	kg
+06cbc364-a825-494d-becf-4d9c7dfefbbe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	29f86909-cd3c-4670-8da4-97e6aaddcf9f	01513	SOLE 400/600 PF	t	\N	\N	2026-05-17 09:42:46.950747+00	2026-05-29 18:29:31.386716+00	kg	kg
+cde00ba4-4fcb-4239-aac7-acdecaad7a19	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	dbfcc13d-1e61-4dd9-89b9-485a65446ad2	cf244b2b-a980-4760-9d7c-6bbc06f9eda3	01593	TACAUD DE LIGNE PF	t	\N	\N	2026-05-17 09:42:46.957249+00	2026-05-29 18:29:31.386716+00	kg	kg
+bdd78ee1-4fc3-414f-a753-bb9d4c2a897a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	497dfa60-242a-41cf-a896-a2f5aaa8bc7b	000001523	SAUMON ENTIER	t	\N	\N	2026-05-17 09:42:47.11343+00	2026-05-29 18:29:31.386716+00	kg	kg
+ad70e437-f01d-4d5e-97fd-556acc9169dc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	0a1a9a19-4c79-41b4-acea-9fab3d52266f	000000204	MAQUEREAU	t	\N	\N	2026-05-17 09:42:47.084737+00	2026-05-29 18:29:31.386716+00	kg	kg
+d1f1c442-858a-43f4-be60-d4bdcc6642dc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	7a686fcf-41d6-4012-8714-fe2f11510119	000025000	ROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.126182+00	2026-05-29 18:29:31.386716+00	kg	kg
+78d08e29-112a-4181-8509-12658c13dc28	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	2df24e04-f616-43fe-b54e-5cadabdc4605	000000502	CABILLAUD A LA COUPE	t	\N	\N	2026-05-17 09:42:47.090405+00	2026-05-29 18:29:31.386716+00	kg	kg
+184065c1-255d-49a7-9d69-396c02884d32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	2df24e04-f616-43fe-b54e-5cadabdc4605	000000508	CABILLAUD A LA COUPE	t	\N	\N	2026-05-17 09:42:47.092183+00	2026-05-29 18:29:31.386716+00	kg	kg
+b7976e0d-8b4d-4c74-8aba-81a06d7f976b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	984aac3f-583f-4ec2-8743-9f4a14520ea3	000000576	DOS DE CABILLAUD	t	\N	\N	2026-05-17 09:42:47.095807+00	2026-05-29 18:29:31.386716+00	kg	kg
+fa7a856e-a1db-4b6e-8f10-e9aae7b65aff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	000001556	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:47.116616+00	2026-05-29 18:29:31.386716+00	kg	kg
+173217cf-3d50-4978-91ce-6b4432ed6d4f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	5a0bc26c-2870-4a1f-8e8f-8b2f6f010aa8	000001560	PAVES DE SAUMON GROS	t	\N	\N	2026-05-17 09:42:47.118278+00	2026-05-29 18:29:31.386716+00	kg	kg
+37d88d0e-85b2-47dd-bb4c-bc11ddb56dab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	67eee58a-db9e-454b-ab08-e7f4a351d03c	000000750	FILET DE LIEU NOIR	t	\N	\N	2026-05-17 09:42:47.097702+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b36609a-540d-456d-a194-e14022e662ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	50ba1d9b-cacf-4986-a96a-8c7063d7d9ac	000000822	FILET DE JULIENNE	t	\N	\N	2026-05-17 09:42:47.101321+00	2026-05-29 18:29:31.386716+00	kg	kg
+4fc38171-06cf-4309-ab9b-7a7ec73e8003	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	34b35d10-28ed-434a-8380-ef2e92bf3a30	000000522	FILET DE CABILLAUD	t	\N	\N	2026-05-17 09:42:47.094096+00	2026-05-29 18:29:31.386716+00	kg	kg
+e7c623b1-0f5a-4996-ab46-ab422692411a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	2c6ad426-4755-42db-9a16-0b967db0ddbc	000001750	FILET DE LIEU JAUNE	t	\N	\N	2026-05-17 09:42:47.121668+00	2026-05-29 18:29:31.386716+00	kg	kg
+7537b9b1-e925-4a78-a143-1aa4aaeee259	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	8853dd40-3cd6-4ba1-9a42-738d442a549f	000000150	SARDINE PRÊT A CUIRE	t	\N	\N	2026-05-17 09:42:47.083002+00	2026-05-29 18:29:31.386716+00	kg	kg
+eaf40cd9-be69-48c1-9252-1062b6d3702b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	546505b1-799b-42df-9fac-fe4c55c36970	000001050	NOIX DE ST JACQUES AVEC CORAIL	t	\N	\N	2026-05-17 09:42:47.106621+00	2026-05-29 18:29:31.386716+00	kg	kg
+6755b352-7505-4bca-8b01-b34551dbb9e2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	ab0fb31e-be20-4002-8170-9004eada1825	000000951	FILET D EGLEFIN	t	\N	\N	2026-05-17 09:42:47.104781+00	2026-05-29 18:29:31.386716+00	kg	kg
+c804f07f-e9f3-4877-b742-7f24ae4186b4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	53ece447-6db9-4bcc-90d7-b4260a78193f	000000780	DOS DE LIEU NOIR	t	\N	\N	2026-05-17 09:42:47.099532+00	2026-05-29 18:29:31.386716+00	kg	kg
+daa8d2f7-64fc-4296-a19c-0e92bb79b535	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	4d22aae5-e56d-45ca-8b84-eeb6210c4e15	000001544	TRUITE DE MER 1/2	t	\N	\N	2026-05-17 09:42:47.114965+00	2026-05-29 18:29:31.386716+00	kg	kg
+8fbc287a-cfa7-409e-9e4b-0be3dfefce5b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	690c61b2-f403-41da-88b9-7ff0f5dfa5f9	000011152	FILET DE DORADE SEBASTES	t	\N	\N	2026-05-17 09:42:47.123256+00	2026-05-29 18:29:31.386716+00	kg	kg
+9236a335-b6db-448a-b03b-be745835a3f5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	24336843-3546-4088-9153-515acd22a23c	000000450	FILET DE QUEUE DE LINGUE BLEUE	t	\N	\N	2026-05-17 09:42:47.088435+00	2026-05-29 18:29:31.386716+00	kg	kg
+e8558b53-b938-4985-9610-b54f56ca5eaa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	3c3ecce0-095a-4411-9e37-8b887c30ea37	000000875	DOS DE JULIENNE	t	\N	\N	2026-05-17 09:42:47.103072+00	2026-05-29 18:29:31.386716+00	kg	kg
+c1f587c1-f5af-48ea-b007-34e582008941	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	000001252	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:47.108182+00	2026-05-29 18:29:31.386716+00	kg	kg
+36756aab-9f6d-4100-aa4b-4d7c36165ddf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	d5f6ab0e-cf39-43f6-a21f-15a4bc5ac69d	000001253	FILET DE MERLAN	t	\N	\N	2026-05-17 09:42:47.109879+00	2026-05-29 18:29:31.386716+00	kg	kg
+e8cc3a24-82d9-47d2-af12-a1298c30ec05	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	049ab5e2-18a5-4165-bb87-b3bdec4eb3da	000000303	CARRELET/PLIE	t	\N	\N	2026-05-17 09:42:47.086638+00	2026-05-29 18:29:31.386716+00	kg	kg
+2898b849-63c0-46bc-af6f-13aa02292384	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	e5016ffe-93e5-4fd5-9ced-ee4eb97c5e34	000011175	dos de sebaste	t	\N	\N	2026-05-17 09:42:47.124671+00	2026-05-29 18:29:31.386716+00	kg	kg
+53e5719b-46c2-4de8-94ca-25b1ef419963	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	c1927d85-bf42-422c-99e8-2376b0845bd3	000001700	LIEU JAUNE ENTIER	t	\N	\N	2026-05-17 09:42:47.119949+00	2026-05-29 18:29:31.386716+00	kg	kg
+09f18f7b-aecf-4c4f-8912-5c9558fa3648	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	93c60e83-16df-4699-90e4-9cc343f41a0a	000001502	SAUMON ATLANTIQUE SAUVAGE	t	\N	\N	2026-05-17 09:42:47.111714+00	2026-05-29 18:29:31.386716+00	kg	kg
+b07238c4-5ead-4367-a9ca-978e5843dffe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	0fa6d426-aecd-41e6-9717-0b67868bb15e	7a47c4bd-9372-4f6b-8819-30869192465f	280	CREVETTE GRISE CUITE PAYS	t	\N	\N	2026-05-17 09:42:47.131953+00	2026-05-29 18:29:31.386716+00	kg	kg
+a8e3c498-23b5-4198-979e-ed5cd7f22d77	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	0fa6d426-aecd-41e6-9717-0b67868bb15e	d577a5c8-57f7-4e5f-a861-922e41c1e4e3	261	BULOT CUIT	t	\N	\N	2026-05-17 09:42:47.129059+00	2026-05-29 18:29:31.386716+00	kg	kg
+873f22cd-6b8b-4bb5-bf8d-b0ae5e1e5577	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	0fa6d426-aecd-41e6-9717-0b67868bb15e	665043f6-93cd-4c95-85e0-4bf4166b2ff0	31	PALOURDE 	t	\N	\N	2026-05-17 09:42:47.133519+00	2026-05-29 18:29:31.386716+00	kg	kg
+78e102ea-d88d-42f5-9c74-91621ee726e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	0fa6d426-aecd-41e6-9717-0b67868bb15e	84972aa2-f9ef-4b65-a83c-5247d99b7346	22	BIGORNEAU VIVANT	t	\N	\N	2026-05-17 09:42:47.127648+00	2026-05-29 18:29:31.386716+00	kg	kg
+9b277d6b-aaf8-45d1-8137-aef26f48299d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	0fa6d426-aecd-41e6-9717-0b67868bb15e	e1f6ecb7-7606-4445-a7e3-b2bb74ad73d8	262	BULOT CUIT PIMENTé	t	\N	\N	2026-05-17 09:42:47.130646+00	2026-05-29 18:29:31.386716+00	kg	kg
+54c793a4-a11e-43d0-ac84-c3026873400a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	31137cf1-8896-4f7e-9dc4-d842c30f10da	57100	TETE DE SEICHE	t	\N	\N	2026-05-17 09:42:47.250639+00	2026-05-29 18:29:31.386716+00	kg	kg
+e2ee9fb3-c660-47be-b942-c477d7c810b3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	86bb7bb5-b64b-4895-a782-af5563c65dc7	32160	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:47.151812+00	2026-05-29 18:29:31.386716+00	kg	kg
+e58a35dc-5ce1-4b62-a6c1-f9a0f5526277	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	f20d45c7-e2a2-450d-83f8-f1a18ed2ece0	31220	SOLE POLE (Blonde)	t	\N	\N	2026-05-17 09:42:47.144843+00	2026-05-29 18:29:31.386716+00	kg	kg
+b96132bf-18d4-4c02-9962-658b69dfd755	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	f255adfd-76ff-467b-8c3e-5b8a79a0942a	31020	TURBOT	t	\N	\N	2026-05-17 09:42:47.136296+00	2026-05-29 18:29:31.386716+00	kg	kg
+2f744caa-e0fd-4a69-ad8b-4149e7a2c6f7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	62efd755-a71b-46d4-aea9-1035b3aaacec	33080	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:47.156341+00	2026-05-29 18:29:31.386716+00	kg	kg
+5123f4af-6444-4fb2-aae2-f9d77793d0be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	7a686fcf-41d6-4012-8714-fe2f11510119	33410	ROUGET-BARBET DE ROCHE	t	\N	\N	2026-05-17 09:42:47.165571+00	2026-05-29 18:29:31.386716+00	kg	kg
+40fe0aa2-bcc7-4a55-8523-4b29ad104aca	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	c981cf21-9434-4363-9bf9-d815306ffdd2	33630	VIVE	t	\N	\N	2026-05-17 09:42:47.176876+00	2026-05-29 18:29:31.386716+00	kg	kg
+41a224ef-781c-41de-830e-437db190c258	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	2eb84882-ba8b-4b02-8cb0-7395270bbd32	33020	CONGRE	t	\N	\N	2026-05-17 09:42:47.154936+00	2026-05-29 18:29:31.386716+00	kg	kg
+e20ea7e6-7097-4c8a-b446-52a3d0a2859c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	7304dd84-ff46-44f5-aa64-abd307e7ee7a	32020	MERLU COMMUN PP	t	\N	\N	2026-05-17 09:42:47.146234+00	2026-05-29 18:29:31.386716+00	kg	kg
+75e21d3a-cac8-453a-b03b-39f6a80a0704	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	e4714943-1c94-4439-a519-4423042155f1	35080	ANCHOIS commun	t	\N	\N	2026-05-17 09:42:47.195088+00	2026-05-29 18:29:31.386716+00	kg	kg
+cde14a40-4841-402d-9d4b-f9c0d1dbd055	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	009c9571-bdc0-4007-bc90-beb916dd56a6	43040	LANGOUSTE ROUGE	t	\N	\N	2026-05-17 09:42:47.235069+00	2026-05-29 18:29:31.386716+00	kg	kg
+16e43b3f-8212-4219-ab32-f65bc461d9a8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	44011	LANGOUSTINE VIVANTE	t	\N	\N	2026-05-17 09:42:47.236821+00	2026-05-29 18:29:31.386716+00	kg	kg
+8eca2a2d-5830-411e-b58b-25e39d8f534b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	43010	HOMARD EUROPEEN	t	\N	\N	2026-05-17 09:42:47.231961+00	2026-05-29 18:29:31.386716+00	kg	kg
+ddb4684c-b6c6-4348-bdee-9356b5321f90	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	3a29e4c3-df5f-439d-8038-7b0449e5f689	42020	TOURTEAU de CASIER	t	\N	\N	2026-05-17 09:42:47.226851+00	2026-05-29 18:29:31.386716+00	kg	kg
+f8d2d551-e2f4-42da-bb9f-6ad8e1f01301	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	b0e176ed-348e-471c-aa7c-7ebd97129cf4	42080	ETRILLE de CASIER	t	\N	\N	2026-05-17 09:42:47.230414+00	2026-05-29 18:29:31.386716+00	kg	kg
+e979bacd-86ea-4cae-a7e0-509dcfda37e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	46496720-d5a0-44fe-adee-79281696232e	55030	PETONCLE VANNEAU	t	\N	\N	2026-05-17 09:42:47.242161+00	2026-05-29 18:29:31.386716+00	kg	kg
+aa109ca5-806a-470e-83da-4ca3f591b50f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	9812f172-5418-4207-8208-9433fe2a0bd3	45020	CREVETTE GRISE	t	\N	\N	2026-05-17 09:42:47.240148+00	2026-05-29 18:29:31.386716+00	kg	kg
+019d328d-3e10-49f6-bc15-8437421bf130	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	07300211-c58c-4518-809f-663efc1e50c2	33330	OMBRINE BRONZE	t	\N	\N	2026-05-17 09:42:47.163735+00	2026-05-29 18:29:31.386716+00	kg	kg
+890965c0-b542-4dad-aef5-01b5d250a97f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	344287ba-696a-4373-bc7a-947eaeda609e	36060	THON GERMON	t	\N	\N	2026-05-17 09:42:47.198371+00	2026-05-29 18:29:31.386716+00	kg	kg
+df882c35-9bf4-4b68-85fc-d71dc8ad56a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	510b620d-4f2e-49a4-b270-6a57fe295ad7	36070	THON OBESE	t	\N	\N	2026-05-17 09:42:47.199771+00	2026-05-29 18:29:31.386716+00	kg	kg
+a9149087-f73d-496a-a1df-a286dc94a94f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	374b9933-b4e1-4828-a867-1f12cf2f216d	57020	CALMARS	t	\N	\N	2026-05-17 09:42:47.243783+00	2026-05-29 18:29:31.386716+00	kg	kg
+2d376bce-06d4-40c7-8993-5b305626448d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	4c092e26-16d0-463a-b01b-5a4703fbb9c7	57030	ENCORNET ROUGE	t	\N	\N	2026-05-17 09:42:47.245737+00	2026-05-29 18:29:31.386716+00	kg	kg
+4ed30c9a-9af2-4805-a73d-db33ddf22e64	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	44147114-6de6-475e-a232-7abb178ad0a7	24010	ALOSE D'EUROPE	t	\N	\N	2026-05-17 09:42:47.134951+00	2026-05-29 18:29:31.386716+00	kg	kg
+e12254ec-0c5a-46b9-9fdd-3da03f2ad9c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	38100	TORPILLE / DALITE MARBRE	t	\N	\N	2026-05-17 09:42:47.211303+00	2026-05-29 18:29:31.386716+00	kg	kg
+56a7363a-6d2e-4881-aa1b-dab531415b23	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	38130	RAIE BOUCLEE	t	\N	\N	2026-05-17 09:42:47.212868+00	2026-05-29 18:29:31.386716+00	kg	kg
+1c68eeb1-cdb3-449a-97d2-85bfb942a4ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	38150	RAIE DOUCE	t	\N	\N	2026-05-17 09:42:47.214534+00	2026-05-29 18:29:31.386716+00	kg	kg
+64f72ad8-b18f-4537-b31d-bc7ec3731e93	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	38170	RAIE TERRE	t	\N	\N	2026-05-17 09:42:47.216178+00	2026-05-29 18:29:31.386716+00	kg	kg
+9204a7d9-08aa-4bb2-859b-197bd3aaae22	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	38200	RAIE CIRCULAIRE	t	\N	\N	2026-05-17 09:42:47.21792+00	2026-05-29 18:29:31.386716+00	kg	kg
+42dddec7-7669-4348-b715-979a03e01bd1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	38230	RAIE BRUNETTE	t	\N	\N	2026-05-17 09:42:47.219692+00	2026-05-29 18:29:31.386716+00	kg	kg
+662b7dda-7c10-4146-801b-ec48cfb5307f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	38240	RAIE MELEE	t	\N	\N	2026-05-17 09:42:47.221487+00	2026-05-29 18:29:31.386716+00	kg	kg
+6ebb3165-7ca2-427b-abfa-d6309bb8c69e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	38260	RAIE LISSE	t	\N	\N	2026-05-17 09:42:47.223379+00	2026-05-29 18:29:31.386716+00	kg	kg
+11c344bc-cf14-4378-a10d-423c7d8eac5e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	7963f2c8-bdc7-4507-bea1-3ab19506f5a1	57050	POULPE BLANC (petit)	t	\N	\N	2026-05-17 09:42:47.247528+00	2026-05-29 18:29:31.386716+00	kg	kg
+bf4ad400-a81c-464c-8165-9fab7d4d0c40	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	7963f2c8-bdc7-4507-bea1-3ab19506f5a1	57060	POULPE	t	\N	\N	2026-05-17 09:42:47.249093+00	2026-05-29 18:29:31.386716+00	kg	kg
+b80fa79f-810d-4f4b-a80f-c51948429cf0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	fea072a6-8c3b-44c0-9721-ecbf962ce60f	38030	PETITE ROUSSETTE	t	\N	\N	2026-05-17 09:42:47.207932+00	2026-05-29 18:29:31.386716+00	kg	kg
+d554cff3-90ff-45b4-a051-257c8948619c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	716e8b63-2143-48ad-9e5c-57446c24e4d5	75010	OURSINS	t	\N	\N	2026-05-17 09:42:47.25214+00	2026-05-29 18:29:31.386716+00	kg	kg
+a08b53a4-fe0e-499a-a5f3-9a297820ce64	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	357cc017-7dc3-47e0-aff2-af7cf95bb822	33100	BAR TACHETE LIGNE	t	\N	\N	2026-05-17 09:42:47.160626+00	2026-05-29 18:29:31.386716+00	kg	kg
+d03e1100-4ff0-49ab-bf68-fdcaa4ef264a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	736679c3-a884-4108-8859-955daa6c012d	33091	BAR COMMUN LIGNE	t	\N	\N	2026-05-17 09:42:47.159304+00	2026-05-29 18:29:31.386716+00	kg	kg
+29558486-4104-46a0-bb6c-418b39ee537b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	799a9436-5d05-4951-a424-51c2a4094cdc	33090	BAR COMMUN CHALUT	t	\N	\N	2026-05-17 09:42:47.157763+00	2026-05-29 18:29:31.386716+00	kg	kg
+8c0db98a-6fe5-4660-9b2b-e94ec96111b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	a5129f95-d071-483e-afec-32d5f7353eb6	33560	DORADE GRISE	t	\N	\N	2026-05-17 09:42:47.173475+00	2026-05-29 18:29:31.386716+00	kg	kg
+de1f1a95-7951-4f2b-9c87-1b7b80e7d297	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	754bbb2f-884d-40a5-9143-e790393cc10b	33740	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:47.180359+00	2026-05-29 18:29:31.386716+00	kg	kg
+32650cb2-e285-40d0-9fce-e0e49ea0565b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	1b439d6c-0137-4c95-b9cc-a38f5db4ea9d	33730	GRONDIN GRIS	t	\N	\N	2026-05-17 09:42:47.178717+00	2026-05-29 18:29:31.386716+00	kg	kg
+a1379c74-ea1d-4dca-a1d5-e92db6be410c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	70350ad4-e848-4d05-b9d8-8f08af7ad582	32130	LIEU JAUNE de LIGNE	t	\N	\N	2026-05-17 09:42:47.150497+00	2026-05-29 18:29:31.386716+00	kg	kg
+2fbc47b8-7478-4f61-85b2-4c300917e811	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	ee66bb6c-2061-48ac-a254-153c7ad3658d	33320	MAIGRE COMMUN LIGNE	t	\N	\N	2026-05-17 09:42:47.162238+00	2026-05-29 18:29:31.386716+00	kg	kg
+000657fb-cd8b-496f-ba92-0c36688f2ea5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	6ecc824c-d57d-40a8-9134-1a466fc77ddc	37050	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:47.206383+00	2026-05-29 18:29:31.386716+00	kg	kg
+a4bebf83-5c9c-4b13-91e0-8c76b462afe2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	f84214e4-02b2-4690-80df-2d70d5b0436b	32110	MERLAN	t	\N	\N	2026-05-17 09:42:47.149047+00	2026-05-29 18:29:31.386716+00	kg	kg
+096dd7fd-7dbb-412a-8818-3407f031d0e1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	e8a704fc-3293-4b68-beda-b9ced3eff7fe	32022	MERLU QUEUE COUPEE	t	\N	\N	2026-05-17 09:42:47.147656+00	2026-05-29 18:29:31.386716+00	kg	kg
+89ef90b8-7440-4498-bb9b-bd414418c5a7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	0fca7821-36e3-4ce2-b93a-a14e6314e70e	34240	MULET PORC	t	\N	\N	2026-05-17 09:42:47.190158+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f9a615c-73ba-4b42-bfa0-0a555da36a5c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	83e2faf9-3891-45d0-87e5-7f9b0cc6b6ef	34220	MULET LIPPU	t	\N	\N	2026-05-17 09:42:47.18847+00	2026-05-29 18:29:31.386716+00	kg	kg
+6d82062f-7304-4e16-abc8-6f8c77f87132	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	95c20c14-8e70-407e-b693-3ab227d05793	31140	FLET COMMUN	t	\N	\N	2026-05-17 09:42:47.140583+00	2026-05-29 18:29:31.386716+00	kg	kg
+4a68f7ee-5d4b-4796-bb08-72daaba73f69	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	60cbce37-16ee-4fd8-9cb2-df05f8a8196f	33580	VIEILLE COMMUNE	t	\N	\N	2026-05-17 09:42:47.175244+00	2026-05-29 18:29:31.386716+00	kg	kg
+97f481cf-9626-46a6-a0d7-5ed80f116cb9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	60cbce37-16ee-4fd8-9cb2-df05f8a8196f	39990	VIEILLE (COQUETTE)	t	\N	\N	2026-05-17 09:42:47.225107+00	2026-05-29 18:29:31.386716+00	kg	kg
+90fb489d-66a7-448a-9fc0-795855daea6f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	c5e4d501-9c7c-44fc-a1f7-8976600b988c	33520	BOGUE	t	\N	\N	2026-05-17 09:42:47.170078+00	2026-05-29 18:29:31.386716+00	kg	kg
+32c0ac00-9165-474a-af95-24503befb345	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	7ab05ac9-9d06-47e8-8e87-228b754d6350	33760	BAUDROIE COMMUNE	t	\N	\N	2026-05-17 09:42:47.181986+00	2026-05-29 18:29:31.386716+00	kg	kg
+6f6dd5af-4e92-483f-98a0-6a589de56d34	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	39914310-bc02-4670-9085-ddb934c0a484	34010	ORPHIE COMMUNE	t	\N	\N	2026-05-17 09:42:47.185162+00	2026-05-29 18:29:31.386716+00	kg	kg
+f041b52c-15fe-48d8-8061-fde0115f038c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	2be3801a-2f72-4bf0-aadd-6947534e9bc2	36010	BONITE A VENTRE RAYE	t	\N	\N	2026-05-17 09:42:47.196586+00	2026-05-29 18:29:31.386716+00	kg	kg
+885da409-81fa-4d66-94c1-d064b82bdba6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	2be3801a-2f72-4bf0-aadd-6947534e9bc2	36130	BONITE A DOS RAYE	t	\N	\N	2026-05-17 09:42:47.201298+00	2026-05-29 18:29:31.386716+00	kg	kg
+564495c5-a7d4-40d7-b5f1-98e800f5c37f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	00d74386-90c7-407f-b7e2-d943864ac0f6	33540	SAR COMMUN	t	\N	\N	2026-05-17 09:42:47.171729+00	2026-05-29 18:29:31.386716+00	kg	kg
+af6d6c20-e29a-49c5-ac98-524717081815	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	6c608d22-1b2b-465b-8f5d-cde10ab84494	43016	HOMARD EUROPEEN EPATEE	t	\N	\N	2026-05-17 09:42:47.233644+00	2026-05-29 18:29:31.386716+00	kg	kg
+1ae4882e-8c90-40d1-a10a-64af2f07a7e6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	9a78723c-66e1-4e0f-ad35-f967c0ff5c42	42040	ARAIGNEE DE MER FILET	t	\N	\N	2026-05-17 09:42:47.228538+00	2026-05-29 18:29:31.386716+00	kg	kg
+76b360de-1ca2-41ce-996a-3013375a7982	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	5afc1125-7dcd-4390-be6f-a46a7ea0ea58	45010	CREVETTE BOUQUET	t	\N	\N	2026-05-17 09:42:47.238467+00	2026-05-29 18:29:31.386716+00	kg	kg
+b14ce9fe-10ac-440c-a875-43298016eea8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	ce180a78-209b-4f30-8616-211b889e7486	34090	CHINCHARD	t	\N	\N	2026-05-17 09:42:47.18671+00	2026-05-29 18:29:31.386716+00	kg	kg
+51faa079-14e9-48fe-ae09-4280bffc5a76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	ce180a78-209b-4f30-8616-211b889e7486	34310	CHINCHARD	t	\N	\N	2026-05-17 09:42:47.191758+00	2026-05-29 18:29:31.386716+00	kg	kg
+5614962a-0762-4dc5-873d-16a45c2cf22b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	44c65071-01f8-4e6b-9260-a64a273e6cab	37040	MAQUEREAU ESPAGNOL	t	\N	\N	2026-05-17 09:42:47.204554+00	2026-05-29 18:29:31.386716+00	kg	kg
+0554a298-a496-4b1d-a237-62b4059d105b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	1d445638-355e-417a-9d63-5a9d9fecc40a	33490	PAGEOT ACARNE	t	\N	\N	2026-05-17 09:42:47.168576+00	2026-05-29 18:29:31.386716+00	kg	kg
+9604a8e4-a0e2-4546-9221-e2eb6ff85f7c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	049ab5e2-18a5-4165-bb87-b3bdec4eb3da	31150	PLIE COMMUNE	t	\N	\N	2026-05-17 09:42:47.141989+00	2026-05-29 18:29:31.386716+00	kg	kg
+3755af75-29e0-432c-92d4-c4a2ae3b47ab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	515d4dff-9961-4316-9eac-e1133769525d	35040	SARDINE FRAICHE	t	\N	\N	2026-05-17 09:42:47.193413+00	2026-05-29 18:29:31.386716+00	kg	kg
+aa0e3b28-0fe9-4437-8305-e14f1af82380	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	bf77f28a-0e62-46dd-a0c3-343968557980	31030	BARBUE	t	\N	\N	2026-05-17 09:42:47.137805+00	2026-05-29 18:29:31.386716+00	kg	kg
+69d5a665-cf19-45e4-8822-6d8d99a331fb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	45db41fe-6339-48a1-b985-c65a04385612	31060	CARDINE FRANCHE	t	\N	\N	2026-05-17 09:42:47.139257+00	2026-05-29 18:29:31.386716+00	kg	kg
+6167adce-9892-4a4a-9fc1-dbc65241b6cb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	d8cc0865-90d5-4195-961b-665ba8e14bfd	33450	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:47.167166+00	2026-05-29 18:29:31.386716+00	kg	kg
+5b2fa703-afb0-4ce2-9ec3-c8aee7c63624	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	2fd4817f-3c62-4d32-81ee-8043e300e327	38050	EMISSOLE TACHETE	t	\N	\N	2026-05-17 09:42:47.209758+00	2026-05-29 18:29:31.386716+00	kg	kg
+7f850220-7453-4fdc-b90e-227b54b6c9be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	82e81774-46fd-4cfe-b3a0-33cba2607934	36190	ESPADON	t	\N	\N	2026-05-17 09:42:47.202926+00	2026-05-29 18:29:31.386716+00	kg	kg
+569ffedd-04c5-4d2d-b0bb-ba3c858918fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	33800	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:47.183708+00	2026-05-29 18:29:31.386716+00	kg	kg
+cc118d9e-e9e7-40e4-8caf-1074c7be226e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	ea00bccd-06f6-4d93-b50e-fc0674c50885	32230	LINGUE FRANCHE	t	\N	\N	2026-05-17 09:42:47.153586+00	2026-05-29 18:29:31.386716+00	kg	kg
+96887685-a81d-4469-b36a-9cad0b13d142	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	31210	SOLE COMMUNE FILET VIDEE	t	\N	\N	2026-05-17 09:42:47.143511+00	2026-05-29 18:29:31.386716+00	kg	kg
+edcaa9a9-9570-4dee-9042-44aa778258ca	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1429	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.844093+00	2026-05-29 18:29:31.386716+00	kg	kg
+c760aae7-5f95-4fec-9341-076b74bb8549	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1431	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.849554+00	2026-05-29 18:29:31.386716+00	kg	kg
+4e1f58d8-6fad-46dc-a9e3-2948919397e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1432	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.85272+00	2026-05-29 18:29:31.386716+00	kg	kg
+53338e11-3a9f-450c-8f02-290e7cd4d0f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1433	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.85783+00	2026-05-29 18:29:31.386716+00	kg	kg
+d1ad8b3a-d02b-407e-afd5-1b52083dec60	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1434	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.859579+00	2026-05-29 18:29:31.386716+00	kg	kg
+ce013d26-899a-43be-a3ac-43c6afb93220	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1435	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.862008+00	2026-05-29 18:29:31.386716+00	kg	kg
+ee430a42-9449-443f-84ac-dd20e7cc1cab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1436	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.866604+00	2026-05-29 18:29:31.386716+00	kg	kg
+845e91c3-d009-43b8-865c-bed98935e316	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1438	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.870963+00	2026-05-29 18:29:31.386716+00	kg	kg
+33840bf7-881b-46cc-8741-a7c02ca487c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1439	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.872529+00	2026-05-29 18:29:31.386716+00	kg	kg
+59c3d3ec-d625-44de-8f9d-d04d4c7aa92b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1511	MERLU	t	\N	\N	2026-05-17 09:42:47.976808+00	2026-05-29 18:29:31.386716+00	kg	kg
+5986f9b0-30b2-4c31-9e46-20bc343a46da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1512	MERLU	t	\N	\N	2026-05-17 09:42:47.978414+00	2026-05-29 18:29:31.386716+00	kg	kg
+dfd1008a-c2ba-49f9-897d-9ed3eeec1669	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	1513	MERLU	t	\N	\N	2026-05-17 09:42:47.980048+00	2026-05-29 18:29:31.386716+00	kg	kg
+6112e06b-6a09-48f1-b0d5-e5a002ac8cb3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	437	MERLU	t	\N	\N	2026-05-17 09:42:48.460941+00	2026-05-29 18:29:31.386716+00	kg	kg
+e55f75c5-65f8-4a09-8c6f-1d35edd1eab7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	439	MERLU	t	\N	\N	2026-05-17 09:42:48.463412+00	2026-05-29 18:29:31.386716+00	kg	kg
+85417105-e05e-40e2-a16b-cd89344445fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	441	MERLU	t	\N	\N	2026-05-17 09:42:48.467186+00	2026-05-29 18:29:31.386716+00	kg	kg
+bc1a468b-0c38-4144-aaab-9722ce5380a0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	443	MERLU	t	\N	\N	2026-05-17 09:42:48.469642+00	2026-05-29 18:29:31.386716+00	kg	kg
+0ae601e7-4887-4ac3-9a9e-5204ac50d926	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	444	MERLU	t	\N	\N	2026-05-17 09:42:48.470883+00	2026-05-29 18:29:31.386716+00	kg	kg
+8caf871a-f8e5-44c4-ac94-79e7d97f2a76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	445	MERLU	t	\N	\N	2026-05-17 09:42:48.472153+00	2026-05-29 18:29:31.386716+00	kg	kg
+48280814-8e02-481f-8b96-ac4a492d6edf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	447	MERLU	t	\N	\N	2026-05-17 09:42:48.474631+00	2026-05-29 18:29:31.386716+00	kg	kg
+569da582-cea2-4c4d-84bb-fcdb140c6091	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	00729a62-7e96-4ad2-82cc-0dba17958572	448	MERLU	t	\N	\N	2026-05-17 09:42:48.475876+00	2026-05-29 18:29:31.386716+00	kg	kg
+c8792268-7887-44ff-82f9-e43b31a353af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	06367c87-d184-4bf8-b917-cad7799cb1c8	1131	MULETS PORC	t	\N	\N	2026-05-17 09:42:47.431416+00	2026-05-29 18:29:31.386716+00	kg	kg
+3dfdecc2-2638-487e-89ed-1d7e9e037e74	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	06367c87-d184-4bf8-b917-cad7799cb1c8	1132	MULETS PORC	t	\N	\N	2026-05-17 09:42:47.433185+00	2026-05-29 18:29:31.386716+00	kg	kg
+c804004d-033a-4576-87c7-39da7379c98c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	71abfc77-e6b5-43b4-8c31-47facf18a3bc	830	VIEILLE COMMUNE	t	\N	\N	2026-05-17 09:42:48.801572+00	2026-05-29 18:29:31.386716+00	kg	kg
+d35b8136-47ad-4c2c-944f-261bf258751a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	71abfc77-e6b5-43b4-8c31-47facf18a3bc	831	VIEILLE COMMUNE	t	\N	\N	2026-05-17 09:42:48.802545+00	2026-05-29 18:29:31.386716+00	kg	kg
+cf5e3143-b946-4b79-96fc-e85a77503bf3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	71abfc77-e6b5-43b4-8c31-47facf18a3bc	832	VIEILLE COMMUNE	t	\N	\N	2026-05-17 09:42:48.803436+00	2026-05-29 18:29:31.386716+00	kg	kg
+4282bd99-3604-481d-96b8-25b1f387b63c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	71abfc77-e6b5-43b4-8c31-47facf18a3bc	833	VIEILLE COMMUNE	t	\N	\N	2026-05-17 09:42:48.804516+00	2026-05-29 18:29:31.386716+00	kg	kg
+5fd43038-e137-462d-a368-faf4c30a683d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	167	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.083723+00	2026-05-29 18:29:31.386716+00	kg	kg
+92482e36-205c-4366-a113-918cab84f98f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	168	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.085434+00	2026-05-29 18:29:31.386716+00	kg	kg
+5dc2b22e-4fc7-4922-8272-5c3b6c5180a4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	169	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.087085+00	2026-05-29 18:29:31.386716+00	kg	kg
+3eb59721-6e17-4e5a-8ec3-285191a945d6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	170	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.090277+00	2026-05-29 18:29:31.386716+00	kg	kg
+79d790b0-ee85-4cba-891a-920a2211081e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	171	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.091863+00	2026-05-29 18:29:31.386716+00	kg	kg
+44a9c71d-2622-4686-aa66-400b5422e0fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	172	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.093489+00	2026-05-29 18:29:31.386716+00	kg	kg
+4ca66314-25c3-4dd1-98ef-14f3290ebd29	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	173	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.095074+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b1ce03a-1d86-46a3-b4f7-2bcea1f5d609	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	174	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.096568+00	2026-05-29 18:29:31.386716+00	kg	kg
+d26d2f8c-7489-4d62-ac2d-3715d657de9d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	175	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.098056+00	2026-05-29 18:29:31.386716+00	kg	kg
+e8992d95-f3ba-43a5-991d-24cffae5e9cb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	176	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.09963+00	2026-05-29 18:29:31.386716+00	kg	kg
+38ac074d-0029-4779-9f02-b06cf9aeb3d7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	177	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.10111+00	2026-05-29 18:29:31.386716+00	kg	kg
+ad74b127-13da-416b-911f-5558e0f127df	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2eb84882-ba8b-4b02-8cb0-7395270bbd32	178	CONGRE COMMUN	t	\N	\N	2026-05-17 09:42:48.102598+00	2026-05-29 18:29:31.386716+00	kg	kg
+c9d71ff0-0836-45e2-8b2c-93aec3ebd4d1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	452	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.478539+00	2026-05-29 18:29:31.386716+00	kg	kg
+3c685016-6ed5-408f-8318-3dcbb28d74c5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	453	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.479679+00	2026-05-29 18:29:31.386716+00	kg	kg
+880967a0-00b6-421a-98b2-5a8f7da9ce85	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	454	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.480828+00	2026-05-29 18:29:31.386716+00	kg	kg
+a4d76f7f-72ad-4fb8-b219-70ca6acfd0d2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	455	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.482043+00	2026-05-29 18:29:31.386716+00	kg	kg
+e9332965-8ff5-4656-a965-9fd95fae59fc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	456	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.483088+00	2026-05-29 18:29:31.386716+00	kg	kg
+1a3d6daf-cdf6-4200-ae58-a4d498a28e3d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	457	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.484239+00	2026-05-29 18:29:31.386716+00	kg	kg
+7524e07e-30c1-4e9d-8567-3ec81a01eec4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	458	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.485318+00	2026-05-29 18:29:31.386716+00	kg	kg
+53446c62-4db8-423a-990c-6b776ffc4b75	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	459	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.486392+00	2026-05-29 18:29:31.386716+00	kg	kg
+d229b8df-06ce-433f-b2ea-e09cf3f2cf68	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	460	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.488432+00	2026-05-29 18:29:31.386716+00	kg	kg
+2f79097e-705c-4ee3-b56d-81329a586275	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	461	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.489618+00	2026-05-29 18:29:31.386716+00	kg	kg
+d386a1d4-635f-482e-a98b-1890b44843d7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	462	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.490677+00	2026-05-29 18:29:31.386716+00	kg	kg
+8b7eff89-4c7b-4a8e-94e0-1df438ecfc59	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	463	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.491667+00	2026-05-29 18:29:31.386716+00	kg	kg
+a477f320-4ace-4682-b8fe-e6351b443f96	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	464	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.492689+00	2026-05-29 18:29:31.386716+00	kg	kg
+a83e5fa7-5377-41de-9112-997894e830b2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	465	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.493803+00	2026-05-29 18:29:31.386716+00	kg	kg
+44c27843-4bf4-417d-8e7e-41665b671af8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2df24e04-f616-43fe-b54e-5cadabdc4605	466	MORUE COMMUNE (CABILLAUD)	t	\N	\N	2026-05-17 09:42:48.494807+00	2026-05-29 18:29:31.386716+00	kg	kg
+c28d9529-9f5f-4996-a2bf-22cd2d872bf6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	009c9571-bdc0-4007-bc90-beb916dd56a6	332	LANGOUSTES ROUGES	t	\N	\N	2026-05-17 09:42:48.31809+00	2026-05-29 18:29:31.386716+00	kg	kg
+07babe90-8f1c-41f1-96e1-a61d5b0d88fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	009c9571-bdc0-4007-bc90-beb916dd56a6	333	LANGOUSTES ROUGES	t	\N	\N	2026-05-17 09:42:48.31973+00	2026-05-29 18:29:31.386716+00	kg	kg
+e1b8d84d-e23f-4e0e-a63f-0e8d3f994693	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1003	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:47.261086+00	2026-05-29 18:29:31.386716+00	kg	kg
+3bbd86bd-5334-4837-a56f-79d894d3eaeb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1004	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:47.262732+00	2026-05-29 18:29:31.386716+00	kg	kg
+d6884aaf-75a6-4825-892d-85af636d67d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1005	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:47.264449+00	2026-05-29 18:29:31.386716+00	kg	kg
+1191b7c8-1ef7-4ce9-868e-3e2a85c0e5cf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1007	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:47.267613+00	2026-05-29 18:29:31.386716+00	kg	kg
+3dadd403-39d9-4f96-b7a3-b97e00234df7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1317	LANGT VIVANTE SYCOCR	t	\N	\N	2026-05-17 09:42:47.743595+00	2026-05-29 18:29:31.386716+00	kg	kg
+06dcae2c-4ae9-41b1-82c6-a09fb5cd5fae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1318	LANGT VIVANTE SYCOCR	t	\N	\N	2026-05-17 09:42:47.745335+00	2026-05-29 18:29:31.386716+00	kg	kg
+1a0feaca-da95-4ad9-ada7-a0259999be50	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	1542	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:48.014945+00	2026-05-29 18:29:31.386716+00	kg	kg
+aceec488-c45f-46ea-99ea-e78f51bdbb58	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	346	LANGT VIVANTE	t	\N	\N	2026-05-17 09:42:48.325247+00	2026-05-29 18:29:31.386716+00	kg	kg
+06c656fa-cb14-461c-b4ed-ff52e78334fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	347	LANGT VIVANTE	t	\N	\N	2026-05-17 09:42:48.326669+00	2026-05-29 18:29:31.386716+00	kg	kg
+b4ed1663-b99f-4c6a-a36e-e49dd5fad63e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	348	LANGT VIVANTE	t	\N	\N	2026-05-17 09:42:48.328052+00	2026-05-29 18:29:31.386716+00	kg	kg
+5327d17d-94fd-4c0d-abbc-8374dc2b9551	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	996	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:48.982967+00	2026-05-29 18:29:31.386716+00	kg	kg
+5a6ae147-8ba8-4e54-9097-913446894421	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	997	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:48.984226+00	2026-05-29 18:29:31.386716+00	kg	kg
+2952419a-fbca-4d8e-9edf-8f24be4eea02	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	328	HOMARD D'EUROPE	t	\N	\N	2026-05-17 09:42:48.311673+00	2026-05-29 18:29:31.386716+00	kg	kg
+63e3a81d-419c-46b9-b650-7c773fb7d998	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f282b2a8-f9a4-4ee6-8b4d-c11de67974ee	329	HOMARD D'EUROPE	t	\N	\N	2026-05-17 09:42:48.313273+00	2026-05-29 18:29:31.386716+00	kg	kg
+bf4ad275-7e39-404a-a151-9b9478ae7949	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1dc3ab73-2c7b-4770-a62d-00f533b9df74	112	ROSES TOUT VENANT	t	\N	\N	2026-05-17 09:42:47.408992+00	2026-05-29 18:29:31.386716+00	kg	kg
+9ff8e094-daba-4637-8f5e-c9465302c863	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1dc3ab73-2c7b-4770-a62d-00f533b9df74	113	ROSES TOUT VENANT	t	\N	\N	2026-05-17 09:42:47.427994+00	2026-05-29 18:29:31.386716+00	kg	kg
+4895c4d8-5a75-476a-a921-0c21d46e186d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1dc3ab73-2c7b-4770-a62d-00f533b9df74	114	ROSES TOUT VENANT	t	\N	\N	2026-05-17 09:42:47.446619+00	2026-05-29 18:29:31.386716+00	kg	kg
+5ae794d1-d6fe-434e-8fad-8628699345b2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1dc3ab73-2c7b-4770-a62d-00f533b9df74	115	ROSES TOUT VENANT	t	\N	\N	2026-05-17 09:42:47.463472+00	2026-05-29 18:29:31.386716+00	kg	kg
+2acc34ca-4a8e-429d-bbea-91a3474e9702	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1dc3ab73-2c7b-4770-a62d-00f533b9df74	834	ROSES-BOUQUET	t	\N	\N	2026-05-17 09:42:48.805602+00	2026-05-29 18:29:31.386716+00	kg	kg
+49b0225d-cdb0-42a5-8576-da07dec0bbf9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1dc3ab73-2c7b-4770-a62d-00f533b9df74	835	ROSES-BOUQUET	t	\N	\N	2026-05-17 09:42:48.806547+00	2026-05-29 18:29:31.386716+00	kg	kg
+23fb0b6a-d28f-4fac-92cd-a902800fe348	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1dc3ab73-2c7b-4770-a62d-00f533b9df74	836	ROSES-BOUQUET	t	\N	\N	2026-05-17 09:42:48.807404+00	2026-05-29 18:29:31.386716+00	kg	kg
+6594b091-e5f0-4de6-ba31-c4f31c1192fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1dc3ab73-2c7b-4770-a62d-00f533b9df74	837	ROSES-BOUQUET	t	\N	\N	2026-05-17 09:42:48.8085+00	2026-05-29 18:29:31.386716+00	kg	kg
+3dd6de97-6501-441a-b5e0-935f6cc93517	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	3a29e4c3-df5f-439d-8038-7b0449e5f689	1035	TOURTEAU DE CHALUT	t	\N	\N	2026-05-17 09:42:47.31545+00	2026-05-29 18:29:31.386716+00	kg	kg
+d4833cf2-d482-46dd-a237-c159e044c3af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	3a29e4c3-df5f-439d-8038-7b0449e5f689	1036	TOURTEAU DE CHALUT	t	\N	\N	2026-05-17 09:42:47.316928+00	2026-05-29 18:29:31.386716+00	kg	kg
+c4e3ea88-f2c1-4193-9120-b7ca101560c1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	3a29e4c3-df5f-439d-8038-7b0449e5f689	813	TOURTEAU DE CASIER	t	\N	\N	2026-05-17 09:42:48.785658+00	2026-05-29 18:29:31.386716+00	kg	kg
+09f5c808-9848-4c87-a934-69d6b0d22319	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	3a29e4c3-df5f-439d-8038-7b0449e5f689	814	TOURTEAU DE CASIER	t	\N	\N	2026-05-17 09:42:48.786657+00	2026-05-29 18:29:31.386716+00	kg	kg
+8613b9ae-2f5d-4fa6-ba03-5a326377ccfd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b0e176ed-348e-471c-aa7c-7ebd97129cf4	1008	ETRILLE CHALUT	t	\N	\N	2026-05-17 09:42:47.269415+00	2026-05-29 18:29:31.386716+00	kg	kg
+d475ad72-e5e4-49e8-9dbd-1ac002a52f05	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b0e176ed-348e-471c-aa7c-7ebd97129cf4	261	ETRILLE CASIER	t	\N	\N	2026-05-17 09:42:48.205706+00	2026-05-29 18:29:31.386716+00	kg	kg
+969b954f-7a63-45f4-acaf-d94a667dd942	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	46496720-d5a0-44fe-adee-79281696232e	1427	PETONCLE aiguillon	t	\N	\N	2026-05-17 09:42:47.840076+00	2026-05-29 18:29:31.386716+00	kg	kg
+147bdad7-4217-41ea-afb5-0799c94d2474	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	46496720-d5a0-44fe-adee-79281696232e	528	PETONCLE BIGARRE	t	\N	\N	2026-05-17 09:42:48.526015+00	2026-05-29 18:29:31.386716+00	kg	kg
+56f8d586-1662-4e4e-be6f-c85136b26e92	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	46496720-d5a0-44fe-adee-79281696232e	529	PETONCLE BIGARRE	t	\N	\N	2026-05-17 09:42:48.527102+00	2026-05-29 18:29:31.386716+00	kg	kg
+b9eda0c8-359c-43e7-a796-716a2ac2775e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	46496720-d5a0-44fe-adee-79281696232e	530	PETONCLE BIGARRE	t	\N	\N	2026-05-17 09:42:48.52931+00	2026-05-29 18:29:31.386716+00	kg	kg
+a4176613-1408-46ff-a731-012126aec89c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	665043f6-93cd-4c95-85e0-4bf4166b2ff0	1441	PALOURDE EUROPE	t	\N	\N	2026-05-17 09:42:47.877344+00	2026-05-29 18:29:31.386716+00	kg	kg
+bced34aa-67ad-463c-bf0f-c8b9d425e961	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	665043f6-93cd-4c95-85e0-4bf4166b2ff0	1442	PALOURDE EUROPE	t	\N	\N	2026-05-17 09:42:47.879084+00	2026-05-29 18:29:31.386716+00	kg	kg
+492576cb-b47a-4cb2-8406-baca6e6d3fae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	665043f6-93cd-4c95-85e0-4bf4166b2ff0	1443	PALOURDE JAPONNAISE	t	\N	\N	2026-05-17 09:42:47.880853+00	2026-05-29 18:29:31.386716+00	kg	kg
+9bb9d312-0e5a-4321-b3b1-9c1dd2a00646	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	665043f6-93cd-4c95-85e0-4bf4166b2ff0	1444	PALOURDE JAPONNAISE	t	\N	\N	2026-05-17 09:42:47.882749+00	2026-05-29 18:29:31.386716+00	kg	kg
+e76d7e4b-0476-442b-bc11-4782914188c2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e4023222-aa86-4123-b75c-017d1da79525	1391	COQUE	t	\N	\N	2026-05-17 09:42:47.822046+00	2026-05-29 18:29:31.386716+00	kg	kg
+5b2a09ff-3cd6-4908-a3a0-69ecf55e6f86	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	620c1cc1-7ea1-42dc-bad9-59ee97bde88c	1388	BUCCIN ( BULOT )	t	\N	\N	2026-05-17 09:42:47.815032+00	2026-05-29 18:29:31.386716+00	kg	kg
+fb017c62-da00-4026-ae4c-bf1ad77bde37	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	620c1cc1-7ea1-42dc-bad9-59ee97bde88c	1389	BUCCIN ( BULOT )	t	\N	\N	2026-05-17 09:42:47.816761+00	2026-05-29 18:29:31.386716+00	kg	kg
+cbb8e782-a67f-48c2-824a-2fd17404e471	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	620c1cc1-7ea1-42dc-bad9-59ee97bde88c	1390	BUCCIN ( BULOT )	t	\N	\N	2026-05-17 09:42:47.82019+00	2026-05-29 18:29:31.386716+00	kg	kg
+14979146-8d81-4340-a01e-7acd6aeafd32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9812f172-5418-4207-8208-9433fe2a0bd3	181	CREVETTE GRISE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.108407+00	2026-05-29 18:29:31.386716+00	kg	kg
+4ba74af8-ebe0-4a30-b594-ea590aadf9ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5b5b51cb-6577-440f-b0a3-e77336425e85	774	SPRAT-MAREE	t	\N	\N	2026-05-17 09:42:48.757055+00	2026-05-29 18:29:31.386716+00	kg	kg
+4dd04528-eb45-49a3-a3f8-5c34be5967e6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5b5b51cb-6577-440f-b0a3-e77336425e85	775	SPRAT-MAREE	t	\N	\N	2026-05-17 09:42:48.757945+00	2026-05-29 18:29:31.386716+00	kg	kg
+7c05ec79-4e8a-4fdb-85fd-e393f4b4f2b9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5b5b51cb-6577-440f-b0a3-e77336425e85	776	SPRAT-MAREE	t	\N	\N	2026-05-17 09:42:48.758926+00	2026-05-29 18:29:31.386716+00	kg	kg
+c1808857-d703-4894-8ac7-8938a8fd5f06	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5b5b51cb-6577-440f-b0a3-e77336425e85	987	SPRAT USINE	t	\N	\N	2026-05-17 09:42:48.979525+00	2026-05-29 18:29:31.386716+00	kg	kg
+e907c376-c849-4e8e-ac2d-9e9062c42e52	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5b5b51cb-6577-440f-b0a3-e77336425e85	988	SPRAT USINE	t	\N	\N	2026-05-17 09:42:48.980541+00	2026-05-29 18:29:31.386716+00	kg	kg
+eb3beba5-6bd0-459b-b47a-c02e4a437e87	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5b5b51cb-6577-440f-b0a3-e77336425e85	989	SPRAT USINE	t	\N	\N	2026-05-17 09:42:48.981663+00	2026-05-29 18:29:31.386716+00	kg	kg
+053144eb-4ed3-4ede-80c4-2ba8e60f9fbf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cd4f7c91-8a11-42f0-bb80-c35dd0043567	1447	AMANDE	t	\N	\N	2026-05-17 09:42:47.886123+00	2026-05-29 18:29:31.386716+00	kg	kg
+4d99f417-7ee0-4653-94fa-47cfbccedf03	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	84972aa2-f9ef-4b65-a83c-5247d99b7346	1503	BIGORNEAUX	t	\N	\N	2026-05-17 09:42:47.97313+00	2026-05-29 18:29:31.386716+00	kg	kg
+6c4e42f9-3e47-4ab4-92d5-e6f6da5754a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	84972aa2-f9ef-4b65-a83c-5247d99b7346	1584	BIGORNEAUX	t	\N	\N	2026-05-17 09:42:48.062741+00	2026-05-29 18:29:31.386716+00	kg	kg
+f8dc9d9b-054e-4126-921a-48ab280e64d3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	84972aa2-f9ef-4b65-a83c-5247d99b7346	1585	BIGORNEAUX	t	\N	\N	2026-05-17 09:42:48.063993+00	2026-05-29 18:29:31.386716+00	kg	kg
+8b854bc1-0df6-4c4c-b566-e3b2eb49a19a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1047	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.337885+00	2026-05-29 18:29:31.386716+00	kg	kg
+e253c647-5474-4d71-8bec-4786a92b400c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1048	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.339653+00	2026-05-29 18:29:31.386716+00	kg	kg
+014a0a24-8733-43de-9ba4-990d9386f2fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1049	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.341398+00	2026-05-29 18:29:31.386716+00	kg	kg
+7bc76fe9-0be9-4859-8a74-a3b64b6d1f4f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1050	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.344684+00	2026-05-29 18:29:31.386716+00	kg	kg
+b1195d0e-1310-480c-a4f2-d0af18fbb47d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1051	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.346374+00	2026-05-29 18:29:31.386716+00	kg	kg
+f5ee89d8-8ac9-44a1-9804-10d5969cba9b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1052	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.348102+00	2026-05-29 18:29:31.386716+00	kg	kg
+ab8ccc9d-9d36-46d9-a504-be13ab63a7e2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1053	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.349877+00	2026-05-29 18:29:31.386716+00	kg	kg
+692ae20a-079b-44dc-93c6-49dc96c52e02	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1054	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.351599+00	2026-05-29 18:29:31.386716+00	kg	kg
+1deb02b7-d880-449a-ab59-7efe92527123	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1055	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.353195+00	2026-05-29 18:29:31.386716+00	kg	kg
+ab54607a-137f-43f8-8dd1-4dd27b64aa4e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1056	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.354788+00	2026-05-29 18:29:31.386716+00	kg	kg
+52456646-510b-4aef-8322-6a4ed03ccc5d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1057	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.356515+00	2026-05-29 18:29:31.386716+00	kg	kg
+5654a23e-d3a8-446b-a61c-053c3041caef	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1058	GERMON USINE PLEIN	t	\N	\N	2026-05-17 09:42:47.35825+00	2026-05-29 18:29:31.386716+00	kg	kg
+cf4f7296-bd92-4ec3-aa36-2456f33bc7e4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1071	ZZGERMON USINE PLEIN REGU	t	\N	\N	2026-05-17 09:42:47.363914+00	2026-05-29 18:29:31.386716+00	kg	kg
+f91d06c6-2907-4fbb-a2bb-b6b26d3ae9c8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1098	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.370011+00	2026-05-29 18:29:31.386716+00	kg	kg
+d3b5036e-1b8e-4cd0-8c52-2ccc0146e3ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1099	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.371557+00	2026-05-29 18:29:31.386716+00	kg	kg
+4fba1c9e-1762-42b6-87da-ccc5318c4fa8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1100	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.374663+00	2026-05-29 18:29:31.386716+00	kg	kg
+195eb74c-0d7d-4ef8-a90a-404e898a3cf5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1101	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.376246+00	2026-05-29 18:29:31.386716+00	kg	kg
+9a37b920-f419-406f-b4e0-887eb7466c3f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1102	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.377966+00	2026-05-29 18:29:31.386716+00	kg	kg
+ec10838f-4c7d-43e6-b236-73b73447297e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1103	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.379524+00	2026-05-29 18:29:31.386716+00	kg	kg
+3eafbeab-8ea5-4c0d-8029-4b4a73ee8319	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1104	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.381352+00	2026-05-29 18:29:31.386716+00	kg	kg
+b4704d76-030a-4a43-bbb1-09427e62c9ef	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1105	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.382745+00	2026-05-29 18:29:31.386716+00	kg	kg
+89e2dbcd-4c41-4e14-b3e8-00cc75016c8b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1106	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.384237+00	2026-05-29 18:29:31.386716+00	kg	kg
+757d356d-8faf-4aff-829c-8ea6b5b6462f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1107	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.385887+00	2026-05-29 18:29:31.386716+00	kg	kg
+7c95a3a9-4cbb-4d40-9b3d-7caf0d63ef61	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1108	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.387794+00	2026-05-29 18:29:31.386716+00	kg	kg
+cc95f7d2-4619-4c8d-9ee5-34ef1821bd00	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1109	GERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:47.389563+00	2026-05-29 18:29:31.386716+00	kg	kg
+1c76921a-84e4-43c7-a445-2a4e821cb055	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1333	GERMON usine vide éc	t	\N	\N	2026-05-17 09:42:47.772702+00	2026-05-29 18:29:31.386716+00	kg	kg
+eb7feac1-aee6-456e-9c9f-bbca7df7cf70	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1334	GERMON usine vide éc	t	\N	\N	2026-05-17 09:42:47.774751+00	2026-05-29 18:29:31.386716+00	kg	kg
+48ca21d9-e686-4732-90a3-ff9244ae4a5e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1335	GERMON usine vide éc	t	\N	\N	2026-05-17 09:42:47.776635+00	2026-05-29 18:29:31.386716+00	kg	kg
+efed1c95-049b-45da-abb6-618ba28d9424	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1336	GERMON usine vide éc	t	\N	\N	2026-05-17 09:42:47.778313+00	2026-05-29 18:29:31.386716+00	kg	kg
+c24bf961-9448-4c30-9e9c-a4379da14d82	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1337	GERMON usine plein e	t	\N	\N	2026-05-17 09:42:47.780089+00	2026-05-29 18:29:31.386716+00	kg	kg
+54ae9e9e-6749-46ea-9ee6-add8cdcbecf9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1338	GERMON usine plein e	t	\N	\N	2026-05-17 09:42:47.781892+00	2026-05-29 18:29:31.386716+00	kg	kg
+02dcf0bb-c310-4067-9706-22c0c23ef044	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1339	GERMON usine plein e	t	\N	\N	2026-05-17 09:42:47.78368+00	2026-05-29 18:29:31.386716+00	kg	kg
+a0a256e6-7d9e-4c09-9d49-3d22969a07e5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1340	GERMON usine plein e	t	\N	\N	2026-05-17 09:42:47.787242+00	2026-05-29 18:29:31.386716+00	kg	kg
+436e51d3-f7f4-48f2-9d05-888327dec08d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1341	GERMON usine plein e	t	\N	\N	2026-05-17 09:42:47.788887+00	2026-05-29 18:29:31.386716+00	kg	kg
+c6b43c8b-4cec-4948-a3e4-f2b26326fe29	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1342	GERMON usine plein e	t	\N	\N	2026-05-17 09:42:47.790449+00	2026-05-29 18:29:31.386716+00	kg	kg
+f5c54539-0d45-4e17-a519-d6ab09ec318a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1343	GERMON usine plein e	t	\N	\N	2026-05-17 09:42:47.791912+00	2026-05-29 18:29:31.386716+00	kg	kg
+7a7f13b4-48ed-49f0-9f00-46e512a1ea61	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	1344	GERMON usine plein e	t	\N	\N	2026-05-17 09:42:47.79367+00	2026-05-29 18:29:31.386716+00	kg	kg
+d4799610-92ec-425d-803a-fc0f1c9f6527	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	268	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.207592+00	2026-05-29 18:29:31.386716+00	kg	kg
+156b71ca-c875-4b00-994d-15ad7294c33c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	269	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.209075+00	2026-05-29 18:29:31.386716+00	kg	kg
+7f0ef2ea-c3c4-4a60-8dca-a6a00a2ab6f9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	270	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.210714+00	2026-05-29 18:29:31.386716+00	kg	kg
+721ec023-d829-4e65-9ab6-de929ec39a73	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	271	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.212642+00	2026-05-29 18:29:31.386716+00	kg	kg
+7d3ad139-1beb-43dc-9422-a4a9b72d2678	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	272	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.214246+00	2026-05-29 18:29:31.386716+00	kg	kg
+bd6dc6eb-515d-40bd-b684-6af0c306bf85	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	273	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.21573+00	2026-05-29 18:29:31.386716+00	kg	kg
+01b522df-6014-4dd9-b9b2-cde2efb5f215	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	274	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.217272+00	2026-05-29 18:29:31.386716+00	kg	kg
+3cd72f06-fb0e-44fc-8822-4c66af2148dc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	275	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.218793+00	2026-05-29 18:29:31.386716+00	kg	kg
+f866b2b7-e946-4d76-a3bc-5b3560ab0329	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	276	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.22019+00	2026-05-29 18:29:31.386716+00	kg	kg
+4ce1413a-c21a-453c-8db0-f3711f4581f7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	277	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.221953+00	2026-05-29 18:29:31.386716+00	kg	kg
+fc5c568c-3507-4f5b-bcaa-11cd9e299bd2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	278	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.223571+00	2026-05-29 18:29:31.386716+00	kg	kg
+ceef2f9e-5d54-441a-81df-d1152a45f5eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	279	GERMON MAREE VIDE	t	\N	\N	2026-05-17 09:42:48.22501+00	2026-05-29 18:29:31.386716+00	kg	kg
+2e2da09a-efd0-4fb0-bd51-4a1182213653	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	864	ZZGERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:48.844647+00	2026-05-29 18:29:31.386716+00	kg	kg
+55b0f8ce-6b7e-43c2-bdcb-9c62886e68b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	865	ZZGERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:48.845751+00	2026-05-29 18:29:31.386716+00	kg	kg
+b78f5d23-ce6b-4dd0-bdea-6aa3084627ea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	866	ZZGERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:48.846849+00	2026-05-29 18:29:31.386716+00	kg	kg
+8870f9a4-8486-4dc2-b6a8-8404849873c4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	867	ZZGERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:48.847815+00	2026-05-29 18:29:31.386716+00	kg	kg
+a1416685-f3bb-4c8e-833e-413fbd76c1cc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	868	ZZGERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:48.848853+00	2026-05-29 18:29:31.386716+00	kg	kg
+359fa2c4-42b1-495d-8152-16cc4ccfb021	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	869	ZZGERMON USINE VIDE	t	\N	\N	2026-05-17 09:42:48.849938+00	2026-05-29 18:29:31.386716+00	kg	kg
+ac36a5b3-b5ff-4549-8831-ba43eedb8920	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	885	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.867525+00	2026-05-29 18:29:31.386716+00	kg	kg
+e6542702-bd6d-444f-a8c6-a0deba04071b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	886	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.868649+00	2026-05-29 18:29:31.386716+00	kg	kg
+2697f71f-5d52-4aa3-a6a6-bd3b8ec2ec8d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	887	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.869738+00	2026-05-29 18:29:31.386716+00	kg	kg
+4ae5af75-f421-4aca-835b-1b6b63c0bf29	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	888	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.870701+00	2026-05-29 18:29:31.386716+00	kg	kg
+b0e43324-8172-49d7-87ca-0dbb7e94130c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	889	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.871665+00	2026-05-29 18:29:31.386716+00	kg	kg
+65aadbd3-8fa7-465e-9644-5226dbcd27ea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	890	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.873524+00	2026-05-29 18:29:31.386716+00	kg	kg
+f3250ce7-2832-4fa3-ad4e-5642d504a168	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	891	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.874508+00	2026-05-29 18:29:31.386716+00	kg	kg
+9091dbf2-7078-4785-9029-d181aeb5622c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	892	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.875514+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b5fea50-fc37-4793-90e5-ac704024880b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	893	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.876631+00	2026-05-29 18:29:31.386716+00	kg	kg
+14adc326-6fe8-44bb-9346-5b5a110c4888	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	894	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.877587+00	2026-05-29 18:29:31.386716+00	kg	kg
+1779e89a-2a61-44cb-9ef8-0c00daa76e0b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	896	GERMON MAREE PLEIN	t	\N	\N	2026-05-17 09:42:48.878535+00	2026-05-29 18:29:31.386716+00	kg	kg
+66e6f2d2-bf40-4b2f-8c8a-ecbd527a07cd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	897	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.879506+00	2026-05-29 18:29:31.386716+00	kg	kg
+bf865fec-4324-4bbc-ab40-828a49ab3cb5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	898	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.880527+00	2026-05-29 18:29:31.386716+00	kg	kg
+23247bbd-0aee-4d56-9efa-fae9236763d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	899	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.881532+00	2026-05-29 18:29:31.386716+00	kg	kg
+c85b3f84-d199-47d6-a005-222fd559b9b9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	900	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.883468+00	2026-05-29 18:29:31.386716+00	kg	kg
+2a6494e5-c80d-418f-ae8d-510a07ed76e8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	901	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.884496+00	2026-05-29 18:29:31.386716+00	kg	kg
+d8dc0afa-8f6b-4150-8189-d6357946b0ad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	902	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.885616+00	2026-05-29 18:29:31.386716+00	kg	kg
+b23fdb82-aa2f-4edf-8fd2-fb196a333d20	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	903	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.886721+00	2026-05-29 18:29:31.386716+00	kg	kg
+e388c4c2-98ce-4740-8209-22625bad5f6a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	904	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.887693+00	2026-05-29 18:29:31.386716+00	kg	kg
+ef8147ee-cef8-4dee-b964-c11bb1730a25	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	905	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.888535+00	2026-05-29 18:29:31.386716+00	kg	kg
+3260151f-dadd-4ca4-a4f2-a7648c2ac84c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	906	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.889685+00	2026-05-29 18:29:31.386716+00	kg	kg
+af5768e2-2e1e-4051-ad39-96aeb8e51ac6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	907	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.890783+00	2026-05-29 18:29:31.386716+00	kg	kg
+f7c41217-e317-4257-9e88-86ab3f090d0e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	908	GERMON maree plein q	t	\N	\N	2026-05-17 09:42:48.891794+00	2026-05-29 18:29:31.386716+00	kg	kg
+0afbb594-65b7-4c83-92e2-db4bd6bae42e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	909	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.892849+00	2026-05-29 18:29:31.386716+00	kg	kg
+978d833d-7cc1-48a6-902f-10af29417349	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	910	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.894883+00	2026-05-29 18:29:31.386716+00	kg	kg
+f2988529-08e6-4c09-8675-41a9ece91dd3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	911	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.895777+00	2026-05-29 18:29:31.386716+00	kg	kg
+b749003e-873e-400f-8428-df19702a0ef6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	912	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.896767+00	2026-05-29 18:29:31.386716+00	kg	kg
+67e85e23-a26e-4e60-8546-fcb130b96402	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	913	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.897867+00	2026-05-29 18:29:31.386716+00	kg	kg
+e3911e64-20bd-4048-b788-17c0103a216a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	914	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.898684+00	2026-05-29 18:29:31.386716+00	kg	kg
+3e2e1434-3a61-472a-9295-75008dab97ab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	915	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.899496+00	2026-05-29 18:29:31.386716+00	kg	kg
+f66e4896-2b24-4746-a09f-9e492fd50040	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	916	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.900467+00	2026-05-29 18:29:31.386716+00	kg	kg
+3ec214e3-76e7-4bec-aa59-24361f721658	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	917	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.901595+00	2026-05-29 18:29:31.386716+00	kg	kg
+3801bb01-5c72-4eb2-b484-694d934fb046	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	918	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.902665+00	2026-05-29 18:29:31.386716+00	kg	kg
+de64dd25-84f1-4caf-94e8-86c25677de22	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	919	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.903538+00	2026-05-29 18:29:31.386716+00	kg	kg
+3002c21e-8832-437e-bd48-2b6c63e58e9f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	344287ba-696a-4373-bc7a-947eaeda609e	920	GERMON maree vide qu	t	\N	\N	2026-05-17 09:42:48.907346+00	2026-05-29 18:29:31.386716+00	kg	kg
+ef9883d5-97b9-421a-95be-059937af05fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	510b620d-4f2e-49a4-b270-6a57fe295ad7	1392	THON OBESE MAREE	t	\N	\N	2026-05-17 09:42:47.823753+00	2026-05-29 18:29:31.386716+00	kg	kg
+5c0beffc-97f5-415a-8763-6fd5175ee29d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	510b620d-4f2e-49a4-b270-6a57fe295ad7	1393	THON OBESE MAREE	t	\N	\N	2026-05-17 09:42:47.825538+00	2026-05-29 18:29:31.386716+00	kg	kg
+44d51b12-5cf7-401d-942f-a84d750bd6cf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	510b620d-4f2e-49a4-b270-6a57fe295ad7	1394	THON OBESE USINE	t	\N	\N	2026-05-17 09:42:47.82732+00	2026-05-29 18:29:31.386716+00	kg	kg
+0fdf5eab-a7c5-4585-a06a-a7ece2a5d4fb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	510b620d-4f2e-49a4-b270-6a57fe295ad7	1395	THON OBESE USINE	t	\N	\N	2026-05-17 09:42:47.828883+00	2026-05-29 18:29:31.386716+00	kg	kg
+3264cf9b-6b5b-4312-9611-8ebe83bda891	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	818	TURBOT	t	\N	\N	2026-05-17 09:42:48.787583+00	2026-05-29 18:29:31.386716+00	kg	kg
+207c9152-7866-46fd-a2f4-acef81cf7838	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	819	TURBOT	t	\N	\N	2026-05-17 09:42:48.788601+00	2026-05-29 18:29:31.386716+00	kg	kg
+904edad4-044d-47ad-9ed2-1aea383f6e20	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	820	TURBOT	t	\N	\N	2026-05-17 09:42:48.790648+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b089a41-bb68-49c2-9a41-8f90881e33c6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	821	TURBOT	t	\N	\N	2026-05-17 09:42:48.79155+00	2026-05-29 18:29:31.386716+00	kg	kg
+419a75ff-4d22-4638-852c-ae63a4274311	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	822	TURBOT	t	\N	\N	2026-05-17 09:42:48.792636+00	2026-05-29 18:29:31.386716+00	kg	kg
+5ebea137-ed04-4cd3-8fd3-92ecdffcfba9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	823	TURBOT	t	\N	\N	2026-05-17 09:42:48.793775+00	2026-05-29 18:29:31.386716+00	kg	kg
+3de0f75b-815e-4385-9dd9-f1b2222a9e4e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	824	TURBOT	t	\N	\N	2026-05-17 09:42:48.794603+00	2026-05-29 18:29:31.386716+00	kg	kg
+9a6d4476-5fc6-403d-a478-570a6f597bae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	825	TURBOT	t	\N	\N	2026-05-17 09:42:48.795407+00	2026-05-29 18:29:31.386716+00	kg	kg
+e29edf41-fc8e-4d65-8bb9-4b7dfcfcabbc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	826	TURBOT	t	\N	\N	2026-05-17 09:42:48.796489+00	2026-05-29 18:29:31.386716+00	kg	kg
+79ad71e5-4b69-425e-9a93-131dfb5fc8c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	827	TURBOT	t	\N	\N	2026-05-17 09:42:48.797588+00	2026-05-29 18:29:31.386716+00	kg	kg
+446f1284-3055-4ab3-a05d-fea5b821c448	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	828	TURBOT	t	\N	\N	2026-05-17 09:42:48.79849+00	2026-05-29 18:29:31.386716+00	kg	kg
+8497cc76-85a1-47d1-ac8e-6ebe402086e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	48f771db-da7c-4374-b4f3-6219e6d6911b	829	TURBOT	t	\N	\N	2026-05-17 09:42:48.799402+00	2026-05-29 18:29:31.386716+00	kg	kg
+bca3b742-d2f2-46cc-9307-4defb863938e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	116	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.483152+00	2026-05-29 18:29:31.386716+00	kg	kg
+7b59d296-52ae-407f-afc5-7d87480bd65b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	117	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.501719+00	2026-05-29 18:29:31.386716+00	kg	kg
+888847be-9dc5-4055-b9cc-5487b86e867a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	118	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.518748+00	2026-05-29 18:29:31.386716+00	kg	kg
+d7096439-3e4d-449d-9a45-439c6d9f5084	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	119	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.535732+00	2026-05-29 18:29:31.386716+00	kg	kg
+7449a847-606d-410a-814f-3de547324b4e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	120	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.555372+00	2026-05-29 18:29:31.386716+00	kg	kg
+b17f3064-49da-423f-b76d-a0eed8c2e55d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	121	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.573387+00	2026-05-29 18:29:31.386716+00	kg	kg
+75bc50cc-a284-4e54-a192-47a4ac45a515	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	122	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.589903+00	2026-05-29 18:29:31.386716+00	kg	kg
+2a038b27-b101-4fbf-82ec-0405aa812745	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	123	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.598858+00	2026-05-29 18:29:31.386716+00	kg	kg
+550a1d45-cfa5-4f71-983e-00da7686d00d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	124	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.603099+00	2026-05-29 18:29:31.386716+00	kg	kg
+bd30ac2c-f6e0-4163-8f1c-5e3f4aeb16ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	125	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.622195+00	2026-05-29 18:29:31.386716+00	kg	kg
+c720c204-58a0-416b-ad87-1af02f49bf01	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	126	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.640588+00	2026-05-29 18:29:31.386716+00	kg	kg
+772cbe01-4eee-4810-958f-429ee394d849	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	127	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.658842+00	2026-05-29 18:29:31.386716+00	kg	kg
+d478f512-c877-4c26-be44-6e4c3f0702a3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	128	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.67755+00	2026-05-29 18:29:31.386716+00	kg	kg
+d82a5ef8-46c3-4120-838f-51caeb30b3fa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	129	CALMAR (OU ENCORNET)	t	\N	\N	2026-05-17 09:42:47.694769+00	2026-05-29 18:29:31.386716+00	kg	kg
+72fc721f-d78e-43b8-851c-7bf7321512a7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	188	encornet	t	\N	\N	2026-05-17 09:42:48.114626+00	2026-05-29 18:29:31.386716+00	kg	kg
+a97b4b8e-0c39-4cb7-af6c-4b3b81c96e97	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	189	encornet	t	\N	\N	2026-05-17 09:42:48.115971+00	2026-05-29 18:29:31.386716+00	kg	kg
+15df8692-956f-4f62-a4ac-8218571860ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	374b9933-b4e1-4828-a867-1f12cf2f216d	190	encornet	t	\N	\N	2026-05-17 09:42:48.118936+00	2026-05-29 18:29:31.386716+00	kg	kg
+846aa3f2-e95f-4bbe-9645-be8f87007e00	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b5f35c81-ef9b-40a0-b6f9-c17ef923f166	280	VIVE	t	\N	\N	2026-05-17 09:42:48.226585+00	2026-05-29 18:29:31.386716+00	kg	kg
+c6fe5b41-32f3-44f2-bda5-92b9389c9bba	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b5f35c81-ef9b-40a0-b6f9-c17ef923f166	281	VIVE	t	\N	\N	2026-05-17 09:42:48.228099+00	2026-05-29 18:29:31.386716+00	kg	kg
+47bec143-da91-4fa2-b230-e1e77b7b9ff8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b5f35c81-ef9b-40a0-b6f9-c17ef923f166	282	VIVE	t	\N	\N	2026-05-17 09:42:48.229794+00	2026-05-29 18:29:31.386716+00	kg	kg
+dcc69688-8ac6-4757-895e-b12276bfd4a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b5f35c81-ef9b-40a0-b6f9-c17ef923f166	283	VIVE	t	\N	\N	2026-05-17 09:42:48.231616+00	2026-05-29 18:29:31.386716+00	kg	kg
+778422c4-4a54-40a1-a560-3d51be6de77a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	232ffae3-74da-4921-bf6c-5459bf0a3814	100	BOGUE	t	\N	\N	2026-05-17 09:42:47.254252+00	2026-05-29 18:29:31.386716+00	kg	kg
+0645dc55-d53a-45d0-af4b-673c07f65d7c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	232ffae3-74da-4921-bf6c-5459bf0a3814	101	BOGUE	t	\N	\N	2026-05-17 09:42:47.271277+00	2026-05-29 18:29:31.386716+00	kg	kg
+61f82389-a707-4935-ac95-d1102ca87577	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	232ffae3-74da-4921-bf6c-5459bf0a3814	102	BOGUE	t	\N	\N	2026-05-17 09:42:47.288236+00	2026-05-29 18:29:31.386716+00	kg	kg
+0747338c-c0cf-434a-9bb5-640b37ae154c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	232ffae3-74da-4921-bf6c-5459bf0a3814	103	BOGUE	t	\N	\N	2026-05-17 09:42:47.30613+00	2026-05-29 18:29:31.386716+00	kg	kg
+8cdec8f3-e607-4327-b517-37c1ad620c3e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	232ffae3-74da-4921-bf6c-5459bf0a3814	104	BOGUE	t	\N	\N	2026-05-17 09:42:47.323407+00	2026-05-29 18:29:31.386716+00	kg	kg
+3cf5c086-f8ba-45cb-86fd-183ddc7961d1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	232ffae3-74da-4921-bf6c-5459bf0a3814	105	BOGUE	t	\N	\N	2026-05-17 09:42:47.343109+00	2026-05-29 18:29:31.386716+00	kg	kg
+79e82a07-3699-44e1-b6c3-87a28fd9c04a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	4c092e26-16d0-463a-b01b-5a4703fbb9c7	251	ENCORNET- ROUGE (TORPILLE	t	\N	\N	2026-05-17 09:42:48.188166+00	2026-05-29 18:29:31.386716+00	kg	kg
+43d2d776-19e4-474e-b350-c0638cd98b10	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	4c092e26-16d0-463a-b01b-5a4703fbb9c7	252	ENCORNET- ROUGE (TORPILLE	t	\N	\N	2026-05-17 09:42:48.189773+00	2026-05-29 18:29:31.386716+00	kg	kg
+238852a5-1960-44a6-8357-d7d3a748a683	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	44147114-6de6-475e-a232-7abb178ad0a7	870	ALOSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.851829+00	2026-05-29 18:29:31.386716+00	kg	kg
+a0e1da34-685e-4c8c-8775-a0056f8a9aec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	44147114-6de6-475e-a232-7abb178ad0a7	871	ALOSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.852688+00	2026-05-29 18:29:31.386716+00	kg	kg
+21ef620a-3ad1-4197-8fd2-4244d5e6ef2b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	44147114-6de6-475e-a232-7abb178ad0a7	872	ALOSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.853747+00	2026-05-29 18:29:31.386716+00	kg	kg
+9808d0a5-50c4-47d9-9ad0-28e95daa03bb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f12a2f1d-c998-46c0-8e98-7f25aafd974b	488	ORPHIE COMMUNE	t	\N	\N	2026-05-17 09:42:48.51114+00	2026-05-29 18:29:31.386716+00	kg	kg
+c112d4c0-eee1-4a2e-81c3-54c60ba4c945	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f12a2f1d-c998-46c0-8e98-7f25aafd974b	489	ORPHIE COMMUNE	t	\N	\N	2026-05-17 09:42:48.512233+00	2026-05-29 18:29:31.386716+00	kg	kg
+c647f999-3ee3-451e-be41-eb6b5aa4945d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f12a2f1d-c998-46c0-8e98-7f25aafd974b	490	ORPHIE COMMUNE	t	\N	\N	2026-05-17 09:42:48.51457+00	2026-05-29 18:29:31.386716+00	kg	kg
+368aee80-6deb-4058-8ad2-95d0af14b1ea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1133	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.434828+00	2026-05-29 18:29:31.386716+00	kg	kg
+5aebef8f-3898-48a5-94ef-74bf85a25cd1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1134	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.436599+00	2026-05-29 18:29:31.386716+00	kg	kg
+06a0ca9d-5c32-47f5-8d28-3c592634453c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1135	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.438511+00	2026-05-29 18:29:31.386716+00	kg	kg
+e623307c-7406-4cfd-81ff-252f06630c3e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1136	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.44009+00	2026-05-29 18:29:31.386716+00	kg	kg
+67d1da5d-ebf8-4bc3-9719-f363fb071fb4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1137	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.441757+00	2026-05-29 18:29:31.386716+00	kg	kg
+6a340ba8-b7c6-4cf9-b9e2-52c722b9ce52	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1138	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.443393+00	2026-05-29 18:29:31.386716+00	kg	kg
+0a62ba28-fdfe-4e17-996e-f9337697e5a6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1139	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.444928+00	2026-05-29 18:29:31.386716+00	kg	kg
+1fcabc35-df7f-410f-b135-da3c659289da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1140	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.448103+00	2026-05-29 18:29:31.386716+00	kg	kg
+8a10a71a-8f93-4892-95f9-6ee66be0a639	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1141	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.449796+00	2026-05-29 18:29:31.386716+00	kg	kg
+5657ed8e-723c-46e6-a7e5-0bc6e2835397	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1142	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.45138+00	2026-05-29 18:29:31.386716+00	kg	kg
+238ff44f-f2f8-42b1-ae7d-e2bc62c65f38	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1143	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.452949+00	2026-05-29 18:29:31.386716+00	kg	kg
+56ea5842-5373-4f03-b0be-a9a33db27507	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1144	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.454726+00	2026-05-29 18:29:31.386716+00	kg	kg
+b5cab53a-c965-4f71-a65e-ba46e204883b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1145	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.45634+00	2026-05-29 18:29:31.386716+00	kg	kg
+ac39d186-39f3-42b4-b76a-5424cf537283	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1146	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.45812+00	2026-05-29 18:29:31.386716+00	kg	kg
+fc65ec11-a628-4b17-8230-852200856bb9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1147	RAIE AUTRES ENTIERES	t	\N	\N	2026-05-17 09:42:47.459854+00	2026-05-29 18:29:31.386716+00	kg	kg
+42c554ef-5e6a-48e3-b4ac-e87e088af654	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1450	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.887938+00	2026-05-29 18:29:31.386716+00	kg	kg
+f187067a-2923-43f8-8bf5-6ac3f2f61402	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1451	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.889734+00	2026-05-29 18:29:31.386716+00	kg	kg
+1c23c7cd-d401-4604-8265-0d6d3ccd541a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1452	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.891318+00	2026-05-29 18:29:31.386716+00	kg	kg
+93290ce9-0726-4ff0-b265-dcb0f8aefa74	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1453	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.892633+00	2026-05-29 18:29:31.386716+00	kg	kg
+4f9eb88f-c0dd-4a22-bd33-ae86e89c6b54	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1454	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.894158+00	2026-05-29 18:29:31.386716+00	kg	kg
+31d5871c-0e3f-4789-b3f2-fe75d4e32aa6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1455	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.895634+00	2026-05-29 18:29:31.386716+00	kg	kg
+191eaa71-ac9b-4f30-ad2d-d4dbfa0d9a63	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1456	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.897097+00	2026-05-29 18:29:31.386716+00	kg	kg
+2a252fb0-8ac0-4525-8aa7-14b961d3154a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1457	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.898494+00	2026-05-29 18:29:31.386716+00	kg	kg
+03823298-a1c5-439e-9ed7-fb2a546a9413	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1458	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.899854+00	2026-05-29 18:29:31.386716+00	kg	kg
+5ac6937d-3c20-4466-b079-10294e7be038	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	1459	POCHETEAU BLANC	t	\N	\N	2026-05-17 09:42:47.901152+00	2026-05-29 18:29:31.386716+00	kg	kg
+bc2daa73-c0e0-402c-a51f-c21b5bec949a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	193	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.120418+00	2026-05-29 18:29:31.386716+00	kg	kg
+d8db267f-4f78-4241-aab3-1ae95165cc68	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	194	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.121893+00	2026-05-29 18:29:31.386716+00	kg	kg
+eef03c1c-7b41-48ec-b945-d6d4901e8851	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	195	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.123549+00	2026-05-29 18:29:31.386716+00	kg	kg
+489a9555-24be-40be-9b9e-9d8b4a04f2b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	196	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.124949+00	2026-05-29 18:29:31.386716+00	kg	kg
+f029d692-f758-4085-801b-fff499d18262	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	197	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.126409+00	2026-05-29 18:29:31.386716+00	kg	kg
+a7928e5a-f542-491d-b341-ff9684fb1aab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	198	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.127951+00	2026-05-29 18:29:31.386716+00	kg	kg
+6527e4c5-bb99-4c8a-879b-6e5e2189beb8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	199	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.129517+00	2026-05-29 18:29:31.386716+00	kg	kg
+a701b9b4-509e-414c-80ac-a8ade9b85ff4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	200	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.132711+00	2026-05-29 18:29:31.386716+00	kg	kg
+3f698b3f-21a5-4dc8-bece-2a3286376a57	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	201	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.134196+00	2026-05-29 18:29:31.386716+00	kg	kg
+7e49f355-f0ec-46bb-a070-70ed4d88ecd3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	202	POCHETEAU NOIR	t	\N	\N	2026-05-17 09:42:48.135682+00	2026-05-29 18:29:31.386716+00	kg	kg
+de0d881d-8953-4055-b636-91413e5968cd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	206	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.137329+00	2026-05-29 18:29:31.386716+00	kg	kg
+06c310be-aaa6-4657-93c5-4201463e882b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	207	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.138917+00	2026-05-29 18:29:31.386716+00	kg	kg
+0f4bae05-e59e-449e-a602-4d06bb3fbdac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	208	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.140519+00	2026-05-29 18:29:31.386716+00	kg	kg
+dc21c864-6f08-4755-89c4-c9742573e37a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	209	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.142009+00	2026-05-29 18:29:31.386716+00	kg	kg
+99608cd1-545a-412d-8612-593b27dc4542	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	210	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.145092+00	2026-05-29 18:29:31.386716+00	kg	kg
+2ef9b9f9-eb3c-4807-bb61-2c620e419e93	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	211	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.146661+00	2026-05-29 18:29:31.386716+00	kg	kg
+af45b9a6-ff90-40e9-99e1-e9a9f5a78e52	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	212	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.148178+00	2026-05-29 18:29:31.386716+00	kg	kg
+ddd23110-060c-4393-a96a-a52de920fa7a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	213	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.149675+00	2026-05-29 18:29:31.386716+00	kg	kg
+d21d1616-9c3f-4324-8447-f334efeee33f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	214	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.15118+00	2026-05-29 18:29:31.386716+00	kg	kg
+c64ed4a9-aa3d-400f-93d2-261a2ecec230	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	215	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.152756+00	2026-05-29 18:29:31.386716+00	kg	kg
+0918a896-528f-4fad-9d8a-d27ee411b580	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	216	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.154295+00	2026-05-29 18:29:31.386716+00	kg	kg
+6abda4c0-a79c-4c69-8f8a-e2fed7e9964a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	217	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.155758+00	2026-05-29 18:29:31.386716+00	kg	kg
+80168d2d-3dd5-4a5e-9fd4-909db4941f36	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	218	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.157273+00	2026-05-29 18:29:31.386716+00	kg	kg
+f431b502-f299-4dd0-9261-8165d88ed720	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	219	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.158719+00	2026-05-29 18:29:31.386716+00	kg	kg
+90e84e8d-7e8c-41ea-813e-12b59ffa999f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	220	ZZRAIES AUTRES	t	\N	\N	2026-05-17 09:42:48.161784+00	2026-05-29 18:29:31.386716+00	kg	kg
+66b9c579-806a-4e93-8d70-306db0c4ccd6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	566	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.56843+00	2026-05-29 18:29:31.386716+00	kg	kg
+28c02835-091e-4b15-96ea-aba70268926a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	567	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.569391+00	2026-05-29 18:29:31.386716+00	kg	kg
+71a45cbd-24e5-408e-bcb8-f03fb736bb93	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	568	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.570258+00	2026-05-29 18:29:31.386716+00	kg	kg
+c5f8b4f9-e7a0-43b1-9082-36a027b8899d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	569	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.571162+00	2026-05-29 18:29:31.386716+00	kg	kg
+007e22f8-ba0f-4b5b-a007-02bcfcf02d20	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	570	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.573269+00	2026-05-29 18:29:31.386716+00	kg	kg
+27bd61b9-69d8-4543-a57e-d0225993610e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	571	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.574278+00	2026-05-29 18:29:31.386716+00	kg	kg
+55cbc6ed-6e92-4af2-bec3-9a274dab65be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	572	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.575123+00	2026-05-29 18:29:31.386716+00	kg	kg
+adbd223f-2883-45e7-9460-f6405fb011af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	573	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.575976+00	2026-05-29 18:29:31.386716+00	kg	kg
+8150270e-15bb-44c4-97ab-d92b5c355b1c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	574	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.576846+00	2026-05-29 18:29:31.386716+00	kg	kg
+80fcd24c-160d-4e5e-bfda-445e80a2a3f7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	575	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.577816+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b91e872-f0cc-4846-ab00-dd3fadca75f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	576	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.578823+00	2026-05-29 18:29:31.386716+00	kg	kg
+d8368168-bec9-4377-b3b7-2f6e1d4ba54a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	577	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.579675+00	2026-05-29 18:29:31.386716+00	kg	kg
+8552f517-e54a-4f0d-9440-1f64d052abe0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	578	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.580693+00	2026-05-29 18:29:31.386716+00	kg	kg
+fd3cc234-d084-4def-9ca4-73ca9fd79c3f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	579	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.581582+00	2026-05-29 18:29:31.386716+00	kg	kg
+7211dd66-ef30-4143-bb83-ee240548b59b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	580	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.583283+00	2026-05-29 18:29:31.386716+00	kg	kg
+1a9b10d1-8ac1-4642-b55a-27421bd41993	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	581	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.584117+00	2026-05-29 18:29:31.386716+00	kg	kg
+b87eca4e-540e-46b9-9684-5de8ce96fa5a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	582	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.585139+00	2026-05-29 18:29:31.386716+00	kg	kg
+c7ffa7e7-0411-413d-ba3e-25143b8e8e76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	583	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.586326+00	2026-05-29 18:29:31.386716+00	kg	kg
+df9d9284-1846-42f2-963f-3d8cb9ee00f4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	584	RAIE AUTRES VIDEE	t	\N	\N	2026-05-17 09:42:48.587333+00	2026-05-29 18:29:31.386716+00	kg	kg
+bcf3b7c7-727b-479f-9e42-a73fc85a824d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	585	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.588331+00	2026-05-29 18:29:31.386716+00	kg	kg
+57649ff3-05d9-4865-98b2-c203a94e4895	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	586	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.589433+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b6b837c-579a-4f9b-82f9-34696eea85e8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	587	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.590562+00	2026-05-29 18:29:31.386716+00	kg	kg
+efb91410-70ff-4f9a-96ee-399e136628bf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	588	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.59154+00	2026-05-29 18:29:31.386716+00	kg	kg
+12bca9ac-85b0-4534-a6b1-a0e97caa89af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	589	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.592533+00	2026-05-29 18:29:31.386716+00	kg	kg
+693fa7e5-5956-4c6e-aaef-bf2b14d1bad5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	590	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.594488+00	2026-05-29 18:29:31.386716+00	kg	kg
+063de023-c3d9-4581-a9d7-89f9f937f1a3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	591	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.595412+00	2026-05-29 18:29:31.386716+00	kg	kg
+ab9027f9-ec47-4f54-9b74-5046d9a19cc8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	592	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.596477+00	2026-05-29 18:29:31.386716+00	kg	kg
+58bfb7fa-2cd6-4d30-82ad-575779a8771e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	593	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.597562+00	2026-05-29 18:29:31.386716+00	kg	kg
+0f23421b-5a89-47d2-a33f-a223d960fbc8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	594	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.598508+00	2026-05-29 18:29:31.386716+00	kg	kg
+07cf2d4a-5727-4991-bfe1-4499fe912e00	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	595	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.599428+00	2026-05-29 18:29:31.386716+00	kg	kg
+f61c0172-1ac4-4765-b3f5-49bfe615e561	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	596	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.600516+00	2026-05-29 18:29:31.386716+00	kg	kg
+d6243e41-d512-472e-b5ef-d690d83c0aad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	597	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.601603+00	2026-05-29 18:29:31.386716+00	kg	kg
+ce93afd2-7c19-476c-a808-2e7b7101dd22	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	598	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.602635+00	2026-05-29 18:29:31.386716+00	kg	kg
+00207182-2e46-4e14-b28a-cddb013c799e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	599	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.603534+00	2026-05-29 18:29:31.386716+00	kg	kg
+a92668b7-08f8-4303-a555-b9c7f4a453ba	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5c214e96-f8ed-44e1-bbd5-6b96662fb98a	600	RAIE VACHE FLEURIE	t	\N	\N	2026-05-17 09:42:48.605702+00	2026-05-29 18:29:31.386716+00	kg	kg
+b78141f4-7663-4674-abce-6009d0816f2b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29616d28-6a28-49ae-b96c-bf2305dad679	1210	POULPES ( PETITS )	t	\N	\N	2026-05-17 09:42:47.574886+00	2026-05-29 18:29:31.386716+00	kg	kg
+5bb5377a-b291-474f-ae3b-916349e06d26	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29616d28-6a28-49ae-b96c-bf2305dad679	1211	POULPES ( PETITS )	t	\N	\N	2026-05-17 09:42:47.576755+00	2026-05-29 18:29:31.386716+00	kg	kg
+9b6abdbe-3440-4337-9ae6-b700d8b73dde	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29616d28-6a28-49ae-b96c-bf2305dad679	564	POULPES ( GROS )	t	\N	\N	2026-05-17 09:42:48.566465+00	2026-05-29 18:29:31.386716+00	kg	kg
+8aa269a6-9bf1-4b5d-a6c8-ce6a06d4b1b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29616d28-6a28-49ae-b96c-bf2305dad679	565	POULPES ( GROS )	t	\N	\N	2026-05-17 09:42:48.567365+00	2026-05-29 18:29:31.386716+00	kg	kg
+c66f41c8-b1f4-4212-8a69-26cf42673855	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	669	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.660911+00	2026-05-29 18:29:31.386716+00	kg	kg
+5df5e8b8-9d26-4576-b8de-7a571d8b2f58	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	670	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.663028+00	2026-05-29 18:29:31.386716+00	kg	kg
+074c925a-606a-426f-881f-74302b74fb40	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	671	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.664051+00	2026-05-29 18:29:31.386716+00	kg	kg
+e1b3dd99-2f5f-484f-8f3e-012db7ac833f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	672	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.665377+00	2026-05-29 18:29:31.386716+00	kg	kg
+438956ba-be0e-4713-91c2-fe5fd3ef16e0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	673	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.666507+00	2026-05-29 18:29:31.386716+00	kg	kg
+2b7957cd-4156-4682-bdd0-d834cf220738	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	674	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.667471+00	2026-05-29 18:29:31.386716+00	kg	kg
+1ba9a130-93ed-45bd-ab16-63212c1b60fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	675	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.668596+00	2026-05-29 18:29:31.386716+00	kg	kg
+003673a9-112e-41a0-9bbf-6df0948a3f80	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	676	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.669752+00	2026-05-29 18:29:31.386716+00	kg	kg
+d3841e5f-edf5-4c57-bbe2-5eee0079b4e9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	677	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.670839+00	2026-05-29 18:29:31.386716+00	kg	kg
+c9f22d7c-4c10-4615-b282-2b8656f84bee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	678	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.671798+00	2026-05-29 18:29:31.386716+00	kg	kg
+f8dfdc0e-b9c8-479a-82de-bcd992e0f120	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	679	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.672841+00	2026-05-29 18:29:31.386716+00	kg	kg
+32edec0e-ea87-4d96-b3b1-fac527a4caf6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a0eb5ee6-d25d-44c6-a44c-80e38f8967ea	680	SAR COMMUN	t	\N	\N	2026-05-17 09:42:48.674909+00	2026-05-29 18:29:31.386716+00	kg	kg
+a5bb0ec9-a487-4e92-b28a-16416934af57	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	717	SEICHE	t	\N	\N	2026-05-17 09:42:48.712765+00	2026-05-29 18:29:31.386716+00	kg	kg
+13b09411-67b0-4756-b8dc-ba9ad082264f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	718	SEICHE	t	\N	\N	2026-05-17 09:42:48.713845+00	2026-05-29 18:29:31.386716+00	kg	kg
+4209575a-5c90-4ea5-b86c-3f3c55ad3c0b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	719	SEICHE	t	\N	\N	2026-05-17 09:42:48.714924+00	2026-05-29 18:29:31.386716+00	kg	kg
+01e27075-29e7-4505-893b-f1e723fc1108	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	720	SEICHE	t	\N	\N	2026-05-17 09:42:48.717026+00	2026-05-29 18:29:31.386716+00	kg	kg
+a6e274d0-e456-41ae-a3b4-a935e753f0ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	721	SEICHE	t	\N	\N	2026-05-17 09:42:48.718119+00	2026-05-29 18:29:31.386716+00	kg	kg
+f50e4dcf-0c1c-4e88-8106-49de40c27108	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	722	SEICHE	t	\N	\N	2026-05-17 09:42:48.719218+00	2026-05-29 18:29:31.386716+00	kg	kg
+1f2be25b-8ed4-48e6-8bf6-358982ed2a94	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	723	SEICHE	t	\N	\N	2026-05-17 09:42:48.720157+00	2026-05-29 18:29:31.386716+00	kg	kg
+e16d4081-9d48-4e6a-aaac-f5c034fadab1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	724	SEICHE	t	\N	\N	2026-05-17 09:42:48.721268+00	2026-05-29 18:29:31.386716+00	kg	kg
+f47b9f75-6b95-4063-a03f-a5743c65c629	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	725	SEICHE	t	\N	\N	2026-05-17 09:42:48.722345+00	2026-05-29 18:29:31.386716+00	kg	kg
+f60cdcd0-4861-4a32-85ca-e568b69e7435	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	859	seiches	t	\N	\N	2026-05-17 09:42:48.838393+00	2026-05-29 18:29:31.386716+00	kg	kg
+921ef928-c6cc-43f7-a3f2-fade71dc49fd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	860	seiches	t	\N	\N	2026-05-17 09:42:48.840328+00	2026-05-29 18:29:31.386716+00	kg	kg
+f55f76fa-5002-4029-a58a-60fc39b51ef3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	861	seiches	t	\N	\N	2026-05-17 09:42:48.841442+00	2026-05-29 18:29:31.386716+00	kg	kg
+257175c8-225e-4ef0-9be4-b0c115e22040	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	862	seiches	t	\N	\N	2026-05-17 09:42:48.842566+00	2026-05-29 18:29:31.386716+00	kg	kg
+e4470471-69ef-4878-b373-98ad18699a64	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ebf31195-77c5-4654-baaa-7ee37a9454b5	863	seiches	t	\N	\N	2026-05-17 09:42:48.843545+00	2026-05-29 18:29:31.386716+00	kg	kg
+1a703100-9e50-4cd4-8d68-3119b6cc597b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b55ee6e5-75c3-4d51-988f-88bbd5a4a628	1149	TETE DE SEICHE	t	\N	\N	2026-05-17 09:42:47.461895+00	2026-05-29 18:29:31.386716+00	kg	kg
+005bbe9c-f75a-45ff-9e60-e37bee9fb431	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	967b7e71-5169-43f0-97f5-35e18f32cb6b	1426	COQUILLE ST JA aiguillon	t	\N	\N	2026-05-17 09:42:47.838617+00	2026-05-29 18:29:31.386716+00	kg	kg
+ae7746d1-a44b-4f29-a1f0-efa5f63a7633	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	967b7e71-5169-43f0-97f5-35e18f32cb6b	1428	COQUILLE ST MANCHE	t	\N	\N	2026-05-17 09:42:47.842154+00	2026-05-29 18:29:31.386716+00	kg	kg
+a2b86a06-4462-48fb-aa24-0717b5b33c34	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	967b7e71-5169-43f0-97f5-35e18f32cb6b	179	COQUIL.ST JAC. ATLANTIQUE	t	\N	\N	2026-05-17 09:42:48.103931+00	2026-05-29 18:29:31.386716+00	kg	kg
+ab2d864f-e2d4-4d84-a985-c54f1cef6fc4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	967b7e71-5169-43f0-97f5-35e18f32cb6b	180	COQUIL.ST JAC. ATLANTIQUE	t	\N	\N	2026-05-17 09:42:48.106866+00	2026-05-29 18:29:31.386716+00	kg	kg
+bb7b271f-6f4f-4c7d-a0af-a051f40a521e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5442082d-d9b8-45e8-88d4-5067b7f15e94	1589	VERNIS	t	\N	\N	2026-05-17 09:42:48.07015+00	2026-05-29 18:29:31.386716+00	kg	kg
+5b08f7f7-11b6-4e0e-86fe-9b24823d05a0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	649	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.638716+00	2026-05-29 18:29:31.386716+00	kg	kg
+93a727b2-3ef4-43e0-a64a-0d840de189ac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	650	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.64052+00	2026-05-29 18:29:31.386716+00	kg	kg
+2de5240b-43f4-4609-a25c-8adca2ffc7d6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	651	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.641615+00	2026-05-29 18:29:31.386716+00	kg	kg
+1ce130e1-ab12-4581-be5d-581146e62a69	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	652	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.642582+00	2026-05-29 18:29:31.386716+00	kg	kg
+9eae6fe7-0282-4e50-bb44-01ee54774b4a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	653	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.643543+00	2026-05-29 18:29:31.386716+00	kg	kg
+af13da21-a2e9-4baf-a400-29a985942fe2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	654	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.644612+00	2026-05-29 18:29:31.386716+00	kg	kg
+3a765587-7f0f-4d84-9999-f22721e1820d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	655	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.645732+00	2026-05-29 18:29:31.386716+00	kg	kg
+41f9438c-ef8d-49bf-80a3-82c1b03d9cca	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	656	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.646841+00	2026-05-29 18:29:31.386716+00	kg	kg
+1a07e63a-61c1-45a6-9ad2-adf82ba3a9f6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fea072a6-8c3b-44c0-9721-ecbf962ce60f	657	ROUSSETTE PETITE	t	\N	\N	2026-05-17 09:42:48.647806+00	2026-05-29 18:29:31.386716+00	kg	kg
+7449f47e-13e0-4638-a501-d9f189af43f7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e275074c-361d-409e-9253-0ed7806359db	1446	PRAIRE	t	\N	\N	2026-05-17 09:42:47.884561+00	2026-05-29 18:29:31.386716+00	kg	kg
+324be3ba-72c5-4ff6-ad11-7b1501a59e63	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e275074c-361d-409e-9253-0ed7806359db	1586	PRAIRE	t	\N	\N	2026-05-17 09:42:48.065236+00	2026-05-29 18:29:31.386716+00	kg	kg
+7d934ace-20e7-4f81-9982-f86039b1a057	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e275074c-361d-409e-9253-0ed7806359db	1587	PRAIRE	t	\N	\N	2026-05-17 09:42:48.06643+00	2026-05-29 18:29:31.386716+00	kg	kg
+93802118-03bf-4a0d-9b18-7c0cd02c6605	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	716e8b63-2143-48ad-9e5c-57446c24e4d5	1588	OURSIN	t	\N	\N	2026-05-17 09:42:48.068658+00	2026-05-29 18:29:31.386716+00	kg	kg
+153fce7e-7341-4a88-afb2-529aae03dd79	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	799a9436-5d05-4951-a424-51c2a4094cdc	33095	BAR COMMUN 	t	\N	\N	2026-05-17 09:42:48.316374+00	2026-05-29 18:29:31.386716+00	kg	kg
+ced11768-848d-45b9-ba28-0c79952720af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	305	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.271712+00	2026-05-29 18:29:31.386716+00	kg	kg
+029ae16c-77b0-470e-8abd-7326da894f54	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	306	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.27339+00	2026-05-29 18:29:31.386716+00	kg	kg
+d70dfa45-d143-4ba2-a6fc-bfb5134beba3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	307	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.275183+00	2026-05-29 18:29:31.386716+00	kg	kg
+8862169d-6cdf-4e97-9108-e2b4c06cd0ef	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	308	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.276735+00	2026-05-29 18:29:31.386716+00	kg	kg
+07ae8f3a-dda5-427f-bf07-3418847d1664	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	309	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.278164+00	2026-05-29 18:29:31.386716+00	kg	kg
+1df0cd73-2d77-486a-82a5-a5badf9cb441	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	310	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.28173+00	2026-05-29 18:29:31.386716+00	kg	kg
+adb5809f-1ff1-48e4-ae03-ea0f2b475d8d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	311	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.283389+00	2026-05-29 18:29:31.386716+00	kg	kg
+9932f14f-47f8-4b35-aeaf-88a01514c3e5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	312	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.284998+00	2026-05-29 18:29:31.386716+00	kg	kg
+3d73885a-2d30-4fc0-82dc-88012c7da1db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	313	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.286632+00	2026-05-29 18:29:31.386716+00	kg	kg
+fa0208b1-775c-44c9-ae62-97bfdfbed22d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	314	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.288345+00	2026-05-29 18:29:31.386716+00	kg	kg
+d41aa8dd-a140-4178-8ec9-f878febd1337	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	315	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.289977+00	2026-05-29 18:29:31.386716+00	kg	kg
+f9d6cf0a-f173-4e9d-a724-3617a9321a10	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754bbb2f-884d-40a5-9143-e790393cc10b	316	GRONDIN ROUGE	t	\N	\N	2026-05-17 09:42:48.291688+00	2026-05-29 18:29:31.386716+00	kg	kg
+89947c26-1d87-4633-a942-7c78370f7add	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2be3801a-2f72-4bf0-aadd-6947534e9bc2	106	BONITE A DOS RAYE	t	\N	\N	2026-05-17 09:42:47.360117+00	2026-05-29 18:29:31.386716+00	kg	kg
+2e010631-13a4-4f50-a897-cf90393b5539	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2be3801a-2f72-4bf0-aadd-6947534e9bc2	107	BONITE A DOS RAYE	t	\N	\N	2026-05-17 09:42:47.362252+00	2026-05-29 18:29:31.386716+00	kg	kg
+e11ebbe2-1d9d-4904-bdc8-712f842f3440	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2be3801a-2f72-4bf0-aadd-6947534e9bc2	108	BONITE A DOS RAYE	t	\N	\N	2026-05-17 09:42:47.366142+00	2026-05-29 18:29:31.386716+00	kg	kg
+e625d706-e596-4881-a1dc-a77f1bf4aa02	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2be3801a-2f72-4bf0-aadd-6947534e9bc2	109	BONITE A DOS RAYE	t	\N	\N	2026-05-17 09:42:47.367895+00	2026-05-29 18:29:31.386716+00	kg	kg
+f25d2085-5fc0-4c09-9cc0-b49c07f22900	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2be3801a-2f72-4bf0-aadd-6947534e9bc2	110	BONITE A DOS RAYE	t	\N	\N	2026-05-17 09:42:47.373026+00	2026-05-29 18:29:31.386716+00	kg	kg
+828c7335-001c-4dd7-bcfb-6771e3a9cb5a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2be3801a-2f72-4bf0-aadd-6947534e9bc2	111	BONITE A DOS RAYE	t	\N	\N	2026-05-17 09:42:47.391133+00	2026-05-29 18:29:31.386716+00	kg	kg
+fcdc741c-4e0d-4914-aa6b-9eb02e19a7a5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	1241	Lotte - Baudroie	t	\N	\N	2026-05-17 09:42:47.606729+00	2026-05-29 18:29:31.386716+00	kg	kg
+9fd1a7fe-c267-4d30-9bb9-319e4fbda8d2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	1242	Lotte - Baudroie	t	\N	\N	2026-05-17 09:42:47.608235+00	2026-05-29 18:29:31.386716+00	kg	kg
+09e8e0fa-896e-4bc1-be77-b821fa76497d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	1543	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.01656+00	2026-05-29 18:29:31.386716+00	kg	kg
+65e64dc0-9417-479b-a00e-99c5b7a8cfac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	1544	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.01795+00	2026-05-29 18:29:31.386716+00	kg	kg
+2026bf59-72c8-4abc-ac6b-249d8593bf10	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	76	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.754517+00	2026-05-29 18:29:31.386716+00	kg	kg
+844ab9c4-7cd9-4d2b-8b89-7b0ce1986df2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	77	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.755862+00	2026-05-29 18:29:31.386716+00	kg	kg
+3c23be36-63ff-4615-a403-2cfa6b8656e9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	78	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.762821+00	2026-05-29 18:29:31.386716+00	kg	kg
+2204b5d9-a9cd-4c3e-add0-4bef4572f713	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	79	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.773737+00	2026-05-29 18:29:31.386716+00	kg	kg
+a24bfb4f-a3f0-4f07-93e3-419395fcfa6b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	80	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.783111+00	2026-05-29 18:29:31.386716+00	kg	kg
+52145a37-8c35-4f7b-b973-15398d36246e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	81	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.784425+00	2026-05-29 18:29:31.386716+00	kg	kg
+e05a1f4c-6754-43ae-b607-b89b75a08445	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	82	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.7897+00	2026-05-29 18:29:31.386716+00	kg	kg
+003db5b1-19f4-4451-ab67-4bf2e481e0d1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	83	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.800475+00	2026-05-29 18:29:31.386716+00	kg	kg
+ed27a1c3-35c2-4ec5-97db-4b3a73691fab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	84	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.81149+00	2026-05-29 18:29:31.386716+00	kg	kg
+700bb3df-29ff-44bd-bc85-36d9fd1ad605	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	85	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.828474+00	2026-05-29 18:29:31.386716+00	kg	kg
+024adb81-11e3-4b14-94e9-a0b3d5263da3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	86	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.83936+00	2026-05-29 18:29:31.386716+00	kg	kg
+ab95279a-d96b-4f06-b808-b49d3f31328d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	87	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.850934+00	2026-05-29 18:29:31.386716+00	kg	kg
+7bcc10f3-1e62-411c-ad59-8f910d48f2cd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	88	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.861616+00	2026-05-29 18:29:31.386716+00	kg	kg
+fc69555f-d933-4662-88d4-98f8f5c89066	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	89	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.872537+00	2026-05-29 18:29:31.386716+00	kg	kg
+295a7e9a-51f3-4de7-ba92-bbb76aefa3e0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	90	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.882624+00	2026-05-29 18:29:31.386716+00	kg	kg
+ac46b2e3-237f-4097-bdcc-4b3f3fd75e48	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5977bf6d-6e17-42d0-9dec-4c95a0823cff	91	LOTTE-BAUDROIE	t	\N	\N	2026-05-17 09:42:48.893951+00	2026-05-29 18:29:31.386716+00	kg	kg
+a9e47e8a-dddf-4817-b66e-74f3397c5475	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	964c2022-36e5-4b77-b98a-730a358a03d8	957	BLANC DE SEICHE	t	\N	\N	2026-05-17 09:42:48.947659+00	2026-05-29 18:29:31.386716+00	kg	kg
+90962862-cafe-40a3-90bf-66795c434266	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	964c2022-36e5-4b77-b98a-730a358a03d8	958	BLANC DE SEICHE	t	\N	\N	2026-05-17 09:42:48.948489+00	2026-05-29 18:29:31.386716+00	kg	kg
+a101f63a-d508-4af0-811e-855accce0bdd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c608d22-1b2b-465b-8f5d-cde10ab84494	1500	HOMARD EUROPE EPATTE	t	\N	\N	2026-05-17 09:42:47.969884+00	2026-05-29 18:29:31.386716+00	kg	kg
+e6d62785-4c34-4210-839f-18fb4fcf4e15	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c608d22-1b2b-465b-8f5d-cde10ab84494	1501	HOMARD EUROPE EPATTE	t	\N	\N	2026-05-17 09:42:47.971497+00	2026-05-29 18:29:31.386716+00	kg	kg
+7f35d9ba-efa0-4534-a15f-7a88fb576289	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	1000	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:47.255832+00	2026-05-29 18:29:31.386716+00	kg	kg
+52e9b921-4f2a-4e3e-a9c4-4b094a616376	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	1001	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:47.257669+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b27e077-d3df-443a-af58-7d1787624247	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	1002	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:47.259261+00	2026-05-29 18:29:31.386716+00	kg	kg
+f7d66cee-7357-4ffb-8706-fc90a26bc393	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	1006	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:47.266058+00	2026-05-29 18:29:31.386716+00	kg	kg
+3375a617-84ab-4847-ad60-a86034336a87	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	1319	LANGT VIVANTE SYCOCR	t	\N	\N	2026-05-17 09:42:47.746914+00	2026-05-29 18:29:31.386716+00	kg	kg
+dbee61d2-06c4-44b4-88cd-1a4def59e5d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	1320	LANGT VIVANTE SYCOCR	t	\N	\N	2026-05-17 09:42:47.748943+00	2026-05-29 18:29:31.386716+00	kg	kg
+61b7c793-8238-4d5a-b36f-1d065028b83e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	345	LANGT VIVANTE	t	\N	\N	2026-05-17 09:42:48.323611+00	2026-05-29 18:29:31.386716+00	kg	kg
+b6e1c86d-9287-454c-9ce6-733dcffc7978	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	349	LANGT VIVANTE	t	\N	\N	2026-05-17 09:42:48.32964+00	2026-05-29 18:29:31.386716+00	kg	kg
+62cfde5e-80aa-4d31-a947-2a5164877212	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	998	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:48.985361+00	2026-05-29 18:29:31.386716+00	kg	kg
+4a6943f9-ade1-4665-bd25-ba58f66f8b3a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ed8fcee8-c0b5-4ed2-a18f-2449fced4ff3	999	LANGT GOLFE	t	\N	\N	2026-05-17 09:42:48.98636+00	2026-05-29 18:29:31.386716+00	kg	kg
+e6940478-2ac0-4e38-b72b-ae43b17c27a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a78723c-66e1-4e0f-ad35-f967c0ff5c42	182	TOURTEAUX-ARAIGNEES	t	\N	\N	2026-05-17 09:42:48.110012+00	2026-05-29 18:29:31.386716+00	kg	kg
+483f2a82-51f0-4be2-b03a-676242d50eb9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a78723c-66e1-4e0f-ad35-f967c0ff5c42	183	TOURTEAUX-ARAIGNEES	t	\N	\N	2026-05-17 09:42:48.111734+00	2026-05-29 18:29:31.386716+00	kg	kg
+bf0b57f9-91bc-4ec9-9fc9-1cbb1a012c53	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a78723c-66e1-4e0f-ad35-f967c0ff5c42	184	TOURTEAUX-ARAIGNEES	t	\N	\N	2026-05-17 09:42:48.113151+00	2026-05-29 18:29:31.386716+00	kg	kg
+1dbd044a-8c4f-47de-80ae-9d753ba02ff6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a78723c-66e1-4e0f-ad35-f967c0ff5c42	29	ARAIGNEE DE CASIER	t	\N	\N	2026-05-17 09:42:48.243347+00	2026-05-29 18:29:31.386716+00	kg	kg
+a0b0921f-00ee-472f-81c2-45c9aee42131	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a78723c-66e1-4e0f-ad35-f967c0ff5c42	30	ARAIGNEE DE CASIER	t	\N	\N	2026-05-17 09:42:48.261813+00	2026-05-29 18:29:31.386716+00	kg	kg
+4b412ff5-a2fc-4c92-b59d-d5558562172c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a78723c-66e1-4e0f-ad35-f967c0ff5c42	31	ARAIGNEE DE DRAGUE	t	\N	\N	2026-05-17 09:42:48.279957+00	2026-05-29 18:29:31.386716+00	kg	kg
+53e083fc-741f-49de-a6c9-d083e324163c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a78723c-66e1-4e0f-ad35-f967c0ff5c42	32	ARAIGNEE DE DRAGUE	t	\N	\N	2026-05-17 09:42:48.298082+00	2026-05-29 18:29:31.386716+00	kg	kg
+40fe9399-8450-4014-bd21-cb1f373cfdda	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0fc919c6-7923-4774-90d8-a99abe169bb0	253	EPERLAN D'EUROPE	t	\N	\N	2026-05-17 09:42:48.191333+00	2026-05-29 18:29:31.386716+00	kg	kg
+cd04aba7-e58b-48ce-893e-b9677c707f39	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0fc919c6-7923-4774-90d8-a99abe169bb0	254	EPERLAN D'EUROPE	t	\N	\N	2026-05-17 09:42:48.193654+00	2026-05-29 18:29:31.386716+00	kg	kg
+520ecf7b-de96-43bb-a177-deabdc46c5d4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	12	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:47.553813+00	2026-05-29 18:29:31.386716+00	kg	kg
+5bc2647f-56a0-417e-b22d-bd6c250d7463	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	13	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:47.712729+00	2026-05-29 18:29:31.386716+00	kg	kg
+23723ad9-c796-4cbe-89fa-e4fffd3696a8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	14	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:47.830868+00	2026-05-29 18:29:31.386716+00	kg	kg
+e4e1eb97-bf4a-4e8f-9b93-3ba4c67df53a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	15	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:47.968056+00	2026-05-29 18:29:31.386716+00	kg	kg
+b3b07cc2-4960-4daf-869a-989b0b8e9aa0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	16	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:48.073118+00	2026-05-29 18:29:31.386716+00	kg	kg
+b4bb9412-81ec-40b7-a565-49c231239a85	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	17	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:48.088653+00	2026-05-29 18:29:31.386716+00	kg	kg
+52e63613-202a-47ef-8018-2c8b12888ce2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	18	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:48.105416+00	2026-05-29 18:29:31.386716+00	kg	kg
+0dac2af5-4ba1-4f61-be6f-542fcc0ca2d3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	19	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:48.117495+00	2026-05-29 18:29:31.386716+00	kg	kg
+fb12cd35-01fe-4ca2-b357-3f550e47f347	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	20	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:48.131232+00	2026-05-29 18:29:31.386716+00	kg	kg
+118c6038-772c-4c03-ac14-81b1d546b455	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	21	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:48.143496+00	2026-05-29 18:29:31.386716+00	kg	kg
+5cfde7e3-d9b3-48a5-975c-42ab19257d57	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	19a1e000-e604-4de3-a730-272a06c3a104	22	ANCHOIS COMMUN	t	\N	\N	2026-05-17 09:42:48.16024+00	2026-05-29 18:29:31.386716+00	kg	kg
+a1d49d61-b1b5-4c2a-8b91-160f122b6ea1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	57	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.572197+00	2026-05-29 18:29:31.386716+00	kg	kg
+4bac83ba-9540-4d04-9849-bfe8b02861da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	58	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.582432+00	2026-05-29 18:29:31.386716+00	kg	kg
+18083106-27e3-4706-bce8-56d6e7b4fe76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	59	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.593575+00	2026-05-29 18:29:31.386716+00	kg	kg
+02fe3982-b265-4864-989a-a76b85651b74	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	60	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.604597+00	2026-05-29 18:29:31.386716+00	kg	kg
+c5a4917f-36c3-4ae8-b042-b76219b41068	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	61	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.615305+00	2026-05-29 18:29:31.386716+00	kg	kg
+4710a52e-3892-43cd-a7e1-0a0d7a52d33f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	62	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.616568+00	2026-05-29 18:29:31.386716+00	kg	kg
+42e5a1f9-9d54-43d0-ba17-9763f91ec634	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	63	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.618022+00	2026-05-29 18:29:31.386716+00	kg	kg
+7271548f-74b4-4ab8-9af3-ec3e3c585e0c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	64	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.628146+00	2026-05-29 18:29:31.386716+00	kg	kg
+4e16a878-79e7-4318-be36-01bbd0918de9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	65	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.639647+00	2026-05-29 18:29:31.386716+00	kg	kg
+8c51c41c-9614-44cb-9e11-b86da8897b87	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ba56925e-6431-4b9e-9ce0-7fb8cf13ddfa	66	BAR TACHETE	t	\N	\N	2026-05-17 09:42:48.650726+00	2026-05-29 18:29:31.386716+00	kg	kg
+011000e1-398a-4b6c-8aa2-332fb4514ca4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	1555	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.035731+00	2026-05-29 18:29:31.386716+00	kg	kg
+61d1389f-d0c1-425c-aefc-d78e443dbeb2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	1556	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.037261+00	2026-05-29 18:29:31.386716+00	kg	kg
+7c01357e-a6b5-44df-b85d-8e04bd56bda7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	1557	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.038766+00	2026-05-29 18:29:31.386716+00	kg	kg
+af27cdb5-01b9-43fe-883d-eed4bd9bf725	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	1558	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.040346+00	2026-05-29 18:29:31.386716+00	kg	kg
+861f5957-2126-4dd8-a0de-320684927843	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	1559	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.041872+00	2026-05-29 18:29:31.386716+00	kg	kg
+ce06c023-8028-4b32-b83f-1faa6c582362	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	1560	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.044719+00	2026-05-29 18:29:31.386716+00	kg	kg
+50b67c63-7fe3-4d81-baaf-712e4102deae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	48	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.501523+00	2026-05-29 18:29:31.386716+00	kg	kg
+ad35f86e-eabb-4239-bc7f-8624be5f7746	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	49	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.513418+00	2026-05-29 18:29:31.386716+00	kg	kg
+d6299ba2-e151-4d0a-be39-519c8c3a2567	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	50	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.521866+00	2026-05-29 18:29:31.386716+00	kg	kg
+8def4b74-743d-431a-830e-4487b13efcc6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	51	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.523245+00	2026-05-29 18:29:31.386716+00	kg	kg
+40ad0812-b92a-4c1d-ba72-cbb4e558274b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	52	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.524653+00	2026-05-29 18:29:31.386716+00	kg	kg
+812a98ce-4920-4671-983d-4d8a95690125	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	53	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.528234+00	2026-05-29 18:29:31.386716+00	kg	kg
+b8cab1f8-3bc1-441b-9930-5f25c7e2360d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	54	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.539688+00	2026-05-29 18:29:31.386716+00	kg	kg
+315245e6-6aa5-42b5-92e2-5f06123fd1da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	55	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.550743+00	2026-05-29 18:29:31.386716+00	kg	kg
+f50717d4-e468-4be8-8858-c042e9dd41a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	56	BAR LIGNE	t	\N	\N	2026-05-17 09:42:48.561943+00	2026-05-29 18:29:31.386716+00	kg	kg
+7232195b-27e8-4ae9-b16d-a416e28b4cd0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	33	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.314699+00	2026-05-29 18:29:31.386716+00	kg	kg
+d2e69f33-23c3-434a-87fd-449387386b06	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	34	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.321695+00	2026-05-29 18:29:31.386716+00	kg	kg
+f749c520-a8fb-485d-9d5f-0846cd2bc8d3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	35	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.331043+00	2026-05-29 18:29:31.386716+00	kg	kg
+0ff37bea-e423-41a9-9c87-282803d4aa88	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	36	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.348569+00	2026-05-29 18:29:31.386716+00	kg	kg
+f21cdd93-a282-4c55-86aa-2c6783c3aa8d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	37	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.367163+00	2026-05-29 18:29:31.386716+00	kg	kg
+e557fa1a-14b3-4bc4-b4e9-fe2959745c5c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	38	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.383512+00	2026-05-29 18:29:31.386716+00	kg	kg
+d3a22884-0f44-450f-9bee-6ab15d13f49a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	39	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.399447+00	2026-05-29 18:29:31.386716+00	kg	kg
+65d4d59a-955c-46f8-977d-f53a0dfff524	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	40	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.415849+00	2026-05-29 18:29:31.386716+00	kg	kg
+5b90f383-beea-4fa3-ab2a-e371903b64a7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	41	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.423894+00	2026-05-29 18:29:31.386716+00	kg	kg
+16c3c379-9fcb-4319-8516-1d7337912ee1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	42	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.435713+00	2026-05-29 18:29:31.386716+00	kg	kg
+8c94a014-f95c-45a8-b40b-c5411fe60d06	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	43	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.450482+00	2026-05-29 18:29:31.386716+00	kg	kg
+90d9452f-2f56-43ba-83a1-9895547aa877	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	44	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.464582+00	2026-05-29 18:29:31.386716+00	kg	kg
+229c0411-b522-4150-a808-be8b5b7f5b23	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	45	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.477245+00	2026-05-29 18:29:31.386716+00	kg	kg
+f2954666-f390-4dc7-bbf6-89ad994b3da6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	46	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.487412+00	2026-05-29 18:29:31.386716+00	kg	kg
+82f7527c-d7f7-4424-b18a-3b22a28ed461	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6c2c8a05-49d6-46e3-9937-c320b65ffcda	47	BAR CHALUT	t	\N	\N	2026-05-17 09:42:48.495911+00	2026-05-29 18:29:31.386716+00	kg	kg
+16bf21a4-ba1a-46f8-b62a-86f8592ff836	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	1576	BAR FILET	t	\N	\N	2026-05-17 09:42:48.048552+00	2026-05-29 18:29:31.386716+00	kg	kg
+0ad9c2f0-1d1e-4da6-bf61-283551c00c1d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	1577	BAR FILET	t	\N	\N	2026-05-17 09:42:48.05036+00	2026-05-29 18:29:31.386716+00	kg	kg
+fdd61bde-0291-4e7c-bfda-9ef18cee2137	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	1578	BAR FILET	t	\N	\N	2026-05-17 09:42:48.051898+00	2026-05-29 18:29:31.386716+00	kg	kg
+25b17969-c84c-4c84-8468-5c1eacb28c47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	1579	BAR FILET	t	\N	\N	2026-05-17 09:42:48.053314+00	2026-05-29 18:29:31.386716+00	kg	kg
+69b993c3-e0ae-4731-a46c-b0f5b9979eaa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	1580	BAR FILET	t	\N	\N	2026-05-17 09:42:48.056131+00	2026-05-29 18:29:31.386716+00	kg	kg
+d3013f4d-722d-44a4-aef5-9f2ecd4e5d4c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	1581	BAR FILET	t	\N	\N	2026-05-17 09:42:48.057785+00	2026-05-29 18:29:31.386716+00	kg	kg
+e9f57955-90a3-42d0-bfeb-bdf06d0c3225	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	1582	BAR FILET	t	\N	\N	2026-05-17 09:42:48.059319+00	2026-05-29 18:29:31.386716+00	kg	kg
+6c1f3ce7-1aa1-406d-a818-ca1d0ac526ae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2c3896d2-87e8-43ad-b7d4-88c56c7eb9fb	1583	BAR FILET	t	\N	\N	2026-05-17 09:42:48.061139+00	2026-05-29 18:29:31.386716+00	kg	kg
+6aefcc9d-c32b-4c5d-bc4b-345e36a1d9e8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	bf77f28a-0e62-46dd-a0c3-343968557980	67	BARBUE	t	\N	\N	2026-05-17 09:42:48.662053+00	2026-05-29 18:29:31.386716+00	kg	kg
+a6dba315-6525-425b-97f5-567152fccbc1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	bf77f28a-0e62-46dd-a0c3-343968557980	68	BARBUE	t	\N	\N	2026-05-17 09:42:48.673943+00	2026-05-29 18:29:31.386716+00	kg	kg
+665b281f-e215-4641-aab7-41d6c5954dc7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	bf77f28a-0e62-46dd-a0c3-343968557980	70	BARBUE	t	\N	\N	2026-05-17 09:42:48.696668+00	2026-05-29 18:29:31.386716+00	kg	kg
+15aedfee-c4fb-4e98-a3f9-8d253691610c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	bf77f28a-0e62-46dd-a0c3-343968557980	72	BARBUE	t	\N	\N	2026-05-17 09:42:48.71603+00	2026-05-29 18:29:31.386716+00	kg	kg
+c929eb81-ad44-4ed3-9019-c4502c09b50f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	bf77f28a-0e62-46dd-a0c3-343968557980	73	BARBUE	t	\N	\N	2026-05-17 09:42:48.727142+00	2026-05-29 18:29:31.386716+00	kg	kg
+2e078f9f-cc20-4b46-81ed-ef24a091cc30	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	bf77f28a-0e62-46dd-a0c3-343968557980	74	BARBUE	t	\N	\N	2026-05-17 09:42:48.738557+00	2026-05-29 18:29:31.386716+00	kg	kg
+d164f677-4796-4317-9367-b71eab911c5b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	db12b5f3-871e-4bb4-9099-389becece013	69	BARBUE	t	\N	\N	2026-05-17 09:42:48.685092+00	2026-05-29 18:29:31.386716+00	kg	kg
+5442808c-0b7a-4bc8-9525-9606252315e4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	db12b5f3-871e-4bb4-9099-389becece013	71	BARBUE	t	\N	\N	2026-05-17 09:42:48.704775+00	2026-05-29 18:29:31.386716+00	kg	kg
+4fd7bb98-5b90-4ea3-9ac1-34946b367d26	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	db12b5f3-871e-4bb4-9099-389becece013	75	BARBUE	t	\N	\N	2026-05-17 09:42:48.749443+00	2026-05-29 18:29:31.386716+00	kg	kg
+80c98992-addd-4783-a3b9-ec5b1afcfef9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	133	CARDINE	t	\N	\N	2026-05-17 09:42:47.765726+00	2026-05-29 18:29:31.386716+00	kg	kg
+51934b12-895b-4088-bb29-d9301fa9c58a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	134	CARDINE	t	\N	\N	2026-05-17 09:42:47.785546+00	2026-05-29 18:29:31.386716+00	kg	kg
+418a8841-0ace-4dc4-b3a7-ed99f2a9fdfc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	135	CARDINE	t	\N	\N	2026-05-17 09:42:47.799731+00	2026-05-29 18:29:31.386716+00	kg	kg
+35287b41-99d4-4ebf-a3e7-3e0dcf9be009	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	136	CARDINE	t	\N	\N	2026-05-17 09:42:47.808353+00	2026-05-29 18:29:31.386716+00	kg	kg
+fd6c503a-a652-4f33-a40e-1718c62c521b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	137	CARDINE	t	\N	\N	2026-05-17 09:42:47.810437+00	2026-05-29 18:29:31.386716+00	kg	kg
+abf253c0-f66c-43f3-8ab9-f70e499f2bd1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	138	CARDINE	t	\N	\N	2026-05-17 09:42:47.812905+00	2026-05-29 18:29:31.386716+00	kg	kg
+2605e1d9-be06-491d-ad61-eb026fbaae97	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	139	CARDINE	t	\N	\N	2026-05-17 09:42:47.818271+00	2026-05-29 18:29:31.386716+00	kg	kg
+949e1905-b6b3-45cb-9b23-d68fa57868af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	140	CARDINE	t	\N	\N	2026-05-17 09:42:47.83246+00	2026-05-29 18:29:31.386716+00	kg	kg
+86d5dd23-a481-4356-b2dd-d735e8093c27	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	141	CARDINE	t	\N	\N	2026-05-17 09:42:47.834513+00	2026-05-29 18:29:31.386716+00	kg	kg
+6c41c906-9b7e-4bee-9c10-08c2347269b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	142	CARDINE	t	\N	\N	2026-05-17 09:42:47.836709+00	2026-05-29 18:29:31.386716+00	kg	kg
+9b53505e-6167-4bff-a284-791061d5ae39	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	143	CARDINE	t	\N	\N	2026-05-17 09:42:47.845828+00	2026-05-29 18:29:31.386716+00	kg	kg
+95b5710c-c834-4900-837b-07e8cfa62b9b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	555	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.556951+00	2026-05-29 18:29:31.386716+00	kg	kg
+8d2c598c-71ad-4b10-8605-8033d449a39d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	556	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.558028+00	2026-05-29 18:29:31.386716+00	kg	kg
+36285383-6cab-4ace-9da4-c087b64ff7eb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	557	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.558961+00	2026-05-29 18:29:31.386716+00	kg	kg
+01776af2-5334-4472-aa38-61711d483aa3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	558	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.559972+00	2026-05-29 18:29:31.386716+00	kg	kg
+51ebb5ba-2e63-4667-9361-81994eb1c109	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	559	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.560907+00	2026-05-29 18:29:31.386716+00	kg	kg
+2a59b965-1aa6-4602-ad2f-e2201eaa92b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	560	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.562831+00	2026-05-29 18:29:31.386716+00	kg	kg
+789b7e34-189b-4281-867f-0a5c5e7df679	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	561	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.56375+00	2026-05-29 18:29:31.386716+00	kg	kg
+e0fb0e8c-a8ac-47f7-a84c-bfda32aa2f79	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	562	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.5647+00	2026-05-29 18:29:31.386716+00	kg	kg
+a378fe52-509a-459d-9dcb-fa3ed08279fd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	563	FAUSSE CARDINE-CYNOG	t	\N	\N	2026-05-17 09:42:48.565584+00	2026-05-29 18:29:31.386716+00	kg	kg
+c8c5a5de-5675-4b0f-95c1-f1d20acd05a5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	873	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.854622+00	2026-05-29 18:29:31.386716+00	kg	kg
+557f1500-0d38-4c59-91d2-601922a22ff5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	874	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.855558+00	2026-05-29 18:29:31.386716+00	kg	kg
+c216f673-db1b-46af-9eb3-63941a777c20	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	875	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.856806+00	2026-05-29 18:29:31.386716+00	kg	kg
+4e7460b0-3f60-4988-b508-27222e609b9c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	876	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.857966+00	2026-05-29 18:29:31.386716+00	kg	kg
+9cbd6f74-ab60-4b0a-8d0f-f336002108ef	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	877	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.858953+00	2026-05-29 18:29:31.386716+00	kg	kg
+34207b4d-9eb5-4877-8ab5-13a63266e4e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	878	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.859784+00	2026-05-29 18:29:31.386716+00	kg	kg
+a27080b4-2fcd-4912-bf16-06d8719f6093	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	879	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.86067+00	2026-05-29 18:29:31.386716+00	kg	kg
+d7795f37-eb7b-45da-bc57-8470db9637a4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	880	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.862641+00	2026-05-29 18:29:31.386716+00	kg	kg
+d8f65d82-659d-4447-b7a6-e0235de292bd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	881	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.863588+00	2026-05-29 18:29:31.386716+00	kg	kg
+91544733-931a-467d-8383-3057b799586f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	882	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.864737+00	2026-05-29 18:29:31.386716+00	kg	kg
+d4471bad-f3fe-4f4a-8cb3-5cb0066a3269	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	883	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.865691+00	2026-05-29 18:29:31.386716+00	kg	kg
+a85636ed-5b14-4c86-9c26-de236cedc670	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	45db41fe-6339-48a1-b985-c65a04385612	884	CARDINE NOIRE	t	\N	\N	2026-05-17 09:42:48.866596+00	2026-05-29 18:29:31.386716+00	kg	kg
+0aff8023-1f8c-42fe-a890-edc369744ea1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	1130	CETEAU BLANC VIDE	t	\N	\N	2026-05-17 09:42:47.429714+00	2026-05-29 18:29:31.386716+00	kg	kg
+9bc95e23-11eb-4fe7-9913-69f9ba930758	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	1347	CETEAU PLEIN	t	\N	\N	2026-05-17 09:42:47.795238+00	2026-05-29 18:29:31.386716+00	kg	kg
+a401263a-1eaa-46ab-9a44-7df506166884	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	1348	CETEAU PLEIN	t	\N	\N	2026-05-17 09:42:47.796666+00	2026-05-29 18:29:31.386716+00	kg	kg
+19c74378-7ad5-4d0e-ab71-cc161c5f9f4b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	1349	CETEAU PLEIN	t	\N	\N	2026-05-17 09:42:47.798225+00	2026-05-29 18:29:31.386716+00	kg	kg
+f0dd65f9-0567-4719-b1cf-818f4ab11a08	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	1350	CETEAU PLEIN	t	\N	\N	2026-05-17 09:42:47.801386+00	2026-05-29 18:29:31.386716+00	kg	kg
+54a05eb6-b537-460f-ad90-b563882a84e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	1351	CETEAU PLEIN	t	\N	\N	2026-05-17 09:42:47.803124+00	2026-05-29 18:29:31.386716+00	kg	kg
+a5434832-5a58-44d9-b18e-13b89896ee85	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	1352	CETEAU PLEIN	t	\N	\N	2026-05-17 09:42:47.804654+00	2026-05-29 18:29:31.386716+00	kg	kg
+504969b5-a692-4085-962e-d444135d62b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	1353	CETEAU BLANC PLEIN	t	\N	\N	2026-05-17 09:42:47.806316+00	2026-05-29 18:29:31.386716+00	kg	kg
+a6fe4460-64ae-4670-b877-c6b527b74cac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	151	CETEAU VIDE	t	\N	\N	2026-05-17 09:42:47.975147+00	2026-05-29 18:29:31.386716+00	kg	kg
+83bef565-fcdc-490e-a578-3a6a60f1733d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	152	CETEAU VIDE	t	\N	\N	2026-05-17 09:42:47.991685+00	2026-05-29 18:29:31.386716+00	kg	kg
+77be2f47-0820-4085-a946-d31d20c4e39b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	153	CETEAU VIDE	t	\N	\N	2026-05-17 09:42:47.999928+00	2026-05-29 18:29:31.386716+00	kg	kg
+37fce08e-6a72-4162-81a4-8f35b8bddce8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	154	CETEAU VIDE	t	\N	\N	2026-05-17 09:42:48.009767+00	2026-05-29 18:29:31.386716+00	kg	kg
+d4b8001b-80e1-4941-a11f-7889e545434e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	155	CETEAU VIDE	t	\N	\N	2026-05-17 09:42:48.027407+00	2026-05-29 18:29:31.386716+00	kg	kg
+4731acfd-36ca-471b-acd6-d36f2d861660	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e0eee05f-2f61-48fd-ac06-dbfc67eae7eb	156	CETEAU VIDE	t	\N	\N	2026-05-17 09:42:48.043338+00	2026-05-29 18:29:31.386716+00	kg	kg
+11cb3c25-b1cc-47fe-81ec-e1aaeace73df	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1023	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.294981+00	2026-05-29 18:29:31.386716+00	kg	kg
+d078b4a1-3407-4e29-a2b0-78038b7e4f42	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1024	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.296698+00	2026-05-29 18:29:31.386716+00	kg	kg
+02636b46-47a2-4f0c-90ed-5520516883ac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1025	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.298301+00	2026-05-29 18:29:31.386716+00	kg	kg
+a6f6d12e-44f0-45a3-b9d9-87bf7dc67c2a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1026	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.299774+00	2026-05-29 18:29:31.386716+00	kg	kg
+aece567a-2f5f-4417-949d-69d9f560272b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1027	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.301313+00	2026-05-29 18:29:31.386716+00	kg	kg
+400e3d4c-b160-4aa7-8e0c-0aac15ad6267	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1028	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.302755+00	2026-05-29 18:29:31.386716+00	kg	kg
+0d297d22-83f9-4453-bc44-5ff85763b29c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1029	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.304436+00	2026-05-29 18:29:31.386716+00	kg	kg
+ac377f2e-2178-4e18-b141-054fb8b1b4be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1030	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.307755+00	2026-05-29 18:29:31.386716+00	kg	kg
+25a1bfb5-18e1-4ea0-9d3a-44008e42929c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1031	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.309298+00	2026-05-29 18:29:31.386716+00	kg	kg
+5c377888-0418-4356-a503-a77152ef5116	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1032	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.31069+00	2026-05-29 18:29:31.386716+00	kg	kg
+0d3b9522-daf1-4ac7-929c-4f3c993a8eec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1033	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.312227+00	2026-05-29 18:29:31.386716+00	kg	kg
+abe23477-ae87-4f7b-af26-9f8a030f39fd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	cbf0c50d-8cb4-4dc7-9e6a-cd601b36e297	1034	DORADE GRISE-GRISET	t	\N	\N	2026-05-17 09:42:47.314+00	2026-05-29 18:29:31.386716+00	kg	kg
+4f0ea767-5171-4bc3-bb5f-8404629860b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	230	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.173121+00	2026-05-29 18:29:31.386716+00	kg	kg
+440b3dd1-0289-4ac9-8709-474cda74748b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	231	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.174879+00	2026-05-29 18:29:31.386716+00	kg	kg
+8440bc62-48f0-4d7d-bb7d-7a94d58158e4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	232	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.176422+00	2026-05-29 18:29:31.386716+00	kg	kg
+0432939e-173f-4b16-b0c5-2bcdb9b17ce6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	233	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.177877+00	2026-05-29 18:29:31.386716+00	kg	kg
+17493f08-866b-462b-b494-541cfe07a5f9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	234	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.179326+00	2026-05-29 18:29:31.386716+00	kg	kg
+3d0eb994-f1db-4fa8-95bd-ab1d2ac04ec1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	235	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.180858+00	2026-05-29 18:29:31.386716+00	kg	kg
+85add104-6f32-48e5-b1fa-c802476c879d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	236	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.182664+00	2026-05-29 18:29:31.386716+00	kg	kg
+804cc241-8e65-4aff-b68e-1fec17dc48e1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	237	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.184306+00	2026-05-29 18:29:31.386716+00	kg	kg
+91291551-fe4b-426d-a4e1-9aaa3d2e8c34	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8cc0865-90d5-4195-961b-665ba8e14bfd	238	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.185908+00	2026-05-29 18:29:31.386716+00	kg	kg
+0ec54295-e070-4503-a305-6ecb9c59cdf7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5efd5f3c-d873-43ca-9194-12d832a08cd8	224	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.163617+00	2026-05-29 18:29:31.386716+00	kg	kg
+134545db-8f23-4bd6-9f7b-28b94ff364ab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5efd5f3c-d873-43ca-9194-12d832a08cd8	225	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.165261+00	2026-05-29 18:29:31.386716+00	kg	kg
+6ca1010d-ceaa-4dfa-8455-44430b7c5e62	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5efd5f3c-d873-43ca-9194-12d832a08cd8	226	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.166872+00	2026-05-29 18:29:31.386716+00	kg	kg
+319b0775-1934-47ee-8246-302dda230c7f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5efd5f3c-d873-43ca-9194-12d832a08cd8	227	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.168336+00	2026-05-29 18:29:31.386716+00	kg	kg
+fdf4582e-5fab-4466-a3a3-9fab17a7ef47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5efd5f3c-d873-43ca-9194-12d832a08cd8	228	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.169846+00	2026-05-29 18:29:31.386716+00	kg	kg
+1fbce787-8ccc-4905-a086-bbc05498bfbe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	5efd5f3c-d873-43ca-9194-12d832a08cd8	229	DORADE ROYALE	t	\N	\N	2026-05-17 09:42:48.171494+00	2026-05-29 18:29:31.386716+00	kg	kg
+341cf0c9-09ac-4196-899e-abbb6823bbbe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1273	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.665829+00	2026-05-29 18:29:31.386716+00	kg	kg
+85e96096-d918-4af2-9b4e-ebffe192dcfd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1274	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.667617+00	2026-05-29 18:29:31.386716+00	kg	kg
+beb261aa-038c-4116-ab07-cfb86e8fe75c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1275	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.66919+00	2026-05-29 18:29:31.386716+00	kg	kg
+516b1b5c-873b-4985-ac81-f21c0d6172ef	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1276	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.671031+00	2026-05-29 18:29:31.386716+00	kg	kg
+a4773e78-13ab-4a8e-88a4-7d0a411f1e32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1277	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.672636+00	2026-05-29 18:29:31.386716+00	kg	kg
+2fca583e-cf76-47db-abbc-9be61e32c1dc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1278	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.67423+00	2026-05-29 18:29:31.386716+00	kg	kg
+98b67505-b886-4339-af46-b0ec278fc306	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1279	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.675871+00	2026-05-29 18:29:31.386716+00	kg	kg
+18e46eb6-4119-470e-a333-165dee0d2231	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1280	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.679074+00	2026-05-29 18:29:31.386716+00	kg	kg
+2fb9956b-0077-4d3a-b46e-1ca62ddb1284	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1281	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.680594+00	2026-05-29 18:29:31.386716+00	kg	kg
+d2176005-4157-49b1-9c23-7886089d1a75	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1282	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.682052+00	2026-05-29 18:29:31.386716+00	kg	kg
+994c7e49-06fc-4338-81f8-0c31a142bd55	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1283	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.683597+00	2026-05-29 18:29:31.386716+00	kg	kg
+c63df03a-3226-45f8-b468-bfdb3e8bf814	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1284	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.68504+00	2026-05-29 18:29:31.386716+00	kg	kg
+5048a349-4f0e-4ec5-a103-7edfbb9f6b0e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1285	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.686674+00	2026-05-29 18:29:31.386716+00	kg	kg
+95327d53-d23f-4672-b837-be3ce2187be2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1286	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.688248+00	2026-05-29 18:29:31.386716+00	kg	kg
+a00fc5e3-209a-40f5-b1a6-99afc1ce9ccd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1287	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.689801+00	2026-05-29 18:29:31.386716+00	kg	kg
+8e197ad9-ed55-4ded-aedf-2e36d47f7859	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1288	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.691587+00	2026-05-29 18:29:31.386716+00	kg	kg
+58d8dde9-bfdc-4b53-bb09-83a05aa0c980	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1289	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.693094+00	2026-05-29 18:29:31.386716+00	kg	kg
+16924559-b556-443f-8808-3e7ab6f8291b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1290	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.696616+00	2026-05-29 18:29:31.386716+00	kg	kg
+ce51affd-304a-4851-b487-a4ddcaa96780	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1291	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.698254+00	2026-05-29 18:29:31.386716+00	kg	kg
+fdfab06c-93e5-4dc2-87fa-01ef9679ee75	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2fd4817f-3c62-4d32-81ee-8043e300e327	1292	EMISSOLE	t	\N	\N	2026-05-17 09:42:47.699797+00	2026-05-29 18:29:31.386716+00	kg	kg
+aee20ede-7d6e-4880-b66a-9d8f518c3aaa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	82e81774-46fd-4cfe-b3a0-33cba2607934	255	ESPADON	t	\N	\N	2026-05-17 09:42:48.195672+00	2026-05-29 18:29:31.386716+00	kg	kg
+73ac0a20-5c24-4403-82b0-8f008de2dada	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	82e81774-46fd-4cfe-b3a0-33cba2607934	256	ESPADON	t	\N	\N	2026-05-17 09:42:48.19736+00	2026-05-29 18:29:31.386716+00	kg	kg
+b3d45d62-d314-4331-a860-503de72c34d2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	82e81774-46fd-4cfe-b3a0-33cba2607934	257	ESPADON	t	\N	\N	2026-05-17 09:42:48.198904+00	2026-05-29 18:29:31.386716+00	kg	kg
+a1067d85-1741-4126-af0b-bbe28cafc793	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	82e81774-46fd-4cfe-b3a0-33cba2607934	258	ESPADON	t	\N	\N	2026-05-17 09:42:48.200543+00	2026-05-29 18:29:31.386716+00	kg	kg
+e7e36673-f1d0-41b2-89fe-c4568cdf72af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	82e81774-46fd-4cfe-b3a0-33cba2607934	259	ESPADON	t	\N	\N	2026-05-17 09:42:48.202126+00	2026-05-29 18:29:31.386716+00	kg	kg
+840132f0-4dd7-4b68-8ccf-21b86e767e44	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	82e81774-46fd-4cfe-b3a0-33cba2607934	260	ESPADON	t	\N	\N	2026-05-17 09:42:48.204038+00	2026-05-29 18:29:31.386716+00	kg	kg
+37565722-93f8-42e3-8a24-430e672149d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	647c813c-297e-4bb3-9458-a45f040b6e02	284	GRONDIN GRIS (ATL. E)	t	\N	\N	2026-05-17 09:42:48.23324+00	2026-05-29 18:29:31.386716+00	kg	kg
+86aa1afa-ad96-408c-bb46-90a6787bf75d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	647c813c-297e-4bb3-9458-a45f040b6e02	285	GRONDIN GRIS (ATL. E)	t	\N	\N	2026-05-17 09:42:48.234867+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f8c61d8-e6cd-4838-90ff-a45779bcee86	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	647c813c-297e-4bb3-9458-a45f040b6e02	286	GRONDIN GRIS (ATL. E)	t	\N	\N	2026-05-17 09:42:48.236367+00	2026-05-29 18:29:31.386716+00	kg	kg
+fb49157d-d7f8-49e0-9083-980ce507d423	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	647c813c-297e-4bb3-9458-a45f040b6e02	287	GRONDIN GRIS (ATL. E)	t	\N	\N	2026-05-17 09:42:48.238252+00	2026-05-29 18:29:31.386716+00	kg	kg
+720046f9-5a2a-4d36-b3ea-b8f33089f283	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	647c813c-297e-4bb3-9458-a45f040b6e02	288	GRONDIN GRIS (ATL. E)	t	\N	\N	2026-05-17 09:42:48.239934+00	2026-05-29 18:29:31.386716+00	kg	kg
+58b8a085-fb6c-4b0b-961a-e0f30aa0b117	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	647c813c-297e-4bb3-9458-a45f040b6e02	289	GRONDIN GRIS (ATL. E)	t	\N	\N	2026-05-17 09:42:48.241723+00	2026-05-29 18:29:31.386716+00	kg	kg
+f2ccd2b0-80ca-4a46-bd07-72bd7531098f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	290	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.244907+00	2026-05-29 18:29:31.386716+00	kg	kg
+d01a8818-8e3c-42f7-ac1e-ff202415c560	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	291	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.246726+00	2026-05-29 18:29:31.386716+00	kg	kg
+18675eba-bae5-4fa1-b17f-d06dcffcbd0a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	292	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.248344+00	2026-05-29 18:29:31.386716+00	kg	kg
+9dd7270b-9763-445f-97e1-e42482d0d0b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	293	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.249961+00	2026-05-29 18:29:31.386716+00	kg	kg
+b8b030ba-afef-48e7-a706-c4d9fc6ec19d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	294	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.251637+00	2026-05-29 18:29:31.386716+00	kg	kg
+ca8ab88a-4eeb-4fe2-a1f4-6fdf457f966a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	295	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.253185+00	2026-05-29 18:29:31.386716+00	kg	kg
+8b5ed60f-bb40-47c8-a44b-3bde0467e443	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	296	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.254853+00	2026-05-29 18:29:31.386716+00	kg	kg
+7a4093e7-c2b5-4ac9-8903-1fe6a9902a64	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	297	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.256591+00	2026-05-29 18:29:31.386716+00	kg	kg
+156f39c6-f8cd-4ee3-ae81-721d1e9a7458	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	298	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.258246+00	2026-05-29 18:29:31.386716+00	kg	kg
+78ae7c2a-a11e-46e4-b9d1-5147e4decfb0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	299	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.259907+00	2026-05-29 18:29:31.386716+00	kg	kg
+2ec1a500-5f64-454a-b96f-51faca6107c1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	300	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.263611+00	2026-05-29 18:29:31.386716+00	kg	kg
+5985c9bc-c8e8-4def-8e4e-39aee160427f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	301	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.265162+00	2026-05-29 18:29:31.386716+00	kg	kg
+0789d1b3-1c43-4057-9a37-5a058510c0ec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	302	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.26677+00	2026-05-29 18:29:31.386716+00	kg	kg
+de3dd776-7da3-4364-8454-13280cddedbe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	303	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.268322+00	2026-05-29 18:29:31.386716+00	kg	kg
+82174298-ba6d-4ec3-9bda-46d5d2c5e10c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d5779a06-a2b4-4bd1-80b4-4aa5a0118aa9	304	GRONDIN PERLON	t	\N	\N	2026-05-17 09:42:48.269923+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b79f21d-f757-4da0-a51d-809581aea599	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	317	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.293198+00	2026-05-29 18:29:31.386716+00	kg	kg
+248b277a-895a-456b-8b94-10f817c1eb36	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	318	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.29474+00	2026-05-29 18:29:31.386716+00	kg	kg
+fba6db45-ff2a-43f2-bcc3-ad2ecb05d3bd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	319	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.296382+00	2026-05-29 18:29:31.386716+00	kg	kg
+8a80fdcb-de09-442a-9e9a-a0eaa57933d2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	320	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.299683+00	2026-05-29 18:29:31.386716+00	kg	kg
+534d9846-2bff-44f7-b039-90c81e6365bf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	321	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.30124+00	2026-05-29 18:29:31.386716+00	kg	kg
+45adc10d-0af2-4662-8d9a-37cda6f7be46	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	322	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.302719+00	2026-05-29 18:29:31.386716+00	kg	kg
+070f422f-f9a7-458b-97c6-0d24e269059c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	323	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.304153+00	2026-05-29 18:29:31.386716+00	kg	kg
+fda0d0e3-9aea-44b1-959b-e4320f3a7dc0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	324	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.305589+00	2026-05-29 18:29:31.386716+00	kg	kg
+98dfd941-2039-4016-b232-e3d49c4e2560	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	325	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.307121+00	2026-05-29 18:29:31.386716+00	kg	kg
+f0838ddd-d206-4b94-a088-14a5259830e9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	326	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.308671+00	2026-05-29 18:29:31.386716+00	kg	kg
+1f04ee0b-a900-44be-bcd4-a87e1af3bee8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c3ac50b-e044-4be4-ae70-71490a3188b7	327	HARENG COMMUN	t	\N	\N	2026-05-17 09:42:48.310167+00	2026-05-29 18:29:31.386716+00	kg	kg
+47128534-ed7f-4043-8ef5-c4d312f5a2ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	1545	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.019569+00	2026-05-29 18:29:31.386716+00	kg	kg
+fc044e11-0e78-4b0f-819b-d0b477a1c2fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	350	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.332484+00	2026-05-29 18:29:31.386716+00	kg	kg
+d83d0fdb-f4d5-4f6e-ba9d-06fb6f50638f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	351	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.334039+00	2026-05-29 18:29:31.386716+00	kg	kg
+87ec6a49-d892-4756-bbe2-d45242083078	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	352	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.335722+00	2026-05-29 18:29:31.386716+00	kg	kg
+001b8b5b-f80b-4211-a980-565990bd18af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	353	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.337241+00	2026-05-29 18:29:31.386716+00	kg	kg
+f4ee5793-7be2-402f-b1fc-92459e65db74	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	354	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.338932+00	2026-05-29 18:29:31.386716+00	kg	kg
+2535ee32-7fc7-480b-9a35-a536e4098364	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	355	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.340503+00	2026-05-29 18:29:31.386716+00	kg	kg
+01aeb776-a979-4a7d-b1f6-b561023ec43c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	356	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.342061+00	2026-05-29 18:29:31.386716+00	kg	kg
+c99717e0-46c5-4292-80b5-54fa45d40183	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	357	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.343702+00	2026-05-29 18:29:31.386716+00	kg	kg
+7e620e64-3f83-4db2-acb7-247d9e8a0835	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	358	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.345276+00	2026-05-29 18:29:31.386716+00	kg	kg
+021d7122-8bcb-4437-90a8-8dfd4e314758	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	359	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.346941+00	2026-05-29 18:29:31.386716+00	kg	kg
+17c46fb3-b79e-43fa-b0e5-7e822c37c09b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	360	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.350231+00	2026-05-29 18:29:31.386716+00	kg	kg
+29c045c8-0b44-402f-9480-fa3cb90fca32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	c1927d85-bf42-422c-99e8-2376b0845bd3	361	LIEU JAUNE	t	\N	\N	2026-05-17 09:42:48.351847+00	2026-05-29 18:29:31.386716+00	kg	kg
+ee25ac58-167c-4708-806d-9bf2f79c66a8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	362	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.35347+00	2026-05-29 18:29:31.386716+00	kg	kg
+8584a046-6c7b-41b5-9b81-d955f68b8213	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	363	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.355768+00	2026-05-29 18:29:31.386716+00	kg	kg
+652a20f6-27ee-4a5f-9f31-7d42b22e791c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	364	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.35731+00	2026-05-29 18:29:31.386716+00	kg	kg
+33a8d2e5-678f-4993-bfe2-52d973e14566	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	365	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.358856+00	2026-05-29 18:29:31.386716+00	kg	kg
+3f9fdcbd-0921-4a25-a257-d07d6d46291d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	366	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.360569+00	2026-05-29 18:29:31.386716+00	kg	kg
+86916e83-ea55-4d81-bf9c-6216a518670b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	367	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.362824+00	2026-05-29 18:29:31.386716+00	kg	kg
+b4dcbb4c-8e93-4b1e-a3ef-85908dcfd2ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	368	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.364351+00	2026-05-29 18:29:31.386716+00	kg	kg
+2f8050fe-849a-45ed-a8ac-04ba576309b1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	369	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.365773+00	2026-05-29 18:29:31.386716+00	kg	kg
+da843c65-6db7-4620-b9a2-fb73d577e0a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	370	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.368573+00	2026-05-29 18:29:31.386716+00	kg	kg
+7def6bc8-cdf3-45fe-9c2e-553b5ffc47f0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	371	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.370144+00	2026-05-29 18:29:31.386716+00	kg	kg
+a1e5cd95-c277-4992-a447-a2f633cd8470	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	372	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.371593+00	2026-05-29 18:29:31.386716+00	kg	kg
+8a6dcc2a-9c30-4711-a2f1-25986421e14b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	07a82f63-e9e5-4b2f-bb15-e3fbd731f7eb	373	LIEU NOIR	t	\N	\N	2026-05-17 09:42:48.372941+00	2026-05-29 18:29:31.386716+00	kg	kg
+43910274-ca76-4711-9892-9e0a292b16b9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	374	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.374466+00	2026-05-29 18:29:31.386716+00	kg	kg
+acee65a0-1dd5-4f98-bfb5-6484bfb5418d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	375	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.37593+00	2026-05-29 18:29:31.386716+00	kg	kg
+e265dcdd-7141-4fba-9318-d205fcb8631e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	376	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.377677+00	2026-05-29 18:29:31.386716+00	kg	kg
+a2f54717-094e-4501-aeb5-ed3acd2e9012	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	377	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.379126+00	2026-05-29 18:29:31.386716+00	kg	kg
+04c16feb-d0fd-4ed3-85e8-a2c61e936f92	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	378	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.380536+00	2026-05-29 18:29:31.386716+00	kg	kg
+da1a2937-17dd-46fc-bcef-9da8199bec0d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	379	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.382084+00	2026-05-29 18:29:31.386716+00	kg	kg
+735bc486-5867-4cc7-b325-7271e0b7552b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	380	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.385015+00	2026-05-29 18:29:31.386716+00	kg	kg
+fde9080c-9e7b-4d4d-b3c1-41021275b3b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	381	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.386563+00	2026-05-29 18:29:31.386716+00	kg	kg
+5c5c3eb4-229a-4078-87a5-cdddbde5eaf3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	382	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.387851+00	2026-05-29 18:29:31.386716+00	kg	kg
+ac9af49a-4c61-4e59-bdbc-c76c964273c2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	383	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.389244+00	2026-05-29 18:29:31.386716+00	kg	kg
+68fb3dd1-af2c-4515-8f51-cda82ba20692	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	384	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.390708+00	2026-05-29 18:29:31.386716+00	kg	kg
+8b014fbc-fe1a-407e-95ed-d67a95b8befd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	385	LIMANDE FRANCHE BROUX	t	\N	\N	2026-05-17 09:42:48.392089+00	2026-05-29 18:29:31.386716+00	kg	kg
+c222e34b-d0dc-46fe-82f3-bef815e235ed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	386	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.393665+00	2026-05-29 18:29:31.386716+00	kg	kg
+54778d7b-15e3-44e9-acd1-a4304f0a4357	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	387	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.39501+00	2026-05-29 18:29:31.386716+00	kg	kg
+5e701a02-2817-4122-9936-37815e44bfbf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	388	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.396416+00	2026-05-29 18:29:31.386716+00	kg	kg
+6d74aeb2-bacf-446d-86cf-d4618293f3a5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	389	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.397906+00	2026-05-29 18:29:31.386716+00	kg	kg
+13b31810-2c9a-42ea-bc20-3d0054a7e0e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	390	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.400967+00	2026-05-29 18:29:31.386716+00	kg	kg
+fa26479d-b1f3-4e85-b6a8-502737113301	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	391	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.402527+00	2026-05-29 18:29:31.386716+00	kg	kg
+4d172f42-38a5-4212-b76f-bb244d5b4ae6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	392	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.403895+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f591340-cb6c-43b9-b79d-dd2841877282	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	393	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.405501+00	2026-05-29 18:29:31.386716+00	kg	kg
+2f24d18d-e7dc-4a51-8e24-35612b02db97	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	394	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.406986+00	2026-05-29 18:29:31.386716+00	kg	kg
+8405f19f-9711-4552-ad28-a2306823d244	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	395	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.40833+00	2026-05-29 18:29:31.386716+00	kg	kg
+5b5a8484-9131-487b-b4f3-3c41e187cf15	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	396	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.409757+00	2026-05-29 18:29:31.386716+00	kg	kg
+e44760b0-30e6-4a65-84f0-fecbdfcaad1f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	397	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.411159+00	2026-05-29 18:29:31.386716+00	kg	kg
+75dc25c1-6b86-4435-b33d-b661ddc4a7e6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	398	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.412507+00	2026-05-29 18:29:31.386716+00	kg	kg
+f272e151-e650-4469-8926-cf7d82cc0281	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	399	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.414083+00	2026-05-29 18:29:31.386716+00	kg	kg
+f9d86dfb-dfd3-409e-822a-b8058d82de45	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	400	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.417655+00	2026-05-29 18:29:31.386716+00	kg	kg
+23bf22e2-1bed-4875-95a9-7c940ef50119	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	401	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.419069+00	2026-05-29 18:29:31.386716+00	kg	kg
+cca59b05-2942-447a-b749-f548b6515308	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	402	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.420409+00	2026-05-29 18:29:31.386716+00	kg	kg
+ff80dce4-8a7a-4fcb-9017-3af6b7cf75ab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	205bf491-f72d-410e-aa6f-275b96f93de4	403	LIMANDE SOLE	t	\N	\N	2026-05-17 09:42:48.421865+00	2026-05-29 18:29:31.386716+00	kg	kg
+06711893-d640-47fa-9f8d-7d3a99bb16ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	847	MAIGRE	t	\N	\N	2026-05-17 09:42:48.825604+00	2026-05-29 18:29:31.386716+00	kg	kg
+a35cb0a3-d591-4243-bad9-c799f907c9b7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	848	MAIGRE	t	\N	\N	2026-05-17 09:42:48.826612+00	2026-05-29 18:29:31.386716+00	kg	kg
+fa22d86f-caa5-4456-a2e9-0856a0b8628f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	849	MAIGRE	t	\N	\N	2026-05-17 09:42:48.827576+00	2026-05-29 18:29:31.386716+00	kg	kg
+58393555-7e7b-485f-bae5-ea433cd550f0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	850	MAIGRE	t	\N	\N	2026-05-17 09:42:48.829474+00	2026-05-29 18:29:31.386716+00	kg	kg
+fec293ff-7c2c-483e-a5bf-e06b2e1374f5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	851	MAIGRE	t	\N	\N	2026-05-17 09:42:48.83047+00	2026-05-29 18:29:31.386716+00	kg	kg
+3f900c6a-3363-4b1e-b7da-9112558b8518	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	852	MAIGRE	t	\N	\N	2026-05-17 09:42:48.83149+00	2026-05-29 18:29:31.386716+00	kg	kg
+06e43624-c626-4003-8969-ea43fb0c3e97	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	853	MAIGRE	t	\N	\N	2026-05-17 09:42:48.832323+00	2026-05-29 18:29:31.386716+00	kg	kg
+c99451e4-6033-4ac9-9c5f-c5136f62481b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	854	MAIGRE	t	\N	\N	2026-05-17 09:42:48.833321+00	2026-05-29 18:29:31.386716+00	kg	kg
+1ed97cf9-14bf-4e68-93a2-db655a1cc37e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	855	MAIGRE	t	\N	\N	2026-05-17 09:42:48.834319+00	2026-05-29 18:29:31.386716+00	kg	kg
+45069e8d-924b-4235-87a8-70edf59840c4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	856	MAIGRE	t	\N	\N	2026-05-17 09:42:48.835221+00	2026-05-29 18:29:31.386716+00	kg	kg
+e5c1c7b4-f1ae-4e62-bab0-1bba7662a710	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	857	MAIGRE	t	\N	\N	2026-05-17 09:42:48.836224+00	2026-05-29 18:29:31.386716+00	kg	kg
+1a968a2a-e23d-439e-9216-8ce5761b969b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e24129d5-8f4f-46da-be77-2e57a2b32782	858	MAIGRE	t	\N	\N	2026-05-17 09:42:48.837305+00	2026-05-29 18:29:31.386716+00	kg	kg
+f7c906b5-fd51-49a1-a045-3fd38b323abb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	413	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.425814+00	2026-05-29 18:29:31.386716+00	kg	kg
+7394801b-02a1-4a6c-a615-b714b2b87bfc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	414	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.427285+00	2026-05-29 18:29:31.386716+00	kg	kg
+008667c5-da5d-4a2f-a2e0-9f2b01b5e9fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	415	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.428579+00	2026-05-29 18:29:31.386716+00	kg	kg
+51cb51f4-06e2-4d36-bf74-872ccc47be3b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	416	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.429944+00	2026-05-29 18:29:31.386716+00	kg	kg
+0218424f-e20e-4127-b512-09db7f2d2951	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	417	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.431334+00	2026-05-29 18:29:31.386716+00	kg	kg
+1e7ad45e-a01a-4dde-ac80-9589efa2640a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	418	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.432652+00	2026-05-29 18:29:31.386716+00	kg	kg
+2dd3ea34-a953-4dc4-ad60-65b2b5a73157	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	419	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.434298+00	2026-05-29 18:29:31.386716+00	kg	kg
+167ea981-71dd-4391-ab96-01045e579bbe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	420	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.437111+00	2026-05-29 18:29:31.386716+00	kg	kg
+c26e1d3b-a35f-4bfd-ad80-3a8f2dc0a75c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	294a3580-5a47-4c00-abf5-162c1d0b1733	421	MAQUEREAU COMMUN	t	\N	\N	2026-05-17 09:42:48.438594+00	2026-05-29 18:29:31.386716+00	kg	kg
+304008a8-f216-4997-9913-4e71dc48558f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	92cda577-3743-4e3f-a408-aa782f1ab2e1	1535	MAQUEREAU ESPAGNOL	t	\N	\N	2026-05-17 09:42:48.001845+00	2026-05-29 18:29:31.386716+00	kg	kg
+1e1e759a-f116-496d-bd86-54ae6d8e95da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	92cda577-3743-4e3f-a408-aa782f1ab2e1	1536	MAQUEREAU ESPAGNOL	t	\N	\N	2026-05-17 09:42:48.003569+00	2026-05-29 18:29:31.386716+00	kg	kg
+5e9f6a1f-96c5-4ae5-939d-d345b67881cf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	92cda577-3743-4e3f-a408-aa782f1ab2e1	1537	MAQUEREAU ESPAGNOL	t	\N	\N	2026-05-17 09:42:48.005316+00	2026-05-29 18:29:31.386716+00	kg	kg
+3321758f-5086-400f-8f0f-9408dd08e9ac	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	92cda577-3743-4e3f-a408-aa782f1ab2e1	1538	MAQUEREAU ESPAGNOL	t	\N	\N	2026-05-17 09:42:48.006725+00	2026-05-29 18:29:31.386716+00	kg	kg
+f90eafed-c34e-4797-be6d-ab2a7b042247	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	92cda577-3743-4e3f-a408-aa782f1ab2e1	1539	MAQUEREAU ESPAGNOL	t	\N	\N	2026-05-17 09:42:48.008135+00	2026-05-29 18:29:31.386716+00	kg	kg
+2f8530cd-264b-4186-b7ac-336122b851d7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	92cda577-3743-4e3f-a408-aa782f1ab2e1	1540	MAQUEREAU ESPAGNOL	t	\N	\N	2026-05-17 09:42:48.011665+00	2026-05-29 18:29:31.386716+00	kg	kg
+5ab201bb-e723-4609-8396-f4acfc707360	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	92cda577-3743-4e3f-a408-aa782f1ab2e1	1541	MAQUEREAU ESPAGNOL	t	\N	\N	2026-05-17 09:42:48.013196+00	2026-05-29 18:29:31.386716+00	kg	kg
+751d557a-c56b-406d-af9d-209476230eda	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1243	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.609838+00	2026-05-29 18:29:31.386716+00	kg	kg
+0188a2c9-e389-4a5e-86e3-f759571b22f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1244	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.61154+00	2026-05-29 18:29:31.386716+00	kg	kg
+b62fe734-05ca-48e3-ae1f-c98c798ba91f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1245	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.613427+00	2026-05-29 18:29:31.386716+00	kg	kg
+97ffbac4-4f88-49d6-b0e7-0c553d2a6381	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1246	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.615172+00	2026-05-29 18:29:31.386716+00	kg	kg
+09e10c0d-5761-407f-a3fb-05f86f05f5ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1247	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.616749+00	2026-05-29 18:29:31.386716+00	kg	kg
+d7851025-1b5e-4ad2-ae76-04a1e8b8d9e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1248	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.618712+00	2026-05-29 18:29:31.386716+00	kg	kg
+8c6171a9-cf89-4b35-8e83-9b24cb5709a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1249	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.620552+00	2026-05-29 18:29:31.386716+00	kg	kg
+ef476ff7-c632-4743-9fa2-d557c5824313	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1250	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.623816+00	2026-05-29 18:29:31.386716+00	kg	kg
+00695ba1-e74f-4f4c-96cb-50ec5664cb68	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1251	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.625577+00	2026-05-29 18:29:31.386716+00	kg	kg
+c3bbed63-cb7f-4198-a120-0e4980b76982	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1252	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.62724+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f6c836c-d182-4212-87b6-a31b29cef11e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1253	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.628804+00	2026-05-29 18:29:31.386716+00	kg	kg
+34730f93-c766-42b8-be97-3b4995e5f2b2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1254	MERLAN DU NORD	t	\N	\N	2026-05-17 09:42:47.6306+00	2026-05-29 18:29:31.386716+00	kg	kg
+9b03db81-4131-4a89-8b81-75f441e36b94	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1259	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.638953+00	2026-05-29 18:29:31.386716+00	kg	kg
+f4687efe-f88f-4a18-aef1-1855d1ae5248	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1260	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.642254+00	2026-05-29 18:29:31.386716+00	kg	kg
+04f9560d-5ef2-4e9e-a7c8-424bc155ce95	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1261	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.643805+00	2026-05-29 18:29:31.386716+00	kg	kg
+de442bbe-0cd1-42ff-ab7f-533b38e5251f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1262	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.645585+00	2026-05-29 18:29:31.386716+00	kg	kg
+7a992b8d-93fa-4674-8b41-ab295321d252	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1263	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.64728+00	2026-05-29 18:29:31.386716+00	kg	kg
+f259268e-4422-4a1b-ba3c-d13ce7ed148c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1264	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.648804+00	2026-05-29 18:29:31.386716+00	kg	kg
+698a80c9-b283-4177-b093-7b64f3aa31f5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1265	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.650673+00	2026-05-29 18:29:31.386716+00	kg	kg
+adce3d4a-c690-4035-869d-8f5cb109ed9c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1266	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.652364+00	2026-05-29 18:29:31.386716+00	kg	kg
+d12037dc-594d-4c0c-9a66-0d45170928c3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1267	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.653981+00	2026-05-29 18:29:31.386716+00	kg	kg
+468d4c1d-cee4-4c00-86b9-ce8d951fddcf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1268	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.655656+00	2026-05-29 18:29:31.386716+00	kg	kg
+d6c95ad4-a765-4984-95e5-114980bae2a0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1269	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.657243+00	2026-05-29 18:29:31.386716+00	kg	kg
+64242290-3256-4e44-8d4d-24a513a46adb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	1270	MERLAN PLEIN	t	\N	\N	2026-05-17 09:42:47.660685+00	2026-05-29 18:29:31.386716+00	kg	kg
+bc261a0b-7e0a-474f-8904-9b19cb6b8286	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	422	MERLAN	t	\N	\N	2026-05-17 09:42:48.439854+00	2026-05-29 18:29:31.386716+00	kg	kg
+6189bc08-27c9-46ab-aaf3-a1ef981f8c7f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	423	MERLAN	t	\N	\N	2026-05-17 09:42:48.441183+00	2026-05-29 18:29:31.386716+00	kg	kg
+b7ea27a5-780d-46fe-88f2-f33221ba6a1b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	424	MERLAN	t	\N	\N	2026-05-17 09:42:48.442438+00	2026-05-29 18:29:31.386716+00	kg	kg
+925b4174-093e-4866-bec4-d91793ea35b6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	425	MERLAN	t	\N	\N	2026-05-17 09:42:48.443834+00	2026-05-29 18:29:31.386716+00	kg	kg
+000e3eca-ad69-4d23-b364-c11c43a1b884	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	426	MERLAN	t	\N	\N	2026-05-17 09:42:48.44517+00	2026-05-29 18:29:31.386716+00	kg	kg
+089e8db7-6db1-42c3-8a84-e53003dc8284	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	427	MERLAN	t	\N	\N	2026-05-17 09:42:48.446549+00	2026-05-29 18:29:31.386716+00	kg	kg
+c86e3d81-f95f-491e-8c76-858c62f2a25e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	428	MERLAN	t	\N	\N	2026-05-17 09:42:48.447749+00	2026-05-29 18:29:31.386716+00	kg	kg
+75dedf65-81bc-4e27-8f65-2b03af51a3d6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	429	MERLAN	t	\N	\N	2026-05-17 09:42:48.449008+00	2026-05-29 18:29:31.386716+00	kg	kg
+5bbb14f4-5f8d-44e6-9e5c-cf3c6cdaa09b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	430	MERLAN	t	\N	\N	2026-05-17 09:42:48.451848+00	2026-05-29 18:29:31.386716+00	kg	kg
+b4691ef5-15de-4071-9794-409ff1aa167c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	431	MERLAN	t	\N	\N	2026-05-17 09:42:48.453144+00	2026-05-29 18:29:31.386716+00	kg	kg
+0719f7b9-2cad-45d8-b349-98157b9124b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	432	MERLAN	t	\N	\N	2026-05-17 09:42:48.45456+00	2026-05-29 18:29:31.386716+00	kg	kg
+bbcb885b-c058-4554-87ca-8140562f1729	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d884f1dc-e159-4659-823a-b758e62d2e0a	433	MERLAN	t	\N	\N	2026-05-17 09:42:48.455773+00	2026-05-29 18:29:31.386716+00	kg	kg
+a9ec95cb-12cb-4e15-9399-4d76422d5878	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	921	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.908444+00	2026-05-29 18:29:31.386716+00	kg	kg
+ed1a5cd1-7368-4a6b-855a-893bd478c3fc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	922	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.909457+00	2026-05-29 18:29:31.386716+00	kg	kg
+ca317dc0-9d52-4e78-852b-16fc144bbbde	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	923	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.910402+00	2026-05-29 18:29:31.386716+00	kg	kg
+57c2de2e-a326-4a45-9f3a-bcceeda2489e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	924	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.911438+00	2026-05-29 18:29:31.386716+00	kg	kg
+dc131816-75b8-4f3e-9716-1567821dc5ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	925	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.912296+00	2026-05-29 18:29:31.386716+00	kg	kg
+ce248697-1593-49c0-8be1-86b035d4a597	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	926	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.913126+00	2026-05-29 18:29:31.386716+00	kg	kg
+da900963-07e5-4316-af73-6e231a3dad8f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	927	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.914181+00	2026-05-29 18:29:31.386716+00	kg	kg
+07e79d8b-b963-4bf6-9c80-ca1d22d7b05e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	928	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.916358+00	2026-05-29 18:29:31.386716+00	kg	kg
+1afedcf9-7736-4a6d-b12f-790899d837af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	929	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.917469+00	2026-05-29 18:29:31.386716+00	kg	kg
+3604b057-a2c5-4ace-82c2-e1a379d22fd8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	930	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.918601+00	2026-05-29 18:29:31.386716+00	kg	kg
+0a32c6b7-1554-4a29-9cf1-55c663c243c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	931	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.919586+00	2026-05-29 18:29:31.386716+00	kg	kg
+6bd278ad-67b7-4e63-90e2-683e2b8f3ef1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	977ee446-7073-4f8b-b02b-07c97f86a54a	932	MERLAN DE LIGNE	t	\N	\N	2026-05-17 09:42:48.920533+00	2026-05-29 18:29:31.386716+00	kg	kg
+2ae8184d-5116-4173-b330-532bd3d45c55	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	886d469f-bd80-4f1e-84c6-5744bc5eac3f	434	MERLAN BLEU	t	\N	\N	2026-05-17 09:42:48.457002+00	2026-05-29 18:29:31.386716+00	kg	kg
+f848807d-4ecb-4982-ae16-85b159b7e393	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	886d469f-bd80-4f1e-84c6-5744bc5eac3f	435	MERLAN BLEU	t	\N	\N	2026-05-17 09:42:48.458341+00	2026-05-29 18:29:31.386716+00	kg	kg
+44d41ff2-15a4-4b8c-be98-5fff8b0f8dce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	886d469f-bd80-4f1e-84c6-5744bc5eac3f	436	MERLAN BLEU	t	\N	\N	2026-05-17 09:42:48.459632+00	2026-05-29 18:29:31.386716+00	kg	kg
+415437e2-5dc4-409c-a94b-3a314404e1d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	1322	merlu plein	t	\N	\N	2026-05-17 09:42:47.751049+00	2026-05-29 18:29:31.386716+00	kg	kg
+3b438953-74af-44ab-b3be-5dfac8100595	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	1323	merlu plein	t	\N	\N	2026-05-17 09:42:47.752706+00	2026-05-29 18:29:31.386716+00	kg	kg
+947df0bb-de43-452e-bc6d-5b277426c893	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	1324	merlu plein	t	\N	\N	2026-05-17 09:42:47.754422+00	2026-05-29 18:29:31.386716+00	kg	kg
+75f54adc-fd14-48b8-b70d-314b5d377fe1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	1325	merlu plein	t	\N	\N	2026-05-17 09:42:47.755995+00	2026-05-29 18:29:31.386716+00	kg	kg
+2875d72f-a623-4a2c-aae2-ddc5434c2c39	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	1326	merlu plein	t	\N	\N	2026-05-17 09:42:47.758284+00	2026-05-29 18:29:31.386716+00	kg	kg
+6ddb479d-b182-4e18-ac89-2ca49b01b9d6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	1327	merlu plein	t	\N	\N	2026-05-17 09:42:47.760061+00	2026-05-29 18:29:31.386716+00	kg	kg
+bfa2dc8b-38c5-47fd-9007-fc3f5c02542f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	838	merlus	t	\N	\N	2026-05-17 09:42:48.80956+00	2026-05-29 18:29:31.386716+00	kg	kg
+883af257-0556-4f0b-a95f-447c7c185933	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	839	merlus	t	\N	\N	2026-05-17 09:42:48.810541+00	2026-05-29 18:29:31.386716+00	kg	kg
+d4584cc8-69b5-43c4-998c-47090acb2ce1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	840	merlus	t	\N	\N	2026-05-17 09:42:48.812506+00	2026-05-29 18:29:31.386716+00	kg	kg
+a5f03de2-c7a2-49e7-a871-2569bbddbc79	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	841	merlus	t	\N	\N	2026-05-17 09:42:48.813602+00	2026-05-29 18:29:31.386716+00	kg	kg
+fdf07890-d32a-4538-9781-ea3f4528144e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	842	merlus	t	\N	\N	2026-05-17 09:42:48.814534+00	2026-05-29 18:29:31.386716+00	kg	kg
+f89ad08c-dec5-4216-8bbd-a41b69ae8721	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	843	merlus	t	\N	\N	2026-05-17 09:42:48.815482+00	2026-05-29 18:29:31.386716+00	kg	kg
+6fa3195f-3c74-4747-be07-8e319b55898a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	844	merlus	t	\N	\N	2026-05-17 09:42:48.816588+00	2026-05-29 18:29:31.386716+00	kg	kg
+8dc2dc29-3fcc-431b-966f-dd98abfbc21c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	845	merlus	t	\N	\N	2026-05-17 09:42:48.818157+00	2026-05-29 18:29:31.386716+00	kg	kg
+8abfba61-5ed8-4158-bb2f-f02ca45cc509	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	e335fc8e-831f-4761-b2f5-160a993c838f	846	merlus	t	\N	\N	2026-05-17 09:42:48.824401+00	2026-05-29 18:29:31.386716+00	kg	kg
+b319199c-000c-496b-ae6b-06c21615f832	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f17f2e69-9d4b-449f-bdda-adb04b77d959	1549	MERLU DE LIGNE	t	\N	\N	2026-05-17 09:42:48.025924+00	2026-05-29 18:29:31.386716+00	kg	kg
+9a907550-f139-446a-a2d1-0d4f97f5cf56	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f17f2e69-9d4b-449f-bdda-adb04b77d959	1553	MERLU DE LIGNE	t	\N	\N	2026-05-17 09:42:48.033906+00	2026-05-29 18:29:31.386716+00	kg	kg
+f912c824-467f-4dac-9bb9-72699e3f12a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ae7b0025-ff9f-4d4f-8548-a11e349d98ac	1430	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.847559+00	2026-05-29 18:29:31.386716+00	kg	kg
+b3a86567-431c-431d-852e-aebc74667e95	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ae7b0025-ff9f-4d4f-8548-a11e349d98ac	1437	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.868315+00	2026-05-29 18:29:31.386716+00	kg	kg
+2782406c-cf50-4f52-a91a-f66238bccca2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ae7b0025-ff9f-4d4f-8548-a11e349d98ac	1440	MERLU NOIR	t	\N	\N	2026-05-17 09:42:47.874232+00	2026-05-29 18:29:31.386716+00	kg	kg
+02792f81-6a4a-46d8-bf2d-b89fd3d85ea6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ae7b0025-ff9f-4d4f-8548-a11e349d98ac	438	MERLU	t	\N	\N	2026-05-17 09:42:48.462238+00	2026-05-29 18:29:31.386716+00	kg	kg
+c5c34598-2738-4323-8032-936b30e2678a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ae7b0025-ff9f-4d4f-8548-a11e349d98ac	440	MERLU	t	\N	\N	2026-05-17 09:42:48.465884+00	2026-05-29 18:29:31.386716+00	kg	kg
+661b832f-bf3e-499e-983a-318a1c441400	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ae7b0025-ff9f-4d4f-8548-a11e349d98ac	442	MERLU	t	\N	\N	2026-05-17 09:42:48.468344+00	2026-05-29 18:29:31.386716+00	kg	kg
+878b266a-5b46-4721-a9a8-9dd7ed322ab4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ae7b0025-ff9f-4d4f-8548-a11e349d98ac	446	MERLU	t	\N	\N	2026-05-17 09:42:48.473428+00	2026-05-29 18:29:31.386716+00	kg	kg
+6a48334c-8446-4cc8-825b-cce9ee885522	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c81b096-69ce-4e0d-9cb4-77b9108fbc2b	933	MERLU EN QUEUE	t	\N	\N	2026-05-17 09:42:48.921768+00	2026-05-29 18:29:31.386716+00	kg	kg
+5c57b677-8ca4-4cd8-b27a-5fae7351a327	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c81b096-69ce-4e0d-9cb4-77b9108fbc2b	934	MERLU EN QUEUE	t	\N	\N	2026-05-17 09:42:48.922885+00	2026-05-29 18:29:31.386716+00	kg	kg
+321799c4-04f6-4f1b-8267-849c271adcbb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	7c81b096-69ce-4e0d-9cb4-77b9108fbc2b	935	MERLU EN QUEUE	t	\N	\N	2026-05-17 09:42:48.923868+00	2026-05-29 18:29:31.386716+00	kg	kg
+aedd03eb-495e-4478-aebb-70dd626b138d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	65723612-9981-4b4f-b94d-d5f2840d75fb	1547	MERLU DE LIGNE	t	\N	\N	2026-05-17 09:42:48.022887+00	2026-05-29 18:29:31.386716+00	kg	kg
+63fdab62-d269-4076-94bf-0e695df0ba57	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	65723612-9981-4b4f-b94d-d5f2840d75fb	1548	MERLU DE LIGNE	t	\N	\N	2026-05-17 09:42:48.024429+00	2026-05-29 18:29:31.386716+00	kg	kg
+25ae3fcb-cfa8-468e-8e34-a30d4d555524	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	65723612-9981-4b4f-b94d-d5f2840d75fb	1551	MERLU DE LIGNE	t	\N	\N	2026-05-17 09:42:48.030439+00	2026-05-29 18:29:31.386716+00	kg	kg
+f1a0290e-c993-4bf2-a471-236ead997ea5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	65723612-9981-4b4f-b94d-d5f2840d75fb	1552	MERLU DE LIGNE	t	\N	\N	2026-05-17 09:42:48.032127+00	2026-05-29 18:29:31.386716+00	kg	kg
+275a38a3-c90a-46ef-b0a5-8ad542cdfa14	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6ff6ca3b-19b1-4d33-ba98-7f7e1c0fd90c	1546	MERLU DE LIGNE	t	\N	\N	2026-05-17 09:42:48.021164+00	2026-05-29 18:29:31.386716+00	kg	kg
+f84f75ce-5d17-4407-9b34-63c1b1c214a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6ff6ca3b-19b1-4d33-ba98-7f7e1c0fd90c	1550	MERLU DE LIGNE	t	\N	\N	2026-05-17 09:42:48.02891+00	2026-05-29 18:29:31.386716+00	kg	kg
+11393997-d844-43f0-8000-99cd997dc897	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	476	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.497129+00	2026-05-29 18:29:31.386716+00	kg	kg
+699401a1-3570-4e3e-b3cd-ec12ae409c01	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	477	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.498323+00	2026-05-29 18:29:31.386716+00	kg	kg
+9da7476a-5fb3-45a8-bdfa-6bac578f82b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	478	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.499321+00	2026-05-29 18:29:31.386716+00	kg	kg
+63e4e6c0-4028-422a-a5a3-b198954d543b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	479	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.500398+00	2026-05-29 18:29:31.386716+00	kg	kg
+c0f30d81-6baa-4c5a-b599-5cfbe9a380a4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	480	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.502625+00	2026-05-29 18:29:31.386716+00	kg	kg
+6918ca94-bf2f-4703-bb68-88de29e1706e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	481	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.503593+00	2026-05-29 18:29:31.386716+00	kg	kg
+aaa95e9d-58b9-4079-a54e-cf785b95b6bd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	482	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.504648+00	2026-05-29 18:29:31.386716+00	kg	kg
+7cf32a28-a463-4745-89db-23c053dafba2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	483	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.505766+00	2026-05-29 18:29:31.386716+00	kg	kg
+3e0ec6c2-1501-4522-a1f6-b3b792317124	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	484	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.506856+00	2026-05-29 18:29:31.386716+00	kg	kg
+f44c4444-f55d-4dce-b69f-d836ed2f7e62	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	485	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.507836+00	2026-05-29 18:29:31.386716+00	kg	kg
+593b7dc9-a232-453a-96d1-0bf598405af5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	486	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.508993+00	2026-05-29 18:29:31.386716+00	kg	kg
+579c76f3-ab81-413f-a2a9-60c94a8fe1c5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ea76e40d-865f-4a34-a25c-351350f6ce74	487	MULET LIPPUS	t	\N	\N	2026-05-17 09:42:48.510119+00	2026-05-29 18:29:31.386716+00	kg	kg
+f36aa796-5d3e-4733-97b8-4995bb8770a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d1732412-263c-4614-9974-87a1d7588544	491	PAGEOT ACARNE	t	\N	\N	2026-05-17 09:42:48.51555+00	2026-05-29 18:29:31.386716+00	kg	kg
+6bfc1234-6f25-43b0-aa1e-18a5e9abc97b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d1732412-263c-4614-9974-87a1d7588544	492	PAGEOT ACARNE	t	\N	\N	2026-05-17 09:42:48.516545+00	2026-05-29 18:29:31.386716+00	kg	kg
+4ba7f5fe-0c94-416f-a8c2-8311ee5ee9a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d1732412-263c-4614-9974-87a1d7588544	493	PAGEOT ACARNE	t	\N	\N	2026-05-17 09:42:48.517689+00	2026-05-29 18:29:31.386716+00	kg	kg
+d296fdec-8782-47fe-8a02-7b79271f7d34	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d1732412-263c-4614-9974-87a1d7588544	494	PAGEOT ACARNE	t	\N	\N	2026-05-17 09:42:48.51874+00	2026-05-29 18:29:31.386716+00	kg	kg
+7fb7b1e4-4f3f-4af9-acba-3063a8ead976	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d1732412-263c-4614-9974-87a1d7588544	495	PAGEOT ACARNE	t	\N	\N	2026-05-17 09:42:48.519647+00	2026-05-29 18:29:31.386716+00	kg	kg
+3e8fc162-35d6-46ab-b97b-195fdf151fb0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d1732412-263c-4614-9974-87a1d7588544	496	PAGEOT ACARNE	t	\N	\N	2026-05-17 09:42:48.520603+00	2026-05-29 18:29:31.386716+00	kg	kg
+92cd8ed7-39a7-4f2d-913d-2276d82d915b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	531	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.530473+00	2026-05-29 18:29:31.386716+00	kg	kg
+a6302166-8d7d-4b84-ab6d-03cdfc62d038	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	532	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.531566+00	2026-05-29 18:29:31.386716+00	kg	kg
+82304403-df30-48bf-a189-5ada8775a24b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	533	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.532663+00	2026-05-29 18:29:31.386716+00	kg	kg
+d424b421-a383-44fc-a965-830d47342923	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	534	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.533752+00	2026-05-29 18:29:31.386716+00	kg	kg
+07e2b70a-d4d8-4e5d-94c6-4e71ae5bb0be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	535	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.534826+00	2026-05-29 18:29:31.386716+00	kg	kg
+a26aade6-90ee-4588-aa2b-e044b220aee7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	536	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.535743+00	2026-05-29 18:29:31.386716+00	kg	kg
+65a9bed1-f479-4a8c-a7f1-e9458eff7962	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	537	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.536735+00	2026-05-29 18:29:31.386716+00	kg	kg
+fa3f63e1-4c57-4b84-8db3-8a86e41656a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	538	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.537804+00	2026-05-29 18:29:31.386716+00	kg	kg
+8c55cefa-9c84-472a-9592-8426610b2475	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	539	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.538749+00	2026-05-29 18:29:31.386716+00	kg	kg
+db85816f-1373-4fd3-8b73-58f87e4ad971	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	540	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.54062+00	2026-05-29 18:29:31.386716+00	kg	kg
+4add9052-de14-4a4e-b504-9e14ba5d0215	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	541	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.541665+00	2026-05-29 18:29:31.386716+00	kg	kg
+d77469dc-9b04-4322-a2a2-07cce75981de	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	542	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.542564+00	2026-05-29 18:29:31.386716+00	kg	kg
+74d6ed53-9d3f-43ce-b04b-20bd0e3bebd2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	543	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.543471+00	2026-05-29 18:29:31.386716+00	kg	kg
+dc6640d7-a002-428a-8942-6fd6b4c91f9a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	544	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.544563+00	2026-05-29 18:29:31.386716+00	kg	kg
+ec971bff-0d79-4a3b-b13a-3a5004345019	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	545	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.545622+00	2026-05-29 18:29:31.386716+00	kg	kg
+e7c3ebac-d874-469a-b107-f23b609ea7dd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	546	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.546541+00	2026-05-29 18:29:31.386716+00	kg	kg
+87312b2d-a8ca-401b-b3af-a6f80ac0420b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	547	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.547498+00	2026-05-29 18:29:31.386716+00	kg	kg
+b94784fe-d32a-4c4f-b06a-707072e88038	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	548	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.548583+00	2026-05-29 18:29:31.386716+00	kg	kg
+b5925b40-4972-4fc6-b653-bd814f17dfa9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	549	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.549683+00	2026-05-29 18:29:31.386716+00	kg	kg
+155ec71b-e325-4978-8e06-50c75bd25488	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	550	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.551935+00	2026-05-29 18:29:31.386716+00	kg	kg
+65f4d304-bddb-4c5d-98e9-53a96f193ca8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	551	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.552907+00	2026-05-29 18:29:31.386716+00	kg	kg
+e5129370-87e4-412d-8357-78b73fde4b22	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	552	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.55392+00	2026-05-29 18:29:31.386716+00	kg	kg
+90e24838-299c-41a5-8087-9fd63dd5306e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	553	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.554943+00	2026-05-29 18:29:31.386716+00	kg	kg
+8d766ff9-78d9-4b78-92aa-bc46281e8297	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	d8007de4-4cb5-43c0-8dc9-ca460ae07593	554	PLIE - CARRELET	t	\N	\N	2026-05-17 09:42:48.555947+00	2026-05-29 18:29:31.386716+00	kg	kg
+6ff627c4-93fe-41ff-8ff8-585002daebd8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1011	FLET	t	\N	\N	2026-05-17 09:42:47.273081+00	2026-05-29 18:29:31.386716+00	kg	kg
+14dc79f7-ce48-4918-b7b8-3b62b2559430	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1012	FLET	t	\N	\N	2026-05-17 09:42:47.274723+00	2026-05-29 18:29:31.386716+00	kg	kg
+4faeb7e3-c113-4df3-ab6c-d9e707ab6ba4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1013	FLET	t	\N	\N	2026-05-17 09:42:47.276144+00	2026-05-29 18:29:31.386716+00	kg	kg
+ea5184ba-7694-448b-bf0b-9af6d4e50839	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1014	FLET	t	\N	\N	2026-05-17 09:42:47.277989+00	2026-05-29 18:29:31.386716+00	kg	kg
+fe849a1b-b0d1-4fdb-8ecb-f18e7b74191f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1015	FLET	t	\N	\N	2026-05-17 09:42:47.279795+00	2026-05-29 18:29:31.386716+00	kg	kg
+b0ce1449-14ba-495a-9ce4-9c465a827ea5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1016	FLET	t	\N	\N	2026-05-17 09:42:47.281673+00	2026-05-29 18:29:31.386716+00	kg	kg
+bfcd5057-2f93-468f-aa6d-63f05c3f82d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1017	FLET	t	\N	\N	2026-05-17 09:42:47.283362+00	2026-05-29 18:29:31.386716+00	kg	kg
+ec62a8be-bd40-4e42-b7ec-c6ff1a7d8215	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1018	FLET	t	\N	\N	2026-05-17 09:42:47.284988+00	2026-05-29 18:29:31.386716+00	kg	kg
+fc82524a-5b40-4d5a-a064-37cdba9c7999	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1019	FLET	t	\N	\N	2026-05-17 09:42:47.286713+00	2026-05-29 18:29:31.386716+00	kg	kg
+ea733387-7215-43c6-b126-501783418f90	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1020	FLET	t	\N	\N	2026-05-17 09:42:47.289906+00	2026-05-29 18:29:31.386716+00	kg	kg
+c8f61c8d-8a7d-443a-a622-efd3c56b1138	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1021	FLET	t	\N	\N	2026-05-17 09:42:47.291705+00	2026-05-29 18:29:31.386716+00	kg	kg
+1b09e268-c9dc-4b21-9d83-837a414f6881	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	9a72ebd2-2801-4602-9222-1ad00682e1e3	1022	FLET	t	\N	\N	2026-05-17 09:42:47.293479+00	2026-05-29 18:29:31.386716+00	kg	kg
+be34ba0c-bdb9-4fa5-a321-d40eab8b4674	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	601	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.606649+00	2026-05-29 18:29:31.386716+00	kg	kg
+24ab2337-1850-45e4-87e9-eda84a26999f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	602	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.607571+00	2026-05-29 18:29:31.386716+00	kg	kg
+9b208891-9a14-4387-9c09-6dc0a2b8a731	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	603	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.608446+00	2026-05-29 18:29:31.386716+00	kg	kg
+866b232b-d8d4-4831-9695-8a71bfc4b8a3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	604	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.609424+00	2026-05-29 18:29:31.386716+00	kg	kg
+1419f445-7764-4446-9c69-bd41a3805ee0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	605	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.610399+00	2026-05-29 18:29:31.386716+00	kg	kg
+a372d3d6-4904-4042-94ab-ab571ccd3cf1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	606	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.611261+00	2026-05-29 18:29:31.386716+00	kg	kg
+622c3dc6-91d0-465e-984e-6ff93e935422	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	607	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.612226+00	2026-05-29 18:29:31.386716+00	kg	kg
+1e24fd06-e931-4b36-b504-c514918f7e50	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	608	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.613368+00	2026-05-29 18:29:31.386716+00	kg	kg
+95876a2a-a32d-4d8c-bf8c-2e97ae9f77d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1cb5f738-49bc-48ac-903b-87152a32feb4	609	RASCASSE D'EUROPE	t	\N	\N	2026-05-17 09:42:48.614399+00	2026-05-29 18:29:31.386716+00	kg	kg
+7d0c1639-3aef-4061-ba1e-54827995f903	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1213	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.578687+00	2026-05-29 18:29:31.386716+00	kg	kg
+1b7cf093-89f8-46b8-b59c-851409829116	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1214	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.580327+00	2026-05-29 18:29:31.386716+00	kg	kg
+070743f5-a1ad-4e53-81ca-45d9cb83fd9d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1215	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.581806+00	2026-05-29 18:29:31.386716+00	kg	kg
+d6ef61e8-6a74-426e-9ec8-e218fa1c10a5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1216	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.583351+00	2026-05-29 18:29:31.386716+00	kg	kg
+ebc2ce4e-537a-4f6e-bab5-7ad8ffd0778f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1217	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.58518+00	2026-05-29 18:29:31.386716+00	kg	kg
+a94f5cde-dc42-4541-b098-04e52824e3ea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1218	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.586712+00	2026-05-29 18:29:31.386716+00	kg	kg
+b3c83a26-6e58-4af0-a96f-34153f5b8f17	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1219	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.588308+00	2026-05-29 18:29:31.386716+00	kg	kg
+cf35f385-e84c-4158-8864-9d9bbce0be73	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1222	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.594864+00	2026-05-29 18:29:31.386716+00	kg	kg
+ca961143-1cba-4013-ac0f-32a5a284a6f0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1223	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.596557+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f26c80c-9ed2-4d5a-9132-6874c72253dc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1255	Rouget - Barbet Peti	t	\N	\N	2026-05-17 09:42:47.632152+00	2026-05-29 18:29:31.386716+00	kg	kg
+79121177-7f12-4039-a262-d2715ad5be73	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1256	Rouget - Barbet Peti	t	\N	\N	2026-05-17 09:42:47.63395+00	2026-05-29 18:29:31.386716+00	kg	kg
+20b97746-3ceb-4b8d-b1bf-24965c617d21	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1257	Rouget - Barbet Peti	t	\N	\N	2026-05-17 09:42:47.635654+00	2026-05-29 18:29:31.386716+00	kg	kg
+d77e1575-9fab-43c1-9d88-ce90b7389229	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1258	Rouget - Barbet Peti	t	\N	\N	2026-05-17 09:42:47.637229+00	2026-05-29 18:29:31.386716+00	kg	kg
+fbf7a380-1ff3-4ae0-b474-96a26b4dd82e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1271	Rouget barbet blanc	t	\N	\N	2026-05-17 09:42:47.662387+00	2026-05-29 18:29:31.386716+00	kg	kg
+78773f01-1b8e-4594-a96f-b9191b5de349	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1272	Rouget barbet blanc	t	\N	\N	2026-05-17 09:42:47.664048+00	2026-05-29 18:29:31.386716+00	kg	kg
+336d8190-815f-4c60-95cb-e8183f7d9dbc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1293	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.701307+00	2026-05-29 18:29:31.386716+00	kg	kg
+93246bd1-4c42-4fe2-b64e-29aaad8229bf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1294	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.702832+00	2026-05-29 18:29:31.386716+00	kg	kg
+e61dae7d-569e-44c8-891c-4def081a684e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1295	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.704571+00	2026-05-29 18:29:31.386716+00	kg	kg
+a7e04a57-2bb6-4c6b-b788-2c6276a72ac5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1296	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.706167+00	2026-05-29 18:29:31.386716+00	kg	kg
+3f30b559-c612-4a1a-b381-834b1c587074	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1297	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.707763+00	2026-05-29 18:29:31.386716+00	kg	kg
+44f9038b-3c6b-4e34-9d1d-d17b757ef40a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1298	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.7094+00	2026-05-29 18:29:31.386716+00	kg	kg
+7265ce1e-8d46-499e-a8bd-401331124cb0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1299	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.710901+00	2026-05-29 18:29:31.386716+00	kg	kg
+69fbd597-4ed1-4dab-8848-049e7914ed2c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1303	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.719571+00	2026-05-29 18:29:31.386716+00	kg	kg
+d3217ff3-aa16-4ce0-aac7-37d695639f47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1304	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.721028+00	2026-05-29 18:29:31.386716+00	kg	kg
+72c1f337-d454-4cad-8cce-36093bb26910	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1305	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.722687+00	2026-05-29 18:29:31.386716+00	kg	kg
+95f8542b-9d97-47d5-b150-bce52ba41a87	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1306	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.724239+00	2026-05-29 18:29:31.386716+00	kg	kg
+28e5c785-4846-4247-bc46-967574f54872	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1307	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.726047+00	2026-05-29 18:29:31.386716+00	kg	kg
+d6e16897-c02a-47d0-ac42-b4cdacfbbcdb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1308	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.727742+00	2026-05-29 18:29:31.386716+00	kg	kg
+a021f716-c27b-468b-b01a-79819003f5f9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1309	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.72968+00	2026-05-29 18:29:31.386716+00	kg	kg
+40d7ec70-d1d7-4009-9433-1c79bf48c39f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1310	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.731547+00	2026-05-29 18:29:31.386716+00	kg	kg
+79846df4-efc3-438d-ba11-0dd6341fb405	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1313	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.736819+00	2026-05-29 18:29:31.386716+00	kg	kg
+16ce2363-b1bc-4fbd-9dec-35f37f673a12	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1314	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.738568+00	2026-05-29 18:29:31.386716+00	kg	kg
+dcfeb9dd-5a44-4a47-8683-9809d8e90a31	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1315	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.740156+00	2026-05-29 18:29:31.386716+00	kg	kg
+69e8ccd8-0dc3-49a3-84cc-d29f276d8697	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1316	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.741826+00	2026-05-29 18:29:31.386716+00	kg	kg
+da52dc9e-da34-4c9e-b23c-a557cfe48e59	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1328	ROUGET BARBET BLANC	t	\N	\N	2026-05-17 09:42:47.761808+00	2026-05-29 18:29:31.386716+00	kg	kg
+4d1ddd74-20a3-41cc-add6-a652cd6cdbdf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1330	ROUGET BARBET BLANC	t	\N	\N	2026-05-17 09:42:47.767574+00	2026-05-29 18:29:31.386716+00	kg	kg
+1904a180-331c-4183-841b-094cac9c2a4b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1331	ROUGET BARBET BLANC	t	\N	\N	2026-05-17 09:42:47.769179+00	2026-05-29 18:29:31.386716+00	kg	kg
+c3005d47-3e27-4d21-86d1-d09e093fcf91	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	1332	ROUGET BARBET BLANC	t	\N	\N	2026-05-17 09:42:47.771007+00	2026-05-29 18:29:31.386716+00	kg	kg
+be44f2a0-e971-4bae-80c8-19979293c424	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	631	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.619147+00	2026-05-29 18:29:31.386716+00	kg	kg
+e9ccf502-7f80-436d-ac65-8024409c42c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	632	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.620135+00	2026-05-29 18:29:31.386716+00	kg	kg
+40e11753-96c7-4ed7-8fae-d9c9302f639c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	633	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.621132+00	2026-05-29 18:29:31.386716+00	kg	kg
+ed1a71d0-3b2d-49c4-b235-0c89d1124d96	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	635	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.623349+00	2026-05-29 18:29:31.386716+00	kg	kg
+ebbc7505-0b55-4e19-8991-59f7a019c707	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	636	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.624232+00	2026-05-29 18:29:31.386716+00	kg	kg
+41b7f950-7ffa-439d-941f-7ce235960e43	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	637	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.625254+00	2026-05-29 18:29:31.386716+00	kg	kg
+4128c05f-a2ae-4165-87d4-62ea8f4262c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	638	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.626362+00	2026-05-29 18:29:31.386716+00	kg	kg
+ae7c0b3b-ab4a-4222-ae2c-410d080f99af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	639	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.627308+00	2026-05-29 18:29:31.386716+00	kg	kg
+1b1e8831-666c-4a19-937f-dd0358f94f23	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	640	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.629218+00	2026-05-29 18:29:31.386716+00	kg	kg
+20364b5e-5267-4c50-bf68-a54a389a16d6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	641	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.630346+00	2026-05-29 18:29:31.386716+00	kg	kg
+5362192d-4b92-44cc-8d31-010546387e51	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	642	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.631295+00	2026-05-29 18:29:31.386716+00	kg	kg
+e22ff5ee-5b09-4d53-b99d-6c124e66c8a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	644	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.633441+00	2026-05-29 18:29:31.386716+00	kg	kg
+b90c4ffc-bba6-4f5a-8c0d-77f76a997d75	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	645	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.634558+00	2026-05-29 18:29:31.386716+00	kg	kg
+64950a2f-034b-4f43-911c-613891e37a5a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	646	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.635542+00	2026-05-29 18:29:31.386716+00	kg	kg
+d9e5223f-3561-4eea-a501-72b4e639ab49	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	647	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.636632+00	2026-05-29 18:29:31.386716+00	kg	kg
+cc9418a6-6155-487b-8d54-079ed3d8a6f6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	648	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.637731+00	2026-05-29 18:29:31.386716+00	kg	kg
+61ca76f2-51dc-4a47-8db2-9f2382bccf8a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	937	ZZROUGET BARBE BLAN	t	\N	\N	2026-05-17 09:42:48.926044+00	2026-05-29 18:29:31.386716+00	kg	kg
+82b6d376-444e-47f3-a4cb-bda15167cca7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	938	ZZROUGET BARBE BLAN	t	\N	\N	2026-05-17 09:42:48.927118+00	2026-05-29 18:29:31.386716+00	kg	kg
+7aa7c2a3-d1b2-4507-99f0-ae1815ba532f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	939	ZZROUGET BARBE BLAN	t	\N	\N	2026-05-17 09:42:48.929183+00	2026-05-29 18:29:31.386716+00	kg	kg
+876fc9b5-14cb-438b-8e2f-3f5c548be06d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	940	ZZROUGET BARBE BLAN	t	\N	\N	2026-05-17 09:42:48.930635+00	2026-05-29 18:29:31.386716+00	kg	kg
+edb3d0da-992b-4a5c-a281-7f79181daae5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	85a09413-d01c-4021-86af-c2497f9d4d7a	941	ZZROUGET BARBE BLAN	t	\N	\N	2026-05-17 09:42:48.93173+00	2026-05-29 18:29:31.386716+00	kg	kg
+4354c99e-dcb2-47da-bdd0-0baaf4a2f7d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	1220	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.59146+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b1e8688-a937-4841-b775-3d6aeac93446	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	1221	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:47.59328+00	2026-05-29 18:29:31.386716+00	kg	kg
+71bc5b16-7649-4f25-82c0-81b2904e36e9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	1300	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.714579+00	2026-05-29 18:29:31.386716+00	kg	kg
+d8fd5ce0-3da5-4d6e-8b5e-a50199f06588	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	1301	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.716242+00	2026-05-29 18:29:31.386716+00	kg	kg
+471851e7-63a3-454c-a13b-2f16c04f828d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	1302	ZZROU BARBET	t	\N	\N	2026-05-17 09:42:47.717948+00	2026-05-29 18:29:31.386716+00	kg	kg
+53ff81f2-c34a-45ac-8879-b7df557c4063	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	1311	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.733262+00	2026-05-29 18:29:31.386716+00	kg	kg
+856dbc3d-910c-43a7-996d-7e6c40326fd6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	1312	ROUGET BARBE	t	\N	\N	2026-05-17 09:42:47.735088+00	2026-05-29 18:29:31.386716+00	kg	kg
+4dd7752e-fec9-4809-bebc-583ef0205971	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	1329	ROUGET BARBET BLANC	t	\N	\N	2026-05-17 09:42:47.763701+00	2026-05-29 18:29:31.386716+00	kg	kg
+0b6349de-b5a5-4622-a7bb-fb575ac28594	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	634	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.622194+00	2026-05-29 18:29:31.386716+00	kg	kg
+cd0d5f51-0442-4dfa-9b3b-55d06a1e9ca2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	643	ZZROUGET BARBET	t	\N	\N	2026-05-17 09:42:48.632267+00	2026-05-29 18:29:31.386716+00	kg	kg
+e2d19c31-ec45-4b35-ae1e-414169576b0e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	f36a5040-e40f-4aec-820e-351e4913ca35	936	ZZROUGET BARBE BLAN	t	\N	\N	2026-05-17 09:42:48.924905+00	2026-05-29 18:29:31.386716+00	kg	kg
+203aa25e-99c5-4c4f-8170-d8224572560d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	658	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.648764+00	2026-05-29 18:29:31.386716+00	kg	kg
+8792cd8b-022f-4b43-a7cd-30ab11e5f18b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	660	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.651659+00	2026-05-29 18:29:31.386716+00	kg	kg
+415ddc4f-e9eb-4622-bee4-c6922c0d3ca2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	661	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.652826+00	2026-05-29 18:29:31.386716+00	kg	kg
+5ed11f4d-b95f-4091-b7d8-eb7f0c5e9460	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	662	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.653919+00	2026-05-29 18:29:31.386716+00	kg	kg
+3d04bc29-c0e0-4a0e-9498-e70a9f868809	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	663	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.654751+00	2026-05-29 18:29:31.386716+00	kg	kg
+dcc38e89-ee6c-4b50-9eda-9e1c455dfb5c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	664	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.655742+00	2026-05-29 18:29:31.386716+00	kg	kg
+f4f65cc6-734e-475b-9348-6902275e4aa1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	665	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.656787+00	2026-05-29 18:29:31.386716+00	kg	kg
+baed6361-acc5-46e6-a04d-663c9e7ac3b8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	667	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.65899+00	2026-05-29 18:29:31.386716+00	kg	kg
+38850c8e-650b-4b9d-af59-1fa95b1a48bb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	754c1a1d-9c70-47fd-970d-45ac57d457ec	668	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.659948+00	2026-05-29 18:29:31.386716+00	kg	kg
+9e84f219-9fca-48fd-97cd-9f07e897da5e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1159ae83-276d-4698-a815-cfa794990390	659	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.64977+00	2026-05-29 18:29:31.386716+00	kg	kg
+9eea26c4-06d4-48fd-9913-1399b6bf5608	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	1159ae83-276d-4698-a815-cfa794990390	666	SAINT PIERRE	t	\N	\N	2026-05-17 09:42:48.657918+00	2026-05-29 18:29:31.386716+00	kg	kg
+914b5470-134b-4047-86e0-3c223402666c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1192	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.540552+00	2026-05-29 18:29:31.386716+00	kg	kg
+e9c8d7ba-29d9-4088-af7b-e2b3a4c9739e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1193	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.542581+00	2026-05-29 18:29:31.386716+00	kg	kg
+e479c2e6-cc75-4639-b347-e3bc93c75136	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1194	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.544183+00	2026-05-29 18:29:31.386716+00	kg	kg
+f9ac9cae-f5d6-4142-80ef-35266d276ad7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1195	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.545874+00	2026-05-29 18:29:31.386716+00	kg	kg
+36cbc168-ec16-40fd-b66c-13223ff0d3d6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1196	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.547374+00	2026-05-29 18:29:31.386716+00	kg	kg
+8f546b3e-97d8-4017-830d-f5db0fe37303	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1197	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.548879+00	2026-05-29 18:29:31.386716+00	kg	kg
+9303c740-61c6-463f-87da-fde3dc7f31e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1198	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.55065+00	2026-05-29 18:29:31.386716+00	kg	kg
+358fd8f9-d05f-4722-887e-c72749c7a9b5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1199	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.552129+00	2026-05-29 18:29:31.386716+00	kg	kg
+fd29bd8a-4bcd-42df-8f6d-ca7fd7ca7eb2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1200	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.556842+00	2026-05-29 18:29:31.386716+00	kg	kg
+884f81ea-9ea8-4941-9490-8d79bbc09606	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1201	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.558287+00	2026-05-29 18:29:31.386716+00	kg	kg
+c93969f2-ebcd-48be-b930-f49b749b35db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1202	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.559911+00	2026-05-29 18:29:31.386716+00	kg	kg
+28987eaf-76df-46a6-8417-c465669c3898	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1203	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.561466+00	2026-05-29 18:29:31.386716+00	kg	kg
+09e78d76-6aec-41d1-aaaa-a98b1756f1bc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1204	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.563152+00	2026-05-29 18:29:31.386716+00	kg	kg
+bffea534-4872-43cf-b571-27fd0c21b867	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1205	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.564904+00	2026-05-29 18:29:31.386716+00	kg	kg
+f7b5fa2b-aaf9-4743-8d82-96606cfb8271	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1206	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.566665+00	2026-05-29 18:29:31.386716+00	kg	kg
+76f9e802-4255-48eb-88e1-92f6c288330a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1207	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.568243+00	2026-05-29 18:29:31.386716+00	kg	kg
+ee4d0854-31fa-44f3-aced-78bfb2cfa6e1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1208	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.56983+00	2026-05-29 18:29:31.386716+00	kg	kg
+fcc6c630-d4a9-447f-a60f-0f9d0dd77458	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1209	SARDINE-MAREE PARACOU	t	\N	\N	2026-05-17 09:42:47.571725+00	2026-05-29 18:29:31.386716+00	kg	kg
+8da21e74-fb54-4ee4-85aa-557a0279870b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1514	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.98165+00	2026-05-29 18:29:31.386716+00	kg	kg
+2eb085f9-12a4-4cff-880f-aabccf468433	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1515	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.98342+00	2026-05-29 18:29:31.386716+00	kg	kg
+bb96fef8-158e-497f-bbd6-5d1ade66c2e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1516	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.98487+00	2026-05-29 18:29:31.386716+00	kg	kg
+6284dd16-a15b-41c0-bcb4-ec9acfdebc32	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1517	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.986678+00	2026-05-29 18:29:31.386716+00	kg	kg
+742d87b2-6b7b-4c2b-a299-cd1c2b969c9a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1518	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.988307+00	2026-05-29 18:29:31.386716+00	kg	kg
+e9f66879-637a-4d58-9b43-e44cf3ab623a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1519	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.98988+00	2026-05-29 18:29:31.386716+00	kg	kg
+a158419c-6404-4844-869f-3940fcebe218	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1520	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.993245+00	2026-05-29 18:29:31.386716+00	kg	kg
+bd4b9bcc-b168-48ca-9da8-7f1a627223bb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1521	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.994879+00	2026-05-29 18:29:31.386716+00	kg	kg
+59120ed7-99be-41dc-859d-9a8c0901bcea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1522	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.996653+00	2026-05-29 18:29:31.386716+00	kg	kg
+999435a2-a042-4e42-a682-79600f7df6c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	1523	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:47.99826+00	2026-05-29 18:29:31.386716+00	kg	kg
+94b9f158-9360-4dfe-8e4b-e706e0811f9c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	681	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.675828+00	2026-05-29 18:29:31.386716+00	kg	kg
+afaf322e-ed09-4014-97a6-2bce6274dde7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	682	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.676881+00	2026-05-29 18:29:31.386716+00	kg	kg
+8ac983a0-c0a8-43e4-9301-d5427b399ad9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	683	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.677838+00	2026-05-29 18:29:31.386716+00	kg	kg
+4fab11c4-a03a-4574-8eac-e0e3717895d4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	684	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.678761+00	2026-05-29 18:29:31.386716+00	kg	kg
+9fbee4df-98c0-4d80-a673-667d46180b33	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	685	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.679852+00	2026-05-29 18:29:31.386716+00	kg	kg
+8fbc3ec1-74ae-4a0c-96dc-d2a1e1a1d2da	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	686	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.680873+00	2026-05-29 18:29:31.386716+00	kg	kg
+77754345-6244-4dc4-a048-8d111855903a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	687	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.681997+00	2026-05-29 18:29:31.386716+00	kg	kg
+980f3a41-a4bf-46bc-bf78-457b99c318e6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	688	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.68309+00	2026-05-29 18:29:31.386716+00	kg	kg
+db2ec3ac-179a-4a73-b2df-8fd9b924951b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	689	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.684068+00	2026-05-29 18:29:31.386716+00	kg	kg
+32a759a2-5cb0-4f5f-81de-b56e025ede75	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	690	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.686283+00	2026-05-29 18:29:31.386716+00	kg	kg
+18cd6933-db19-41da-b025-6ce32750f67e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	691	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.687308+00	2026-05-29 18:29:31.386716+00	kg	kg
+93c5908f-ebf9-4715-a2d3-9a96a0ccde38	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	692	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.688272+00	2026-05-29 18:29:31.386716+00	kg	kg
+4d80aeb9-132f-407d-8dba-231754898a7b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	693	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.68938+00	2026-05-29 18:29:31.386716+00	kg	kg
+77b8642e-2cbe-45ec-a8b9-4d124b1d770c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	694	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.690498+00	2026-05-29 18:29:31.386716+00	kg	kg
+915e9065-ce2a-416a-9d1c-d66aaf7a71d9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	695	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.691527+00	2026-05-29 18:29:31.386716+00	kg	kg
+15d30384-129b-4e9b-a917-eefec2512d12	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	696	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.692609+00	2026-05-29 18:29:31.386716+00	kg	kg
+3c0b0743-7e9a-46c8-8d46-41b789de4a5f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	697	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.693699+00	2026-05-29 18:29:31.386716+00	kg	kg
+2b612027-adb2-4a6f-bdcb-443416505b03	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	698	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.694632+00	2026-05-29 18:29:31.386716+00	kg	kg
+d1b5bac4-738e-4893-8a94-8f4395ec9e96	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	699	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.695534+00	2026-05-29 18:29:31.386716+00	kg	kg
+ef785f18-469a-47a7-a577-6fc568f7f493	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	700	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.697763+00	2026-05-29 18:29:31.386716+00	kg	kg
+0690b789-fb84-4046-9101-e12a2a6c2a59	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	701	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.698829+00	2026-05-29 18:29:31.386716+00	kg	kg
+94c7481e-1831-4262-96ff-b159a21279c6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	702	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.699829+00	2026-05-29 18:29:31.386716+00	kg	kg
+12607d2e-eabc-41bb-b68a-09ef91efae40	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	703	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.700776+00	2026-05-29 18:29:31.386716+00	kg	kg
+2d50c159-bcd8-4230-8479-d5574fe1465e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	704	SARDINE-MAREE	t	\N	\N	2026-05-17 09:42:48.701837+00	2026-05-29 18:29:31.386716+00	kg	kg
+a67d7379-5af8-4a6d-be38-89adf81d8e93	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	942	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.932812+00	2026-05-29 18:29:31.386716+00	kg	kg
+253fb730-9071-4a9b-94c9-5842a3bd2abe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	943	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.933737+00	2026-05-29 18:29:31.386716+00	kg	kg
+ac1999bb-819f-4b27-af22-0be643544a2c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	944	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.934795+00	2026-05-29 18:29:31.386716+00	kg	kg
+e5e0edf9-cf7e-4b8f-aeda-1758d7dfa2a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	945	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.935823+00	2026-05-29 18:29:31.386716+00	kg	kg
+1d297a8f-47a6-4271-8caa-0609ddda3e47	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	946	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.936742+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f55461b-e0fd-42c7-8e08-7de828b1ad28	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	947	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.937692+00	2026-05-29 18:29:31.386716+00	kg	kg
+0ee75c37-3acc-44db-be80-1c2f1234e337	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	948	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.93851+00	2026-05-29 18:29:31.386716+00	kg	kg
+775d2dd7-e2fa-47b7-aa43-0134ba048927	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	949	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.939553+00	2026-05-29 18:29:31.386716+00	kg	kg
+884e15fd-97d3-45a0-96da-bbd5a47aae93	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	950	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.940743+00	2026-05-29 18:29:31.386716+00	kg	kg
+fe2a3067-decd-481a-9673-e415d2f049f9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	951	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.941851+00	2026-05-29 18:29:31.386716+00	kg	kg
+b2922c99-0ec7-48fe-ac20-bccbe5b05cf9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	952	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.942818+00	2026-05-29 18:29:31.386716+00	kg	kg
+45e5784b-00f7-4f16-a1cf-c1ab9b935318	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	953	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.94373+00	2026-05-29 18:29:31.386716+00	kg	kg
+c95828c8-ea67-4fd7-9abc-5aae17748e34	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	954	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.944751+00	2026-05-29 18:29:31.386716+00	kg	kg
+944b75d7-fa52-47d6-9de8-b7ac9d212bae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	955	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.945835+00	2026-05-29 18:29:31.386716+00	kg	kg
+a0b3b59d-f831-4668-876b-67b5eb091e7b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	0242067f-5fa8-4cc4-9440-3677c968b3bb	956	SARDINE USINE	t	\N	\N	2026-05-17 09:42:48.94676+00	2026-05-29 18:29:31.386716+00	kg	kg
+e6a50e90-586a-4cbd-88fb-e478f9e3604a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1150	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.465122+00	2026-05-29 18:29:31.386716+00	kg	kg
+f0d73307-a679-4714-9006-24bfcb1ac154	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1151	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.466809+00	2026-05-29 18:29:31.386716+00	kg	kg
+b277ba41-d5b0-486a-801b-a487ef211889	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1152	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.468658+00	2026-05-29 18:29:31.386716+00	kg	kg
+7ba129af-af04-4378-bf06-56cfc069a81f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1153	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.470347+00	2026-05-29 18:29:31.386716+00	kg	kg
+7622984f-0a56-4d1d-911f-00e26c3cd5d0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1154	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.47209+00	2026-05-29 18:29:31.386716+00	kg	kg
+ebd1b4e1-f479-480d-963f-b8f30c79a4ee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1155	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.473843+00	2026-05-29 18:29:31.386716+00	kg	kg
+697166d3-bef5-4761-a7e2-eea7aab9828d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1156	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.475502+00	2026-05-29 18:29:31.386716+00	kg	kg
+3c7e1c27-ff96-4efe-a9e0-e4bba61fc469	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1157	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.47711+00	2026-05-29 18:29:31.386716+00	kg	kg
+53d5f647-5903-4a8d-b549-8325d18112ff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1158	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.47973+00	2026-05-29 18:29:31.386716+00	kg	kg
+89d13ae8-451b-4e21-bed8-e64b6d785583	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1171	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.504853+00	2026-05-29 18:29:31.386716+00	kg	kg
+ba6024be-b645-4cc2-84c4-ce7d7b2d9bf4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1172	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.506283+00	2026-05-29 18:29:31.386716+00	kg	kg
+61d1895c-073c-4d8e-9fec-fe88278b720c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1173	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.507828+00	2026-05-29 18:29:31.386716+00	kg	kg
+9681cf85-d2f0-4ad6-b7f6-2099f50b01e3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1174	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.509236+00	2026-05-29 18:29:31.386716+00	kg	kg
+d558ef16-1728-45a5-b8bb-afb696985656	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1175	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.510795+00	2026-05-29 18:29:31.386716+00	kg	kg
+488fc78f-593c-4c94-80e6-081042990450	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1176	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.51223+00	2026-05-29 18:29:31.386716+00	kg	kg
+d7463fcc-6f49-4102-ac45-9e8926945331	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1177	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.51378+00	2026-05-29 18:29:31.386716+00	kg	kg
+66f63905-c53c-49fb-a070-8af0811ca78e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1178	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.515438+00	2026-05-29 18:29:31.386716+00	kg	kg
+89f86d1d-6b04-4ccc-ad9c-c066a9e9aefa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1179	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.517091+00	2026-05-29 18:29:31.386716+00	kg	kg
+57f1c0c4-69af-4433-baf8-d8ef9d0a9c8f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1460	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.902826+00	2026-05-29 18:29:31.386716+00	kg	kg
+6f78ec30-8fb8-44ae-8440-ebbfbae3dacf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1461	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.904227+00	2026-05-29 18:29:31.386716+00	kg	kg
+d8873a26-f010-4255-9fee-5609e7070a38	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1462	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.905742+00	2026-05-29 18:29:31.386716+00	kg	kg
+77762a8c-08de-49d8-82cb-8f81431d46dc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1463	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.907456+00	2026-05-29 18:29:31.386716+00	kg	kg
+7a233cd9-46ad-4f8d-8692-85267285cd03	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1464	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.908947+00	2026-05-29 18:29:31.386716+00	kg	kg
+0e4d0b09-67af-44f7-b779-6e5b3696a7a0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1465	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.910786+00	2026-05-29 18:29:31.386716+00	kg	kg
+278a8e33-51b6-4ae6-8e0f-ba42c4b13f7c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1466	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.912633+00	2026-05-29 18:29:31.386716+00	kg	kg
+bf9adb8e-2e8b-40c0-8ecb-679f4880296a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1467	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.914224+00	2026-05-29 18:29:31.386716+00	kg	kg
+f9e35554-2413-4b3e-af05-0abd8aeae262	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1468	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.9159+00	2026-05-29 18:29:31.386716+00	kg	kg
+41255a23-ad57-4c30-96a1-c100a7a5f8ec	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1480	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.936329+00	2026-05-29 18:29:31.386716+00	kg	kg
+d28792f1-e880-4c1f-9eb6-c3cb3dff9e44	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1481	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.937876+00	2026-05-29 18:29:31.386716+00	kg	kg
+35cf34c2-b383-42a9-b48f-5693c0dee611	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1482	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.939729+00	2026-05-29 18:29:31.386716+00	kg	kg
+2e597123-2947-41f6-af38-7840492d2813	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1483	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.94132+00	2026-05-29 18:29:31.386716+00	kg	kg
+46c5a5e1-0c1b-4012-bf7d-31287c731335	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1484	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.942901+00	2026-05-29 18:29:31.386716+00	kg	kg
+25c77d4d-adbd-41f0-b61a-4dd1cfb9a5db	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1485	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.94444+00	2026-05-29 18:29:31.386716+00	kg	kg
+de8af7c7-be24-417e-8371-2a67fc6801a0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1486	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.946137+00	2026-05-29 18:29:31.386716+00	kg	kg
+f11f21fa-0372-41fc-b53e-858bb2b022f0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1487	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.947739+00	2026-05-29 18:29:31.386716+00	kg	kg
+e8634298-0211-470c-87e3-5dad6c60ae2d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	1488	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.949427+00	2026-05-29 18:29:31.386716+00	kg	kg
+62b6cb5f-5b45-4c93-a0f3-26aa22a67877	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	726	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.723325+00	2026-05-29 18:29:31.386716+00	kg	kg
+576cde18-8589-46e3-b6a0-dfd755c6deaa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	727	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.724254+00	2026-05-29 18:29:31.386716+00	kg	kg
+439d1aeb-e730-4837-8814-a5af818f754a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	739	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.737552+00	2026-05-29 18:29:31.386716+00	kg	kg
+9be938bc-75f8-4a91-8261-a8805aedcb83	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	740	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.739388+00	2026-05-29 18:29:31.386716+00	kg	kg
+9110e96e-9f65-43b1-9658-3c415937b5fc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	741	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.740511+00	2026-05-29 18:29:31.386716+00	kg	kg
+541cb528-82ed-48d5-85a4-6ddf218e9d06	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	742	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.741575+00	2026-05-29 18:29:31.386716+00	kg	kg
+ec33bbcc-2cc7-4bad-a319-fa19c1bc46f0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	743	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.742538+00	2026-05-29 18:29:31.386716+00	kg	kg
+6cd8fdb0-6e11-4332-ae6a-bec310f62742	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	744	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.743406+00	2026-05-29 18:29:31.386716+00	kg	kg
+beb69991-8188-4838-9468-5d38867d9b90	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	745	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.744435+00	2026-05-29 18:29:31.386716+00	kg	kg
+4a63ae2f-c01a-4262-ac2b-aac8cff0b983	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	964	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.954722+00	2026-05-29 18:29:31.386716+00	kg	kg
+66f9dd12-6f44-4763-8410-3eae048729c9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	965	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.95567+00	2026-05-29 18:29:31.386716+00	kg	kg
+08fe7c3a-576d-4179-acc8-702fdaa333f4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	966	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.956793+00	2026-05-29 18:29:31.386716+00	kg	kg
+1cac6ed4-c6b3-46ce-9007-2c7926c337a0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	967	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.957859+00	2026-05-29 18:29:31.386716+00	kg	kg
+9019fa50-d172-4d16-8e58-3e925ce2ad5d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	968	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.958795+00	2026-05-29 18:29:31.386716+00	kg	kg
+9b9b7a33-905c-493d-bc06-6a494db4e00b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	969	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.959738+00	2026-05-29 18:29:31.386716+00	kg	kg
+f53b5f7d-cbe7-445d-a3ba-beeb8bad8a5c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	976	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.967511+00	2026-05-29 18:29:31.386716+00	kg	kg
+b25667f5-6e63-443d-abcc-6e4ac6cfe8d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	977	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.968483+00	2026-05-29 18:29:31.386716+00	kg	kg
+acb8204b-e177-4dc1-b2dd-a9e41519d218	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	978	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.969589+00	2026-05-29 18:29:31.386716+00	kg	kg
+2839a1b5-17ef-49ac-9d5b-402498360a4e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	979	SOLE BLANCHE	t	\N	\N	2026-05-17 09:42:48.970713+00	2026-05-29 18:29:31.386716+00	kg	kg
+d2e98f74-2aca-4d84-b215-d8ab6ecb885c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	980	SOLE BLANCHE	t	\N	\N	2026-05-17 09:42:48.9719+00	2026-05-29 18:29:31.386716+00	kg	kg
+9e7b21f0-6181-4d04-a755-c4da29372c8a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	981	SOLE BLANCHE	t	\N	\N	2026-05-17 09:42:48.973111+00	2026-05-29 18:29:31.386716+00	kg	kg
+6975b702-b766-4aa9-931a-512d4e0f103b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	b6299ea8-be6c-400b-bf98-bc145ab5541c	982	SOLE BLANCHE	t	\N	\N	2026-05-17 09:42:48.974315+00	2026-05-29 18:29:31.386716+00	kg	kg
+9ecd7569-7d93-46d8-bff3-2ccf16c6d092	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1165	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.493245+00	2026-05-29 18:29:31.386716+00	kg	kg
+e04c96b2-b0d3-4c31-a40f-604d5962ecbd	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1166	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.494926+00	2026-05-29 18:29:31.386716+00	kg	kg
+9ad8ac5a-1f89-4d9a-ae27-fb76083f84a2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1167	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.49661+00	2026-05-29 18:29:31.386716+00	kg	kg
+cb4dd684-84eb-40c8-a5a9-bdbc6694b2e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1168	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.498183+00	2026-05-29 18:29:31.386716+00	kg	kg
+a445c76f-662b-4570-b4cd-3f588d47f0dc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1169	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.499878+00	2026-05-29 18:29:31.386716+00	kg	kg
+c8c5d1c3-ec43-4e3d-8a4f-e1b1cb6eb46e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1170	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.503296+00	2026-05-29 18:29:31.386716+00	kg	kg
+cfb5a254-916b-4a44-8e76-724261a30bcb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1186	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.529377+00	2026-05-29 18:29:31.386716+00	kg	kg
+160e02ce-af70-4d9d-909b-c23e4491b929	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1187	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.530898+00	2026-05-29 18:29:31.386716+00	kg	kg
+2c69bcec-9999-411c-8974-d777f8ebb5d2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1188	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.532442+00	2026-05-29 18:29:31.386716+00	kg	kg
+974e66bd-29ee-4bc9-8119-50ed20aa6c54	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1189	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.533959+00	2026-05-29 18:29:31.386716+00	kg	kg
+c1b296a9-3c57-44c2-918e-e1699f474184	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1190	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.537252+00	2026-05-29 18:29:31.386716+00	kg	kg
+e7bd54ae-d4bb-4a0d-b6c9-ecca67dd3aed	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1191	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.538888+00	2026-05-29 18:29:31.386716+00	kg	kg
+02b6141a-5b68-48e1-a5ed-00dc72ea0e91	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1475	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.927932+00	2026-05-29 18:29:31.386716+00	kg	kg
+2f56e89d-e20f-41aa-ba68-50124772c2d1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1476	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.929673+00	2026-05-29 18:29:31.386716+00	kg	kg
+0c3748fd-3a03-4bb0-a442-d8a830d65100	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1477	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.931376+00	2026-05-29 18:29:31.386716+00	kg	kg
+a9274ce4-d4a7-4705-a026-52051fe84c6b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1478	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.932971+00	2026-05-29 18:29:31.386716+00	kg	kg
+4af939f5-8556-42e4-afb4-f4a29c79318a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1479	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.934611+00	2026-05-29 18:29:31.386716+00	kg	kg
+decddafb-8f75-42af-a652-50c0fe5ac26e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1495	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.960662+00	2026-05-29 18:29:31.386716+00	kg	kg
+4c246e99-021c-4573-a395-4b9d2de3314a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1496	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.962021+00	2026-05-29 18:29:31.386716+00	kg	kg
+87726d92-2dcd-4ccd-9571-f7b6e2e57cd0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1497	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.963541+00	2026-05-29 18:29:31.386716+00	kg	kg
+7db864f4-93a8-473a-ac38-95c1e60f9b5c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1498	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.964854+00	2026-05-29 18:29:31.386716+00	kg	kg
+459f979a-1413-4aea-84e1-dbe1edea61f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	1499	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.966508+00	2026-05-29 18:29:31.386716+00	kg	kg
+59ff9627-4131-4c94-82a3-0350227bd9c9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	733	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.731184+00	2026-05-29 18:29:31.386716+00	kg	kg
+7d451b55-7895-45a1-ba57-05fe6e069e0f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	734	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.732216+00	2026-05-29 18:29:31.386716+00	kg	kg
+2c1cfbe6-4e2a-494a-a042-ef23a8437af5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	735	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.733392+00	2026-05-29 18:29:31.386716+00	kg	kg
+f17275f2-f9e2-4094-aee1-da83bcd665f3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	736	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.734439+00	2026-05-29 18:29:31.386716+00	kg	kg
+9f861d89-e779-47bc-9979-28a7d022a88e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	737	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.735398+00	2026-05-29 18:29:31.386716+00	kg	kg
+8331386e-9c93-49f4-a74e-cb1cfee4d46e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	959	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.949611+00	2026-05-29 18:29:31.386716+00	kg	kg
+7425ff02-1e30-43d4-b4a8-5e7b5003b9a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	960	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.950742+00	2026-05-29 18:29:31.386716+00	kg	kg
+ed2d0de1-74e1-444a-9605-4d4d1f5a9883	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	961	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.951734+00	2026-05-29 18:29:31.386716+00	kg	kg
+d1874a01-c6fc-42c3-a38f-f75ca7f2aa78	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	962	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.952696+00	2026-05-29 18:29:31.386716+00	kg	kg
+d81a2ba8-39f2-4c6b-a2d2-a7dedb885a6d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	963	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.953782+00	2026-05-29 18:29:31.386716+00	kg	kg
+13568c44-3f24-4af5-aea3-54820f0f38a3	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	985	SOLE BLANCHE	t	\N	\N	2026-05-17 09:42:48.977382+00	2026-05-29 18:29:31.386716+00	kg	kg
+e9442f28-218f-4cf3-82f3-b9b572a5c9f8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	a5c29017-f6d8-47d9-9ad7-5e0aaf547443	986	SOLE BLANCHE	t	\N	\N	2026-05-17 09:42:48.978522+00	2026-05-29 18:29:31.386716+00	kg	kg
+473c9512-67e8-489d-a955-93d581a1d101	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1159	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.481345+00	2026-05-29 18:29:31.386716+00	kg	kg
+bbc09dc5-07f9-4ba2-a37a-08a4be4e2662	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1160	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.484897+00	2026-05-29 18:29:31.386716+00	kg	kg
+70694989-44fc-4035-b7f6-8b6a7a837d08	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1161	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.48655+00	2026-05-29 18:29:31.386716+00	kg	kg
+96dc33ec-5f9e-447c-8688-1426147229e0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1162	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.488436+00	2026-05-29 18:29:31.386716+00	kg	kg
+8cfc77fa-a1dd-467e-b3dd-9c74d2407faa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1163	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.49006+00	2026-05-29 18:29:31.386716+00	kg	kg
+e8fc96b7-ef6d-4f4d-a12d-46b8ecb51a95	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1164	SOLE GOLFE ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.49164+00	2026-05-29 18:29:31.386716+00	kg	kg
+a21c7a13-3d3f-4451-894c-80d8f752a74b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1180	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.520298+00	2026-05-29 18:29:31.386716+00	kg	kg
+65263587-e39a-44e9-8474-44f23e733fe2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1181	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.521793+00	2026-05-29 18:29:31.386716+00	kg	kg
+b90f65d9-3da6-4518-8626-5c436ecf1d69	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1182	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.523231+00	2026-05-29 18:29:31.386716+00	kg	kg
+d86a4c93-4c54-4d05-acf4-385eaa30c17a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1183	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.524725+00	2026-05-29 18:29:31.386716+00	kg	kg
+d633fef4-a550-46b9-bcb1-459ea159edd2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1184	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.526249+00	2026-05-29 18:29:31.386716+00	kg	kg
+99fe2a49-6c47-4e79-8492-837be9ce67fe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1185	SOLE NORD ENTIERE CHALUT	t	\N	\N	2026-05-17 09:42:47.527775+00	2026-05-29 18:29:31.386716+00	kg	kg
+39025b44-b570-4386-a662-9a5b621ffe78	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1469	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.917712+00	2026-05-29 18:29:31.386716+00	kg	kg
+a065ba71-1f70-4482-9a2f-757e759fd3ae	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1470	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.919568+00	2026-05-29 18:29:31.386716+00	kg	kg
+2efc0bf2-ce6c-4c34-a25d-5e2dfc9b2b4f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1471	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.921135+00	2026-05-29 18:29:31.386716+00	kg	kg
+c1c2cd7f-9178-4fb3-9a67-1c06763b99c8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1472	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.92275+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b203a1a-ffc5-4900-b920-3a8f96b6e8d7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1473	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.924471+00	2026-05-29 18:29:31.386716+00	kg	kg
+63334594-0b36-4a26-b6ae-f8bd14830fd8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1474	SOLE PLEINE FILET	t	\N	\N	2026-05-17 09:42:47.92629+00	2026-05-29 18:29:31.386716+00	kg	kg
+3d4be94a-c878-4617-9355-4d0447bca4be	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1489	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.951058+00	2026-05-29 18:29:31.386716+00	kg	kg
+bc6f349f-04c0-4cbb-bcf0-7d9e52e07ed7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1490	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.952654+00	2026-05-29 18:29:31.386716+00	kg	kg
+21c489a1-1b1f-4a83-aa2f-f57629ceeeee	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1491	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.954266+00	2026-05-29 18:29:31.386716+00	kg	kg
+4197d86b-3d06-43bc-8038-2f81d5e20a10	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1492	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.955768+00	2026-05-29 18:29:31.386716+00	kg	kg
+322b8873-8702-4a1c-8119-b0dbb5e79e7e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1493	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.957528+00	2026-05-29 18:29:31.386716+00	kg	kg
+d9598df4-0e3c-4d13-8d6c-055101f79b63	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	1494	SOLE VIDEE FILET	t	\N	\N	2026-05-17 09:42:47.959041+00	2026-05-29 18:29:31.386716+00	kg	kg
+64da0ca2-6b9c-43ce-a3e7-dd0e500c4380	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	728	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.725377+00	2026-05-29 18:29:31.386716+00	kg	kg
+2b0d4c42-272c-4459-a6d7-7a46c6d5d528	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	729	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.72635+00	2026-05-29 18:29:31.386716+00	kg	kg
+57d3e1b3-34cc-42ea-b690-3d3bc19b551d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	730	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.727965+00	2026-05-29 18:29:31.386716+00	kg	kg
+625c0234-5ddd-4fd8-9a11-eb007548b905	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	731	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.728798+00	2026-05-29 18:29:31.386716+00	kg	kg
+04f102ab-b9d8-49df-967b-0b97d213c8a5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	732	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.729888+00	2026-05-29 18:29:31.386716+00	kg	kg
+d090c197-a7a0-450a-9460-c82741ae4429	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	738	SOLE GOLFE VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.736437+00	2026-05-29 18:29:31.386716+00	kg	kg
+3ca7c4ba-b264-4b25-a423-161dc71742c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	970	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.960805+00	2026-05-29 18:29:31.386716+00	kg	kg
+71c29475-f7a3-413c-acb5-1e1717ebc52e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	971	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.962125+00	2026-05-29 18:29:31.386716+00	kg	kg
+edc441f8-1069-4efe-999d-ddea079e1358	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	972	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.963309+00	2026-05-29 18:29:31.386716+00	kg	kg
+b541390c-940e-4909-96dd-d27fe8a3b09d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	973	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.96441+00	2026-05-29 18:29:31.386716+00	kg	kg
+43bd6e3e-ec93-47d5-ba3f-e3c467ee6561	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	974	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.965549+00	2026-05-29 18:29:31.386716+00	kg	kg
+40f5a87a-ee72-4da6-9377-40b27e896896	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	975	SOLE NORD VIDEE CHALUT	t	\N	\N	2026-05-17 09:42:48.966551+00	2026-05-29 18:29:31.386716+00	kg	kg
+f8e1a990-a49b-4a3f-8b3a-7faf501153a1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	983	SOLE BLANCHE	t	\N	\N	2026-05-17 09:42:48.975435+00	2026-05-29 18:29:31.386716+00	kg	kg
+65cfce3d-e5db-47ac-8728-20a6508697e6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	29f86909-cd3c-4670-8da4-97e6aaddcf9f	984	SOLE BLANCHE	t	\N	\N	2026-05-17 09:42:48.976431+00	2026-05-29 18:29:31.386716+00	kg	kg
+508ecf0a-949d-46a0-aacd-cd4a91499b9e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	38687bf9-0158-4f33-9343-b7a1e2a653ec	1239	SOLE BLONDE GROSSE	t	\N	\N	2026-05-17 09:42:47.601415+00	2026-05-29 18:29:31.386716+00	kg	kg
+38d1383d-da25-4a48-ad40-fc5695892051	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	38687bf9-0158-4f33-9343-b7a1e2a653ec	1240	SOLE BLONDE GROSSE	t	\N	\N	2026-05-17 09:42:47.604892+00	2026-05-29 18:29:31.386716+00	kg	kg
+87116680-a159-40a3-b126-5de9a18f7f1b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	38687bf9-0158-4f33-9343-b7a1e2a653ec	750	SOLE BLONDE PETITE	t	\N	\N	2026-05-17 09:42:48.75048+00	2026-05-29 18:29:31.386716+00	kg	kg
+4493f905-3b3d-446f-8cad-6ea95cb6493c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	38687bf9-0158-4f33-9343-b7a1e2a653ec	751	SOLE BLONDE PETITE	t	\N	\N	2026-05-17 09:42:48.751279+00	2026-05-29 18:29:31.386716+00	kg	kg
+26416e91-f6b4-452f-b36f-67719769921b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	38687bf9-0158-4f33-9343-b7a1e2a653ec	752	SOLE BLONDE PETITE	t	\N	\N	2026-05-17 09:42:48.752275+00	2026-05-29 18:29:31.386716+00	kg	kg
+5bd8e8db-bfd6-4a0d-8988-378e8a725250	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	38687bf9-0158-4f33-9343-b7a1e2a653ec	753	SOLE BLONDE PETITE	t	\N	\N	2026-05-17 09:42:48.753271+00	2026-05-29 18:29:31.386716+00	kg	kg
+bb303e9a-7202-4f41-bcf5-f53c56470685	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	8be8de38-5872-44e6-8ce8-a855fa651f5e	746	SOLE PERDRIX	t	\N	\N	2026-05-17 09:42:48.745543+00	2026-05-29 18:29:31.386716+00	kg	kg
+13d42bc0-06d4-4e77-adcd-e9ad8ff390c0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	8be8de38-5872-44e6-8ce8-a855fa651f5e	747	SOLE PERDRIX	t	\N	\N	2026-05-17 09:42:48.746466+00	2026-05-29 18:29:31.386716+00	kg	kg
+f50e90ee-49d3-4c8d-8a49-812109aca5bf	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	8be8de38-5872-44e6-8ce8-a855fa651f5e	748	SOLE PERDRIX	t	\N	\N	2026-05-17 09:42:48.747348+00	2026-05-29 18:29:31.386716+00	kg	kg
+71ce7f1e-6d15-4b31-85ba-a7f3c6af643f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	8be8de38-5872-44e6-8ce8-a855fa651f5e	749	SOLE PERDRIX	t	\N	\N	2026-05-17 09:42:48.748298+00	2026-05-29 18:29:31.386716+00	kg	kg
+daf79060-8799-4688-b945-9533e8145bfa	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	777	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.75986+00	2026-05-29 18:29:31.386716+00	kg	kg
+1d200247-45ac-48cd-9f7c-ea6e604946c6	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	778	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.760794+00	2026-05-29 18:29:31.386716+00	kg	kg
+6b6d005b-cab7-4e49-8cf1-4ffc7029f35c	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	779	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.761881+00	2026-05-29 18:29:31.386716+00	kg	kg
+deade465-9c34-40d1-a870-d9f7df758abe	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	780	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.763766+00	2026-05-29 18:29:31.386716+00	kg	kg
+e446df32-012b-4ab5-82d1-280b8c916065	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	781	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.764636+00	2026-05-29 18:29:31.386716+00	kg	kg
+0e429c64-ccd5-4b8d-8eed-3c00600b82e4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	782	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.765754+00	2026-05-29 18:29:31.386716+00	kg	kg
+21b5a24d-5276-4afb-9696-c0309812e616	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	783	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.766701+00	2026-05-29 18:29:31.386716+00	kg	kg
+4a8afb33-7c93-44f0-80de-8b86413027e1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	784	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.767613+00	2026-05-29 18:29:31.386716+00	kg	kg
+4e03dca8-a84c-4708-8a03-16ce86b62710	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	785	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.768647+00	2026-05-29 18:29:31.386716+00	kg	kg
+dabb5953-6cce-4799-8fe8-39ef1a13c420	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	786	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.769901+00	2026-05-29 18:29:31.386716+00	kg	kg
+55c66fcf-9fda-4841-b7d4-e43777e7da75	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	787	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.77087+00	2026-05-29 18:29:31.386716+00	kg	kg
+fee564ae-698b-42bc-9e68-6d95e7aa3eff	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	788	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.771775+00	2026-05-29 18:29:31.386716+00	kg	kg
+358192f9-5e03-42e7-b64e-e8b1eff38690	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	789	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.77264+00	2026-05-29 18:29:31.386716+00	kg	kg
+94776ded-8033-4ab5-a2a0-1d72b60e95d0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	790	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.77468+00	2026-05-29 18:29:31.386716+00	kg	kg
+019beed0-4944-4509-8035-aa99b7792c17	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	791	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.775597+00	2026-05-29 18:29:31.386716+00	kg	kg
+5e53b3c2-24ea-4dfe-adc9-2a8adc6e5479	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	792	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.776608+00	2026-05-29 18:29:31.386716+00	kg	kg
+62bdf842-2eb9-4169-b371-e12114cdbe3b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	793	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.777766+00	2026-05-29 18:29:31.386716+00	kg	kg
+cdb36207-8a64-4316-acff-efd7f93910d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	794	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.778701+00	2026-05-29 18:29:31.386716+00	kg	kg
+b5b4f8cd-befb-4472-8f6f-bd08dfb0ac2d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	795	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.779617+00	2026-05-29 18:29:31.386716+00	kg	kg
+88762811-55d8-448d-ad4e-2a458fd68ed2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	796	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.780814+00	2026-05-29 18:29:31.386716+00	kg	kg
+0684317a-bf8d-4c15-9348-be6772591854	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	12779ad8-5a76-49ba-a0a4-8fa0fc4d594a	797	TACAUD COMMUN	t	\N	\N	2026-05-17 09:42:48.781908+00	2026-05-29 18:29:31.386716+00	kg	kg
+834d9a42-c266-490c-b1a7-299914318b12	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	fcd65a7e-4e57-42fe-b3fd-c08f2d545850	44011	LANGOUSTINE VIVANTE	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-30 19:35:07.440468+00	2026-05-30 19:35:07.440468+00	kg	kg
+c53d8b5f-77e9-436f-ad49-653f60e139a9	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	ce180a78-209b-4f30-8616-211b889e7486	34310	CHINCHARD A QUEUE JAUNE	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-05 18:26:26.968408+00	2026-06-05 18:26:26.968408+00	kg	kg
+ac44746e-cba1-4308-abee-4095e95aaf2f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	6ecc824c-d57d-40a8-9134-1a466fc77ddc	37050	MAQUEREAU COMMUN	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-05 18:26:27.001588+00	2026-06-05 18:26:27.001588+00	kg	kg
+7516a5f9-8add-4ed9-9e28-92adf0d7344a	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	86bb7bb5-b64b-4895-a782-af5563c65dc7	32160	TACAUD COMMUN	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-05 18:26:27.031492+00	2026-06-05 18:26:27.031492+00	kg	kg
+4951068a-7b36-4681-a231-962a9c57b4ad	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	4c092e26-16d0-463a-b01b-5a4703fbb9c7	57030	ENCORNET ROUGE	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-05 18:26:27.060559+00	2026-06-05 18:26:27.060559+00	kg	kg
+f1d2d64e-eeea-4cfe-a09c-c36fdf80a7a8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	42da462f-cae0-4600-b291-ccd177c2ce70	2cf25564-754e-4e68-aace-e2f278690d86	33091	BAR COMMUN LIGNE	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-05 18:26:27.088264+00	2026-06-05 18:26:27.088264+00	kg	kg
+b5f16958-fb6a-4b1a-a0dc-cbb5717190ce	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	d9445d28-b5c1-4175-8437-e370955b619e	799a9436-5d05-4951-a424-51c2a4094cdc	33095	BAR COMMUN FILET	t	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-06 14:11:27.658297+00	2026-06-06 14:11:29.632867+00	kg	kg
+\.
+
+
+--
+-- Data for Name: supplier_invoice_cost_adjustments; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.supplier_invoice_cost_adjustments (id, store_id, supplier_invoice_id, purchase_id, purchase_line_id, lot_id, article_id, old_unit_cost_ex_vat, new_unit_cost_ex_vat, quantity_reference, adjustment_amount_ex_vat, reason, created_by, created_at) FROM stdin;
+1a702145-1a37-4990-b0a4-3cbc444b9a82	dbc17f4c-8ef7-4247-b13f-603e4c58f622	bed74747-6c63-4da5-9c2b-c04670bd2ebb	c462d3f9-44d9-4776-88cb-afe863042043	e822547b-8e2a-408d-8b64-f7271063bc2f	5723d92e-0838-42eb-9869-b08c786a75e8	67eee58a-db9e-454b-ab08-e7f4a351d03c	12.5000	8.3333	9.000	-37.5003	Ajustement cout facture fournisseur / criee	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:42:48.200823+00
+\.
+
+
+--
+-- Data for Name: supplier_invoice_documents; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.supplier_invoice_documents (id, supplier_invoice_id, purchase_id, store_id, document_type, original_name, mime_type, storage_path, public_url, uploaded_by, created_at) FROM stdin;
+36dfd4d5-744f-42b2-9801-190f7fe110de	\N	e4a68085-357d-4c8d-a3b0-b67e836beb72	dbc17f4c-8ef7-4247-b13f-603e4c58f622	purchase_bl	551-00012803.PDF	application/pdf	/var/www/gestion-commerciale/backend/uploads/purchase-documents/c4fe298c85ac71206de5f041c1be2feb	/api/purchases/e4a68085-357d-4c8d-a3b0-b67e836beb72/document	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:17:00.402841+00
+710fd3a2-ec38-4b10-9121-790b761a28de	77e25613-4d62-4404-b252-14f67a9ee2e7	\N	dbc17f4c-8ef7-4247-b13f-603e4c58f622	invoice	551260000145.PDF	application/pdf	/var/www/gestion-commerciale/backend/uploads/supplier-invoices/7dba4f7d52726d37ae2a6babf1b8ed9b	/api/supplier-invoices/77e25613-4d62-4404-b252-14f67a9ee2e7/document	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:27:51.529029+00
+f9a291ff-3f8f-476b-b524-1266addd3793	\N	c462d3f9-44d9-4776-88cb-afe863042043	dbc17f4c-8ef7-4247-b13f-603e4c58f622	purchase_bl	511-00075465 (1).PDF	application/pdf	/var/www/gestion-commerciale/backend/uploads/purchase-documents/db2f007bb90b042ed7b5db3c8b9af7b1	/api/purchases/c462d3f9-44d9-4776-88cb-afe863042043/document	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:39:18.297929+00
+3eb293d3-7189-4c1c-b9dd-391e46b9f18e	bed74747-6c63-4da5-9c2b-c04670bd2ebb	\N	dbc17f4c-8ef7-4247-b13f-603e4c58f622	invoice	511260000046.PDF	application/pdf	/var/www/gestion-commerciale/backend/uploads/supplier-invoices/a036215d1acc9ded18a2cda0c67be27c	/api/supplier-invoices/bed74747-6c63-4da5-9c2b-c04670bd2ebb/document	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:42:39.207563+00
+55e815d3-c610-4628-b3fd-3fc35b5a716d	\N	6528afc6-5b4d-4efc-89d9-ee62ab025e76	dbc17f4c-8ef7-4247-b13f-603e4c58f622	purchase_bl	confirm111413 (1).PDF	application/pdf	/var/www/gestion-commerciale/backend/uploads/purchase-documents/bf8e66698ec87a115f0962fcbf4f85ee	/api/purchases/6528afc6-5b4d-4efc-89d9-ee62ab025e76/document	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:23:34.335304+00
+440d4e59-5570-4fa1-8ec1-d6fd88fa645f	4bb8d607-1227-4503-8e38-95523b317c29	\N	dbc17f4c-8ef7-4247-b13f-603e4c58f622	invoice	confirm111413 (1).PDF	application/pdf	/var/www/gestion-commerciale/backend/uploads/supplier-invoices/94fd1cda6c18d4cfb84d451e4abe1056	/api/supplier-invoices/4bb8d607-1227-4503-8e38-95523b317c29/document	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:35:56.181414+00
+\.
+
+
+--
+-- Data for Name: supplier_invoice_exports; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.supplier_invoice_exports (id, supplier_invoice_id, store_id, export_type, status, payload, external_id, error, created_by, created_at, sent_at) FROM stdin;
+2ae6ff97-ea52-438a-8ecb-2ea69e2ea29b	77e25613-4d62-4404-b252-14f67a9ee2e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	pennylane_payload	ready_to_send	{"type": "supplier_invoice", "lines": [{"label": null, "quantity": 30, "vat_rate": 5.5, "article_id": null, "vat_amount": 12.38, "unit_price_ex_vat": 7.5, "line_amount_ex_vat": 225, "supplier_reference": "LANGGL304"}, {"label": null, "quantity": 8, "vat_rate": 5.5, "article_id": null, "vat_amount": 8.8, "unit_price_ex_vat": 20, "line_amount_ex_vat": 160, "supplier_reference": "LANGV2535"}, {"label": null, "quantity": 4, "vat_rate": 5.5, "article_id": null, "vat_amount": 7.7, "unit_price_ex_vat": 35, "line_amount_ex_vat": 140, "supplier_reference": "LANGV510/"}], "source": "gestion-commerciale", "due_date": null, "store_id": "dbc17f4c-8ef7-4247-b13f-603e4c58f622", "invoice_id": "77e25613-4d62-4404-b252-14f67a9ee2e7", "vat_amount": 28.88, "fees_ex_vat": 0, "supplier_id": "96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca", "invoice_date": "2026-02-02T00:00:00.000Z", "total_ex_vat": 525, "supplier_name": "DISTRIMER", "total_inc_vat": 553.88, "invoice_number": "551260000145", "product_total_ex_vat": 525}	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:28:14.705056+00	\N
+c3147ace-225a-432c-8315-2c3a9f8e2ad6	bed74747-6c63-4da5-9c2b-c04670bd2ebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	pennylane_payload	ready_to_send	{"type": "supplier_invoice", "lines": [{"label": "AILE RAIE 2/500 GR PELE 1F 3 KG", "quantity": 6, "vat_rate": 5.5, "article_id": null, "vat_amount": 3.93, "unit_price_ex_vat": 11.9, "line_amount_ex_vat": 71.4, "supplier_reference": "RAI25001F/3"}, {"label": "FILET EGLEFIN 100/200 GR 3 KG", "quantity": 9, "vat_rate": 5.5, "article_id": null, "vat_amount": 7.87, "unit_price_ex_vat": 15.9, "line_amount_ex_vat": 143.1, "supplier_reference": "FILEG1200/3"}, {"label": "FILET LIEU NOIR 200/400 GR 3 KG", "quantity": 6, "vat_rate": 5.5, "article_id": null, "vat_amount": 4.13, "unit_price_ex_vat": 12.5, "line_amount_ex_vat": 75, "supplier_reference": "FILLIEUN24"}, {"label": "FILET LINGUE BLEUE 3 KG", "quantity": 9, "vat_rate": 5.5, "article_id": null, "vat_amount": 8.17, "unit_price_ex_vat": 16.5, "line_amount_ex_vat": 148.5, "supplier_reference": "FILLINB/3"}, {"label": "QUEUE LOTTE 200/500 GR 3 KG", "quantity": 3, "vat_rate": 5.5, "article_id": null, "vat_amount": 3.28, "unit_price_ex_vat": 19.9, "line_amount_ex_vat": 59.7, "supplier_reference": "QLO2500/3"}], "source": "gestion-commerciale", "due_date": null, "store_id": "dbc17f4c-8ef7-4247-b13f-603e4c58f622", "invoice_id": "bed74747-6c63-4da5-9c2b-c04670bd2ebb", "vat_amount": 27.38, "fees_ex_vat": 0, "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7", "invoice_date": "2026-01-05T00:00:00.000Z", "total_ex_vat": 497.7, "supplier_name": "SOGELMER", "total_inc_vat": 497.7, "invoice_number": "511260000046", "product_total_ex_vat": 497.7}	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:42:48.200823+00	\N
+29f1d3a0-bdf8-4371-8a1f-e559b1e08df7	4bb8d607-1227-4503-8e38-95523b317c29	dbc17f4c-8ef7-4247-b13f-603e4c58f622	pennylane_payload	ready_to_send	{"type": "supplier_invoice", "lines": [], "source": "gestion-commerciale", "due_date": null, "store_id": "dbc17f4c-8ef7-4247-b13f-603e4c58f622", "invoice_id": "4bb8d607-1227-4503-8e38-95523b317c29", "vat_amount": 0, "fees_ex_vat": 0, "supplier_id": "3f19cdbc-05b1-48c2-996e-6263dc6141fc", "invoice_date": null, "total_ex_vat": 1655.51, "supplier_name": "LECRI MAREE", "total_inc_vat": 1746.56, "invoice_number": "confirm111413 (1)", "product_total_ex_vat": 1655.51}	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:36:49.867381+00	\N
+\.
+
+
+--
+-- Data for Name: supplier_invoice_lines; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.supplier_invoice_lines (id, supplier_invoice_id, store_id, supplier_id, line_number, article_id, supplier_reference, supplier_label, quantity, colis, pieces, price_unit, unit_price_ex_vat, line_amount_ex_vat, vat_rate, vat_amount, line_amount_inc_vat, match_status, match_error, created_at, updated_at, parsed_payload) FROM stdin;
+2121a0d2-8f1b-4204-8942-4a8738cc0617	77e25613-4d62-4404-b252-14f67a9ee2e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	1	\N	LANGGL304	\N	30.000	10.000	\N	kg	7.5000	225.0000	5.500	12.3800	237.3800	matched	\N	2026-06-07 08:27:51.529029+00	2026-06-07 08:27:51.529029+00	{"unit_weight_kg": 3, "supplier_lot_number": "140020208007"}
+feddba40-d8ec-4a91-b827-0e2e26a690a2	77e25613-4d62-4404-b252-14f67a9ee2e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	2	\N	LANGV2535	\N	8.000	2.000	\N	kg	20.0000	160.0000	5.500	8.8000	168.8000	matched	\N	2026-06-07 08:27:51.529029+00	2026-06-07 08:27:51.529029+00	{"unit_weight_kg": 4, "supplier_lot_number": "140020208105"}
+c53267ae-8cde-4939-b4b2-9b2c6da59617	77e25613-4d62-4404-b252-14f67a9ee2e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	3	\N	LANGV510/	\N	4.000	1.000	\N	kg	35.0000	140.0000	5.500	7.7000	147.7000	matched	\N	2026-06-07 08:27:51.529029+00	2026-06-07 08:27:51.529029+00	{"unit_weight_kg": 4, "supplier_lot_number": "140020208118"}
+6efb0d01-c01d-447a-8dac-6f74650217ab	bed74747-6c63-4da5-9c2b-c04670bd2ebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	1	\N	RAI25001F/3	AILE RAIE 2/500 GR PELE 1F 3 KG	6.000	2.000	\N	kg	11.9000	71.4000	5.500	3.9300	75.3300	matched	\N	2026-06-07 08:42:39.207563+00	2026-06-07 08:42:39.207563+00	{"unit_weight_kg": 3, "supplier_lot_number": "05050103027"}
+8f3efb1a-307e-4685-9275-66842082ada9	bed74747-6c63-4da5-9c2b-c04670bd2ebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	2	\N	FILEG1200/3	FILET EGLEFIN 100/200 GR 3 KG	9.000	3.000	\N	kg	15.9000	143.1000	5.500	7.8700	150.9700	matched	\N	2026-06-07 08:42:39.207563+00	2026-06-07 08:42:39.207563+00	{"unit_weight_kg": 3, "supplier_lot_number": "05050103081"}
+4f330e44-0f1b-4218-b75d-31d0c5df0a3e	bed74747-6c63-4da5-9c2b-c04670bd2ebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	3	\N	FILLIEUN24	FILET LIEU NOIR 200/400 GR 3 KG	6.000	2.000	\N	kg	12.5000	75.0000	5.500	4.1300	79.1300	price_difference	Ecart facture/reception a controler	2026-06-07 08:42:39.207563+00	2026-06-07 08:42:39.207563+00	{"unit_weight_kg": 3, "supplier_lot_number": "05050100443"}
+41d34627-dc32-48a0-94d0-7341ecc37f89	bed74747-6c63-4da5-9c2b-c04670bd2ebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	4	\N	FILLINB/3	FILET LINGUE BLEUE 3 KG	9.000	3.000	\N	kg	16.5000	148.5000	5.500	8.1700	156.6700	matched	\N	2026-06-07 08:42:39.207563+00	2026-06-07 08:42:39.207563+00	{"unit_weight_kg": 3, "supplier_lot_number": "05050102514"}
+ab612592-912b-4475-886e-6f4e292e8342	bed74747-6c63-4da5-9c2b-c04670bd2ebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	5	\N	QLO2500/3	QUEUE LOTTE 200/500 GR 3 KG	3.000	1.000	\N	kg	19.9000	59.7000	5.500	3.2800	62.9800	matched	\N	2026-06-07 08:42:39.207563+00	2026-06-07 08:42:39.207563+00	{"unit_weight_kg": 3, "supplier_lot_number": "05050102995"}
+\.
+
+
+--
+-- Data for Name: supplier_invoice_matches; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.supplier_invoice_matches (id, store_id, supplier_invoice_id, supplier_invoice_line_id, purchase_id, purchase_line_id, lot_id, match_status, difference_type, quantity_difference, price_difference, amount_difference, notes, created_at) FROM stdin;
+1547edb0-efaf-4622-a835-e873fa837a0d	dbc17f4c-8ef7-4247-b13f-603e4c58f622	77e25613-4d62-4404-b252-14f67a9ee2e7	\N	e4a68085-357d-4c8d-a3b0-b67e836beb72	\N	\N	matched	\N	0.000	0.0000	0.0000	Proposition automatique par numero BL facture (bl_number)	2026-06-07 08:27:51.529029+00
+ade93968-adb3-4964-bf6d-c7557f68d2d5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	77e25613-4d62-4404-b252-14f67a9ee2e7	2121a0d2-8f1b-4204-8942-4a8738cc0617	e4a68085-357d-4c8d-a3b0-b67e836beb72	73337a07-bbec-41bb-bcfd-73b4c9aa05bd	2cf6a4f2-3286-4f77-8e5f-5f2e07919a52	matched	\N	0.000	0.0000	0.0000	Proposition OK (supplier_lot_number)	2026-06-07 08:27:51.529029+00
+1d85399b-5de8-4f7a-beed-53c642920fea	dbc17f4c-8ef7-4247-b13f-603e4c58f622	77e25613-4d62-4404-b252-14f67a9ee2e7	feddba40-d8ec-4a91-b827-0e2e26a690a2	e4a68085-357d-4c8d-a3b0-b67e836beb72	9dd01bd8-aefc-4ec8-a43b-e8fe22e2397b	796aa0b0-416e-46db-8861-605e81a067a4	matched	\N	0.000	0.0000	0.0000	Proposition OK (supplier_lot_number)	2026-06-07 08:27:51.529029+00
+7db7a5ee-61f3-4644-ac41-02857ec6df96	dbc17f4c-8ef7-4247-b13f-603e4c58f622	77e25613-4d62-4404-b252-14f67a9ee2e7	c53267ae-8cde-4939-b4b2-9b2c6da59617	e4a68085-357d-4c8d-a3b0-b67e836beb72	c521639f-c0b0-433f-962a-da619a8465d0	86bf8178-e99d-4db2-ab1c-cbfa375fc650	matched	\N	0.000	0.0000	0.0000	Proposition OK (supplier_lot_number)	2026-06-07 08:27:51.529029+00
+4e943cdb-ce17-4f18-bdd2-589f3d1197af	dbc17f4c-8ef7-4247-b13f-603e4c58f622	bed74747-6c63-4da5-9c2b-c04670bd2ebb	\N	c462d3f9-44d9-4776-88cb-afe863042043	\N	\N	matched	\N	0.000	0.0000	0.0000	Proposition automatique par numero BL facture (bl_number)	2026-06-07 08:42:39.207563+00
+c8da88a3-89bc-47bb-ba26-1ef6560aef08	dbc17f4c-8ef7-4247-b13f-603e4c58f622	bed74747-6c63-4da5-9c2b-c04670bd2ebb	6efb0d01-c01d-447a-8dac-6f74650217ab	c462d3f9-44d9-4776-88cb-afe863042043	1a7b56f3-e117-48d1-a94c-8374dd19af0f	7d86e266-adfc-4f0c-bfa8-b64c2a8a3334	matched	\N	0.000	0.0000	0.0000	Proposition OK (supplier_lot_number)	2026-06-07 08:42:39.207563+00
+bc7c288d-c6da-4065-accb-0b11a7f2a109	dbc17f4c-8ef7-4247-b13f-603e4c58f622	bed74747-6c63-4da5-9c2b-c04670bd2ebb	8f3efb1a-307e-4685-9275-66842082ada9	c462d3f9-44d9-4776-88cb-afe863042043	64c086ff-9c5b-4f0f-b6ea-d08e6d521d01	71145093-7854-416c-85ce-8a266d4981e2	matched	\N	0.000	0.0000	0.0000	Proposition OK (supplier_lot_number)	2026-06-07 08:42:39.207563+00
+2e7e6e3b-6d3e-4352-b3ee-6d50177e8fa7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	bed74747-6c63-4da5-9c2b-c04670bd2ebb	4f330e44-0f1b-4218-b75d-31d0c5df0a3e	c462d3f9-44d9-4776-88cb-afe863042043	e822547b-8e2a-408d-8b64-f7271063bc2f	5723d92e-0838-42eb-9869-b08c786a75e8	difference	line	-3.000	0.0000	0.0000	Proposition avec ecart (supplier_lot_number)	2026-06-07 08:42:39.207563+00
+176a80e7-5c9a-49a9-ba7f-fdd2c2e532b0	dbc17f4c-8ef7-4247-b13f-603e4c58f622	bed74747-6c63-4da5-9c2b-c04670bd2ebb	41d34627-dc32-48a0-94d0-7341ecc37f89	c462d3f9-44d9-4776-88cb-afe863042043	fe4d93a3-5134-492b-9745-2b729f97fcb5	db2f2e6f-808a-47fc-9015-e922da3b5d54	matched	\N	0.000	0.0000	0.0000	Proposition OK (supplier_lot_number)	2026-06-07 08:42:39.207563+00
+aba218c0-1e3f-471e-b215-d50791cc933e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	bed74747-6c63-4da5-9c2b-c04670bd2ebb	ab612592-912b-4475-886e-6f4e292e8342	c462d3f9-44d9-4776-88cb-afe863042043	88a1bf1e-e484-421d-a028-004287f3d171	b35b9db3-ef57-4fa6-bba5-c9b09e5b6c22	matched	\N	0.000	0.0000	0.0000	Proposition OK (supplier_lot_number)	2026-06-07 08:42:39.207563+00
+b4e47ea9-e5e2-46a4-b5d3-479e92ff0949	dbc17f4c-8ef7-4247-b13f-603e4c58f622	4bb8d607-1227-4503-8e38-95523b317c29	\N	6528afc6-5b4d-4efc-89d9-ee62ab025e76	\N	\N	matched	\N	0.000	0.0000	-0.0240	Rapprochement manuel confirme par utilisateur - BL selectionne 6528afc6-5b4d-4efc-89d9-ee62ab025e76 - total BL 1655.5340 HT - total selection 1655.5340 HT - ecart facture-selection -0.0240 HT	2026-06-07 09:36:46.087742+00
+\.
+
+
+--
+-- Data for Name: supplier_invoices; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.supplier_invoices (id, store_id, client_key, supplier_id, invoice_number, invoice_date, due_date, status, match_status, supplier_type, total_ex_vat, product_total_ex_vat, fees_ex_vat, vat_amount, total_inc_vat, document_url, pennylane_status, pennylane_id, pennylane_payload, pennylane_synced_at, pennylane_error, notes, created_by, validated_by, validated_at, created_at, updated_at, supplier_invoice_bl_number, customer_code, parsed_payload) FROM stdin;
+bed74747-6c63-4da5-9c2b-c04670bd2ebb	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	511260000046	2026-01-05	\N	cost_adjusted	discrepancy	standard	497.7000	497.7000	0.0000	27.3800	497.7000	/api/supplier-invoices/bed74747-6c63-4da5-9c2b-c04670bd2ebb/document	ready_to_send	\N	{"type": "supplier_invoice", "lines": [{"label": "AILE RAIE 2/500 GR PELE 1F 3 KG", "quantity": 6, "vat_rate": 5.5, "article_id": null, "vat_amount": 3.93, "unit_price_ex_vat": 11.9, "line_amount_ex_vat": 71.4, "supplier_reference": "RAI25001F/3"}, {"label": "FILET EGLEFIN 100/200 GR 3 KG", "quantity": 9, "vat_rate": 5.5, "article_id": null, "vat_amount": 7.87, "unit_price_ex_vat": 15.9, "line_amount_ex_vat": 143.1, "supplier_reference": "FILEG1200/3"}, {"label": "FILET LIEU NOIR 200/400 GR 3 KG", "quantity": 6, "vat_rate": 5.5, "article_id": null, "vat_amount": 4.13, "unit_price_ex_vat": 12.5, "line_amount_ex_vat": 75, "supplier_reference": "FILLIEUN24"}, {"label": "FILET LINGUE BLEUE 3 KG", "quantity": 9, "vat_rate": 5.5, "article_id": null, "vat_amount": 8.17, "unit_price_ex_vat": 16.5, "line_amount_ex_vat": 148.5, "supplier_reference": "FILLINB/3"}, {"label": "QUEUE LOTTE 200/500 GR 3 KG", "quantity": 3, "vat_rate": 5.5, "article_id": null, "vat_amount": 3.28, "unit_price_ex_vat": 19.9, "line_amount_ex_vat": 59.7, "supplier_reference": "QLO2500/3"}], "source": "gestion-commerciale", "due_date": null, "store_id": "dbc17f4c-8ef7-4247-b13f-603e4c58f622", "invoice_id": "bed74747-6c63-4da5-9c2b-c04670bd2ebb", "vat_amount": 27.38, "fees_ex_vat": 0, "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7", "invoice_date": "2026-01-05T00:00:00.000Z", "total_ex_vat": 497.7, "supplier_name": "SOGELMER", "total_inc_vat": 497.7, "invoice_number": "511260000046", "product_total_ex_vat": 497.7}	\N	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:42:48.200823+00	2026-06-07 08:42:39.207563+00	2026-06-07 08:42:48.200823+00	511-00075465	C5100022	{"parser": "sogelmer", "customer_code": "C5100022", "original_name": "511260000046.PDF", "supplier_invoice_review": {"status": "pending_human_review", "matches": 6, "confidence": "doute", "updated_at": "2026-06-07T08:42:39.286Z", "differences": 1, "proposed_purchase_ids": ["c462d3f9-44d9-4776-88cb-afe863042043"], "requires_human_confirmation": true}, "supplier_invoice_bl_number": "511-00075465"}
+77e25613-4d62-4404-b252-14f67a9ee2e7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	551260000145	2026-02-02	\N	invoice_validated	matched	standard	525.0000	525.0000	0.0000	28.8800	553.8800	/api/supplier-invoices/77e25613-4d62-4404-b252-14f67a9ee2e7/document	ready_to_send	\N	{"type": "supplier_invoice", "lines": [{"label": null, "quantity": 30, "vat_rate": 5.5, "article_id": null, "vat_amount": 12.38, "unit_price_ex_vat": 7.5, "line_amount_ex_vat": 225, "supplier_reference": "LANGGL304"}, {"label": null, "quantity": 8, "vat_rate": 5.5, "article_id": null, "vat_amount": 8.8, "unit_price_ex_vat": 20, "line_amount_ex_vat": 160, "supplier_reference": "LANGV2535"}, {"label": null, "quantity": 4, "vat_rate": 5.5, "article_id": null, "vat_amount": 7.7, "unit_price_ex_vat": 35, "line_amount_ex_vat": 140, "supplier_reference": "LANGV510/"}], "source": "gestion-commerciale", "due_date": null, "store_id": "dbc17f4c-8ef7-4247-b13f-603e4c58f622", "invoice_id": "77e25613-4d62-4404-b252-14f67a9ee2e7", "vat_amount": 28.88, "fees_ex_vat": 0, "supplier_id": "96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca", "invoice_date": "2026-02-02T00:00:00.000Z", "total_ex_vat": 525, "supplier_name": "DISTRIMER", "total_inc_vat": 553.88, "invoice_number": "551260000145", "product_total_ex_vat": 525}	\N	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 08:28:14.705056+00	2026-06-07 08:27:51.529029+00	2026-06-07 08:28:14.705056+00	551-00012803	C5500013	{"parser": "distrimer", "customer_code": "C5500013", "original_name": "551260000145.PDF", "supplier_invoice_review": {"status": "pending_human_review", "matches": 4, "confidence": "sur", "updated_at": "2026-06-07T08:27:51.613Z", "differences": 0, "proposed_purchase_ids": ["e4a68085-357d-4c8d-a3b0-b67e836beb72"], "requires_human_confirmation": true}, "supplier_invoice_bl_number": "551-00012803"}
+4bb8d607-1227-4503-8e38-95523b317c29	dbc17f4c-8ef7-4247-b13f-603e4c58f622	scorpa	3f19cdbc-05b1-48c2-996e-6263dc6141fc	confirm111413 (1)	\N	\N	invoice_validated	matched	standard	1655.5100	1655.5100	0.0000	0.0000	1746.5600	/api/supplier-invoices/4bb8d607-1227-4503-8e38-95523b317c29/document	ready_to_send	\N	{"type": "supplier_invoice", "lines": [], "source": "gestion-commerciale", "due_date": null, "store_id": "dbc17f4c-8ef7-4247-b13f-603e4c58f622", "invoice_id": "4bb8d607-1227-4503-8e38-95523b317c29", "vat_amount": 0, "fees_ex_vat": 0, "supplier_id": "3f19cdbc-05b1-48c2-996e-6263dc6141fc", "invoice_date": null, "total_ex_vat": 1655.51, "supplier_name": "LECRI MAREE", "total_inc_vat": 1746.56, "invoice_number": "confirm111413 (1)", "product_total_ex_vat": 1655.51}	\N	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-06-07 09:36:49.867381+00	2026-06-07 09:35:56.181414+00	2026-06-07 09:36:49.867381+00	\N	\N	{"supplier_invoice_review": {"status": "pending_human_review", "matches": 1, "confidence": "probable", "updated_at": "2026-06-07T09:35:56.222Z", "differences": 0, "proposed_purchase_ids": ["6528afc6-5b4d-4efc-89d9-ee62ab025e76"], "requires_human_confirmation": true}}
+\.
+
+
+--
+-- Data for Name: suppliers; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.suppliers (id, store_id, code, name, legal_name, supplier_type, status, contact_name, phone, mobile, email, address_line1, address_line2, postal_code, city, country, vat_number, siret, payment_terms, delivery_terms, notes, created_by, updated_by, created_at, updated_at) FROM stdin;
+96fda541-40f6-46c8-8ebe-9327a7606fa5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	134	test	test	standard	active	\N	\N	\N	\N	\N	\N	\N	\N	France	\N	\N	\N	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-28 16:30:59.008364	2026-05-28 16:30:59.008364
+b69610b0-ac14-4d96-9414-8dfeded4b1d8	dbc17f4c-8ef7-4247-b13f-603e4c58f622	1234	divers	\N	standard	active			\N			\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.232236	2026-05-29 18:29:31.386716
+a3af69c0-58a7-4545-89ae-4ef18a9c0611	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10001	scapmaree	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.241324	2026-05-29 18:29:31.386716
+96dee3ee-bc8a-47d2-a0fa-39b30f5e6dca	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10002	DISTRIMER	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.243538	2026-05-29 18:29:31.386716
+f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10003	SOGELMER	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.245788	2026-05-29 18:29:31.386716
+dbfcc13d-1e61-4dd9-89b9-485a65446ad2	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10004	ROYALE MARÉE	\N	mareyeur	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	3200f2be-f337-4cbd-8ca2-aa752bd61be5	3200f2be-f337-4cbd-8ca2-aa752bd61be5	2026-05-29 17:02:45.885291	2026-05-29 18:29:31.386716
+f2d131cf-5e1c-4939-a38d-0d2d7be1dd3f	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10005	fouasson	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.250073	2026-05-29 18:29:31.386716
+d5927193-e326-4090-8559-49d2b279c4d4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10006	SCAOUEST	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.252311	2026-05-29 18:29:31.386716
+44435cd0-8d18-43b2-b71a-cd8322f42fb5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10007	BRIAUT	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.254442	2026-05-29 18:29:31.386716
+0bf85dab-051d-48ef-8eff-5556873517b4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10008	pomona	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.256647	2026-05-29 18:29:31.386716
+ce453aad-5f59-4dfd-beeb-1681723a8fab	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10009	DUPOND	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.258678	2026-05-29 18:29:31.386716
+a73a3dde-fd22-45d9-800d-ccf0baca4f2b	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10010	panama	\N	standard	active			\N			\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.260348	2026-05-29 18:29:31.386716
+0becb007-4db7-4b94-b80d-5b5df5316875	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10011	system b	\N	standard	active			\N			\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.262267	2026-05-29 18:29:31.386716
+eaac8667-e2ea-4b0f-8374-ec59e764c2d4	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10012	cap maree	\N	standard	active			\N			\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.263764	2026-05-29 18:29:31.386716
+3f19cdbc-05b1-48c2-996e-6263dc6141fc	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10013	LECRI MAREE	\N	standard	active	JORDAN	+33648417484	\N			\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.265545	2026-05-29 18:29:31.386716
+0fa6d426-aecd-41e6-9717-0b67868bb15e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	10014	GC CRUSTACES	\N	standard	active			\N			\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.267043	2026-05-29 18:29:31.386716
+d9445d28-b5c1-4175-8437-e370955b619e	dbc17f4c-8ef7-4247-b13f-603e4c58f622	81268	criee st gilles croix de vie	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.268638	2026-05-29 18:29:31.386716
+42da462f-cae0-4600-b291-ccd177c2ce70	dbc17f4c-8ef7-4247-b13f-603e4c58f622	81269	criee des sables d'olonne	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.270293	2026-05-29 18:29:31.386716
+bae08ab0-7d37-453e-b9ba-39216d35e108	dbc17f4c-8ef7-4247-b13f-603e4c58f622	89692	vendee crustaces	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.271829	2026-05-29 18:29:31.386716
+96a680bf-1c8f-490a-b3e0-46b264bbcb64	dbc17f4c-8ef7-4247-b13f-603e4c58f622	99998	retrocession	\N	standard	active			\N			\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.273723	2026-05-29 18:29:31.386716
+37249fb2-4107-465d-9e33-f918d0f58392	dbc17f4c-8ef7-4247-b13f-603e4c58f622	99999	transformation	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.275251	2026-05-29 18:29:31.386716
+a3624f0a-eee4-4c84-a55e-aab2afc84cb1	dbc17f4c-8ef7-4247-b13f-603e4c58f622	INT	TRANSFO INTERNE	\N	standard	active	nan	nan	\N	nan	nan	\N	\N	\N	France	\N	\N	\N	\N	\N	\N	\N	2026-05-17 09:42:43.277083	2026-05-29 18:29:31.386716
+\.
+
+
+--
+-- Data for Name: transformation_inputs; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.transformation_inputs (id, transformation_id, store_id, department_id, client_key, article_id, source_lot_id, line_number, article_plu, article_label, input_quantity, input_unit, unit_cost_ex_vat, total_cost_ex_vat, line_status, traceability_snapshot, source_metadata, created_by, updated_by, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: transformation_metadata; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.transformation_metadata (id, transformation_id, store_id, client_key, meta_key, meta_value, metadata, notes, created_by, updated_by, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: transformation_outputs; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.transformation_outputs (id, transformation_id, store_id, department_id, client_key, article_id, created_lot_id, line_number, article_plu, article_label, output_quantity, output_unit, unit_cost_ex_vat, total_cost_ex_vat, line_status, traceability_snapshot, output_metadata, created_by, updated_by, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: transformations; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.transformations (id, store_id, department_id, client_key, transformation_date, status, transformation_type, source_type, reference_number, notes, validated_at, cancelled_at, created_by, updated_by, validated_by, cancelled_by, created_at, updated_at) FROM stdin;
+\.
+
+
+--
+-- Data for Name: user_departments; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.user_departments (id, user_id, department_id, is_default) FROM stdin;
+14caacb7-01a5-4e66-b122-ec580a9c1289	3200f2be-f337-4cbd-8ca2-aa752bd61be5	bf9edbc2-3558-4cd1-89e3-4be30819b42a	t
+\.
+
+
+--
+-- Data for Name: users; Type: TABLE DATA; Schema: public; Owner: admin
+--
+
+COPY public.users (id, store_id, email, password_hash, role, created_at, is_active) FROM stdin;
+3200f2be-f337-4cbd-8ca2-aa752bd61be5	dbc17f4c-8ef7-4247-b13f-603e4c58f622	paonalric@gmail.com	$2b$10$TSREq8ZbtxfWLTBSOtV.QOY6Jp6INHc1UoOhvs.hbJUjdLMI0vAR.	admin	2026-05-27 18:00:52.590109	t
+\.
+
+
+--
+-- Name: ai_pending_actions ai_pending_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.ai_pending_actions
+    ADD CONSTRAINT ai_pending_actions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ai_user_memory ai_user_memory_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.ai_user_memory
+    ADD CONSTRAINT ai_user_memory_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ai_user_memory ai_user_memory_store_id_user_id_memory_key_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.ai_user_memory
+    ADD CONSTRAINT ai_user_memory_store_id_user_id_memory_key_key UNIQUE (store_id, user_id, memory_key);
+
+
+--
+-- Name: article_department_metadata article_department_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_department_metadata
+    ADD CONSTRAINT article_department_metadata_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: article_departments article_departments_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_departments
+    ADD CONSTRAINT article_departments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: articles articles_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.articles
+    ADD CONSTRAINT articles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: clients clients_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.clients
+    ADD CONSTRAINT clients_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: clients clients_store_code_unique; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.clients
+    ADD CONSTRAINT clients_store_code_unique UNIQUE (store_id, code);
+
+
+--
+-- Name: customer_price_list_lines customer_price_list_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_list_lines
+    ADD CONSTRAINT customer_price_list_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: customer_price_lists customer_price_lists_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_lists
+    ADD CONSTRAINT customer_price_lists_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: department_sectors department_sectors_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.department_sectors
+    ADD CONSTRAINT department_sectors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: departments departments_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: departments departments_store_id_code_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_store_id_code_key UNIQUE (store_id, code);
+
+
+--
+-- Name: lots lots_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.lots
+    ADD CONSTRAINT lots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: lots lots_store_id_lot_code_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.lots
+    ADD CONSTRAINT lots_store_id_lot_code_key UNIQUE (store_id, lot_code);
+
+
+--
+-- Name: purchase_line_metadata purchase_line_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchase_line_metadata
+    ADD CONSTRAINT purchase_line_metadata_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchase_line_metadata purchase_line_metadata_purchase_line_id_meta_key_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchase_line_metadata
+    ADD CONSTRAINT purchase_line_metadata_purchase_line_id_meta_key_key UNIQUE (purchase_line_id, meta_key);
+
+
+--
+-- Name: purchase_lines purchase_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchase_lines
+    ADD CONSTRAINT purchase_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: purchases purchases_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchases
+    ADD CONSTRAINT purchases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sale_line_allocations sale_line_allocations_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sale_line_allocations
+    ADD CONSTRAINT sale_line_allocations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_documents sales_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_documents
+    ADD CONSTRAINT sales_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: sales_lines sales_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_lines
+    ADD CONSTRAINT sales_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_movements stock_movements_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_movements
+    ADD CONSTRAINT stock_movements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_snapshot_lines stock_snapshot_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_snapshot_lines
+    ADD CONSTRAINT stock_snapshot_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_snapshots stock_snapshots_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_snapshots
+    ADD CONSTRAINT stock_snapshots_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_summary stock_summary_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_summary
+    ADD CONSTRAINT stock_summary_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: stock_summary stock_summary_store_id_article_id_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_summary
+    ADD CONSTRAINT stock_summary_store_id_article_id_key UNIQUE (store_id, article_id);
+
+
+--
+-- Name: store_settings store_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.store_settings
+    ADD CONSTRAINT store_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: store_settings store_settings_store_unique; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.store_settings
+    ADD CONSTRAINT store_settings_store_unique UNIQUE (store_id);
+
+
+--
+-- Name: stores stores_code_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stores
+    ADD CONSTRAINT stores_code_key UNIQUE (code);
+
+
+--
+-- Name: stores stores_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stores
+    ADD CONSTRAINT stores_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supplier_article_mappings supplier_article_mappings_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_article_mappings
+    ADD CONSTRAINT supplier_article_mappings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supplier_article_mappings supplier_article_mappings_supplier_id_supplier_ref_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_article_mappings
+    ADD CONSTRAINT supplier_article_mappings_supplier_id_supplier_ref_key UNIQUE (supplier_id, supplier_ref);
+
+
+--
+-- Name: supplier_invoice_cost_adjustments supplier_invoice_cost_adjustments_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_cost_adjustments
+    ADD CONSTRAINT supplier_invoice_cost_adjustments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supplier_invoice_documents supplier_invoice_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_documents
+    ADD CONSTRAINT supplier_invoice_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supplier_invoice_exports supplier_invoice_exports_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_exports
+    ADD CONSTRAINT supplier_invoice_exports_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supplier_invoice_lines supplier_invoice_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_lines
+    ADD CONSTRAINT supplier_invoice_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supplier_invoice_matches supplier_invoice_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_matches
+    ADD CONSTRAINT supplier_invoice_matches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: supplier_invoices supplier_invoices_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoices
+    ADD CONSTRAINT supplier_invoices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: suppliers suppliers_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.suppliers
+    ADD CONSTRAINT suppliers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: suppliers suppliers_store_code_unique; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.suppliers
+    ADD CONSTRAINT suppliers_store_code_unique UNIQUE (store_id, code);
+
+
+--
+-- Name: transformation_inputs transformation_inputs_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_inputs
+    ADD CONSTRAINT transformation_inputs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: transformation_metadata transformation_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_metadata
+    ADD CONSTRAINT transformation_metadata_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: transformation_metadata transformation_metadata_transformation_id_meta_key_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_metadata
+    ADD CONSTRAINT transformation_metadata_transformation_id_meta_key_key UNIQUE (transformation_id, meta_key);
+
+
+--
+-- Name: transformation_outputs transformation_outputs_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_outputs
+    ADD CONSTRAINT transformation_outputs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: transformations transformations_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformations
+    ADD CONSTRAINT transformations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: article_department_metadata uq_article_department_metadata_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_department_metadata
+    ADD CONSTRAINT uq_article_department_metadata_key UNIQUE (article_department_id, field_key);
+
+
+--
+-- Name: article_departments uq_article_departments_article_department; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_departments
+    ADD CONSTRAINT uq_article_departments_article_department UNIQUE (article_id, department_id);
+
+
+--
+-- Name: articles uq_articles_store_plu; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.articles
+    ADD CONSTRAINT uq_articles_store_plu UNIQUE (store_id, plu);
+
+
+--
+-- Name: department_sectors uq_department_sectors_department_code; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.department_sectors
+    ADD CONSTRAINT uq_department_sectors_department_code UNIQUE (department_id, code);
+
+
+--
+-- Name: user_departments user_departments_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.user_departments
+    ADD CONSTRAINT user_departments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: user_departments user_departments_user_id_department_id_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.user_departments
+    ADD CONSTRAINT user_departments_user_id_department_id_key UNIQUE (user_id, department_id);
+
+
+--
+-- Name: users users_pkey; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: users users_store_id_email_key; Type: CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_store_id_email_key UNIQUE (store_id, email);
+
+
+--
+-- Name: idx_ai_pending_actions_store_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_ai_pending_actions_store_status ON public.ai_pending_actions USING btree (store_id, status, created_at DESC);
+
+
+--
+-- Name: idx_ai_pending_actions_store_user_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_ai_pending_actions_store_user_status ON public.ai_pending_actions USING btree (store_id, user_id, status, created_at DESC);
+
+
+--
+-- Name: idx_ai_pending_actions_user_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_ai_pending_actions_user_status ON public.ai_pending_actions USING btree (user_id, status, created_at DESC);
+
+
+--
+-- Name: idx_ai_user_memory_store_user; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_ai_user_memory_store_user ON public.ai_user_memory USING btree (store_id, user_id, updated_at DESC);
+
+
+--
+-- Name: idx_article_department_metadata_article_department_id; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_article_department_metadata_article_department_id ON public.article_department_metadata USING btree (article_department_id);
+
+
+--
+-- Name: idx_article_departments_article_id; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_article_departments_article_id ON public.article_departments USING btree (article_id);
+
+
+--
+-- Name: idx_article_departments_department_id; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_article_departments_department_id ON public.article_departments USING btree (department_id);
+
+
+--
+-- Name: idx_article_departments_sector_id; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_article_departments_sector_id ON public.article_departments USING btree (department_sector_id);
+
+
+--
+-- Name: idx_articles_designation; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_designation ON public.articles USING btree (designation);
+
+
+--
+-- Name: idx_articles_plu; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_plu ON public.articles USING btree (plu);
+
+
+--
+-- Name: idx_articles_store_active; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_store_active ON public.articles USING btree (store_id, is_active);
+
+
+--
+-- Name: idx_articles_store_designation; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_store_designation ON public.articles USING btree (store_id, designation);
+
+
+--
+-- Name: idx_articles_store_ean; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_store_ean ON public.articles USING btree (store_id, ean);
+
+
+--
+-- Name: idx_articles_store_family; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_store_family ON public.articles USING btree (store_id, family_code);
+
+
+--
+-- Name: idx_articles_store_id; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_store_id ON public.articles USING btree (store_id);
+
+
+--
+-- Name: idx_articles_store_latin_name; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_store_latin_name ON public.articles USING btree (store_id, latin_name);
+
+
+--
+-- Name: idx_articles_store_tariff_levels; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_articles_store_tariff_levels ON public.articles USING btree (store_id, sale_price_level_1_ht, sale_price_level_2_ht, sale_price_level_3_ht);
+
+
+--
+-- Name: idx_clients_store_billed_client; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_clients_store_billed_client ON public.clients USING btree (store_id, billed_client_id);
+
+
+--
+-- Name: idx_clients_store_identifier; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_clients_store_identifier ON public.clients USING btree (store_id, store_identifier);
+
+
+--
+-- Name: idx_clients_store_tariff_level; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_clients_store_tariff_level ON public.clients USING btree (store_id, tariff_level);
+
+
+--
+-- Name: idx_clients_store_vat; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_clients_store_vat ON public.clients USING btree (store_id, is_vat_exempt, vat_rate);
+
+
+--
+-- Name: idx_customer_price_list_lines_list_order; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_customer_price_list_lines_list_order ON public.customer_price_list_lines USING btree (price_list_id, is_featured DESC, family_name, display_order, designation_snapshot);
+
+
+--
+-- Name: idx_customer_price_list_lines_store_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_customer_price_list_lines_store_article ON public.customer_price_list_lines USING btree (store_id, article_id);
+
+
+--
+-- Name: idx_customer_price_lists_store_client; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_customer_price_lists_store_client ON public.customer_price_lists USING btree (store_id, client_id);
+
+
+--
+-- Name: idx_customer_price_lists_store_date; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_customer_price_lists_store_date ON public.customer_price_lists USING btree (store_id, price_list_date DESC, created_at DESC);
+
+
+--
+-- Name: idx_customer_price_lists_store_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_customer_price_lists_store_status ON public.customer_price_lists USING btree (store_id, status);
+
+
+--
+-- Name: idx_customer_price_lists_store_tariff_level; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_customer_price_lists_store_tariff_level ON public.customer_price_lists USING btree (store_id, tariff_level);
+
+
+--
+-- Name: idx_department_sectors_code; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_department_sectors_code ON public.department_sectors USING btree (code);
+
+
+--
+-- Name: idx_department_sectors_department_id; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_department_sectors_department_id ON public.department_sectors USING btree (department_id);
+
+
+--
+-- Name: idx_lots_remaining; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_lots_remaining ON public.lots USING btree (store_id, article_id, qty_remaining);
+
+
+--
+-- Name: idx_lots_store_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_lots_store_article ON public.lots USING btree (store_id, article_id);
+
+
+--
+-- Name: idx_lots_store_article_fifo; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_lots_store_article_fifo ON public.lots USING btree (store_id, article_id, qty_remaining, dlc, created_at);
+
+
+--
+-- Name: idx_lots_store_available; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_lots_store_available ON public.lots USING btree (store_id, qty_remaining) WHERE (qty_remaining > (0)::numeric);
+
+
+--
+-- Name: idx_purchase_lines_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_purchase_lines_article ON public.purchase_lines USING btree (article_id);
+
+
+--
+-- Name: idx_purchase_lines_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_purchase_lines_lot ON public.purchase_lines USING btree (lot_id);
+
+
+--
+-- Name: idx_purchase_lines_purchase; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_purchase_lines_purchase ON public.purchase_lines USING btree (purchase_id);
+
+
+--
+-- Name: idx_purchases_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_purchases_status ON public.purchases USING btree (status);
+
+
+--
+-- Name: idx_purchases_store; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_purchases_store ON public.purchases USING btree (store_id);
+
+
+--
+-- Name: idx_purchases_supplier; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_purchases_supplier ON public.purchases USING btree (supplier_id);
+
+
+--
+-- Name: idx_sale_line_allocations_line; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sale_line_allocations_line ON public.sale_line_allocations USING btree (sales_line_id);
+
+
+--
+-- Name: idx_sale_line_allocations_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sale_line_allocations_lot ON public.sale_line_allocations USING btree (lot_id);
+
+
+--
+-- Name: idx_sales_documents_billed_client; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_billed_client ON public.sales_documents USING btree (store_id, billed_client_id, document_date DESC);
+
+
+--
+-- Name: idx_sales_documents_credit_note_pennylane_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_credit_note_pennylane_status ON public.sales_documents USING btree (store_id, pennylane_status, document_date DESC) WHERE (document_type = 'CREDIT_NOTE'::text);
+
+
+--
+-- Name: idx_sales_documents_credit_note_reference_unique; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE UNIQUE INDEX idx_sales_documents_credit_note_reference_unique ON public.sales_documents USING btree (store_id, reference_number) WHERE ((document_type = 'CREDIT_NOTE'::text) AND (reference_number IS NOT NULL));
+
+
+--
+-- Name: idx_sales_documents_credit_note_source_invoice; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_credit_note_source_invoice ON public.sales_documents USING btree (store_id, source_invoice_id, document_date DESC) WHERE (document_type = 'CREDIT_NOTE'::text);
+
+
+--
+-- Name: idx_sales_documents_invoice_pennylane_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_invoice_pennylane_status ON public.sales_documents USING btree (store_id, pennylane_status, document_date DESC) WHERE (document_type = 'INVOICE'::text);
+
+
+--
+-- Name: idx_sales_documents_invoice_reference_unique; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE UNIQUE INDEX idx_sales_documents_invoice_reference_unique ON public.sales_documents USING btree (store_id, reference_number) WHERE ((document_type = 'INVOICE'::text) AND (reference_number IS NOT NULL));
+
+
+--
+-- Name: idx_sales_documents_source_delivery_note; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_source_delivery_note ON public.sales_documents USING btree (store_id, source_delivery_note_id);
+
+
+--
+-- Name: idx_sales_documents_source_invoice; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_source_invoice ON public.sales_documents USING btree (store_id, source_invoice_id);
+
+
+--
+-- Name: idx_sales_documents_source_order; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_source_order ON public.sales_documents USING btree (store_id, source_order_id);
+
+
+--
+-- Name: idx_sales_documents_store_client; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_store_client ON public.sales_documents USING btree (store_id, client_id, document_date DESC);
+
+
+--
+-- Name: idx_sales_documents_store_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_documents_store_status ON public.sales_documents USING btree (store_id, status, document_date DESC);
+
+
+--
+-- Name: idx_sales_lines_credit_note_source_invoice_line; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_lines_credit_note_source_invoice_line ON public.sales_lines USING btree (store_id, source_invoice_line_id) WHERE (source_invoice_line_id IS NOT NULL);
+
+
+--
+-- Name: idx_sales_lines_document; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_lines_document ON public.sales_lines USING btree (sales_document_id, line_number);
+
+
+--
+-- Name: idx_sales_lines_selected_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_lines_selected_lot ON public.sales_lines USING btree (selected_lot_id);
+
+
+--
+-- Name: idx_sales_lines_store_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_lines_store_article ON public.sales_lines USING btree (store_id, article_id);
+
+
+--
+-- Name: idx_sales_lines_suggested_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_sales_lines_suggested_lot ON public.sales_lines USING btree (suggested_lot_id);
+
+
+--
+-- Name: idx_stock_movements_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_stock_movements_lot ON public.stock_movements USING btree (lot_id);
+
+
+--
+-- Name: idx_stock_movements_store_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_stock_movements_store_article ON public.stock_movements USING btree (store_id, article_id);
+
+
+--
+-- Name: idx_stock_movements_store_article_created; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_stock_movements_store_article_created ON public.stock_movements USING btree (store_id, article_id, created_at DESC);
+
+
+--
+-- Name: idx_stock_snapshot_lines_article_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_stock_snapshot_lines_article_lot ON public.stock_snapshot_lines USING btree (article_id, lot_id);
+
+
+--
+-- Name: idx_stock_snapshot_lines_snapshot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_stock_snapshot_lines_snapshot ON public.stock_snapshot_lines USING btree (snapshot_id);
+
+
+--
+-- Name: idx_stock_snapshots_store_date; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_stock_snapshots_store_date ON public.stock_snapshots USING btree (store_id, snapshot_date DESC);
+
+
+--
+-- Name: idx_stock_snapshots_store_type_date; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_stock_snapshots_store_type_date ON public.stock_snapshots USING btree (store_id, snapshot_type, snapshot_date DESC);
+
+
+--
+-- Name: idx_stores_client_key; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE UNIQUE INDEX idx_stores_client_key ON public.stores USING btree (client_key) WHERE (client_key IS NOT NULL);
+
+
+--
+-- Name: idx_supplier_article_mappings_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_article_mappings_article ON public.supplier_article_mappings USING btree (article_id);
+
+
+--
+-- Name: idx_supplier_article_mappings_ref; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_article_mappings_ref ON public.supplier_article_mappings USING btree (supplier_ref);
+
+
+--
+-- Name: idx_supplier_article_mappings_store; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_article_mappings_store ON public.supplier_article_mappings USING btree (store_id);
+
+
+--
+-- Name: idx_supplier_article_mappings_supplier; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_article_mappings_supplier ON public.supplier_article_mappings USING btree (supplier_id, supplier_ref);
+
+
+--
+-- Name: idx_supplier_article_mappings_supplier_id; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_article_mappings_supplier_id ON public.supplier_article_mappings USING btree (supplier_id);
+
+
+--
+-- Name: idx_supplier_invoice_cost_adjustments_invoice; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_cost_adjustments_invoice ON public.supplier_invoice_cost_adjustments USING btree (supplier_invoice_id);
+
+
+--
+-- Name: idx_supplier_invoice_cost_adjustments_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_cost_adjustments_lot ON public.supplier_invoice_cost_adjustments USING btree (lot_id);
+
+
+--
+-- Name: idx_supplier_invoice_documents_invoice; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_documents_invoice ON public.supplier_invoice_documents USING btree (supplier_invoice_id);
+
+
+--
+-- Name: idx_supplier_invoice_documents_purchase; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_documents_purchase ON public.supplier_invoice_documents USING btree (purchase_id);
+
+
+--
+-- Name: idx_supplier_invoice_exports_invoice; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_exports_invoice ON public.supplier_invoice_exports USING btree (supplier_invoice_id, created_at DESC);
+
+
+--
+-- Name: idx_supplier_invoice_lines_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_lines_article ON public.supplier_invoice_lines USING btree (store_id, article_id);
+
+
+--
+-- Name: idx_supplier_invoice_lines_invoice; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_lines_invoice ON public.supplier_invoice_lines USING btree (supplier_invoice_id, line_number);
+
+
+--
+-- Name: idx_supplier_invoice_matches_invoice; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_matches_invoice ON public.supplier_invoice_matches USING btree (supplier_invoice_id);
+
+
+--
+-- Name: idx_supplier_invoice_matches_purchase; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoice_matches_purchase ON public.supplier_invoice_matches USING btree (store_id, purchase_id);
+
+
+--
+-- Name: idx_supplier_invoices_bl_number; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoices_bl_number ON public.supplier_invoices USING btree (store_id, supplier_id, supplier_invoice_bl_number) WHERE (supplier_invoice_bl_number IS NOT NULL);
+
+
+--
+-- Name: idx_supplier_invoices_pennylane; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoices_pennylane ON public.supplier_invoices USING btree (store_id, pennylane_status);
+
+
+--
+-- Name: idx_supplier_invoices_store_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_supplier_invoices_store_status ON public.supplier_invoices USING btree (store_id, status, invoice_date DESC);
+
+
+--
+-- Name: idx_suppliers_store_id; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_suppliers_store_id ON public.suppliers USING btree (store_id);
+
+
+--
+-- Name: idx_suppliers_store_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_suppliers_store_status ON public.suppliers USING btree (store_id, status);
+
+
+--
+-- Name: idx_suppliers_store_type; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_suppliers_store_type ON public.suppliers USING btree (store_id, supplier_type);
+
+
+--
+-- Name: idx_transformation_inputs_source_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformation_inputs_source_lot ON public.transformation_inputs USING btree (store_id, source_lot_id);
+
+
+--
+-- Name: idx_transformation_inputs_store_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformation_inputs_store_article ON public.transformation_inputs USING btree (store_id, article_id);
+
+
+--
+-- Name: idx_transformation_inputs_transformation; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformation_inputs_transformation ON public.transformation_inputs USING btree (transformation_id, line_number);
+
+
+--
+-- Name: idx_transformation_metadata_store_key; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformation_metadata_store_key ON public.transformation_metadata USING btree (store_id, meta_key);
+
+
+--
+-- Name: idx_transformation_metadata_transformation; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformation_metadata_transformation ON public.transformation_metadata USING btree (transformation_id);
+
+
+--
+-- Name: idx_transformation_outputs_created_lot; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformation_outputs_created_lot ON public.transformation_outputs USING btree (store_id, created_lot_id);
+
+
+--
+-- Name: idx_transformation_outputs_store_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformation_outputs_store_article ON public.transformation_outputs USING btree (store_id, article_id);
+
+
+--
+-- Name: idx_transformation_outputs_transformation; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformation_outputs_transformation ON public.transformation_outputs USING btree (transformation_id, line_number);
+
+
+--
+-- Name: idx_transformations_store_date; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformations_store_date ON public.transformations USING btree (store_id, transformation_date DESC, created_at DESC);
+
+
+--
+-- Name: idx_transformations_store_reference; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformations_store_reference ON public.transformations USING btree (store_id, reference_number);
+
+
+--
+-- Name: idx_transformations_store_status; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE INDEX idx_transformations_store_status ON public.transformations USING btree (store_id, status, transformation_date DESC);
+
+
+--
+-- Name: ux_lots_store_lot_code; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE UNIQUE INDEX ux_lots_store_lot_code ON public.lots USING btree (store_id, lot_code);
+
+
+--
+-- Name: ux_stock_summary_store_article; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE UNIQUE INDEX ux_stock_summary_store_article ON public.stock_summary USING btree (store_id, article_id);
+
+
+--
+-- Name: ux_supplier_invoices_store_supplier_number; Type: INDEX; Schema: public; Owner: admin
+--
+
+CREATE UNIQUE INDEX ux_supplier_invoices_store_supplier_number ON public.supplier_invoices USING btree (store_id, supplier_id, invoice_number);
+
+
+--
+-- Name: article_department_metadata trg_article_department_metadata_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_article_department_metadata_updated_at BEFORE UPDATE ON public.article_department_metadata FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: article_departments trg_article_departments_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_article_departments_updated_at BEFORE UPDATE ON public.article_departments FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: articles trg_articles_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_articles_updated_at BEFORE UPDATE ON public.articles FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: customer_price_list_lines trg_customer_price_list_lines_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_customer_price_list_lines_updated_at BEFORE UPDATE ON public.customer_price_list_lines FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: customer_price_lists trg_customer_price_lists_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_customer_price_lists_updated_at BEFORE UPDATE ON public.customer_price_lists FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: department_sectors trg_department_sectors_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_department_sectors_updated_at BEFORE UPDATE ON public.department_sectors FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: sales_documents trg_sales_documents_short_references; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_sales_documents_short_references BEFORE INSERT ON public.sales_documents FOR EACH ROW EXECUTE FUNCTION public.gc_sales_documents_short_reference_before_insert();
+
+
+--
+-- Name: suppliers trg_suppliers_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_suppliers_updated_at BEFORE UPDATE ON public.suppliers FOR EACH ROW EXECUTE FUNCTION public.set_suppliers_updated_at();
+
+
+--
+-- Name: transformation_inputs trg_transformation_inputs_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_transformation_inputs_updated_at BEFORE UPDATE ON public.transformation_inputs FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: transformation_metadata trg_transformation_metadata_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_transformation_metadata_updated_at BEFORE UPDATE ON public.transformation_metadata FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: transformation_outputs trg_transformation_outputs_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_transformation_outputs_updated_at BEFORE UPDATE ON public.transformation_outputs FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: transformations trg_transformations_updated_at; Type: TRIGGER; Schema: public; Owner: admin
+--
+
+CREATE TRIGGER trg_transformations_updated_at BEFORE UPDATE ON public.transformations FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+
+--
+-- Name: ai_user_memory ai_user_memory_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.ai_user_memory
+    ADD CONSTRAINT ai_user_memory_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: ai_user_memory ai_user_memory_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.ai_user_memory
+    ADD CONSTRAINT ai_user_memory_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: article_department_metadata article_department_metadata_article_department_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_department_metadata
+    ADD CONSTRAINT article_department_metadata_article_department_id_fkey FOREIGN KEY (article_department_id) REFERENCES public.article_departments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: article_departments article_departments_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_departments
+    ADD CONSTRAINT article_departments_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id) ON DELETE CASCADE;
+
+
+--
+-- Name: article_departments article_departments_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_departments
+    ADD CONSTRAINT article_departments_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: article_departments article_departments_department_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_departments
+    ADD CONSTRAINT article_departments_department_id_fkey FOREIGN KEY (department_id) REFERENCES public.departments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: article_departments article_departments_department_sector_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_departments
+    ADD CONSTRAINT article_departments_department_sector_id_fkey FOREIGN KEY (department_sector_id) REFERENCES public.department_sectors(id) ON DELETE SET NULL;
+
+
+--
+-- Name: article_departments article_departments_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.article_departments
+    ADD CONSTRAINT article_departments_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: articles articles_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.articles
+    ADD CONSTRAINT articles_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: articles articles_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.articles
+    ADD CONSTRAINT articles_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: articles articles_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.articles
+    ADD CONSTRAINT articles_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: clients clients_billed_client_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.clients
+    ADD CONSTRAINT clients_billed_client_id_fkey FOREIGN KEY (billed_client_id) REFERENCES public.clients(id) ON DELETE SET NULL;
+
+
+--
+-- Name: customer_price_list_lines customer_price_list_lines_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_list_lines
+    ADD CONSTRAINT customer_price_list_lines_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id) ON DELETE SET NULL;
+
+
+--
+-- Name: customer_price_list_lines customer_price_list_lines_price_list_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_list_lines
+    ADD CONSTRAINT customer_price_list_lines_price_list_id_fkey FOREIGN KEY (price_list_id) REFERENCES public.customer_price_lists(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_price_list_lines customer_price_list_lines_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_list_lines
+    ADD CONSTRAINT customer_price_list_lines_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_price_lists customer_price_lists_client_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_lists
+    ADD CONSTRAINT customer_price_lists_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.clients(id) ON DELETE SET NULL;
+
+
+--
+-- Name: customer_price_lists customer_price_lists_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_lists
+    ADD CONSTRAINT customer_price_lists_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: customer_price_lists customer_price_lists_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_lists
+    ADD CONSTRAINT customer_price_lists_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: customer_price_lists customer_price_lists_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.customer_price_lists
+    ADD CONSTRAINT customer_price_lists_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: department_sectors department_sectors_department_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.department_sectors
+    ADD CONSTRAINT department_sectors_department_id_fkey FOREIGN KEY (department_id) REFERENCES public.departments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: departments departments_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.departments
+    ADD CONSTRAINT departments_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: lots lots_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.lots
+    ADD CONSTRAINT lots_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id);
+
+
+--
+-- Name: lots lots_purchase_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.lots
+    ADD CONSTRAINT lots_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id);
+
+
+--
+-- Name: lots lots_purchase_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.lots
+    ADD CONSTRAINT lots_purchase_line_id_fkey FOREIGN KEY (purchase_line_id) REFERENCES public.purchase_lines(id);
+
+
+--
+-- Name: lots lots_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.lots
+    ADD CONSTRAINT lots_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id);
+
+
+--
+-- Name: purchase_line_metadata purchase_line_metadata_purchase_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchase_line_metadata
+    ADD CONSTRAINT purchase_line_metadata_purchase_line_id_fkey FOREIGN KEY (purchase_line_id) REFERENCES public.purchase_lines(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchase_lines purchase_lines_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchase_lines
+    ADD CONSTRAINT purchase_lines_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id);
+
+
+--
+-- Name: purchase_lines purchase_lines_purchase_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchase_lines
+    ADD CONSTRAINT purchase_lines_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: purchase_lines purchase_lines_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchase_lines
+    ADD CONSTRAINT purchase_lines_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id);
+
+
+--
+-- Name: purchases purchases_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.purchases
+    ADD CONSTRAINT purchases_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id);
+
+
+--
+-- Name: sale_line_allocations sale_line_allocations_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sale_line_allocations
+    ADD CONSTRAINT sale_line_allocations_lot_id_fkey FOREIGN KEY (lot_id) REFERENCES public.lots(id);
+
+
+--
+-- Name: sale_line_allocations sale_line_allocations_sales_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sale_line_allocations
+    ADD CONSTRAINT sale_line_allocations_sales_line_id_fkey FOREIGN KEY (sales_line_id) REFERENCES public.sales_lines(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_documents sales_documents_billed_client_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_documents
+    ADD CONSTRAINT sales_documents_billed_client_id_fkey FOREIGN KEY (billed_client_id) REFERENCES public.clients(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_documents sales_documents_client_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_documents
+    ADD CONSTRAINT sales_documents_client_id_fkey FOREIGN KEY (client_id) REFERENCES public.clients(id);
+
+
+--
+-- Name: sales_documents sales_documents_source_delivery_note_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_documents
+    ADD CONSTRAINT sales_documents_source_delivery_note_id_fkey FOREIGN KEY (source_delivery_note_id) REFERENCES public.sales_documents(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_documents sales_documents_source_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_documents
+    ADD CONSTRAINT sales_documents_source_invoice_id_fkey FOREIGN KEY (source_invoice_id) REFERENCES public.sales_documents(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_documents sales_documents_source_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_documents
+    ADD CONSTRAINT sales_documents_source_order_id_fkey FOREIGN KEY (source_order_id) REFERENCES public.sales_documents(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_lines sales_lines_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_lines
+    ADD CONSTRAINT sales_lines_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id);
+
+
+--
+-- Name: sales_lines sales_lines_sales_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_lines
+    ADD CONSTRAINT sales_lines_sales_document_id_fkey FOREIGN KEY (sales_document_id) REFERENCES public.sales_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: sales_lines sales_lines_selected_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_lines
+    ADD CONSTRAINT sales_lines_selected_lot_id_fkey FOREIGN KEY (selected_lot_id) REFERENCES public.lots(id) ON DELETE SET NULL;
+
+
+--
+-- Name: sales_lines sales_lines_source_invoice_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_lines
+    ADD CONSTRAINT sales_lines_source_invoice_line_id_fkey FOREIGN KEY (source_invoice_line_id) REFERENCES public.sales_lines(id);
+
+
+--
+-- Name: sales_lines sales_lines_suggested_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.sales_lines
+    ADD CONSTRAINT sales_lines_suggested_lot_id_fkey FOREIGN KEY (suggested_lot_id) REFERENCES public.lots(id) ON DELETE SET NULL;
+
+
+--
+-- Name: stock_movements stock_movements_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_movements
+    ADD CONSTRAINT stock_movements_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id);
+
+
+--
+-- Name: stock_movements stock_movements_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_movements
+    ADD CONSTRAINT stock_movements_lot_id_fkey FOREIGN KEY (lot_id) REFERENCES public.lots(id);
+
+
+--
+-- Name: stock_snapshot_lines stock_snapshot_lines_snapshot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_snapshot_lines
+    ADD CONSTRAINT stock_snapshot_lines_snapshot_id_fkey FOREIGN KEY (snapshot_id) REFERENCES public.stock_snapshots(id) ON DELETE CASCADE;
+
+
+--
+-- Name: stock_summary stock_summary_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.stock_summary
+    ADD CONSTRAINT stock_summary_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id);
+
+
+--
+-- Name: store_settings store_settings_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.store_settings
+    ADD CONSTRAINT store_settings_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_article_mappings supplier_article_mappings_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_article_mappings
+    ADD CONSTRAINT supplier_article_mappings_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id);
+
+
+--
+-- Name: supplier_article_mappings supplier_article_mappings_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_article_mappings
+    ADD CONSTRAINT supplier_article_mappings_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id);
+
+
+--
+-- Name: supplier_invoice_cost_adjustments supplier_invoice_cost_adjustments_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_cost_adjustments
+    ADD CONSTRAINT supplier_invoice_cost_adjustments_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_cost_adjustments supplier_invoice_cost_adjustments_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_cost_adjustments
+    ADD CONSTRAINT supplier_invoice_cost_adjustments_lot_id_fkey FOREIGN KEY (lot_id) REFERENCES public.lots(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_cost_adjustments supplier_invoice_cost_adjustments_purchase_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_cost_adjustments
+    ADD CONSTRAINT supplier_invoice_cost_adjustments_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_cost_adjustments supplier_invoice_cost_adjustments_purchase_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_cost_adjustments
+    ADD CONSTRAINT supplier_invoice_cost_adjustments_purchase_line_id_fkey FOREIGN KEY (purchase_line_id) REFERENCES public.purchase_lines(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_cost_adjustments supplier_invoice_cost_adjustments_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_cost_adjustments
+    ADD CONSTRAINT supplier_invoice_cost_adjustments_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_cost_adjustments supplier_invoice_cost_adjustments_supplier_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_cost_adjustments
+    ADD CONSTRAINT supplier_invoice_cost_adjustments_supplier_invoice_id_fkey FOREIGN KEY (supplier_invoice_id) REFERENCES public.supplier_invoices(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_documents supplier_invoice_documents_purchase_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_documents
+    ADD CONSTRAINT supplier_invoice_documents_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_documents supplier_invoice_documents_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_documents
+    ADD CONSTRAINT supplier_invoice_documents_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_documents supplier_invoice_documents_supplier_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_documents
+    ADD CONSTRAINT supplier_invoice_documents_supplier_invoice_id_fkey FOREIGN KEY (supplier_invoice_id) REFERENCES public.supplier_invoices(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_exports supplier_invoice_exports_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_exports
+    ADD CONSTRAINT supplier_invoice_exports_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_exports supplier_invoice_exports_supplier_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_exports
+    ADD CONSTRAINT supplier_invoice_exports_supplier_invoice_id_fkey FOREIGN KEY (supplier_invoice_id) REFERENCES public.supplier_invoices(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_lines supplier_invoice_lines_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_lines
+    ADD CONSTRAINT supplier_invoice_lines_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_lines supplier_invoice_lines_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_lines
+    ADD CONSTRAINT supplier_invoice_lines_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_lines supplier_invoice_lines_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_lines
+    ADD CONSTRAINT supplier_invoice_lines_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: supplier_invoice_lines supplier_invoice_lines_supplier_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_lines
+    ADD CONSTRAINT supplier_invoice_lines_supplier_invoice_id_fkey FOREIGN KEY (supplier_invoice_id) REFERENCES public.supplier_invoices(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_matches supplier_invoice_matches_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_matches
+    ADD CONSTRAINT supplier_invoice_matches_lot_id_fkey FOREIGN KEY (lot_id) REFERENCES public.lots(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_matches supplier_invoice_matches_purchase_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_matches
+    ADD CONSTRAINT supplier_invoice_matches_purchase_id_fkey FOREIGN KEY (purchase_id) REFERENCES public.purchases(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_matches supplier_invoice_matches_purchase_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_matches
+    ADD CONSTRAINT supplier_invoice_matches_purchase_line_id_fkey FOREIGN KEY (purchase_line_id) REFERENCES public.purchase_lines(id) ON DELETE SET NULL;
+
+
+--
+-- Name: supplier_invoice_matches supplier_invoice_matches_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_matches
+    ADD CONSTRAINT supplier_invoice_matches_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_matches supplier_invoice_matches_supplier_invoice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_matches
+    ADD CONSTRAINT supplier_invoice_matches_supplier_invoice_id_fkey FOREIGN KEY (supplier_invoice_id) REFERENCES public.supplier_invoices(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoice_matches supplier_invoice_matches_supplier_invoice_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoice_matches
+    ADD CONSTRAINT supplier_invoice_matches_supplier_invoice_line_id_fkey FOREIGN KEY (supplier_invoice_line_id) REFERENCES public.supplier_invoice_lines(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoices supplier_invoices_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoices
+    ADD CONSTRAINT supplier_invoices_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: supplier_invoices supplier_invoices_supplier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.supplier_invoices
+    ADD CONSTRAINT supplier_invoices_supplier_id_fkey FOREIGN KEY (supplier_id) REFERENCES public.suppliers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: suppliers suppliers_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.suppliers
+    ADD CONSTRAINT suppliers_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id);
+
+
+--
+-- Name: suppliers suppliers_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.suppliers
+    ADD CONSTRAINT suppliers_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: suppliers suppliers_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.suppliers
+    ADD CONSTRAINT suppliers_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id);
+
+
+--
+-- Name: transformation_inputs transformation_inputs_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_inputs
+    ADD CONSTRAINT transformation_inputs_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: transformation_inputs transformation_inputs_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_inputs
+    ADD CONSTRAINT transformation_inputs_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_inputs transformation_inputs_department_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_inputs
+    ADD CONSTRAINT transformation_inputs_department_id_fkey FOREIGN KEY (department_id) REFERENCES public.departments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_inputs transformation_inputs_source_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_inputs
+    ADD CONSTRAINT transformation_inputs_source_lot_id_fkey FOREIGN KEY (source_lot_id) REFERENCES public.lots(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_inputs transformation_inputs_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_inputs
+    ADD CONSTRAINT transformation_inputs_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transformation_inputs transformation_inputs_transformation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_inputs
+    ADD CONSTRAINT transformation_inputs_transformation_id_fkey FOREIGN KEY (transformation_id) REFERENCES public.transformations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transformation_inputs transformation_inputs_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_inputs
+    ADD CONSTRAINT transformation_inputs_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_metadata transformation_metadata_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_metadata
+    ADD CONSTRAINT transformation_metadata_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_metadata transformation_metadata_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_metadata
+    ADD CONSTRAINT transformation_metadata_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transformation_metadata transformation_metadata_transformation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_metadata
+    ADD CONSTRAINT transformation_metadata_transformation_id_fkey FOREIGN KEY (transformation_id) REFERENCES public.transformations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transformation_metadata transformation_metadata_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_metadata
+    ADD CONSTRAINT transformation_metadata_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_outputs transformation_outputs_article_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_outputs
+    ADD CONSTRAINT transformation_outputs_article_id_fkey FOREIGN KEY (article_id) REFERENCES public.articles(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: transformation_outputs transformation_outputs_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_outputs
+    ADD CONSTRAINT transformation_outputs_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_outputs transformation_outputs_created_lot_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_outputs
+    ADD CONSTRAINT transformation_outputs_created_lot_id_fkey FOREIGN KEY (created_lot_id) REFERENCES public.lots(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_outputs transformation_outputs_department_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_outputs
+    ADD CONSTRAINT transformation_outputs_department_id_fkey FOREIGN KEY (department_id) REFERENCES public.departments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformation_outputs transformation_outputs_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_outputs
+    ADD CONSTRAINT transformation_outputs_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transformation_outputs transformation_outputs_transformation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_outputs
+    ADD CONSTRAINT transformation_outputs_transformation_id_fkey FOREIGN KEY (transformation_id) REFERENCES public.transformations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transformation_outputs transformation_outputs_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformation_outputs
+    ADD CONSTRAINT transformation_outputs_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformations transformations_cancelled_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformations
+    ADD CONSTRAINT transformations_cancelled_by_fkey FOREIGN KEY (cancelled_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformations transformations_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformations
+    ADD CONSTRAINT transformations_created_by_fkey FOREIGN KEY (created_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformations transformations_department_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformations
+    ADD CONSTRAINT transformations_department_id_fkey FOREIGN KEY (department_id) REFERENCES public.departments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformations transformations_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformations
+    ADD CONSTRAINT transformations_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- Name: transformations transformations_updated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformations
+    ADD CONSTRAINT transformations_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: transformations transformations_validated_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.transformations
+    ADD CONSTRAINT transformations_validated_by_fkey FOREIGN KEY (validated_by) REFERENCES public.users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: user_departments user_departments_department_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.user_departments
+    ADD CONSTRAINT user_departments_department_id_fkey FOREIGN KEY (department_id) REFERENCES public.departments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: user_departments user_departments_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.user_departments
+    ADD CONSTRAINT user_departments_user_id_fkey FOREIGN KEY (user_id) REFERENCES public.users(id) ON DELETE CASCADE;
+
+
+--
+-- Name: users users_store_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: admin
+--
+
+ALTER TABLE ONLY public.users
+    ADD CONSTRAINT users_store_id_fkey FOREIGN KEY (store_id) REFERENCES public.stores(id) ON DELETE CASCADE;
+
+
+--
+-- PostgreSQL database dump complete
+--
+
+\unrestrict Pl5UVQmaCMnYGJVmiOJjKRIOQX6zmkO9znMax1uItfiFUoE3pTTaLrkAvhimdjX
+

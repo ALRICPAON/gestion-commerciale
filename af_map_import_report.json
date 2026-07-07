@@ -1,0 +1,6632 @@
+{
+  "mode": "dry-run",
+  "total_rows": 2195,
+  "imported": 1327,
+  "ignored": 868,
+  "supplier_not_found": 0,
+  "article_not_found": 544,
+  "invalid_rows": 323,
+  "errors": [
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__11000570",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "11000570",
+      "plu": "3499"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__11001012",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "11001012",
+      "plu": "3452"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__11001015",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "11001015",
+      "plu": "3452"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__11101350",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "11101350",
+      "plu": "3022"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__11101355",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "11101355",
+      "plu": "3480"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__11101601",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "11101601",
+      "plu": "3531"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__11103309",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "11103309",
+      "plu": "3228"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__12001200",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "12001200",
+      "plu": "3162"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13104100",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13104100",
+      "plu": "3629"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13104112",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13104112",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13150058",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13150058",
+      "plu": "3621"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13150401",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13150401",
+      "plu": "3347"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13150852",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13150852",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13152075",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13152075",
+      "plu": "3964"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13152509",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13152509",
+      "plu": "3604"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13154120",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13154120",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13154122",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13154122",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13205120",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13205120",
+      "plu": "3024"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13401110",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13401110",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13401210",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13401210",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13451030",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13451030",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13457336",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13457336",
+      "plu": "3028"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13457337",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13457337",
+      "plu": "3028"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13532000",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13532000",
+      "plu": "3194"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__13701200",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "13701200",
+      "plu": "3049"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14101006",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14101006",
+      "plu": "3092"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14101024",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14101024",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14102014",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14102014",
+      "plu": "3065"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "10001__14111031",
+      "fournisseurCode": "10001",
+      "refFournisseur": "14111031",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14112014",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14112014",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14112019",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14112019",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14131022",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14131022",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14192220",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14192220",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14292102",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14292102",
+      "plu": "3551"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14302100",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14302100",
+      "plu": "3438"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14302350",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14302350",
+      "plu": "3438"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14304350",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14304350",
+      "plu": "3444"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__14304850",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "14304850",
+      "plu": "3444"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__15208100",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "15208100",
+      "plu": "3326"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__16100513",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "16100513",
+      "plu": "3305"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__16102010",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "16102010",
+      "plu": "3425"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__21103115",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "21103115",
+      "plu": "3228"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__22307211",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "22307211",
+      "plu": "3272"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__22307221",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "22307221",
+      "plu": "3257"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__22307225",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "22307225",
+      "plu": "3666"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__22307231",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "22307231",
+      "plu": "3827"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__23561011",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "23561011",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__25204211",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "25204211",
+      "plu": "3492500013982"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__25206134",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "25206134",
+      "plu": "3435020083189"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__25206463",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "25206463",
+      "plu": "3302100013445"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__25208050",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "25208050",
+      "plu": "3439"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__55602002",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "55602002",
+      "plu": "3450971469448"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__62203500",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "62203500",
+      "plu": "3664335053932"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__62206500",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "62206500",
+      "plu": "3664335050641"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__62305050",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "62305050",
+      "plu": "3664335055707"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__64192019",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "64192019",
+      "plu": "3664335050368"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__65205200",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "65205200",
+      "plu": "3664335050009"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__65205240",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "65205240",
+      "plu": "3664335050047"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__65205300",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "65205300",
+      "plu": "3664335050085"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__65205350",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "65205350",
+      "plu": "3664335050122"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__65205450",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "65205450",
+      "plu": "3664335056056"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10001__65206075",
+      "fournisseurCode": "10001",
+      "supplier_id": "a3af69c0-58a7-4545-89ae-4ef18a9c0611",
+      "refFournisseur": "65206075",
+      "plu": "3664335057534"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10003__DORG350",
+      "fournisseurCode": "10003",
+      "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7",
+      "refFournisseur": "DORG350",
+      "plu": "3021"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10003__DORG580",
+      "fournisseurCode": "10003",
+      "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7",
+      "refFournisseur": "DORG580",
+      "plu": "3021"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10003__EMISP_3",
+      "fournisseurCode": "10003",
+      "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7",
+      "refFournisseur": "EMISP_3",
+      "plu": "3796"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10003__JOURAI_02",
+      "fournisseurCode": "10003",
+      "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7",
+      "refFournisseur": "JOURAI_02",
+      "plu": "3210"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10003__JOURAI_03",
+      "fournisseurCode": "10003",
+      "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7",
+      "refFournisseur": "JOURAI_03",
+      "plu": "3210"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10003__JOURAI_2",
+      "fournisseurCode": "10003",
+      "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7",
+      "refFournisseur": "JOURAI_2",
+      "plu": "3210"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10003__MAQ3500",
+      "fournisseurCode": "10003",
+      "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7",
+      "refFournisseur": "MAQ3500",
+      "plu": "3629"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10003__MERLU13",
+      "fournisseurCode": "10003",
+      "supplier_id": "f7d3bea2-a8e0-4990-b4aa-e5c0e60165c7",
+      "refFournisseur": "MERLU13",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00020",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00020",
+      "plu": "3595"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00370",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00370",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00373",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00373",
+      "plu": "3640"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00401",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00401",
+      "plu": "3198"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00407",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00407",
+      "plu": "3021"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00411",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00411",
+      "plu": "3224"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00435",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00435",
+      "plu": "3201"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00517",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00517",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00600",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00600",
+      "plu": "3413"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00801",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00801",
+      "plu": "3621"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__00806",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "00806",
+      "plu": "3052"
+    },
+    {
+      "reason": "duplicate",
+      "firebase_key": "10004__00922",
+      "existing_id": "5582e86f-c338-4c67-aa7e-4f9c54bba0b1",
+      "fournisseurCode": "10004",
+      "refFournisseur": "00922",
+      "plu": "3215"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01001",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01001",
+      "plu": "3347"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01002",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01002",
+      "plu": "3347"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01004",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01004",
+      "plu": "3628"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01010",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01010",
+      "plu": "3628"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01011",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01011",
+      "plu": "3628"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01054",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01054",
+      "plu": "3629"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01321",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01321",
+      "plu": "3300"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01514",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01514",
+      "plu": "3669"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01593",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01593",
+      "plu": "3997"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01609",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01609",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__01696",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "01696",
+      "plu": "3162"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__02669",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "02669",
+      "plu": "3052"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__02701",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "02701",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__02754",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "02754",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__02779",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "02779",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__02782",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "02782",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__02783",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "02783",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__02799",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "02799",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__04089",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "04089",
+      "plu": "3022"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__08076",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "08076",
+      "plu": "3444"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10004__15005",
+      "fournisseurCode": "10004",
+      "supplier_id": "dbfcc13d-1e61-4dd9-89b9-485a65446ad2",
+      "refFournisseur": "15005",
+      "plu": "3563243012829"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10013__000000303",
+      "fournisseurCode": "10013",
+      "supplier_id": "3f19cdbc-05b1-48c2-996e-6263dc6141fc",
+      "refFournisseur": "000000303",
+      "plu": "3834"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10013__000000502",
+      "fournisseurCode": "10013",
+      "supplier_id": "3f19cdbc-05b1-48c2-996e-6263dc6141fc",
+      "refFournisseur": "000000502",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10013__000000508",
+      "fournisseurCode": "10013",
+      "supplier_id": "3f19cdbc-05b1-48c2-996e-6263dc6141fc",
+      "refFournisseur": "000000508",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10013__000001556",
+      "fournisseurCode": "10013",
+      "supplier_id": "3f19cdbc-05b1-48c2-996e-6263dc6141fc",
+      "refFournisseur": "000001556",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "10013__000001560",
+      "fournisseurCode": "10013",
+      "supplier_id": "3f19cdbc-05b1-48c2-996e-6263dc6141fc",
+      "refFournisseur": "000001560",
+      "plu": "3065"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__31020",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "31020",
+      "plu": "3024"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__31140",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "31140",
+      "plu": "3657"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__31150",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "31150",
+      "plu": "3834"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__32022",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "32022",
+      "plu": "3643"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__32130",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "32130",
+      "plu": "3621"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81268__32220",
+      "fournisseurCode": "81268",
+      "refFournisseur": "32220",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__33100",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "33100",
+      "plu": "3587"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__33320",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "33320",
+      "plu": "3628"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__33330",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "33330",
+      "plu": "3224"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__33560",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "33560",
+      "plu": "3604"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__34240",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "34240",
+      "plu": "3646"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__35080",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "35080",
+      "plu": "3144"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81268__36040",
+      "fournisseurCode": "81268",
+      "refFournisseur": "36040",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__36060",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "36060",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__37050",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "37050",
+      "plu": "3629"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__42020",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "42020",
+      "plu": "3162"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__57050",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "57050",
+      "plu": "3394"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__57060",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "57060",
+      "plu": "3394"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__57100",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "57100",
+      "plu": "3007"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81268__75010",
+      "fournisseurCode": "81268",
+      "supplier_id": "d9445d28-b5c1-4175-8437-e370955b619e",
+      "refFournisseur": "75010",
+      "plu": "3499"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__10",
+      "fournisseurCode": "81269",
+      "refFournisseur": "10",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__100",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "100",
+      "plu": "3360"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1009",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1009",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__101",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "101",
+      "plu": "3360"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1010",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1010",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1011",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1011",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1012",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1012",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1013",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1013",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1014",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1014",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1015",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1015",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1016",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1016",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1017",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1017",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1018",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1018",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1019",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1019",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__102",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "102",
+      "plu": "3360"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1020",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1020",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1021",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1021",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1022",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1022",
+      "plu": "3969"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__103",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "103",
+      "plu": "3360"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1035",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1035",
+      "plu": "3162"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1036",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1036",
+      "plu": "3162"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1037",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1037",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1038",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1038",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1039",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1039",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__104",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "104",
+      "plu": "3360"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1040",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1040",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1041",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1041",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1042",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1042",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1043",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1043",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1044",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1044",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1045",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1045",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1046",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1046",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1047",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1047",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1048",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1048",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1049",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1049",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__105",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "105",
+      "plu": "3360"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1050",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1050",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1051",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1051",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1052",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1052",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1053",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1053",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1054",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1054",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1055",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1055",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1056",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1056",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1057",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1057",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1058",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1058",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1059",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1059",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1060",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1060",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1061",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1061",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1062",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1062",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1063",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1063",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1064",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1064",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1065",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1065",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1066",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1066",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1067",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1067",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1068",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1068",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1069",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1069",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1070",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1070",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1071",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1071",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1072",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1072",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1073",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1073",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1074",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1074",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1075",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1075",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1076",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1076",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1077",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1077",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1078",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1078",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1079",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1079",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1080",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1080",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1081",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1081",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1082",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1082",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1092",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1092",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1093",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1093",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1094",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1094",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1095",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1095",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1096",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1096",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1097",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1097",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1098",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1098",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1099",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1099",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__11",
+      "fournisseurCode": "81269",
+      "refFournisseur": "11",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1100",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1100",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1101",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1101",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1102",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1102",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1103",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1103",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1104",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1104",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1105",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1105",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1106",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1106",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1107",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1107",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1108",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1108",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1109",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1109",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1110",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1110",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1111",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1111",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1112",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1112",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1113",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1113",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1114",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1114",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1115",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1115",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1116",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1116",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1117",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1117",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1118",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1118",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1119",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1119",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1120",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1120",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1121",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1121",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1122",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1122",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1123",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1123",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1124",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1124",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1125",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1125",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1126",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1126",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1127",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1127",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1128",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1128",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1129",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1129",
+      "plu": "3898"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1148",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1148",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1213",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1213",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1214",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1214",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1215",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1215",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1216",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1216",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1217",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1217",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1218",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1218",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1219",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1219",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1222",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1222",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1223",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1223",
+      "plu": "3971"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1224",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1224",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1225",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1225",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1226",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1226",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1227",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1227",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1228",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1228",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1229",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1229",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1230",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1230",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1231",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1231",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1232",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1232",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1233",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1233",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1234",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1234",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1235",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1235",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1236",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1236",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1237",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1237",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1238",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1238",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1241",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1241",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1242",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1242",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1255",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1255",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1256",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1256",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1257",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1257",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1258",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1258",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1271",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1271",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1272",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1272",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1293",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1293",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1294",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1294",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1295",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1295",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1296",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1296",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1297",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1297",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1298",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1298",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1299",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1299",
+      "plu": "3971"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__130",
+      "fournisseurCode": "81269",
+      "refFournisseur": "130",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1303",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1303",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1304",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1304",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1305",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1305",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1306",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1306",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1307",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1307",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1308",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1308",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1309",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1309",
+      "plu": "3971"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__131",
+      "fournisseurCode": "81269",
+      "refFournisseur": "131",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1310",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1310",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1313",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1313",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1314",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1314",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1315",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1315",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1316",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1316",
+      "plu": "3971"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__132",
+      "fournisseurCode": "81269",
+      "refFournisseur": "132",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1321",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1321",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1322",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1322",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1323",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1323",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1324",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1324",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1325",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1325",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1326",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1326",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1327",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1327",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1328",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1328",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1330",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1330",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1331",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1331",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1332",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1332",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1333",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1333",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1334",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1334",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1335",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1335",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1336",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1336",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1337",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1337",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1338",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1338",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1339",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1339",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1340",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1340",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1341",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1341",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1342",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1342",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1343",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1343",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1344",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1344",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1354",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1354",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1355",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1355",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1356",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1356",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1357",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1357",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1358",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1358",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1359",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1359",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1360",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1360",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1361",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1361",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1362",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1362",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1363",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1363",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1364",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1364",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1365",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1365",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1366",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1366",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1367",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1367",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1368",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1368",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1369",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1369",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1370",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1370",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1371",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1371",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1372",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1372",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1373",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1373",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1374",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1374",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1375",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1375",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1376",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1376",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1377",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1377",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1378",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1378",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1379",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1379",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1380",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1380",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1381",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1381",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1382",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1382",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1383",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1383",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1384",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1384",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1385",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1385",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1386",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1386",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1387",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1387",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1396",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1396",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1397",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1397",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1398",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1398",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1399",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1399",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1400",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1400",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1401",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1401",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1402",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1402",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1403",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1403",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1404",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1404",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1405",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1405",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1406",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1406",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1407",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1407",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1408",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1408",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1409",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1409",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1410",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1410",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1411",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1411",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1412",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1412",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1413",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1413",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1414",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1414",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1415",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1415",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1416",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1416",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1417",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1417",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1418",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1418",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1419",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1419",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1420",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1420",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1421",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1421",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1422",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1422",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1423",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1423",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1424",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1424",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1425",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1425",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1426",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1426",
+      "plu": "3452"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1428",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1428",
+      "plu": "3452"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1445",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1445",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1447",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1447",
+      "plu": "3316"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__145",
+      "fournisseurCode": "81269",
+      "refFournisseur": "145",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__146",
+      "fournisseurCode": "81269",
+      "refFournisseur": "146",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__147",
+      "fournisseurCode": "81269",
+      "refFournisseur": "147",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__148",
+      "fournisseurCode": "81269",
+      "refFournisseur": "148",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__149",
+      "fournisseurCode": "81269",
+      "refFournisseur": "149",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__150",
+      "fournisseurCode": "81269",
+      "refFournisseur": "150",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1502",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1502",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1504",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1504",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1505",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1505",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1506",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1506",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1507",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1507",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1524",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1524",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1533",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1533",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1534",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1534",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1535",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1535",
+      "plu": "3940"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1536",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1536",
+      "plu": "3940"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1537",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1537",
+      "plu": "3940"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1538",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1538",
+      "plu": "3940"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1539",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1539",
+      "plu": "3940"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1540",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1540",
+      "plu": "3940"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1541",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1541",
+      "plu": "3940"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1543",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1543",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1544",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1544",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1547",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1547",
+      "plu": "3955"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1548",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1548",
+      "plu": "3955"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1551",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1551",
+      "plu": "3955"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1552",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1552",
+      "plu": "3955"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1554",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1554",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1561",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1561",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1562",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1562",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1563",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1563",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1564",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1564",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1565",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1565",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1566",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1566",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1567",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1567",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1568",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1568",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1569",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1569",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__157",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "157",
+      "plu": "3898"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__1570",
+      "fournisseurCode": "81269",
+      "refFournisseur": "1570",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1576",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1576",
+      "plu": "3891"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1577",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1577",
+      "plu": "3891"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1578",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1578",
+      "plu": "3891"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1579",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1579",
+      "plu": "3891"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__158",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "158",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1580",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1580",
+      "plu": "3891"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1581",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1581",
+      "plu": "3891"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1582",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1582",
+      "plu": "3891"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1583",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1583",
+      "plu": "3891"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__1588",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "1588",
+      "plu": "3499"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__159",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "159",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__160",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "160",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__161",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "161",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__162",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "162",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__163",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "163",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__164",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "164",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__165",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "165",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__166",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "166",
+      "plu": "3898"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__179",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "179",
+      "plu": "3452"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__180",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "180",
+      "plu": "3452"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__2",
+      "fournisseurCode": "81269",
+      "refFournisseur": "2",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__203",
+      "fournisseurCode": "81269",
+      "refFournisseur": "203",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__204",
+      "fournisseurCode": "81269",
+      "refFournisseur": "204",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__205",
+      "fournisseurCode": "81269",
+      "refFournisseur": "205",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__221",
+      "fournisseurCode": "81269",
+      "refFournisseur": "221",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__222",
+      "fournisseurCode": "81269",
+      "refFournisseur": "222",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__223",
+      "fournisseurCode": "81269",
+      "refFournisseur": "223",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__23",
+      "fournisseurCode": "81269",
+      "refFournisseur": "23",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__239",
+      "fournisseurCode": "81269",
+      "refFournisseur": "239",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__24",
+      "fournisseurCode": "81269",
+      "refFournisseur": "24",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__240",
+      "fournisseurCode": "81269",
+      "refFournisseur": "240",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__241",
+      "fournisseurCode": "81269",
+      "refFournisseur": "241",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__242",
+      "fournisseurCode": "81269",
+      "refFournisseur": "242",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__243",
+      "fournisseurCode": "81269",
+      "refFournisseur": "243",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__244",
+      "fournisseurCode": "81269",
+      "refFournisseur": "244",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__245",
+      "fournisseurCode": "81269",
+      "refFournisseur": "245",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__246",
+      "fournisseurCode": "81269",
+      "refFournisseur": "246",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__247",
+      "fournisseurCode": "81269",
+      "refFournisseur": "247",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__248",
+      "fournisseurCode": "81269",
+      "refFournisseur": "248",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__249",
+      "fournisseurCode": "81269",
+      "refFournisseur": "249",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__25",
+      "fournisseurCode": "81269",
+      "refFournisseur": "25",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__250",
+      "fournisseurCode": "81269",
+      "refFournisseur": "250",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__26",
+      "fournisseurCode": "81269",
+      "refFournisseur": "26",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__262",
+      "fournisseurCode": "81269",
+      "refFournisseur": "262",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__263",
+      "fournisseurCode": "81269",
+      "refFournisseur": "263",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__264",
+      "fournisseurCode": "81269",
+      "refFournisseur": "264",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__265",
+      "fournisseurCode": "81269",
+      "refFournisseur": "265",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__266",
+      "fournisseurCode": "81269",
+      "refFournisseur": "266",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__267",
+      "fournisseurCode": "81269",
+      "refFournisseur": "267",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__268",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "268",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__269",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "269",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__27",
+      "fournisseurCode": "81269",
+      "refFournisseur": "27",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__270",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "270",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__271",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "271",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__272",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "272",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__273",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "273",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__274",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "274",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__275",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "275",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__276",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "276",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__277",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "277",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__278",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "278",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__279",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "279",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__28",
+      "fournisseurCode": "81269",
+      "refFournisseur": "28",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__284",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "284",
+      "plu": "3918"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__285",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "285",
+      "plu": "3918"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__286",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "286",
+      "plu": "3918"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__287",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "287",
+      "plu": "3918"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__288",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "288",
+      "plu": "3918"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__289",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "289",
+      "plu": "3918"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__3",
+      "fournisseurCode": "81269",
+      "refFournisseur": "3",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__330",
+      "fournisseurCode": "81269",
+      "refFournisseur": "330",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__331",
+      "fournisseurCode": "81269",
+      "refFournisseur": "331",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__334",
+      "fournisseurCode": "81269",
+      "refFournisseur": "334",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__335",
+      "fournisseurCode": "81269",
+      "refFournisseur": "335",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__336",
+      "fournisseurCode": "81269",
+      "refFournisseur": "336",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__337",
+      "fournisseurCode": "81269",
+      "refFournisseur": "337",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__338",
+      "fournisseurCode": "81269",
+      "refFournisseur": "338",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__339",
+      "fournisseurCode": "81269",
+      "refFournisseur": "339",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__340",
+      "fournisseurCode": "81269",
+      "refFournisseur": "340",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__341",
+      "fournisseurCode": "81269",
+      "refFournisseur": "341",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__342",
+      "fournisseurCode": "81269",
+      "refFournisseur": "342",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__343",
+      "fournisseurCode": "81269",
+      "refFournisseur": "343",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__344",
+      "fournisseurCode": "81269",
+      "refFournisseur": "344",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__374",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "374",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__375",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "375",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__376",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "376",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__377",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "377",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__378",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "378",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__379",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "379",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__380",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "380",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__381",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "381",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__382",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "382",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__383",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "383",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__384",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "384",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__385",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "385",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__386",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "386",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__387",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "387",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__388",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "388",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__389",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "389",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__390",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "390",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__391",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "391",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__392",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "392",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__393",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "393",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__394",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "394",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__395",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "395",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__396",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "396",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__397",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "397",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__398",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "398",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__399",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "399",
+      "plu": "3930"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__4",
+      "fournisseurCode": "81269",
+      "refFournisseur": "4",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__400",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "400",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__401",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "401",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__402",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "402",
+      "plu": "3930"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__403",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "403",
+      "plu": "3930"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__404",
+      "fournisseurCode": "81269",
+      "refFournisseur": "404",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__405",
+      "fournisseurCode": "81269",
+      "refFournisseur": "405",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__406",
+      "fournisseurCode": "81269",
+      "refFournisseur": "406",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__407",
+      "fournisseurCode": "81269",
+      "refFournisseur": "407",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__408",
+      "fournisseurCode": "81269",
+      "refFournisseur": "408",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__409",
+      "fournisseurCode": "81269",
+      "refFournisseur": "409",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__410",
+      "fournisseurCode": "81269",
+      "refFournisseur": "410",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__411",
+      "fournisseurCode": "81269",
+      "refFournisseur": "411",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__412",
+      "fournisseurCode": "81269",
+      "refFournisseur": "412",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__413",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "413",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__414",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "414",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__415",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "415",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__416",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "416",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__417",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "417",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__418",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "418",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__419",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "419",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__420",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "420",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__421",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "421",
+      "plu": "3936"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__434",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "434",
+      "plu": "3946"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__435",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "435",
+      "plu": "3946"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__436",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "436",
+      "plu": "3946"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__449",
+      "fournisseurCode": "81269",
+      "refFournisseur": "449",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__450",
+      "fournisseurCode": "81269",
+      "refFournisseur": "450",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__451",
+      "fournisseurCode": "81269",
+      "refFournisseur": "451",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__452",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "452",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__453",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "453",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__454",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "454",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__455",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "455",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__456",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "456",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__457",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "457",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__458",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "458",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__459",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "459",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__460",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "460",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__461",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "461",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__462",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "462",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__463",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "463",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__464",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "464",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__465",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "465",
+      "plu": "3055"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__466",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "466",
+      "plu": "3055"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__467",
+      "fournisseurCode": "81269",
+      "refFournisseur": "467",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__468",
+      "fournisseurCode": "81269",
+      "refFournisseur": "468",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__469",
+      "fournisseurCode": "81269",
+      "refFournisseur": "469",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__470",
+      "fournisseurCode": "81269",
+      "refFournisseur": "470",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__471",
+      "fournisseurCode": "81269",
+      "refFournisseur": "471",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__472",
+      "fournisseurCode": "81269",
+      "refFournisseur": "472",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__473",
+      "fournisseurCode": "81269",
+      "refFournisseur": "473",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__474",
+      "fournisseurCode": "81269",
+      "refFournisseur": "474",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__475",
+      "fournisseurCode": "81269",
+      "refFournisseur": "475",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__476",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "476",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__477",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "477",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__478",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "478",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__479",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "479",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__480",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "480",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__481",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "481",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__482",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "482",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__483",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "483",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__484",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "484",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__485",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "485",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__486",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "486",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__487",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "487",
+      "plu": "3959"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__488",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "488",
+      "plu": "3367"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__489",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "489",
+      "plu": "3367"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__490",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "490",
+      "plu": "3367"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__497",
+      "fournisseurCode": "81269",
+      "refFournisseur": "497",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__498",
+      "fournisseurCode": "81269",
+      "refFournisseur": "498",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__499",
+      "fournisseurCode": "81269",
+      "refFournisseur": "499",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__5",
+      "fournisseurCode": "81269",
+      "refFournisseur": "5",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__500",
+      "fournisseurCode": "81269",
+      "refFournisseur": "500",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__501",
+      "fournisseurCode": "81269",
+      "refFournisseur": "501",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__502",
+      "fournisseurCode": "81269",
+      "refFournisseur": "502",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__503",
+      "fournisseurCode": "81269",
+      "refFournisseur": "503",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__504",
+      "fournisseurCode": "81269",
+      "refFournisseur": "504",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__505",
+      "fournisseurCode": "81269",
+      "refFournisseur": "505",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__506",
+      "fournisseurCode": "81269",
+      "refFournisseur": "506",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__507",
+      "fournisseurCode": "81269",
+      "refFournisseur": "507",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__508",
+      "fournisseurCode": "81269",
+      "refFournisseur": "508",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__509",
+      "fournisseurCode": "81269",
+      "refFournisseur": "509",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__510",
+      "fournisseurCode": "81269",
+      "refFournisseur": "510",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__511",
+      "fournisseurCode": "81269",
+      "refFournisseur": "511",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__512",
+      "fournisseurCode": "81269",
+      "refFournisseur": "512",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__513",
+      "fournisseurCode": "81269",
+      "refFournisseur": "513",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__514",
+      "fournisseurCode": "81269",
+      "refFournisseur": "514",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__515",
+      "fournisseurCode": "81269",
+      "refFournisseur": "515",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__516",
+      "fournisseurCode": "81269",
+      "refFournisseur": "516",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__517",
+      "fournisseurCode": "81269",
+      "refFournisseur": "517",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__518",
+      "fournisseurCode": "81269",
+      "refFournisseur": "518",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__519",
+      "fournisseurCode": "81269",
+      "refFournisseur": "519",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__520",
+      "fournisseurCode": "81269",
+      "refFournisseur": "520",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__521",
+      "fournisseurCode": "81269",
+      "refFournisseur": "521",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__522",
+      "fournisseurCode": "81269",
+      "refFournisseur": "522",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__523",
+      "fournisseurCode": "81269",
+      "refFournisseur": "523",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__524",
+      "fournisseurCode": "81269",
+      "refFournisseur": "524",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__525",
+      "fournisseurCode": "81269",
+      "refFournisseur": "525",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__526",
+      "fournisseurCode": "81269",
+      "refFournisseur": "526",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__527",
+      "fournisseurCode": "81269",
+      "refFournisseur": "527",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__6",
+      "fournisseurCode": "81269",
+      "refFournisseur": "6",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__610",
+      "fournisseurCode": "81269",
+      "refFournisseur": "610",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__611",
+      "fournisseurCode": "81269",
+      "refFournisseur": "611",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__612",
+      "fournisseurCode": "81269",
+      "refFournisseur": "612",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__613",
+      "fournisseurCode": "81269",
+      "refFournisseur": "613",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__614",
+      "fournisseurCode": "81269",
+      "refFournisseur": "614",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__615",
+      "fournisseurCode": "81269",
+      "refFournisseur": "615",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__616",
+      "fournisseurCode": "81269",
+      "refFournisseur": "616",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__617",
+      "fournisseurCode": "81269",
+      "refFournisseur": "617",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__618",
+      "fournisseurCode": "81269",
+      "refFournisseur": "618",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__619",
+      "fournisseurCode": "81269",
+      "refFournisseur": "619",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__620",
+      "fournisseurCode": "81269",
+      "refFournisseur": "620",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__621",
+      "fournisseurCode": "81269",
+      "refFournisseur": "621",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__622",
+      "fournisseurCode": "81269",
+      "refFournisseur": "622",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__623",
+      "fournisseurCode": "81269",
+      "refFournisseur": "623",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__624",
+      "fournisseurCode": "81269",
+      "refFournisseur": "624",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__625",
+      "fournisseurCode": "81269",
+      "refFournisseur": "625",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__626",
+      "fournisseurCode": "81269",
+      "refFournisseur": "626",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__627",
+      "fournisseurCode": "81269",
+      "refFournisseur": "627",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__628",
+      "fournisseurCode": "81269",
+      "refFournisseur": "628",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__629",
+      "fournisseurCode": "81269",
+      "refFournisseur": "629",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__630",
+      "fournisseurCode": "81269",
+      "refFournisseur": "630",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__631",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "631",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__632",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "632",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__633",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "633",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__635",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "635",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__636",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "636",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__637",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "637",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__638",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "638",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__639",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "639",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__640",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "640",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__641",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "641",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__642",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "642",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__644",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "644",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__645",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "645",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__646",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "646",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__647",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "647",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__648",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "648",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__658",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "658",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__660",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "660",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__661",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "661",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__662",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "662",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__663",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "663",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__664",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "664",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__665",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "665",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__667",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "667",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__668",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "668",
+      "plu": "3975"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__669",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "669",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__670",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "670",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__671",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "671",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__672",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "672",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__673",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "673",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__674",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "674",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__675",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "675",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__676",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "676",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__677",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "677",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__678",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "678",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__679",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "679",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__680",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "680",
+      "plu": "3383"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__69",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "69",
+      "plu": "3894"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__7",
+      "fournisseurCode": "81269",
+      "refFournisseur": "7",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__708",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "708",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__709",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "709",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__71",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "71",
+      "plu": "3894"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__710",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "710",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__711",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "711",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__712",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "712",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__713",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "713",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__714",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "714",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__715",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "715",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__716",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "716",
+      "plu": "3984"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__75",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "75",
+      "plu": "3894"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__754",
+      "fournisseurCode": "81269",
+      "refFournisseur": "754",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__755",
+      "fournisseurCode": "81269",
+      "refFournisseur": "755",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__756",
+      "fournisseurCode": "81269",
+      "refFournisseur": "756",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__757",
+      "fournisseurCode": "81269",
+      "refFournisseur": "757",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__758",
+      "fournisseurCode": "81269",
+      "refFournisseur": "758",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__759",
+      "fournisseurCode": "81269",
+      "refFournisseur": "759",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__76",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "76",
+      "plu": "3754"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__760",
+      "fournisseurCode": "81269",
+      "refFournisseur": "760",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__761",
+      "fournisseurCode": "81269",
+      "refFournisseur": "761",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__762",
+      "fournisseurCode": "81269",
+      "refFournisseur": "762",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__763",
+      "fournisseurCode": "81269",
+      "refFournisseur": "763",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__764",
+      "fournisseurCode": "81269",
+      "refFournisseur": "764",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__765",
+      "fournisseurCode": "81269",
+      "refFournisseur": "765",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__766",
+      "fournisseurCode": "81269",
+      "refFournisseur": "766",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__767",
+      "fournisseurCode": "81269",
+      "refFournisseur": "767",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__768",
+      "fournisseurCode": "81269",
+      "refFournisseur": "768",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__769",
+      "fournisseurCode": "81269",
+      "refFournisseur": "769",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__77",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "77",
+      "plu": "3754"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__770",
+      "fournisseurCode": "81269",
+      "refFournisseur": "770",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__771",
+      "fournisseurCode": "81269",
+      "refFournisseur": "771",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__772",
+      "fournisseurCode": "81269",
+      "refFournisseur": "772",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__773",
+      "fournisseurCode": "81269",
+      "refFournisseur": "773",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__777",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "777",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__778",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "778",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__779",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "779",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__78",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "78",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__780",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "780",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__781",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "781",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__782",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "782",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__783",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "783",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__784",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "784",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__785",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "785",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__786",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "786",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__787",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "787",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__788",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "788",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__789",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "789",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__79",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "79",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__790",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "790",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__791",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "791",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__792",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "792",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__793",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "793",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__794",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "794",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__795",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "795",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__796",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "796",
+      "plu": "3994"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__797",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "797",
+      "plu": "3994"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__798",
+      "fournisseurCode": "81269",
+      "refFournisseur": "798",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__799",
+      "fournisseurCode": "81269",
+      "refFournisseur": "799",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__8",
+      "fournisseurCode": "81269",
+      "refFournisseur": "8",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__80",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "80",
+      "plu": "3754"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__800",
+      "fournisseurCode": "81269",
+      "refFournisseur": "800",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__801",
+      "fournisseurCode": "81269",
+      "refFournisseur": "801",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__802",
+      "fournisseurCode": "81269",
+      "refFournisseur": "802",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__803",
+      "fournisseurCode": "81269",
+      "refFournisseur": "803",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__804",
+      "fournisseurCode": "81269",
+      "refFournisseur": "804",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__805",
+      "fournisseurCode": "81269",
+      "refFournisseur": "805",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__806",
+      "fournisseurCode": "81269",
+      "refFournisseur": "806",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__807",
+      "fournisseurCode": "81269",
+      "refFournisseur": "807",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__808",
+      "fournisseurCode": "81269",
+      "refFournisseur": "808",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__809",
+      "fournisseurCode": "81269",
+      "refFournisseur": "809",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__81",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "81",
+      "plu": "3754"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__810",
+      "fournisseurCode": "81269",
+      "refFournisseur": "810",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__811",
+      "fournisseurCode": "81269",
+      "refFournisseur": "811",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__812",
+      "fournisseurCode": "81269",
+      "refFournisseur": "812",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__813",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "813",
+      "plu": "3162"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__814",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "814",
+      "plu": "3162"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__815",
+      "fournisseurCode": "81269",
+      "refFournisseur": "815",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__816",
+      "fournisseurCode": "81269",
+      "refFournisseur": "816",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__817",
+      "fournisseurCode": "81269",
+      "refFournisseur": "817",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__818",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "818",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__819",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "819",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__82",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "82",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__820",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "820",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__821",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "821",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__822",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "822",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__823",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "823",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__824",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "824",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__825",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "825",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__826",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "826",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__827",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "827",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__828",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "828",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__829",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "829",
+      "plu": "3353"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__83",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "83",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__838",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "838",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__839",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "839",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__84",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "84",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__840",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "840",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__841",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "841",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__842",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "842",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__843",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "843",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__844",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "844",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__845",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "845",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__846",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "846",
+      "plu": "3947"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__85",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "85",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__86",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "86",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__864",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "864",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__865",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "865",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__866",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "866",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__867",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "867",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__868",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "868",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__869",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "869",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__87",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "87",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__88",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "88",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__885",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "885",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__886",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "886",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__887",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "887",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__888",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "888",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__889",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "889",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__89",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "89",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__890",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "890",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__891",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "891",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__892",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "892",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__893",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "893",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__894",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "894",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__896",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "896",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__897",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "897",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__898",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "898",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__899",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "899",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__9",
+      "fournisseurCode": "81269",
+      "refFournisseur": "9",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__90",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "90",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__900",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "900",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__901",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "901",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__902",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "902",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__903",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "903",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__904",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "904",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__905",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "905",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__906",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "906",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__907",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "907",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__908",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "908",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__909",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "909",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__91",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "91",
+      "plu": "3754"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__910",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "910",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__911",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "911",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__912",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "912",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__913",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "913",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__914",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "914",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__915",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "915",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__916",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "916",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__917",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "917",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__918",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "918",
+      "plu": "3339"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__919",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "919",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__92",
+      "fournisseurCode": "81269",
+      "refFournisseur": "92",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__920",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "920",
+      "plu": "3339"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__93",
+      "fournisseurCode": "81269",
+      "refFournisseur": "93",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__933",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "933",
+      "plu": "3954"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__934",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "934",
+      "plu": "3954"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__935",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "935",
+      "plu": "3954"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__937",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "937",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__938",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "938",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__939",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "939",
+      "plu": "3971"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__94",
+      "fournisseurCode": "81269",
+      "refFournisseur": "94",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__940",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "940",
+      "plu": "3971"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__941",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "941",
+      "plu": "3971"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__95",
+      "fournisseurCode": "81269",
+      "refFournisseur": "95",
+      "plu": null
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__957",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "957",
+      "plu": "3765"
+    },
+    {
+      "reason": "article_not_found",
+      "firebase_key": "81269__958",
+      "fournisseurCode": "81269",
+      "supplier_id": "42da462f-cae0-4600-b291-ccd177c2ce70",
+      "refFournisseur": "958",
+      "plu": "3765"
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__96",
+      "fournisseurCode": "81269",
+      "refFournisseur": "96",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__97",
+      "fournisseurCode": "81269",
+      "refFournisseur": "97",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__98",
+      "fournisseurCode": "81269",
+      "refFournisseur": "98",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__99",
+      "fournisseurCode": "81269",
+      "refFournisseur": "99",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__990",
+      "fournisseurCode": "81269",
+      "refFournisseur": "990",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__991",
+      "fournisseurCode": "81269",
+      "refFournisseur": "991",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__992",
+      "fournisseurCode": "81269",
+      "refFournisseur": "992",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__993",
+      "fournisseurCode": "81269",
+      "refFournisseur": "993",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__994",
+      "fournisseurCode": "81269",
+      "refFournisseur": "994",
+      "plu": null
+    },
+    {
+      "reason": "invalid_row",
+      "firebase_key": "81269__995",
+      "fournisseurCode": "81269",
+      "refFournisseur": "995",
+      "plu": null
+    }
+  ]
+}

@@ -17,10 +17,10 @@ const COURSE_TYPE_LABELS = {
 };
 
 const TARGET_LABELS = {
-  all: 'Cours general multi-tarifs',
-  1: 'Cours Tarif 1',
-  2: 'Cours Tarif 2',
-  3: 'Cours Tarif 3',
+  all: 'Mercuriale complete',
+  1: 'Vue Leclerc',
+  2: 'Vue B',
+  3: 'Vue C',
 };
 
 const userNameEl = document.getElementById('user-name');
@@ -198,9 +198,9 @@ function renderTableHead() {
         <th>Famille</th>
         <th>Infos</th>
         <th>Stock</th>
-        <th>Tarif 1 HT</th>
-        <th>Tarif 2 HT</th>
-        <th>Tarif 3 HT</th>
+        <th>Vue Leclerc HT</th>
+        <th>Vue B HT</th>
+        <th>Vue C HT</th>
       </tr>`
     : `<tr>
         <th>Inclure</th>
@@ -292,7 +292,7 @@ function unselectAll() {
 async function loadClients() {
   clients = await apiGet('/api/clients?status=active');
   clientSelect.innerHTML = '<option value="">Sans client</option>' + clients.map((client) => (
-    `<option value="${escapeHtml(client.id)}">${escapeHtml(client.name)}${client.tariff_level ? ` - Tarif ${client.tariff_level}` : ''}</option>`
+    `<option value="${escapeHtml(client.id)}">${escapeHtml(client.name)}</option>`
   )).join('');
 }
 
