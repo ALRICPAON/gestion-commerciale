@@ -69,6 +69,8 @@ const statusLabels = {
   cancelled: "Annulee",
 };
 
+const nonWorkingDayTypes = new Set(["rest", "paid_leave", "sick_leave", "unpaid_leave", "holiday", "recovery"]);
+
 let employees = [];
 let planning = { week: null, employees: [], lines: [], totals: [] };
 let absenceRequests = [];
@@ -156,6 +158,29 @@ function formatHour(value) {
   return value ? String(value).slice(0, 5) : "";
 }
 
+function minutesBetween(start, end, breakMinutes = 0) {
+  if (!start || !end) return 0;
+  const [startHour, startMinute] = String(start).slice(0, 5).split(":").map(Number);
+  const [endHour, endMinute] = String(end).slice(0, 5).split(":").map(Number);
+  if (![startHour, startMinute, endHour, endMinute].every(Number.isFinite)) return 0;
+
+  const startTotal = startHour * 60 + startMinute;
+  let endTotal = endHour * 60 + endMinute;
+  if (endTotal < startTotal) endTotal += 24 * 60;
+
+  const pause = Math.max(0, Number(breakMinutes || 0));
+  return Math.max(0, endTotal - startTotal - pause);
+}
+
+function hoursFromFields(start, end, breakMinutes, dayType) {
+  if (nonWorkingDayTypes.has(dayType)) return 0;
+  return Math.round((minutesBetween(start, end, breakMinutes) / 60) * 100) / 100;
+}
+
+function formatHours(value) {
+  return `${Number(value || 0).toFixed(2)} h`;
+}
+
 function employeeName(employee) {
   return `${employee.first_name || ""} ${employee.last_name || ""}`.trim();
 }
@@ -166,6 +191,10 @@ function lineFor(employeeId, workDate) {
 
 function totalFor(employeeId) {
   return planning.totals.find((total) => total.employee_id === employeeId)?.planned_hours || 0;
+}
+
+function totalActualFor(employeeId) {
+  return planning.totals.find((total) => total.employee_id === employeeId)?.actual_hours || 0;
 }
 
 function dayTypeOptions(selected) {
@@ -218,7 +247,10 @@ function renderPlanning() {
     <tr>
       <td><strong>${escapeHtml(employeeName(employee))}</strong><br><small>${escapeHtml(employee.job_title || "")}</small></td>
       ${days.map((day) => renderPlanningCell(employee, dateKey(day))).join("")}
-      <td><strong>${Number(totalFor(employee.id)).toLocaleString("fr-FR")} h</strong></td>
+      <td>
+        <strong data-planning-total="${employee.id}">${formatHours(totalFor(employee.id))}</strong>
+        <br><small>Reel : <span data-actual-total="${employee.id}">${formatHours(totalActualFor(employee.id))}</span></small>
+      </td>
     </tr>
   `).join("");
 }
@@ -229,35 +261,118 @@ function renderPlanningCell(employee, workDate) {
   return `
     <td>
       <div class="form-group">
-        <select data-field="day_type" data-cell="${id}">${dayTypeOptions(line.day_type || "worked")}</select>
+        <select data-field="day_type" data-cell="${id}" data-employee-id="${employee.id}">${dayTypeOptions(line.day_type || "worked")}</select>
       </div>
       <div class="filters-row">
-        <input aria-label="Debut prevu" data-field="planned_start" data-cell="${id}" type="time" value="${formatHour(line.planned_start)}" />
-        <input aria-label="Fin prevue" data-field="planned_end" data-cell="${id}" type="time" value="${formatHour(line.planned_end)}" />
+        <input aria-label="Debut prevu" data-field="planned_start" data-cell="${id}" data-employee-id="${employee.id}" type="time" value="${formatHour(line.planned_start)}" />
+        <input aria-label="Fin prevue" data-field="planned_end" data-cell="${id}" data-employee-id="${employee.id}" type="time" value="${formatHour(line.planned_end)}" />
       </div>
       <div class="filters-row">
-        <input aria-label="Pause prevue" data-field="planned_break_minutes" data-cell="${id}" type="number" min="0" step="5" value="${line.planned_break_minutes || 0}" />
+        <input aria-label="Pause prevue" data-field="planned_break_minutes" data-cell="${id}" data-employee-id="${employee.id}" type="number" min="0" step="5" value="${line.planned_break_minutes || 0}" />
         <button class="btn btn-secondary btn-sm" type="button" data-action="save-line" data-employee-id="${employee.id}" data-work-date="${workDate}" data-line-id="${line.id || ""}">OK</button>
       </div>
+      <small>Prevu : <span data-cell-planned-hours="${id}">${formatHours(line.planned_hours || 0)}</span></small>
     </td>
   `;
+}
+
+function planningCellValue(cellId, field) {
+  return document.querySelector(`[data-cell="${cellId}"][data-field="${field}"]`)?.value || "";
+}
+
+function plannedHoursForCell(cellId) {
+  return hoursFromFields(
+    planningCellValue(cellId, "planned_start"),
+    planningCellValue(cellId, "planned_end"),
+    planningCellValue(cellId, "planned_break_minutes"),
+    planningCellValue(cellId, "day_type") || "worked"
+  );
+}
+
+function refreshPlanningCell(cellId) {
+  const target = document.querySelector(`[data-cell-planned-hours="${cellId}"]`);
+  if (target) target.textContent = formatHours(plannedHoursForCell(cellId));
+}
+
+function refreshEmployeePlannedTotal(employeeId) {
+  const total = Array.from(document.querySelectorAll(`[data-employee-id="${employeeId}"][data-field="day_type"]`))
+    .reduce((sum, input) => sum + plannedHoursForCell(input.dataset.cell), 0);
+  const target = document.querySelector(`[data-planning-total="${employeeId}"]`);
+  if (target) target.textContent = formatHours(total);
+}
+
+function refreshPlanningHoursFromInput(input) {
+  const cellId = input.dataset.cell;
+  const employeeId = input.dataset.employeeId;
+  if (!cellId || !employeeId) return;
+  refreshPlanningCell(cellId);
+  refreshEmployeePlannedTotal(employeeId);
+}
+
+function validationValue(lineId, field) {
+  return document.querySelector(`[data-line-id="${lineId}"][data-validation-field="${field}"]`)?.value || "";
+}
+
+function refreshValidationLine(lineId) {
+  const row = document.querySelector(`[data-validation-row="${lineId}"]`);
+  if (!row) return;
+
+  const plannedHours = hoursFromFields(
+    row.dataset.plannedStart,
+    row.dataset.plannedEnd,
+    row.dataset.plannedBreak,
+    row.dataset.dayType || "worked"
+  );
+  const actualHours = hoursFromFields(
+    validationValue(lineId, "actual_start"),
+    validationValue(lineId, "actual_end"),
+    validationValue(lineId, "actual_break_minutes"),
+    row.dataset.dayType || "worked"
+  );
+
+  const plannedTarget = document.querySelector(`[data-validation-planned-hours="${lineId}"]`);
+  const actualTarget = document.querySelector(`[data-validation-actual-hours="${lineId}"]`);
+  const deltaTarget = document.querySelector(`[data-validation-delta="${lineId}"]`);
+
+  if (plannedTarget) plannedTarget.textContent = formatHours(plannedHours);
+  if (actualTarget) actualTarget.textContent = formatHours(actualHours);
+  if (deltaTarget) deltaTarget.textContent = formatHours(actualHours - plannedHours);
+  refreshEmployeeActualTotal(row.dataset.employeeId);
+}
+
+function refreshEmployeeActualTotal(employeeId) {
+  if (!employeeId) return;
+  const total = Array.from(document.querySelectorAll(`[data-validation-row][data-employee-id="${employeeId}"]`))
+    .reduce((sum, row) => {
+      const lineId = row.dataset.validationRow;
+      return sum + hoursFromFields(
+        validationValue(lineId, "actual_start"),
+        validationValue(lineId, "actual_end"),
+        validationValue(lineId, "actual_break_minutes"),
+        row.dataset.dayType || "worked"
+      );
+    }, 0);
+  const target = document.querySelector(`[data-actual-total="${employeeId}"]`);
+  if (target) target.textContent = formatHours(total);
 }
 
 function renderValidation() {
   const lines = planning.lines.slice().sort((a, b) => `${a.work_date}-${a.last_name}`.localeCompare(`${b.work_date}-${b.last_name}`));
   if (!lines.length) {
-    els.validationBody.innerHTML = `<tr><td colspan="9">Aucune ligne a valider</td></tr>`;
+    els.validationBody.innerHTML = `<tr><td colspan="11">Aucune ligne a valider</td></tr>`;
     return;
   }
 
   els.validationBody.innerHTML = lines.map((line) => `
-    <tr>
+    <tr data-validation-row="${line.id}" data-employee-id="${line.employee_id}" data-day-type="${line.day_type || "worked"}" data-planned-start="${formatHour(line.planned_start)}" data-planned-end="${formatHour(line.planned_end)}" data-planned-break="${line.planned_break_minutes || 0}">
       <td>${escapeHtml(`${line.first_name || ""} ${line.last_name || ""}`.trim())}</td>
       <td>${formatDate(line.work_date)}</td>
       <td><input data-validation-field="actual_start" data-line-id="${line.id}" type="time" value="${formatHour(line.actual_start)}" /></td>
       <td><input data-validation-field="actual_end" data-line-id="${line.id}" type="time" value="${formatHour(line.actual_end)}" /></td>
       <td><input data-validation-field="actual_break_minutes" data-line-id="${line.id}" type="number" min="0" step="5" value="${line.actual_break_minutes || 0}" /></td>
-      <td>${Number(line.actual_hours || 0).toLocaleString("fr-FR")} h</td>
+      <td data-validation-planned-hours="${line.id}">${formatHours(line.planned_hours || 0)}</td>
+      <td data-validation-actual-hours="${line.id}">${formatHours(line.actual_hours || 0)}</td>
+      <td data-validation-delta="${line.id}">${formatHours(Number(line.actual_hours || 0) - Number(line.planned_hours || 0))}</td>
       <td>${line.employee_validated_at ? "Valide" : "Non valide"}</td>
       <td>${line.manager_validated_at ? "Valide" : "Non valide"}</td>
       <td>
@@ -464,11 +579,27 @@ function bindEvents() {
     const button = event.target.closest("[data-action='save-line']");
     if (button) saveLine(button).catch((error) => showFeedback(els.planningFeedback, error.message, true));
   });
+  els.planningBody?.addEventListener("input", (event) => {
+    const input = event.target.closest("[data-cell][data-field]");
+    if (input) refreshPlanningHoursFromInput(input);
+  });
+  els.planningBody?.addEventListener("change", (event) => {
+    const input = event.target.closest("[data-cell][data-field]");
+    if (input) refreshPlanningHoursFromInput(input);
+  });
   els.validationBody?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action]");
     if (!button) return;
     if (button.dataset.action === "employee-validate") validateLine(button.dataset.lineId, "employee-validate").catch((error) => showFeedback(els.planningFeedback, error.message, true));
     if (button.dataset.action === "manager-validate") validateLine(button.dataset.lineId, "manager-validate").catch((error) => showFeedback(els.planningFeedback, error.message, true));
+  });
+  els.validationBody?.addEventListener("input", (event) => {
+    const input = event.target.closest("[data-line-id][data-validation-field]");
+    if (input) refreshValidationLine(input.dataset.lineId);
+  });
+  els.validationBody?.addEventListener("change", (event) => {
+    const input = event.target.closest("[data-line-id][data-validation-field]");
+    if (input) refreshValidationLine(input.dataset.lineId);
   });
   els.absenceForm?.addEventListener("submit", (event) => createAbsence(event).catch((error) => showFeedback(els.absenceFeedback, error.message, true)));
   els.absenceTable?.addEventListener("click", (event) => {

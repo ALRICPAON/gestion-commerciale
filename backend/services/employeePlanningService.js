@@ -20,6 +20,15 @@ const ABSENCE_TYPES = new Set([
   'training',
 ]);
 
+const NON_WORKING_DAY_TYPES = new Set([
+  'rest',
+  'paid_leave',
+  'sick_leave',
+  'unpaid_leave',
+  'holiday',
+  'recovery',
+]);
+
 function getDb(req) {
   return req.dbPool || req.db || req.app.get('db');
 }
@@ -85,11 +94,16 @@ function formatHours(minutes) {
   return Math.round((minutes / 60) * 100) / 100;
 }
 
+function hoursForLine(line, startField, endField, breakField) {
+  if (NON_WORKING_DAY_TYPES.has(line.day_type)) return 0;
+  return formatHours(minutesBetween(line[startField], line[endField], line[breakField]));
+}
+
 function addComputedHours(line) {
   return {
     ...line,
-    planned_hours: formatHours(minutesBetween(line.planned_start, line.planned_end, line.planned_break_minutes)),
-    actual_hours: formatHours(minutesBetween(line.actual_start, line.actual_end, line.actual_break_minutes)),
+    planned_hours: hoursForLine(line, 'planned_start', 'planned_end', 'planned_break_minutes'),
+    actual_hours: hoursForLine(line, 'actual_start', 'actual_end', 'actual_break_minutes'),
   };
 }
 
@@ -393,7 +407,10 @@ async function managerValidateLine(req, id, payload = {}) {
   const { rows } = await db.query(
     `UPDATE employee_planning_lines l
      SET
-       manager_comment = COALESCE($3, manager_comment),
+       actual_start = COALESCE($3, actual_start),
+       actual_end = COALESCE($4, actual_end),
+       actual_break_minutes = COALESCE($5, actual_break_minutes),
+       manager_comment = COALESCE($6, manager_comment),
        manager_validated_at = now(),
        updated_at = now()
      FROM employees e
@@ -401,7 +418,14 @@ async function managerValidateLine(req, id, payload = {}) {
        AND l.employee_id = e.id
        AND e.store_id = $2
      RETURNING l.*`,
-    [id, storeId, cleanText(payload.manager_comment)]
+    [
+      id,
+      storeId,
+      nullableTime(payload.actual_start),
+      nullableTime(payload.actual_end),
+      payload.actual_break_minutes === undefined ? null : toMinutes(payload.actual_break_minutes),
+      cleanText(payload.manager_comment),
+    ]
   );
 
   if (!rows[0]) throw makeError('Ligne planning introuvable.', 404);
