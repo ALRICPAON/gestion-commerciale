@@ -7,8 +7,9 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/employee-planning.css" />
 </head>
-<body class="app-page">
+<body class="app-page employee-planning-page">
   <header class="topbar">
     <div class="topbar-left">
       <h1 class="app-title">Gestion Commerciale</h1>
@@ -21,7 +22,7 @@
     </div>
   </header>
 
-  <main class="main-content">
+  <main class="main-content employee-planning-content">
     <section class="welcome-card">
       <div class="page-actions">
         <div>
@@ -35,12 +36,12 @@
     </section>
 
     <section class="card">
-      <h3>Salaries</h3>
+      <h3>Salariés</h3>
       <div id="employees-feedback" class="page-feedback hidden"></div>
-      <form id="employee-form" class="filters-row">
+      <form id="employee-form" class="filters-row employee-form-grid">
         <input type="hidden" id="employee-id" />
         <div class="form-group">
-          <label for="employee-first-name">Prenom</label>
+          <label for="employee-first-name">Prénom</label>
           <input id="employee-first-name" type="text" required />
         </div>
         <div class="form-group">
@@ -99,8 +100,8 @@
           </div>
         </div>
       </form>
-      <div class="table-wrap">
-        <table class="data-table">
+      <div class="table-wrap employee-table-wrap">
+        <table class="data-table employee-list-table">
           <thead>
             <tr>
               <th>Nom</th>
@@ -132,8 +133,8 @@
         </div>
       </div>
       <div id="planning-feedback" class="page-feedback hidden"></div>
-      <div class="table-wrap">
-        <table class="data-table">
+      <div class="table-wrap planning-table-wrap">
+        <table class="data-table planning-grid-table">
           <thead id="planning-table-head"></thead>
           <tbody id="planning-table-body">
             <tr><td>Chargement...</td></tr>
@@ -144,20 +145,20 @@
 
     <section class="card">
       <h3>Validation heures</h3>
-      <div class="table-wrap">
-        <table class="data-table">
+      <div class="table-wrap validation-table-wrap">
+        <table class="data-table validation-grid-table">
           <thead>
             <tr>
-              <th>Salarie</th>
+              <th>Salarié</th>
               <th>Date</th>
-              <th>Reel debut</th>
-              <th>Reel fin</th>
+              <th>Réel début</th>
+              <th>Réel fin</th>
               <th>Pause</th>
-              <th>Heures prevues</th>
-              <th>Heures reelles</th>
+              <th>Heures prévues</th>
+              <th>Heures réelles</th>
               <th>Heures nuit</th>
-              <th>Ecart</th>
-              <th>Validation salarie</th>
+              <th>Écart</th>
+              <th>Validation salarié</th>
               <th>Validation responsable</th>
               <th>Action</th>
             </tr>
@@ -170,17 +171,17 @@
     </section>
 
     <section class="card">
-      <h3>Conges / absences</h3>
+      <h3>Congés / absences</h3>
       <div id="absence-feedback" class="page-feedback hidden"></div>
       <form id="absence-form" class="filters-row">
         <div class="form-group">
-          <label for="absence-employee">Salarie</label>
+          <label for="absence-employee">Salarié</label>
           <select id="absence-employee"></select>
         </div>
         <div class="form-group">
           <label for="absence-type">Type</label>
           <select id="absence-type">
-            <option value="paid_leave">Conge paye</option>
+            <option value="paid_leave">Congé payé</option>
             <option value="sick_leave">Maladie</option>
             <option value="unpaid_leave">Conge sans solde</option>
             <option value="recovery">Recuperation</option>

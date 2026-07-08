@@ -165,6 +165,29 @@ function formatDate(value) {
   return parseDate(String(value).slice(0, 10)).toLocaleDateString("fr-FR");
 }
 
+function formatDayLabel(value) {
+  if (!value) return "-";
+  const label = parseDate(String(value).slice(0, 10)).toLocaleDateString("fr-FR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+  });
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+function isWeekendDate(value) {
+  const day = parseDate(String(value).slice(0, 10)).getDay();
+  return day === 0 || day === 6;
+}
+
+function employeeRowClass(index) {
+  return index % 2 ? "employee-row-alt" : "";
+}
+
+function dayTypeClass(dayType) {
+  return `day-type-${String(dayType || "worked").replace(/[^a-z0-9_-]/gi, "")}`;
+}
+
 function formatHour(value) {
   return value ? String(value).slice(0, 5) : "";
 }
@@ -291,21 +314,24 @@ function renderEmployees() {
 function renderPlanning() {
   const days = weekDays();
   els.weekLabel.textContent = `Du ${formatDate(dateKey(days[0]))} au ${formatDate(dateKey(days[6]))}`;
-  els.planningHead.innerHTML = `<tr><th>Salarie</th>${days.map((day) => `<th>${day.toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit" })}</th>`).join("")}<th>Total prevu</th></tr>`;
+  els.planningHead.innerHTML = `<tr><th>Salarié</th>${days.map((day) => {
+    const key = dateKey(day);
+    return `<th class="day-header${isWeekendDate(key) ? " is-weekend" : ""}">${formatDayLabel(key)}</th>`;
+  }).join("")}<th>Total prévu</th></tr>`;
 
   const activeEmployees = employees.filter((employee) => employee.is_active);
   if (!activeEmployees.length) {
-    els.planningBody.innerHTML = `<tr><td colspan="9">Cree un salarie actif pour commencer le planning.</td></tr>`;
+    els.planningBody.innerHTML = `<tr><td colspan="9">Crée un salarié actif pour commencer le planning.</td></tr>`;
     return;
   }
 
-  els.planningBody.innerHTML = activeEmployees.map((employee) => `
-    <tr>
-      <td><strong>${escapeHtml(employeeName(employee))}</strong><br><small>${escapeHtml(employee.job_title || "")}</small></td>
+  els.planningBody.innerHTML = activeEmployees.map((employee, index) => `
+    <tr class="${employeeRowClass(index)}">
+      <td class="employee-sticky-cell"><strong>${escapeHtml(employeeName(employee))}</strong><br><small>${escapeHtml(employee.job_title || "")}</small></td>
       ${days.map((day) => renderPlanningCell(employee, dateKey(day))).join("")}
-      <td>
-        <strong data-planning-total="${employee.id}">${formatHours(totalFor(employee.id))}</strong>
-        <br><small>Reel : <span data-actual-total="${employee.id}">${formatHours(totalActualFor(employee.id))}</span></small>
+      <td class="planning-total-cell">
+        <span class="hours-pill" data-planning-total="${employee.id}">${formatHours(totalFor(employee.id))}</span>
+        <br><small>Réel : <span class="hours-pill muted" data-actual-total="${employee.id}">${formatHours(totalActualFor(employee.id))}</span></small>
       </td>
     </tr>
   `).join("");
@@ -317,20 +343,20 @@ function renderPlanningCell(employee, workDate) {
   const dayType = line.day_type || "worked";
   const plannedBreak = line.planned_break_minutes ?? autoBreakMinutes(formatHour(line.planned_start), formatHour(line.planned_end), dayType);
   return `
-    <td>
+    <td class="planning-day-cell ${isWeekendDate(workDate) ? "is-weekend" : ""} ${dayTypeClass(dayType)}">
       <div class="form-group">
         <select data-field="day_type" data-cell="${id}" data-employee-id="${employee.id}">${dayTypeOptions(dayType)}</select>
       </div>
-      <div class="filters-row">
-        <input aria-label="Debut prevu" data-field="planned_start" data-cell="${id}" data-employee-id="${employee.id}" type="time" value="${formatHour(line.planned_start)}" />
-        <input aria-label="Fin prevue" data-field="planned_end" data-cell="${id}" data-employee-id="${employee.id}" type="time" value="${formatHour(line.planned_end)}" />
+      <div class="planning-time-row">
+        <input aria-label="Début prévu" data-field="planned_start" data-cell="${id}" data-employee-id="${employee.id}" type="time" value="${formatHour(line.planned_start)}" />
+        <input aria-label="Fin prévue" data-field="planned_end" data-cell="${id}" data-employee-id="${employee.id}" type="time" value="${formatHour(line.planned_end)}" />
       </div>
-      <div class="filters-row">
-        <input aria-label="Pause prevue" data-field="planned_break_minutes" data-cell="${id}" data-employee-id="${employee.id}" data-auto-break="true" type="number" min="0" step="1" value="${plannedBreak || 0}" />
+      <div class="planning-break-row">
+        <input aria-label="Pause prévue" data-field="planned_break_minutes" data-cell="${id}" data-employee-id="${employee.id}" data-auto-break="true" type="number" min="0" step="1" value="${plannedBreak || 0}" />
         <button class="btn btn-secondary btn-sm" type="button" data-action="save-line" data-employee-id="${employee.id}" data-work-date="${workDate}" data-line-id="${line.id || ""}">OK</button>
       </div>
       <small>Pause auto : <span data-cell-auto-break="${id}">${autoBreakMinutes(formatHour(line.planned_start), formatHour(line.planned_end), dayType)}</span> min</small><br>
-      <small>Prevu : <span data-cell-planned-hours="${id}">${formatHours(line.planned_hours || 0)}</span> - Nuit : <span data-cell-night-hours="${id}">${formatHours(line.night_hours || 0)}</span></small>
+      <small>Prévu : <span class="hours-pill" data-cell-planned-hours="${id}">${formatHours(line.planned_hours || 0)}</span> Nuit : <span class="hours-pill muted" data-cell-night-hours="${id}">${formatHours(line.night_hours || 0)}</span></small>
     </td>
   `;
 }
@@ -429,7 +455,12 @@ function refreshValidationLine(lineId) {
     validationValue(lineId, "actual_end"),
     row.dataset.dayType || "worked"
   ));
-  if (deltaTarget) deltaTarget.textContent = formatHours(actualHours - plannedHours);
+  if (deltaTarget) {
+    const delta = actualHours - plannedHours;
+    deltaTarget.textContent = formatHours(delta);
+    deltaTarget.classList.toggle("warning", Math.abs(delta) > 0.004);
+    deltaTarget.classList.toggle("muted", Math.abs(delta) <= 0.004);
+  }
   refreshEmployeeActualTotal(row.dataset.employeeId);
 }
 
@@ -468,8 +499,9 @@ function employeeValidationControl(line) {
 
 function renderValidation() {
   const lines = planning.lines.slice().sort((a, b) => `${a.work_date}-${a.last_name}`.localeCompare(`${b.work_date}-${b.last_name}`));
+  const employeeIndexes = new Map(employees.map((employee, index) => [employee.id, index]));
   if (!lines.length) {
-    els.validationBody.innerHTML = `<tr><td colspan="12">Aucune ligne a valider</td></tr>`;
+    els.validationBody.innerHTML = `<tr><td colspan="12">Aucune ligne à valider</td></tr>`;
     return;
   }
 
@@ -482,21 +514,24 @@ function renderValidation() {
       : (line.planned_break_minutes ?? autoBreakMinutes(actualStart, actualEnd, line.day_type || "worked"));
     const actualHours = hoursFromFields(actualStart, actualEnd, actualBreak, line.day_type || "worked");
     const nightHours = nightHoursFromFields(actualStart, actualEnd, line.day_type || "worked");
+    const delta = Number(actualHours || 0) - Number(line.planned_hours || 0);
+    const deltaClass = Math.abs(delta) > 0.004 ? "hours-pill warning" : "hours-pill muted";
+    const rowClass = `${employeeRowClass(employeeIndexes.get(line.employee_id) || 0)} ${dayTypeClass(line.day_type)}`.trim();
     return `
-    <tr data-validation-row="${line.id}" data-employee-id="${line.employee_id}" data-day-type="${line.day_type || "worked"}" data-planned-start="${formatHour(line.planned_start)}" data-planned-end="${formatHour(line.planned_end)}" data-planned-break="${line.planned_break_minutes || 0}">
-      <td>${escapeHtml(`${line.first_name || ""} ${line.last_name || ""}`.trim())}</td>
-      <td>${formatDate(line.work_date)}</td>
+    <tr class="${rowClass}" data-validation-row="${line.id}" data-employee-id="${line.employee_id}" data-day-type="${line.day_type || "worked"}" data-planned-start="${formatHour(line.planned_start)}" data-planned-end="${formatHour(line.planned_end)}" data-planned-break="${line.planned_break_minutes || 0}">
+      <td class="validation-employee-cell">${escapeHtml(`${line.first_name || ""} ${line.last_name || ""}`.trim())}</td>
+      <td class="validation-date-cell">${formatDayLabel(line.work_date)}</td>
       <td><input data-validation-field="actual_start" data-line-id="${line.id}" type="time" value="${actualStart}" /></td>
       <td><input data-validation-field="actual_end" data-line-id="${line.id}" type="time" value="${actualEnd}" /></td>
       <td><input data-validation-field="actual_break_minutes" data-line-id="${line.id}" data-auto-break="true" type="number" min="0" step="1" value="${actualBreak || 0}" /></td>
-      <td data-validation-planned-hours="${line.id}">${formatHours(line.planned_hours || 0)}</td>
-      <td data-validation-actual-hours="${line.id}">${formatHours(actualHours)}</td>
-      <td data-validation-night-hours="${line.id}">${formatHours(nightHours)}</td>
-      <td data-validation-delta="${line.id}">${formatHours(Number(actualHours || 0) - Number(line.planned_hours || 0))}</td>
-      <td>${line.employee_validated_at ? "Valide" : "Non valide"}</td>
-      <td>${line.manager_validated_at ? "Valide" : "Non valide"}</td>
-      <td>
-        <div class="page-actions-right">
+      <td class="validation-hours-cell"><span class="hours-pill" data-validation-planned-hours="${line.id}">${formatHours(line.planned_hours || 0)}</span></td>
+      <td class="validation-hours-cell"><span class="hours-pill" data-validation-actual-hours="${line.id}">${formatHours(actualHours)}</span></td>
+      <td class="validation-hours-cell"><span class="hours-pill muted" data-validation-night-hours="${line.id}">${formatHours(nightHours)}</span></td>
+      <td class="validation-hours-cell"><span class="${deltaClass}" data-validation-delta="${line.id}">${formatHours(delta)}</span></td>
+      <td>${line.employee_validated_at ? "Validé" : "Non validé"}</td>
+      <td>${line.manager_validated_at ? "Validé" : "Non validé"}</td>
+      <td class="validation-actions-cell">
+        <div class="validation-actions-stack">
           ${employeeValidationControl(line)}
           <button class="btn btn-primary btn-sm" type="button" data-action="manager-validate" data-line-id="${line.id}">Responsable</button>
         </div>
