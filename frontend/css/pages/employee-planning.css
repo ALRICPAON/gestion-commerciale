@@ -1,0 +1,303 @@
+.employee-planning-content {
+  width: 100%;
+  max-width: none;
+  padding: 20px 28px 32px;
+}
+
+.employee-planning-page .card,
+.employee-planning-page .welcome-card {
+  border-radius: 8px;
+}
+
+.employee-planning-page .employee-form-grid {
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+}
+
+.employee-planning-page .table-wrap {
+  overflow-x: auto;
+  border-radius: 8px;
+}
+
+.employee-planning-page .data-table {
+  border-spacing: 0;
+}
+
+.employee-planning-page .data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+}
+
+.employee-list-table {
+  min-width: 980px;
+}
+
+.planning-grid-table {
+  min-width: 1680px;
+  table-layout: fixed;
+}
+
+.planning-grid-table th,
+.planning-grid-table td {
+  vertical-align: top;
+}
+
+.planning-grid-table th:first-child,
+.planning-grid-table td.employee-sticky-cell {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  width: 210px;
+  min-width: 210px;
+  background: #ffffff;
+  box-shadow: 1px 0 0 #e5e7eb;
+}
+
+.planning-grid-table th:first-child {
+  z-index: 5;
+  background: #f8fafc;
+}
+
+.planning-grid-table th.day-header,
+.planning-grid-table td.planning-day-cell {
+  width: 188px;
+  min-width: 188px;
+}
+
+.planning-grid-table th.day-header {
+  border-left: 1px solid #e5e7eb;
+}
+
+.planning-grid-table th.is-weekend,
+.planning-grid-table td.is-weekend {
+  background: #f7fafb;
+}
+
+.planning-grid-table tr.employee-row-alt td {
+  background: #fcfdff;
+}
+
+.planning-grid-table tr.employee-row-alt td.employee-sticky-cell {
+  background: #fcfdff;
+}
+
+.employee-sticky-cell strong {
+  display: block;
+  color: #132238;
+}
+
+.employee-sticky-cell small,
+.planning-day-cell small,
+.validation-grid-table small {
+  color: #667085;
+  line-height: 1.35;
+}
+
+.planning-day-cell .form-group {
+  margin-bottom: 6px;
+}
+
+.planning-day-cell .planning-time-row,
+.planning-day-cell .planning-break-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.planning-day-cell .planning-break-row {
+  grid-template-columns: minmax(64px, 1fr) auto;
+}
+
+.planning-day-cell input,
+.planning-day-cell select,
+.validation-grid-table input {
+  width: 100%;
+  min-width: 0;
+  font-size: 13px;
+}
+
+.planning-total-cell {
+  width: 140px;
+  min-width: 140px;
+  background: #fbfcfd;
+}
+
+.hours-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 74px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #164e63;
+  background: #ecfeff;
+  border: 1px solid #cffafe;
+  font-variant-numeric: tabular-nums;
+}
+
+.hours-pill.muted {
+  color: #475467;
+  background: #f8fafc;
+  border-color: #e5e7eb;
+}
+
+.hours-pill.warning {
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.day-type-worked,
+tr.day-type-worked td {
+  background: #ffffff;
+}
+
+.day-type-rest,
+tr.day-type-rest td {
+  background: #f9fafb;
+}
+
+.day-type-paid_leave,
+tr.day-type-paid_leave td {
+  background: #f0fdf4;
+}
+
+.day-type-sick_leave,
+tr.day-type-sick_leave td {
+  background: #fef2f2;
+}
+
+.day-type-unpaid_leave,
+tr.day-type-unpaid_leave td {
+  background: #fff7ed;
+}
+
+.day-type-holiday,
+tr.day-type-holiday td {
+  background: #eff6ff;
+}
+
+.day-type-recovery,
+tr.day-type-recovery td {
+  background: #f5f3ff;
+}
+
+.day-type-training,
+tr.day-type-training td {
+  background: #f1f5f9;
+}
+
+.validation-grid-table {
+  min-width: 1560px;
+}
+
+.validation-grid-table th:first-child,
+.validation-grid-table td.validation-employee-cell {
+  position: sticky;
+  left: 0;
+  z-index: 4;
+  width: 210px;
+  min-width: 210px;
+  background: #ffffff;
+  box-shadow: 1px 0 0 #e5e7eb;
+}
+
+.validation-grid-table th:first-child {
+  z-index: 5;
+  background: #f8fafc;
+}
+
+.validation-grid-table tr.employee-row-alt td {
+  background: #fcfdff;
+}
+
+.validation-grid-table tr.employee-row-alt td.validation-employee-cell {
+  background: #fcfdff;
+}
+
+.validation-grid-table tr.day-type-worked td {
+  background: #ffffff;
+}
+
+.validation-grid-table tr.day-type-rest td {
+  background: #f9fafb;
+}
+
+.validation-grid-table tr.day-type-paid_leave td {
+  background: #f0fdf4;
+}
+
+.validation-grid-table tr.day-type-sick_leave td {
+  background: #fef2f2;
+}
+
+.validation-grid-table tr.day-type-unpaid_leave td {
+  background: #fff7ed;
+}
+
+.validation-grid-table tr.day-type-holiday td {
+  background: #eff6ff;
+}
+
+.validation-grid-table tr.day-type-recovery td {
+  background: #f5f3ff;
+}
+
+.validation-grid-table tr.day-type-training td {
+  background: #f1f5f9;
+}
+
+.validation-grid-table td {
+  vertical-align: top;
+}
+
+.validation-grid-table .validation-date-cell {
+  min-width: 118px;
+  white-space: nowrap;
+}
+
+.validation-grid-table .validation-hours-cell {
+  min-width: 112px;
+  white-space: nowrap;
+}
+
+.validation-grid-table .validation-actions-cell {
+  min-width: 260px;
+}
+
+.validation-actions-stack {
+  display: grid;
+  gap: 8px;
+  align-items: start;
+}
+
+.validation-actions-stack input {
+  max-width: 150px;
+}
+
+.validation-actions-stack .page-actions-right {
+  justify-content: flex-start;
+}
+
+.payroll-export-grid {
+  align-items: end;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+@media (max-width: 960px) {
+  .employee-planning-content {
+    padding: 12px;
+  }
+
+  .employee-planning-page .page-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .employee-planning-page .page-actions-right {
+    justify-content: flex-start;
+  }
+}

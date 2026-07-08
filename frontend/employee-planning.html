@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Equipe & Planning - Gestion Commerciale</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/employee-planning.css" />
+</head>
+<body class="app-page employee-planning-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Equipe & Planning</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content employee-planning-content">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Equipe & Planning</h2>
+          <p>Planning hebdomadaire, validation des heures, absences et export paie.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="refresh-btn" class="btn btn-secondary" type="button">Rafraichir</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Salariés</h3>
+      <div id="employees-feedback" class="page-feedback hidden"></div>
+      <form id="employee-form" class="filters-row employee-form-grid">
+        <input type="hidden" id="employee-id" />
+        <div class="form-group">
+          <label for="employee-first-name">Prénom</label>
+          <input id="employee-first-name" type="text" required />
+        </div>
+        <div class="form-group">
+          <label for="employee-last-name">Nom</label>
+          <input id="employee-last-name" type="text" required />
+        </div>
+        <div class="form-group">
+          <label for="employee-email">Email</label>
+          <input id="employee-email" type="email" />
+        </div>
+        <div class="form-group">
+          <label for="employee-phone">Telephone</label>
+          <input id="employee-phone" type="text" />
+        </div>
+        <div class="form-group">
+          <label for="employee-job-title">Poste</label>
+          <input id="employee-job-title" type="text" />
+        </div>
+        <div class="form-group">
+          <label for="employee-contract-type">Contrat</label>
+          <input id="employee-contract-type" type="text" value="CDI" />
+        </div>
+        <div class="form-group">
+          <label for="employee-weekly-hours">Heures semaine</label>
+          <input id="employee-weekly-hours" type="number" min="0" step="0.25" value="35" />
+        </div>
+        <div class="form-group">
+          <label for="employee-is-active">Statut</label>
+          <select id="employee-is-active">
+            <option value="true">Actif</option>
+            <option value="false">Inactif</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="employee-user-id">Compte utilisateur ALTA</label>
+          <select id="employee-user-id">
+            <option value="">Aucun compte lie</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="employee-validation-pin">Code personnel</label>
+          <input id="employee-validation-pin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="4 a 12 chiffres" />
+        </div>
+        <div class="form-group">
+          <label for="employee-clear-validation-pin">Code existant</label>
+          <select id="employee-clear-validation-pin">
+            <option value="false">Conserver</option>
+            <option value="true">Supprimer</option>
+          </select>
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <div class="page-actions-right">
+            <button id="employee-reset-btn" class="btn btn-secondary" type="button">Nouveau</button>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </div>
+        </div>
+      </form>
+      <div class="table-wrap employee-table-wrap">
+        <table class="data-table employee-list-table">
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Poste</th>
+              <th>Email</th>
+              <th>Contrat</th>
+              <th>Heures</th>
+              <th>Statut</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="employees-table-body">
+            <tr><td colspan="7">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="page-actions">
+        <div>
+          <h3>Planning semaine</h3>
+          <p id="week-label" class="helper-text">Semaine en cours</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="previous-week-btn" class="btn btn-secondary" type="button">Semaine precedente</button>
+          <input id="week-start-input" type="date" />
+          <button id="next-week-btn" class="btn btn-secondary" type="button">Semaine suivante</button>
+        </div>
+      </div>
+      <div id="planning-feedback" class="page-feedback hidden"></div>
+      <div class="table-wrap planning-table-wrap">
+        <table class="data-table planning-grid-table">
+          <thead id="planning-table-head"></thead>
+          <tbody id="planning-table-body">
+            <tr><td>Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Validation heures</h3>
+      <div class="table-wrap validation-table-wrap">
+        <table class="data-table validation-grid-table">
+          <thead>
+            <tr>
+              <th>Salarié</th>
+              <th>Date</th>
+              <th>Réel début</th>
+              <th>Réel fin</th>
+              <th>Pause</th>
+              <th>Heures prévues</th>
+              <th>Heures réelles</th>
+              <th>Heures nuit</th>
+              <th>Écart</th>
+              <th>Validation salarié</th>
+              <th>Validation responsable</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="validation-table-body">
+            <tr><td colspan="12">Aucune ligne</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Congés / absences</h3>
+      <div id="absence-feedback" class="page-feedback hidden"></div>
+      <form id="absence-form" class="filters-row">
+        <div class="form-group">
+          <label for="absence-employee">Salarié</label>
+          <select id="absence-employee"></select>
+        </div>
+        <div class="form-group">
+          <label for="absence-type">Type</label>
+          <select id="absence-type">
+            <option value="paid_leave">Congé payé</option>
+            <option value="sick_leave">Maladie</option>
+            <option value="unpaid_leave">Conge sans solde</option>
+            <option value="recovery">Recuperation</option>
+            <option value="training">Formation</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="absence-start">Debut</label>
+          <input id="absence-start" type="date" required />
+        </div>
+        <div class="form-group">
+          <label for="absence-end">Fin</label>
+          <input id="absence-end" type="date" required />
+        </div>
+        <div class="form-group">
+          <label for="absence-comment">Commentaire</label>
+          <input id="absence-comment" type="text" />
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" type="submit">Creer demande</button>
+        </div>
+      </form>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Salarie</th>
+              <th>Periode</th>
+              <th>Type</th>
+              <th>Statut</th>
+              <th>Commentaire</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="absence-table-body">
+            <tr><td colspan="6">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3>Export paie</h3>
+      <div class="filters-row payroll-export-grid">
+        <div class="form-group">
+          <label for="payroll-export-mode">Type export</label>
+          <select id="payroll-export-mode">
+            <option value="month">Mois</option>
+            <option value="weeks">Période par semaines</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="payroll-month">Mois</label>
+          <input id="payroll-month" type="month" />
+        </div>
+        <div class="form-group hidden" data-payroll-weeks-field>
+          <label for="payroll-week-from">Semaine début</label>
+          <input id="payroll-week-from" type="date" />
+        </div>
+        <div class="form-group hidden" data-payroll-weeks-field>
+          <label for="payroll-week-to">Semaine fin</label>
+          <input id="payroll-week-to" type="date" />
+        </div>
+        <div class="form-group filter-actions">
+          <label>&nbsp;</label>
+          <button id="payroll-export-btn" class="btn btn-primary" type="button">Exporter paie comptable</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/employee-planning.js?v=1"></script>
+</body>
+</html>
