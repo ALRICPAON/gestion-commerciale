@@ -46,22 +46,22 @@ const els = {
 };
 
 const dayTypes = [
-  ["worked", "Travaille"],
+  ["worked", "Travail"],
   ["rest", "Repos"],
-  ["paid_leave", "Conge paye"],
+  ["paid_leave", "Congé payé"],
   ["sick_leave", "Maladie"],
   ["unpaid_leave", "Sans solde"],
-  ["holiday", "Ferie"],
-  ["recovery", "Recuperation"],
+  ["holiday", "Jour férié"],
+  ["recovery", "Récupération"],
   ["training", "Formation"],
 ];
 
 const absenceLabels = {
-  paid_leave: "Conge paye",
+  paid_leave: "Congé payé",
   sick_leave: "Maladie",
-  unpaid_leave: "Conge sans solde",
-  holiday: "Ferie",
-  recovery: "Recuperation",
+  unpaid_leave: "Congé sans solde",
+  holiday: "Jour férié",
+  recovery: "Récupération",
   training: "Formation",
 };
 
@@ -72,7 +72,7 @@ const statusLabels = {
   cancelled: "Annulee",
 };
 
-const nonWorkingDayTypes = new Set(["rest", "paid_leave", "sick_leave", "unpaid_leave", "holiday", "recovery"]);
+const zeroHourDayTypes = new Set(["rest"]);
 const defaultPlanningRules = {
   auto_break_minutes_per_worked_hour: 3,
   night_start: "21:00",
@@ -208,7 +208,7 @@ function grossMinutesBetween(start, end) {
 }
 
 function autoBreakMinutes(start, end, dayType) {
-  if (nonWorkingDayTypes.has(dayType)) return 0;
+  if (zeroHourDayTypes.has(dayType)) return 0;
   const rule = Number((planning.rules || defaultPlanningRules).auto_break_minutes_per_worked_hour || 0);
   return Math.round((grossMinutesBetween(start, end) / 60) * rule);
 }
@@ -219,7 +219,7 @@ function minutesBetween(start, end, breakMinutes = 0) {
 }
 
 function hoursFromFields(start, end, breakMinutes, dayType) {
-  if (nonWorkingDayTypes.has(dayType)) return 0;
+  if (zeroHourDayTypes.has(dayType)) return 0;
   return Math.round((minutesBetween(start, end, breakMinutes) / 60) * 100) / 100;
 }
 
@@ -228,7 +228,7 @@ function formatHours(value) {
 }
 
 function nightHoursFromFields(start, end, dayType) {
-  if (!start || !end || nonWorkingDayTypes.has(dayType)) return 0;
+  if (!start || !end || zeroHourDayTypes.has(dayType)) return 0;
   const startTotal = timeToMinutes(start);
   let endTotal = timeToMinutes(end);
   const rules = planning.rules || defaultPlanningRules;
@@ -248,6 +248,24 @@ function nightHoursFromFields(start, end, dayType) {
   }
 
   return Math.round((total / 60) * 100) / 100;
+}
+
+function computeLineMetrics({ plannedStart, plannedEnd, plannedBreak, actualStart, actualEnd, actualBreak, dayType }) {
+  const cleanDayType = dayType || "worked";
+  const plannedPause = plannedBreak ?? autoBreakMinutes(plannedStart, plannedEnd, cleanDayType);
+  const actualBaseStart = actualStart || plannedStart;
+  const actualBaseEnd = actualEnd || plannedEnd;
+  const actualPause = actualBreak ?? plannedPause ?? autoBreakMinutes(actualBaseStart, actualBaseEnd, cleanDayType);
+  const plannedHours = hoursFromFields(plannedStart, plannedEnd, plannedPause, cleanDayType);
+  const actualHours = hoursFromFields(actualBaseStart, actualBaseEnd, actualPause, cleanDayType);
+  return {
+    plannedBreak: plannedPause,
+    actualBreak: actualPause,
+    plannedHours,
+    actualHours,
+    nightHours: nightHoursFromFields(actualBaseStart, actualBaseEnd, cleanDayType),
+    deltaHours: actualHours - plannedHours,
+  };
 }
 
 function employeeName(employee) {
@@ -341,7 +359,16 @@ function renderPlanningCell(employee, workDate) {
   const line = lineFor(employee.id, workDate) || {};
   const id = `${employee.id}-${workDate}`;
   const dayType = line.day_type || "worked";
-  const plannedBreak = line.planned_break_minutes ?? autoBreakMinutes(formatHour(line.planned_start), formatHour(line.planned_end), dayType);
+  const metrics = computeLineMetrics({
+    plannedStart: formatHour(line.planned_start),
+    plannedEnd: formatHour(line.planned_end),
+    plannedBreak: line.planned_break_minutes ?? null,
+    actualStart: formatHour(line.actual_start),
+    actualEnd: formatHour(line.actual_end),
+    actualBreak: line.actual_break_minutes ?? null,
+    dayType,
+  });
+  const plannedBreak = metrics.plannedBreak;
   return `
     <td class="planning-day-cell ${isWeekendDate(workDate) ? "is-weekend" : ""} ${dayTypeClass(dayType)}">
       <div class="form-group">
@@ -366,20 +393,21 @@ function planningCellValue(cellId, field) {
 }
 
 function plannedHoursForCell(cellId) {
-  return hoursFromFields(
-    planningCellValue(cellId, "planned_start"),
-    planningCellValue(cellId, "planned_end"),
-    planningCellValue(cellId, "planned_break_minutes"),
-    planningCellValue(cellId, "day_type") || "worked"
-  );
+  return computeLineMetrics({
+    plannedStart: planningCellValue(cellId, "planned_start"),
+    plannedEnd: planningCellValue(cellId, "planned_end"),
+    plannedBreak: Number(planningCellValue(cellId, "planned_break_minutes") || 0),
+    dayType: planningCellValue(cellId, "day_type") || "worked",
+  }).plannedHours;
 }
 
 function nightHoursForCell(cellId) {
-  return nightHoursFromFields(
-    planningCellValue(cellId, "planned_start"),
-    planningCellValue(cellId, "planned_end"),
-    planningCellValue(cellId, "day_type") || "worked"
-  );
+  return computeLineMetrics({
+    plannedStart: planningCellValue(cellId, "planned_start"),
+    plannedEnd: planningCellValue(cellId, "planned_end"),
+    plannedBreak: Number(planningCellValue(cellId, "planned_break_minutes") || 0),
+    dayType: planningCellValue(cellId, "day_type") || "worked",
+  }).nightHours;
 }
 
 function refreshPlanningCell(cellId) {
@@ -430,33 +458,26 @@ function refreshValidationLine(lineId) {
     ));
   }
 
-  const plannedHours = hoursFromFields(
-    row.dataset.plannedStart,
-    row.dataset.plannedEnd,
-    row.dataset.plannedBreak,
-    row.dataset.dayType || "worked"
-  );
-  const actualHours = hoursFromFields(
-    validationValue(lineId, "actual_start"),
-    validationValue(lineId, "actual_end"),
-    validationValue(lineId, "actual_break_minutes"),
-    row.dataset.dayType || "worked"
-  );
+  const metrics = computeLineMetrics({
+    plannedStart: row.dataset.plannedStart,
+    plannedEnd: row.dataset.plannedEnd,
+    plannedBreak: Number(row.dataset.plannedBreak || 0),
+    actualStart: validationValue(lineId, "actual_start"),
+    actualEnd: validationValue(lineId, "actual_end"),
+    actualBreak: Number(validationValue(lineId, "actual_break_minutes") || 0),
+    dayType: row.dataset.dayType || "worked",
+  });
 
   const plannedTarget = document.querySelector(`[data-validation-planned-hours="${lineId}"]`);
   const actualTarget = document.querySelector(`[data-validation-actual-hours="${lineId}"]`);
   const nightTarget = document.querySelector(`[data-validation-night-hours="${lineId}"]`);
   const deltaTarget = document.querySelector(`[data-validation-delta="${lineId}"]`);
 
-  if (plannedTarget) plannedTarget.textContent = formatHours(plannedHours);
-  if (actualTarget) actualTarget.textContent = formatHours(actualHours);
-  if (nightTarget) nightTarget.textContent = formatHours(nightHoursFromFields(
-    validationValue(lineId, "actual_start"),
-    validationValue(lineId, "actual_end"),
-    row.dataset.dayType || "worked"
-  ));
+  if (plannedTarget) plannedTarget.textContent = formatHours(metrics.plannedHours);
+  if (actualTarget) actualTarget.textContent = formatHours(metrics.actualHours);
+  if (nightTarget) nightTarget.textContent = formatHours(metrics.nightHours);
   if (deltaTarget) {
-    const delta = actualHours - plannedHours;
+    const delta = metrics.deltaHours;
     deltaTarget.textContent = formatHours(delta);
     deltaTarget.classList.toggle("warning", Math.abs(delta) > 0.004);
     deltaTarget.classList.toggle("muted", Math.abs(delta) <= 0.004);
@@ -469,12 +490,15 @@ function refreshEmployeeActualTotal(employeeId) {
   const total = Array.from(document.querySelectorAll(`[data-validation-row][data-employee-id="${employeeId}"]`))
     .reduce((sum, row) => {
       const lineId = row.dataset.validationRow;
-      return sum + hoursFromFields(
-        validationValue(lineId, "actual_start"),
-        validationValue(lineId, "actual_end"),
-        validationValue(lineId, "actual_break_minutes"),
-        row.dataset.dayType || "worked"
-      );
+      return sum + computeLineMetrics({
+        plannedStart: row.dataset.plannedStart,
+        plannedEnd: row.dataset.plannedEnd,
+        plannedBreak: Number(row.dataset.plannedBreak || 0),
+        actualStart: validationValue(lineId, "actual_start"),
+        actualEnd: validationValue(lineId, "actual_end"),
+        actualBreak: Number(validationValue(lineId, "actual_break_minutes") || 0),
+        dayType: row.dataset.dayType || "worked",
+      }).actualHours;
     }, 0);
   const target = document.querySelector(`[data-actual-total="${employeeId}"]`);
   if (target) target.textContent = formatHours(total);
@@ -512,9 +536,18 @@ function renderValidation() {
     const actualBreak = hasActualTimes
       ? (line.actual_break_minutes ?? line.planned_break_minutes ?? autoBreakMinutes(actualStart, actualEnd, line.day_type || "worked"))
       : (line.planned_break_minutes ?? autoBreakMinutes(actualStart, actualEnd, line.day_type || "worked"));
-    const actualHours = hoursFromFields(actualStart, actualEnd, actualBreak, line.day_type || "worked");
-    const nightHours = nightHoursFromFields(actualStart, actualEnd, line.day_type || "worked");
-    const delta = Number(actualHours || 0) - Number(line.planned_hours || 0);
+    const metrics = computeLineMetrics({
+      plannedStart: formatHour(line.planned_start),
+      plannedEnd: formatHour(line.planned_end),
+      plannedBreak: line.planned_break_minutes ?? null,
+      actualStart,
+      actualEnd,
+      actualBreak,
+      dayType: line.day_type || "worked",
+    });
+    const plannedHours = line.planned_hours ?? metrics.plannedHours;
+    const actualHours = metrics.actualHours;
+    const delta = Number(actualHours || 0) - Number(plannedHours || 0);
     const deltaClass = Math.abs(delta) > 0.004 ? "hours-pill warning" : "hours-pill muted";
     const rowClass = `${employeeRowClass(employeeIndexes.get(line.employee_id) || 0)} ${dayTypeClass(line.day_type)}`.trim();
     return `
@@ -524,9 +557,9 @@ function renderValidation() {
       <td><input data-validation-field="actual_start" data-line-id="${line.id}" type="time" value="${actualStart}" /></td>
       <td><input data-validation-field="actual_end" data-line-id="${line.id}" type="time" value="${actualEnd}" /></td>
       <td><input data-validation-field="actual_break_minutes" data-line-id="${line.id}" data-auto-break="true" type="number" min="0" step="1" value="${actualBreak || 0}" /></td>
-      <td class="validation-hours-cell"><span class="hours-pill" data-validation-planned-hours="${line.id}">${formatHours(line.planned_hours || 0)}</span></td>
+      <td class="validation-hours-cell"><span class="hours-pill" data-validation-planned-hours="${line.id}">${formatHours(plannedHours)}</span></td>
       <td class="validation-hours-cell"><span class="hours-pill" data-validation-actual-hours="${line.id}">${formatHours(actualHours)}</span></td>
-      <td class="validation-hours-cell"><span class="hours-pill muted" data-validation-night-hours="${line.id}">${formatHours(nightHours)}</span></td>
+      <td class="validation-hours-cell"><span class="hours-pill muted" data-validation-night-hours="${line.id}">${formatHours(metrics.nightHours)}</span></td>
       <td class="validation-hours-cell"><span class="${deltaClass}" data-validation-delta="${line.id}">${formatHours(delta)}</span></td>
       <td>${line.employee_validated_at ? "Validé" : "Non validé"}</td>
       <td>${line.manager_validated_at ? "Validé" : "Non validé"}</td>
@@ -627,6 +660,12 @@ async function saveLine(button) {
   const workDate = button.dataset.workDate;
   const cell = `${employeeId}-${workDate}`;
   const value = (field) => document.querySelector(`[data-cell="${cell}"][data-field="${field}"]`)?.value || "";
+  const metrics = computeLineMetrics({
+    plannedStart: value("planned_start"),
+    plannedEnd: value("planned_end"),
+    plannedBreak: value("planned_break_minutes") === "" ? null : Number(value("planned_break_minutes") || 0),
+    dayType: value("day_type") || "worked",
+  });
   await apiFetch("/api/employee-planning/lines", {
     method: "POST",
     body: JSON.stringify({
@@ -636,7 +675,7 @@ async function saveLine(button) {
       day_type: value("day_type"),
       planned_start: value("planned_start"),
       planned_end: value("planned_end"),
-      planned_break_minutes: Number(value("planned_break_minutes") || 0),
+      planned_break_minutes: metrics.plannedBreak,
     }),
   });
   await loadPlanning();

@@ -22,14 +22,7 @@ const ABSENCE_TYPES = new Set([
   'training',
 ]);
 
-const NON_WORKING_DAY_TYPES = new Set([
-  'rest',
-  'paid_leave',
-  'sick_leave',
-  'unpaid_leave',
-  'holiday',
-  'recovery',
-]);
+const ZERO_HOUR_DAY_TYPES = new Set(['rest']);
 
 const ALTA_PLANNING_RULES = {
   auto_break_minutes_per_worked_hour: 3,
@@ -110,7 +103,7 @@ function grossMinutesBetween(start, end) {
 }
 
 function automaticBreakMinutes(start, end, dayType) {
-  if (NON_WORKING_DAY_TYPES.has(dayType)) return 0;
+  if (ZERO_HOUR_DAY_TYPES.has(dayType)) return 0;
   return Math.round((grossMinutesBetween(start, end) / 60) * ALTA_PLANNING_RULES.auto_break_minutes_per_worked_hour);
 }
 
@@ -123,7 +116,7 @@ function formatHours(minutes) {
 }
 
 function nightMinutesBetween(start, end, dayType) {
-  if (!start || !end || NON_WORKING_DAY_TYPES.has(dayType)) return 0;
+  if (!start || !end || ZERO_HOUR_DAY_TYPES.has(dayType)) return 0;
 
   const startMinutes = timeToMinutes(start);
   let endMinutes = timeToMinutes(end);
@@ -148,7 +141,7 @@ function nightMinutesBetween(start, end, dayType) {
 }
 
 function hoursForLine(line, startField, endField, breakField) {
-  if (NON_WORKING_DAY_TYPES.has(line.day_type)) return 0;
+  if (ZERO_HOUR_DAY_TYPES.has(line.day_type)) return 0;
   return formatHours(minutesBetween(line[startField], line[endField], line[breakField]));
 }
 
@@ -697,6 +690,7 @@ async function exportPayroll(req, month) {
        l.actual_end,
        l.actual_break_minutes,
        l.employee_validated_at,
+       l.employee_validation_method,
        l.manager_validated_at,
        l.employee_comment,
        l.manager_comment
@@ -724,13 +718,22 @@ async function exportPayroll(req, month) {
       heures_prevues: 0,
       heures_reelles: 0,
       heures_de_nuit: 0,
-      conges_payes: 0,
-      absences_maladie: 0,
-      absences_non_remunerees: 0,
-      recuperation: 0,
-      formation: 0,
+      jours_travailles: 0,
+      jours_repos: 0,
+      jours_conges_payes: 0,
+      heures_conges_payes: 0,
+      jours_maladie: 0,
+      heures_maladie: 0,
+      jours_sans_solde: 0,
+      heures_sans_solde: 0,
       jours_feries: 0,
+      heures_jours_feries: 0,
+      jours_recuperation: 0,
+      heures_recuperation: 0,
+      jours_formation: 0,
+      heures_formation: 0,
       employee_validation_dates: [],
+      employee_validation_methods: [],
       manager_validation_dates: [],
       employee_validated: true,
       manager_validated: true,
@@ -742,16 +745,37 @@ async function exportPayroll(req, month) {
     current.heures_reelles += payrollHours;
     current.heures_de_nuit += row.night_hours;
 
-    if (row.day_type === 'paid_leave') current.conges_payes += 1;
-    if (row.day_type === 'sick_leave') current.absences_maladie += 1;
-    if (row.day_type === 'unpaid_leave') current.absences_non_remunerees += 1;
-    if (row.day_type === 'recovery') current.recuperation += 1;
-    if (row.day_type === 'training') current.formation += 1;
-    if (row.day_type === 'holiday') current.jours_feries += 1;
+    if (row.day_type === 'worked') current.jours_travailles += 1;
+    if (row.day_type === 'rest') current.jours_repos += 1;
+    if (row.day_type === 'paid_leave') {
+      current.jours_conges_payes += 1;
+      current.heures_conges_payes += payrollHours;
+    }
+    if (row.day_type === 'sick_leave') {
+      current.jours_maladie += 1;
+      current.heures_maladie += payrollHours;
+    }
+    if (row.day_type === 'unpaid_leave') {
+      current.jours_sans_solde += 1;
+      current.heures_sans_solde += payrollHours;
+    }
+    if (row.day_type === 'holiday') {
+      current.jours_feries += 1;
+      current.heures_jours_feries += payrollHours;
+    }
+    if (row.day_type === 'recovery') {
+      current.jours_recuperation += 1;
+      current.heures_recuperation += payrollHours;
+    }
+    if (row.day_type === 'training') {
+      current.jours_formation += 1;
+      current.heures_formation += payrollHours;
+    }
 
     current.employee_validated = current.employee_validated && Boolean(row.employee_validated_at);
     current.manager_validated = current.manager_validated && Boolean(row.manager_validated_at);
     if (row.employee_validated_at) current.employee_validation_dates.push(row.employee_validated_at);
+    if (row.employee_validation_method) current.employee_validation_methods.push(row.employee_validation_method);
     if (row.manager_validated_at) current.manager_validation_dates.push(row.manager_validated_at);
     if (row.employee_comment) current.comments.push(row.employee_comment);
     if (row.manager_comment) current.comments.push(row.manager_comment);
@@ -769,8 +793,15 @@ async function exportPayroll(req, month) {
       heures_normales: Math.min(heuresReelles, ALTA_PLANNING_RULES.weekly_base_hours),
       heures_supplementaires: Math.max(0, heuresReelles - ALTA_PLANNING_RULES.overtime_threshold),
       heures_de_nuit: formatHours(row.heures_de_nuit * 60),
+      heures_conges_payes: formatHours(row.heures_conges_payes * 60),
+      heures_maladie: formatHours(row.heures_maladie * 60),
+      heures_sans_solde: formatHours(row.heures_sans_solde * 60),
+      heures_jours_feries: formatHours(row.heures_jours_feries * 60),
+      heures_recuperation: formatHours(row.heures_recuperation * 60),
+      heures_formation: formatHours(row.heures_formation * 60),
       valide_salarie: row.employee_validated,
       date_validation_salarie: row.employee_validation_dates.sort().slice(-1)[0] || '',
+      methode_validation_salarie: Array.from(new Set(row.employee_validation_methods)).join(' | '),
       valide_responsable: row.manager_validated,
       date_validation_responsable: row.manager_validation_dates.sort().slice(-1)[0] || '',
       commentaire: Array.from(new Set(row.comments)).join(' | '),

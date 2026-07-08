@@ -150,33 +150,44 @@
   border-color: #fde68a;
 }
 
+.day-type-worked,
+tr.day-type-worked td {
+  background: #ffffff;
+}
+
 .day-type-rest,
-.day-type-paid_leave,
-.day-type-sick_leave,
-.day-type-unpaid_leave,
-.day-type-holiday,
-.day-type-recovery,
-tr.day-type-rest td,
-tr.day-type-paid_leave td,
-tr.day-type-sick_leave td,
-tr.day-type-unpaid_leave td,
-tr.day-type-holiday td,
-tr.day-type-recovery td {
+tr.day-type-rest td {
   background: #f9fafb;
 }
 
 .day-type-paid_leave,
-tr.day-type-paid_leave td,
-.day-type-holiday,
-tr.day-type-holiday td {
-  box-shadow: inset 0 0 0 999px rgba(16, 185, 129, 0.035);
+tr.day-type-paid_leave td {
+  background: #f0fdf4;
 }
 
 .day-type-sick_leave,
-tr.day-type-sick_leave td,
+tr.day-type-sick_leave td {
+  background: #fef2f2;
+}
+
 .day-type-unpaid_leave,
 tr.day-type-unpaid_leave td {
-  box-shadow: inset 0 0 0 999px rgba(245, 158, 11, 0.045);
+  background: #fff7ed;
+}
+
+.day-type-holiday,
+tr.day-type-holiday td {
+  background: #eff6ff;
+}
+
+.day-type-recovery,
+tr.day-type-recovery td {
+  background: #f5f3ff;
+}
+
+.day-type-training,
+tr.day-type-training td {
+  background: #f1f5f9;
 }
 
 .validation-grid-table {
@@ -205,6 +216,38 @@ tr.day-type-unpaid_leave td {
 
 .validation-grid-table tr.employee-row-alt td.validation-employee-cell {
   background: #fcfdff;
+}
+
+.validation-grid-table tr.day-type-worked td {
+  background: #ffffff;
+}
+
+.validation-grid-table tr.day-type-rest td {
+  background: #f9fafb;
+}
+
+.validation-grid-table tr.day-type-paid_leave td {
+  background: #f0fdf4;
+}
+
+.validation-grid-table tr.day-type-sick_leave td {
+  background: #fef2f2;
+}
+
+.validation-grid-table tr.day-type-unpaid_leave td {
+  background: #fff7ed;
+}
+
+.validation-grid-table tr.day-type-holiday td {
+  background: #eff6ff;
+}
+
+.validation-grid-table tr.day-type-recovery td {
+  background: #f5f3ff;
+}
+
+.validation-grid-table tr.day-type-training td {
+  background: #f1f5f9;
 }
 
 .validation-grid-table td {
