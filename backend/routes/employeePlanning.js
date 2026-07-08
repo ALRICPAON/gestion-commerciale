@@ -30,6 +30,11 @@ router.get('/employees', asyncHandler(async (req, res) => {
   res.json({ ok: true, employees });
 }));
 
+router.get('/users', asyncHandler(async (req, res) => {
+  const users = await service.listUsers(req);
+  res.json({ ok: true, users });
+}));
+
 router.post('/employees', asyncHandler(async (req, res) => {
   const employee = await service.createEmployee(req, req.body || {});
   res.status(201).json({ ok: true, employee });

@@ -19,6 +19,9 @@ const els = {
   employeeContractType: document.getElementById("employee-contract-type"),
   employeeWeeklyHours: document.getElementById("employee-weekly-hours"),
   employeeIsActive: document.getElementById("employee-is-active"),
+  employeeUserId: document.getElementById("employee-user-id"),
+  employeeValidationPin: document.getElementById("employee-validation-pin"),
+  employeeClearValidationPin: document.getElementById("employee-clear-validation-pin"),
   employeeReset: document.getElementById("employee-reset-btn"),
   employeesFeedback: document.getElementById("employees-feedback"),
   employeesTable: document.getElementById("employees-table-body"),
@@ -79,6 +82,7 @@ const defaultPlanningRules = {
 };
 
 let employees = [];
+let users = [];
 let planning = { week: null, employees: [], lines: [], totals: [], rules: defaultPlanningRules };
 let absenceRequests = [];
 
@@ -249,6 +253,16 @@ function resetEmployeeForm() {
   els.employeeContractType.value = "CDI";
   els.employeeWeeklyHours.value = "35";
   els.employeeIsActive.value = "true";
+  if (els.employeeUserId) els.employeeUserId.value = "";
+  if (els.employeeValidationPin) els.employeeValidationPin.value = "";
+  if (els.employeeClearValidationPin) els.employeeClearValidationPin.value = "false";
+}
+
+function renderUserOptions() {
+  if (!els.employeeUserId) return;
+  els.employeeUserId.innerHTML = `<option value="">Aucun compte lie</option>${users.map((user) => (
+    `<option value="${user.id}">${escapeHtml(user.email || user.id)}${user.is_active ? "" : " (inactif)"}</option>`
+  )).join("")}`;
 }
 
 function renderEmployees() {
@@ -435,6 +449,23 @@ function refreshEmployeeActualTotal(employeeId) {
   if (target) target.textContent = formatHours(total);
 }
 
+function employeeValidationControl(line) {
+  const linkedUserId = line.employee_user_id || line.user_id || "";
+  if (linkedUserId) {
+    if (linkedUserId === sessionUser.id) {
+      return `<button class="btn btn-secondary btn-sm" type="button" data-action="employee-validate" data-line-id="${line.id}">Validation salarie</button>`;
+    }
+    return `<small>La validation salarie doit etre faite par le salarie avec son compte ou son code personnel.</small>`;
+  }
+
+  if (line.has_validation_pin) {
+    return `<input data-pin-line-id="${line.id}" type="password" inputmode="numeric" autocomplete="one-time-code" placeholder="Code salarie" aria-label="Code personnel salarie" />
+      <button class="btn btn-secondary btn-sm" type="button" data-action="employee-validate" data-line-id="${line.id}">Validation salarie</button>`;
+  }
+
+  return `<small>Salarie non lie a un compte utilisateur ALTA. La validation salarie doit etre faite par le salarie avec son compte ou son code personnel.</small>`;
+}
+
 function renderValidation() {
   const lines = planning.lines.slice().sort((a, b) => `${a.work_date}-${a.last_name}`.localeCompare(`${b.work_date}-${b.last_name}`));
   if (!lines.length) {
@@ -445,7 +476,10 @@ function renderValidation() {
   els.validationBody.innerHTML = lines.map((line) => {
     const actualStart = formatHour(line.actual_start) || formatHour(line.planned_start);
     const actualEnd = formatHour(line.actual_end) || formatHour(line.planned_end);
-    const actualBreak = line.actual_break_minutes ?? line.planned_break_minutes ?? autoBreakMinutes(actualStart, actualEnd, line.day_type || "worked");
+    const hasActualTimes = Boolean(line.actual_start || line.actual_end);
+    const actualBreak = hasActualTimes
+      ? (line.actual_break_minutes ?? line.planned_break_minutes ?? autoBreakMinutes(actualStart, actualEnd, line.day_type || "worked"))
+      : (line.planned_break_minutes ?? autoBreakMinutes(actualStart, actualEnd, line.day_type || "worked"));
     const actualHours = hoursFromFields(actualStart, actualEnd, actualBreak, line.day_type || "worked");
     const nightHours = nightHoursFromFields(actualStart, actualEnd, line.day_type || "worked");
     return `
@@ -463,7 +497,7 @@ function renderValidation() {
       <td>${line.manager_validated_at ? "Valide" : "Non valide"}</td>
       <td>
         <div class="page-actions-right">
-          <button class="btn btn-secondary btn-sm" type="button" data-action="employee-validate" data-line-id="${line.id}">Salarie</button>
+          ${employeeValidationControl(line)}
           <button class="btn btn-primary btn-sm" type="button" data-action="manager-validate" data-line-id="${line.id}">Responsable</button>
         </div>
       </td>
@@ -497,6 +531,12 @@ async function loadEmployees() {
   renderEmployees();
 }
 
+async function loadUsers() {
+  const data = await apiFetch("/api/employee-planning/users");
+  users = data.users || [];
+  renderUserOptions();
+}
+
 async function loadPlanning() {
   const data = await apiFetch(`/api/employee-planning/weeks/${encodeURIComponent(els.weekStart.value)}`);
   planning = data.planning || { week: null, employees: [], lines: [], totals: [] };
@@ -515,6 +555,7 @@ async function refreshAll() {
   clearFeedback(els.planningFeedback);
   clearFeedback(els.absenceFeedback);
   await loadEmployees();
+  await loadUsers();
   await loadPlanning();
   await loadAbsences();
 }
@@ -532,6 +573,9 @@ async function saveEmployee(event) {
     contract_type: els.employeeContractType.value,
     weekly_hours: Number(els.employeeWeeklyHours.value || 35),
     is_active: els.employeeIsActive.value === "true",
+    user_id: els.employeeUserId?.value || null,
+    validation_pin: els.employeeValidationPin?.value || null,
+    clear_validation_pin: els.employeeClearValidationPin?.value === "true",
   };
   await apiFetch(id ? `/api/employee-planning/employees/${encodeURIComponent(id)}` : "/api/employee-planning/employees", {
     method: id ? "PUT" : "POST",
@@ -566,10 +610,12 @@ async function saveLine(button) {
 
 function validationPayload(lineId) {
   const value = (field) => document.querySelector(`[data-line-id="${lineId}"][data-validation-field="${field}"]`)?.value || "";
+  const pin = document.querySelector(`[data-pin-line-id="${lineId}"]`)?.value || "";
   return {
     actual_start: value("actual_start"),
     actual_end: value("actual_end"),
     actual_break_minutes: Number(value("actual_break_minutes") || 0),
+    validation_pin: pin || undefined,
   };
 }
 
@@ -620,6 +666,9 @@ function editEmployee(id) {
   els.employeeContractType.value = employee.contract_type || "CDI";
   els.employeeWeeklyHours.value = employee.weekly_hours || 35;
   els.employeeIsActive.value = employee.is_active ? "true" : "false";
+  if (els.employeeUserId) els.employeeUserId.value = employee.user_id || "";
+  if (els.employeeValidationPin) els.employeeValidationPin.value = "";
+  if (els.employeeClearValidationPin) els.employeeClearValidationPin.value = "false";
   els.employeeFirstName.focus();
 }
 

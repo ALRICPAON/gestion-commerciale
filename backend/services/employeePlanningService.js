@@ -1,5 +1,7 @@
 'use strict';
 
+const bcrypt = require('bcrypt');
+
 const DAY_TYPES = new Set([
   'worked',
   'rest',
@@ -185,6 +187,33 @@ function requestUserAgent(req) {
   return cleanText(req.headers['user-agent']);
 }
 
+function sanitizeEmployee(employee) {
+  if (!employee) return employee;
+  const { validation_pin_hash, ...safeEmployee } = employee;
+  return {
+    ...safeEmployee,
+    has_validation_pin: Boolean(validation_pin_hash),
+  };
+}
+
+function sanitizeLine(line) {
+  if (!line) return line;
+  const { validation_pin_hash, ...safeLine } = line;
+  return {
+    ...safeLine,
+    has_validation_pin: Boolean(validation_pin_hash),
+  };
+}
+
+async function hashPin(pin) {
+  const value = cleanText(pin);
+  if (!value) return null;
+  if (!/^\d{4,12}$/.test(value)) {
+    throw makeError('Le code personnel doit contenir entre 4 et 12 chiffres.');
+  }
+  return bcrypt.hash(value, 10);
+}
+
 function assertManager(req) {
   if (!isManager(req)) {
     throw makeError('Acces interdit', 403);
@@ -220,6 +249,19 @@ async function listEmployees(req) {
      ORDER BY is_active DESC, last_name ASC, first_name ASC`,
     [getStoreId(req)]
   );
+  return rows.map(sanitizeEmployee);
+}
+
+async function listUsers(req) {
+  assertManager(req);
+  const db = getDb(req);
+  const { rows } = await db.query(
+    `SELECT id, email, role, is_active
+     FROM users
+     WHERE store_id = $1
+     ORDER BY is_active DESC, email ASC`,
+    [getStoreId(req)]
+  );
   return rows;
 }
 
@@ -234,12 +276,14 @@ async function createEmployee(req, payload) {
     throw makeError('Le prenom et le nom sont obligatoires.');
   }
 
+  const validationPinHash = await hashPin(payload.validation_pin);
+
   const { rows } = await db.query(
     `INSERT INTO employees (
        store_id, user_id, first_name, last_name, email, phone, job_title,
-       contract_type, weekly_hours, hire_date, leave_date, is_active
+       contract_type, weekly_hours, validation_pin_hash, hire_date, leave_date, is_active
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING *`,
     [
       storeId,
@@ -251,13 +295,14 @@ async function createEmployee(req, payload) {
       cleanText(payload.job_title),
       cleanText(payload.contract_type) || 'CDI',
       toNumber(payload.weekly_hours, 35),
+      validationPinHash,
       nullableDate(payload.hire_date),
       nullableDate(payload.leave_date),
       payload.is_active !== false,
     ]
   );
 
-  return rows[0];
+  return sanitizeEmployee(rows[0]);
 }
 
 async function updateEmployee(req, id, payload) {
@@ -265,10 +310,13 @@ async function updateEmployee(req, id, payload) {
   const db = getDb(req);
   const storeId = getStoreId(req);
 
+  const validationPinHash = await hashPin(payload.validation_pin);
+  const shouldClearPin = payload.clear_validation_pin === true;
+
   const { rows } = await db.query(
     `UPDATE employees
      SET
-       user_id = COALESCE($3, user_id),
+       user_id = $3,
        first_name = COALESCE($4, first_name),
        last_name = COALESCE($5, last_name),
        email = $6,
@@ -276,9 +324,14 @@ async function updateEmployee(req, id, payload) {
        job_title = $8,
        contract_type = COALESCE($9, contract_type),
        weekly_hours = COALESCE($10, weekly_hours),
-       hire_date = $11,
-       leave_date = $12,
-       is_active = COALESCE($13, is_active),
+       validation_pin_hash = CASE
+         WHEN $11::boolean THEN NULL
+         WHEN $12::text IS NOT NULL THEN $12::text
+         ELSE validation_pin_hash
+       END,
+       hire_date = $13,
+       leave_date = $14,
+       is_active = COALESCE($15, is_active),
        updated_at = now()
      WHERE id = $1 AND store_id = $2
      RETURNING *`,
@@ -293,6 +346,8 @@ async function updateEmployee(req, id, payload) {
       cleanText(payload.job_title),
       cleanText(payload.contract_type),
       payload.weekly_hours === undefined ? null : toNumber(payload.weekly_hours, 35),
+      shouldClearPin,
+      validationPinHash,
       nullableDate(payload.hire_date),
       nullableDate(payload.leave_date),
       payload.is_active,
@@ -300,7 +355,7 @@ async function updateEmployee(req, id, payload) {
   );
 
   if (!rows[0]) throw makeError('Salarie introuvable.', 404);
-  return rows[0];
+  return sanitizeEmployee(rows[0]);
 }
 
 async function getOrCreatePlanningWeek(req, weekStart) {
@@ -342,7 +397,9 @@ async function getPlanningWeek(req, weekStart) {
        e.first_name,
        e.last_name,
        e.job_title,
-       e.weekly_hours
+       e.weekly_hours,
+       e.user_id AS employee_user_id,
+       e.validation_pin_hash
      FROM employee_planning_lines l
      JOIN employees e ON e.id = l.employee_id AND e.store_id = $2
      WHERE l.planning_week_id = $1
@@ -350,7 +407,7 @@ async function getPlanningWeek(req, weekStart) {
     [week.id, storeId]
   );
 
-  const lines = lineRows.map(addComputedHours);
+  const lines = lineRows.map((line) => sanitizeLine(addComputedHours(line)));
   const totalsByEmployee = new Map();
 
   for (const line of lines) {
@@ -367,7 +424,7 @@ async function getPlanningWeek(req, weekStart) {
 
   return {
     week,
-    employees,
+    employees: employees.map(sanitizeEmployee),
     lines,
     totals: Array.from(totalsByEmployee.values()).map((total) => ({
       ...total,
@@ -459,11 +516,11 @@ async function upsertPlanningLine(req, payload) {
   return addComputedHours(rows[0]);
 }
 
-async function canValidateLine(req, lineId) {
+async function getLineForEmployeeValidation(req, lineId) {
   const db = getDb(req);
   const storeId = getStoreId(req);
   const { rows } = await db.query(
-    `SELECT l.*, e.user_id, e.store_id
+    `SELECT l.*, e.user_id AS employee_user_id, e.validation_pin_hash, e.store_id
      FROM employee_planning_lines l
      JOIN employees e ON e.id = l.employee_id
      WHERE l.id = $1 AND e.store_id = $2`,
@@ -472,17 +529,41 @@ async function canValidateLine(req, lineId) {
 
   const line = rows[0];
   if (!line) throw makeError('Ligne planning introuvable.', 404);
-  if (isManager(req) || (line.user_id && line.user_id === req.user.id)) return line;
-  throw makeError('Acces interdit', 403);
+  return line;
+}
+
+async function resolveEmployeeValidationMethod(req, line, payload = {}) {
+  if (line.employee_user_id) {
+    if (line.employee_user_id === req.user.id) return 'user_account';
+    throw makeError('La validation salarie doit etre faite par le salarie avec son compte ALTA.', 403);
+  }
+
+  if (!line.validation_pin_hash) {
+    throw makeError('Salarie non lie a un compte utilisateur ALTA et aucun code personnel defini.', 403);
+  }
+
+  const pin = cleanText(payload.validation_pin);
+  if (!pin) {
+    throw makeError('Code personnel salarie obligatoire.', 403);
+  }
+
+  const ok = await bcrypt.compare(pin, line.validation_pin_hash);
+  if (!ok) {
+    throw makeError('Code personnel salarie invalide.', 403);
+  }
+
+  return 'pin';
 }
 
 async function employeeValidateLine(req, id, payload = {}) {
   const db = getDb(req);
-  const existingLine = await canValidateLine(req, id);
+  const existingLine = await getLineForEmployeeValidation(req, id);
+  const validationMethod = await resolveEmployeeValidationMethod(req, existingLine, payload);
+  const hasExistingActualTimes = Boolean(existingLine.actual_start || existingLine.actual_end);
   const actualStart = nullableTime(payload.actual_start) || existingLine.actual_start || existingLine.planned_start;
   const actualEnd = nullableTime(payload.actual_end) || existingLine.actual_end || existingLine.planned_end;
   const actualBreakMinutes = payload.actual_break_minutes === undefined || payload.actual_break_minutes === ''
-    ? toMinutes(existingLine.actual_break_minutes, toMinutes(existingLine.planned_break_minutes))
+    ? (hasExistingActualTimes ? toMinutes(existingLine.actual_break_minutes, toMinutes(existingLine.planned_break_minutes)) : toMinutes(existingLine.planned_break_minutes))
     : toMinutes(payload.actual_break_minutes);
   const computed = computedFieldsForLine({
     ...existingLine,
@@ -502,8 +583,9 @@ async function employeeValidateLine(req, id, payload = {}) {
        employee_validated_by_user_id = $6,
        employee_validation_ip = $7,
        employee_validation_user_agent = $8,
-       actual_hours = $9,
-       night_hours = $10,
+       employee_validation_method = $9,
+       actual_hours = $10,
+       night_hours = $11,
        updated_at = now()
      WHERE id = $1
      RETURNING *`,
@@ -516,12 +598,13 @@ async function employeeValidateLine(req, id, payload = {}) {
       req.user.id,
       requestIp(req),
       requestUserAgent(req),
+      validationMethod,
       computed.actual_hours,
       computed.night_hours,
     ]
   );
 
-  return addComputedHours(rows[0]);
+  return sanitizeLine(addComputedHours(rows[0]));
 }
 
 async function managerValidateLine(req, id, payload = {}) {
@@ -537,10 +620,11 @@ async function managerValidateLine(req, id, payload = {}) {
   );
   const existingLine = lineCheck.rows[0];
   if (!existingLine) throw makeError('Ligne planning introuvable.', 404);
+  const hasExistingActualTimes = Boolean(existingLine.actual_start || existingLine.actual_end);
   const actualStart = nullableTime(payload.actual_start) || existingLine.actual_start || existingLine.planned_start;
   const actualEnd = nullableTime(payload.actual_end) || existingLine.actual_end || existingLine.planned_end;
   const actualBreakMinutes = payload.actual_break_minutes === undefined || payload.actual_break_minutes === ''
-    ? toMinutes(existingLine.actual_break_minutes, toMinutes(existingLine.planned_break_minutes))
+    ? (hasExistingActualTimes ? toMinutes(existingLine.actual_break_minutes, toMinutes(existingLine.planned_break_minutes)) : toMinutes(existingLine.planned_break_minutes))
     : toMinutes(payload.actual_break_minutes);
   const computed = computedFieldsForLine({
     ...existingLine,
@@ -560,8 +644,9 @@ async function managerValidateLine(req, id, payload = {}) {
        manager_validated_by_user_id = $7,
        manager_validation_ip = $8,
        manager_validation_user_agent = $9,
-       actual_hours = $10,
-       night_hours = $11,
+       manager_validation_method = $10,
+       actual_hours = $11,
+       night_hours = $12,
        updated_at = now()
      FROM employees e
      WHERE l.id = $1
@@ -578,13 +663,14 @@ async function managerValidateLine(req, id, payload = {}) {
       req.user.id,
       requestIp(req),
       requestUserAgent(req),
+      'user_account',
       computed.actual_hours,
       computed.night_hours,
     ]
   );
 
   if (!rows[0]) throw makeError('Ligne planning introuvable.', 404);
-  return addComputedHours(rows[0]);
+  return sanitizeLine(addComputedHours(rows[0]));
 }
 
 async function exportPayroll(req, month) {
@@ -788,6 +874,7 @@ async function decideAbsenceRequest(req, id, decision, payload = {}) {
 module.exports = {
   minutesBetween,
   listEmployees,
+  listUsers,
   createEmployee,
   updateEmployee,
   getPlanningWeek,

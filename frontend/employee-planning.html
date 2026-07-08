@@ -74,6 +74,23 @@
             <option value="false">Inactif</option>
           </select>
         </div>
+        <div class="form-group">
+          <label for="employee-user-id">Compte utilisateur ALTA</label>
+          <select id="employee-user-id">
+            <option value="">Aucun compte lie</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="employee-validation-pin">Code personnel</label>
+          <input id="employee-validation-pin" type="password" inputmode="numeric" autocomplete="new-password" placeholder="4 a 12 chiffres" />
+        </div>
+        <div class="form-group">
+          <label for="employee-clear-validation-pin">Code existant</label>
+          <select id="employee-clear-validation-pin">
+            <option value="false">Conserver</option>
+            <option value="true">Supprimer</option>
+          </select>
+        </div>
         <div class="form-group filter-actions">
           <label>&nbsp;</label>
           <div class="page-actions-right">

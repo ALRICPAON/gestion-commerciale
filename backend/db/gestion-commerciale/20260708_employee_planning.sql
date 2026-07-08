@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS employees (
   job_title text NULL,
   contract_type text NOT NULL DEFAULT 'CDI',
   weekly_hours numeric(6,2) NOT NULL DEFAULT 35,
+  validation_pin_hash text NULL,
   hire_date date NULL,
   leave_date date NULL,
   is_active boolean NOT NULL DEFAULT true,
@@ -27,6 +28,7 @@ ALTER TABLE employees ADD COLUMN IF NOT EXISTS phone text NULL;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS job_title text NULL;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS contract_type text NOT NULL DEFAULT 'CDI';
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS weekly_hours numeric(6,2) NOT NULL DEFAULT 35;
+ALTER TABLE employees ADD COLUMN IF NOT EXISTS validation_pin_hash text NULL;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS hire_date date NULL;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS leave_date date NULL;
 ALTER TABLE employees ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
@@ -74,10 +76,12 @@ CREATE TABLE IF NOT EXISTS employee_planning_lines (
   employee_validated_by_user_id uuid NULL,
   employee_validation_ip text NULL,
   employee_validation_user_agent text NULL,
+  employee_validation_method text NULL,
   manager_validated_at timestamptz NULL,
   manager_validated_by_user_id uuid NULL,
   manager_validation_ip text NULL,
   manager_validation_user_agent text NULL,
+  manager_validation_method text NULL,
   planned_hours numeric(8,2) NULL,
   actual_hours numeric(8,2) NULL,
   night_hours numeric(8,2) NULL,
@@ -101,10 +105,12 @@ ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS employee_validated_
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS employee_validated_by_user_id uuid NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS employee_validation_ip text NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS employee_validation_user_agent text NULL;
+ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS employee_validation_method text NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS manager_validated_at timestamptz NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS manager_validated_by_user_id uuid NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS manager_validation_ip text NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS manager_validation_user_agent text NULL;
+ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS manager_validation_method text NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS planned_hours numeric(8,2) NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS actual_hours numeric(8,2) NULL;
 ALTER TABLE employee_planning_lines ADD COLUMN IF NOT EXISTS night_hours numeric(8,2) NULL;
