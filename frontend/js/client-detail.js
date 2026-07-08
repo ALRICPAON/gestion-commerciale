@@ -301,7 +301,9 @@ function bindEvents() {
   $('add-contact-btn')?.addEventListener('click', () => contactForm?.classList.toggle('hidden'));
   $('add-affiliate-btn')?.addEventListener('click', () => affiliateForm?.classList.toggle('hidden'));
   contactForm?.addEventListener('submit', createContact);
+  if (affiliateForm) affiliateForm.noValidate = true;
   affiliateForm?.addEventListener('submit', createAffiliate);
+  affiliateForm?.querySelector('button[type="submit"]')?.addEventListener('click', createAffiliate);
 }
 
 bindEvents();
