@@ -70,9 +70,16 @@ const statusLabels = {
 };
 
 const nonWorkingDayTypes = new Set(["rest", "paid_leave", "sick_leave", "unpaid_leave", "holiday", "recovery"]);
+const defaultPlanningRules = {
+  auto_break_minutes_per_worked_hour: 3,
+  night_start: "21:00",
+  night_end: "06:00",
+  weekly_base_hours: 35,
+  overtime_threshold: 35,
+};
 
 let employees = [];
-let planning = { week: null, employees: [], lines: [], totals: [] };
+let planning = { week: null, employees: [], lines: [], totals: [], rules: defaultPlanningRules };
 let absenceRequests = [];
 
 function logout() {
@@ -158,18 +165,30 @@ function formatHour(value) {
   return value ? String(value).slice(0, 5) : "";
 }
 
-function minutesBetween(start, end, breakMinutes = 0) {
+function timeToMinutes(value) {
+  const [hour, minute] = String(value || "").slice(0, 5).split(":").map(Number);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return hour * 60 + minute;
+}
+
+function grossMinutesBetween(start, end) {
   if (!start || !end) return 0;
-  const [startHour, startMinute] = String(start).slice(0, 5).split(":").map(Number);
-  const [endHour, endMinute] = String(end).slice(0, 5).split(":").map(Number);
-  if (![startHour, startMinute, endHour, endMinute].every(Number.isFinite)) return 0;
-
-  const startTotal = startHour * 60 + startMinute;
-  let endTotal = endHour * 60 + endMinute;
+  const startTotal = timeToMinutes(start);
+  let endTotal = timeToMinutes(end);
+  if (startTotal === null || endTotal === null) return 0;
   if (endTotal < startTotal) endTotal += 24 * 60;
+  return Math.max(0, endTotal - startTotal);
+}
 
+function autoBreakMinutes(start, end, dayType) {
+  if (nonWorkingDayTypes.has(dayType)) return 0;
+  const rule = Number((planning.rules || defaultPlanningRules).auto_break_minutes_per_worked_hour || 0);
+  return Math.round((grossMinutesBetween(start, end) / 60) * rule);
+}
+
+function minutesBetween(start, end, breakMinutes = 0) {
   const pause = Math.max(0, Number(breakMinutes || 0));
-  return Math.max(0, endTotal - startTotal - pause);
+  return Math.max(0, grossMinutesBetween(start, end) - pause);
 }
 
 function hoursFromFields(start, end, breakMinutes, dayType) {
@@ -179,6 +198,29 @@ function hoursFromFields(start, end, breakMinutes, dayType) {
 
 function formatHours(value) {
   return `${Number(value || 0).toFixed(2)} h`;
+}
+
+function nightHoursFromFields(start, end, dayType) {
+  if (!start || !end || nonWorkingDayTypes.has(dayType)) return 0;
+  const startTotal = timeToMinutes(start);
+  let endTotal = timeToMinutes(end);
+  const rules = planning.rules || defaultPlanningRules;
+  const nightStart = timeToMinutes(rules.night_start);
+  const nightEnd = timeToMinutes(rules.night_end);
+  if ([startTotal, endTotal, nightStart, nightEnd].some((value) => value === null)) return 0;
+  if (endTotal < startTotal) endTotal += 24 * 60;
+
+  let total = 0;
+  for (let dayOffset = -24 * 60; dayOffset <= 24 * 60; dayOffset += 24 * 60) {
+    let windowStart = nightStart + dayOffset;
+    let windowEnd = nightEnd + dayOffset;
+    if (windowEnd <= windowStart) windowEnd += 24 * 60;
+    const overlapStart = Math.max(startTotal, windowStart);
+    const overlapEnd = Math.min(endTotal, windowEnd);
+    if (overlapEnd > overlapStart) total += overlapEnd - overlapStart;
+  }
+
+  return Math.round((total / 60) * 100) / 100;
 }
 
 function employeeName(employee) {
@@ -258,20 +300,23 @@ function renderPlanning() {
 function renderPlanningCell(employee, workDate) {
   const line = lineFor(employee.id, workDate) || {};
   const id = `${employee.id}-${workDate}`;
+  const dayType = line.day_type || "worked";
+  const plannedBreak = line.planned_break_minutes ?? autoBreakMinutes(formatHour(line.planned_start), formatHour(line.planned_end), dayType);
   return `
     <td>
       <div class="form-group">
-        <select data-field="day_type" data-cell="${id}" data-employee-id="${employee.id}">${dayTypeOptions(line.day_type || "worked")}</select>
+        <select data-field="day_type" data-cell="${id}" data-employee-id="${employee.id}">${dayTypeOptions(dayType)}</select>
       </div>
       <div class="filters-row">
         <input aria-label="Debut prevu" data-field="planned_start" data-cell="${id}" data-employee-id="${employee.id}" type="time" value="${formatHour(line.planned_start)}" />
         <input aria-label="Fin prevue" data-field="planned_end" data-cell="${id}" data-employee-id="${employee.id}" type="time" value="${formatHour(line.planned_end)}" />
       </div>
       <div class="filters-row">
-        <input aria-label="Pause prevue" data-field="planned_break_minutes" data-cell="${id}" data-employee-id="${employee.id}" type="number" min="0" step="5" value="${line.planned_break_minutes || 0}" />
+        <input aria-label="Pause prevue" data-field="planned_break_minutes" data-cell="${id}" data-employee-id="${employee.id}" data-auto-break="true" type="number" min="0" step="1" value="${plannedBreak || 0}" />
         <button class="btn btn-secondary btn-sm" type="button" data-action="save-line" data-employee-id="${employee.id}" data-work-date="${workDate}" data-line-id="${line.id || ""}">OK</button>
       </div>
-      <small>Prevu : <span data-cell-planned-hours="${id}">${formatHours(line.planned_hours || 0)}</span></small>
+      <small>Pause auto : <span data-cell-auto-break="${id}">${autoBreakMinutes(formatHour(line.planned_start), formatHour(line.planned_end), dayType)}</span> min</small><br>
+      <small>Prevu : <span data-cell-planned-hours="${id}">${formatHours(line.planned_hours || 0)}</span> - Nuit : <span data-cell-night-hours="${id}">${formatHours(line.night_hours || 0)}</span></small>
     </td>
   `;
 }
@@ -289,9 +334,29 @@ function plannedHoursForCell(cellId) {
   );
 }
 
+function nightHoursForCell(cellId) {
+  return nightHoursFromFields(
+    planningCellValue(cellId, "planned_start"),
+    planningCellValue(cellId, "planned_end"),
+    planningCellValue(cellId, "day_type") || "worked"
+  );
+}
+
 function refreshPlanningCell(cellId) {
+  const dayType = planningCellValue(cellId, "day_type") || "worked";
+  const autoBreak = autoBreakMinutes(
+    planningCellValue(cellId, "planned_start"),
+    planningCellValue(cellId, "planned_end"),
+    dayType
+  );
+  const autoTarget = document.querySelector(`[data-cell-auto-break="${cellId}"]`);
+  const breakInput = document.querySelector(`[data-cell="${cellId}"][data-field="planned_break_minutes"]`);
+  if (autoTarget) autoTarget.textContent = String(autoBreak);
+  if (breakInput?.dataset.autoBreak === "true") breakInput.value = String(autoBreak);
   const target = document.querySelector(`[data-cell-planned-hours="${cellId}"]`);
   if (target) target.textContent = formatHours(plannedHoursForCell(cellId));
+  const nightTarget = document.querySelector(`[data-cell-night-hours="${cellId}"]`);
+  if (nightTarget) nightTarget.textContent = formatHours(nightHoursForCell(cellId));
 }
 
 function refreshEmployeePlannedTotal(employeeId) {
@@ -316,6 +381,14 @@ function validationValue(lineId, field) {
 function refreshValidationLine(lineId) {
   const row = document.querySelector(`[data-validation-row="${lineId}"]`);
   if (!row) return;
+  const breakInput = document.querySelector(`[data-line-id="${lineId}"][data-validation-field="actual_break_minutes"]`);
+  if (breakInput?.dataset.autoBreak === "true") {
+    breakInput.value = String(autoBreakMinutes(
+      validationValue(lineId, "actual_start"),
+      validationValue(lineId, "actual_end"),
+      row.dataset.dayType || "worked"
+    ));
+  }
 
   const plannedHours = hoursFromFields(
     row.dataset.plannedStart,
@@ -332,10 +405,16 @@ function refreshValidationLine(lineId) {
 
   const plannedTarget = document.querySelector(`[data-validation-planned-hours="${lineId}"]`);
   const actualTarget = document.querySelector(`[data-validation-actual-hours="${lineId}"]`);
+  const nightTarget = document.querySelector(`[data-validation-night-hours="${lineId}"]`);
   const deltaTarget = document.querySelector(`[data-validation-delta="${lineId}"]`);
 
   if (plannedTarget) plannedTarget.textContent = formatHours(plannedHours);
   if (actualTarget) actualTarget.textContent = formatHours(actualHours);
+  if (nightTarget) nightTarget.textContent = formatHours(nightHoursFromFields(
+    validationValue(lineId, "actual_start"),
+    validationValue(lineId, "actual_end"),
+    row.dataset.dayType || "worked"
+  ));
   if (deltaTarget) deltaTarget.textContent = formatHours(actualHours - plannedHours);
   refreshEmployeeActualTotal(row.dataset.employeeId);
 }
@@ -359,20 +438,27 @@ function refreshEmployeeActualTotal(employeeId) {
 function renderValidation() {
   const lines = planning.lines.slice().sort((a, b) => `${a.work_date}-${a.last_name}`.localeCompare(`${b.work_date}-${b.last_name}`));
   if (!lines.length) {
-    els.validationBody.innerHTML = `<tr><td colspan="11">Aucune ligne a valider</td></tr>`;
+    els.validationBody.innerHTML = `<tr><td colspan="12">Aucune ligne a valider</td></tr>`;
     return;
   }
 
-  els.validationBody.innerHTML = lines.map((line) => `
+  els.validationBody.innerHTML = lines.map((line) => {
+    const actualStart = formatHour(line.actual_start) || formatHour(line.planned_start);
+    const actualEnd = formatHour(line.actual_end) || formatHour(line.planned_end);
+    const actualBreak = line.actual_break_minutes ?? line.planned_break_minutes ?? autoBreakMinutes(actualStart, actualEnd, line.day_type || "worked");
+    const actualHours = hoursFromFields(actualStart, actualEnd, actualBreak, line.day_type || "worked");
+    const nightHours = nightHoursFromFields(actualStart, actualEnd, line.day_type || "worked");
+    return `
     <tr data-validation-row="${line.id}" data-employee-id="${line.employee_id}" data-day-type="${line.day_type || "worked"}" data-planned-start="${formatHour(line.planned_start)}" data-planned-end="${formatHour(line.planned_end)}" data-planned-break="${line.planned_break_minutes || 0}">
       <td>${escapeHtml(`${line.first_name || ""} ${line.last_name || ""}`.trim())}</td>
       <td>${formatDate(line.work_date)}</td>
-      <td><input data-validation-field="actual_start" data-line-id="${line.id}" type="time" value="${formatHour(line.actual_start)}" /></td>
-      <td><input data-validation-field="actual_end" data-line-id="${line.id}" type="time" value="${formatHour(line.actual_end)}" /></td>
-      <td><input data-validation-field="actual_break_minutes" data-line-id="${line.id}" type="number" min="0" step="5" value="${line.actual_break_minutes || 0}" /></td>
+      <td><input data-validation-field="actual_start" data-line-id="${line.id}" type="time" value="${actualStart}" /></td>
+      <td><input data-validation-field="actual_end" data-line-id="${line.id}" type="time" value="${actualEnd}" /></td>
+      <td><input data-validation-field="actual_break_minutes" data-line-id="${line.id}" data-auto-break="true" type="number" min="0" step="1" value="${actualBreak || 0}" /></td>
       <td data-validation-planned-hours="${line.id}">${formatHours(line.planned_hours || 0)}</td>
-      <td data-validation-actual-hours="${line.id}">${formatHours(line.actual_hours || 0)}</td>
-      <td data-validation-delta="${line.id}">${formatHours(Number(line.actual_hours || 0) - Number(line.planned_hours || 0))}</td>
+      <td data-validation-actual-hours="${line.id}">${formatHours(actualHours)}</td>
+      <td data-validation-night-hours="${line.id}">${formatHours(nightHours)}</td>
+      <td data-validation-delta="${line.id}">${formatHours(Number(actualHours || 0) - Number(line.planned_hours || 0))}</td>
       <td>${line.employee_validated_at ? "Valide" : "Non valide"}</td>
       <td>${line.manager_validated_at ? "Valide" : "Non valide"}</td>
       <td>
@@ -382,7 +468,9 @@ function renderValidation() {
         </div>
       </td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
+  employees.forEach((employee) => refreshEmployeeActualTotal(employee.id));
 }
 
 function renderAbsences() {
@@ -581,10 +669,12 @@ function bindEvents() {
   });
   els.planningBody?.addEventListener("input", (event) => {
     const input = event.target.closest("[data-cell][data-field]");
+    if (input?.dataset.field === "planned_break_minutes") input.dataset.autoBreak = "false";
     if (input) refreshPlanningHoursFromInput(input);
   });
   els.planningBody?.addEventListener("change", (event) => {
     const input = event.target.closest("[data-cell][data-field]");
+    if (input?.dataset.field === "planned_break_minutes") input.dataset.autoBreak = "false";
     if (input) refreshPlanningHoursFromInput(input);
   });
   els.validationBody?.addEventListener("click", (event) => {
@@ -595,10 +685,12 @@ function bindEvents() {
   });
   els.validationBody?.addEventListener("input", (event) => {
     const input = event.target.closest("[data-line-id][data-validation-field]");
+    if (input?.dataset.validationField === "actual_break_minutes") input.dataset.autoBreak = "false";
     if (input) refreshValidationLine(input.dataset.lineId);
   });
   els.validationBody?.addEventListener("change", (event) => {
     const input = event.target.closest("[data-line-id][data-validation-field]");
+    if (input?.dataset.validationField === "actual_break_minutes") input.dataset.autoBreak = "false";
     if (input) refreshValidationLine(input.dataset.lineId);
   });
   els.absenceForm?.addEventListener("submit", (event) => createAbsence(event).catch((error) => showFeedback(els.absenceFeedback, error.message, true)));

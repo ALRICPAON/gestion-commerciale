@@ -29,6 +29,15 @@ const NON_WORKING_DAY_TYPES = new Set([
   'recovery',
 ]);
 
+const ALTA_PLANNING_RULES = {
+  auto_break_minutes_per_worked_hour: 3,
+  night_start: '21:00',
+  night_end: '06:00',
+  weekly_base_hours: 35,
+  overtime_threshold: 35,
+  day_types: Array.from(DAY_TYPES),
+};
+
 function getDb(req) {
   return req.dbPool || req.db || req.app.get('db');
 }
@@ -56,6 +65,12 @@ function nullableDate(value) {
   return value ? String(value).slice(0, 10) : null;
 }
 
+function dateOnly(value) {
+  if (!value) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  return String(value).slice(0, 10);
+}
+
 function nullableTime(value) {
   if (!value) return null;
   const text = String(value).slice(0, 5);
@@ -72,26 +87,62 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(number) ? number : fallback;
 }
 
-function minutesBetween(start, end, breakMinutes = 0) {
+function timeToMinutes(value) {
+  const [hours, minutes] = String(value || '').slice(0, 5).split(':').map(Number);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+  return hours * 60 + minutes;
+}
+
+function grossMinutesBetween(start, end) {
   if (!start || !end) return 0;
 
-  const [sh, sm] = String(start).slice(0, 5).split(':').map(Number);
-  const [eh, em] = String(end).slice(0, 5).split(':').map(Number);
-
-  if (![sh, sm, eh, em].every(Number.isFinite)) return 0;
-
-  const startMinutes = sh * 60 + sm;
-  let endMinutes = eh * 60 + em;
+  const startMinutes = timeToMinutes(start);
+  let endMinutes = timeToMinutes(end);
+  if (startMinutes === null || endMinutes === null) return 0;
 
   if (endMinutes < startMinutes) {
     endMinutes += 24 * 60;
   }
 
-  return Math.max(0, endMinutes - startMinutes - toMinutes(breakMinutes));
+  return Math.max(0, endMinutes - startMinutes);
+}
+
+function automaticBreakMinutes(start, end, dayType) {
+  if (NON_WORKING_DAY_TYPES.has(dayType)) return 0;
+  return Math.round((grossMinutesBetween(start, end) / 60) * ALTA_PLANNING_RULES.auto_break_minutes_per_worked_hour);
+}
+
+function minutesBetween(start, end, breakMinutes = 0) {
+  return Math.max(0, grossMinutesBetween(start, end) - toMinutes(breakMinutes));
 }
 
 function formatHours(minutes) {
   return Math.round((minutes / 60) * 100) / 100;
+}
+
+function nightMinutesBetween(start, end, dayType) {
+  if (!start || !end || NON_WORKING_DAY_TYPES.has(dayType)) return 0;
+
+  const startMinutes = timeToMinutes(start);
+  let endMinutes = timeToMinutes(end);
+  const nightStart = timeToMinutes(ALTA_PLANNING_RULES.night_start);
+  const nightEnd = timeToMinutes(ALTA_PLANNING_RULES.night_end);
+  if ([startMinutes, endMinutes, nightStart, nightEnd].some((value) => value === null)) return 0;
+
+  if (endMinutes < startMinutes) endMinutes += 24 * 60;
+  let total = 0;
+
+  for (let dayOffset = -24 * 60; dayOffset <= 24 * 60; dayOffset += 24 * 60) {
+    let windowStart = nightStart + dayOffset;
+    let windowEnd = nightEnd + dayOffset;
+    if (windowEnd <= windowStart) windowEnd += 24 * 60;
+
+    const overlapStart = Math.max(startMinutes, windowStart);
+    const overlapEnd = Math.min(endMinutes, windowEnd);
+    if (overlapEnd > overlapStart) total += overlapEnd - overlapStart;
+  }
+
+  return total;
 }
 
 function hoursForLine(line, startField, endField, breakField) {
@@ -99,12 +150,39 @@ function hoursForLine(line, startField, endField, breakField) {
   return formatHours(minutesBetween(line[startField], line[endField], line[breakField]));
 }
 
+function nightHoursForLine(line) {
+  const actualHasTimes = line.actual_start && line.actual_end;
+  return formatHours(nightMinutesBetween(
+    actualHasTimes ? line.actual_start : line.planned_start,
+    actualHasTimes ? line.actual_end : line.planned_end,
+    line.day_type
+  ));
+}
+
 function addComputedHours(line) {
   return {
     ...line,
     planned_hours: hoursForLine(line, 'planned_start', 'planned_end', 'planned_break_minutes'),
     actual_hours: hoursForLine(line, 'actual_start', 'actual_end', 'actual_break_minutes'),
+    night_hours: nightHoursForLine(line),
   };
+}
+
+function computedFieldsForLine(line) {
+  const computed = addComputedHours(line);
+  return {
+    planned_hours: computed.planned_hours,
+    actual_hours: computed.actual_hours,
+    night_hours: computed.night_hours,
+  };
+}
+
+function requestIp(req) {
+  return cleanText(req.headers['x-forwarded-for']) || cleanText(req.ip) || cleanText(req.socket && req.socket.remoteAddress);
+}
+
+function requestUserAgent(req) {
+  return cleanText(req.headers['user-agent']);
 }
 
 function assertManager(req) {
@@ -296,6 +374,7 @@ async function getPlanningWeek(req, weekStart) {
       planned_hours: formatHours(total.planned_hours * 60),
       actual_hours: formatHours(total.actual_hours * 60),
     })),
+    rules: ALTA_PLANNING_RULES,
   };
 }
 
@@ -315,14 +394,33 @@ async function upsertPlanningLine(req, payload) {
   if (!employee) throw makeError('Salarie introuvable.', 404);
 
   const week = await getOrCreatePlanningWeek(req, payload.week_start);
+  const plannedStart = nullableTime(payload.planned_start);
+  const plannedEnd = nullableTime(payload.planned_end);
+  const actualStart = nullableTime(payload.actual_start);
+  const actualEnd = nullableTime(payload.actual_end);
+  const plannedBreakMinutes = payload.planned_break_minutes === undefined || payload.planned_break_minutes === ''
+    ? automaticBreakMinutes(plannedStart, plannedEnd, dayType)
+    : toMinutes(payload.planned_break_minutes);
+  const actualBreakMinutes = payload.actual_break_minutes === undefined || payload.actual_break_minutes === ''
+    ? automaticBreakMinutes(actualStart || plannedStart, actualEnd || plannedEnd, dayType)
+    : toMinutes(payload.actual_break_minutes);
+  const computed = computedFieldsForLine({
+    day_type: dayType,
+    planned_start: plannedStart,
+    planned_end: plannedEnd,
+    planned_break_minutes: plannedBreakMinutes,
+    actual_start: actualStart,
+    actual_end: actualEnd,
+    actual_break_minutes: actualBreakMinutes,
+  });
 
   const { rows } = await db.query(
     `INSERT INTO employee_planning_lines (
        planning_week_id, employee_id, work_date, planned_start, planned_end,
        planned_break_minutes, actual_start, actual_end, actual_break_minutes,
-       day_type, employee_comment, manager_comment
+       day_type, employee_comment, manager_comment, planned_hours, actual_hours, night_hours
      )
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
      ON CONFLICT (planning_week_id, employee_id, work_date)
      DO UPDATE SET
        planned_start = EXCLUDED.planned_start,
@@ -334,21 +432,27 @@ async function upsertPlanningLine(req, payload) {
        day_type = EXCLUDED.day_type,
        employee_comment = EXCLUDED.employee_comment,
        manager_comment = EXCLUDED.manager_comment,
+       planned_hours = EXCLUDED.planned_hours,
+       actual_hours = EXCLUDED.actual_hours,
+       night_hours = EXCLUDED.night_hours,
        updated_at = now()
      RETURNING *`,
     [
       week.id,
       employeeId,
       workDate,
-      nullableTime(payload.planned_start),
-      nullableTime(payload.planned_end),
-      toMinutes(payload.planned_break_minutes),
-      nullableTime(payload.actual_start),
-      nullableTime(payload.actual_end),
-      toMinutes(payload.actual_break_minutes),
+      plannedStart,
+      plannedEnd,
+      plannedBreakMinutes,
+      actualStart,
+      actualEnd,
+      actualBreakMinutes,
       dayType,
       cleanText(payload.employee_comment),
       cleanText(payload.manager_comment),
+      computed.planned_hours,
+      computed.actual_hours,
+      computed.night_hours,
     ]
   );
 
@@ -374,25 +478,46 @@ async function canValidateLine(req, lineId) {
 
 async function employeeValidateLine(req, id, payload = {}) {
   const db = getDb(req);
-  await canValidateLine(req, id);
+  const existingLine = await canValidateLine(req, id);
+  const actualStart = nullableTime(payload.actual_start) || existingLine.actual_start || existingLine.planned_start;
+  const actualEnd = nullableTime(payload.actual_end) || existingLine.actual_end || existingLine.planned_end;
+  const actualBreakMinutes = payload.actual_break_minutes === undefined || payload.actual_break_minutes === ''
+    ? toMinutes(existingLine.actual_break_minutes, toMinutes(existingLine.planned_break_minutes))
+    : toMinutes(payload.actual_break_minutes);
+  const computed = computedFieldsForLine({
+    ...existingLine,
+    actual_start: actualStart,
+    actual_end: actualEnd,
+    actual_break_minutes: actualBreakMinutes,
+  });
 
   const { rows } = await db.query(
     `UPDATE employee_planning_lines
      SET
-       actual_start = COALESCE($2, actual_start),
-       actual_end = COALESCE($3, actual_end),
-       actual_break_minutes = COALESCE($4, actual_break_minutes),
+       actual_start = $2,
+       actual_end = $3,
+       actual_break_minutes = $4,
        employee_comment = COALESCE($5, employee_comment),
        employee_validated_at = now(),
+       employee_validated_by_user_id = $6,
+       employee_validation_ip = $7,
+       employee_validation_user_agent = $8,
+       actual_hours = $9,
+       night_hours = $10,
        updated_at = now()
      WHERE id = $1
      RETURNING *`,
     [
       id,
-      nullableTime(payload.actual_start),
-      nullableTime(payload.actual_end),
-      payload.actual_break_minutes === undefined ? null : toMinutes(payload.actual_break_minutes),
+      actualStart,
+      actualEnd,
+      actualBreakMinutes,
       cleanText(payload.employee_comment),
+      req.user.id,
+      requestIp(req),
+      requestUserAgent(req),
+      computed.actual_hours,
+      computed.night_hours,
     ]
   );
 
@@ -403,15 +528,40 @@ async function managerValidateLine(req, id, payload = {}) {
   assertManager(req);
   const db = getDb(req);
   const storeId = getStoreId(req);
+  const lineCheck = await db.query(
+    `SELECT l.*
+     FROM employee_planning_lines l
+     JOIN employees e ON e.id = l.employee_id
+     WHERE l.id = $1 AND e.store_id = $2`,
+    [id, storeId]
+  );
+  const existingLine = lineCheck.rows[0];
+  if (!existingLine) throw makeError('Ligne planning introuvable.', 404);
+  const actualStart = nullableTime(payload.actual_start) || existingLine.actual_start || existingLine.planned_start;
+  const actualEnd = nullableTime(payload.actual_end) || existingLine.actual_end || existingLine.planned_end;
+  const actualBreakMinutes = payload.actual_break_minutes === undefined || payload.actual_break_minutes === ''
+    ? toMinutes(existingLine.actual_break_minutes, toMinutes(existingLine.planned_break_minutes))
+    : toMinutes(payload.actual_break_minutes);
+  const computed = computedFieldsForLine({
+    ...existingLine,
+    actual_start: actualStart,
+    actual_end: actualEnd,
+    actual_break_minutes: actualBreakMinutes,
+  });
 
   const { rows } = await db.query(
     `UPDATE employee_planning_lines l
      SET
-       actual_start = COALESCE($3, actual_start),
-       actual_end = COALESCE($4, actual_end),
-       actual_break_minutes = COALESCE($5, actual_break_minutes),
+       actual_start = $3,
+       actual_end = $4,
+       actual_break_minutes = $5,
        manager_comment = COALESCE($6, manager_comment),
        manager_validated_at = now(),
+       manager_validated_by_user_id = $7,
+       manager_validation_ip = $8,
+       manager_validation_user_agent = $9,
+       actual_hours = $10,
+       night_hours = $11,
        updated_at = now()
      FROM employees e
      WHERE l.id = $1
@@ -421,10 +571,15 @@ async function managerValidateLine(req, id, payload = {}) {
     [
       id,
       storeId,
-      nullableTime(payload.actual_start),
-      nullableTime(payload.actual_end),
-      payload.actual_break_minutes === undefined ? null : toMinutes(payload.actual_break_minutes),
+      actualStart,
+      actualEnd,
+      actualBreakMinutes,
       cleanText(payload.manager_comment),
+      req.user.id,
+      requestIp(req),
+      requestUserAgent(req),
+      computed.actual_hours,
+      computed.night_hours,
     ]
   );
 
@@ -446,6 +601,7 @@ async function exportPayroll(req, month) {
        e.first_name,
        e.last_name,
        e.job_title,
+       date_trunc('week', l.work_date)::date AS week_start,
        l.work_date,
        l.day_type,
        l.planned_start,
@@ -468,7 +624,72 @@ async function exportPayroll(req, month) {
     [getStoreId(req), month]
   );
 
-  return rows.map(addComputedHours);
+  const groups = new Map();
+
+  for (const sourceRow of rows) {
+    const row = addComputedHours(sourceRow);
+    const weekStart = dateOnly(row.week_start);
+    const key = `${row.employee_id}:${weekStart}`;
+    const current = groups.get(key) || {
+      employee_id: row.employee_id,
+      salarie: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+      poste: row.job_title || '',
+      semaine_du: weekStart,
+      heures_prevues: 0,
+      heures_reelles: 0,
+      heures_de_nuit: 0,
+      conges_payes: 0,
+      absences_maladie: 0,
+      absences_non_remunerees: 0,
+      recuperation: 0,
+      formation: 0,
+      jours_feries: 0,
+      employee_validation_dates: [],
+      manager_validation_dates: [],
+      employee_validated: true,
+      manager_validated: true,
+      comments: [],
+    };
+
+    const payrollHours = row.actual_start && row.actual_end ? row.actual_hours : row.planned_hours;
+    current.heures_prevues += row.planned_hours;
+    current.heures_reelles += payrollHours;
+    current.heures_de_nuit += row.night_hours;
+
+    if (row.day_type === 'paid_leave') current.conges_payes += 1;
+    if (row.day_type === 'sick_leave') current.absences_maladie += 1;
+    if (row.day_type === 'unpaid_leave') current.absences_non_remunerees += 1;
+    if (row.day_type === 'recovery') current.recuperation += 1;
+    if (row.day_type === 'training') current.formation += 1;
+    if (row.day_type === 'holiday') current.jours_feries += 1;
+
+    current.employee_validated = current.employee_validated && Boolean(row.employee_validated_at);
+    current.manager_validated = current.manager_validated && Boolean(row.manager_validated_at);
+    if (row.employee_validated_at) current.employee_validation_dates.push(row.employee_validated_at);
+    if (row.manager_validated_at) current.manager_validation_dates.push(row.manager_validated_at);
+    if (row.employee_comment) current.comments.push(row.employee_comment);
+    if (row.manager_comment) current.comments.push(row.manager_comment);
+
+    groups.set(key, current);
+  }
+
+  return Array.from(groups.values()).map((row) => {
+    const heuresReelles = formatHours(row.heures_reelles * 60);
+    return {
+      ...row,
+      heures_prevues: formatHours(row.heures_prevues * 60),
+      heures_reelles: heuresReelles,
+      ecart_heures: formatHours((row.heures_reelles - row.heures_prevues) * 60),
+      heures_normales: Math.min(heuresReelles, ALTA_PLANNING_RULES.weekly_base_hours),
+      heures_supplementaires: Math.max(0, heuresReelles - ALTA_PLANNING_RULES.overtime_threshold),
+      heures_de_nuit: formatHours(row.heures_de_nuit * 60),
+      valide_salarie: row.employee_validated,
+      date_validation_salarie: row.employee_validation_dates.sort().slice(-1)[0] || '',
+      valide_responsable: row.manager_validated,
+      date_validation_responsable: row.manager_validation_dates.sort().slice(-1)[0] || '',
+      commentaire: Array.from(new Set(row.comments)).join(' | '),
+    };
+  });
 }
 
 async function listAbsenceRequests(req) {

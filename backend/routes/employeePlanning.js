@@ -19,6 +19,7 @@ function csvValue(value) {
 
 function formatDate(value) {
   if (!value) return '';
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
   return String(value).slice(0, 10);
 }
 
@@ -63,43 +64,51 @@ router.get('/payroll-export', asyncHandler(async (req, res) => {
   const rows = await service.exportPayroll(req, req.query.month);
 
   const header = [
-    'salarie',
-    'poste',
-    'date',
-    'type_jour',
-    'debut_prevu',
-    'fin_prevue',
-    'pause_prevue_min',
-    'heures_prevues',
-    'debut_reel',
-    'fin_reelle',
-    'pause_reelle_min',
-    'heures_reelles',
-    'valide_salarie',
-    'valide_responsable',
-    'commentaire_salarie',
-    'commentaire_responsable',
+    'Salarié',
+    'Poste',
+    'Semaine du',
+    'Heures prévues',
+    'Heures réelles',
+    'Écart heures',
+    'Heures normales',
+    'Heures supplémentaires',
+    'Heures de nuit',
+    'Congés payés',
+    'Absences maladie',
+    'Absences non rémunérées',
+    'Récupération',
+    'Formation',
+    'Jours fériés',
+    'Validé salarié',
+    'Date validation salarié',
+    'Validé responsable',
+    'Date validation responsable',
+    'Commentaire',
   ];
 
   const csvRows = [
     header.join(';'),
     ...rows.map((row) => [
-      `${row.first_name || ''} ${row.last_name || ''}`.trim(),
-      row.job_title || '',
-      formatDate(row.work_date),
-      row.day_type,
-      row.planned_start || '',
-      row.planned_end || '',
-      row.planned_break_minutes || 0,
-      row.planned_hours,
-      row.actual_start || '',
-      row.actual_end || '',
-      row.actual_break_minutes || 0,
-      row.actual_hours,
-      row.employee_validated_at ? 'oui' : 'non',
-      row.manager_validated_at ? 'oui' : 'non',
-      row.employee_comment || '',
-      row.manager_comment || '',
+      row.salarie,
+      row.poste,
+      formatDate(row.semaine_du),
+      row.heures_prevues,
+      row.heures_reelles,
+      row.ecart_heures,
+      row.heures_normales,
+      row.heures_supplementaires,
+      row.heures_de_nuit,
+      row.conges_payes,
+      row.absences_maladie,
+      row.absences_non_remunerees,
+      row.recuperation,
+      row.formation,
+      row.jours_feries,
+      row.valide_salarie ? 'oui' : 'non',
+      formatDate(row.date_validation_salarie),
+      row.valide_responsable ? 'oui' : 'non',
+      formatDate(row.date_validation_responsable),
+      row.commentaire || '',
     ].map(csvValue).join(';')),
   ];
 
