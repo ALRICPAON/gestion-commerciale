@@ -47,11 +47,23 @@ function lineTrace(line) {
 }
 
 function lineDeliveredKey(line) {
-  return line.delivered_client_id || line.delivered_client_name || line.delivered_client_code || '';
+  return line.delivered_client_id
+    || line.delivered_client_name_snapshot
+    || line.delivered_client_code_snapshot
+    || line.delivered_client_store_identifier_snapshot
+    || '';
 }
 
 function lineDeliveredLabel(line, fallback) {
-  return line.delivered_client_name || line.delivered_client_code || line.delivered_client_store_identifier || fallback || 'Client livre';
+  const name = line.delivered_client_name_snapshot
+    || (line.delivered_client_id ? line.delivered_client_name : null)
+    || line.delivered_client_code_snapshot
+    || (line.delivered_client_id ? line.delivered_client_code : null)
+    || fallback
+    || 'Client livre';
+  const storeIdentifier = line.delivered_client_store_identifier_snapshot
+    || (line.delivered_client_id ? line.delivered_client_store_identifier : null);
+  return storeIdentifier ? `${name} - N° magasin ${storeIdentifier}` : name;
 }
 
 function renderInvoiceLineRow(line) {

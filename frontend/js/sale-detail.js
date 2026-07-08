@@ -67,6 +67,18 @@ function affiliateOptions(selectedId) {
   return options.map((option) => `<option value="${esc(option.id)}" ${String(option.id) === String(selectedId || '') ? 'selected' : ''}>${esc(option.label)}</option>`).join('');
 }
 
+function lastDeliveredClientId() {
+  const rows = Array.from(els.body?.querySelectorAll('tr[data-line-id]') || []);
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const value = rows[index].querySelector('.line-delivered-client')?.value || '';
+    if (value) return value;
+  }
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index]?.delivered_client_id) return lines[index].delivered_client_id;
+  }
+  return null;
+}
+
 function ensureStockSearchToggle() {
   if (!els.stockSearch || els.stockOnly) return;
   const existing = document.getElementById(stockOnlyToggleId);
@@ -295,7 +307,7 @@ async function saveHeader(reload = true) {
   if (reload) { fb(els.hf, isDeliveryNote() ? 'BL enregistré' : 'En-tête enregistré'); await loadSale(); }
 }
 async function ensureHeader() { if ((sale?.client_id || '') === (els.client.value || '')) return; await saveHeader(false); const data = await api(`/api/sales/${saleId}`); sale = data.sale; lines = Array.isArray(data.lines) ? data.lines : []; await loadAffiliates(); }
-async function addLine() { clear(els.lf); if (!editable()) return; if (!els.client.value) { fb(els.lf, "Sélectionne un client avant d'ajouter une ligne", true); return; } await ensureHeader(); await api(`/api/sales/${saleId}/lines`, { method: 'POST', body: JSON.stringify({}) }); await loadSale(); els.body.querySelector('tr[data-line-id]:last-child .line-plu')?.focus(); }
+async function addLine() { clear(els.lf); if (!editable()) return; if (!els.client.value) { fb(els.lf, "Sélectionne un client avant d'ajouter une ligne", true); return; } const deliveredClientId = affiliates.length ? lastDeliveredClientId() : null; await ensureHeader(); await api(`/api/sales/${saleId}/lines`, { method: 'POST', body: JSON.stringify({ delivered_client_id: deliveredClientId }) }); await loadSale(); els.body.querySelector('tr[data-line-id]:last-child .line-plu')?.focus(); }
 async function saveLine(lineId) {
   clear(els.lf);
   await ensureHeader();
