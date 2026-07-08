@@ -666,12 +666,32 @@ async function managerValidateLine(req, id, payload = {}) {
   return sanitizeLine(addComputedHours(rows[0]));
 }
 
-async function exportPayroll(req, month) {
+async function exportPayroll(req, filters = {}) {
   assertManager(req);
   const db = getDb(req);
+  const month = cleanText(filters.month);
+  const weekStartFrom = nullableDate(filters.week_start_from);
+  const weekStartTo = nullableDate(filters.week_start_to);
 
-  if (!month || !/^\d{4}-\d{2}$/.test(month)) {
-    throw makeError('Le mois doit etre au format YYYY-MM.');
+  let wherePeriod;
+  let periodParams;
+  if (month) {
+    if (!/^\d{4}-\d{2}$/.test(month)) {
+      throw makeError('Le mois doit etre au format YYYY-MM.');
+    }
+    wherePeriod = `l.work_date >= ($2 || '-01')::date
+       AND l.work_date < (($2 || '-01')::date + interval '1 month')`;
+    periodParams = [month];
+  } else {
+    if (!weekStartFrom || !weekStartTo) {
+      throw makeError('month ou week_start_from/week_start_to est obligatoire.');
+    }
+    if (weekStartTo < weekStartFrom) {
+      throw makeError('La semaine de fin doit etre apres la semaine de debut.');
+    }
+    wherePeriod = `date_trunc('week', l.work_date)::date >= $2::date
+       AND date_trunc('week', l.work_date)::date <= $3::date`;
+    periodParams = [weekStartFrom, weekStartTo];
   }
 
   const { rows } = await db.query(
@@ -698,34 +718,37 @@ async function exportPayroll(req, month) {
      JOIN employee_planning_weeks w ON w.id = l.planning_week_id
      JOIN employees e ON e.id = l.employee_id
      WHERE w.store_id = $1
-       AND l.work_date >= ($2 || '-01')::date
-       AND l.work_date < (($2 || '-01')::date + interval '1 month')
+       AND ${wherePeriod}
      ORDER BY e.last_name ASC, e.first_name ASC, l.work_date ASC`,
-    [getStoreId(req), month]
+    [getStoreId(req), ...periodParams]
   );
 
   const groups = new Map();
+  const employeeOrder = new Map();
 
   for (const sourceRow of rows) {
     const row = addComputedHours(sourceRow);
     const weekStart = dateOnly(row.week_start);
     const key = `${row.employee_id}:${weekStart}`;
+    if (!employeeOrder.has(row.employee_id)) {
+      employeeOrder.set(row.employee_id, {
+        employee_id: row.employee_id,
+        salarie: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+        poste: row.job_title || '',
+      });
+    }
     const current = groups.get(key) || {
       employee_id: row.employee_id,
       salarie: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
       poste: row.job_title || '',
       semaine_du: weekStart,
-      heures_prevues: 0,
       heures_reelles: 0,
       heures_de_nuit: 0,
       jours_travailles: 0,
       jours_repos: 0,
       jours_conges_payes: 0,
-      heures_conges_payes: 0,
       jours_maladie: 0,
-      heures_maladie: 0,
       jours_sans_solde: 0,
-      heures_sans_solde: 0,
       jours_feries: 0,
       heures_jours_feries: 0,
       jours_recuperation: 0,
@@ -741,23 +764,22 @@ async function exportPayroll(req, month) {
     };
 
     const payrollHours = row.actual_start && row.actual_end ? row.actual_hours : row.planned_hours;
-    current.heures_prevues += row.planned_hours;
-    current.heures_reelles += payrollHours;
-    current.heures_de_nuit += row.night_hours;
+    const countsAsWorkedHours = ['worked', 'holiday', 'recovery', 'training'].includes(row.day_type);
+    if (countsAsWorkedHours) {
+      current.heures_reelles += payrollHours;
+      current.heures_de_nuit += row.night_hours;
+    }
 
     if (row.day_type === 'worked') current.jours_travailles += 1;
     if (row.day_type === 'rest') current.jours_repos += 1;
     if (row.day_type === 'paid_leave') {
       current.jours_conges_payes += 1;
-      current.heures_conges_payes += payrollHours;
     }
     if (row.day_type === 'sick_leave') {
       current.jours_maladie += 1;
-      current.heures_maladie += payrollHours;
     }
     if (row.day_type === 'unpaid_leave') {
       current.jours_sans_solde += 1;
-      current.heures_sans_solde += payrollHours;
     }
     if (row.day_type === 'holiday') {
       current.jours_feries += 1;
@@ -783,19 +805,14 @@ async function exportPayroll(req, month) {
     groups.set(key, current);
   }
 
-  return Array.from(groups.values()).map((row) => {
+  const weeklyRows = Array.from(groups.values()).map((row) => {
     const heuresReelles = formatHours(row.heures_reelles * 60);
     return {
       ...row,
-      heures_prevues: formatHours(row.heures_prevues * 60),
       heures_reelles: heuresReelles,
-      ecart_heures: formatHours((row.heures_reelles - row.heures_prevues) * 60),
       heures_normales: Math.min(heuresReelles, ALTA_PLANNING_RULES.weekly_base_hours),
       heures_supplementaires: Math.max(0, heuresReelles - ALTA_PLANNING_RULES.overtime_threshold),
       heures_de_nuit: formatHours(row.heures_de_nuit * 60),
-      heures_conges_payes: formatHours(row.heures_conges_payes * 60),
-      heures_maladie: formatHours(row.heures_maladie * 60),
-      heures_sans_solde: formatHours(row.heures_sans_solde * 60),
       heures_jours_feries: formatHours(row.heures_jours_feries * 60),
       heures_recuperation: formatHours(row.heures_recuperation * 60),
       heures_formation: formatHours(row.heures_formation * 60),
@@ -807,6 +824,78 @@ async function exportPayroll(req, month) {
       commentaire: Array.from(new Set(row.comments)).join(' | '),
     };
   });
+
+  const byEmployee = new Map();
+  for (const row of weeklyRows) {
+    const list = byEmployee.get(row.employee_id) || [];
+    list.push(row);
+    byEmployee.set(row.employee_id, list);
+  }
+
+  const output = [];
+  for (const employee of employeeOrder.values()) {
+    const rowsForEmployee = (byEmployee.get(employee.employee_id) || [])
+      .sort((a, b) => String(a.semaine_du).localeCompare(String(b.semaine_du)));
+    output.push(...rowsForEmployee);
+
+    const total = rowsForEmployee.reduce((acc, row) => {
+      acc.heures_reelles += Number(row.heures_reelles || 0);
+      acc.heures_normales += Number(row.heures_normales || 0);
+      acc.heures_supplementaires += Number(row.heures_supplementaires || 0);
+      acc.heures_de_nuit += Number(row.heures_de_nuit || 0);
+      acc.jours_travailles += Number(row.jours_travailles || 0);
+      acc.jours_repos += Number(row.jours_repos || 0);
+      acc.jours_conges_payes += Number(row.jours_conges_payes || 0);
+      acc.jours_maladie += Number(row.jours_maladie || 0);
+      acc.jours_sans_solde += Number(row.jours_sans_solde || 0);
+      acc.jours_feries += Number(row.jours_feries || 0);
+      acc.heures_jours_feries += Number(row.heures_jours_feries || 0);
+      acc.jours_recuperation += Number(row.jours_recuperation || 0);
+      acc.heures_recuperation += Number(row.heures_recuperation || 0);
+      acc.jours_formation += Number(row.jours_formation || 0);
+      acc.heures_formation += Number(row.heures_formation || 0);
+      return acc;
+    }, {
+      employee_id: employee.employee_id,
+      salarie: employee.salarie,
+      poste: employee.poste,
+      semaine_du: 'TOTAL',
+      heures_reelles: 0,
+      heures_normales: 0,
+      heures_supplementaires: 0,
+      heures_de_nuit: 0,
+      jours_travailles: 0,
+      jours_repos: 0,
+      jours_conges_payes: 0,
+      jours_maladie: 0,
+      jours_sans_solde: 0,
+      jours_feries: 0,
+      heures_jours_feries: 0,
+      jours_recuperation: 0,
+      heures_recuperation: 0,
+      jours_formation: 0,
+      heures_formation: 0,
+      valide_salarie: '',
+      date_validation_salarie: '',
+      methode_validation_salarie: '',
+      valide_responsable: '',
+      date_validation_responsable: '',
+      commentaire: 'voir detail semaines',
+    });
+
+    output.push({
+      ...total,
+      heures_reelles: formatHours(total.heures_reelles * 60),
+      heures_normales: formatHours(total.heures_normales * 60),
+      heures_supplementaires: formatHours(total.heures_supplementaires * 60),
+      heures_de_nuit: formatHours(total.heures_de_nuit * 60),
+      heures_jours_feries: formatHours(total.heures_jours_feries * 60),
+      heures_recuperation: formatHours(total.heures_recuperation * 60),
+      heures_formation: formatHours(total.heures_formation * 60),
+    });
+  }
+
+  return output;
 }
 
 async function listAbsenceRequests(req) {

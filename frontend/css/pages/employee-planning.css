@@ -282,6 +282,11 @@ tr.day-type-training td {
   justify-content: flex-start;
 }
 
+.payroll-export-grid {
+  align-items: end;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
 @media (max-width: 960px) {
   .employee-planning-content {
     padding: 12px;

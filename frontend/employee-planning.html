@@ -226,10 +226,25 @@
 
     <section class="card">
       <h3>Export paie</h3>
-      <div class="filters-row">
+      <div class="filters-row payroll-export-grid">
+        <div class="form-group">
+          <label for="payroll-export-mode">Type export</label>
+          <select id="payroll-export-mode">
+            <option value="month">Mois</option>
+            <option value="weeks">Période par semaines</option>
+          </select>
+        </div>
         <div class="form-group">
           <label for="payroll-month">Mois</label>
           <input id="payroll-month" type="month" />
+        </div>
+        <div class="form-group hidden" data-payroll-weeks-field>
+          <label for="payroll-week-from">Semaine début</label>
+          <input id="payroll-week-from" type="date" />
+        </div>
+        <div class="form-group hidden" data-payroll-weeks-field>
+          <label for="payroll-week-to">Semaine fin</label>
+          <input id="payroll-week-to" type="date" />
         </div>
         <div class="form-group filter-actions">
           <label>&nbsp;</label>

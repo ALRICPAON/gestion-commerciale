@@ -41,7 +41,11 @@ const els = {
   absenceComment: document.getElementById("absence-comment"),
   absenceFeedback: document.getElementById("absence-feedback"),
   absenceTable: document.getElementById("absence-table-body"),
+  payrollExportMode: document.getElementById("payroll-export-mode"),
   payrollMonth: document.getElementById("payroll-month"),
+  payrollWeekFrom: document.getElementById("payroll-week-from"),
+  payrollWeekTo: document.getElementById("payroll-week-to"),
+  payrollWeeksFields: document.querySelectorAll("[data-payroll-weeks-field]"),
   payrollExport: document.getElementById("payroll-export-btn"),
 };
 
@@ -751,13 +755,41 @@ function shiftWeek(days) {
   loadPlanning().catch((error) => showFeedback(els.planningFeedback, error.message, true));
 }
 
+function syncPayrollExportMode() {
+  const isWeeks = els.payrollExportMode?.value === "weeks";
+  els.payrollMonth?.closest(".form-group")?.classList.toggle("hidden", isWeeks);
+  els.payrollWeeksFields?.forEach((field) => field.classList.toggle("hidden", !isWeeks));
+}
+
 function downloadPayrollExport() {
-  const month = els.payrollMonth.value;
-  if (!month) {
-    showFeedback(els.planningFeedback, "Choisis un mois pour exporter.", true);
-    return;
+  const mode = els.payrollExportMode?.value || "month";
+  const params = new URLSearchParams();
+  let label = "";
+  if (mode === "weeks") {
+    const weekFrom = els.payrollWeekFrom.value;
+    const weekTo = els.payrollWeekTo.value;
+    if (!weekFrom || !weekTo) {
+      showFeedback(els.planningFeedback, "Choisis une semaine de debut et une semaine de fin.", true);
+      return;
+    }
+    if (weekTo < weekFrom) {
+      showFeedback(els.planningFeedback, "La semaine de fin doit etre apres la semaine de debut.", true);
+      return;
+    }
+    params.set("week_start_from", weekFrom);
+    params.set("week_start_to", weekTo);
+    label = `${weekFrom}-${weekTo}`;
+  } else {
+    const month = els.payrollMonth.value;
+    if (!month) {
+      showFeedback(els.planningFeedback, "Choisis un mois pour exporter.", true);
+      return;
+    }
+    params.set("month", month);
+    label = month;
   }
-  fetch(`${API_BASE}/api/employee-planning/payroll-export?month=${encodeURIComponent(month)}`, {
+
+  fetch(`${API_BASE}/api/employee-planning/payroll-export?${params.toString()}`, {
     headers: { Authorization: `Bearer ${token}` },
   }).then(async (response) => {
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || "Erreur export");
@@ -765,7 +797,7 @@ function downloadPayrollExport() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `export-paie-${month}.csv`;
+    link.download = `export-paie-${label}.csv`;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -786,6 +818,7 @@ function bindEvents() {
   els.weekStart?.addEventListener("change", () => loadPlanning().catch((error) => showFeedback(els.planningFeedback, error.message, true)));
   els.previousWeek?.addEventListener("click", () => shiftWeek(-7));
   els.nextWeek?.addEventListener("click", () => shiftWeek(7));
+  els.payrollExportMode?.addEventListener("change", syncPayrollExportMode);
   els.planningBody?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-action='save-line']");
     if (button) saveLine(button).catch((error) => showFeedback(els.planningFeedback, error.message, true));
@@ -831,6 +864,9 @@ async function init() {
   const today = new Date();
   els.weekStart.value = dateKey(mondayOf(today));
   els.payrollMonth.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+  if (els.payrollWeekFrom) els.payrollWeekFrom.value = els.weekStart.value;
+  if (els.payrollWeekTo) els.payrollWeekTo.value = els.weekStart.value;
+  syncPayrollExportMode();
   bindEvents();
   await refreshAll();
 }

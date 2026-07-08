@@ -66,26 +66,21 @@ router.post('/lines/:id/manager-validate', asyncHandler(async (req, res) => {
 }));
 
 router.get('/payroll-export', asyncHandler(async (req, res) => {
-  const rows = await service.exportPayroll(req, req.query.month);
+  const rows = await service.exportPayroll(req, req.query);
 
   const header = [
     'Salarié',
     'Poste',
     'Semaine du',
-    'Heures prévues',
     'Heures réelles',
-    'Écart heures',
     'Heures normales',
     'Heures supplémentaires',
     'Heures de nuit',
     'Jours travaillés',
     'Jours repos',
     'Jours congés payés',
-    'Heures congés payés',
     'Jours maladie',
-    'Heures maladie',
     'Jours sans solde',
-    'Heures sans solde',
     'Jours fériés',
     'Heures jours fériés',
     'Jours récupération',
@@ -106,37 +101,35 @@ router.get('/payroll-export', asyncHandler(async (req, res) => {
       row.salarie,
       row.poste,
       formatDate(row.semaine_du),
-      row.heures_prevues,
       row.heures_reelles,
-      row.ecart_heures,
       row.heures_normales,
       row.heures_supplementaires,
       row.heures_de_nuit,
       row.jours_travailles,
       row.jours_repos,
       row.jours_conges_payes,
-      row.heures_conges_payes,
       row.jours_maladie,
-      row.heures_maladie,
       row.jours_sans_solde,
-      row.heures_sans_solde,
       row.jours_feries,
       row.heures_jours_feries,
       row.jours_recuperation,
       row.heures_recuperation,
       row.jours_formation,
       row.heures_formation,
-      row.valide_salarie ? 'oui' : 'non',
+      row.semaine_du === 'TOTAL' ? '' : (row.valide_salarie ? 'oui' : 'non'),
       formatDate(row.date_validation_salarie),
       row.methode_validation_salarie,
-      row.valide_responsable ? 'oui' : 'non',
+      row.semaine_du === 'TOTAL' ? '' : (row.valide_responsable ? 'oui' : 'non'),
       formatDate(row.date_validation_responsable),
       row.commentaire || '',
     ].map(csvValue).join(';')),
   ];
 
+  const exportName = req.query.month
+    ? `export-paie-${req.query.month}.csv`
+    : `export-paie-${req.query.week_start_from}-${req.query.week_start_to}.csv`;
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="export-paie-${req.query.month}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${exportName}"`);
   res.send(`\uFEFF${csvRows.join('\n')}`);
 }));
 
