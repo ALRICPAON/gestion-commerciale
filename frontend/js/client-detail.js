@@ -15,10 +15,17 @@ const saveClientBtn = $('save-client-btn');
 const statusClientBtn = $('status-client-btn');
 const clientForm = $('client-form');
 const billedClientSelect = $('billed_client_id');
+const parentClientSelect = $('parent_client_id');
+const contactsBody = $('contacts-table-body');
+const affiliatesBody = $('affiliates-table-body');
+const contactForm = $('contact-form');
+const affiliateForm = $('affiliate-form');
 
-const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'is_royale_maree_member', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
+const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'parent_client_id', 'affiliate_label', 'affiliate_store_number', 'is_royale_maree_member', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
 let currentClient = null;
 let clients = [];
+let contacts = [];
+let affiliates = [];
 
 function logoutAndRedirect() {
   ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key));
@@ -170,6 +177,119 @@ async function changeClientStatus(status) {
   } catch (err) { console.error('Erreur statut client :', err); showFeedback(err.message || 'Erreur changement statut', 'error'); }
 }
 
+function esc(value) {
+  return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
+}
+
+function renderBilledClients() {
+  if (!billedClientSelect && !parentClientSelect) return;
+  const selected = currentClient?.billed_client_id || clientId || '';
+  if (billedClientSelect) billedClientSelect.innerHTML = '<option value="">Lui-même</option>';
+  if (parentClientSelect) parentClientSelect.innerHTML = '<option value="">Aucun</option>';
+  clients.forEach((client) => {
+    if (client.status === 'inactive' || client.id === clientId) return;
+    const option = document.createElement('option');
+    option.value = client.id;
+    option.textContent = [client.code, client.name].filter(Boolean).join(' - ');
+    billedClientSelect?.appendChild(option.cloneNode(true));
+    parentClientSelect?.appendChild(option);
+  });
+  if (billedClientSelect) billedClientSelect.value = selected === clientId ? '' : selected;
+  if (parentClientSelect) parentClientSelect.value = currentClient?.parent_client_id || '';
+}
+
+function renderContacts() {
+  if (!contactsBody) return;
+  contactsBody.innerHTML = contacts.length ? contacts.map((contact) => {
+    const usage = [
+      contact.receives_orders ? 'Commandes' : null,
+      contact.receives_delivery_notes ? 'BL' : null,
+      contact.receives_invoices ? 'Factures' : null,
+      contact.receives_statements ? 'Relevés' : null,
+    ].filter(Boolean).join(', ') || '-';
+    return `<tr><td>${esc(contact.contact_name)}</td><td>${esc(contact.role || '')}</td><td>${esc(contact.email || '')}</td><td>${esc(contact.phone || contact.mobile || '')}</td><td>${esc(usage)}</td><td>${esc(contact.status || 'active')}</td></tr>`;
+  }).join('') : '<tr><td colspan="6">Aucun contact.</td></tr>';
+}
+
+function renderAffiliates() {
+  if (!affiliatesBody) return;
+  affiliatesBody.innerHTML = affiliates.length ? affiliates.map((client) => `<tr><td>${esc(client.code || '')}</td><td><a href="./client-detail.html?id=${encodeURIComponent(client.id)}">${esc(client.name || client.affiliate_label || '')}</a></td><td>${esc(client.affiliate_store_number || client.store_identifier || '')}</td><td>${esc(client.contact_name || '')}</td><td>${esc(client.phone || client.mobile || '')}</td><td>${esc(client.email || '')}</td><td>${esc(client.city || '')}</td><td>${esc(client.status || 'active')}</td></tr>`).join('') : '<tr><td colspan="8">Aucun affilié.</td></tr>';
+}
+
+async function loadContactsAndAffiliates() {
+  if (!clientId) {
+    contacts = [];
+    affiliates = [];
+    renderContacts();
+    renderAffiliates();
+    return;
+  }
+  const [contactsResponse, affiliatesResponse] = await Promise.all([
+    apiFetch(`${API_BASE_URL}/api/clients/${clientId}/contacts`),
+    apiFetch(`${API_BASE_URL}/api/clients/${clientId}/affiliates`),
+  ]);
+  if (contactsResponse?.ok) contacts = await contactsResponse.json().catch(() => []);
+  if (affiliatesResponse?.ok) affiliates = await affiliatesResponse.json().catch(() => []);
+  renderContacts();
+  renderAffiliates();
+}
+
+async function createContact(event) {
+  event.preventDefault();
+  if (!clientId) return showFeedback('Enregistre le client avant d’ajouter un contact.', 'error');
+  const contactName = $('contact-form-name')?.value.trim();
+  if (!contactName) return showFeedback('Le nom du contact est obligatoire.', 'error');
+  const response = await apiFetch(`${API_BASE_URL}/api/clients/${clientId}/contacts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contact_name: contactName,
+      role: $('contact-form-role')?.value.trim() || null,
+      email: $('contact-form-email')?.value.trim() || null,
+      phone: $('contact-form-phone')?.value.trim() || null,
+      receives_invoices: $('contact-form-invoices')?.checked || false,
+      receives_delivery_notes: $('contact-form-delivery')?.checked || false,
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return showFeedback(data.error || 'Erreur création contact', 'error');
+  contactForm.reset();
+  contactForm.classList.add('hidden');
+  await loadContactsAndAffiliates();
+  showFeedback('Contact créé.');
+}
+
+async function createAffiliate(event) {
+  event.preventDefault();
+  if (!clientId) return showFeedback('Enregistre le client avant d’ajouter un affilié.', 'error');
+  const name = $('affiliate-form-name')?.value.trim();
+  if (!name) return showFeedback('Le nom magasin est obligatoire.', 'error');
+  const storeNumber = $('affiliate-form-store-number')?.value.trim() || null;
+  const response = await apiFetch(`${API_BASE_URL}/api/clients/${clientId}/affiliates`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code: $('affiliate-form-code')?.value.trim() || null,
+      name,
+      affiliate_label: name,
+      affiliate_store_number: storeNumber,
+      store_identifier: storeNumber,
+      contact_name: $('affiliate-form-contact')?.value.trim() || null,
+      phone: $('affiliate-form-phone')?.value.trim() || null,
+      email: $('affiliate-form-email')?.value.trim() || null,
+      city: $('affiliate-form-city')?.value.trim() || null,
+      status: $('affiliate-form-status')?.value || 'active',
+      client_type: 'gms',
+    }),
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return showFeedback(data.error || 'Erreur création affilié', 'error');
+  affiliateForm.reset();
+  affiliateForm.classList.add('hidden');
+  await loadContactsAndAffiliates();
+  showFeedback('Affilié créé.');
+}
+
 function bindEvents() {
   if (userNameEl) userNameEl.textContent = sessionUser.email || 'Utilisateur';
   $('back-list-btn')?.addEventListener('click', () => { window.location.href = './clients.html'; });
@@ -178,7 +298,11 @@ function bindEvents() {
   saveClientBtn?.addEventListener('click', saveClient);
   clientForm?.addEventListener('submit', (event) => { event.preventDefault(); saveClient(); });
   statusClientBtn?.addEventListener('click', () => changeClientStatus(statusClientBtn.dataset.status || 'inactive'));
+  $('add-contact-btn')?.addEventListener('click', () => contactForm?.classList.toggle('hidden'));
+  $('add-affiliate-btn')?.addEventListener('click', () => affiliateForm?.classList.toggle('hidden'));
+  contactForm?.addEventListener('submit', createContact);
+  affiliateForm?.addEventListener('submit', createAffiliate);
 }
 
 bindEvents();
-loadClientsForBilling().then(loadClient).catch((err) => { console.error('Erreur initialisation client :', err); showFeedback(err.message || 'Erreur initialisation client', 'error'); loadClient(); });
+loadClientsForBilling().then(loadClient).then(loadContactsAndAffiliates).catch((err) => { console.error('Erreur initialisation client :', err); showFeedback(err.message || 'Erreur initialisation client', 'error'); loadClient(); });

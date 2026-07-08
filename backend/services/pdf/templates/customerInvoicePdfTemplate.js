@@ -46,6 +46,50 @@ function lineTrace(line) {
   ].filter(Boolean).map(escapeHtml).join(' - ');
 }
 
+function lineDeliveredKey(line) {
+  return line.delivered_client_id || line.delivered_client_name || line.delivered_client_code || '';
+}
+
+function lineDeliveredLabel(line, fallback) {
+  return line.delivered_client_name || line.delivered_client_code || line.delivered_client_store_identifier || fallback || 'Client livre';
+}
+
+function renderInvoiceLineRow(line) {
+  const details = [escapeHtml(line.article_plu || ''), lineTrace(line)].filter(Boolean).join('<br>');
+  return `<tr>
+    <td class="line-cell">${escapeHtml(line.line_number || '')}</td>
+    <td class="designation-cell"><strong>${escapeHtml(line.article_label || '-')}</strong><small>${details || '-'}</small></td>
+    <td class="num">${number(line.package_count)}</td>
+    <td class="num">${qty(line.weight_per_package)} ${escapeHtml(line.sale_unit || 'kg')}</td>
+    <td class="num">${qty(line.total_weight || line.sold_quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td>
+    <td class="num">${money(line.unit_sale_price_ht)}</td>
+    <td class="num">${money(line.line_amount_ht)}</td>
+    <td class="num vat-cell">${number(line.vat_rate).toFixed(2)} %</td>
+    <td class="num">${money(line.line_vat_amount)}</td>
+    <td class="num">${money(line.line_amount_ttc)}</td>
+  </tr>`;
+}
+
+function renderGroupedRows(lines, fallbackLabel) {
+  if (!lines.length) return '<tr><td colspan="10">Aucune ligne.</td></tr>';
+  const hasDeliveredGroups = lines.some((line) => lineDeliveredKey(line));
+  if (!hasDeliveredGroups) return lines.map(renderInvoiceLineRow).join('');
+
+  const groups = new Map();
+  lines.forEach((line) => {
+    const key = lineDeliveredKey(line) || '__main__';
+    if (!groups.has(key)) groups.set(key, { label: lineDeliveredLabel(line, fallbackLabel), lines: [] });
+    groups.get(key).lines.push(line);
+  });
+
+  return Array.from(groups.values()).map((group) => {
+    const subtotal = group.lines.reduce((sum, line) => sum + number(line.line_amount_ht), 0);
+    return `<tr class="invoice-group-row"><td colspan="10">${escapeHtml(group.label)}</td></tr>
+      ${group.lines.map(renderInvoiceLineRow).join('')}
+      <tr class="invoice-subtotal-row"><td colspan="6">Sous-total ${escapeHtml(group.label)}</td><td class="num">${money(subtotal)}</td><td></td><td></td><td></td></tr>`;
+  }).join('');
+}
+
 function renderCustomerInvoicePdf({ invoice, lines, storeSettings }) {
   const doc = invoice || {};
   const settings = storeSettings || {};
@@ -63,21 +107,7 @@ function renderCustomerInvoicePdf({ invoice, lines, storeSettings }) {
     settings.terms_and_conditions ? `<h3>CGV</h3><p>${escapeHtml(settings.terms_and_conditions)}</p>` : '',
   ].filter(Boolean).join('');
 
-  const rows = (lines || []).map((line) => {
-    const details = [escapeHtml(line.article_plu || ''), lineTrace(line)].filter(Boolean).join('<br>');
-    return `<tr>
-    <td class="line-cell">${escapeHtml(line.line_number || '')}</td>
-    <td class="designation-cell"><strong>${escapeHtml(line.article_label || '-')}</strong><small>${details || '-'}</small></td>
-    <td class="num">${number(line.package_count)}</td>
-    <td class="num">${qty(line.weight_per_package)} ${escapeHtml(line.sale_unit || 'kg')}</td>
-    <td class="num">${qty(line.total_weight || line.sold_quantity)} ${escapeHtml(line.sale_unit || 'kg')}</td>
-    <td class="num">${money(line.unit_sale_price_ht)}</td>
-    <td class="num">${money(line.line_amount_ht)}</td>
-    <td class="num vat-cell">${number(line.vat_rate).toFixed(2)} %</td>
-    <td class="num">${money(line.line_vat_amount)}</td>
-    <td class="num">${money(line.line_amount_ttc)}</td>
-  </tr>`;
-  }).join('');
+  const rows = renderGroupedRows(lines || [], doc.delivered_client_name || doc.delivered_client_name_snapshot);
 
   const body = `<article class="pdf-document invoice-document">
     ${companyHeader(settings, doc.reference_number || doc.id || 'Facture client', `Facture client - ${formatDate(doc.document_date)}`)}
@@ -112,7 +142,7 @@ function renderCustomerInvoicePdf({ invoice, lines, storeSettings }) {
         <col class="col-ttc">
       </colgroup>
       <thead><tr><th>Ligne</th><th>Designation</th><th>Colis</th><th>Poids/colis</th><th>Poids total</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>Montant TVA</th><th>TTC</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="10">Aucune ligne.</td></tr>'}</tbody>
+      <tbody>${rows}</tbody>
     </table>
     <section class="bottom">
       <div class="footer-note">
@@ -138,6 +168,8 @@ function renderCustomerInvoicePdf({ invoice, lines, storeSettings }) {
     .invoice-lines-table th, .invoice-lines-table td { padding: 4px 3px; }
     .invoice-lines-table th { background: #e8eef4; border-color: #aebdcc; color: #17212b; font-size: 7.5px; letter-spacing: 0; }
     .invoice-lines-table tbody tr:nth-child(even) { background: #f8fafc; }
+    .invoice-lines-table .invoice-group-row td { background: #dbe7ef; color: #17212b; font-size: 8.8px; font-weight: 800; text-transform: uppercase; }
+    .invoice-lines-table .invoice-subtotal-row td { background: #eef3f7; font-weight: 800; }
     .designation-cell strong { display: block; overflow-wrap: anywhere; }
     .designation-cell small { font-size: 7.5px; line-height: 1.15; margin-top: 1px; overflow-wrap: anywhere; }
     .line-cell { text-align: center; }

@@ -52,7 +52,11 @@ async function getDeliveryNotePayload(db, { storeId, deliveryNoteId }) {
   const [linesResult, storeSettings] = await Promise.all([
     db.query(
       `
-      SELECT sl.*, COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
+      SELECT sl.*,
+        COALESCE(sl.delivered_client_name_snapshot, delivered.name) AS delivered_client_name,
+        COALESCE(sl.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
+        COALESCE(sl.delivered_client_store_identifier_snapshot, delivered.store_identifier) AS delivered_client_store_identifier,
+        COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
         jsonb_agg(jsonb_build_object(
           'lot_id', sla.lot_id,
           'quantity', sla.quantity,
@@ -66,11 +70,12 @@ async function getDeliveryNotePayload(db, { storeId, deliveryNoteId }) {
           'production_method', COALESCE(l.traceability_data->>'production_method', a.production_method)
         )) FILTER (WHERE sla.id IS NOT NULL) AS allocations
       FROM sales_lines sl
+      LEFT JOIN clients delivered ON delivered.id = sl.delivered_client_id AND delivered.store_id = sl.store_id
       LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
       LEFT JOIN lots l ON l.id = sla.lot_id
       LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
       WHERE sl.sales_document_id = $1 AND sl.store_id = $2
-      GROUP BY sl.id
+      GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier
       ORDER BY sl.line_number ASC
       `,
       [deliveryNoteId, storeId]
@@ -128,7 +133,11 @@ async function getInvoicePayload(db, { storeId, invoiceId }) {
   const [linesResult, storeSettings] = await Promise.all([
     db.query(
       `
-      SELECT il.*, COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
+      SELECT il.*,
+        COALESCE(il.delivered_client_name_snapshot, delivered_line.name, bl.delivered_client_name_snapshot) AS delivered_client_name,
+        COALESCE(il.delivered_client_code_snapshot, delivered_line.code, bl.delivered_client_code_snapshot) AS delivered_client_code,
+        COALESCE(il.delivered_client_store_identifier_snapshot, delivered_line.store_identifier, bl.delivered_client_store_identifier_snapshot) AS delivered_client_store_identifier,
+        COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
         jsonb_agg(jsonb_build_object(
           'lot_id', sla.lot_id,
           'quantity', sla.quantity,
@@ -150,6 +159,9 @@ async function getInvoicePayload(db, { storeId, invoiceId }) {
        AND bl.store_id = inv.store_id
        AND bl.line_number = il.line_number
        AND (bl.article_id IS NOT DISTINCT FROM il.article_id)
+      LEFT JOIN clients delivered_line
+        ON delivered_line.id = il.delivered_client_id
+       AND delivered_line.store_id = il.store_id
       LEFT JOIN sale_line_allocations sla
         ON sla.sales_line_id = bl.id
       LEFT JOIN lots l
@@ -160,7 +172,7 @@ async function getInvoicePayload(db, { storeId, invoiceId }) {
       WHERE inv.id = $1
         AND inv.store_id = $2
         AND inv.document_type = 'INVOICE'
-      GROUP BY il.id
+      GROUP BY il.id, delivered_line.name, delivered_line.code, delivered_line.store_identifier, bl.delivered_client_name_snapshot, bl.delivered_client_code_snapshot, bl.delivered_client_store_identifier_snapshot
       ORDER BY il.line_number ASC
       `,
       [invoiceId, storeId]

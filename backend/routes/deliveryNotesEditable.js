@@ -94,6 +94,36 @@ async function clientSnapshot(db, storeId, clientId) {
   return result.rows[0];
 }
 
+async function deliveredClientSnapshot(db, storeId, billedDocumentClientId, deliveredClientId) {
+  const id = clean(deliveredClientId);
+  if (!id) return {
+    id: null,
+    name: null,
+    code: null,
+    store_identifier: null,
+  };
+
+  const result = await db.query(
+    `SELECT id, code, name, store_identifier, parent_client_id
+     FROM clients
+     WHERE id = $1 AND store_id = $2 AND status <> 'inactive'
+     LIMIT 1`,
+    [id, storeId]
+  );
+  if (!result.rows.length) {
+    const error = new Error('Client livré introuvable pour ce magasin');
+    error.status = 400;
+    throw error;
+  }
+  const client = result.rows[0];
+  if (client.id !== billedDocumentClientId && client.parent_client_id !== billedDocumentClientId) {
+    const error = new Error('Le client livré doit être le client principal ou un affilié de ce client');
+    error.status = 400;
+    throw error;
+  }
+  return client;
+}
+
 async function articleByPayload(db, storeId, body) {
   const id = clean(body.article_id);
   const plu = clean(body.article_plu);
@@ -327,9 +357,21 @@ router.post('/sales/:id/lines', authenticateToken, attachDbContext, requireAdmin
     if (!unlocked(doc)) { await db.query('ROLLBACK'); return res.status(400).json({ error: 'BL facture ou lie a une facture : modification interdite' }); }
     const line = await withReallocation(db, doc, req.user.store_id, req.user.client_key, req.user.id, { forceStockExit: forceRequested(req.body) }, async () => {
       const numberResult = await db.query(`SELECT COALESCE(MAX(line_number), 0) + 1 AS line_number FROM sales_lines WHERE sales_document_id = $1`, [doc.id]);
+      const deliveredClient = await deliveredClientSnapshot(db, req.user.store_id, doc.client_id, req.body?.delivered_client_id);
       const inserted = await db.query(
-        `INSERT INTO sales_lines(id, store_id, client_key, sales_document_id, line_number, sale_unit, vat_rate, line_status, created_by, updated_by) VALUES(gen_random_uuid(), $1, $2, $3, $4, 'kg', COALESCE($5, 5.5), 'pending', $6, $6) RETURNING *`,
-        [req.user.store_id, doc.client_key || req.user.client_key || null, doc.id, numberResult.rows[0].line_number, doc.vat_rate_snapshot, req.user.id]
+        `INSERT INTO sales_lines(
+          id, store_id, client_key, sales_document_id, line_number, sale_unit, vat_rate,
+          delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot,
+          delivered_client_store_identifier_snapshot, line_status, created_by, updated_by
+        ) VALUES(
+          gen_random_uuid(), $1, $2, $3, $4, 'kg', COALESCE($5, 5.5),
+          $6, $7, $8, $9, 'pending', $10, $10
+        ) RETURNING *`,
+        [
+          req.user.store_id, doc.client_key || req.user.client_key || null, doc.id,
+          numberResult.rows[0].line_number, doc.vat_rate_snapshot, deliveredClient.id,
+          deliveredClient.name, deliveredClient.code, deliveredClient.store_identifier, req.user.id,
+        ]
       );
       return inserted.rows[0];
     });
@@ -358,10 +400,12 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
       const selectedLot = await lotById(db, req.user.store_id, article?.id, clean(req.body?.selected_lot_id));
       if (clean(req.body?.selected_lot_id) && !selectedLot && line.document_origin !== 'negoce' && !forceRequested(req.body)) { const error = new Error('Lot selectionne introuvable ou sans stock'); error.status = 400; throw error; }
       const suggestedLot = selectedLot || (line.document_origin === 'negoce' ? null : await fifoLot(db, req.user.store_id, article?.id));
+      const deliveredClientId = req.body?.delivered_client_id !== undefined ? req.body.delivered_client_id : line.delivered_client_id;
+      const deliveredClient = await deliveredClientSnapshot(db, req.user.store_id, doc.client_id, deliveredClientId);
       const x = compute(req.body || {}, article, doc, line);
       const result = await db.query(
-        `UPDATE sales_lines SET article_id = $1, article_plu = $2, article_label = $3, package_count = $4, weight_per_package = $5, total_weight = $6, sold_quantity = $7, sale_unit = $8, unit_sale_price_ht = $9, unit_sale_price_ttc = $10, vat_rate = $11, line_amount_ht = $12, line_vat_amount = $13, line_amount_ttc = $14, unit_cost_ex_vat = $15, line_margin_ex_vat = $16, selected_lot_id = $17, suggested_lot_id = $18, traceability_snapshot = $19::jsonb, updated_by = $20, updated_at = NOW() WHERE id = $21 AND store_id = $22 RETURNING *`,
-        [article?.id || null, clean(req.body?.article_plu) || article?.plu || null, clean(req.body?.article_label) || article?.designation || null, x.packageCount, x.weightPerPackage, x.totalWeight, x.soldQuantity, clean(req.body?.sale_unit) || article?.sale_unit || article?.unit || 'kg', x.unitPriceHt, x.unitPriceTtc, x.vatRate, x.lineAmountHt, x.lineVatAmount, x.lineAmountTtc, x.unitCost, x.margin, selectedLot?.id || null, suggestedLot?.id || null, JSON.stringify(snapshot(selectedLot || suggestedLot)), req.user.id, req.params.id, req.user.store_id]
+        `UPDATE sales_lines SET article_id = $1, article_plu = $2, article_label = $3, package_count = $4, weight_per_package = $5, total_weight = $6, sold_quantity = $7, sale_unit = $8, unit_sale_price_ht = $9, unit_sale_price_ttc = $10, vat_rate = $11, line_amount_ht = $12, line_vat_amount = $13, line_amount_ttc = $14, unit_cost_ex_vat = $15, line_margin_ex_vat = $16, selected_lot_id = $17, suggested_lot_id = $18, traceability_snapshot = $19::jsonb, delivered_client_id = $20, delivered_client_name_snapshot = $21, delivered_client_code_snapshot = $22, delivered_client_store_identifier_snapshot = $23, updated_by = $24, updated_at = NOW() WHERE id = $25 AND store_id = $26 RETURNING *`,
+        [article?.id || null, clean(req.body?.article_plu) || article?.plu || null, clean(req.body?.article_label) || article?.designation || null, x.packageCount, x.weightPerPackage, x.totalWeight, x.soldQuantity, clean(req.body?.sale_unit) || article?.sale_unit || article?.unit || 'kg', x.unitPriceHt, x.unitPriceTtc, x.vatRate, x.lineAmountHt, x.lineVatAmount, x.lineAmountTtc, x.unitCost, x.margin, selectedLot?.id || null, suggestedLot?.id || null, JSON.stringify(snapshot(selectedLot || suggestedLot)), deliveredClient.id, deliveredClient.name, deliveredClient.code, deliveredClient.store_identifier, req.user.id, req.params.id, req.user.store_id]
       );
       return result.rows[0];
     });

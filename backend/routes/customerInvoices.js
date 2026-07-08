@@ -107,7 +107,11 @@ async function getInvoiceDocument(db, { invoiceId, storeId }) {
 async function getInvoiceLines(db, { invoiceId, storeId }) {
   const result = await db.query(
     `
-    SELECT il.*, COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
+    SELECT il.*,
+      COALESCE(il.delivered_client_name_snapshot, delivered_line.name, bl.delivered_client_name_snapshot) AS delivered_client_name,
+      COALESCE(il.delivered_client_code_snapshot, delivered_line.code, bl.delivered_client_code_snapshot) AS delivered_client_code,
+      COALESCE(il.delivered_client_store_identifier_snapshot, delivered_line.store_identifier, bl.delivered_client_store_identifier_snapshot) AS delivered_client_store_identifier,
+      COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
       jsonb_agg(jsonb_build_object(
         'lot_id', sla.lot_id,
         'quantity', sla.quantity,
@@ -129,6 +133,9 @@ async function getInvoiceLines(db, { invoiceId, storeId }) {
      AND bl.store_id = inv.store_id
      AND bl.line_number = il.line_number
      AND (bl.article_id IS NOT DISTINCT FROM il.article_id)
+    LEFT JOIN clients delivered_line
+      ON delivered_line.id = il.delivered_client_id
+     AND delivered_line.store_id = il.store_id
     LEFT JOIN sale_line_allocations sla
       ON sla.sales_line_id = bl.id
     LEFT JOIN lots l
@@ -139,7 +146,7 @@ async function getInvoiceLines(db, { invoiceId, storeId }) {
     WHERE inv.id = $1
       AND inv.store_id = $2
       AND inv.document_type = 'INVOICE'
-    GROUP BY il.id
+    GROUP BY il.id, delivered_line.name, delivered_line.code, delivered_line.store_identifier, bl.delivered_client_name_snapshot, bl.delivered_client_code_snapshot, bl.delivered_client_store_identifier_snapshot
     ORDER BY il.line_number ASC
     `,
     [invoiceId, storeId]
@@ -263,13 +270,16 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
           package_count, weight_per_package, total_weight, sold_quantity, sale_unit,
           unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc,
           unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot,
+          delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot,
+          delivered_client_store_identifier_snapshot,
           line_status, created_by, updated_by
         ) VALUES (
           gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10, $11, $12,
           $13, $14, $15, $16, $17, $18,
           $19, $20, $21, $22, $23::jsonb,
-          'invoiced', $24, $24
+          $24, $25, $26, $27,
+          'invoiced', $28, $28
         )
         `,
         [
@@ -296,6 +306,10 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
           line.selected_lot_id,
           line.suggested_lot_id,
           JSON.stringify(line.traceability_snapshot || {}),
+          line.delivered_client_id,
+          line.delivered_client_name_snapshot,
+          line.delivered_client_code_snapshot,
+          line.delivered_client_store_identifier_snapshot,
           req.user.id,
         ]
       );

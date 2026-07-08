@@ -10,6 +10,7 @@ const els = { user: $('user-name'), logout: $('logout-btn'), back: $('back-sales
 let sale = null;
 let lines = [];
 let clients = [];
+let affiliates = [];
 let stockItems = [];
 let lotItems = [];
 let editingLineId = null;
@@ -48,6 +49,23 @@ function editable() {
 }
 function canValidateInBl() { return sale?.document_type === 'ORDER' && sale?.status === 'draft'; }
 function stockOnlyArticles() { return els.stockOnly ? els.stockOnly.checked : true; }
+
+function ensureAffiliateLineHeader() {
+  const row = document.querySelector('.sale-lines-table thead tr');
+  if (!row || row.dataset.affiliatesReady === 'true') return;
+  row.insertAdjacentHTML('afterbegin', '<th>Magasin livré</th>');
+  row.dataset.affiliatesReady = 'true';
+}
+
+function affiliateOptions(selectedId) {
+  const main = selectedClient();
+  const options = [{ id: '', label: main?.name ? `Client principal - ${main.name}` : 'Client principal' }]
+    .concat(affiliates.map((client) => ({
+      id: client.id,
+      label: client.affiliate_label || client.name || client.code || 'Magasin affilié',
+    })));
+  return options.map((option) => `<option value="${esc(option.id)}" ${String(option.id) === String(selectedId || '') ? 'selected' : ''}>${esc(option.label)}</option>`).join('');
+}
 
 function ensureStockSearchToggle() {
   if (!els.stockSearch || els.stockOnly) return;
@@ -103,7 +121,8 @@ function renderTopbar() {
 }
 
 async function loadClients() { clients = await api('/api/clients?status=active'); els.client.innerHTML = '<option value="">Sélectionner un client</option>' + clients.map((c) => `<option value="${c.id}">${esc(c.name || c.legal_name || c.code || 'Client')}</option>`).join(''); }
-async function loadSale() { clear(els.hf); clear(els.lf); const data = await api(`/api/sales/${saleId}`); sale = data.sale; lines = Array.isArray(data.lines) ? data.lines : []; renderHeader(); renderLines(); }
+async function loadAffiliates() { affiliates = sale?.client_id ? await api(`/api/clients/${sale.client_id}/affiliates`).catch(() => []) : []; }
+async function loadSale() { clear(els.hf); clear(els.lf); const data = await api(`/api/sales/${saleId}`); sale = data.sale; lines = Array.isArray(data.lines) ? data.lines : []; await loadAffiliates(); renderHeader(); renderLines(); }
 
 function renderClientContext() {
   const c = selectedClient();
@@ -135,12 +154,14 @@ function renderHeader() {
 }
 
 function renderLines() {
-  if (!lines.length) { els.body.innerHTML = '<tr><td colspan="13">Aucune ligne.</td></tr>'; return; }
+  ensureAffiliateLineHeader();
+  if (!lines.length) { els.body.innerHTML = '<tr><td colspan="14">Aucune ligne.</td></tr>'; return; }
   els.body.innerHTML = lines.map((line) => {
     const t = trace(line);
     const locked = !editable();
     const negoce = isNegoce();
     return `<tr data-line-id="${line.id}" data-article-id="${line.article_id || ''}" data-selected-lot-id="${line.selected_lot_id || ''}" data-sale-unit="${esc(line.sale_unit || 'kg')}">
+      <td><select class="line-input line-delivered-client" ${locked ? 'disabled' : ''}>${affiliateOptions(line.delivered_client_id)}</select></td>
       <td><input class="line-input line-plu" value="${esc(line.article_plu || '')}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-article-label" value="${esc(line.article_label || '')}" ${locked ? 'disabled' : ''}></td>
       <td><button type="button" class="btn btn-secondary" data-action="choose-lot" data-id="${line.id}" ${locked || !line.article_id || negoce ? 'disabled' : ''}>${esc(t.lot_code || t.supplier_lot_number || (negoce ? 'Négoce' : 'Lot'))}</button></td>
@@ -273,7 +294,7 @@ async function saveHeader(reload = true) {
   });
   if (reload) { fb(els.hf, isDeliveryNote() ? 'BL enregistré' : 'En-tête enregistré'); await loadSale(); }
 }
-async function ensureHeader() { if ((sale?.client_id || '') === (els.client.value || '')) return; await saveHeader(false); const data = await api(`/api/sales/${saleId}`); sale = data.sale; lines = Array.isArray(data.lines) ? data.lines : []; }
+async function ensureHeader() { if ((sale?.client_id || '') === (els.client.value || '')) return; await saveHeader(false); const data = await api(`/api/sales/${saleId}`); sale = data.sale; lines = Array.isArray(data.lines) ? data.lines : []; await loadAffiliates(); }
 async function addLine() { clear(els.lf); if (!editable()) return; if (!els.client.value) { fb(els.lf, "Sélectionne un client avant d'ajouter une ligne", true); return; } await ensureHeader(); await api(`/api/sales/${saleId}/lines`, { method: 'POST', body: JSON.stringify({}) }); await loadSale(); els.body.querySelector('tr[data-line-id]:last-child .line-plu')?.focus(); }
 async function saveLine(lineId) {
   clear(els.lf);
@@ -284,7 +305,7 @@ async function saveLine(lineId) {
   if (!row.dataset.articleId) { fb(els.lf, 'Sélectionne un article', true); return; }
   const label = clean(row.querySelector('.line-article-label').value);
   if (isNegoce() && !label) { fb(els.lf, 'Saisis la désignation du produit négoce', true); return; }
-  const payload = { article_id: row.dataset.articleId, article_plu: clean(row.querySelector('.line-plu').value), article_label: label, selected_lot_id: row.dataset.selectedLotId || null, package_count: n(row.querySelector('.line-package-count').value), weight_per_package: n(row.querySelector('.line-weight-per-package').value), total_weight: n(row.querySelector('.line-total-weight').value), sale_unit: row.dataset.saleUnit || 'kg', unit_sale_price_ht: n(row.querySelector('.line-unit-price-ht').value), vat_rate: n(row.querySelector('.line-vat-rate').value, vatRate()) };
+  const payload = { article_id: row.dataset.articleId, article_plu: clean(row.querySelector('.line-plu').value), article_label: label, selected_lot_id: row.dataset.selectedLotId || null, delivered_client_id: row.querySelector('.line-delivered-client')?.value || null, package_count: n(row.querySelector('.line-package-count').value), weight_per_package: n(row.querySelector('.line-weight-per-package').value), total_weight: n(row.querySelector('.line-total-weight').value), sale_unit: row.dataset.saleUnit || 'kg', unit_sale_price_ht: n(row.querySelector('.line-unit-price-ht').value), vat_rate: n(row.querySelector('.line-vat-rate').value, vatRate()) };
   await api(`/api/sales/lines/${lineId}`, { method: 'PATCH', body: JSON.stringify(payload) });
   fb(els.lf, isDeliveryNote() && sale?.status === 'validated' ? 'Ligne enregistrée et stock réajusté' : 'Ligne enregistrée');
   await loadSale();
@@ -309,7 +330,7 @@ els.save?.addEventListener('click', () => saveHeader(true));
 els.add?.addEventListener('click', addLine);
 els.validateBl?.addEventListener('click', validateInBl);
 els.printOrder?.addEventListener('click', printOrder);
-els.client?.addEventListener('change', renderClientContext);
+els.client?.addEventListener('change', async () => { renderClientContext(); affiliates = els.client.value ? await api(`/api/clients/${els.client.value}/affiliates`).catch(() => []) : []; renderLines(); });
 els.closeStock?.addEventListener('click', () => els.stockModal.classList.add('hidden'));
 els.closeLot?.addEventListener('click', () => els.lotModal.classList.add('hidden'));
 els.stockSearch?.addEventListener('input', () => stockSearch(clean(els.stockSearch.value)).catch((e) => fb(els.lf, e.message, true)));
@@ -334,5 +355,5 @@ els.body?.addEventListener('keydown', async (e) => {
 els.body?.addEventListener('blur', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row) return; await (isNegoce() ? searchNegocePlu(row, { applyFirst: true }) : resolvePlu(row)).catch((err) => fb(els.lf, err.message, true)); }, true);
 els.body?.addEventListener('change', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row || !isNegoce()) return; await searchNegocePlu(row, { applyFirst: true }).catch((err) => fb(els.lf, err.message, true)); });
 els.body?.addEventListener('input', (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.target.classList.contains('line-plu') && isNegoce()) { row.dataset.articleId = ''; row.dataset.selectedLotId = ''; scheduleNegocePluSearch(row); return; } if (['line-package-count', 'line-weight-per-package', 'line-total-weight', 'line-unit-price-ht', 'line-vat-rate'].some((c) => e.target.classList.contains(c))) computeRow(row); });
-async function init() { try { renderTopbar(); ensureStockSearchToggle(); await loadClients(); await loadSale(); } catch (e) { console.error('Erreur init détail vente :', e); fb(els.lf, e.message || 'Erreur chargement vente', true); } }
+async function init() { try { renderTopbar(); ensureStockSearchToggle(); ensureAffiliateLineHeader(); await loadClients(); await loadSale(); } catch (e) { console.error('Erreur init détail vente :', e); fb(els.lf, e.message || 'Erreur chargement vente', true); } }
 init();

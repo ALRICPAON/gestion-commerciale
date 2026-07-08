@@ -4,6 +4,7 @@ const router = express.Router();
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
+const { requireAdminOrManager } = require('../middleware/authorization');
 
 function requireRole(allowedRoles = []) {
   return (req, res, next) => {
@@ -67,6 +68,11 @@ function clientSelectSql() {
       COALESCE(c.billed_client_id, c.id) AS billed_client_id,
       billed.code AS billed_client_code,
       billed.name AS billed_client_name,
+      c.parent_client_id,
+      parent.code AS parent_client_code,
+      parent.name AS parent_client_name,
+      c.affiliate_label,
+      c.affiliate_store_number,
       c.store_identifier,
       c.contact_name,
       c.phone,
@@ -88,6 +94,9 @@ function clientSelectSql() {
     LEFT JOIN clients billed
       ON billed.id = COALESCE(c.billed_client_id, c.id)
      AND billed.store_id = c.store_id
+    LEFT JOIN clients parent
+      ON parent.id = c.parent_client_id
+     AND parent.store_id = c.store_id
   `;
 }
 
@@ -102,6 +111,9 @@ function mapClientPayload(body) {
     is_royale_maree_member: normalizeBoolean(body.is_royale_maree_member),
     billed_client_id: normalizeUuid(body.billed_client_id),
     store_identifier: normalizeText(body.store_identifier),
+    parent_client_id: normalizeUuid(body.parent_client_id),
+    affiliate_label: normalizeText(body.affiliate_label),
+    affiliate_store_number: normalizeText(body.affiliate_store_number),
 
     contact_name: normalizeText(body.contact_name),
     phone: normalizeText(body.phone),
@@ -146,6 +158,35 @@ async function ensureBilledClient(req, billedClientId) {
   }
 
   return billedClientId;
+}
+
+async function ensureParentClient(req, parentClientId, currentClientId = null) {
+  if (!parentClientId) return null;
+  if (currentClientId && parentClientId === currentClientId) {
+    const error = new Error('Un client ne peut pas etre son propre parent');
+    error.status = 400;
+    throw error;
+  }
+
+  const result = await req.dbPool.query(
+    `
+    SELECT id
+    FROM clients
+    WHERE id = $1
+      AND store_id = $2
+      AND status <> 'inactive'
+    LIMIT 1
+    `,
+    [parentClientId, req.user.store_id]
+  );
+
+  if (result.rows.length === 0) {
+    const error = new Error('Client parent introuvable pour ce magasin');
+    error.status = 400;
+    throw error;
+  }
+
+  return parentClientId;
 }
 
 router.get('/clients', authenticateToken, attachDbContext, async (req, res) => {
@@ -216,6 +257,82 @@ router.get('/clients/:id', authenticateToken, attachDbContext, async (req, res) 
   }
 });
 
+router.get('/clients/:id/affiliates', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    await ensureParentClient(req, req.params.id);
+    const result = await req.dbPool.query(
+      `
+      ${clientSelectSql()}
+      WHERE c.store_id = $1
+        AND c.parent_client_id = $2
+        AND c.status <> 'inactive'
+      ORDER BY c.name ASC, c.code ASC
+      `,
+      [req.user.store_id, req.params.id]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur GET /api/clients/:id/affiliates :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur serveur affiliés client' });
+  }
+});
+
+router.post('/clients/:id/affiliates', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const parentResult = await req.dbPool.query(
+      `SELECT * FROM clients WHERE id = $1 AND store_id = $2 AND status <> 'inactive' LIMIT 1`,
+      [req.params.id, req.user.store_id]
+    );
+    if (!parentResult.rows.length) return res.status(404).json({ error: 'Client parent introuvable' });
+
+    const parent = parentResult.rows[0];
+    const client = mapClientPayload({
+      ...req.body,
+      parent_client_id: parent.id,
+      billed_client_id: parent.billed_client_id || parent.id,
+    });
+    if (!client.name) return res.status(400).json({ error: 'Le nom magasin est obligatoire' });
+
+    const billedClientId = await ensureBilledClient(req, client.billed_client_id);
+    const result = await req.dbPool.query(
+      `
+      INSERT INTO clients (
+        store_id, code, name, legal_name, client_type, status, tariff_level,
+        is_royale_maree_member, billed_client_id, parent_client_id, affiliate_label,
+        affiliate_store_number, store_identifier, contact_name, phone, mobile, email,
+        address_line1, address_line2, postal_code, city, country,
+        vat_number, siret, payment_terms, delivery_terms, notes,
+        created_by, updated_by
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        COALESCE($8::boolean, false), $9, $10, $11,
+        $12, $13, $14, $15, $16, $17,
+        $18, $19, $20, $21, $22,
+        $23, $24, $25, $26, $27,
+        $28, $28
+      )
+      RETURNING id
+      `,
+      [
+        req.user.store_id, client.code, client.name, client.legal_name, client.client_type,
+        client.status, client.tariff_level, client.is_royale_maree_member, billedClientId,
+        parent.id, client.affiliate_label || client.name, client.affiliate_store_number,
+        client.store_identifier, client.contact_name, client.phone, client.mobile, client.email,
+        client.address_line1, client.address_line2, client.postal_code, client.city, client.country,
+        client.vat_number, client.siret, client.payment_terms, client.delivery_terms, client.notes,
+        req.user.id,
+      ]
+    );
+
+    const created = await req.dbPool.query(`${clientSelectSql()} WHERE c.id = $1 AND c.store_id = $2`, [result.rows[0].id, req.user.store_id]);
+    res.status(201).json(created.rows[0]);
+  } catch (err) {
+    console.error('Erreur POST /api/clients/:id/affiliates :', err);
+    if (err.code === '23505') return res.status(400).json({ error: 'Code client déjà existant' });
+    res.status(err.status || 500).json({ error: err.message || 'Erreur création affilié client' });
+  }
+});
+
 router.post(
   '/clients',
   authenticateToken,
@@ -227,12 +344,14 @@ router.post(
       if (!client.name) return res.status(400).json({ error: 'Le nom client est obligatoire' });
 
       const billedClientId = await ensureBilledClient(req, client.billed_client_id);
+      const parentClientId = await ensureParentClient(req, client.parent_client_id);
 
       const result = await req.dbPool.query(
         `
         INSERT INTO clients (
           store_id, code, name, legal_name, client_type, status, tariff_level,
           is_royale_maree_member, billed_client_id, store_identifier,
+          parent_client_id, affiliate_label, affiliate_store_number,
           contact_name, phone, mobile, email,
           address_line1, address_line2, postal_code, city, country,
           vat_number, siret, payment_terms, delivery_terms, notes,
@@ -240,10 +359,11 @@ router.post(
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           COALESCE($8::boolean, false), $9, $10,
-          $11, $12, $13, $14,
-          $15, $16, $17, $18, $19,
-          $20, $21, $22, $23, $24,
-          $25, $26
+          $11, $12, $13,
+          $14, $15, $16, $17,
+          $18, $19, $20, $21, $22,
+          $23, $24, $25, $26, $27,
+          $28, $29
         )
         RETURNING id
         `,
@@ -258,6 +378,9 @@ router.post(
           client.is_royale_maree_member,
           billedClientId,
           client.store_identifier,
+          parentClientId,
+          client.affiliate_label,
+          client.affiliate_store_number,
           client.contact_name,
           client.phone,
           client.mobile,
@@ -308,6 +431,7 @@ router.put(
       if (!client.name) return res.status(400).json({ error: 'Le nom client est obligatoire' });
 
       const billedClientId = await ensureBilledClient(req, client.billed_client_id || req.params.id);
+      const parentClientId = await ensureParentClient(req, client.parent_client_id, req.params.id);
 
       const result = await req.dbPool.query(
         `
@@ -336,9 +460,12 @@ router.put(
           delivery_terms = $21,
           notes = $22,
           is_royale_maree_member = COALESCE($23::boolean, is_royale_maree_member),
-          updated_by = $24
-        WHERE id = $25
-          AND store_id = $26
+          parent_client_id = $24,
+          affiliate_label = $25,
+          affiliate_store_number = $26,
+          updated_by = $27
+        WHERE id = $28
+          AND store_id = $29
         RETURNING id
         `,
         [
@@ -365,6 +492,9 @@ router.put(
           client.delivery_terms,
           client.notes,
           client.is_royale_maree_member,
+          parentClientId,
+          client.affiliate_label,
+          client.affiliate_store_number,
           req.user.id,
           req.params.id,
           req.user.store_id,
