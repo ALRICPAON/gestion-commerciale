@@ -153,18 +153,23 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
         package_count, weight_per_package, total_weight, sold_quantity, sale_unit,
         unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc,
         unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot,
+        delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot,
+        delivered_client_store_identifier_snapshot,
         line_status, created_by, updated_by
       ) VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23::jsonb, 'pending', $24, $24
+        $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27, 'pending', $28, $28
       )`,
       [
         storeId, line.client_key || order.client_key || clientKey || null, deliveryNoteId, line.line_number,
         line.article_id, line.article_plu, line.article_label, line.package_count, line.weight_per_package,
         line.total_weight, line.sold_quantity, line.sale_unit, line.unit_sale_price_ht, line.unit_sale_price_ttc,
         line.vat_rate, line.line_amount_ht, line.line_vat_amount, line.line_amount_ttc, line.unit_cost_ex_vat,
-        line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id, JSON.stringify(line.traceability_snapshot || {}), userId,
+        line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id,
+        JSON.stringify(line.traceability_snapshot || {}), line.delivered_client_id,
+        line.delivered_client_name_snapshot, line.delivered_client_code_snapshot,
+        line.delivered_client_store_identifier_snapshot, userId,
       ]
     );
   }
@@ -405,7 +410,17 @@ router.get('/delivery-notes/:id', authenticateToken, attachDbContext, async (req
   try {
     const document = await req.dbPool.query(`${deliveryNoteSelect()} WHERE dn.id = $1 AND dn.store_id = $2 AND dn.document_type = 'DELIVERY_NOTE' GROUP BY dn.id, delivered.name, delivered.code, delivered.address_line1, delivered.address_line2, delivered.postal_code, delivered.city, delivered.store_identifier, billed.name, billed.code, src.reference_number, invoice.id, invoice.reference_number`, [req.params.id, req.user.store_id]);
     if (!document.rows.length) return res.status(404).json({ error: 'BL introuvable' });
-    const lines = await req.dbPool.query(`SELECT * FROM sales_lines WHERE sales_document_id = $1 ORDER BY line_number ASC`, [req.params.id]);
+    const lines = await req.dbPool.query(
+      `SELECT sl.*,
+        COALESCE(sl.delivered_client_name_snapshot, delivered.name) AS delivered_client_name,
+        COALESCE(sl.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
+        COALESCE(sl.delivered_client_store_identifier_snapshot, delivered.store_identifier) AS delivered_client_store_identifier
+       FROM sales_lines sl
+       LEFT JOIN clients delivered ON delivered.id = sl.delivered_client_id AND delivered.store_id = sl.store_id
+       WHERE sl.sales_document_id = $1 AND sl.store_id = $2
+       ORDER BY sl.line_number ASC`,
+      [req.params.id, req.user.store_id]
+    );
     res.json({ ...document.rows[0], lines: lines.rows });
   } catch (err) {
     console.error('Erreur GET /api/delivery-notes/:id :', err);
@@ -463,7 +478,7 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
     );
     const lines = await db.query(`SELECT * FROM sales_lines WHERE sales_document_id = $1 ORDER BY line_number`, [note.id]);
     for (const line of lines.rows) {
-      await db.query(`INSERT INTO sales_lines (id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label, package_count, weight_per_package, total_weight, sold_quantity, sale_unit, unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc, unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot, line_status, created_by, updated_by) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, 'invoiced', $24, $24)`, [req.user.store_id, line.client_key || note.client_key || req.user.client_key || null, invoice.rows[0].id, line.line_number, line.article_id, line.article_plu, line.article_label, line.package_count, line.weight_per_package, line.total_weight, line.sold_quantity, line.sale_unit, line.unit_sale_price_ht, line.unit_sale_price_ttc, line.vat_rate, line.line_amount_ht, line.line_vat_amount, line.line_amount_ttc, line.unit_cost_ex_vat, line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id, JSON.stringify(line.traceability_snapshot || {}), req.user.id]);
+      await db.query(`INSERT INTO sales_lines (id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label, package_count, weight_per_package, total_weight, sold_quantity, sale_unit, unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc, unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot, delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot, delivered_client_store_identifier_snapshot, line_status, created_by, updated_by) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27, 'invoiced', $28, $28)`, [req.user.store_id, line.client_key || note.client_key || req.user.client_key || null, invoice.rows[0].id, line.line_number, line.article_id, line.article_plu, line.article_label, line.package_count, line.weight_per_package, line.total_weight, line.sold_quantity, line.sale_unit, line.unit_sale_price_ht, line.unit_sale_price_ttc, line.vat_rate, line.line_amount_ht, line.line_vat_amount, line.line_amount_ttc, line.unit_cost_ex_vat, line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id, JSON.stringify(line.traceability_snapshot || {}), line.delivered_client_id, line.delivered_client_name_snapshot, line.delivered_client_code_snapshot, line.delivered_client_store_identifier_snapshot, req.user.id]);
     }
     await db.query(`UPDATE sales_documents SET status = 'invoiced', invoiced_at = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2`, [req.user.id, note.id]);
     await db.query('COMMIT');
@@ -485,7 +500,11 @@ async function getPrintableDeliveryNote(req, res, withPrintedAt = false) {
   if (!document.rows.length) return res.status(404).json({ error: 'BL introuvable' });
   const [lines, storeSettings] = await Promise.all([
     req.dbPool.query(
-      `SELECT sl.*, COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
+      `SELECT sl.*,
+        COALESCE(sl.delivered_client_name_snapshot, delivered.name) AS delivered_client_name,
+        COALESCE(sl.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
+        COALESCE(sl.delivered_client_store_identifier_snapshot, delivered.store_identifier) AS delivered_client_store_identifier,
+        COALESCE(SUM(sla.quantity), 0) AS allocated_quantity,
         jsonb_agg(jsonb_build_object(
           'lot_id', sla.lot_id,
           'quantity', sla.quantity,
@@ -499,11 +518,12 @@ async function getPrintableDeliveryNote(req, res, withPrintedAt = false) {
           'production_method', COALESCE(l.traceability_data->>'production_method', a.production_method)
         )) FILTER (WHERE sla.id IS NOT NULL) AS allocations
        FROM sales_lines sl
+       LEFT JOIN clients delivered ON delivered.id = sl.delivered_client_id AND delivered.store_id = sl.store_id
        LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
        LEFT JOIN lots l ON l.id = sla.lot_id
        LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
        WHERE sl.sales_document_id = $1 AND sl.store_id = $2
-       GROUP BY sl.id
+       GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier
        ORDER BY sl.line_number ASC`,
       [req.params.id, req.user.store_id]
     ),

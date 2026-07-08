@@ -44,13 +44,28 @@ function lineTrace(line) {
   ].filter(Boolean).map(escapeHtml).join(' - ');
 }
 
-function renderDeliveryNotePdf({ document, lines, storeSettings }) {
-  const doc = document || {};
-  const settings = storeSettings || {};
-  const deliveredStoreId = doc.client_store_identifier || doc.delivered_client_store_identifier || '';
-  const sourceOrder = doc.source_order_reference || displaySalesDocumentReference({ id: doc.source_order_id, document_date: doc.document_date }, 'CMD');
-  const documentReference = displaySalesDocumentReference(doc, 'BL') || 'Bon de livraison';
-  const rows = (lines || []).map((line) => `<tr>
+function lineDeliveredKey(line) {
+  return line.delivered_client_id
+    || line.delivered_client_name_snapshot
+    || line.delivered_client_code_snapshot
+    || line.delivered_client_store_identifier_snapshot
+    || '';
+}
+
+function lineDeliveredLabel(line, fallback) {
+  const name = line.delivered_client_name_snapshot
+    || (line.delivered_client_id ? line.delivered_client_name : null)
+    || line.delivered_client_code_snapshot
+    || (line.delivered_client_id ? line.delivered_client_code : null)
+    || fallback
+    || 'Client livre';
+  const storeIdentifier = line.delivered_client_store_identifier_snapshot
+    || (line.delivered_client_id ? line.delivered_client_store_identifier : null);
+  return storeIdentifier ? `${name} - N° magasin ${storeIdentifier}` : name;
+}
+
+function renderLineRow(line) {
+  return `<tr>
     <td class="line-cell">${escapeHtml(line.line_number || '')}</td>
     <td>${escapeHtml(line.article_plu || '')}</td>
     <td class="designation-cell"><strong>${escapeHtml(line.article_label || '-')}</strong><small>${lineTrace(line) || '-'}</small></td>
@@ -61,7 +76,36 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
     <td class="num">${money(line.line_amount_ht)}</td>
     <td class="num vat-cell">${number(line.vat_rate).toFixed(2)} %</td>
     <td class="num">${money(line.line_amount_ttc)}</td>
-  </tr>`).join('');
+  </tr>`;
+}
+
+function renderGroupedRows(lines, fallbackLabel) {
+  if (!lines.length) return '<tr><td colspan="10">Aucune ligne.</td></tr>';
+  const hasDeliveredGroups = lines.some((line) => lineDeliveredKey(line));
+  if (!hasDeliveredGroups) return lines.map(renderLineRow).join('');
+
+  const groups = new Map();
+  lines.forEach((line) => {
+    const key = lineDeliveredKey(line) || '__main__';
+    if (!groups.has(key)) groups.set(key, { label: lineDeliveredLabel(line, fallbackLabel), lines: [] });
+    groups.get(key).lines.push(line);
+  });
+
+  return Array.from(groups.values()).map((group) => {
+    const subtotal = group.lines.reduce((sum, line) => sum + number(line.line_amount_ht), 0);
+    return `<tr class="delivery-group-row"><td colspan="10">${escapeHtml(group.label)}</td></tr>
+      ${group.lines.map(renderLineRow).join('')}
+      <tr class="delivery-subtotal-row"><td colspan="7">Sous-total ${escapeHtml(group.label)}</td><td class="num">${money(subtotal)}</td><td></td><td></td></tr>`;
+  }).join('');
+}
+
+function renderDeliveryNotePdf({ document, lines, storeSettings }) {
+  const doc = document || {};
+  const settings = storeSettings || {};
+  const deliveredStoreId = doc.client_store_identifier || doc.delivered_client_store_identifier || '';
+  const sourceOrder = doc.source_order_reference || displaySalesDocumentReference({ id: doc.source_order_id, document_date: doc.document_date }, 'CMD');
+  const documentReference = displaySalesDocumentReference(doc, 'BL') || 'Bon de livraison';
+  const rows = renderGroupedRows(lines || [], doc.client_name || doc.delivered_client_name_snapshot);
 
   const body = `<article class="pdf-document bl-document">
     ${companyHeader(settings, documentReference, `Bon de livraison - ${formatDate(doc.document_date)}`)}
@@ -93,7 +137,7 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
         <col class="col-ttc">
       </colgroup>
       <thead><tr><th>Ligne</th><th>PLU</th><th>Designation</th><th>Colis</th><th>Poids/colis</th><th>Poids total</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>TTC</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="10">Aucune ligne.</td></tr>'}</tbody>
+      <tbody>${rows}</tbody>
     </table>
     <section class="bottom">
       <div class="footer-note">
@@ -121,6 +165,8 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
     .delivery-lines-table th, .delivery-lines-table td { padding: 4px 4px; }
     .delivery-lines-table th { background: #e8eef4; border-color: #aebdcc; color: #17212b; font-size: 7.9px; letter-spacing: 0; }
     .delivery-lines-table tbody tr:nth-child(even) { background: #f8fafc; }
+    .delivery-lines-table .delivery-group-row td { background: #dbe7ef; color: #17212b; font-size: 9px; font-weight: 800; text-transform: uppercase; }
+    .delivery-lines-table .delivery-subtotal-row td { background: #eef3f7; font-weight: 800; }
     .delivery-lines-table td { border-color: #d5dde5; line-height: 1.2; }
     .delivery-lines-table td small { font-size: 7.6px; line-height: 1.15; margin-top: 1px; overflow-wrap: anywhere; }
     .line-cell { text-align: center; }

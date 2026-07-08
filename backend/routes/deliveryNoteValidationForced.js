@@ -170,18 +170,23 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
         package_count, weight_per_package, total_weight, sold_quantity, sale_unit,
         unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc,
         unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot,
+        delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot,
+        delivered_client_store_identifier_snapshot,
         line_status, created_by, updated_by
       ) VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23::jsonb, 'pending', $24, $24
+        $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27, 'pending', $28, $28
       )`,
       [
         storeId, line.client_key || order.client_key || clientKey || null, deliveryNoteId, line.line_number,
         line.article_id, line.article_plu, line.article_label, line.package_count, line.weight_per_package,
         line.total_weight, line.sold_quantity, line.sale_unit, line.unit_sale_price_ht, line.unit_sale_price_ttc,
         line.vat_rate, line.line_amount_ht, line.line_vat_amount, line.line_amount_ttc, line.unit_cost_ex_vat,
-        line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id, JSON.stringify(line.traceability_snapshot || {}), userId,
+        line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id,
+        JSON.stringify(line.traceability_snapshot || {}), line.delivered_client_id,
+        line.delivered_client_name_snapshot, line.delivered_client_code_snapshot,
+        line.delivered_client_store_identifier_snapshot, userId,
       ]
     );
   }
