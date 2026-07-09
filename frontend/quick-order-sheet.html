@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fiche d'appel clients - ALTA MAREE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/quick-order-sheet.css?v=2" />
+</head>
+<body class="app-page quick-order-sheet-page">
+  <header class="topbar no-print">
+    <div>
+      <h1 class="app-title">ALTA MAREE</h1>
+      <p class="app-subtitle">Saisie rapide / Fiche d'appel imprimable</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content quick-order-layout">
+    <section class="quick-config-panel no-print" aria-label="Configuration fiche d'appel">
+      <div class="quick-config-header">
+        <div>
+          <h2>Fiche d'appel clients</h2>
+          <p>Preparer une feuille papier pour noter les commandes par telephone.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="refresh-data-btn" class="btn btn-secondary" type="button">Actualiser</button>
+          <button id="print-sheet-btn" class="btn btn-primary" type="button">Imprimer</button>
+        </div>
+      </div>
+
+      <div id="page-feedback" class="page-feedback hidden"></div>
+
+      <div class="quick-form-grid">
+        <div class="form-group">
+          <label for="sheet-title-input">Titre</label>
+          <input id="sheet-title-input" type="text" value="Fiche d'appel clients" />
+        </div>
+        <div class="form-group">
+          <label for="sheet-date-input">Date</label>
+          <input id="sheet-date-input" type="date" />
+        </div>
+        <div class="form-group quick-note-field">
+          <label for="sheet-note-input">Note</label>
+          <input id="sheet-note-input" type="text" placeholder="Arrivage du jour" />
+        </div>
+      </div>
+    </section>
+
+    <section class="quick-workspace no-print">
+      <div class="quick-clients-panel">
+        <div class="section-title-row">
+          <div>
+            <h3>Clients</h3>
+            <p id="client-count-label">Chargement...</p>
+          </div>
+        </div>
+        <div class="quick-client-tools">
+          <input id="client-search-input" type="search" placeholder="Rechercher client" />
+          <button id="select-all-clients-btn" class="btn btn-secondary btn-sm" type="button">Tout selectionner</button>
+          <button id="clear-clients-btn" class="btn btn-secondary btn-sm" type="button">Tout decocher</button>
+        </div>
+        <div id="clients-list" class="clients-check-list" aria-live="polite"></div>
+      </div>
+
+      <div class="quick-products-panel">
+        <div class="section-title-row">
+          <div>
+            <h3>Produits du jour</h3>
+            <p>Choisir les articles, saisir le prix et ajuster le stock affiche.</p>
+          </div>
+          <button id="add-product-column-btn" class="btn btn-secondary" type="button">Ajouter colonne</button>
+        </div>
+        <div id="product-columns" class="product-columns-grid"></div>
+      </div>
+    </section>
+
+    <section class="quick-preview-section" aria-label="Apercu imprimable">
+      <div class="quick-preview-toolbar no-print">
+        <div>
+          <h3>Apercu papier</h3>
+          <p>Saisir Colis / Kg a l'ecran, ou laisser vide pour ecrire a la main.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="clear-entries-btn" class="btn btn-secondary" type="button">Vider les saisies</button>
+          <button id="print-sheet-btn-secondary" class="btn btn-primary" type="button">Imprimer</button>
+        </div>
+      </div>
+      <div id="print-sheet" class="print-sheet">
+        <div class="print-sheet-header">
+          <div>
+            <h1 id="print-title">Fiche d'appel clients</h1>
+            <p id="print-note">Arrivage du jour</p>
+          </div>
+          <div class="print-date-block">
+            <span>Date</span>
+            <strong id="print-date"></strong>
+          </div>
+        </div>
+        <div id="print-table-wrap" class="print-table-wrap"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="article-modal" class="quick-modal hidden no-print" role="dialog" aria-modal="true" aria-labelledby="article-modal-title">
+    <div class="quick-modal-content">
+      <div class="quick-modal-header">
+        <h3 id="article-modal-title">Selectionner un article</h3>
+        <button id="close-article-modal-btn" class="btn btn-secondary btn-sm" type="button">Fermer</button>
+      </div>
+      <div class="quick-modal-search">
+        <input id="article-search-input" type="search" placeholder="F9 / PLU / designation" />
+        <button id="article-search-btn" class="btn btn-secondary" type="button">Rechercher</button>
+      </div>
+      <div id="article-results" class="article-results"></div>
+    </div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/quick-order-sheet.js?v=2"></script>
+</body>
+</html>
