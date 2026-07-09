@@ -28,6 +28,10 @@ const upload = multer({
 function toNullableString(v) { const s = String(v ?? '').trim(); return s || null; }
 function normalizePriceUnit(v) { return ['kg','piece','colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg'; }
 function normalizeMappingUnit(v) { return ['kg','piece','colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg'; }
+const NORMALIZED_SUPPLIER_REF_SQL = "regexp_replace(UPPER(TRIM(COALESCE(%s, ''))), '[^A-Z0-9]', '', 'g')";
+function normalizedSupplierRefSql(expression) {
+  return NORMALIZED_SUPPLIER_REF_SQL.replace('%s', expression);
+}
 function buildLotCode(plu, supplierId, lineId) {
   const p = String(plu || 'NOPLU').replace(/\s+/g,'').toUpperCase();
   const s = String(supplierId || '').replace(/-/g,'').slice(0,6).toUpperCase();
@@ -222,10 +226,50 @@ router.post('/purchases/:id/apply-af-mappings', authenticateToken, attachDbConte
     await client.query('BEGIN');
     const p=await client.query('SELECT * FROM purchases WHERE id=$1 AND store_id=$2 LIMIT 1',[req.params.id,req.user.store_id]);
     if(!p.rows.length){await client.query('ROLLBACK');return res.status(404).json({error:'Achat introuvable'});}
-    const update=await client.query(`UPDATE purchase_lines pl SET article_id=m.article_id, updated_at=NOW() FROM supplier_article_mappings m WHERE pl.purchase_id=$1 AND pl.supplier_id=m.supplier_id AND pl.supplier_reference=m.supplier_ref AND COALESCE(m.is_active,true)=true AND pl.article_id IS NULL RETURNING pl.id`).catch((error)=>({rows:[],mappingError:error}));
+    const lineRef = normalizedSupplierRefSql('pl.supplier_reference');
+    const mapRef = normalizedSupplierRefSql('m.supplier_ref');
+    const update=await client.query(
+      `WITH rematches AS (
+         SELECT DISTINCT ON (pl.id)
+           pl.id line_id,
+           m.id mapping_id,
+           m.article_id
+         FROM purchase_lines pl
+         JOIN supplier_article_mappings m
+           ON m.store_id = pl.store_id
+          AND m.supplier_id = pl.supplier_id
+          AND COALESCE(m.is_active, true) = true
+          AND ${lineRef} <> ''
+          AND ${lineRef} = ${mapRef}
+         JOIN articles a
+           ON a.id = m.article_id
+          AND a.store_id = pl.store_id
+         WHERE pl.purchase_id = $1
+           AND pl.store_id = $2
+           AND pl.article_id IS NULL
+         ORDER BY pl.id, (TRIM(COALESCE(pl.supplier_reference, '')) = TRIM(COALESCE(m.supplier_ref, ''))) DESC, m.updated_at DESC NULLS LAST, m.created_at DESC NULLS LAST
+       )
+       UPDATE purchase_lines pl
+       SET article_id = rematches.article_id,
+           supplier_article_mapping_id = rematches.mapping_id,
+           updated_at = NOW()
+       FROM rematches
+       WHERE pl.id = rematches.line_id
+       RETURNING pl.id`,
+      [req.params.id, req.user.store_id]
+    ).catch((error)=>({rows:[],mappingError:error}));
     if(update.mappingError){await client.query('ROLLBACK');return res.status(400).json({error:'Table de mappings fournisseur/article indisponible'});}
+    const unresolved=await client.query(
+      `SELECT id, line_number, supplier_reference, supplier_label
+       FROM purchase_lines
+       WHERE purchase_id=$1
+         AND store_id=$2
+         AND article_id IS NULL
+       ORDER BY line_number`,
+      [req.params.id, req.user.store_id]
+    );
     await client.query('COMMIT');
-    res.json({ok:true,updated_lines:update.rows.length});
+    res.json({ok:true,updated_lines:update.rows.length,unresolved_lines:unresolved.rows});
   }catch(e){await client.query('ROLLBACK');console.error(e);res.status(500).json({error:'Erreur application mappings'});}finally{client.release();}
 });
 
@@ -322,7 +366,12 @@ router.post('/purchases/import-document', authenticateToken, attachDbContext, re
     for(const line of result.lines||[]){
       let article=null;
       if(line.article_plu) article=await resolveArticle(client,req.user.store_id,{article_plu:line.article_plu});
-      if(!article && line.supplier_reference){ const m=await client.query(`SELECT a.* FROM supplier_article_mappings m JOIN articles a ON a.id=m.article_id WHERE m.supplier_id=$1 AND m.supplier_ref=$2 AND COALESCE(m.is_active,true)=true LIMIT 1`,[supplier.id,line.supplier_reference]).catch(()=>({rows:[]})); article=m.rows[0]||null; }
+      if(!article && line.supplier_reference){
+        const mapRef = normalizedSupplierRefSql('m.supplier_ref');
+        const inputRef = normalizedSupplierRefSql('$2');
+        const m=await client.query(`SELECT a.* FROM supplier_article_mappings m JOIN articles a ON a.id=m.article_id AND a.store_id=$3 WHERE m.supplier_id=$1 AND ${mapRef}=${inputRef} AND COALESCE(m.is_active,true)=true LIMIT 1`,[supplier.id,line.supplier_reference,req.user.store_id]).catch(()=>({rows:[]}));
+        article=m.rows[0]||null;
+      }
       if(!article && line.needs_mapping){ missing.push({supplier_reference:line.supplier_reference,designation:line.designation}); }
       const n=await client.query('SELECT COALESCE(MAX(line_number),0)+1 n FROM purchase_lines WHERE purchase_id=$1',[purchase.rows[0].id]);
       const amount=line.line_amount_ex_vat ?? lineAmount(line,false);

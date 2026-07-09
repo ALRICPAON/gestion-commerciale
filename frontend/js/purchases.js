@@ -900,6 +900,16 @@ async function saveImportMappings() {
       if (!applyResponse.ok) {
         throw new Error(applyData.error || "Erreur application mappings achat");
       }
+
+      const unresolvedLines = Array.isArray(applyData.unresolved_lines) ? applyData.unresolved_lines : [];
+      if (unresolvedLines.length > 0) {
+        const labels = unresolvedLines
+          .slice(0, 3)
+          .map((line) => line.supplier_reference || line.supplier_label || `ligne ${line.line_number || "?"}`)
+          .join(", ");
+        const suffix = unresolvedLines.length > 3 ? `, +${unresolvedLines.length - 3}` : "";
+        throw new Error(`Mappings enregistrés, mais ${unresolvedLines.length} ligne(s) restent non mappées : ${labels}${suffix}`);
+      }
     }
 
     showFeedback(domFeedback, `${rowsToSave.length} mapping(s) enregistré(s)`);
