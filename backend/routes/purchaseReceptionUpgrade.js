@@ -134,6 +134,11 @@ function normalizePriceUnit(v) {
   return ['kg', 'piece', 'colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg';
 }
 
+const NORMALIZED_SUPPLIER_REF_SQL = "regexp_replace(UPPER(TRIM(COALESCE(%s, ''))), '[^A-Z0-9]', '', 'g')";
+function normalizedSupplierRefSql(expression) {
+  return NORMALIZED_SUPPLIER_REF_SQL.replace('%s', expression);
+}
+
 function buildLotCode(plu, supplierId, lineId) {
   const p = String(plu || 'NOPLU').replace(/\s+/g, '').toUpperCase();
   const s = String(supplierId || '').replace(/-/g, '').slice(0, 6).toUpperCase();
@@ -190,6 +195,8 @@ async function resolveSupplierArticleMapping(client, storeId, supplier, supplier
 
   const supplierCode = String(supplier?.code || '').trim();
   const crieeCodes = crieeMappingSupplierCodes(supplierCode);
+  const mapRef = normalizedSupplierRefSql('m.supplier_ref');
+  const inputRef = normalizedSupplierRefSql('$2');
 
   if (supplierCode === '81268' || supplierCode === '81269') {
     const result = await client.query(
@@ -201,7 +208,7 @@ async function resolveSupplierArticleMapping(client, storeId, supplier, supplier
        JOIN suppliers s ON s.store_id = $1 AND s.code = c.code
        JOIN supplier_article_mappings m ON m.supplier_id = s.id
        JOIN articles a ON a.id = m.article_id AND a.store_id = $1
-       WHERE m.supplier_ref = $2 AND COALESCE(m.is_active, true) = true
+       WHERE ${mapRef} = ${inputRef} AND COALESCE(m.is_active, true) = true
        ORDER BY c.priority
        LIMIT 1`,
       [storeId, ref, crieeCodes]
@@ -213,7 +220,7 @@ async function resolveSupplierArticleMapping(client, storeId, supplier, supplier
     `SELECT a.*
      FROM supplier_article_mappings m
      JOIN articles a ON a.id = m.article_id AND a.store_id = $3
-     WHERE m.supplier_id = $1 AND m.supplier_ref = $2 AND COALESCE(m.is_active, true) = true
+     WHERE m.supplier_id = $1 AND ${mapRef} = ${inputRef} AND COALESCE(m.is_active, true) = true
      LIMIT 1`,
     [supplier.id, ref, storeId]
   ).catch(() => ({ rows: [] }));
