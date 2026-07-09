@@ -17,6 +17,7 @@ const logoutBtn = document.getElementById('logout-btn');
 const refreshDataBtn = document.getElementById('refresh-data-btn');
 const printSheetBtn = document.getElementById('print-sheet-btn');
 const printSheetBtnSecondary = document.getElementById('print-sheet-btn-secondary');
+const clearEntriesBtn = document.getElementById('clear-entries-btn');
 const pageFeedback = document.getElementById('page-feedback');
 const sheetTitleInput = document.getElementById('sheet-title-input');
 const sheetDateInput = document.getElementById('sheet-date-input');
@@ -40,12 +41,16 @@ const articleResults = document.getElementById('article-results');
 
 const DEFAULT_PRODUCT_COLUMNS = 10;
 const MAX_PRODUCT_COLUMNS = 18;
+const DRAFT_STORAGE_KEY = `alta-maree:quick-order-sheet:v2:${sessionUser.store_id || sessionUser.client_key || sessionUser.email || 'default'}`;
 
 let clients = [];
 let selectedClientIds = new Set();
 let productColumns = [];
 let activeProductIndex = null;
 let articleSearchResults = [];
+let orderEntries = {};
+let draftLoaded = false;
+let draftHasClientSelection = false;
 
 function authHeaders() {
   return { Authorization: `Bearer ${sessionToken}` };
@@ -93,6 +98,57 @@ function moneyInputValue(value) {
   return number.toFixed(2);
 }
 
+function columnUid() {
+  return `col-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function safeJsonParse(value, fallback = null) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+function loadDraft() {
+  const draft = safeJsonParse(localStorage.getItem(DRAFT_STORAGE_KEY));
+  if (!draft || typeof draft !== 'object') return false;
+
+  if (draft.title !== undefined) sheetTitleInput.value = draft.title || "Fiche d'appel clients";
+  if (draft.date !== undefined) sheetDateInput.value = draft.date || todayIso();
+  if (draft.note !== undefined) sheetNoteInput.value = draft.note || '';
+
+  if (Array.isArray(draft.selectedClientIds)) {
+    selectedClientIds = new Set(draft.selectedClientIds.map(String));
+    draftHasClientSelection = true;
+  }
+
+  if (Array.isArray(draft.productColumns) && draft.productColumns.length > 0) {
+    productColumns = draft.productColumns.slice(0, MAX_PRODUCT_COLUMNS).map((column) => ({
+      ...emptyProductColumn(),
+      ...column,
+      uid: column.uid || columnUid(),
+    }));
+  }
+
+  orderEntries = draft.orderEntries && typeof draft.orderEntries === 'object' ? draft.orderEntries : {};
+  draftLoaded = true;
+  return true;
+}
+
+function saveDraft() {
+  const draft = {
+    title: sheetTitleInput.value,
+    date: sheetDateInput.value,
+    note: sheetNoteInput.value,
+    selectedClientIds: Array.from(selectedClientIds),
+    productColumns,
+    orderEntries,
+    savedAt: new Date().toISOString(),
+  };
+  localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+}
+
 async function apiGet(path) {
   const response = await fetch(`${API_BASE_URL}${path}`, { headers: authHeaders() });
   const data = await response.json().catch(() => ({}));
@@ -112,6 +168,7 @@ function productLabel(product) {
 
 function emptyProductColumn() {
   return {
+    uid: columnUid(),
     article_id: null,
     plu: '',
     designation: '',
@@ -138,6 +195,36 @@ function visibleClients() {
 
 function usableProductColumns() {
   return productColumns.filter((column) => column.article_id || column.designation || column.price || column.stock);
+}
+
+function entryFor(clientId, columnUidValue) {
+  return orderEntries[String(clientId)]?.[String(columnUidValue)] || {};
+}
+
+function setEntryValue(clientId, columnUidValue, field, value) {
+  const safeClientId = String(clientId);
+  const safeColumnUid = String(columnUidValue);
+  if (!orderEntries[safeClientId]) orderEntries[safeClientId] = {};
+  if (!orderEntries[safeClientId][safeColumnUid]) orderEntries[safeClientId][safeColumnUid] = {};
+  orderEntries[safeClientId][safeColumnUid][field] = value;
+}
+
+function orderCellHtml(client, column) {
+  const entry = entryFor(client.id, column.uid);
+  const clientId = escapeHtml(client.id);
+  const columnId = escapeHtml(column.uid);
+  return `<td>
+    <div class="order-cell-grid">
+      <label>
+        <span>Colis</span>
+        <input class="order-cell-input" type="text" inputmode="decimal" data-client-id="${clientId}" data-column-id="${columnId}" data-order-field="colis" value="${escapeHtml(entry.colis || '')}" aria-label="Colis ${escapeHtml(client.name || '')} ${escapeHtml(productLabel(column) || '')}" />
+      </label>
+      <label>
+        <span>Kg</span>
+        <input class="order-cell-input" type="text" inputmode="decimal" data-client-id="${clientId}" data-column-id="${columnId}" data-order-field="kg" value="${escapeHtml(entry.kg || '')}" aria-label="Kg ${escapeHtml(client.name || '')} ${escapeHtml(productLabel(column) || '')}" />
+      </label>
+    </div>
+  </td>`;
 }
 
 function updatePreview() {
@@ -177,7 +264,7 @@ function updatePreview() {
       <strong>${escapeHtml(client.name || client.legal_name || 'Client')}</strong>
       <span>${escapeHtml([client.code, client.city].filter(Boolean).join(' - '))}</span>
     </th>
-    ${columns.map(() => '<td></td>').join('')}
+    ${columns.map((column) => orderCellHtml(client, column)).join('')}
   </tr>`).join('');
 
   printTableWrap.innerHTML = `<table class="quick-print-table">
@@ -210,6 +297,7 @@ function renderClients() {
   }).join('');
 
   updatePreview();
+  saveDraft();
 }
 
 function renderProductColumns() {
@@ -246,7 +334,9 @@ async function loadClients() {
   const data = await apiGet('/api/clients?status=active');
   clients = Array.isArray(data) ? data : [];
   clients.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
-  selectedClientIds = new Set(clients.map((client) => String(client.id)));
+  if (!draftHasClientSelection) {
+    selectedClientIds = new Set(clients.map((client) => String(client.id)));
+  }
   renderClients();
 }
 
@@ -335,6 +425,7 @@ function applyArticleResult(index) {
   const stock = article.stock_row;
   const price = article.sale_price_ex_vat ?? stock?.sale_price_level_1_ht ?? stock?.sale_price_level_2_ht ?? stock?.sale_price_level_3_ht;
   productColumns[activeProductIndex] = {
+    uid: productColumns[activeProductIndex].uid || columnUid(),
     article_id: article.id,
     plu: article.plu || '',
     designation: article.display_name || article.designation || '',
@@ -344,18 +435,32 @@ function applyArticleResult(index) {
   };
   closeArticleModal();
   renderProductColumns();
+  saveDraft();
 }
 
 function duplicateProduct(index) {
   if (productColumns.length >= MAX_PRODUCT_COLUMNS) return;
-  productColumns.splice(index + 1, 0, { ...productColumns[index] });
+  productColumns.splice(index + 1, 0, { ...productColumns[index], uid: columnUid() });
   renderProductColumns();
 }
 
 function removeProduct(index) {
+  const removed = productColumns[index];
   productColumns.splice(index, 1);
+  if (removed?.uid) {
+    Object.values(orderEntries).forEach((clientEntries) => {
+      if (clientEntries && typeof clientEntries === 'object') delete clientEntries[removed.uid];
+    });
+  }
   ensureProductColumns();
   renderProductColumns();
+}
+
+function clearEntries() {
+  orderEntries = {};
+  updatePreview();
+  saveDraft();
+  showFeedback('Saisies Colis / Kg videes.', 'success');
 }
 
 async function refreshData() {
@@ -388,15 +493,21 @@ function initEvents() {
   refreshDataBtn?.addEventListener('click', refreshData);
   printSheetBtn?.addEventListener('click', printSheet);
   printSheetBtnSecondary?.addEventListener('click', printSheet);
-  [sheetTitleInput, sheetDateInput, sheetNoteInput].forEach((input) => input?.addEventListener('input', updatePreview));
+  clearEntriesBtn?.addEventListener('click', clearEntries);
+  [sheetTitleInput, sheetDateInput, sheetNoteInput].forEach((input) => input?.addEventListener('input', () => {
+    updatePreview();
+    saveDraft();
+  }));
   clientSearchInput?.addEventListener('input', renderClients);
   selectAllClientsBtn?.addEventListener('click', () => {
     selectedClientIds = new Set(clients.map((client) => String(client.id)));
     renderClients();
+    saveDraft();
   });
   clearClientsBtn?.addEventListener('click', () => {
     selectedClientIds = new Set();
     renderClients();
+    saveDraft();
   });
   clientsList?.addEventListener('change', (event) => {
     const checkbox = event.target.closest('[data-client-id]');
@@ -404,10 +515,12 @@ function initEvents() {
     if (checkbox.checked) selectedClientIds.add(String(checkbox.dataset.clientId));
     else selectedClientIds.delete(String(checkbox.dataset.clientId));
     renderClients();
+    saveDraft();
   });
   addProductColumnBtn?.addEventListener('click', () => {
     if (productColumns.length < MAX_PRODUCT_COLUMNS) productColumns.push(emptyProductColumn());
     renderProductColumns();
+    saveDraft();
   });
   productColumnsEl?.addEventListener('click', (event) => {
     const editor = event.target.closest('[data-product-index]');
@@ -417,6 +530,7 @@ function initEvents() {
     if (action === 'pick-product') openArticleModal(index);
     if (action === 'duplicate-product') duplicateProduct(index);
     if (action === 'remove-product') removeProduct(index);
+    if (['duplicate-product', 'remove-product'].includes(action)) saveDraft();
   });
   productColumnsEl?.addEventListener('input', (event) => {
     const input = event.target.closest('[data-field]');
@@ -425,6 +539,23 @@ function initEvents() {
     const index = Number(editor.dataset.productIndex);
     productColumns[index][input.dataset.field] = input.value;
     updatePreview();
+    saveDraft();
+  });
+  printTableWrap?.addEventListener('input', (event) => {
+    const input = event.target.closest('[data-order-field]');
+    if (!input) return;
+    setEntryValue(input.dataset.clientId, input.dataset.columnId, input.dataset.orderField, input.value);
+    saveDraft();
+  });
+  printTableWrap?.addEventListener('keydown', (event) => {
+    const input = event.target.closest('[data-order-field]');
+    if (!input || event.key !== 'Enter') return;
+    event.preventDefault();
+    const inputs = Array.from(printTableWrap.querySelectorAll('.order-cell-input'));
+    const currentIndex = inputs.indexOf(input);
+    const next = inputs[currentIndex + 1] || inputs[0];
+    next?.focus();
+    next?.select();
   });
   closeArticleModalBtn?.addEventListener('click', closeArticleModal);
   articleModal?.addEventListener('click', (event) => {
@@ -456,6 +587,7 @@ function init() {
   if (userNameEl) userNameEl.textContent = sessionUser.email || 'Utilisateur';
   sheetDateInput.value = todayIso();
   sheetNoteInput.value = 'Arrivage du jour';
+  loadDraft();
   ensureProductColumns();
   initEvents();
   renderProductColumns();

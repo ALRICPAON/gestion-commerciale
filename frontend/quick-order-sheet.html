@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/quick-order-sheet.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/quick-order-sheet.css?v=2" />
 </head>
 <body class="app-page quick-order-sheet-page">
   <header class="topbar no-print">
@@ -85,9 +85,12 @@
       <div class="quick-preview-toolbar no-print">
         <div>
           <h3>Apercu papier</h3>
-          <p>Les cellules sont volontairement vides pour une saisie manuscrite.</p>
+          <p>Saisir Colis / Kg a l'ecran, ou laisser vide pour ecrire a la main.</p>
         </div>
-        <button id="print-sheet-btn-secondary" class="btn btn-primary" type="button">Imprimer</button>
+        <div class="page-actions-right">
+          <button id="clear-entries-btn" class="btn btn-secondary" type="button">Vider les saisies</button>
+          <button id="print-sheet-btn-secondary" class="btn btn-primary" type="button">Imprimer</button>
+        </div>
       </div>
       <div id="print-sheet" class="print-sheet">
         <div class="print-sheet-header">
@@ -120,6 +123,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/quick-order-sheet.js?v=1"></script>
+  <script src="./js/quick-order-sheet.js?v=2"></script>
 </body>
 </html>
