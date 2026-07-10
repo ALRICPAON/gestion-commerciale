@@ -22,6 +22,8 @@ const pageFeedback = document.getElementById('page-feedback');
 const sheetTitleInput = document.getElementById('sheet-title-input');
 const sheetDateInput = document.getElementById('sheet-date-input');
 const sheetNoteInput = document.getElementById('sheet-note-input');
+const supplierSelect = document.getElementById('supplier-select');
+const supplierEmailOutput = document.getElementById('supplier-email-output');
 const clientSearchInput = document.getElementById('client-search-input');
 const selectAllClientsBtn = document.getElementById('select-all-clients-btn');
 const clearClientsBtn = document.getElementById('clear-clients-btn');
@@ -29,6 +31,10 @@ const clientCountLabel = document.getElementById('client-count-label');
 const clientsList = document.getElementById('clients-list');
 const productColumnsEl = document.getElementById('product-columns');
 const addProductColumnBtn = document.getElementById('add-product-column-btn');
+const emailPreviewBtn = document.getElementById('email-preview-btn');
+const sendSupplierEmailBtn = document.getElementById('send-supplier-email-btn');
+const generateOrdersBtn = document.getElementById('generate-orders-btn');
+const actionPreviewPanel = document.getElementById('action-preview-panel');
 const printTitle = document.getElementById('print-title');
 const printNote = document.getElementById('print-note');
 const printDate = document.getElementById('print-date');
@@ -41,9 +47,10 @@ const articleResults = document.getElementById('article-results');
 
 const DEFAULT_PRODUCT_COLUMNS = 10;
 const MAX_PRODUCT_COLUMNS = 18;
-const DRAFT_STORAGE_KEY = `alta-maree:quick-order-sheet:v2:${sessionUser.store_id || sessionUser.client_key || sessionUser.email || 'default'}`;
+const DRAFT_STORAGE_KEY = `alta-maree:quick-order-sheet:v3:${sessionUser.store_id || sessionUser.client_key || sessionUser.email || 'default'}`;
 
 let clients = [];
+let suppliers = [];
 let selectedClientIds = new Set();
 let productColumns = [];
 let activeProductIndex = null;
@@ -51,6 +58,10 @@ let articleSearchResults = [];
 let orderEntries = {};
 let draftLoaded = false;
 let draftHasClientSelection = false;
+let sheetId = window.crypto?.randomUUID ? window.crypto.randomUUID() : columnUid();
+let emailPreviewReady = false;
+let generatedOrderIds = [];
+let draftSupplierId = '';
 
 function authHeaders() {
   return { Authorization: `Bearer ${sessionToken}` };
@@ -98,6 +109,12 @@ function moneyInputValue(value) {
   return number.toFixed(2);
 }
 
+function parseDecimal(value) {
+  if (value === null || value === undefined || value === '') return 0;
+  const parsed = Number(String(value).replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function columnUid() {
   return `col-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -117,6 +134,8 @@ function loadDraft() {
   if (draft.title !== undefined) sheetTitleInput.value = draft.title || "Fiche d'appel clients";
   if (draft.date !== undefined) sheetDateInput.value = draft.date || todayIso();
   if (draft.note !== undefined) sheetNoteInput.value = draft.note || '';
+  if (draft.sheetId && /^[0-9a-f-]{36}$/i.test(String(draft.sheetId))) sheetId = draft.sheetId;
+  if (draft.supplierId !== undefined) draftSupplierId = draft.supplierId || '';
 
   if (Array.isArray(draft.selectedClientIds)) {
     selectedClientIds = new Set(draft.selectedClientIds.map(String));
@@ -132,6 +151,7 @@ function loadDraft() {
   }
 
   orderEntries = draft.orderEntries && typeof draft.orderEntries === 'object' ? draft.orderEntries : {};
+  generatedOrderIds = Array.isArray(draft.generatedOrderIds) ? draft.generatedOrderIds : [];
   draftLoaded = true;
   return true;
 }
@@ -139,11 +159,14 @@ function loadDraft() {
 function saveDraft() {
   const draft = {
     title: sheetTitleInput.value,
+    sheetId,
     date: sheetDateInput.value,
     note: sheetNoteInput.value,
+    supplierId: supplierSelect.value || '',
     selectedClientIds: Array.from(selectedClientIds),
     productColumns,
     orderEntries,
+    generatedOrderIds,
     savedAt: new Date().toISOString(),
   };
   localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
@@ -151,6 +174,20 @@ function saveDraft() {
 
 async function apiGet(path) {
   const response = await fetch(`${API_BASE_URL}${path}`, { headers: authHeaders() });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erreur API');
+  return data;
+}
+
+async function apiSend(path, payload) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erreur API');
   return data;
@@ -201,12 +238,99 @@ function entryFor(clientId, columnUidValue) {
   return orderEntries[String(clientId)]?.[String(columnUidValue)] || {};
 }
 
+function entryQuantity(entry = {}) {
+  const colis = parseDecimal(entry.colis);
+  const kg = parseDecimal(entry.kg);
+  return Number((colis * kg).toFixed(3));
+}
+
 function setEntryValue(clientId, columnUidValue, field, value) {
   const safeClientId = String(clientId);
   const safeColumnUid = String(columnUidValue);
   if (!orderEntries[safeClientId]) orderEntries[safeClientId] = {};
   if (!orderEntries[safeClientId][safeColumnUid]) orderEntries[safeClientId][safeColumnUid] = {};
   orderEntries[safeClientId][safeColumnUid][field] = value;
+}
+
+function selectedSupplier() {
+  return suppliers.find((supplier) => String(supplier.id) === String(supplierSelect.value)) || null;
+}
+
+function selectedProductTotals() {
+  const rows = selectedClients();
+  return usableProductColumns().map((column) => {
+    const sold = rows.reduce((sum, client) => sum + entryQuantity(entryFor(client.id, column.uid)), 0);
+    const stock = parseDecimal(column.stock);
+    return {
+      ...column,
+      stock,
+      sold: Number(sold.toFixed(3)),
+      remaining: Number((stock - sold).toFixed(3)),
+      overstock: stock > 0 && sold > stock,
+    };
+  });
+}
+
+function updateSupplierEmailOutput() {
+  const supplier = selectedSupplier();
+  supplierEmailOutput.textContent = supplier?.email || '-';
+  supplierEmailOutput.classList.toggle('missing-email', Boolean(supplier && !supplier.email));
+  emailPreviewReady = false;
+  sendSupplierEmailBtn.disabled = true;
+}
+
+function invalidateEmailPreview() {
+  emailPreviewReady = false;
+  sendSupplierEmailBtn.disabled = true;
+}
+
+function buildSheetPayload() {
+  const selectedIds = new Set(selectedClients().map((client) => String(client.id)));
+  const products = usableProductColumns();
+  return {
+    sheet_id: sheetId,
+    title: sheetTitleInput.value.trim() || "Fiche d'appel clients",
+    date: sheetDateInput.value || todayIso(),
+    notes: sheetNoteInput.value.trim(),
+    supplier_id: supplierSelect.value || null,
+    clients: clients
+      .filter((client) => selectedIds.has(String(client.id)))
+      .map((client) => ({
+        id: client.id,
+        code: client.code,
+        name: client.name || client.legal_name,
+        legal_name: client.legal_name,
+        city: client.city,
+      })),
+    products: products.map((product) => ({
+      uid: product.uid,
+      article_id: product.article_id,
+      plu: product.plu,
+      designation: product.designation,
+      price: product.price,
+      stock: product.stock,
+      unit: product.unit || 'kg',
+    })),
+    entries: orderEntries,
+  };
+}
+
+function enteredOrderLines() {
+  const productsByUid = new Map(usableProductColumns().map((product) => [String(product.uid), product]));
+  const rows = [];
+  selectedClients().forEach((client) => {
+    const clientEntries = orderEntries[String(client.id)] || {};
+    Object.entries(clientEntries).forEach(([uid, entry]) => {
+      const product = productsByUid.get(String(uid));
+      if (!product?.article_id) return;
+      const colis = parseDecimal(entry.colis);
+      const kg = parseDecimal(entry.kg);
+      const quantity = Number((colis * kg).toFixed(3));
+      if (quantity <= 0) return;
+      rows.push({ client, product, colis, kg, quantity });
+    });
+  });
+  return rows;
 }
 
 function orderCellHtml(client, column) {
@@ -227,12 +351,28 @@ function orderCellHtml(client, column) {
   </td>`;
 }
 
+function updateProductTotalsInPlace() {
+  selectedProductTotals().forEach((column) => {
+    const head = printTableWrap.querySelector(`[data-total-column-id="${CSS.escape(String(column.uid))}"]`);
+    if (!head) return;
+    head.classList.toggle('product-overstock', column.overstock);
+    const stockEl = head.querySelector('[data-total-field="stock"]');
+    const soldEl = head.querySelector('[data-total-field="sold"]');
+    const remainingEl = head.querySelector('[data-total-field="remaining"]');
+    const remainingLine = head.querySelector('[data-total-line="remaining"]');
+    if (stockEl) stockEl.textContent = compactNumber(column.stock);
+    if (soldEl) soldEl.textContent = compactNumber(column.sold);
+    if (remainingEl) remainingEl.textContent = compactNumber(column.remaining);
+    remainingLine?.classList.toggle('stock-alert', column.overstock);
+  });
+}
+
 function updatePreview() {
   const title = sheetTitleInput.value.trim() || "Fiche d'appel clients";
   const note = sheetNoteInput.value.trim();
   const date = sheetDateInput.value || todayIso();
   const rows = selectedClients();
-  const columns = usableProductColumns();
+  const columns = selectedProductTotals();
 
   printTitle.textContent = title;
   printNote.textContent = note || 'Arrivage du jour';
@@ -251,11 +391,12 @@ function updatePreview() {
   const head = columns.map((column) => {
     const name = productLabel(column) || 'Produit';
     const price = column.price ? `${escapeHtml(column.price)} EUR` : '&nbsp;';
-    const stock = column.stock ? `${escapeHtml(column.stock)} ${escapeHtml(column.unit || '')}` : '&nbsp;';
-    return `<th>
+    return `<th data-total-column-id="${escapeHtml(column.uid)}" class="${column.overstock ? 'product-overstock' : ''}">
       <div class="product-head-name">${escapeHtml(name)}</div>
       <div class="product-head-meta">Prix: ${price}</div>
-      <div class="product-head-meta">Stock: ${stock}</div>
+      <div class="product-head-meta">Stock: <span data-total-field="stock">${escapeHtml(compactNumber(column.stock))}</span> ${escapeHtml(column.unit || 'kg')}</div>
+      <div class="product-head-meta">Vendu: <span data-total-field="sold">${escapeHtml(compactNumber(column.sold))}</span> kg</div>
+      <div class="product-head-meta ${column.overstock ? 'stock-alert' : ''}" data-total-line="remaining">Reste: <span data-total-field="remaining">${escapeHtml(compactNumber(column.remaining))}</span> kg</div>
     </th>`;
   }).join('');
 
@@ -338,6 +479,20 @@ async function loadClients() {
     selectedClientIds = new Set(clients.map((client) => String(client.id)));
   }
   renderClients();
+}
+
+async function loadSuppliers() {
+  const data = await apiGet('/api/suppliers?status=active');
+  suppliers = Array.isArray(data) ? data : [];
+  supplierSelect.innerHTML = '<option value="">Choisir fournisseur</option>';
+  suppliers.forEach((supplier) => {
+    const option = document.createElement('option');
+    option.value = supplier.id;
+    option.textContent = `${supplier.code ? `${supplier.code} - ` : ''}${supplier.name || 'Fournisseur'}`;
+    supplierSelect.appendChild(option);
+  });
+  if (draftSupplierId) supplierSelect.value = draftSupplierId;
+  updateSupplierEmailOutput();
 }
 
 async function stockByArticleIds(articleIds, searchTerm = '') {
@@ -459,14 +614,127 @@ function removeProduct(index) {
 function clearEntries() {
   orderEntries = {};
   updatePreview();
+  invalidateEmailPreview();
   saveDraft();
   showFeedback('Saisies Colis / Kg videes.', 'success');
+}
+
+function renderActionPreview(title, html) {
+  actionPreviewPanel.classList.remove('hidden');
+  actionPreviewPanel.innerHTML = `<h3>${escapeHtml(title)}</h3>${html}`;
+}
+
+async function previewSupplierEmail() {
+  const supplier = selectedSupplier();
+  if (!supplier) {
+    showFeedback('Choisis un fournisseur avant de preparer l email.', 'error');
+    return;
+  }
+  try {
+    const preview = await apiSend('/api/quick-order-sheets/email-preview', buildSheetPayload());
+    const totalsHtml = (preview.totals || []).map((product) => `
+      <tr class="${product.remaining < 0 ? 'danger-row' : ''}">
+        <td>${escapeHtml(product.designation || product.plu || 'Produit')}</td>
+        <td>${escapeHtml(compactNumber(product.stock))}</td>
+        <td>${escapeHtml(compactNumber(product.sold))}</td>
+        <td>${escapeHtml(compactNumber(product.remaining))}</td>
+      </tr>
+    `).join('');
+    renderActionPreview('Apercu email fournisseur', `
+      <p><strong>A :</strong> ${escapeHtml(preview.to || 'Email fournisseur manquant')}</p>
+      <p><strong>Objet :</strong> ${escapeHtml(preview.subject || '')}</p>
+      <table class="action-preview-table">
+        <thead><tr><th>Produit</th><th>Stock</th><th>Vendu</th><th>Reste</th></tr></thead>
+        <tbody>${totalsHtml}</tbody>
+      </table>
+    `);
+    emailPreviewReady = true;
+    sendSupplierEmailBtn.disabled = preview.missing_email === true;
+    showFeedback(preview.missing_email ? 'Apercu genere, mais le fournisseur n a pas d email.' : 'Apercu email pret.', preview.missing_email ? 'error' : 'success');
+  } catch (error) {
+    console.error('Erreur apercu email fournisseur :', error);
+    showFeedback(error.message || 'Erreur apercu email', 'error');
+  }
+}
+
+async function sendSupplierEmail() {
+  if (!emailPreviewReady) {
+    showFeedback('Genere un apercu avant envoi.', 'error');
+    return;
+  }
+  const supplier = selectedSupplier();
+  const confirmed = window.confirm(`Envoyer la fiche d'appel au fournisseur ${supplier?.name || ''} (${supplier?.email || 'email manquant'}) ?`);
+  if (!confirmed) return;
+
+  try {
+    const result = await apiSend('/api/quick-order-sheets/send-supplier-email', {
+      ...buildSheetPayload(),
+      preview_confirmed: true,
+      confirm_send: true,
+    });
+    showFeedback(`Email envoye a ${result.to}.`, 'success');
+  } catch (error) {
+    console.error('Erreur envoi fournisseur :', error);
+    showFeedback(error.message || 'Erreur envoi fournisseur', 'error');
+  }
+}
+
+function orderSummaryHtml(lines) {
+  const totalKg = lines.reduce((sum, line) => sum + line.quantity, 0);
+  const totalAmount = lines.reduce((sum, line) => sum + line.quantity * parseDecimal(line.product.price), 0);
+  const rows = lines.slice(0, 12).map((line) => `
+    <tr>
+      <td>${escapeHtml(line.client.name || line.client.legal_name || 'Client')}</td>
+      <td>${escapeHtml(productLabel(line.product) || 'Produit')}</td>
+      <td>${escapeHtml(compactNumber(line.colis))}</td>
+      <td>${escapeHtml(compactNumber(line.kg))}</td>
+      <td>${escapeHtml(compactNumber(line.quantity))}</td>
+      <td>${escapeHtml(moneyInputValue(line.product.price) || '0.00')}</td>
+    </tr>
+  `).join('');
+  const extra = lines.length > 12 ? `<p>+ ${lines.length - 12} ligne(s) supplementaire(s)</p>` : '';
+  return `
+    <p>${lines.length} ligne(s), ${escapeHtml(compactNumber(totalKg))} kg, environ ${escapeHtml(moneyInputValue(totalAmount))} EUR HT.</p>
+    ${extra}
+    <table class="action-preview-table">
+      <thead><tr><th>Client</th><th>Produit</th><th>Colis</th><th>Kg/colis</th><th>Total kg</th><th>Prix HT</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function generateOrders() {
+  if (generatedOrderIds.length) {
+    showFeedback(`Commandes deja generees pour cette fiche : ${generatedOrderIds.length}.`, 'error');
+    return;
+  }
+  const lines = enteredOrderLines();
+  if (!lines.length) {
+    showFeedback('Aucune saisie Colis x Kg a transformer en commande.', 'error');
+    return;
+  }
+  renderActionPreview('Recapitulatif generation commandes', orderSummaryHtml(lines));
+  const confirmed = window.confirm(`Generer ${lines.length} ligne(s) de commande depuis cette fiche ?`);
+  if (!confirmed) return;
+
+  try {
+    const result = await apiSend('/api/quick-order-sheets/generate-orders', {
+      ...buildSheetPayload(),
+      confirm_generate: true,
+    });
+    generatedOrderIds = Array.isArray(result.order_ids) ? result.order_ids : [];
+    saveDraft();
+    showFeedback(result.existing ? 'Ces commandes avaient deja ete generees pour cette fiche.' : `${generatedOrderIds.length} commande(s) generee(s).`, 'success');
+  } catch (error) {
+    console.error('Erreur generation commandes :', error);
+    showFeedback(error.message || 'Erreur generation commandes', 'error');
+  }
 }
 
 async function refreshData() {
   showFeedback('Chargement clients...', '');
   try {
-    await loadClients();
+    await Promise.all([loadClients(), loadSuppliers()]);
     showFeedback('Clients actifs charges.', 'success');
   } catch (error) {
     console.error('Erreur chargement fiche appel :', error);
@@ -494,19 +762,29 @@ function initEvents() {
   printSheetBtn?.addEventListener('click', printSheet);
   printSheetBtnSecondary?.addEventListener('click', printSheet);
   clearEntriesBtn?.addEventListener('click', clearEntries);
+  emailPreviewBtn?.addEventListener('click', previewSupplierEmail);
+  sendSupplierEmailBtn?.addEventListener('click', sendSupplierEmail);
+  generateOrdersBtn?.addEventListener('click', generateOrders);
+  supplierSelect?.addEventListener('change', () => {
+    updateSupplierEmailOutput();
+    saveDraft();
+  });
   [sheetTitleInput, sheetDateInput, sheetNoteInput].forEach((input) => input?.addEventListener('input', () => {
     updatePreview();
+    invalidateEmailPreview();
     saveDraft();
   }));
   clientSearchInput?.addEventListener('input', renderClients);
   selectAllClientsBtn?.addEventListener('click', () => {
     selectedClientIds = new Set(clients.map((client) => String(client.id)));
     renderClients();
+    invalidateEmailPreview();
     saveDraft();
   });
   clearClientsBtn?.addEventListener('click', () => {
     selectedClientIds = new Set();
     renderClients();
+    invalidateEmailPreview();
     saveDraft();
   });
   clientsList?.addEventListener('change', (event) => {
@@ -515,11 +793,13 @@ function initEvents() {
     if (checkbox.checked) selectedClientIds.add(String(checkbox.dataset.clientId));
     else selectedClientIds.delete(String(checkbox.dataset.clientId));
     renderClients();
+    invalidateEmailPreview();
     saveDraft();
   });
   addProductColumnBtn?.addEventListener('click', () => {
     if (productColumns.length < MAX_PRODUCT_COLUMNS) productColumns.push(emptyProductColumn());
     renderProductColumns();
+    invalidateEmailPreview();
     saveDraft();
   });
   productColumnsEl?.addEventListener('click', (event) => {
@@ -530,6 +810,7 @@ function initEvents() {
     if (action === 'pick-product') openArticleModal(index);
     if (action === 'duplicate-product') duplicateProduct(index);
     if (action === 'remove-product') removeProduct(index);
+    if (action === 'duplicate-product' || action === 'remove-product') invalidateEmailPreview();
     if (['duplicate-product', 'remove-product'].includes(action)) saveDraft();
   });
   productColumnsEl?.addEventListener('input', (event) => {
@@ -539,12 +820,15 @@ function initEvents() {
     const index = Number(editor.dataset.productIndex);
     productColumns[index][input.dataset.field] = input.value;
     updatePreview();
+    invalidateEmailPreview();
     saveDraft();
   });
   printTableWrap?.addEventListener('input', (event) => {
     const input = event.target.closest('[data-order-field]');
     if (!input) return;
     setEntryValue(input.dataset.clientId, input.dataset.columnId, input.dataset.orderField, input.value);
+    updateProductTotalsInPlace();
+    invalidateEmailPreview();
     saveDraft();
   });
   printTableWrap?.addEventListener('keydown', (event) => {

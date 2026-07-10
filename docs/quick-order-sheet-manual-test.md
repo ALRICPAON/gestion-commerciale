@@ -1,6 +1,6 @@
-# Test manuel - Fiche d'appel clients imprimable
+# Test manuel - Fiche d'appel clients
 
-Objectif: verifier que le module permet de preparer une feuille papier de prise de commandes sans creer de commande en base.
+Objectif: verifier que le module permet de preparer une fiche d'appel imprimable, de saisir les quantites Colis x Kg, de preparer l'envoi fournisseur et de generer des commandes clients uniquement apres confirmation.
 
 ## Scenario principal
 
@@ -16,17 +16,47 @@ Objectif: verifier que le module permet de preparer une feuille papier de prise 
 10. Verifier que l'apercu contient les clients en lignes et les produits en colonnes.
 11. Dans une cellule client x produit, saisir une valeur dans `Colis`, puis utiliser `Tab` pour passer a `Kg`.
 12. Saisir une valeur dans `Kg`, puis utiliser `Entree` pour passer au champ suivant.
-13. Verifier que les valeurs restent visibles dans le tableau a l'ecran.
-14. Recharger la page et verifier que les saisies, produits, titre, date, note et selection clients sont restaurees depuis le navigateur.
-15. Cliquer sur `Vider les saisies` et verifier que seules les valeurs Colis / Kg sont effacees.
-16. Cliquer sur `Imprimer` et verifier que l'impression est en A4 paysage, sans zones de configuration ni boutons.
-17. Verifier que les cellules imprimees affichent deux zones `Colis` et `Kg`, avec les valeurs saisies ou des cases vides pour saisie manuscrite.
+13. Verifier que la quantite vendue de la colonne est recalculee immediatement: `Colis x Kg/colis`.
+14. Verifier que l'en-tete produit affiche `Stock`, `Vendu` et `Reste`.
+15. Saisir volontairement une quantite superieure au stock et verifier que l'alerte de depassement apparait a l'ecran et reste visible a l'impression.
+16. Selectionner un fournisseur actif et verifier que son adresse e-mail s'affiche.
+17. Cliquer sur `Apercu email fournisseur` et verifier le destinataire, l'objet et le resume des totaux par produit.
+18. Verifier que le bouton `Envoyer au fournisseur` reste bloque si le fournisseur n'a pas d'adresse e-mail.
+19. Cliquer sur `Envoyer au fournisseur`, annuler la confirmation, puis verifier qu'aucun e-mail n'est envoye.
+20. En environnement autorise, confirmer l'envoi et verifier que l'e-mail contient le resume, la date, le titre, les notes et un PDF en piece jointe.
+21. Recharger la page et verifier que les saisies, produits, titre, date, note, fournisseur et selection clients sont restaures depuis le navigateur.
+22. Cliquer sur `Vider les saisies` et verifier que seules les valeurs Colis / Kg sont effacees.
+23. Cliquer sur `Imprimer` et verifier que l'impression est en A4 paysage, sans zones de configuration ni boutons.
+24. Verifier que les cellules imprimees affichent deux zones `Colis` et `Kg`, avec les valeurs saisies ou des cases vides pour saisie manuscrite.
+
+## Generation des commandes
+
+1. Saisir plusieurs lignes non vides pour au moins deux clients et deux produits.
+2. Cliquer sur `Generer la commande`.
+3. Verifier que le recapitulatif liste les lignes, les colis, le poids par colis, le total kg et le prix HT.
+4. Annuler la confirmation et verifier qu'aucune commande n'est creee.
+5. Relancer, confirmer, puis verifier que les commandes `ORDER` sont creees en brouillon avec `origin = quick_order_sheet`.
+6. Verifier que chaque ligne contient `package_count`, `weight_per_package`, `sold_quantity` et `total_weight = package_count x weight_per_package`.
+7. Cliquer une deuxieme fois sur `Generer la commande` et verifier qu'aucune commande en double n'est creee pour la meme fiche.
+
+## Royale Maree et Pennylane
+
+1. Utiliser un magasin affilie dont le client facture est Royale Maree.
+2. Saisir une ligne de commande depuis la fiche d'appel.
+3. Generer la commande et verifier que la commande est portee par le client facture Royale Maree.
+4. Verifier que la ligne conserve le magasin affilie dans `delivered_client_id` et `delivered_client_name_snapshot`.
+5. Generer le BL puis la facture client.
+6. Verifier que le detail du magasin affilie est conserve sur les lignes du BL et de la facture.
+7. Synchroniser la facture vers Pennylane sur un environnement de test.
+8. Verifier que le client comptable Pennylane est Royale Maree.
+9. Verifier que chaque ligne envoyee a Pennylane contient le nom du magasin affilie dans le libelle, par exemple `[Magasin] - [Article]`, et la description `N colis x P kg`.
 
 ## Non-regression
 
 1. Ouvrir les modules `Ventes / Commandes`, `BL`, `Cours / Mercuriale` et `Planning`.
 2. Verifier que les pages se chargent comme avant.
-3. Verifier qu'aucune commande client n'est creee en base lors de l'utilisation, de la sauvegarde locale ou de l'impression de la fiche.
+3. Verifier qu'aucune commande client n'est creee en base lors de l'utilisation, de la sauvegarde locale, de l'apercu email ou de l'impression de la fiche.
+4. Verifier qu'aucun e-mail n'est envoye pendant les tests automatises (`NODE_ENV=test` ou `DISABLE_OUTBOUND_EMAILS=true`).
 
 ## Cas utile
 

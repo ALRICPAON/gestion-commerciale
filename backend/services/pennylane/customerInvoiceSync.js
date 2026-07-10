@@ -122,14 +122,22 @@ function lineQuantity(line) {
 function buildStandardInvoiceLinePayload(line, invoice) {
   const quantity = lineQuantity(line);
   const unitPrice = Number(line.unit_sale_price_ht ?? 0);
+  const deliveredClientName = line.delivered_client_name_snapshot || line.delivered_client_name || null;
+  const articleLabel = line.article_label || `Ligne ${line.line_number || ''}`.trim();
+  const packageCount = Number(line.package_count || 0);
+  const weightPerPackage = Number(line.weight_per_package || 0);
+  const description = packageCount > 0 && weightPerPackage > 0
+    ? `${packageCount.toLocaleString('fr-FR')} colis x ${weightPerPackage.toLocaleString('fr-FR')} kg`
+    : null;
 
-  return {
-    label: line.article_label || `Ligne ${line.line_number || ''}`.trim(),
+  return compactObject({
+    label: deliveredClientName ? `${deliveredClientName} - ${articleLabel}` : articleLabel,
+    description,
     quantity,
     unit: normalizeUnit(line.sale_unit),
     raw_currency_unit_price: toMoneyString(unitPrice),
     vat_rate: normalizeVatRate(line.vat_rate, invoice),
-  };
+  });
 }
 
 function buildPennylaneCustomerInvoicePayload(invoice, lines) {
@@ -298,7 +306,8 @@ async function fetchAltaInvoiceLines(db, storeId, invoiceId) {
     `
     SELECT
       id, line_number, article_label, sold_quantity, total_weight,
-      package_count, sale_unit, unit_sale_price_ht, vat_rate
+      package_count, weight_per_package, sale_unit, unit_sale_price_ht, vat_rate,
+      delivered_client_name_snapshot
     FROM sales_lines
     WHERE store_id = $1
       AND sales_document_id = $2
