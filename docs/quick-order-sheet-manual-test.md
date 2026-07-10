@@ -31,25 +31,39 @@ Objectif: verifier que le module permet de preparer une fiche d'appel imprimable
 
 ## Generation des commandes
 
-1. Saisir plusieurs lignes non vides pour au moins deux clients et deux produits.
+1. Preparer une fiche avec un client classique, deux produits et plusieurs lignes non vides.
 2. Cliquer sur `Generer la commande`.
 3. Verifier que le recapitulatif liste les lignes, les colis, le poids par colis, le total kg et le prix HT.
-4. Annuler la confirmation et verifier qu'aucune commande n'est creee.
-5. Relancer, confirmer, puis verifier que les commandes `ORDER` sont creees en brouillon avec `origin = quick_order_sheet`.
-6. Verifier que chaque ligne contient `package_count`, `weight_per_package`, `sold_quantity` et `total_weight = package_count x weight_per_package`.
-7. Cliquer une deuxieme fois sur `Generer la commande` et verifier qu'aucune commande en double n'est creee pour la meme fiche.
+4. Verifier qu'un bouton clair `Confirmer et creer les commandes` apparait dans l'apercu.
+5. Ne pas cliquer sur ce bouton et verifier qu'aucune commande n'est creee en base.
+6. Relancer, cliquer sur `Confirmer et creer les commandes`, puis verifier que l'appel `POST /api/quick-order-sheets/generate-orders` repond `201` avec `order_ids` et `orders`.
+7. Verifier en base que les commandes sont creees dans `sales_documents` avec `document_type = ORDER`, `status = draft`, `origin = quick_order_sheet`, le bon `store_id` et le bon `client_key`.
+8. Verifier en base que chaque ligne contient `package_count`, `weight_per_package`, `sold_quantity` et `total_weight = package_count x weight_per_package`.
+9. Verifier que le panneau affiche les references creees et un bouton `Ouvrir dans Ventes`.
+10. Cliquer sur `Ouvrir dans Ventes` et verifier que les commandes apparaissent directement dans l'onglet `Commandes`, sans changer manuellement de filtre.
+11. Revenir sur la fiche et recliquer sur `Generer la commande` avec le meme `sheet_id`.
+12. Verifier qu'aucune commande en double n'est creee et que l'API retourne les commandes deja generees.
+
+## Migration des anciens brouillons
+
+1. Simuler un ancien brouillon navigateur sans `sheetId` dans `localStorage`.
+2. Recharger la fiche et verifier qu'un UUID v4 valide est cree automatiquement.
+3. Simuler un ancien brouillon avec un `sheetId` invalide, par exemple `col-abc`.
+4. Recharger la fiche et verifier que ce `sheetId` est remplace automatiquement sans vider le reste du brouillon.
+5. Verifier que l'apercu email fournisseur, l'envoi confirme et la generation de commande n'envoient jamais un `sheet_id` non UUID.
 
 ## Royale Maree et Pennylane
 
-1. Utiliser un magasin affilie dont le client facture est Royale Maree.
-2. Saisir une ligne de commande depuis la fiche d'appel.
-3. Generer la commande et verifier que la commande est portee par le client facture Royale Maree.
-4. Verifier que la ligne conserve le magasin affilie dans `delivered_client_id` et `delivered_client_name_snapshot`.
-5. Generer le BL puis la facture client.
-6. Verifier que le detail du magasin affilie est conserve sur les lignes du BL et de la facture.
-7. Synchroniser la facture vers Pennylane sur un environnement de test.
-8. Verifier que le client comptable Pennylane est Royale Maree.
-9. Verifier que chaque ligne envoyee a Pennylane contient le nom du magasin affilie dans le libelle, par exemple `[Magasin] - [Article]`, et la description `N colis x P kg`.
+1. Utiliser deux magasins affilies differents dont le client facture est Royale Maree.
+2. Saisir au moins deux produits sur chaque magasin affilie.
+3. Generer la commande et verifier qu'une commande est portee par le client facture Royale Maree.
+4. Verifier que chaque ligne conserve son magasin affilie dans `delivered_client_id` et `delivered_client_name_snapshot`.
+5. Verifier dans la page Ventes que la commande Royale Maree apparait dans l'onglet `Commandes`.
+6. Generer le BL puis la facture client.
+7. Verifier que le detail du magasin affilie est conserve sur les lignes du BL et de la facture.
+8. Synchroniser la facture vers Pennylane sur un environnement de test.
+9. Verifier que le client comptable Pennylane est Royale Maree.
+10. Verifier que chaque ligne envoyee a Pennylane contient le nom du magasin affilie dans le libelle, par exemple `[Magasin] - [Article]`, et la description `N colis x P kg`.
 
 ## Non-regression
 

@@ -58,9 +58,10 @@ let articleSearchResults = [];
 let orderEntries = {};
 let draftLoaded = false;
 let draftHasClientSelection = false;
-let sheetId = window.crypto?.randomUUID ? window.crypto.randomUUID() : columnUid();
+let sheetId = '';
 let emailPreviewReady = false;
 let generatedOrderIds = [];
+let generatedOrders = [];
 let draftSupplierId = '';
 
 function authHeaders() {
@@ -115,6 +116,32 @@ function parseDecimal(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function isValidUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function generateUuidV4() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (window.crypto?.getRandomValues) {
+    window.crypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
+  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
+}
+
+function ensureValidSheetId() {
+  if (isValidUuid(sheetId)) return sheetId;
+  sheetId = generateUuidV4();
+  return sheetId;
+}
+
 function columnUid() {
   return `col-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -134,7 +161,7 @@ function loadDraft() {
   if (draft.title !== undefined) sheetTitleInput.value = draft.title || "Fiche d'appel clients";
   if (draft.date !== undefined) sheetDateInput.value = draft.date || todayIso();
   if (draft.note !== undefined) sheetNoteInput.value = draft.note || '';
-  if (draft.sheetId && /^[0-9a-f-]{36}$/i.test(String(draft.sheetId))) sheetId = draft.sheetId;
+  if (isValidUuid(draft.sheetId)) sheetId = draft.sheetId;
   if (draft.supplierId !== undefined) draftSupplierId = draft.supplierId || '';
 
   if (Array.isArray(draft.selectedClientIds)) {
@@ -152,24 +179,37 @@ function loadDraft() {
 
   orderEntries = draft.orderEntries && typeof draft.orderEntries === 'object' ? draft.orderEntries : {};
   generatedOrderIds = Array.isArray(draft.generatedOrderIds) ? draft.generatedOrderIds : [];
+  generatedOrders = Array.isArray(draft.generatedOrders) ? draft.generatedOrders : [];
   draftLoaded = true;
   return true;
 }
 
 function saveDraft() {
+  ensureValidSheetId();
   const draft = {
     title: sheetTitleInput.value,
     sheetId,
     date: sheetDateInput.value,
     note: sheetNoteInput.value,
-    supplierId: supplierSelect.value || '',
+    supplierId: supplierSelect.value || draftSupplierId || '',
     selectedClientIds: Array.from(selectedClientIds),
     productColumns,
     orderEntries,
     generatedOrderIds,
+    generatedOrders,
     savedAt: new Date().toISOString(),
   };
   localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+}
+
+function persistSheetIdInDraft() {
+  ensureValidSheetId();
+  const draft = safeJsonParse(localStorage.getItem(DRAFT_STORAGE_KEY), {});
+  localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
+    ...(draft && typeof draft === 'object' ? draft : {}),
+    sheetId,
+    savedAt: new Date().toISOString(),
+  }));
 }
 
 async function apiGet(path) {
@@ -285,6 +325,7 @@ function invalidateEmailPreview() {
 }
 
 function buildSheetPayload() {
+  ensureValidSheetId();
   const selectedIds = new Set(selectedClients().map((client) => String(client.id)));
   const products = usableProductColumns();
   return {
@@ -492,6 +533,7 @@ async function loadSuppliers() {
     supplierSelect.appendChild(option);
   });
   if (draftSupplierId) supplierSelect.value = draftSupplierId;
+  draftSupplierId = supplierSelect.value || '';
   updateSupplierEmailOutput();
 }
 
@@ -624,6 +666,20 @@ function renderActionPreview(title, html) {
   actionPreviewPanel.innerHTML = `<h3>${escapeHtml(title)}</h3>${html}`;
 }
 
+function orderLinksHtml(orders = []) {
+  if (!orders.length && !generatedOrderIds.length) return '';
+  return `
+    <div class="generated-orders-list">
+      ${orders.map((order) => `
+        <a class="btn btn-secondary btn-sm" href="./sale-detail.html?id=${encodeURIComponent(order.id)}">
+          ${escapeHtml(order.reference_number || order.id)}
+        </a>
+      `).join('')}
+      <button class="btn btn-primary btn-sm" type="button" data-action="open-sales-orders">Ouvrir dans Ventes</button>
+    </div>
+  `;
+}
+
 async function previewSupplierEmail() {
   const supplier = selectedSupplier();
   if (!supplier) {
@@ -700,11 +756,24 @@ function orderSummaryHtml(lines) {
       <thead><tr><th>Client</th><th>Produit</th><th>Colis</th><th>Kg/colis</th><th>Total kg</th><th>Prix HT</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
+    <div class="action-preview-actions">
+      <button class="btn btn-primary" type="button" data-action="confirm-generate-orders">Confirmer et creer les commandes</button>
+    </div>
   `;
 }
 
-async function generateOrders() {
+function renderGeneratedOrders(result) {
+  const orders = Array.isArray(result.orders) ? result.orders : [];
+  const count = orders.length || generatedOrderIds.length;
+  renderActionPreview(result.existing ? 'Commandes deja generees' : 'Commandes creees', `
+    <p>${result.existing ? 'Cette fiche avait deja genere ces commandes.' : `${count} commande(s) creee(s).`}</p>
+    ${orderLinksHtml(orders)}
+  `);
+}
+
+function generateOrders() {
   if (generatedOrderIds.length) {
+    renderGeneratedOrders({ existing: true, orders: generatedOrders });
     showFeedback(`Commandes deja generees pour cette fiche : ${generatedOrderIds.length}.`, 'error');
     return;
   }
@@ -714,16 +783,18 @@ async function generateOrders() {
     return;
   }
   renderActionPreview('Recapitulatif generation commandes', orderSummaryHtml(lines));
-  const confirmed = window.confirm(`Generer ${lines.length} ligne(s) de commande depuis cette fiche ?`);
-  if (!confirmed) return;
+}
 
+async function confirmGenerateOrders() {
   try {
     const result = await apiSend('/api/quick-order-sheets/generate-orders', {
       ...buildSheetPayload(),
       confirm_generate: true,
     });
     generatedOrderIds = Array.isArray(result.order_ids) ? result.order_ids : [];
+    generatedOrders = Array.isArray(result.orders) ? result.orders : [];
     saveDraft();
+    renderGeneratedOrders(result);
     showFeedback(result.existing ? 'Ces commandes avaient deja ete generees pour cette fiche.' : `${generatedOrderIds.length} commande(s) generee(s).`, 'success');
   } catch (error) {
     console.error('Erreur generation commandes :', error);
@@ -765,7 +836,16 @@ function initEvents() {
   emailPreviewBtn?.addEventListener('click', previewSupplierEmail);
   sendSupplierEmailBtn?.addEventListener('click', sendSupplierEmail);
   generateOrdersBtn?.addEventListener('click', generateOrders);
+  actionPreviewPanel?.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]')?.dataset.action;
+    if (action === 'confirm-generate-orders') confirmGenerateOrders();
+    if (action === 'open-sales-orders') {
+      localStorage.setItem('gc_sales_section', 'orders');
+      window.location.href = './sales.html';
+    }
+  });
   supplierSelect?.addEventListener('change', () => {
+    draftSupplierId = supplierSelect.value || '';
     updateSupplierEmailOutput();
     saveDraft();
   });
@@ -872,6 +952,8 @@ function init() {
   sheetDateInput.value = todayIso();
   sheetNoteInput.value = 'Arrivage du jour';
   loadDraft();
+  ensureValidSheetId();
+  persistSheetIdInDraft();
   ensureProductColumns();
   initEvents();
   renderProductColumns();

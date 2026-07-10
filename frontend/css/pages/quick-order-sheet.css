@@ -406,6 +406,14 @@
   font-weight: 700;
 }
 
+.action-preview-actions,
+.generated-orders-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .print-empty-state,
 .empty-list {
   padding: 16px;

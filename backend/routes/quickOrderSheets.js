@@ -356,7 +356,7 @@ async function fetchClients(db, storeId, ids) {
       billed.is_vat_exempt billed_is_vat_exempt
      FROM clients c
      LEFT JOIN clients billed ON billed.id = COALESCE(c.billed_client_id, c.id) AND billed.store_id = c.store_id
-     WHERE c.store_id = $1 AND c.id = ANY($2::uuid[]) AND c.status <> 'inactive'`,
+     WHERE c.store_id = $1 AND c.id = ANY($2::uuid[]) AND COALESCE(c.status, 'active') <> 'inactive'`,
     [storeId, ids]
   );
   return new Map(result.rows.map((client) => [String(client.id), client]));
@@ -373,14 +373,43 @@ async function fetchArticles(db, storeId, ids) {
   return new Map(result.rows.map((article) => [String(article.id), article]));
 }
 
+async function fetchGeneratedOrders(db, storeId, orderIds) {
+  const ids = (Array.isArray(orderIds) ? orderIds : []).filter(isUuid);
+  if (!ids.length) return [];
+  const result = await db.query(
+    `SELECT sd.id, sd.reference_number, sd.client_id, sd.document_date, sd.status, sd.document_type,
+            c.name AS client_name, COUNT(sl.id) AS line_count
+     FROM sales_documents sd
+     LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
+     LEFT JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+     WHERE sd.store_id = $1 AND sd.id = ANY($2::uuid[])
+     GROUP BY sd.id, c.name
+     ORDER BY sd.created_at ASC`,
+    [storeId, ids]
+  );
+  return result.rows;
+}
+
 router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   const db = await req.dbPool.connect();
+  const logContext = {
+    sheet_id: clean(req.body?.sheet_id),
+    store_id: req.user?.store_id,
+    client_key: req.user?.client_key || null,
+  };
   try {
     if (req.body?.confirm_generate !== true) {
       return res.status(400).json({ error: 'Confirmation obligatoire avant generation des commandes' });
     }
     const sheet = normalizeSheetPayload(req.body);
     const sourceLines = sheetLines(sheet);
+    console.info('quick_order_sheet.generate_orders.start', {
+      ...logContext,
+      sheet_id: sheet.sheet_id,
+      received_lines: sourceLines.length,
+      received_clients: sheet.clients.length,
+      received_products: sheet.products.length,
+    });
     if (!sourceLines.length) return res.status(400).json({ error: 'Aucune ligne saisie a transformer en commande' });
 
     await db.query('BEGIN');
@@ -391,8 +420,15 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       [req.user.store_id, sheet.sheet_id]
     );
     if (existing.rows.length) {
+      const existingOrderIds = existing.rows[0].generated_order_ids || [];
+      const existingOrders = await fetchGeneratedOrders(db, req.user.store_id, existingOrderIds);
       await db.query('COMMIT');
-      return res.json({ ok: true, existing: true, order_ids: existing.rows[0].generated_order_ids || [] });
+      console.info('quick_order_sheet.generate_orders.idempotent', {
+        ...logContext,
+        sheet_id: sheet.sheet_id,
+        order_ids: existingOrderIds,
+      });
+      return res.json({ ok: true, existing: true, order_ids: existingOrderIds, orders: existingOrders });
     }
 
     const clients = await fetchClients(db, req.user.store_id, [...new Set(sourceLines.map((line) => line.client.id).filter(isUuid))]);
@@ -406,8 +442,25 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       if (!groups.has(String(billedClientId))) groups.set(String(billedClientId), { billedClientId, billedClient: client, lines: [] });
       groups.get(String(billedClientId)).lines.push({ ...line, client, article });
     }
+    console.info('quick_order_sheet.generate_orders.matching', {
+      ...logContext,
+      sheet_id: sheet.sheet_id,
+      fetched_clients: clients.size,
+      fetched_articles: articles.size,
+      groups: groups.size,
+      processed_clients: Array.from(groups.values()).map((group) => ({
+        billed_client_id: group.billedClientId,
+        lines: group.lines.length,
+      })),
+    });
+    if (!groups.size) {
+      const error = new Error('Aucune ligne valide apres rapprochement clients/articles');
+      error.status = 400;
+      throw error;
+    }
 
     const orderIds = [];
+    const createdOrders = [];
     for (const group of groups.values()) {
       const billed = group.billedClient;
       const docClientId = group.billedClientId;
@@ -420,14 +473,13 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
           reference_number, notes, tariff_level_snapshot, vat_rate_snapshot, is_vat_exempt_snapshot, created_by, updated_by
         ) VALUES(
           gen_random_uuid(), $1, $2, $3, $3, $4::date, 'draft', 'ORDER', 'quick_order_sheet',
-          $5, $6, $7, $8, $9, $10, $10
-        ) RETURNING id`,
+          NULL, $5, $6, $7, $8, $9, $9
+        ) RETURNING id, reference_number`,
         [
           req.user.store_id,
           req.user.client_key || null,
           docClientId,
           sheet.sheet_date,
-          `SA-${sheet.sheet_date}-${String(sheet.sheet_id).slice(0, 8)}`,
           [sheet.title, sheet.notes, `Fiche source: ${sheet.sheet_id}`].filter(Boolean).join('\n'),
           tariffLevel,
           vatRate,
@@ -437,6 +489,14 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       );
       const orderId = order.rows[0].id;
       orderIds.push(orderId);
+      createdOrders.push({
+        id: orderId,
+        reference_number: order.rows[0].reference_number,
+        client_id: docClientId,
+        status: 'draft',
+        document_type: 'ORDER',
+        line_count: group.lines.length,
+      });
 
       let lineNumber = 1;
       for (const line of group.lines) {
@@ -508,11 +568,23 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         req.user.id,
       ]
     );
+    const orders = await fetchGeneratedOrders(db, req.user.store_id, orderIds);
     await db.query('COMMIT');
-    res.status(201).json({ ok: true, existing: false, order_ids: orderIds });
+    console.info('quick_order_sheet.generate_orders.success', {
+      ...logContext,
+      sheet_id: sheet.sheet_id,
+      order_ids: orderIds,
+      order_count: orderIds.length,
+    });
+    res.status(201).json({ ok: true, existing: false, order_ids: orderIds, orders: orders.length ? orders : createdOrders });
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
-    console.error('Erreur generation commandes fiche appel :', err);
+    console.error('quick_order_sheet.generate_orders.rollback', {
+      ...logContext,
+      message: err.message,
+      status: err.status || 500,
+      stack: err.stack,
+    });
     res.status(err.status || 500).json({ error: err.message || 'Erreur generation commandes' });
   } finally {
     db.release();
