@@ -229,7 +229,12 @@ async function apiSend(path, payload) {
     body: JSON.stringify(payload),
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Erreur API');
+  if (!response.ok) {
+    const error = new Error(data.error || 'Erreur API');
+    error.status = response.status;
+    error.data = data;
+    throw error;
+  }
   return data;
 }
 
@@ -768,6 +773,7 @@ function renderGeneratedOrders(result) {
   renderActionPreview(result.existing ? 'Commandes deja generees' : 'Commandes creees', `
     <p>${result.existing ? 'Cette fiche avait deja genere ces commandes.' : `${count} commande(s) creee(s).`}</p>
     ${orderLinksHtml(orders)}
+    ${result.existing ? '<div class="action-preview-actions"><button class="btn btn-secondary" type="button" data-action="confirm-generate-orders">Verifier le regroupement cote serveur</button></div>' : ''}
   `);
 }
 
@@ -785,11 +791,23 @@ function generateOrders() {
   renderActionPreview('Recapitulatif generation commandes', orderSummaryHtml(lines));
 }
 
-async function confirmGenerateOrders() {
+function renderRegeneratePrompt(errorData = {}) {
+  const orders = Array.isArray(errorData.orders) ? errorData.orders : [];
+  renderActionPreview('Regeneration requise', `
+    <p>${escapeHtml(errorData.error || 'Cette fiche a deja genere des commandes avec un ancien regroupement.')}</p>
+    ${orderLinksHtml(orders)}
+    <div class="action-preview-actions">
+      <button class="btn btn-primary" type="button" data-action="force-regenerate-orders">Recreer proprement les commandes brouillon</button>
+    </div>
+  `);
+}
+
+async function confirmGenerateOrders(forceRegenerate = false) {
   try {
     const result = await apiSend('/api/quick-order-sheets/generate-orders', {
       ...buildSheetPayload(),
       confirm_generate: true,
+      force_regenerate: forceRegenerate,
     });
     generatedOrderIds = Array.isArray(result.order_ids) ? result.order_ids : [];
     generatedOrders = Array.isArray(result.orders) ? result.orders : [];
@@ -798,6 +816,9 @@ async function confirmGenerateOrders() {
     showFeedback(result.existing ? 'Ces commandes avaient deja ete generees pour cette fiche.' : `${generatedOrderIds.length} commande(s) generee(s).`, 'success');
   } catch (error) {
     console.error('Erreur generation commandes :', error);
+    if (error.status === 409 && error.data?.can_regenerate) {
+      renderRegeneratePrompt(error.data);
+    }
     showFeedback(error.message || 'Erreur generation commandes', 'error');
   }
 }
@@ -839,6 +860,10 @@ function initEvents() {
   actionPreviewPanel?.addEventListener('click', (event) => {
     const action = event.target.closest('[data-action]')?.dataset.action;
     if (action === 'confirm-generate-orders') confirmGenerateOrders();
+    if (action === 'force-regenerate-orders') {
+      const confirmed = window.confirm('Supprimer les anciennes commandes brouillon de cette fiche et les recreer proprement ?');
+      if (confirmed) confirmGenerateOrders(true);
+    }
     if (action === 'open-sales-orders') {
       localStorage.setItem('gc_sales_section', 'orders');
       window.location.href = './sales.html';

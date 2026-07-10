@@ -43,6 +43,9 @@ Objectif: verifier que le module permet de preparer une fiche d'appel imprimable
 10. Cliquer sur `Ouvrir dans Ventes` et verifier que les commandes apparaissent directement dans l'onglet `Commandes`, sans changer manuellement de filtre.
 11. Revenir sur la fiche et recliquer sur `Generer la commande` avec le meme `sheet_id`.
 12. Verifier qu'aucune commande en double n'est creee et que l'API retourne les commandes deja generees.
+13. Si une ancienne generation de test existe avec le mauvais regroupement, cliquer sur `Verifier le regroupement cote serveur`.
+14. Verifier que l'API retourne `409` avec `can_regenerate = true`, puis utiliser `Recreer proprement les commandes brouillon`.
+15. Verifier que seules les commandes brouillon `origin = quick_order_sheet` de cette fiche sont supprimees puis recreees.
 
 ## Migration des anciens brouillons
 
@@ -56,14 +59,26 @@ Objectif: verifier que le module permet de preparer une fiche d'appel imprimable
 
 1. Utiliser deux magasins affilies differents dont le client facture est Royale Maree.
 2. Saisir au moins deux produits sur chaque magasin affilie.
-3. Generer la commande et verifier qu'une commande est portee par le client facture Royale Maree.
-4. Verifier que chaque ligne conserve son magasin affilie dans `delivered_client_id` et `delivered_client_name_snapshot`.
-5. Verifier dans la page Ventes que la commande Royale Maree apparait dans l'onglet `Commandes`.
-6. Generer le BL puis la facture client.
-7. Verifier que le detail du magasin affilie est conserve sur les lignes du BL et de la facture.
-8. Synchroniser la facture vers Pennylane sur un environnement de test.
-9. Verifier que le client comptable Pennylane est Royale Maree.
-10. Verifier que chaque ligne envoyee a Pennylane contient le nom du magasin affilie dans le libelle, par exemple `[Magasin] - [Article]`, et la description `N colis x P kg`.
+3. Generer la commande et verifier qu'une seule commande est creee pour Royale Maree.
+4. Verifier en base que `sales_documents.client_id` et `sales_documents.billed_client_id` correspondent tous les deux a Royale Maree.
+5. Verifier que chaque ligne conserve son magasin affilie dans `delivered_client_id`, `delivered_client_name_snapshot`, `delivered_client_code_snapshot` et `delivered_client_store_identifier_snapshot`.
+6. Verifier dans la page Ventes que la commande Royale Maree apparait dans l'onglet `Commandes`.
+7. Generer le BL depuis cette commande.
+8. Verifier que le BL garde le client livre et le client facture a Royale Maree.
+9. Verifier que le PDF BL regroupe les lignes par magasin livre, par exemple `LECLERC CHALLANS - N MAGASIN 88`, avec un sous-total par magasin.
+10. Generer la facture client.
+11. Verifier que le detail du magasin affilie est conserve sur les lignes de facture.
+12. Synchroniser la facture vers Pennylane sur un environnement de test.
+13. Verifier que le client comptable Pennylane est Royale Maree.
+14. Verifier que chaque ligne envoyee a Pennylane contient le nom du magasin affilie dans le libelle, par exemple `[Magasin livre] - [Article]` ou `[Magasin livre] — [Article]`, et la description `N colis x P kg/colis`.
+
+## PDF fournisseur
+
+1. Selectionner un fournisseur avec adresse e-mail.
+2. Generer l'apercu email fournisseur.
+3. Envoyer sur un environnement autorise ou generer le PDF fournisseur depuis le flux d'envoi.
+4. Verifier que le PDF fournisseur contient uniquement fournisseur, date, produit, magasin, nombre de colis, poids par colis, poids total et notes.
+5. Verifier que le PDF fournisseur ne contient jamais prix de vente, total HT, TVA, TTC ou montant commercial interne.
 
 ## Non-regression
 
