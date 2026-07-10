@@ -25,7 +25,7 @@ Objectif: verifier que le module permet de preparer une fiche d'appel imprimable
 19. Cliquer sur `Envoyer au fournisseur`, annuler la confirmation, puis verifier qu'aucun e-mail n'est envoye.
 20. En environnement autorise, confirmer l'envoi et verifier que l'e-mail contient le resume, la date, le titre, les notes et un PDF en piece jointe.
 21. Recharger la page et verifier que les saisies, produits, titre, date, note, fournisseur et selection clients sont restaures depuis le navigateur.
-22. Cliquer sur `Vider les saisies` et verifier que seules les valeurs Colis / Kg sont effacees.
+22. Cliquer sur `Vider les quantites` et verifier que seules les valeurs Colis / Kg sont effacees.
 23. Cliquer sur `Imprimer` et verifier que l'impression est en A4 paysage, sans zones de configuration ni boutons.
 24. Verifier que les cellules imprimees affichent deux zones `Colis` et `Kg`, avec les valeurs saisies ou des cases vides pour saisie manuscrite.
 
@@ -46,6 +46,19 @@ Objectif: verifier que le module permet de preparer une fiche d'appel imprimable
 13. Si une ancienne generation de test existe avec le mauvais regroupement, cliquer sur `Verifier le regroupement cote serveur`.
 14. Verifier que l'API retourne `409` avec `can_regenerate = true`, puis utiliser `Recreer proprement les commandes brouillon`.
 15. Verifier que seules les commandes brouillon `origin = quick_order_sheet` de cette fiche sont supprimees puis recreees.
+
+## Nouvelle fiche apres generation
+
+1. Creer une fiche A avec au moins un client et un produit.
+2. Noter la reference courte affichee dans l'interface, par exemple les 8 premiers caracteres du `sheet_id`.
+3. Generer les commandes de la fiche A.
+4. Cliquer sur `Vider les quantites` et verifier que le `sheet_id` affiche ne change pas.
+5. Cliquer sur `Nouvelle fiche`.
+6. Confirmer le message indiquant que les commandes deja generees ne seront pas supprimees.
+7. Verifier que les quantites sont videes, que la date revient au jour courant, et qu'une nouvelle reference courte de fiche est affichee.
+8. Verifier que les produits, clients selectionnes, fournisseur, titre et note sont conserves pour faciliter une nouvelle prise d'appel.
+9. Saisir de nouvelles quantites puis generer les commandes.
+10. Verifier qu'il n'y a aucun blocage d'idempotence, aucun doublon, et que les commandes de la fiche A restent intactes.
 
 ## Migration des anciens brouillons
 

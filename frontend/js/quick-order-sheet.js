@@ -18,6 +18,7 @@ const refreshDataBtn = document.getElementById('refresh-data-btn');
 const printSheetBtn = document.getElementById('print-sheet-btn');
 const printSheetBtnSecondary = document.getElementById('print-sheet-btn-secondary');
 const clearEntriesBtn = document.getElementById('clear-entries-btn');
+const newSheetBtn = document.getElementById('new-sheet-btn');
 const pageFeedback = document.getElementById('page-feedback');
 const sheetTitleInput = document.getElementById('sheet-title-input');
 const sheetDateInput = document.getElementById('sheet-date-input');
@@ -35,6 +36,7 @@ const emailPreviewBtn = document.getElementById('email-preview-btn');
 const sendSupplierEmailBtn = document.getElementById('send-supplier-email-btn');
 const generateOrdersBtn = document.getElementById('generate-orders-btn');
 const actionPreviewPanel = document.getElementById('action-preview-panel');
+const sheetReferenceLabel = document.getElementById('sheet-reference-label');
 const printTitle = document.getElementById('print-title');
 const printNote = document.getElementById('print-note');
 const printDate = document.getElementById('print-date');
@@ -142,6 +144,12 @@ function ensureValidSheetId() {
   return sheetId;
 }
 
+function updateSheetReferenceLabel() {
+  if (!sheetReferenceLabel) return;
+  ensureValidSheetId();
+  sheetReferenceLabel.textContent = sheetId.slice(0, 8).toUpperCase();
+}
+
 function columnUid() {
   return `col-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -200,6 +208,7 @@ function saveDraft() {
     savedAt: new Date().toISOString(),
   };
   localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  updateSheetReferenceLabel();
 }
 
 function persistSheetIdInDraft() {
@@ -210,6 +219,7 @@ function persistSheetIdInDraft() {
     sheetId,
     savedAt: new Date().toISOString(),
   }));
+  updateSheetReferenceLabel();
 }
 
 async function apiGet(path) {
@@ -327,6 +337,12 @@ function updateSupplierEmailOutput() {
 function invalidateEmailPreview() {
   emailPreviewReady = false;
   sendSupplierEmailBtn.disabled = true;
+}
+
+function resetGenerationState() {
+  generatedOrderIds = [];
+  generatedOrders = [];
+  invalidateEmailPreview();
 }
 
 function buildSheetPayload() {
@@ -663,7 +679,22 @@ function clearEntries() {
   updatePreview();
   invalidateEmailPreview();
   saveDraft();
-  showFeedback('Saisies Colis / Kg videes.', 'success');
+  showFeedback('Quantites Colis / Kg videes pour cette fiche.', 'success');
+}
+
+function newSheet() {
+  const confirmed = window.confirm('Cette action va effacer les saisies actuelles et creer une nouvelle fiche. Les commandes deja generees ne seront pas supprimees.');
+  if (!confirmed) return;
+  orderEntries = {};
+  resetGenerationState();
+  sheetId = generateUuidV4();
+  sheetDateInput.value = todayIso();
+  actionPreviewPanel.classList.add('hidden');
+  actionPreviewPanel.innerHTML = '';
+  updateSheetReferenceLabel();
+  updatePreview();
+  saveDraft();
+  showFeedback(`Nouvelle fiche creee (${sheetId.slice(0, 8).toUpperCase()}). Produits, clients et fournisseur conserves.`, 'success');
 }
 
 function renderActionPreview(title, html) {
@@ -854,6 +885,7 @@ function initEvents() {
   printSheetBtn?.addEventListener('click', printSheet);
   printSheetBtnSecondary?.addEventListener('click', printSheet);
   clearEntriesBtn?.addEventListener('click', clearEntries);
+  newSheetBtn?.addEventListener('click', newSheet);
   emailPreviewBtn?.addEventListener('click', previewSupplierEmail);
   sendSupplierEmailBtn?.addEventListener('click', sendSupplierEmail);
   generateOrdersBtn?.addEventListener('click', generateOrders);
@@ -979,6 +1011,7 @@ function init() {
   loadDraft();
   ensureValidSheetId();
   persistSheetIdInDraft();
+  updateSheetReferenceLabel();
   ensureProductColumns();
   initEvents();
   renderProductColumns();

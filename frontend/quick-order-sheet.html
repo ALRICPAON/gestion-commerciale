@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/quick-order-sheet.css?v=3" />
+  <link rel="stylesheet" href="./css/pages/quick-order-sheet.css?v=4" />
 </head>
 <body class="app-page quick-order-sheet-page">
   <header class="topbar no-print">
@@ -96,9 +96,11 @@
         <div>
           <h3>Apercu papier</h3>
           <p>Saisir Colis / Kg a l'ecran, ou laisser vide pour ecrire a la main.</p>
+          <p class="quick-sheet-ref">Fiche <strong id="sheet-reference-label">-</strong></p>
         </div>
         <div class="page-actions-right">
-          <button id="clear-entries-btn" class="btn btn-secondary" type="button">Vider les saisies</button>
+          <button id="clear-entries-btn" class="btn btn-secondary" type="button">Vider les quantites</button>
+          <button id="new-sheet-btn" class="btn btn-secondary" type="button">Nouvelle fiche</button>
           <button id="email-preview-btn" class="btn btn-secondary" type="button">Apercu email fournisseur</button>
           <button id="send-supplier-email-btn" class="btn btn-secondary" type="button" disabled>Envoyer au fournisseur</button>
           <button id="generate-orders-btn" class="btn btn-primary" type="button">Generer la commande</button>
@@ -137,6 +139,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/quick-order-sheet.js?v=3"></script>
+  <script src="./js/quick-order-sheet.js?v=4"></script>
 </body>
 </html>

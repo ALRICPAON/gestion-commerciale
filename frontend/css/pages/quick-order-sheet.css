@@ -39,6 +39,15 @@
   color: #62717a;
 }
 
+.quick-sheet-ref {
+  font-size: 0.82rem;
+}
+
+.quick-sheet-ref strong {
+  color: #1f2933;
+  letter-spacing: 0.04em;
+}
+
 .quick-form-grid {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) 170px minmax(260px, 2fr);
