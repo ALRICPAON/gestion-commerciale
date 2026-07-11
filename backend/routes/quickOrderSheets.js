@@ -742,6 +742,19 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         const amountTtc = Number((amountHt + vatAmount).toFixed(2));
         const unitTtc = line.quantity > 0 ? Number((amountTtc / line.quantity).toFixed(4)) : Number((unitPrice * (1 + lineVatRate / 100)).toFixed(4));
         const delivered = deliveredSnapshotForLine(line, docClientId, group.flow === 'royale_maree');
+        console.info('quick_order_sheet.generate_orders.line_before_insert', {
+          ...logContext,
+          sheet_id: sheet.sheet_id,
+          flow: group.flow,
+          order_id: orderId,
+          source_client_id: line.client.id,
+          source_client_name: line.client.name || line.client.legal_name || null,
+          doc_client_id: docClientId,
+          delivered_client_id: delivered.id,
+          delivered_client_name_snapshot: delivered.name,
+          delivered_client_code_snapshot: delivered.code,
+          delivered_client_store_identifier_snapshot: delivered.store_identifier,
+        });
         await db.query(
           `INSERT INTO sales_lines(
             id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label,

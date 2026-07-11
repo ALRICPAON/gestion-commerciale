@@ -57,13 +57,27 @@ function ensureAffiliateLineHeader() {
   row.dataset.affiliatesReady = 'true';
 }
 
-function affiliateOptions(selectedId) {
+function affiliateOptionLabelFromLine(line) {
+  return clean(line?.delivered_client_name_snapshot)
+    || clean(line?.delivered_client_name)
+    || clean(line?.delivered_client_code_snapshot)
+    || clean(line?.delivered_client_code)
+    || clean(line?.delivered_client_store_identifier_snapshot)
+    || clean(line?.delivered_client_store_identifier)
+    || 'Magasin livre';
+}
+
+function affiliateOptions(line) {
+  const selectedId = line?.delivered_client_id || '';
   const main = selectedClient();
   const options = [{ id: '', label: main?.name ? `Client principal - ${main.name}` : 'Client principal' }]
     .concat(affiliates.map((client) => ({
       id: client.id,
       label: client.affiliate_label || client.name || client.code || 'Magasin affilié',
     })));
+  if (selectedId && !options.some((option) => String(option.id) === String(selectedId))) {
+    options.push({ id: selectedId, label: affiliateOptionLabelFromLine(line) });
+  }
   return options.map((option) => `<option value="${esc(option.id)}" ${String(option.id) === String(selectedId || '') ? 'selected' : ''}>${esc(option.label)}</option>`).join('');
 }
 
@@ -173,7 +187,7 @@ function renderLines() {
     const locked = !editable();
     const negoce = isNegoce();
     return `<tr data-line-id="${line.id}" data-article-id="${line.article_id || ''}" data-selected-lot-id="${line.selected_lot_id || ''}" data-sale-unit="${esc(line.sale_unit || 'kg')}">
-      <td><select class="line-input line-delivered-client" ${locked ? 'disabled' : ''}>${affiliateOptions(line.delivered_client_id)}</select></td>
+      <td><select class="line-input line-delivered-client" ${locked ? 'disabled' : ''}>${affiliateOptions(line)}</select></td>
       <td><input class="line-input line-plu" value="${esc(line.article_plu || '')}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-article-label" value="${esc(line.article_label || '')}" ${locked ? 'disabled' : ''}></td>
       <td><button type="button" class="btn btn-secondary" data-action="choose-lot" data-id="${line.id}" ${locked || !line.article_id || negoce ? 'disabled' : ''}>${esc(t.lot_code || t.supplier_lot_number || (negoce ? 'Négoce' : 'Lot'))}</button></td>
