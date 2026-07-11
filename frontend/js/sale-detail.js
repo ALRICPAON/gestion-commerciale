@@ -57,14 +57,70 @@ function ensureAffiliateLineHeader() {
   row.dataset.affiliatesReady = 'true';
 }
 
-function affiliateOptions(selectedId) {
-  const main = selectedClient();
-  const options = [{ id: '', label: main?.name ? `Client principal - ${main.name}` : 'Client principal' }]
-    .concat(affiliates.map((client) => ({
-      id: client.id,
-      label: client.affiliate_label || client.name || client.code || 'Magasin affilié',
-    })));
+function affiliateOptionLabelFromLine(line) {
+  return optionLabel(
+    clean(line?.delivered_client_name_snapshot) || clean(line?.delivered_client_name),
+    clean(line?.delivered_client_code_snapshot) || clean(line?.delivered_client_code) || clean(line?.delivered_client_store_identifier_snapshot) || clean(line?.delivered_client_store_identifier)
+  );
+}
+
+function optionLabel(name, code) {
+  const label = clean(name) || 'Magasin livre';
+  const suffix = clean(code);
+  return suffix && suffix !== label ? `${label} - ${suffix}` : label;
+}
+
+function addOptionOnce(options, option) {
+  if (!option?.id) return;
+  if (!options.some((item) => String(item.id) === String(option.id))) options.push(option);
+}
+
+function deliveredLineOptions() {
+  const options = [];
+  lines.forEach((line) => {
+    addOptionOnce(options, {
+      id: line.delivered_client_id,
+      label: affiliateOptionLabelFromLine(line),
+    });
+  });
+  return options;
+}
+
+function affiliateOptions(line) {
+  const selectedId = line?.delivered_client_id || '';
+  const mainName = sale?.client_name || selectedClient()?.name || 'Client principal';
+  const options = [{ id: sale?.client_id || '', label: `Client principal - ${mainName}` }];
+  affiliates.forEach((client) => addOptionOnce(options, {
+    id: client.id,
+    label: optionLabel(client.name || client.legal_name, client.code || client.store_identifier || client.affiliate_store_number),
+  }));
+  deliveredLineOptions().forEach((option) => addOptionOnce(options, option));
+  if (selectedId && !options.some((option) => String(option.id) === String(selectedId))) {
+    options.push({ id: selectedId, label: affiliateOptionLabelFromLine(line) });
+  }
   return options.map((option) => `<option value="${esc(option.id)}" ${String(option.id) === String(selectedId || '') ? 'selected' : ''}>${esc(option.label)}</option>`).join('');
+}
+
+function syncDeliveredClientSelects() {
+  const lineById = new Map(lines.map((line) => [String(line.id), line]));
+  els.body.querySelectorAll('tr[data-line-id]').forEach((row) => {
+    const line = lineById.get(String(row.dataset.lineId));
+    const select = row.querySelector('.line-delivered-client');
+    const selectedId = clean(line?.delivered_client_id);
+    if (!line || !select || !selectedId) return;
+    if (![...select.options].some((option) => String(option.value) === selectedId)) {
+      const option = document.createElement('option');
+      option.value = selectedId;
+      option.textContent = affiliateOptionLabelFromLine(line);
+      select.appendChild(option);
+    }
+    select.value = selectedId;
+    console.log('DELIVERED OPTIONS', {
+      lineDeliveredId: line.delivered_client_id,
+      options: [...select.options].map((option) => ({ value: option.value, text: option.textContent })),
+      selected: select.value,
+    });
+  });
 }
 
 function lastDeliveredClientId() {
@@ -173,7 +229,7 @@ function renderLines() {
     const locked = !editable();
     const negoce = isNegoce();
     return `<tr data-line-id="${line.id}" data-article-id="${line.article_id || ''}" data-selected-lot-id="${line.selected_lot_id || ''}" data-sale-unit="${esc(line.sale_unit || 'kg')}">
-      <td><select class="line-input line-delivered-client" ${locked ? 'disabled' : ''}>${affiliateOptions(line.delivered_client_id)}</select></td>
+      <td><select class="line-input line-delivered-client" ${locked ? 'disabled' : ''}>${affiliateOptions(line)}</select></td>
       <td><input class="line-input line-plu" value="${esc(line.article_plu || '')}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-article-label" value="${esc(line.article_label || '')}" ${locked ? 'disabled' : ''}></td>
       <td><button type="button" class="btn btn-secondary" data-action="choose-lot" data-id="${line.id}" ${locked || !line.article_id || negoce ? 'disabled' : ''}>${esc(t.lot_code || t.supplier_lot_number || (negoce ? 'Négoce' : 'Lot'))}</button></td>
@@ -189,6 +245,7 @@ function renderLines() {
       <td><button type="button" class="btn btn-primary" data-action="save-line" data-id="${line.id}" ${locked ? 'disabled' : ''}>OK</button><button type="button" class="btn btn-secondary" data-action="delete-line" data-id="${line.id}" ${locked ? 'disabled' : ''}>Suppr.</button></td>
     </tr>`;
   }).join('');
+  syncDeliveredClientSelects();
 }
 
 function computeRow(row) {

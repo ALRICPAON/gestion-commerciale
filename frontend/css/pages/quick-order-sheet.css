@@ -39,6 +39,15 @@
   color: #62717a;
 }
 
+.quick-sheet-ref {
+  font-size: 0.82rem;
+}
+
+.quick-sheet-ref strong {
+  color: #1f2933;
+  letter-spacing: 0.04em;
+}
+
 .quick-form-grid {
   display: grid;
   grid-template-columns: minmax(220px, 1fr) 170px minmax(260px, 2fr);
@@ -48,6 +57,23 @@
 
 .quick-note-field {
   min-width: 0;
+}
+
+.quick-email-field output {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 8px;
+  background: #fbfcfd;
+  font-weight: 700;
+}
+
+.quick-email-field output.missing-email {
+  border-color: #fecdca;
+  background: #fff5f4;
+  color: #b42318;
 }
 
 .quick-workspace {
@@ -244,6 +270,10 @@
   background: #eef3f5;
 }
 
+.quick-print-table thead th.product-overstock {
+  background: #fff1f0;
+}
+
 .quick-print-table thead th:first-child,
 .quick-print-table tbody th {
   position: sticky;
@@ -339,6 +369,58 @@
   margin-top: 3px;
   font-size: 0.72rem;
   font-weight: 600;
+}
+
+.stock-alert {
+  color: #b42318;
+  font-weight: 800;
+}
+
+.action-preview-panel {
+  margin-bottom: 12px;
+  border: 1px solid #d8e0e4;
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.action-preview-panel.hidden {
+  display: none;
+}
+
+.action-preview-panel h3 {
+  margin: 0 0 8px;
+}
+
+.action-preview-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.action-preview-table th,
+.action-preview-table td {
+  border-bottom: 1px solid #e1e7eb;
+  padding: 6px;
+  text-align: left;
+}
+
+.action-preview-table th:not(:first-child),
+.action-preview-table td:not(:first-child) {
+  text-align: right;
+}
+
+.danger-row td {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.action-preview-actions,
+.generated-orders-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .print-empty-state,
@@ -521,6 +603,12 @@
   .quick-print-table thead th {
     height: 17mm;
     padding: 2mm;
+  }
+
+  .quick-print-table thead th.product-overstock {
+    background: #fff1f0;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
 
   .quick-print-table tbody th,
