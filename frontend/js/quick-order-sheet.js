@@ -363,6 +363,12 @@ function buildSheetPayload() {
         name: client.name || client.legal_name,
         legal_name: client.legal_name,
         city: client.city,
+        parent_client_id: client.parent_client_id,
+        billed_client_id: client.billed_client_id,
+        is_royale_maree_member: client.is_royale_maree_member,
+        store_identifier: client.store_identifier,
+        affiliate_label: client.affiliate_label,
+        affiliate_store_number: client.affiliate_store_number,
       })),
     products: products.map((product) => ({
       uid: product.uid,

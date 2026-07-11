@@ -480,8 +480,8 @@ function orderTargetForClient(client) {
   };
 }
 
-function deliveredSnapshotForLine(line, documentClientId) {
-  if (String(line.client.id) === String(documentClientId)) {
+function deliveredSnapshotForLine(line, documentClientId, forceSourceClient = false) {
+  if (!forceSourceClient && String(line.client.id) === String(documentClientId)) {
     return {
       id: null,
       name: null,
@@ -491,7 +491,7 @@ function deliveredSnapshotForLine(line, documentClientId) {
   }
   return {
     id: line.client.id,
-    name: line.client.name,
+    name: line.client.name || line.client.legal_name,
     code: line.client.code,
     store_identifier: line.client.store_identifier,
   };
@@ -525,13 +525,55 @@ async function fetchGeneratedOrders(db, storeId, orderIds) {
   return result.rows;
 }
 
-function existingGenerationMatchesGroups(existingOrders, groups) {
+async function fetchGeneratedOrderLineSnapshots(db, storeId, orderIds) {
+  const ids = (Array.isArray(orderIds) ? orderIds : []).filter(isUuid);
+  if (!ids.length) return [];
+  const result = await db.query(
+    `SELECT sales_document_id, delivered_client_id, delivered_client_name_snapshot,
+            delivered_client_code_snapshot, delivered_client_store_identifier_snapshot,
+            source_inventory_line ->> 'source_client_id' AS source_client_id
+     FROM sales_lines
+     WHERE store_id = $1 AND sales_document_id = ANY($2::uuid[])
+     ORDER BY sales_document_id, line_number`,
+    [storeId, ids]
+  );
+  return result.rows;
+}
+
+function existingGenerationMatchesGroups(existingOrders, groups, existingLines = []) {
   const groupList = Array.from(groups.values());
   if (existingOrders.length !== groupList.length) return false;
   return groupList.every((group) => existingOrders.some((order) => (
     String(order.client_id) === String(group.documentClientId)
     && Number(order.line_count || 0) === group.lines.length
+    && existingOrderLinesMatchGroup(order, group, existingLines)
   )));
+}
+
+function existingOrderLinesMatchGroup(order, group, existingLines) {
+  if (group.flow !== 'royale_maree') return true;
+  const rows = existingLines.filter((line) => String(line.sales_document_id) === String(order.id));
+  const expectedByClient = new Map();
+  for (const line of group.lines) {
+    const sourceClientId = String(line.client.id);
+    expectedByClient.set(sourceClientId, (expectedByClient.get(sourceClientId) || 0) + 1);
+  }
+
+  const validByClient = new Map();
+  for (const row of rows) {
+    const sourceClientId = String(row.source_client_id || '');
+    if (
+      sourceClientId
+      && String(row.delivered_client_id || '') === sourceClientId
+      && clean(row.delivered_client_name_snapshot)
+    ) {
+      validByClient.set(sourceClientId, (validByClient.get(sourceClientId) || 0) + 1);
+    }
+  }
+
+  return Array.from(expectedByClient.entries()).every(([sourceClientId, expectedCount]) => (
+    (validByClient.get(sourceClientId) || 0) >= expectedCount
+  ));
 }
 
 async function resetGeneratedOrders(db, storeId, orderIds) {
@@ -622,7 +664,8 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
     if (existing.rows.length) {
       const existingOrderIds = existing.rows[0].generated_order_ids || [];
       const existingOrders = await fetchGeneratedOrders(db, req.user.store_id, existingOrderIds);
-      const compatible = existingGenerationMatchesGroups(existingOrders, groups);
+      const existingLineSnapshots = await fetchGeneratedOrderLineSnapshots(db, req.user.store_id, existingOrderIds);
+      const compatible = existingGenerationMatchesGroups(existingOrders, groups, existingLineSnapshots);
       if (compatible && req.body?.force_regenerate !== true) {
         await db.query('COMMIT');
         console.info('quick_order_sheet.generate_orders.idempotent', {
@@ -698,7 +741,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         const vatAmount = Number((amountHt * lineVatRate / 100).toFixed(2));
         const amountTtc = Number((amountHt + vatAmount).toFixed(2));
         const unitTtc = line.quantity > 0 ? Number((amountTtc / line.quantity).toFixed(4)) : Number((unitPrice * (1 + lineVatRate / 100)).toFixed(4));
-        const delivered = deliveredSnapshotForLine(line, docClientId);
+        const delivered = deliveredSnapshotForLine(line, docClientId, group.flow === 'royale_maree');
         await db.query(
           `INSERT INTO sales_lines(
             id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label,
@@ -735,7 +778,15 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
             delivered.name,
             delivered.code,
             delivered.store_identifier,
-            JSON.stringify({ quick_order_sheet_id: sheet.sheet_id, column_uid: line.product.uid, source_client_id: line.client.id }),
+            JSON.stringify({
+              quick_order_sheet_id: sheet.sheet_id,
+              column_uid: line.product.uid,
+              source_client_id: line.client.id,
+              source_client_name: line.client.name || line.client.legal_name || null,
+              source_client_code: line.client.code || null,
+              source_client_store_identifier: line.client.store_identifier || null,
+              flow: group.flow,
+            }),
             req.user.id,
           ]
         );

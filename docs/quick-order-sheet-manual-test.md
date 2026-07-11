@@ -76,14 +76,24 @@ Objectif: verifier que le module permet de preparer une fiche d'appel imprimable
 4. Verifier en base que `sales_documents.client_id` et `sales_documents.billed_client_id` correspondent tous les deux a Royale Maree.
 5. Verifier que chaque ligne conserve son magasin affilie dans `delivered_client_id`, `delivered_client_name_snapshot`, `delivered_client_code_snapshot` et `delivered_client_store_identifier_snapshot`.
 6. Verifier dans la page Ventes que la commande Royale Maree apparait dans l'onglet `Commandes`.
-7. Generer le BL depuis cette commande.
-8. Verifier que le BL garde le client livre et le client facture a Royale Maree.
-9. Verifier que le PDF BL regroupe les lignes par magasin livre, par exemple `LECLERC CHALLANS - N MAGASIN 88`, avec un sous-total par magasin.
-10. Generer la facture client.
-11. Verifier que le detail du magasin affilie est conserve sur les lignes de facture.
-12. Synchroniser la facture vers Pennylane sur un environnement de test.
-13. Verifier que le client comptable Pennylane est Royale Maree.
-14. Verifier que chaque ligne envoyee a Pennylane contient le nom du magasin affilie dans le libelle, par exemple `[Magasin livre] - [Article]` ou `[Magasin livre] — [Article]`, et la description `N colis x P kg/colis`.
+7. Ouvrir la commande et controler la colonne `MAGASIN LIVRE` ligne par ligne: une ligne issue de `E.LECLERC ANCENIS` doit afficher `E.LECLERC ANCENIS`, une ligne issue de `E.LECLERC ANGERS` doit afficher `E.LECLERC ANGERS`, jamais Royale Maree par defaut.
+8. Generer le BL depuis cette commande.
+9. Verifier que le BL garde le client livre et le client facture a Royale Maree.
+10. Verifier que le PDF BL regroupe les lignes par magasin livre, par exemple `LECLERC CHALLANS - N MAGASIN 88`, avec un sous-total par magasin.
+11. Generer la facture client.
+12. Verifier que le detail du magasin affilie est conserve sur les lignes de facture.
+13. Synchroniser la facture vers Pennylane sur un environnement de test.
+14. Verifier que le client comptable Pennylane est Royale Maree.
+15. Verifier que chaque ligne envoyee a Pennylane contient le nom du magasin affilie dans le libelle, par exemple `[Magasin livre] - [Article]` ou `[Magasin livre] — [Article]`, et la description `N colis x P kg/colis`.
+
+## Regeneration controlee Royale Maree
+
+1. Reprendre une fiche de test deja generee avec l'ancien bug ou toutes les lignes affichaient Royale Maree en `MAGASIN LIVRE`.
+2. Cliquer sur `Verifier le regroupement cote serveur` ou relancer la generation avec le meme `sheet_id`.
+3. Verifier que le backend ne considere pas cette ancienne generation comme compatible si les lignes Royale Maree n'ont pas `delivered_client_id` egal au magasin source.
+4. Utiliser `Recreer proprement les commandes brouillon`.
+5. Verifier que seules les commandes `document_type = ORDER`, `status = draft`, `origin = quick_order_sheet` de cette fiche sont supprimees.
+6. Verifier que la commande recreee est unique pour Royale Maree et que chaque ligne affiche le bon magasin livre.
 
 ## PDF fournisseur
 
