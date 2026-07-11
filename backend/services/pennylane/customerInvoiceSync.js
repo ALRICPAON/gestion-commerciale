@@ -113,10 +113,42 @@ function normalizeUnit(value) {
   return text || 'piece';
 }
 
+function normalizeSearch(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+}
+
+function isRoyaleMareeInvoice(invoice = {}) {
+  const haystack = normalizeSearch([
+    invoice.billed_client_name_snapshot,
+    invoice.billed_client_code_snapshot,
+    invoice.billed_client_name,
+    invoice.billed_client_code,
+    invoice.client_name,
+    invoice.client_code,
+  ].filter(Boolean).join(' '));
+  return haystack.includes('ROYALE MAREE');
+}
+
 function lineQuantity(line) {
   const candidates = [line.sold_quantity, line.total_weight, line.package_count, 1];
   const quantity = candidates.map(Number).find((value) => Number.isFinite(value) && value > 0);
   return quantity || 1;
+}
+
+function royaleMareeLineLabel(line, articleLabel) {
+  const deliveredClientName = line.delivered_client_name_snapshot || line.delivered_client_name || null;
+  const deliveredClientPrefix = line.delivered_client_code_snapshot
+    || line.delivered_client_store_identifier_snapshot
+    || deliveredClientName;
+  if (!deliveredClientName && !deliveredClientPrefix) return articleLabel;
+
+  const storeLine = deliveredClientPrefix && deliveredClientName && deliveredClientPrefix !== deliveredClientName
+    ? `${deliveredClientPrefix} - ${deliveredClientName}`
+    : (deliveredClientPrefix || deliveredClientName);
+  return `${storeLine}\n${articleLabel}`;
 }
 
 function buildStandardInvoiceLinePayload(line, invoice) {
@@ -129,8 +161,9 @@ function buildStandardInvoiceLinePayload(line, invoice) {
   const description = packageCount > 0 && weightPerPackage > 0
     ? `${packageCount.toLocaleString('fr-FR')} colis x ${weightPerPackage.toLocaleString('fr-FR')} kg/colis`
     : null;
+  const royaleMaree = isRoyaleMareeInvoice(invoice);
 
-  return compactObject({
+  const payload = compactObject({
     label: deliveredClientName ? `${deliveredClientName} — ${articleLabel}` : articleLabel,
     description,
     quantity,
@@ -138,6 +171,11 @@ function buildStandardInvoiceLinePayload(line, invoice) {
     raw_currency_unit_price: toMoneyString(unitPrice),
     vat_rate: normalizeVatRate(line.vat_rate, invoice),
   });
+  if (royaleMaree) {
+    payload.label = royaleMareeLineLabel(line, articleLabel);
+    delete payload.description;
+  }
+  return payload;
 }
 
 function buildPennylaneCustomerInvoicePayload(invoice, lines) {
@@ -285,6 +323,8 @@ async function fetchAltaInvoice(db, storeId, invoiceId) {
     `
     SELECT inv.*,
       billed.pennylane_customer_id,
+      billed.name AS billed_client_name,
+      billed.code AS billed_client_code,
       billed.payment_terms AS client_payment_terms
     FROM sales_documents inv
     LEFT JOIN clients billed
@@ -307,7 +347,8 @@ async function fetchAltaInvoiceLines(db, storeId, invoiceId) {
     SELECT
       id, line_number, article_label, sold_quantity, total_weight,
       package_count, weight_per_package, sale_unit, unit_sale_price_ht, vat_rate,
-      delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot
+      delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot,
+      delivered_client_store_identifier_snapshot
     FROM sales_lines
     WHERE store_id = $1
       AND sales_document_id = $2
