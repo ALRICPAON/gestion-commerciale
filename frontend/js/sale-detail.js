@@ -58,13 +58,16 @@ function ensureAffiliateLineHeader() {
 }
 
 function affiliateOptionLabelFromLine(line) {
-  return clean(line?.delivered_client_name_snapshot)
-    || clean(line?.delivered_client_name)
-    || clean(line?.delivered_client_code_snapshot)
-    || clean(line?.delivered_client_code)
-    || clean(line?.delivered_client_store_identifier_snapshot)
-    || clean(line?.delivered_client_store_identifier)
-    || 'Magasin livre';
+  return optionLabel(
+    clean(line?.delivered_client_name_snapshot) || clean(line?.delivered_client_name),
+    clean(line?.delivered_client_code_snapshot) || clean(line?.delivered_client_code) || clean(line?.delivered_client_store_identifier_snapshot) || clean(line?.delivered_client_store_identifier)
+  );
+}
+
+function optionLabel(name, code) {
+  const label = clean(name) || 'Magasin livre';
+  const suffix = clean(code);
+  return suffix && suffix !== label ? `${label} - ${suffix}` : label;
 }
 
 function addOptionOnce(options, option) {
@@ -85,12 +88,12 @@ function deliveredLineOptions() {
 
 function affiliateOptions(line) {
   const selectedId = line?.delivered_client_id || '';
-  const main = selectedClient();
-  const options = [{ id: '', label: main?.name ? `Client principal - ${main.name}` : 'Client principal' }]
-    .concat(affiliates.map((client) => ({
-      id: client.id,
-      label: client.affiliate_label || client.name || client.code || 'Magasin affilié',
-    })));
+  const mainName = sale?.client_name || selectedClient()?.name || 'Client principal';
+  const options = [{ id: sale?.client_id || '', label: `Client principal - ${mainName}` }];
+  affiliates.forEach((client) => addOptionOnce(options, {
+    id: client.id,
+    label: optionLabel(client.name || client.legal_name, client.code || client.store_identifier || client.affiliate_store_number),
+  }));
   deliveredLineOptions().forEach((option) => addOptionOnce(options, option));
   if (selectedId && !options.some((option) => String(option.id) === String(selectedId))) {
     options.push({ id: selectedId, label: affiliateOptionLabelFromLine(line) });
@@ -112,9 +115,9 @@ function syncDeliveredClientSelects() {
       select.appendChild(option);
     }
     select.value = selectedId;
-    console.log({
+    console.log('DELIVERED OPTIONS', {
       lineDeliveredId: line.delivered_client_id,
-      options: [...select.options].map((option) => ({ value: option.value, text: option.text })),
+      options: [...select.options].map((option) => ({ value: option.value, text: option.textContent })),
       selected: select.value,
     });
   });
