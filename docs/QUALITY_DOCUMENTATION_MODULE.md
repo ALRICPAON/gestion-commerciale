@@ -41,6 +41,7 @@ Toutes les tables portent `store_id` et les requetes filtrent par le magasin con
 - `DELETE /api/quality/documentation/sections/:sectionId`
 - `GET /api/quality/documentation/sections/:sectionId/versions`
 - `POST /api/quality/documentation/sections/:sectionId/restore-version`
+- `POST /api/quality/documentation/sections/:sectionId/merge-into/:targetSectionId`
 - `GET /api/quality/documentation/missing-items`
 - `POST /api/quality/documentation/missing-items`
 - `PATCH /api/quality/documentation/missing-items/:id`
@@ -68,6 +69,20 @@ Les roles `admin` et `responsable` restent privilegies via le mecanisme existant
 
 Le PDF est genere cote serveur par Puppeteer. L'apercu et l'export utilisent le meme template HTML.
 Le PDF inclut page de garde, historique de revisions, sommaire, informations a completer, corps documentaire, annexes listees, entetes/pieds de page CSS et pagination.
+
+## Arborescence documentaire
+
+L'arborescence est adaptable depuis l'interface :
+
+- renommer un chapitre via le champ `Titre` ;
+- deplacer un chapitre via le champ `Ranger dans` ;
+- modifier l'ordre via le champ `Ordre` ou les boutons `Monter` / `Descendre` ;
+- masquer un chapitre de l'export avec `Affiche dans le PDF` ;
+- creer un nouveau chapitre depuis le bouton `Ajouter` ;
+- supprimer un chapitre par archivage logique ;
+- fusionner un chapitre dans un autre avec transfert du contenu, des pieces jointes et des informations a completer.
+
+Exemple metier mareyage : le chapitre `Ventilation` peut etre renomme en `Conditions climatiques des locaux` ou fusionne dans `Atelier refrigere` sans perdre les annexes ni les points a completer.
 
 ## Stockage
 

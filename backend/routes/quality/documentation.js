@@ -15,6 +15,7 @@ const {
   getOrCreateDefaultDocumentation,
   listDocumentation,
   listMissingItems,
+  mergeSections,
   updateMissingItem,
   updateSection,
 } = require('../../services/quality/qualityDocumentationService');
@@ -172,6 +173,22 @@ router.post('/sections/:sectionId/restore-version', requireQualityPermission(QUA
     res.json(section);
   } catch (err) {
     handleError(res, err, 'Erreur POST /api/quality/documentation/sections/:sectionId/restore-version');
+  }
+});
+
+router.post('/sections/:sectionId/merge-into/:targetSectionId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const section = await mergeSections(
+      req.dbPool,
+      req.user.store_id,
+      req.params.sectionId,
+      req.params.targetSectionId,
+      req.user.id,
+      req.body
+    );
+    res.json(section);
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/sections/:sectionId/merge-into/:targetSectionId');
   }
 });
 
