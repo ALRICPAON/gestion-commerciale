@@ -45,6 +45,7 @@
     review: $('review-section-btn'),
     validate: $('validate-section-btn'),
     markMissing: $('mark-missing-btn'),
+    textColor: $('text-color-select'),
     preview: $('preview-pdf-btn'),
     exportPdf: $('export-pdf-btn'),
     missing: $('missing-list'),
@@ -113,6 +114,16 @@
 
   function sectionLabel(section) {
     return `${section.code} - ${section.title}`;
+  }
+
+  function escapeHtml(value = '') {
+    return String(value).replace(/[&<>'"]/g, (char) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      "'": '&#39;',
+      '"': '&quot;',
+    }[char]));
   }
 
   function renderMetrics(dashboard = {}) {
@@ -188,11 +199,12 @@
   function renderEditor() {
     const section = currentSection();
     const disabled = !section || !canEdit;
-    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
+    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.textColor, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
       if (!el) return;
       if ('disabled' in el) el.disabled = disabled;
       if (el === els.editor) el.setAttribute('contenteditable', disabled ? 'false' : 'true');
     });
+    document.querySelectorAll('[data-text-color]').forEach((button) => { button.disabled = disabled; });
     if (!section) return;
     els.code.textContent = section.code;
     els.heading.textContent = section.title;
@@ -311,8 +323,23 @@
     setTimeout(() => URL.revokeObjectURL(url), 30000);
   }
 
+  function applyTextColor(color) {
+    if (!color || !canEdit) return;
+    els.editor.focus();
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand('foreColor', false, color);
+    state.dirty = true;
+  }
+
   document.querySelectorAll('[data-command]').forEach((button) => {
     button.addEventListener('click', () => document.execCommand(button.dataset.command, false, null));
+  });
+  document.querySelectorAll('[data-text-color]').forEach((button) => {
+    button.addEventListener('click', () => applyTextColor(button.dataset.textColor));
+  });
+  els.textColor.addEventListener('change', () => {
+    applyTextColor(els.textColor.value);
+    els.textColor.value = '';
   });
   [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment].forEach((el) => {
     el.addEventListener('input', () => { state.dirty = true; });
@@ -373,9 +400,16 @@
     }
   });
   els.markMissing.addEventListener('click', async () => {
-    const selection = window.getSelection().toString().trim() || window.prompt('Information a completer');
+    const selectedText = window.getSelection().toString().trim();
+    const selection = selectedText || window.prompt('Information a completer');
     if (!selection) return;
-    document.execCommand('insertHTML', false, `<span class="missing-info">${selection}</span>`);
+    if (selectedText) {
+      applyTextColor('#b42318');
+    } else {
+      els.editor.focus();
+      document.execCommand('insertHTML', false, `<span class="missing-info" style="color: #b42318; font-weight: 700;">${escapeHtml(selection)}</span>`);
+      state.dirty = true;
+    }
     await request('/missing-items', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
