@@ -276,9 +276,34 @@
 }
 
 .quality-doc-editor-toolbar {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.quality-color-picker {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.quality-color-picker .form-input {
+  min-width: 220px;
+}
+
+.quality-color-action {
+  border-left-width: 4px;
+}
+
+.quality-color-red {
+  border-left-color: #b42318;
+}
+
+.quality-color-black {
+  border-left-color: #000;
 }
 
 .quality-rich-editor {

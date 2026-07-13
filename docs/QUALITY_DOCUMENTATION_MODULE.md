@@ -69,6 +69,19 @@ Les roles `admin` et `responsable` restent privilegies via le mecanisme existant
 
 Le PDF est genere cote serveur par Puppeteer. L'apercu et l'export utilisent le meme template HTML.
 Le PDF inclut page de garde, historique de revisions, sommaire, informations a completer, corps documentaire, annexes listees, entetes/pieds de page CSS et pagination.
+Les couleurs appliquees dans l'editeur sont conservees dans le HTML du chapitre et restituees dans le PDF.
+
+## Editeur de contenu
+
+La barre d'outils propose une palette volontairement limitee pour conserver une presentation homogene :
+
+- noir, texte normal ;
+- rouge, information a completer ;
+- vert, information validee ;
+- bleu, information importante ;
+- orange, attention.
+
+Deux boutons rapides couvrent les usages principaux du dossier d'agrement : `A completer` applique le rouge au texte selectionne, et `Texte normal` remet la selection en noir.
 
 ## Arborescence documentaire
 

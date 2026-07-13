@@ -68,6 +68,18 @@
         <div class="quality-doc-editor-toolbar">
           <button class="btn btn-secondary" data-command="bold" type="button">B</button>
           <button class="btn btn-secondary" data-command="italic" type="button">I</button>
+          <button class="btn btn-secondary quality-color-action quality-color-red" data-text-color="#b42318" type="button">A completer</button>
+          <button class="btn btn-secondary quality-color-action quality-color-black" data-text-color="#000000" type="button">Texte normal</button>
+          <label class="quality-color-picker">Couleur du texte
+            <select id="text-color-select" class="form-input">
+              <option value="">Choisir</option>
+              <option value="#000000">Noir - texte normal</option>
+              <option value="#b42318">Rouge - information a completer</option>
+              <option value="#15803d">Vert - information validee</option>
+              <option value="#1d4ed8">Bleu - information importante</option>
+              <option value="#c2410c">Orange - attention</option>
+            </select>
+          </label>
           <button class="btn btn-secondary" data-command="insertUnorderedList" type="button">Liste</button>
           <button id="mark-missing-btn" class="btn btn-secondary" type="button">Marquer a completer</button>
         </div>
