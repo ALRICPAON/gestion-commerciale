@@ -187,3 +187,139 @@
   flex: 1;
   min-width: 10px;
 }
+
+.quality-documentation-page .quality-card {
+  border-radius: 8px;
+}
+
+.quality-doc-hero,
+.quality-doc-workbench,
+.quality-doc-dashboard {
+  display: grid;
+  gap: 16px;
+}
+
+.quality-doc-hero {
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.quality-doc-dashboard {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.quality-doc-dashboard .quality-card {
+  box-shadow: none;
+  padding: 14px;
+}
+
+.quality-doc-dashboard span {
+  color: var(--alta-muted);
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.quality-doc-dashboard strong {
+  color: var(--alta-navy);
+  font-size: 24px;
+}
+
+.quality-doc-workbench {
+  align-items: start;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(360px, 1.4fr) minmax(260px, 0.9fr);
+}
+
+.quality-doc-tree,
+.quality-doc-meta {
+  position: sticky;
+  top: 16px;
+}
+
+.quality-doc-section-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.quality-doc-tome {
+  display: grid;
+  gap: 5px;
+}
+
+.quality-doc-tome button {
+  background: #f7fafc;
+  border: 1px solid var(--alta-border);
+  border-radius: 6px;
+  color: var(--alta-navy);
+  cursor: pointer;
+  padding: 9px 10px;
+  text-align: left;
+}
+
+.quality-doc-tome button.chapter {
+  margin-left: 14px;
+}
+
+.quality-doc-tome button.active,
+.quality-doc-mini.active {
+  border-color: var(--alta-ocean);
+  background: #e4f6f6;
+}
+
+.quality-doc-editor {
+  display: grid;
+  gap: 12px;
+}
+
+.quality-doc-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quality-rich-editor {
+  background: #fff;
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  min-height: 420px;
+  overflow: auto;
+  padding: 16px;
+}
+
+.missing-info {
+  color: #b42318;
+  font-weight: 700;
+}
+
+.quality-doc-missing-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.quality-doc-mini {
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.quality-doc-mini p {
+  color: #b42318;
+  margin: 6px 0;
+}
+
+@media (max-width: 1100px) {
+  .quality-doc-workbench,
+  .quality-doc-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .quality-doc-tree,
+  .quality-doc-meta {
+    position: static;
+  }
+}

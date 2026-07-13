@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Documentation Qualite - ALTA MAREE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=3" />
+</head>
+<body class="app-page quality-documentation-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">ALTA MAREE</h1>
+      <p class="app-subtitle">Documentation Qualite</p>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualite</button>
+      <button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button>
+    </div>
+  </header>
+
+  <main class="main-content quality-doc-layout">
+    <section class="welcome-card quality-doc-hero">
+      <div>
+        <span class="section-kicker">Manuel qualite</span>
+        <h2 id="documentation-title">Documentation Qualite</h2>
+        <p>Le pourcentage indique l'etat de completude documentaire. Il ne constitue pas une validation reglementaire.</p>
+      </div>
+      <div class="quality-actions">
+        <button id="preview-pdf-btn" class="btn btn-secondary" type="button">Apercu PDF</button>
+        <button id="export-pdf-btn" class="btn btn-primary" type="button">Exporter PDF</button>
+      </div>
+    </section>
+
+    <section class="quality-doc-dashboard" aria-label="Tableau de bord">
+      <article class="quality-card"><span>Tomes</span><strong id="metric-tomes">-</strong></article>
+      <article class="quality-card"><span>Chapitres</span><strong id="metric-chapters">-</strong></article>
+      <article class="quality-card"><span>Valides</span><strong id="metric-validated">-</strong></article>
+      <article class="quality-card"><span>A completer</span><strong id="metric-missing">-</strong></article>
+      <article class="quality-card"><span>Pieces jointes</span><strong id="metric-attachments">-</strong></article>
+      <article class="quality-card"><span>Completude</span><strong id="metric-completion">-</strong></article>
+    </section>
+
+    <div id="documentation-feedback" class="page-feedback hidden"></div>
+
+    <section class="quality-doc-workbench">
+      <aside class="quality-card quality-doc-tree">
+        <div class="quality-section-header">
+          <div>
+            <h3>Arborescence</h3>
+            <p class="quality-muted">Tomes, chapitres et sous-chapitres.</p>
+          </div>
+          <button id="add-section-btn" class="btn btn-secondary" type="button">Ajouter</button>
+        </div>
+        <input id="doc-search" class="form-input" placeholder="Rechercher titre, code, contenu">
+        <div id="section-tree" class="quality-doc-section-list"></div>
+      </aside>
+
+      <section class="quality-card quality-doc-editor">
+        <div class="quality-section-header">
+          <div>
+            <span id="section-code" class="quality-badge">-</span>
+            <h3 id="section-title-heading">Selectionne un chapitre</h3>
+          </div>
+          <span id="section-status-badge" class="quality-badge">-</span>
+        </div>
+        <label>Titre <input id="section-title" class="form-input"></label>
+        <div class="quality-doc-editor-toolbar">
+          <button class="btn btn-secondary" data-command="bold" type="button">B</button>
+          <button class="btn btn-secondary" data-command="italic" type="button">I</button>
+          <button class="btn btn-secondary" data-command="insertUnorderedList" type="button">Liste</button>
+          <button id="mark-missing-btn" class="btn btn-secondary" type="button">Marquer a completer</button>
+        </div>
+        <div id="section-editor" class="quality-rich-editor" contenteditable="true"></div>
+        <div class="quality-actions">
+          <button id="save-section-btn" class="btn btn-primary" type="button">Enregistrer</button>
+          <button id="save-next-btn" class="btn btn-secondary" type="button">Enregistrer et suivant</button>
+          <button id="review-section-btn" class="btn btn-secondary" type="button">Envoyer en relecture</button>
+          <button id="validate-section-btn" class="btn btn-secondary" type="button">Valider</button>
+        </div>
+      </section>
+
+      <aside class="quality-card quality-doc-meta">
+        <h3>Metadonnees</h3>
+        <label>Statut
+          <select id="section-status" class="form-input">
+            <option value="draft">Brouillon</option>
+            <option value="to_complete">A completer</option>
+            <option value="ready_for_review">Pret pour relecture</option>
+            <option value="validated">Valide</option>
+            <option value="archived">Archive</option>
+          </select>
+        </label>
+        <label>Version <input id="section-version" class="form-input"></label>
+        <label>Date de revision <input id="section-revision" class="form-input" type="date"></label>
+        <label><input id="section-include-export" type="checkbox"> Affiche dans le PDF</label>
+        <label>References reglementaires <textarea id="section-references" class="form-input"></textarea></label>
+        <label>Commentaire interne <textarea id="section-comment" class="form-input"></textarea></label>
+
+        <section>
+          <h3>Informations a completer</h3>
+          <div class="quality-actions">
+            <button class="btn btn-secondary" data-missing-filter="all" type="button">Toutes</button>
+            <button class="btn btn-secondary" data-missing-filter="blocking" type="button">Bloquantes</button>
+            <button class="btn btn-secondary" data-missing-filter="before_submission" type="button">Avant depot</button>
+            <button class="btn btn-secondary" data-missing-filter="overdue" type="button">En retard</button>
+          </div>
+          <div id="missing-list" class="quality-doc-missing-list"></div>
+        </section>
+
+        <section>
+          <h3>Pieces jointes</h3>
+          <form id="attachment-form" enctype="multipart/form-data">
+            <input id="attachment-file" class="form-input" type="file">
+            <label><input id="attachment-include" type="checkbox" checked> Inclure dans le PDF</label>
+            <button class="btn btn-secondary" type="submit">Joindre</button>
+          </form>
+          <div id="attachment-list" class="quality-doc-missing-list"></div>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script src="../../js/config.js"></script>
+  <script src="../js/permissions.js?v=3"></script>
+  <script src="../js/documentation.js?v=1"></script>
+</body>
+</html>
