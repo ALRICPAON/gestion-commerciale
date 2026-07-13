@@ -92,10 +92,27 @@
           </select>
         </label>
         <label>Version <input id="section-version" class="form-input"></label>
+        <label>Ranger dans
+          <select id="section-parent" class="form-input"></select>
+        </label>
+        <label>Ordre <input id="section-order" class="form-input" type="number" step="1"></label>
         <label>Date de revision <input id="section-revision" class="form-input" type="date"></label>
         <label><input id="section-include-export" type="checkbox"> Affiche dans le PDF</label>
         <label>References reglementaires <textarea id="section-references" class="form-input"></textarea></label>
         <label>Commentaire interne <textarea id="section-comment" class="form-input"></textarea></label>
+        <div class="quality-actions">
+          <button id="move-up-btn" class="btn btn-secondary" type="button">Monter</button>
+          <button id="move-down-btn" class="btn btn-secondary" type="button">Descendre</button>
+          <button id="delete-section-btn" class="btn btn-secondary" type="button">Supprimer</button>
+        </div>
+
+        <section>
+          <h3>Fusionner</h3>
+          <label>Fusionner ce chapitre dans
+            <select id="merge-target" class="form-input"></select>
+          </label>
+          <button id="merge-section-btn" class="btn btn-secondary" type="button">Fusionner et archiver celui-ci</button>
+        </section>
 
         <section>
           <h3>Informations a completer</h3>

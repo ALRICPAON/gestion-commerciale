@@ -29,10 +29,17 @@
     editor: $('section-editor'),
     status: $('section-status'),
     version: $('section-version'),
+    parent: $('section-parent'),
+    order: $('section-order'),
     revision: $('section-revision'),
     includeExport: $('section-include-export'),
     references: $('section-references'),
     comment: $('section-comment'),
+    moveUp: $('move-up-btn'),
+    moveDown: $('move-down-btn'),
+    deleteSection: $('delete-section-btn'),
+    mergeTarget: $('merge-target'),
+    mergeSection: $('merge-section-btn'),
     save: $('save-section-btn'),
     saveNext: $('save-next-btn'),
     review: $('review-section-btn'),
@@ -88,6 +95,26 @@
     return state.sections.filter((section) => section.parent_id === parentId && !section.archived_at);
   }
 
+  function activeSections() {
+    return state.sections.filter((section) => !section.archived_at);
+  }
+
+  function descendantsOf(sectionId) {
+    const descendants = new Set();
+    const visit = (parentId) => {
+      childrenOf(parentId).forEach((child) => {
+        descendants.add(child.id);
+        visit(child.id);
+      });
+    };
+    visit(sectionId);
+    return descendants;
+  }
+
+  function sectionLabel(section) {
+    return `${section.code} - ${section.title}`;
+  }
+
   function renderMetrics(dashboard = {}) {
     $('metric-tomes').textContent = dashboard.tome_count ?? '-';
     $('metric-chapters').textContent = dashboard.chapter_count ?? '-';
@@ -139,10 +166,29 @@
     </article>`).join('') || '<p class="quality-muted">Aucune piece jointe.</p>';
   }
 
+  function renderStructureControls(section) {
+    const descendants = descendantsOf(section.id);
+    const parentOptions = activeSections()
+      .filter((item) => item.id !== section.id && !descendants.has(item.id))
+      .map((item) => `<option value="${item.id}">${sectionLabel(item)}</option>`)
+      .join('');
+    els.parent.innerHTML = `<option value="">Aucun parent / Tome racine</option>${parentOptions}`;
+    els.parent.value = section.parent_id || '';
+    els.parent.disabled = !canEdit;
+
+    const mergeOptions = activeSections()
+      .filter((item) => item.id !== section.id && item.collection_id === section.collection_id)
+      .map((item) => `<option value="${item.id}">${sectionLabel(item)}</option>`)
+      .join('');
+    els.mergeTarget.innerHTML = mergeOptions || '<option value="">Aucun chapitre cible</option>';
+    els.mergeTarget.disabled = !canEdit || !mergeOptions;
+    els.mergeSection.disabled = !canEdit || !mergeOptions;
+  }
+
   function renderEditor() {
     const section = currentSection();
     const disabled = !section || !canEdit;
-    [els.titleInput, els.editor, els.status, els.version, els.revision, els.includeExport, els.references, els.comment, els.save, els.saveNext, els.review, els.validate, els.markMissing].forEach((el) => {
+    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
       if (!el) return;
       if ('disabled' in el) el.disabled = disabled;
       if (el === els.editor) el.setAttribute('contenteditable', disabled ? 'false' : 'true');
@@ -155,10 +201,12 @@
     els.editor.innerHTML = section.content_html || '';
     els.status.value = section.status || 'draft';
     els.version.value = section.version || '1.0';
+    els.order.value = Number.isFinite(Number(section.display_order)) ? Number(section.display_order) : 0;
     els.revision.value = section.revision_due_at ? section.revision_due_at.slice(0, 10) : '';
     els.includeExport.checked = section.include_in_export !== false;
     els.references.value = section.regulatory_references || '';
     els.comment.value = section.comment_internal || '';
+    renderStructureControls(section);
     state.dirty = false;
     renderMissing();
     renderAttachments();
@@ -185,6 +233,8 @@
       content_html: els.editor.innerHTML,
       status: els.status.value,
       version: els.version.value,
+      parent_id: els.parent.value || null,
+      display_order: Number(els.order.value || 0),
       revision_due_at: els.revision.value || null,
       include_in_export: els.includeExport.checked,
       regulatory_references: els.references.value,
@@ -203,6 +253,29 @@
     });
     await load(updated.id);
     return updated;
+  }
+
+  async function updateSectionOnly(sectionId, body) {
+    return request(`/sections/${sectionId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  async function moveCurrent(direction) {
+    const section = currentSection();
+    if (!section || !canEdit) return;
+    const siblings = activeSections()
+      .filter((item) => item.parent_id === section.parent_id && item.section_type === section.section_type)
+      .sort((a, b) => Number(a.display_order || 0) - Number(b.display_order || 0));
+    const index = siblings.findIndex((item) => item.id === section.id);
+    const sibling = siblings[index + direction];
+    if (!sibling) return;
+    const currentOrder = section.display_order;
+    await save({ display_order: sibling.display_order, change_summary: direction < 0 ? 'Deplacement du chapitre vers le haut' : 'Deplacement du chapitre vers le bas' });
+    await updateSectionOnly(sibling.id, { display_order: currentOrder, change_summary: 'Reordonnancement documentaire' });
+    await load(section.id);
   }
 
   async function openPdf(path, download = false) {
@@ -241,7 +314,7 @@
   document.querySelectorAll('[data-command]').forEach((button) => {
     button.addEventListener('click', () => document.execCommand(button.dataset.command, false, null));
   });
-  [els.titleInput, els.editor, els.status, els.version, els.revision, els.includeExport, els.references, els.comment].forEach((el) => {
+  [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment].forEach((el) => {
     el.addEventListener('input', () => { state.dirty = true; });
     el.addEventListener('change', () => { state.dirty = true; });
   });
@@ -269,6 +342,36 @@
   });
   els.review.addEventListener('click', () => save({ status: 'ready_for_review', change_summary: 'Envoi en relecture' }).catch((error) => setFeedback(error.message, 'error')));
   els.validate.addEventListener('click', () => save({ status: 'validated', change_summary: 'Validation documentaire' }).catch((error) => setFeedback(error.message, 'error')));
+  els.moveUp.addEventListener('click', () => moveCurrent(-1).catch((error) => setFeedback(error.message, 'error')));
+  els.moveDown.addEventListener('click', () => moveCurrent(1).catch((error) => setFeedback(error.message, 'error')));
+  els.deleteSection.addEventListener('click', async () => {
+    const section = currentSection();
+    if (!section || !canEdit || !window.confirm(`Supprimer le chapitre "${section.title}" ? Il sera archive et masque de l'export.`)) return;
+    try {
+      await request(`/sections/${section.id}`, { method: 'DELETE' });
+      const next = activeSections().find((item) => item.id !== section.id)?.id || null;
+      await load(next);
+    } catch (error) {
+      setFeedback(error.message, 'error');
+    }
+  });
+  els.mergeSection.addEventListener('click', async () => {
+    const section = currentSection();
+    const targetId = els.mergeTarget.value;
+    if (!section || !targetId || !canEdit) return;
+    const target = state.sections.find((item) => item.id === targetId);
+    if (!target || !window.confirm(`Fusionner "${section.title}" dans "${target.title}" ? Le chapitre source sera archive.`)) return;
+    try {
+      const merged = await request(`/sections/${section.id}/merge-into/${targetId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Fusion depuis l interface documentaire' }),
+      });
+      await load(merged.id);
+    } catch (error) {
+      setFeedback(error.message, 'error');
+    }
+  });
   els.markMissing.addEventListener('click', async () => {
     const selection = window.getSelection().toString().trim() || window.prompt('Information a completer');
     if (!selection) return;

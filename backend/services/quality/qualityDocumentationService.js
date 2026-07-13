@@ -39,6 +39,14 @@ function sectionPayload(body = {}) {
   };
 }
 
+async function getSection(db, storeId, sectionId) {
+  const result = await db.query(
+    'SELECT * FROM quality_documentation_sections WHERE id = $1 AND store_id = $2 LIMIT 1',
+    [sectionId, storeId]
+  );
+  return result.rows[0] || null;
+}
+
 async function getOrCreateDefaultDocumentation(db, storeId, userId) {
   const collection = await initializeDefaultDocumentation(db, storeId, userId);
   return getDocumentation(db, storeId, collection.id);
@@ -137,10 +145,31 @@ async function createSection(db, storeId, collectionId, userId, body) {
 }
 
 async function updateSection(db, storeId, sectionId, userId, body) {
-  const beforeResult = await db.query('SELECT * FROM quality_documentation_sections WHERE id = $1 AND store_id = $2 LIMIT 1', [sectionId, storeId]);
-  const before = beforeResult.rows[0];
+  const before = await getSection(db, storeId, sectionId);
   if (!before) return null;
   const payload = sectionPayload({ ...before, ...body });
+  if (payload.parent_id === sectionId) {
+    const err = new Error('Un chapitre ne peut pas etre son propre parent');
+    err.status = 400;
+    throw err;
+  }
+  if (payload.parent_id) {
+    const parent = await getSection(db, storeId, payload.parent_id);
+    if (!parent || parent.collection_id !== before.collection_id || parent.archived_at) {
+      const err = new Error('Parent documentaire invalide');
+      err.status = 400;
+      throw err;
+    }
+    let cursor = parent;
+    while (cursor?.parent_id) {
+      if (cursor.parent_id === sectionId) {
+        const err = new Error('Impossible de deplacer un chapitre dans un de ses sous-chapitres');
+        err.status = 400;
+        throw err;
+      }
+      cursor = await getSection(db, storeId, cursor.parent_id);
+    }
+  }
   const validatedAt = payload.status === 'validated' && !before.validated_at ? new Date().toISOString() : payload.validated_at;
   const result = await db.query(
     `UPDATE quality_documentation_sections
@@ -174,6 +203,90 @@ async function updateSection(db, storeId, sectionId, userId, body) {
 
 async function deleteSection(db, storeId, sectionId, userId) {
   return updateSection(db, storeId, sectionId, userId, { status: 'archived', change_summary: 'Archivage du chapitre' });
+}
+
+async function mergeSections(db, storeId, sourceSectionId, targetSectionId, userId, body = {}) {
+  if (sourceSectionId === targetSectionId) {
+    const err = new Error('Selectionne deux chapitres differents pour fusionner');
+    err.status = 400;
+    throw err;
+  }
+
+  const source = await getSection(db, storeId, sourceSectionId);
+  const target = await getSection(db, storeId, targetSectionId);
+  if (!source || !target || source.collection_id !== target.collection_id) {
+    const err = new Error('Chapitres a fusionner introuvables');
+    err.status = 404;
+    throw err;
+  }
+  if (source.archived_at || target.archived_at) {
+    const err = new Error('Impossible de fusionner un chapitre archive');
+    err.status = 400;
+    throw err;
+  }
+
+  const separatorTitle = cleanText(body.separator_title, source.title);
+  const mergedHtml = [
+    target.content_html || '',
+    '<hr>',
+    `<h3>Fusion depuis ${separatorTitle.replace(/[&<>'"]/g, '')}</h3>`,
+    source.content_html || '',
+  ].join('\n');
+  const mergedText = stripHtml(mergedHtml);
+  const mergedReferences = [target.regulatory_references, source.regulatory_references]
+    .filter(Boolean)
+    .join('\n');
+  const mergedComment = [
+    target.comment_internal,
+    `Fusion du chapitre ${source.code} - ${source.title}${body.reason ? ` : ${body.reason}` : ''}`,
+    source.comment_internal,
+  ].filter(Boolean).join('\n');
+
+  const updatedTarget = await db.query(
+    `UPDATE quality_documentation_sections
+     SET content_html = $3,
+         content_text = $4,
+         regulatory_references = NULLIF($5, ''),
+         comment_internal = NULLIF($6, ''),
+         updated_by = $7,
+         updated_at = now()
+     WHERE id = $1 AND store_id = $2
+     RETURNING *`,
+    [targetSectionId, storeId, mergedHtml, mergedText, mergedReferences, mergedComment, userId]
+  );
+
+  await db.query(
+    'UPDATE quality_documentation_missing_items SET section_id = $3, updated_at = now() WHERE section_id = $1 AND store_id = $2',
+    [sourceSectionId, storeId, targetSectionId]
+  );
+  await db.query(
+    'UPDATE quality_documentation_attachments SET section_id = $3 WHERE section_id = $1 AND store_id = $2',
+    [sourceSectionId, storeId, targetSectionId]
+  );
+  await db.query(
+    `UPDATE quality_documentation_sections
+     SET status = 'archived',
+         include_in_export = false,
+         archived_at = COALESCE(archived_at, now()),
+         updated_by = $3,
+         updated_at = now()
+     WHERE id = $1 AND store_id = $2`,
+    [sourceSectionId, storeId, userId]
+  );
+
+  await recordSectionVersion(db, storeId, updatedTarget.rows[0], userId, `Fusion du chapitre ${source.code} - ${source.title}`, 'merge', target);
+  await logQualityEvent({
+    dbPool: db,
+    storeId,
+    actorId: userId,
+    eventType: 'quality.documentation.section.merged',
+    targetType: 'quality_documentation_section',
+    targetId: targetSectionId,
+    before: { source, target },
+    after: updatedTarget.rows[0],
+  });
+
+  return updatedTarget.rows[0];
 }
 
 async function listMissingItems(db, storeId, query = {}) {
@@ -237,6 +350,7 @@ module.exports = {
   deleteSection,
   getDocumentation,
   getOrCreateDefaultDocumentation,
+  mergeSections,
   listDocumentation,
   listMissingItems,
   sanitizeHtml,
