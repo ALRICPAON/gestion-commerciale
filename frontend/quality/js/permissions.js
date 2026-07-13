@@ -8,6 +8,12 @@
     AUDIT_MANAGE: 'quality.audit.manage',
     CRISIS_MANAGE: 'quality.crisis.manage',
     DOCUMENT_MANAGE: 'quality.document.manage',
+    DOCUMENTATION_READ: 'quality.document.read',
+    DOCUMENTATION_CREATE: 'quality.document.create',
+    DOCUMENTATION_EDIT: 'quality.document.edit',
+    DOCUMENTATION_DELETE: 'quality.document.delete',
+    DOCUMENTATION_EXPORT: 'quality.document.export',
+    DOCUMENTATION_ADMIN: 'quality.document.admin',
     INSPECTION_EXPORT: 'quality.inspection.export',
     AI_USE: 'quality.ai.use',
     ADMIN: 'quality.admin',
@@ -22,6 +28,7 @@
     if (!user || !permission) return false;
     if (QUALITY_PRIVILEGED_ROLES.includes(user.role)) return true;
     const permissions = getQualityPermissions(user);
+    if (permission.startsWith('quality.document.') && permissions.includes(QUALITY_PERMISSIONS.DOCUMENTATION_ADMIN)) return true;
     return permissions.includes(permission) || permissions.includes(QUALITY_PERMISSIONS.ADMIN);
   }
 

@@ -7,7 +7,7 @@
   }
 
   const canReadQuality = window.hasQualityPermission
-    ? window.hasQualityPermission(sessionUser, 'quality.read')
+    ? window.hasQualityPermission(sessionUser, 'quality.read') || window.hasQualityPermission(sessionUser, 'quality.document.read')
     : sessionUser.role === 'admin' || sessionUser.role === 'responsable';
 
   if (!canReadQuality) {
@@ -27,6 +27,11 @@
         <span class="module-icon" aria-hidden="true">QMS</span>
         <h3>Qualité</h3>
         <p>Module en cours de construction.</p>
+      </a>
+      <a class="module-card" href="./quality/pages/documentation.html" data-module="quality-documentation">
+        <span class="module-icon" aria-hidden="true">DOC</span>
+        <h3>Documentation QualitÃ©</h3>
+        <p>Dossier d'agrÃ©ment, PMS, HACCP, procÃ©dures, annexes et export PDF.</p>
       </a>
     </div>
   `;
