@@ -73,6 +73,18 @@
     diagramNodeList: $('diagram-node-list'),
     diagramEdgeList: $('diagram-edge-list'),
     diagramAddEdge: $('diagram-add-edge-btn'),
+    diagramVisualTab: $('diagram-visual-tab'),
+    diagramMermaidTab: $('diagram-mermaid-tab'),
+    diagramVisualPanel: $('diagram-visual-panel'),
+    diagramMermaidPanel: $('diagram-mermaid-panel'),
+    mermaidTitle: $('mermaid-title'),
+    mermaidTemplate: $('mermaid-template'),
+    mermaidLoadTemplate: $('mermaid-load-template-btn'),
+    mermaidFormat: $('mermaid-format-btn'),
+    mermaidPreviewBtn: $('mermaid-preview-btn'),
+    mermaidSource: $('mermaid-source'),
+    mermaidPreview: $('mermaid-preview'),
+    mermaidError: $('mermaid-error'),
   };
 
   const DIAGRAM_NODE_TYPES = [
@@ -104,7 +116,26 @@
   };
 
   let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], currentId: null, dirty: false, filter: 'all' };
-  let diagramState = { id: null, data: null, history: [], future: [], zoom: 100 };
+  let diagramState = { id: null, data: null, history: [], future: [], zoom: 100, mode: 'structured', mermaidSvg: '' };
+
+  if (window.mermaid) {
+    window.mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      htmlLabels: false,
+      flowchart: { htmlLabels: false, useMaxWidth: true },
+      theme: 'base',
+      themeVariables: {
+        fontFamily: 'Arial, sans-serif',
+        primaryTextColor: '#111827',
+        lineColor: '#334155',
+        primaryBorderColor: '#1f2937',
+        primaryColor: '#ffffff',
+        secondaryColor: '#f8fafc',
+        tertiaryColor: '#fef2f2',
+      },
+    });
+  }
 
   function setFeedback(message = '', type = '') {
     els.feedback.textContent = message;
@@ -223,6 +254,119 @@
     return cloneDiagram(templates[key] || templates.blank);
   }
 
+  function mermaidTemplateData(key = 'seafood_fabrication') {
+    const templates = {
+      seafood_fabrication: {
+        title: 'Diagramme de fabrication - Produits de la peche prepares',
+        source: `flowchart TD
+    A([Début]) --> B[Réception des poissons]
+    B --> C[Contrôle à réception]
+    C --> D{Lot conforme ?}
+
+    D -- Oui --> E[Stockage en chambre froide ou préparation immédiate]
+    D -- Non --> NC1[Isolement du lot]
+    NC1 --> NC2[Création d'une non-conformité dans ALTA]
+    NC2 --> NC3[Photographies et information de la criée]
+    NC3 --> NC4[Décision : retour, avoir, destruction ou déclassement]
+
+    E --> F[Préparation]
+    F --> G[Découpe]
+    G --> H[Filetage]
+    H --> I[Parage]
+    I --> J[Pelage si nécessaire]
+    J --> K[Conditionnement]
+    K --> L[Mise sous glace]
+    L --> M[Filmage]
+    M --> N[Étiquetage]
+    N --> O[Préparation de la commande]
+    O --> P[Contrôle final]
+    P --> Q{Commande conforme ?}
+
+    Q -- Oui --> R[Chargement en véhicule frigorifique]
+    Q -- Non --> NC5[Isolement et correction de la commande]
+    NC5 --> P
+
+    R --> S[Expédition]
+    S --> T([Fin])`,
+      },
+      live_shellfish: {
+        title: 'Crustaces vivants',
+        source: `flowchart TD
+    A([Debut]) --> B[Reception des crustaces vivants]
+    B --> C[Controle vitalite et temperature]
+    C --> D{Lot conforme ?}
+    D -- Oui --> E[Stockage en vivier ou zone adaptee]
+    D -- Non --> NC1[Isolement du lot]
+    NC1 --> NC2[Non-conformite fournisseur]
+    E --> F[Preparation de commande]
+    F --> G[Controle final]
+    G --> H[Expedition]
+    H --> I([Fin])`,
+      },
+      trading_with_transit: {
+        title: 'Negoce avec transit',
+        source: `flowchart TD
+    A([Debut]) --> B[Reception produit]
+    B --> C[Controle documentaire et temperature]
+    C --> D{Conforme ?}
+    D -- Oui --> E[Transit en chambre froide]
+    D -- Non --> NC1[Isolement et non-conformite]
+    E --> F[Preparation expedition]
+    F --> G[Chargement]
+    G --> H[Livraison client]
+    H --> I([Fin])`,
+      },
+      trading_without_transit: {
+        title: 'Negoce sans transit',
+        source: `flowchart TD
+    A([Debut]) --> B[Commande fournisseur]
+    B --> C[Controle documents et tracabilite]
+    C --> D[Expedition directe fournisseur vers client]
+    D --> E[Controle reception client]
+    E --> F{Anomalie ?}
+    F -- Non --> G([Fin])
+    F -- Oui --> NC1[Ouverture non-conformite]`,
+      },
+      non_conformity: {
+        title: 'Non-conformite',
+        source: `flowchart TD
+    A([Debut]) --> B[Detection anomalie]
+    B --> C[Isolement du produit]
+    C --> D[Enregistrement dans ALTA]
+    D --> E{Decision ?}
+    E -- Retour --> F[Retour fournisseur]
+    E -- Avoir --> G[Demande avoir]
+    E -- Destruction --> H[Destruction maitrisee]
+    F --> I([Fin])
+    G --> I
+    H --> I`,
+      },
+      recall: {
+        title: 'Retrait / rappel',
+        source: `flowchart TD
+    A([Debut]) --> B[Alerte sanitaire ou interne]
+    B --> C[Identification du lot]
+    C --> D[Blocage du stock]
+    D --> E[Identification des clients]
+    E --> F[Information autorites et clients]
+    F --> G[Retrait ou rappel]
+    G --> H[Bilan et action corrective]
+    H --> I([Fin])`,
+      },
+      simple_process: {
+        title: 'Processus simple',
+        source: `flowchart TD
+    A([Debut]) --> B[Etape]
+    B --> C[Controle]
+    C --> D{Conforme ?}
+    D -- Oui --> E([Fin])
+    D -- Non --> F[Action corrective]
+    F --> B`,
+      },
+    };
+    return cloneDiagram(templates[key] || templates.seafood_fabrication);
+  }
+
   function diagramLayout(data) {
     const horizontal = data.orientation === 'horizontal';
     const nodeWidth = 190;
@@ -316,6 +460,68 @@
     </svg>`;
   }
 
+  function sanitizeMermaidSource(source) {
+    const text = String(source || '').replace(/\r\n/g, '\n').trim();
+    if (!text) throw new Error('Le code Mermaid est obligatoire.');
+    if (!/^flowchart\s+(TD|TB|BT|LR|RL)\b/i.test(text)) throw new Error('Seuls les diagrammes Mermaid flowchart sont autorises.');
+    if (/<[^>]+>/i.test(text) || /\bclick\b/i.test(text) || /\bhref\b/i.test(text) || /javascript\s*:/i.test(text) || /https?:\/\//i.test(text)) {
+      throw new Error('Le code Mermaid contient une instruction non autorisee.');
+    }
+    return text;
+  }
+
+  function sanitizeMermaidSvg(svg) {
+    const text = String(svg || '').trim();
+    if (!/^<svg[\s>]/i.test(text)) throw new Error('Mermaid n a pas produit de SVG.');
+    if (/<script[\s>]/i.test(text) || /<foreignObject[\s>]/i.test(text) || /\son[a-z]+\s*=/i.test(text) || /\b(?:href|xlink:href|src)\s*=\s*["']?\s*(?:javascript|data)\s*:/i.test(text)) {
+      throw new Error('Le SVG Mermaid contient un contenu non autorise.');
+    }
+    return text;
+  }
+
+  function formatMermaidSource(source) {
+    return String(source || '')
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return '';
+        return index === 0 || /^flowchart\b/i.test(trimmed) ? trimmed : `    ${trimmed}`;
+      })
+      .join('\n')
+      .trim();
+  }
+
+  function mermaidErrorMessage(error) {
+    const message = String(error?.str || error?.message || error || 'Erreur Mermaid');
+    const hashLine = error?.hash?.loc?.first_line;
+    const match = message.match(/line\s+(\d+)/i);
+    const line = hashLine || match?.[1];
+    return line ? `Erreur Mermaid ligne ${line} : ${message}` : `Erreur Mermaid : ${message}`;
+  }
+
+  async function previewMermaid() {
+    if (!window.mermaid) throw new Error('La bibliotheque Mermaid locale est indisponible.');
+    const source = sanitizeMermaidSource(els.mermaidSource.value);
+    els.mermaidError.classList.add('hidden');
+    els.mermaidError.textContent = '';
+    try {
+      if (window.mermaid.parse) await window.mermaid.parse(source);
+      const id = `quality-mermaid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const rendered = await window.mermaid.render(id, source);
+      const svg = sanitizeMermaidSvg(rendered.svg || rendered);
+      els.mermaidPreview.innerHTML = svg;
+      diagramState.mermaidSvg = svg;
+      return svg;
+    } catch (error) {
+      diagramState.mermaidSvg = '';
+      els.mermaidPreview.innerHTML = '';
+      els.mermaidError.textContent = mermaidErrorMessage(error);
+      els.mermaidError.classList.remove('hidden');
+      throw error;
+    }
+  }
+
   function renderMetrics(dashboard = {}) {
     $('metric-tomes').textContent = dashboard.tome_count ?? '-';
     $('metric-chapters').textContent = dashboard.chapter_count ?? '-';
@@ -400,7 +606,18 @@
   function renderDiagramEditor() {
     const data = diagramState.data;
     if (!data) return;
+    const isMermaid = diagramState.mode === 'mermaid';
+    els.diagramVisualTab.classList.toggle('active', !isMermaid);
+    els.diagramMermaidTab.classList.toggle('active', isMermaid);
+    els.diagramVisualPanel.classList.toggle('hidden', isMermaid);
+    els.diagramMermaidPanel.classList.toggle('hidden', !isMermaid);
     els.diagramTitle.value = data.title || '';
+    els.mermaidTitle.value = data.title || '';
+    if (isMermaid) {
+      els.mermaidSource.value = data.source || '';
+      els.mermaidPreview.innerHTML = diagramState.mermaidSvg || data.rendered_svg || '';
+      return;
+    }
     els.diagramOrientation.value = data.orientation || 'vertical';
     els.diagramZoom.value = String(diagramState.zoom);
     els.diagramPreview.innerHTML = renderDiagramSvg(data);
@@ -431,16 +648,20 @@
 
   function openDiagramModal(diagram = null) {
     const baseData = diagram?.diagram_data || templateData(els.diagramTemplate.value || 'blank');
+    const mode = baseData.editor_mode === 'mermaid' ? 'mermaid' : 'structured';
     diagramState = {
       id: diagram?.id || null,
       data: cloneDiagram(baseData),
       history: [],
       future: [],
       zoom: 100,
+      mode,
+      mermaidSvg: baseData.rendered_svg || '',
     };
     els.diagramDelete.classList.toggle('hidden', !diagramState.id);
     els.diagramModal.classList.remove('hidden');
     renderDiagramEditor();
+    if (mode === 'mermaid' && !diagramState.mermaidSvg) previewMermaid().catch(() => {});
   }
 
   function closeDiagramModal() {
@@ -455,17 +676,47 @@
     });
   }
 
+  function switchDiagramMode(mode) {
+    if (!diagramState.data || diagramState.mode === mode) return;
+    if (diagramState.id && !window.confirm('Changer de mode remplace le contenu editable du diagramme. Continuer ?')) return;
+    diagramState.mode = mode;
+    if (mode === 'mermaid') {
+      const template = mermaidTemplateData(els.mermaidTemplate.value || 'seafood_fabrication');
+      diagramState.data = { editor_mode: 'mermaid', title: template.title, source: template.source, rendered_svg: '', schema_version: 1 };
+      diagramState.mermaidSvg = '';
+      renderDiagramEditor();
+      previewMermaid().catch(() => {});
+      return;
+    }
+    diagramState.data = templateData(els.diagramTemplate.value || 'blank');
+    diagramState.mermaidSvg = '';
+    renderDiagramEditor();
+  }
+
   async function saveDiagram() {
     const section = currentSection();
     if (!section || !diagramState.data) return;
-    diagramState.data.title = els.diagramTitle.value || 'Diagramme qualite';
-    diagramState.data.orientation = els.diagramOrientation.value || 'vertical';
+    if (diagramState.mode === 'mermaid') {
+      const source = sanitizeMermaidSource(els.mermaidSource.value);
+      const svg = diagramState.mermaidSvg || await previewMermaid();
+      diagramState.data = {
+        editor_mode: 'mermaid',
+        schema_version: 1,
+        title: els.mermaidTitle.value || 'Diagramme Mermaid',
+        source,
+        rendered_svg: svg,
+      };
+    } else {
+      diagramState.data.title = els.diagramTitle.value || 'Diagramme qualite';
+      diagramState.data.orientation = els.diagramOrientation.value || 'vertical';
+      diagramState.data.editor_mode = 'structured';
+    }
     const path = diagramState.id ? `/diagrams/${diagramState.id}` : `/sections/${section.id}/diagrams`;
     const method = diagramState.id ? 'PUT' : 'POST';
     const saved = await request(path, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ diagram_data: diagramState.data }),
+      body: JSON.stringify({ diagram_data: diagramState.data, editor_mode: diagramState.mode, confirm_mode_change: true }),
     });
     await load(section.id);
     closeDiagramModal();
@@ -646,6 +897,8 @@
   });
   els.diagramClose.addEventListener('click', closeDiagramModal);
   els.diagramCancel.addEventListener('click', closeDiagramModal);
+  els.diagramVisualTab.addEventListener('click', () => switchDiagramMode('structured'));
+  els.diagramMermaidTab.addEventListener('click', () => switchDiagramMode('mermaid'));
   els.diagramTemplate.addEventListener('change', () => {
     if (diagramState.id || !diagramState.data) return;
     diagramState.data = templateData(els.diagramTemplate.value);
@@ -691,6 +944,27 @@
     if (data.nodes.length < 2) return;
     data.edges.push({ id: `edge-${Date.now()}`, from: data.nodes[0].id, to: data.nodes[1].id, label: '' });
   }));
+  els.mermaidLoadTemplate.addEventListener('click', () => {
+    if (els.mermaidSource.value.trim() && !window.confirm('Remplacer le code Mermaid actuel par ce modele ?')) return;
+    const template = mermaidTemplateData(els.mermaidTemplate.value);
+    els.mermaidTitle.value = template.title;
+    els.mermaidSource.value = template.source;
+    diagramState.data = { editor_mode: 'mermaid', schema_version: 1, title: template.title, source: template.source, rendered_svg: '' };
+    diagramState.mermaidSvg = '';
+    previewMermaid().catch(() => {});
+  });
+  els.mermaidFormat.addEventListener('click', () => {
+    els.mermaidSource.value = formatMermaidSource(els.mermaidSource.value);
+    diagramState.mermaidSvg = '';
+  });
+  els.mermaidPreviewBtn.addEventListener('click', () => previewMermaid().catch(() => {}));
+  els.mermaidSource.addEventListener('input', () => {
+    diagramState.mermaidSvg = '';
+    if (diagramState.data) diagramState.data.source = els.mermaidSource.value;
+  });
+  els.mermaidTitle.addEventListener('input', () => {
+    if (diagramState.data) diagramState.data.title = els.mermaidTitle.value;
+  });
   els.diagramNodeList.addEventListener('change', (event) => {
     const field = event.target.dataset.nodeField;
     const card = event.target.closest('[data-node-id]');

@@ -28,7 +28,7 @@ Toutes les tables portent `store_id` et les requetes filtrent par le magasin con
 - `qualityDocumentationVersionService` historise les modifications et restaure une version.
 - `qualityDocumentationExportService` rend le HTML qualite et genere le PDF cote serveur.
 - `companyIdentityService` lit l'identite entreprise depuis `store_settings`.
-- `qualityDocumentationDiagramService` valide les diagrammes JSON, genere le rendu SVG et fournit les modeles metier.
+- `qualityDocumentationDiagramService` valide les diagrammes JSON, gere les modes `structured` et `mermaid`, genere le rendu SVG et fournit les modeles metier.
 
 ## Routes
 
@@ -84,6 +84,13 @@ Les diagrammes sont rendus en SVG inline par ALTA et proteges contre les coupure
 Les diagrammes sont stockes dans `quality_document_diagrams` sous forme JSON controlee et versionnee (`schema_version = 1`).
 Le contenu riche du chapitre contient un bloc `<figure>` non editable avec un SVG snapshot. Ce snapshot est conserve dans `quality_documentation_versions.content_html`, ce qui permet a une ancienne version de conserver l'ancien rendu du diagramme.
 
+Deux modes d'edition existent :
+
+- `structured` : editeur visuel historique, avec noeuds et liaisons controles.
+- `mermaid` : source Mermaid `flowchart` conservee comme verite editable, plus un SVG rendu inline pour l'affichage et le PDF.
+
+Le mode Mermaid utilise la bibliotheque locale `frontend/vendor/mermaid/mermaid.min.js`, sans CDN, initialisee avec `securityLevel: "strict"` et labels HTML desactives. Le backend rejette HTML, `click`, URL externes, `javascript:` et SVG dangereux (`script`, `foreignObject`, handlers `on*`).
+
 Limites de validation :
 
 - 100 noeuds maximum ;
@@ -98,10 +105,14 @@ Modeles disponibles :
 - diagramme vide ;
 - processus simple ;
 - fabrication produits de la peche ;
+- crustaces vivants ;
+- negoce avec transit ;
+- negoce sans transit ;
 - decision / non-conformite ;
+- non-conformite ;
 - retrait / rappel.
 
-Un premier diagramme est initialise dans `T3-C18 - Diagrammes de fabrication` : `Diagramme de fabrication - Produits de la peche prepares`, avec flux principal, branche de non-conformite et associations de chapitres.
+Un premier diagramme Mermaid est initialise dans `T3-C18 - Diagrammes de fabrication` : `Diagramme de fabrication - Produits de la peche prepares`, avec flux principal, branche de non-conformite et source Mermaid versionnee.
 
 ## Editeur de contenu
 
@@ -171,6 +182,11 @@ Tests manuels recommandes apres migration :
 - ajouter/resoudre une information a completer ;
 - joindre un fichier ;
 - lancer l'apercu PDF puis l'export PDF ;
+- creer un diagramme Mermaid, previsualiser, enregistrer, puis recharger par Ctrl+F5 ;
+- verifier une erreur Mermaid volontaire et la ligne affichee ;
+- verifier accents, apostrophes et diagramme long ;
+- verifier qu'un code avec `click`, HTML ou `javascript:` est refuse ;
+- verifier le fonctionnement hors ligne sans CDN ;
 - ouvrir le PDF et verifier logo, accents, sommaire et pagination ;
 - tester avec un utilisateur sans permission.
 

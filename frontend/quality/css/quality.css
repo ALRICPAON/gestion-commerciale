@@ -365,6 +365,28 @@
   width: min(1180px, 96vw);
 }
 
+.quality-tabs {
+  border-bottom: 1px solid var(--alta-border);
+  display: flex;
+  gap: 8px;
+  margin: 8px 0 16px;
+}
+
+.quality-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: var(--alta-muted);
+  cursor: pointer;
+  font-weight: 800;
+  padding: 10px 12px;
+}
+
+.quality-tab.active {
+  border-bottom-color: var(--alta-blue);
+  color: var(--alta-navy);
+}
+
 .quality-diagram-editor-grid {
   display: grid;
   gap: 16px;
@@ -447,9 +469,60 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.quality-mermaid-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.quality-mermaid-panel.hidden {
+  display: none;
+}
+
+.quality-mermaid-toolbar {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) auto;
+}
+
+.quality-mermaid-toolbar label,
+.quality-mermaid-code-label {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.quality-mermaid-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
+}
+
+.quality-mermaid-code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  min-height: 520px;
+  resize: vertical;
+  white-space: pre;
+}
+
+.quality-mermaid-preview {
+  min-height: 520px;
+}
+
+.quality-mermaid-preview svg {
+  background: #fff;
+  height: auto;
+  max-width: 100%;
+}
+
 @media (max-width: 1100px) {
   .quality-diagram-editor-grid,
-  .quality-diagram-editors {
+  .quality-diagram-editors,
+  .quality-mermaid-toolbar,
+  .quality-mermaid-grid {
     grid-template-columns: 1fr;
   }
 }

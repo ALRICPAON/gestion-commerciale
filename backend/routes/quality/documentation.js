@@ -31,6 +31,7 @@ const {
   archiveDiagram,
   createDiagram,
   listDiagrams,
+  mermaidTemplates,
   templates: diagramTemplates,
   updateDiagram,
 } = require('../../services/quality/qualityDocumentationDiagramService');
@@ -203,7 +204,7 @@ router.post('/sections/:sectionId/diagrams', requireQualityPermission(QUALITY_PE
 
 router.get('/diagrams/templates', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
   try {
-    res.json(diagramTemplates());
+    res.json({ structured: diagramTemplates(), mermaid: mermaidTemplates() });
   } catch (err) {
     handleError(res, err, 'Erreur GET /api/quality/documentation/diagrams/templates');
   }

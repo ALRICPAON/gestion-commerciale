@@ -161,7 +161,12 @@
         <button id="diagram-close-btn" class="btn btn-secondary" type="button">Fermer</button>
       </header>
 
-      <section class="quality-diagram-editor-grid">
+      <div class="quality-tabs" role="tablist" aria-label="Mode d'edition du diagramme">
+        <button id="diagram-visual-tab" class="quality-tab active" type="button" data-diagram-mode="structured">Editeur visuel</button>
+        <button id="diagram-mermaid-tab" class="quality-tab" type="button" data-diagram-mode="mermaid">Code Mermaid</button>
+      </div>
+
+      <section id="diagram-visual-panel" class="quality-diagram-editor-grid">
         <aside class="quality-diagram-side">
           <label>Titre <input id="diagram-title" class="form-input"></label>
           <label>Modele
@@ -208,6 +213,37 @@
         </section>
       </section>
 
+      <section id="diagram-mermaid-panel" class="quality-mermaid-panel hidden">
+        <div class="quality-mermaid-toolbar">
+          <label>Titre <input id="mermaid-title" class="form-input"></label>
+          <label>Modele
+            <select id="mermaid-template" class="form-input">
+              <option value="seafood_fabrication">Fabrication produits de la peche</option>
+              <option value="live_shellfish">Crustaces vivants</option>
+              <option value="trading_with_transit">Negoce avec transit</option>
+              <option value="trading_without_transit">Negoce sans transit</option>
+              <option value="non_conformity">Non-conformite</option>
+              <option value="recall">Retrait / rappel</option>
+              <option value="simple_process">Processus simple</option>
+            </select>
+          </label>
+          <div class="quality-actions">
+            <button id="mermaid-load-template-btn" class="btn btn-secondary" type="button">Charger un modele</button>
+            <button id="mermaid-format-btn" class="btn btn-secondary" type="button">Formater</button>
+            <button id="mermaid-preview-btn" class="btn btn-primary" type="button">Previsualiser</button>
+          </div>
+        </div>
+        <div class="quality-mermaid-grid">
+          <label class="quality-mermaid-code-label">Code Mermaid
+            <textarea id="mermaid-source" class="form-input quality-mermaid-code" spellcheck="false"></textarea>
+          </label>
+          <div>
+            <div id="mermaid-error" class="page-feedback error hidden"></div>
+            <div id="mermaid-preview" class="quality-diagram-preview quality-mermaid-preview"></div>
+          </div>
+        </div>
+      </section>
+
       <footer class="quality-actions">
         <button id="diagram-save-btn" class="btn btn-primary" type="button">Enregistrer le diagramme</button>
         <button id="diagram-delete-btn" class="btn btn-secondary" type="button">Supprimer le diagramme</button>
@@ -218,6 +254,7 @@
 
   <script src="../../js/config.js"></script>
   <script src="../js/permissions.js?v=3"></script>
-  <script src="../js/documentation.js?v=1"></script>
+  <script src="../../vendor/mermaid/mermaid.min.js?v=1"></script>
+  <script src="../js/documentation.js?v=2"></script>
 </body>
 </html>
