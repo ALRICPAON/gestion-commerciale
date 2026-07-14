@@ -365,6 +365,24 @@
   width: min(1180px, 96vw);
 }
 
+.quality-modal-fullscreen {
+  padding: 6px;
+}
+
+.quality-modal-fullscreen .quality-modal-panel {
+  height: calc(100vh - 12px);
+  max-height: calc(100vh - 12px);
+  width: calc(100vw - 12px);
+}
+
+.quality-modal-fullscreen .quality-mermaid-code {
+  min-height: 62vh;
+}
+
+.quality-modal-fullscreen .quality-mermaid-preview {
+  min-height: 50vh;
+}
+
 .quality-tabs {
   border-bottom: 1px solid var(--alta-border);
   display: flex;
@@ -438,6 +456,14 @@
 .quality-diagram-block figcaption {
   color: var(--alta-navy);
   font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.quality-diagram-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
   margin-bottom: 8px;
 }
 
@@ -580,21 +606,28 @@
   padding: 8px;
 }
 
-.quality-template-list button {
+.quality-template-list-item {
   background: #fff;
   border: 1px solid var(--alta-border);
   border-radius: 8px;
-  cursor: pointer;
   padding: 10px;
-  text-align: left;
 }
 
-.quality-template-list button.active {
+.quality-template-list-item > button {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  width: 100%;
+}
+
+.quality-template-list-item.active {
   border-color: var(--alta-blue);
   box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.12);
 }
 
-.quality-template-list small {
+.quality-template-list-item small {
   color: var(--alta-muted);
   display: block;
   margin-top: 4px;

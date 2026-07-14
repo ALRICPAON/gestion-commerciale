@@ -197,6 +197,12 @@
     els.mermaidStatus.className = message ? `quality-inline-status ${type}`.trim() : 'quality-inline-status hidden';
   }
 
+  function reportActionError(error, fallback = 'Erreur') {
+    console.error(fallback, error);
+    setFeedback(error.message || fallback, 'error');
+    setMermaidStatus(error.message || fallback, 'error');
+  }
+
   function systemMermaidTemplates() {
     const builtIns = mermaidTemplateData();
     return Object.entries(builtIns).map(([key, template]) => ({
@@ -599,8 +605,8 @@
     const source = sanitizeMermaidSource(sourceEl.value);
     errorEl.classList.add('hidden');
     errorEl.textContent = '';
-    previewEl.innerHTML = '<div class="quality-empty-state">Rendu Mermaid en cours...</div>';
-    setMermaidStatus('Previsualisation en cours...', 'loading');
+    previewEl.innerHTML = '<div class="quality-empty-state">Generation de l apercu...</div>';
+    setMermaidStatus('Generation de l apercu...', 'loading');
     if (button) button.disabled = true;
     try {
       if (window.mermaid.parse) await window.mermaid.parse(source);
@@ -609,7 +615,7 @@
       const svg = sanitizeMermaidSvg(rendered.svg || rendered);
       previewEl.innerHTML = svg;
       diagramState.mermaidSvg = svg;
-      setMermaidStatus('Previsualisation a jour.', 'success');
+      setMermaidStatus('Apercu genere.', 'success');
       return svg;
     } catch (error) {
       diagramState.mermaidSvg = '';
@@ -798,40 +804,61 @@
   async function saveDiagram() {
     const section = currentSection();
     if (!section || !diagramState.data) return;
-    if (diagramState.mode === 'mermaid') {
-      const source = sanitizeMermaidSource(els.mermaidSource.value);
-      const svg = diagramState.mermaidSvg || await previewMermaid();
-      diagramState.data = {
-        editor_mode: 'mermaid',
-        schema_version: 1,
-        title: els.mermaidTitle.value || 'Diagramme Mermaid',
-        source,
-        rendered_svg: svg,
-      };
-    } else {
-      diagramState.data.title = els.diagramTitle.value || 'Diagramme qualite';
-      diagramState.data.orientation = els.diagramOrientation.value || 'vertical';
-      diagramState.data.editor_mode = 'structured';
+    els.diagramSave.disabled = true;
+    setMermaidStatus('Enregistrement...', 'loading');
+    setFeedback('Enregistrement du diagramme...');
+    try {
+      if (diagramState.mode === 'mermaid') {
+        const source = sanitizeMermaidSource(els.mermaidSource.value);
+        const svg = diagramState.mermaidSvg || await previewMermaid();
+        diagramState.data = {
+          editor_mode: 'mermaid',
+          schema_version: 1,
+          title: els.mermaidTitle.value || 'Diagramme Mermaid',
+          source,
+          rendered_svg: svg,
+        };
+      } else {
+        diagramState.data.title = els.diagramTitle.value || 'Diagramme qualite';
+        diagramState.data.orientation = els.diagramOrientation.value || 'vertical';
+        diagramState.data.editor_mode = 'structured';
+      }
+      const path = diagramState.id ? `/diagrams/${diagramState.id}` : `/sections/${section.id}/diagrams`;
+      const method = diagramState.id ? 'PUT' : 'POST';
+      const saved = await request(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diagram_data: diagramState.data, editor_mode: diagramState.mode, confirm_mode_change: true }),
+      });
+      await load(section.id);
+      setFeedback('Diagramme enregistre.', 'success');
+      setMermaidStatus('Enregistre.', 'success');
+      closeDiagramModal();
+      return saved;
+    } catch (error) {
+      console.error('Erreur enregistrement diagramme', error);
+      setMermaidStatus(`Erreur d enregistrement : ${error.message}`, 'error');
+      setFeedback(error.message, 'error');
+      throw error;
+    } finally {
+      els.diagramSave.disabled = false;
     }
-    const path = diagramState.id ? `/diagrams/${diagramState.id}` : `/sections/${section.id}/diagrams`;
-    const method = diagramState.id ? 'PUT' : 'POST';
-    const saved = await request(path, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ diagram_data: diagramState.data, editor_mode: diagramState.mode, confirm_mode_change: true }),
-    });
-    await load(section.id);
-    closeDiagramModal();
-    return saved;
   }
 
   function renderTemplateManager(selectedId = '') {
     const templates = state.mermaidTemplates.length ? state.mermaidTemplates : systemMermaidTemplates();
-    els.mermaidTemplateList.innerHTML = templates.map((template) => `<button class="${template.id === selectedId ? 'active' : ''}" data-template-id="${escapeHtml(template.id)}" type="button">
-      <strong>${escapeHtml(template.name || template.title)}</strong>
-      <small>${escapeHtml(template.category || 'Autre')} - ${template.is_system ? 'Modele systeme' : 'Modele personnalise'}</small>
-      ${template.description ? `<small>${escapeHtml(template.description)}</small>` : ''}
-    </button>`).join('');
+    els.mermaidTemplateList.innerHTML = templates.map((template) => `<article class="quality-template-list-item ${template.id === selectedId ? 'active' : ''}" data-template-id="${escapeHtml(template.id)}">
+      <button data-template-action="select" type="button">
+        <strong>${escapeHtml(template.name || template.title)}</strong>
+        <small>${escapeHtml(template.category || 'Autre')} - ${template.is_system ? 'Modele systeme' : 'Modele personnalise'}${template.updated_at ? ` - modifie le ${escapeHtml(String(template.updated_at).slice(0, 10))}` : ''}</small>
+        ${template.description ? `<small>${escapeHtml(template.description)}</small>` : ''}
+      </button>
+      <div class="quality-actions">
+        <button class="btn btn-secondary" data-template-action="load" type="button">Charger</button>
+        <button class="btn btn-secondary" data-template-action="duplicate" type="button">Dupliquer</button>
+        ${template.is_system ? '' : '<button class="btn btn-secondary" data-template-action="delete" type="button">Supprimer</button>'}
+      </div>
+    </article>`).join('');
   }
 
   function fillTemplateForm(template = null, duplicate = false) {
@@ -859,18 +886,59 @@
   }
 
   async function saveCurrentAsTemplate() {
-    const name = window.prompt('Nom du nouveau modele', els.mermaidTitle.value || 'Nouveau modele Mermaid');
-    if (!name) return;
-    const description = window.prompt('Description facultative', '') || '';
-    const category = window.prompt('Categorie', 'Autre') || 'Autre';
-    const created = await request('/diagrams/template-library', {
+    await loadMermaidTemplates();
+    renderTemplateManager('');
+    fillTemplateForm({
+      id: '',
+      name: els.mermaidTitle.value || '',
+      title: els.mermaidTitle.value || '',
+      description: '',
+      category: 'Autre',
+      source: els.mermaidSource.value,
+      is_system: false,
+    }, true);
+    els.mermaidTemplateManager.classList.remove('hidden');
+    setMermaidStatus('Complete le nom puis enregistre le modele.', 'loading');
+  }
+
+  function editorContentHtml() {
+    const clone = els.editor.cloneNode(true);
+    clone.querySelectorAll('[data-diagram-controls]').forEach((node) => node.remove());
+    return clone.innerHTML;
+  }
+
+  function decorateDiagramBlocks() {
+    els.editor.querySelectorAll('[data-diagram-id]').forEach((block) => {
+      if (block.querySelector('[data-diagram-controls]')) return;
+      const controls = document.createElement('div');
+      controls.className = 'quality-diagram-controls';
+      controls.setAttribute('data-diagram-controls', 'true');
+      controls.setAttribute('contenteditable', 'false');
+      controls.innerHTML = '<button class="btn btn-secondary" data-diagram-action="edit" type="button">Modifier</button><button class="btn btn-secondary" data-diagram-action="duplicate" type="button">Dupliquer</button><button class="btn btn-secondary" data-diagram-action="delete" type="button">Supprimer</button>';
+      block.prepend(controls);
+    });
+  }
+
+  async function deleteDiagramById(diagramId) {
+    if (!diagramId || !window.confirm('Supprimer ce diagramme du chapitre ? Cette action est definitive.')) return;
+    await request(`/diagrams/${diagramId}`, { method: 'DELETE' });
+    await load(state.currentId);
+    setFeedback('Diagramme supprime.', 'success');
+  }
+
+  async function duplicateDiagram(diagramId) {
+    const section = currentSection();
+    const diagram = state.diagrams.find((item) => item.id === diagramId);
+    if (!section || !diagram) return;
+    const copy = cloneDiagram(diagram.diagram_data || {});
+    copy.title = `${copy.title || diagram.title || 'Diagramme'} copie`;
+    await request(`/sections/${section.id}/diagrams`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, description, category, source: els.mermaidSource.value }),
+      body: JSON.stringify({ diagram_data: copy, editor_mode: copy.editor_mode || 'structured', diagram_type: diagram.diagram_type || 'process' }),
     });
-    await loadMermaidTemplates();
-    els.mermaidTemplate.value = created.id;
-    setMermaidStatus('Modele personnalise enregistre.', 'success');
+    await load(section.id);
+    setFeedback('Diagramme duplique.', 'success');
   }
 
   function renderStructureControls(section) {
@@ -907,6 +975,7 @@
     els.statusBadge.textContent = section.status;
     els.titleInput.value = section.title || '';
     els.editor.innerHTML = section.content_html || '';
+    decorateDiagramBlocks();
     els.status.value = section.status || 'draft';
     els.version.value = section.version || '1.0';
     els.order.value = Number.isFinite(Number(section.display_order)) ? Number(section.display_order) : 0;
@@ -940,7 +1009,7 @@
   function payload(extra = {}) {
     return {
       title: els.titleInput.value,
-      content_html: els.editor.innerHTML,
+      content_html: editorContentHtml(),
       status: els.status.value,
       version: els.version.value,
       parent_id: els.parent.value || null,
@@ -1046,6 +1115,17 @@
     const diagram = state.diagrams.find((item) => item.id === block.dataset.diagramId);
     if (diagram) openDiagramModal(diagram);
   });
+  els.editor.addEventListener('click', (event) => {
+    const action = event.target.closest?.('[data-diagram-action]');
+    if (!action) return;
+    event.preventDefault();
+    const block = action.closest('[data-diagram-id]');
+    const diagramId = block?.dataset.diagramId;
+    const diagram = state.diagrams.find((item) => item.id === diagramId);
+    if (action.dataset.diagramAction === 'edit' && diagram) openDiagramModal(diagram);
+    if (action.dataset.diagramAction === 'duplicate') duplicateDiagram(diagramId).catch((error) => reportActionError(error, 'Erreur duplication diagramme'));
+    if (action.dataset.diagramAction === 'delete') deleteDiagramById(diagramId).catch((error) => reportActionError(error, 'Erreur suppression diagramme'));
+  });
   els.diagramClose.addEventListener('click', closeDiagramModal);
   els.diagramCancel.addEventListener('click', closeDiagramModal);
   els.diagramVisualTab.addEventListener('click', () => switchDiagramMode('structured'));
@@ -1118,11 +1198,9 @@
   });
   els.mermaidPreviewBtn.addEventListener('click', () => previewMermaid().catch(() => {}));
   els.mermaidExpand.addEventListener('click', () => {
-    els.mermaidFullscreenTitle.value = els.mermaidTitle.value;
-    els.mermaidFullscreenSource.value = els.mermaidSource.value;
-    els.mermaidFullscreenPreview.innerHTML = els.mermaidPreview.innerHTML;
-    els.mermaidFullscreenError.classList.add('hidden');
-    els.mermaidFullscreen.classList.remove('hidden');
+    const fullscreen = els.diagramModal.classList.toggle('quality-modal-fullscreen');
+    els.mermaidExpand.textContent = fullscreen ? 'Reduire l editeur' : 'Agrandir l editeur';
+    setMermaidStatus(fullscreen ? 'Editeur agrandi.' : 'Editeur reduit.', 'success');
   });
   function closeMermaidFullscreen(sync = true) {
     if (sync) {
@@ -1162,11 +1240,39 @@
   els.mermaidManageTemplates.addEventListener('click', () => openTemplateManager().catch((error) => setMermaidStatus(error.message, 'error')));
   els.mermaidTemplateManagerClose.addEventListener('click', () => els.mermaidTemplateManager.classList.add('hidden'));
   els.mermaidTemplateList.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-template-id]');
-    if (!button) return;
-    const template = state.mermaidTemplates.find((item) => item.id === button.dataset.templateId);
-    renderTemplateManager(button.dataset.templateId);
+    const item = event.target.closest('[data-template-id]');
+    if (!item) return;
+    const action = event.target.closest('[data-template-action]')?.dataset.templateAction || 'select';
+    const template = state.mermaidTemplates.find((entry) => entry.id === item.dataset.templateId);
+    if (!template) return;
+    renderTemplateManager(item.dataset.templateId);
     fillTemplateForm(template);
+    if (action === 'load') {
+      if (diagramState.mermaidDirty && !window.confirm('Le chargement d un nouveau modele remplacera le code actuel. Continuer ?')) return;
+      els.mermaidTitle.value = template.title || template.name || '';
+      els.mermaidSource.value = template.source || '';
+      diagramState.data = { editor_mode: 'mermaid', schema_version: 1, title: els.mermaidTitle.value, source: els.mermaidSource.value, rendered_svg: '' };
+      diagramState.mermaidSvg = '';
+      diagramState.mermaidDirty = true;
+      els.mermaidTemplateManager.classList.add('hidden');
+      setMermaidStatus('Modele charge.', 'success');
+    }
+    if (action === 'duplicate') {
+      fillTemplateForm(template, true);
+      setMermaidStatus('Modele duplique dans le formulaire. Enregistre pour l ajouter.', 'loading');
+    }
+    if (action === 'delete') {
+      if (template.is_system) return;
+      if (!window.confirm('Supprimer definitivement ce modele ?')) return;
+      request(`/diagrams/template-library/${template.id}`, { method: 'DELETE' })
+        .then(() => loadMermaidTemplates())
+        .then(() => {
+          renderTemplateManager();
+          fillTemplateForm(state.mermaidTemplates[0]);
+          setMermaidStatus('Modele supprime.', 'success');
+        })
+        .catch((error) => reportActionError(error, 'Erreur suppression modele'));
+    }
   });
   els.mermaidTemplateDuplicate.addEventListener('click', () => {
     const template = state.mermaidTemplates.find((item) => item.id === els.mermaidTemplateId.value) || selectedMermaidTemplate();
@@ -1180,6 +1286,7 @@
     await loadMermaidTemplates();
     renderTemplateManager();
     fillTemplateForm(state.mermaidTemplates[0]);
+    setMermaidStatus('Modele supprime.', 'success');
   });
   els.mermaidTemplateForm.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1199,6 +1306,7 @@
     els.mermaidTemplate.value = saved.id;
     renderTemplateManager(saved.id);
     fillTemplateForm(saved);
+    setMermaidStatus('Modele enregistre dans la bibliotheque.', 'success');
   });
   els.diagramNodeList.addEventListener('change', (event) => {
     const field = event.target.dataset.nodeField;
@@ -1254,15 +1362,16 @@
       data.edges = data.edges.filter((edge) => edge.id !== card.dataset.edgeId);
     });
   });
-  els.diagramSave.addEventListener('click', () => saveDiagram().catch((error) => setFeedback(error.message, 'error')));
+  els.diagramSave.addEventListener('click', () => saveDiagram().catch((error) => reportActionError(error, 'Erreur enregistrement diagramme')));
   els.diagramDelete.addEventListener('click', async () => {
-    if (!diagramState.id || !window.confirm('Supprimer ce diagramme ?')) return;
+    if (!diagramState.id || !window.confirm('Supprimer ce diagramme du chapitre ? Cette action est definitive.')) return;
     try {
       await request(`/diagrams/${diagramState.id}`, { method: 'DELETE' });
       await load(state.currentId);
       closeDiagramModal();
+      setFeedback('Diagramme supprime.', 'success');
     } catch (error) {
-      setFeedback(error.message, 'error');
+      reportActionError(error, 'Erreur suppression diagramme');
     }
   });
   [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment].forEach((el) => {
