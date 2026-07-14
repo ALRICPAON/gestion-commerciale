@@ -17,6 +17,8 @@ Tables creees :
 - `quality_documentation_missing_items`
 - `quality_documentation_attachments`
 - `quality_documentation_exports`
+- `quality_document_diagrams`
+- `quality_document_diagram_templates`
 
 Toutes les tables portent `store_id` et les requetes filtrent par le magasin connecte.
 
@@ -27,6 +29,7 @@ Toutes les tables portent `store_id` et les requetes filtrent par le magasin con
 - `qualityDocumentationVersionService` historise les modifications et restaure une version.
 - `qualityDocumentationExportService` rend le HTML qualite et genere le PDF cote serveur.
 - `companyIdentityService` lit l'identite entreprise depuis `store_settings`.
+- `qualityDocumentationDiagramService` valide les diagrammes JSON, gere les modes `structured` et `mermaid`, genere le rendu SVG et fournit les modeles metier.
 
 ## Routes
 
@@ -42,6 +45,11 @@ Toutes les tables portent `store_id` et les requetes filtrent par le magasin con
 - `GET /api/quality/documentation/sections/:sectionId/versions`
 - `POST /api/quality/documentation/sections/:sectionId/restore-version`
 - `POST /api/quality/documentation/sections/:sectionId/merge-into/:targetSectionId`
+- `GET /api/quality/documentation/sections/:sectionId/diagrams`
+- `POST /api/quality/documentation/sections/:sectionId/diagrams`
+- `GET /api/quality/documentation/diagrams/templates`
+- `PUT /api/quality/documentation/diagrams/:diagramId`
+- `DELETE /api/quality/documentation/diagrams/:diagramId`
 - `GET /api/quality/documentation/missing-items`
 - `POST /api/quality/documentation/missing-items`
 - `PATCH /api/quality/documentation/missing-items/:id`
@@ -70,6 +78,50 @@ Les roles `admin` et `responsable` restent privilegies via le mecanisme existant
 Le PDF est genere cote serveur par Puppeteer. L'apercu et l'export utilisent le meme template HTML.
 Le PDF inclut page de garde, historique de revisions, sommaire, informations a completer, corps documentaire, annexes listees, entetes/pieds de page CSS et pagination.
 Les couleurs appliquees dans l'editeur sont conservees dans le HTML du chapitre et restituees dans le PDF.
+Les diagrammes sont rendus en SVG inline par ALTA et proteges contre les coupures avec `break-inside: avoid` / `page-break-inside: avoid`.
+
+## Diagrammes
+
+Les diagrammes sont stockes dans `quality_document_diagrams` sous forme JSON controlee et versionnee (`schema_version = 1`).
+Le contenu riche du chapitre contient un bloc `<figure>` non editable avec un SVG snapshot. Ce snapshot est conserve dans `quality_documentation_versions.content_html`, ce qui permet a une ancienne version de conserver l'ancien rendu du diagramme.
+
+Deux modes d'edition existent :
+
+- `structured` : editeur visuel historique, avec noeuds et liaisons controles.
+- `mermaid` : source Mermaid `flowchart` conservee comme verite editable, plus un SVG rendu inline pour l'affichage et le PDF.
+
+Le mode Mermaid utilise la bibliotheque locale `frontend/vendor/mermaid/mermaid.min.js`, sans CDN, initialisee avec `securityLevel: "strict"` et labels HTML desactives. Le backend rejette HTML, `click`, URL externes, `javascript:` et SVG dangereux (`script`, `foreignObject`, handlers `on*`).
+
+L'onglet Mermaid propose un editeur large, un mode agrandi, une previsualisation explicite et des etats visuels `chargement`, `succes`, `erreur`. Le bouton `Charger un modele` copie le code dans l'editeur sans conserver de lien dynamique avec la bibliotheque et sans sauvegarder automatiquement.
+
+Les modeles Mermaid reutilisables sont exposes par la bibliotheque de modeles :
+
+- modeles systeme fournis par ALTA, non modifiables et non supprimables ;
+- modeles personnalises stockes dans `quality_document_diagram_templates`, limites au `store_id` connecte ;
+- creation, duplication, modification et suppression logique des modeles personnalises selon les permissions documentaires existantes.
+
+Limites de validation :
+
+- 100 noeuds maximum ;
+- 200 liaisons maximum ;
+- types de noeuds limites a `start`, `end`, `process`, `decision`, `control`, `storage`, `transport`, `document`, `non_conformity`, `external`, `note` ;
+- liaisons uniquement entre noeuds existants ;
+- identifiants de noeuds uniques ;
+- libelles et descriptions nettoyes, sans HTML libre.
+
+Modeles disponibles :
+
+- diagramme vide ;
+- processus simple ;
+- fabrication produits de la peche ;
+- crustaces vivants ;
+- negoce avec transit ;
+- negoce sans transit ;
+- decision / non-conformite ;
+- non-conformite ;
+- retrait / rappel.
+
+Un premier diagramme Mermaid est initialise dans `T3-C18 - Diagrammes de fabrication` : `Diagramme de fabrication - Produits de la peche prepares`, avec flux principal, branche de non-conformite et source Mermaid versionnee.
 
 ## Editeur de contenu
 
@@ -126,6 +178,8 @@ node --check backend/routes/quality/documentation.js
 node --check backend/services/quality/qualityDocumentationService.js
 node --check backend/services/quality/qualityDocumentationExportService.js
 node --check frontend/quality/js/documentation.js
+node --check backend/services/quality/qualityDocumentationDiagramService.js
+node backend/scripts/test-quality-document-diagrams.js
 ```
 
 Tests manuels recommandes apres migration :
@@ -137,6 +191,11 @@ Tests manuels recommandes apres migration :
 - ajouter/resoudre une information a completer ;
 - joindre un fichier ;
 - lancer l'apercu PDF puis l'export PDF ;
+- creer un diagramme Mermaid, previsualiser, enregistrer, puis recharger par Ctrl+F5 ;
+- verifier une erreur Mermaid volontaire et la ligne affichee ;
+- verifier accents, apostrophes et diagramme long ;
+- verifier qu'un code avec `click`, HTML ou `javascript:` est refuse ;
+- verifier le fonctionnement hors ligne sans CDN ;
 - ouvrir le PDF et verifier logo, accents, sommaire et pagination ;
 - tester avec un utilisateur sans permission.
 

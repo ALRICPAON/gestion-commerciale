@@ -116,6 +116,9 @@ function buildHtml(documentation, identity, options = {}) {
     .section-meta { color: #52616f; font-size: 10px; margin-bottom: 8px; }
     .rich-content table { break-inside: avoid; }
     .missing, .missing-info { color: #b42318; font-weight: 700; }
+    .quality-diagram-block { break-inside: avoid; page-break-inside: avoid; margin: 14px 0; }
+    .quality-diagram-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
+    .quality-diagram-svg { max-width: 100%; height: auto; break-inside: avoid; page-break-inside: avoid; }
     blockquote { border-left: 3px solid #0f5f73; margin-left: 0; padding-left: 10px; }
     img { max-width: 100%; }
     tr { break-inside: avoid; }

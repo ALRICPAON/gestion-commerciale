@@ -82,6 +82,7 @@
           </label>
           <button class="btn btn-secondary" data-command="insertUnorderedList" type="button">Liste</button>
           <button id="mark-missing-btn" class="btn btn-secondary" type="button">Marquer a completer</button>
+          <button id="insert-diagram-btn" class="btn btn-secondary" type="button">Inserer un diagramme</button>
         </div>
         <div id="section-editor" class="quality-rich-editor" contenteditable="true"></div>
         <div class="quality-actions">
@@ -150,8 +151,179 @@
     </section>
   </main>
 
+  <div id="diagram-modal" class="quality-modal hidden" role="dialog" aria-modal="true" aria-labelledby="diagram-modal-title">
+    <div class="quality-modal-panel quality-diagram-modal">
+      <header class="quality-section-header">
+        <div>
+          <span class="section-kicker">Diagramme</span>
+          <h3 id="diagram-modal-title">Editeur de diagramme</h3>
+        </div>
+        <button id="diagram-close-btn" class="btn btn-secondary" type="button">Fermer</button>
+      </header>
+
+      <div class="quality-tabs" role="tablist" aria-label="Mode d'edition du diagramme">
+        <button id="diagram-visual-tab" class="quality-tab active" type="button" data-diagram-mode="structured">Editeur visuel</button>
+        <button id="diagram-mermaid-tab" class="quality-tab" type="button" data-diagram-mode="mermaid">Code Mermaid</button>
+      </div>
+
+      <section id="diagram-visual-panel" class="quality-diagram-editor-grid">
+        <aside class="quality-diagram-side">
+          <label>Titre <input id="diagram-title" class="form-input"></label>
+          <label>Modele
+            <select id="diagram-template" class="form-input">
+              <option value="blank">Diagramme vide</option>
+              <option value="simple_process">Processus simple</option>
+              <option value="seafood_fabrication">Fabrication produits de la peche</option>
+              <option value="non_conformity_decision">Decision / non-conformite</option>
+              <option value="recall">Retrait / rappel</option>
+            </select>
+          </label>
+          <label>Orientation
+            <select id="diagram-orientation" class="form-input">
+              <option value="vertical">Verticale</option>
+              <option value="horizontal">Horizontale</option>
+            </select>
+          </label>
+          <div class="quality-actions">
+            <button id="diagram-add-step-btn" class="btn btn-secondary" type="button">Ajouter une etape</button>
+            <button id="diagram-add-decision-btn" class="btn btn-secondary" type="button">Ajouter une decision</button>
+            <button id="diagram-auto-layout-btn" class="btn btn-secondary" type="button">Reorganiser automatiquement</button>
+          </div>
+          <div class="quality-actions">
+            <button id="diagram-undo-btn" class="btn btn-secondary" type="button">Annuler</button>
+            <button id="diagram-redo-btn" class="btn btn-secondary" type="button">Retablir</button>
+            <button id="diagram-fit-btn" class="btn btn-secondary" type="button">Ajuster a l'ecran</button>
+          </div>
+          <label>Zoom <input id="diagram-zoom" class="form-input" type="range" min="60" max="140" value="100"></label>
+        </aside>
+
+        <section class="quality-diagram-main">
+          <div id="diagram-preview" class="quality-diagram-preview"></div>
+          <div class="quality-diagram-editors">
+            <section>
+              <h4>Noeuds</h4>
+              <div id="diagram-node-list" class="quality-diagram-list"></div>
+            </section>
+            <section>
+              <h4>Liaisons</h4>
+              <div id="diagram-edge-list" class="quality-diagram-list"></div>
+              <button id="diagram-add-edge-btn" class="btn btn-secondary" type="button">Relier</button>
+            </section>
+          </div>
+        </section>
+      </section>
+
+      <section id="diagram-mermaid-panel" class="quality-mermaid-panel hidden">
+        <div class="quality-mermaid-toolbar">
+          <label>Titre <input id="mermaid-title" class="form-input"></label>
+          <label>Modele
+            <select id="mermaid-template" class="form-input">
+              <option value="seafood_fabrication">Fabrication produits de la peche</option>
+              <option value="live_shellfish">Crustaces vivants</option>
+              <option value="trading_with_transit">Negoce avec transit</option>
+              <option value="trading_without_transit">Negoce sans transit</option>
+              <option value="non_conformity">Non-conformite</option>
+              <option value="recall">Retrait / rappel</option>
+              <option value="simple_process">Processus simple</option>
+            </select>
+          </label>
+          <div class="quality-actions">
+            <button id="mermaid-load-template-btn" class="btn btn-secondary" type="button">Charger un modele</button>
+            <button id="mermaid-save-template-btn" class="btn btn-secondary" type="button">Enregistrer comme modele</button>
+            <button id="mermaid-manage-templates-btn" class="btn btn-secondary" type="button">Gerer les modeles</button>
+          </div>
+        </div>
+        <label class="quality-mermaid-code-label">Code Mermaid
+          <textarea id="mermaid-source" class="form-input quality-mermaid-code" spellcheck="false"></textarea>
+        </label>
+        <div class="quality-mermaid-commands">
+          <button id="mermaid-format-btn" class="btn btn-secondary" type="button">Indenter</button>
+          <button id="mermaid-preview-btn" class="btn btn-primary" type="button">Previsualiser</button>
+          <button id="mermaid-expand-btn" class="btn btn-secondary" type="button">Agrandir l'editeur</button>
+        </div>
+        <div id="mermaid-status" class="quality-inline-status hidden"></div>
+        <div id="mermaid-error" class="page-feedback error hidden"></div>
+        <div id="mermaid-preview" class="quality-diagram-preview quality-mermaid-preview"></div>
+      </section>
+
+      <section id="mermaid-fullscreen" class="quality-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mermaid-fullscreen-title">
+        <div class="quality-modal-panel quality-mermaid-fullscreen-panel">
+          <header class="quality-section-header">
+            <div>
+              <span class="section-kicker">Mermaid</span>
+              <h3 id="mermaid-fullscreen-title">Editeur agrandi</h3>
+            </div>
+            <button id="mermaid-collapse-btn" class="btn btn-secondary" type="button">Reduire l'editeur</button>
+          </header>
+          <label>Titre <input id="mermaid-fullscreen-title-input" class="form-input"></label>
+          <div class="quality-mermaid-grid">
+            <label class="quality-mermaid-code-label">Code Mermaid
+              <textarea id="mermaid-fullscreen-source" class="form-input quality-mermaid-code quality-mermaid-code-full" spellcheck="false"></textarea>
+            </label>
+            <div>
+              <div id="mermaid-fullscreen-error" class="page-feedback error hidden"></div>
+              <div id="mermaid-fullscreen-preview" class="quality-diagram-preview quality-mermaid-preview"></div>
+            </div>
+          </div>
+          <footer class="quality-actions">
+            <button id="mermaid-fullscreen-preview-btn" class="btn btn-primary" type="button">Previsualiser</button>
+            <button id="mermaid-fullscreen-save-btn" class="btn btn-primary" type="button">Enregistrer</button>
+            <button id="mermaid-fullscreen-close-btn" class="btn btn-secondary" type="button">Fermer</button>
+          </footer>
+        </div>
+      </section>
+
+      <section id="mermaid-template-manager" class="quality-modal hidden" role="dialog" aria-modal="true" aria-labelledby="mermaid-template-manager-title">
+        <div class="quality-modal-panel quality-template-manager-panel">
+          <header class="quality-section-header">
+            <div>
+              <span class="section-kicker">Bibliotheque Mermaid</span>
+              <h3 id="mermaid-template-manager-title">Gerer les modeles</h3>
+            </div>
+            <button id="mermaid-template-manager-close-btn" class="btn btn-secondary" type="button">Fermer</button>
+          </header>
+          <div class="quality-template-manager-grid">
+            <div id="mermaid-template-list" class="quality-template-list"></div>
+            <form id="mermaid-template-form" class="quality-template-form">
+              <input id="mermaid-template-id" type="hidden">
+              <label>Nom <input id="mermaid-template-name" class="form-input"></label>
+              <label>Description <textarea id="mermaid-template-description" class="form-input"></textarea></label>
+              <label>Categorie
+                <select id="mermaid-template-category" class="form-input">
+                  <option>Fabrication</option>
+                  <option>HACCP</option>
+                  <option>Non-conformite</option>
+                  <option>Tracabilite</option>
+                  <option>Retrait / rappel</option>
+                  <option>Flux</option>
+                  <option>Nettoyage</option>
+                  <option>Maintenance</option>
+                  <option>Urgence</option>
+                  <option>Autre</option>
+                </select>
+              </label>
+              <label>Code Mermaid <textarea id="mermaid-template-source" class="form-input quality-mermaid-code" spellcheck="false"></textarea></label>
+              <div class="quality-actions">
+                <button id="mermaid-template-save-btn" class="btn btn-primary" type="submit">Enregistrer le modele</button>
+                <button id="mermaid-template-duplicate-btn" class="btn btn-secondary" type="button">Dupliquer</button>
+                <button id="mermaid-template-delete-btn" class="btn btn-secondary" type="button">Supprimer</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <footer class="quality-actions">
+        <button id="diagram-save-btn" class="btn btn-primary" type="button">Enregistrer le diagramme</button>
+        <button id="diagram-delete-btn" class="btn btn-secondary" type="button">Supprimer le diagramme</button>
+        <button id="diagram-cancel-btn" class="btn btn-secondary" type="button">Annuler</button>
+      </footer>
+    </div>
+  </div>
+
   <script src="../../js/config.js"></script>
   <script src="../js/permissions.js?v=3"></script>
-  <script src="../js/documentation.js?v=1"></script>
+  <script src="../../vendor/mermaid/mermaid.min.js?v=1"></script>
+  <script src="../js/documentation.js?v=2"></script>
 </body>
 </html>

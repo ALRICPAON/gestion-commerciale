@@ -45,6 +45,7 @@
     review: $('review-section-btn'),
     validate: $('validate-section-btn'),
     markMissing: $('mark-missing-btn'),
+    insertDiagram: $('insert-diagram-btn'),
     textColor: $('text-color-select'),
     preview: $('preview-pdf-btn'),
     exportPdf: $('export-pdf-btn'),
@@ -53,9 +54,112 @@
     attachmentFile: $('attachment-file'),
     attachmentInclude: $('attachment-include'),
     attachments: $('attachment-list'),
+    diagramModal: $('diagram-modal'),
+    diagramClose: $('diagram-close-btn'),
+    diagramCancel: $('diagram-cancel-btn'),
+    diagramSave: $('diagram-save-btn'),
+    diagramDelete: $('diagram-delete-btn'),
+    diagramTitle: $('diagram-title'),
+    diagramTemplate: $('diagram-template'),
+    diagramOrientation: $('diagram-orientation'),
+    diagramAddStep: $('diagram-add-step-btn'),
+    diagramAddDecision: $('diagram-add-decision-btn'),
+    diagramAutoLayout: $('diagram-auto-layout-btn'),
+    diagramUndo: $('diagram-undo-btn'),
+    diagramRedo: $('diagram-redo-btn'),
+    diagramFit: $('diagram-fit-btn'),
+    diagramZoom: $('diagram-zoom'),
+    diagramPreview: $('diagram-preview'),
+    diagramNodeList: $('diagram-node-list'),
+    diagramEdgeList: $('diagram-edge-list'),
+    diagramAddEdge: $('diagram-add-edge-btn'),
+    diagramVisualTab: $('diagram-visual-tab'),
+    diagramMermaidTab: $('diagram-mermaid-tab'),
+    diagramVisualPanel: $('diagram-visual-panel'),
+    diagramMermaidPanel: $('diagram-mermaid-panel'),
+    mermaidTitle: $('mermaid-title'),
+    mermaidTemplate: $('mermaid-template'),
+    mermaidLoadTemplate: $('mermaid-load-template-btn'),
+    mermaidFormat: $('mermaid-format-btn'),
+    mermaidPreviewBtn: $('mermaid-preview-btn'),
+    mermaidExpand: $('mermaid-expand-btn'),
+    mermaidStatus: $('mermaid-status'),
+    mermaidSource: $('mermaid-source'),
+    mermaidPreview: $('mermaid-preview'),
+    mermaidError: $('mermaid-error'),
+    mermaidSaveTemplate: $('mermaid-save-template-btn'),
+    mermaidManageTemplates: $('mermaid-manage-templates-btn'),
+    mermaidFullscreen: $('mermaid-fullscreen'),
+    mermaidCollapse: $('mermaid-collapse-btn'),
+    mermaidFullscreenTitle: $('mermaid-fullscreen-title-input'),
+    mermaidFullscreenSource: $('mermaid-fullscreen-source'),
+    mermaidFullscreenPreview: $('mermaid-fullscreen-preview'),
+    mermaidFullscreenError: $('mermaid-fullscreen-error'),
+    mermaidFullscreenPreviewBtn: $('mermaid-fullscreen-preview-btn'),
+    mermaidFullscreenSave: $('mermaid-fullscreen-save-btn'),
+    mermaidFullscreenClose: $('mermaid-fullscreen-close-btn'),
+    mermaidTemplateManager: $('mermaid-template-manager'),
+    mermaidTemplateManagerClose: $('mermaid-template-manager-close-btn'),
+    mermaidTemplateList: $('mermaid-template-list'),
+    mermaidTemplateForm: $('mermaid-template-form'),
+    mermaidTemplateId: $('mermaid-template-id'),
+    mermaidTemplateName: $('mermaid-template-name'),
+    mermaidTemplateDescription: $('mermaid-template-description'),
+    mermaidTemplateCategory: $('mermaid-template-category'),
+    mermaidTemplateSource: $('mermaid-template-source'),
+    mermaidTemplateDuplicate: $('mermaid-template-duplicate-btn'),
+    mermaidTemplateDelete: $('mermaid-template-delete-btn'),
   };
 
-  let state = { collection: null, sections: [], missing: [], attachments: [], currentId: null, dirty: false, filter: 'all' };
+  const DIAGRAM_NODE_TYPES = [
+    ['start', 'Debut'],
+    ['end', 'Fin'],
+    ['process', 'Etape'],
+    ['decision', 'Decision'],
+    ['control', 'Controle qualite'],
+    ['storage', 'Stockage'],
+    ['transport', 'Transport / expedition'],
+    ['document', 'Document'],
+    ['non_conformity', 'Non-conformite'],
+    ['external', 'Tiers'],
+    ['note', 'Note'],
+  ];
+
+  const DIAGRAM_TYPE_STYLES = {
+    start: { fill: '#e8f7ef', stroke: '#15803d', icon: 'D', shape: 'pill' },
+    end: { fill: '#eef2f7', stroke: '#475569', icon: 'F', shape: 'pill' },
+    process: { fill: '#eff6ff', stroke: '#1d4ed8', icon: 'E', shape: 'rect' },
+    decision: { fill: '#fff7ed', stroke: '#c2410c', icon: '?', shape: 'diamond' },
+    control: { fill: '#fef2f2', stroke: '#b42318', icon: 'C', shape: 'rect' },
+    storage: { fill: '#ecfeff', stroke: '#0891b2', icon: 'S', shape: 'cylinder' },
+    transport: { fill: '#f5f3ff', stroke: '#6d28d9', icon: 'T', shape: 'rect' },
+    document: { fill: '#f8fafc', stroke: '#64748b', icon: 'Doc', shape: 'document' },
+    non_conformity: { fill: '#fef2f2', stroke: '#b42318', icon: 'NC', shape: 'octagon' },
+    external: { fill: '#faf5ff', stroke: '#7e22ce', icon: 'X', shape: 'rect' },
+    note: { fill: '#fefce8', stroke: '#a16207', icon: 'i', shape: 'note' },
+  };
+
+  let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], currentId: null, dirty: false, filter: 'all', mermaidTemplates: [] };
+  let diagramState = { id: null, data: null, history: [], future: [], zoom: 100, mode: 'structured', mermaidSvg: '', mermaidDirty: false };
+
+  if (window.mermaid) {
+    window.mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      htmlLabels: false,
+      flowchart: { htmlLabels: false, useMaxWidth: true },
+      theme: 'base',
+      themeVariables: {
+        fontFamily: 'Arial, sans-serif',
+        primaryTextColor: '#111827',
+        lineColor: '#334155',
+        primaryBorderColor: '#1f2937',
+        primaryColor: '#ffffff',
+        secondaryColor: '#f8fafc',
+        tertiaryColor: '#fef2f2',
+      },
+    });
+  }
 
   function setFeedback(message = '', type = '') {
     els.feedback.textContent = message;
@@ -86,6 +190,56 @@
       throw new Error(data.error || 'Erreur export PDF');
     }
     return response.blob();
+  }
+
+  function setMermaidStatus(message = '', type = '') {
+    els.mermaidStatus.textContent = message;
+    els.mermaidStatus.className = message ? `quality-inline-status ${type}`.trim() : 'quality-inline-status hidden';
+  }
+
+  function reportActionError(error, fallback = 'Erreur') {
+    console.error(fallback, error);
+    setFeedback(error.message || fallback, 'error');
+    setMermaidStatus(error.message || fallback, 'error');
+  }
+
+  function systemMermaidTemplates() {
+    const builtIns = mermaidTemplateData();
+    return Object.entries(builtIns).map(([key, template]) => ({
+      id: `system:${key}`,
+      key,
+      name: template.name || template.title,
+      title: template.title,
+      description: template.description || '',
+      category: template.category || 'Autre',
+      source: template.source,
+      is_system: true,
+      editor_mode: 'mermaid',
+    }));
+  }
+
+  function renderMermaidTemplateSelect() {
+    const templates = state.mermaidTemplates.length ? state.mermaidTemplates : systemMermaidTemplates();
+    els.mermaidTemplate.innerHTML = templates.map((template) => {
+      const badge = template.is_system ? 'Systeme' : 'Personnalise';
+      return `<option value="${escapeHtml(template.id)}">${escapeHtml(template.category || 'Autre')} - ${escapeHtml(template.name || template.title)} (${badge})</option>`;
+    }).join('');
+  }
+
+  async function loadMermaidTemplates() {
+    try {
+      const templates = await request('/diagrams/template-library');
+      state.mermaidTemplates = templates;
+    } catch (error) {
+      state.mermaidTemplates = systemMermaidTemplates();
+    }
+    renderMermaidTemplateSelect();
+    return state.mermaidTemplates;
+  }
+
+  function selectedMermaidTemplate() {
+    const templates = state.mermaidTemplates.length ? state.mermaidTemplates : systemMermaidTemplates();
+    return templates.find((template) => template.id === els.mermaidTemplate.value) || templates[0] || systemMermaidTemplates()[0];
   }
 
   function currentSection() {
@@ -124,6 +278,355 @@
       "'": '&#39;',
       '"': '&quot;',
     }[char]));
+  }
+
+  function slugId(value, fallback = 'node') {
+    return String(value || fallback)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || fallback;
+  }
+
+  function cloneDiagram(data) {
+    return JSON.parse(JSON.stringify(data));
+  }
+
+  function templateData(key = 'blank') {
+    const vertical = (title, labels, types = []) => ({
+      version: 1,
+      title,
+      orientation: 'vertical',
+      nodes: labels.map((label, index) => ({ id: slugId(label, `node-${index + 1}`), label, type: types[index] || 'process', description: '', chapter_code: '', x: 0, y: index })),
+      edges: labels.slice(1).map((label, index) => ({ id: `edge-${index + 1}`, from: slugId(labels[index], `node-${index + 1}`), to: slugId(label, `node-${index + 2}`), label: '' })),
+    });
+    const templates = {
+      blank: vertical('Nouveau diagramme qualite', ['Debut', 'Etape', 'Fin'], ['start', 'process', 'end']),
+      simple_process: vertical('Processus simple', ['Debut', 'Etape', 'Controle', 'Fin'], ['start', 'process', 'control', 'end']),
+      seafood_fabrication: vertical('Fabrication produits de la peche', ['Reception', 'Controle a reception', 'Stockage refrigere', 'Preparation', 'Decoupe / Filetage / Parage', 'Conditionnement', 'Mise sous glace', 'Filmage', 'Etiquetage', 'Preparation des commandes', 'Chargement', 'Expedition'], ['start', 'control', 'storage', 'process', 'process', 'process', 'storage', 'process', 'document', 'process', 'transport', 'end']),
+      non_conformity_decision: {
+        version: 1,
+        title: 'Decision / non-conformite',
+        orientation: 'vertical',
+        nodes: [
+          { id: 'controle', label: 'Controle', type: 'control', description: '', chapter_code: '', x: 0, y: 0 },
+          { id: 'conforme', label: 'Produit conforme ?', type: 'decision', description: '', chapter_code: '', x: 0, y: 1 },
+          { id: 'poursuite', label: 'Poursuite du processus', type: 'process', description: '', chapter_code: '', x: -1, y: 2 },
+          { id: 'isolement', label: 'Isolement', type: 'non_conformity', description: '', chapter_code: '', x: 1, y: 2 },
+          { id: 'decision', label: 'Decision', type: 'decision', description: '', chapter_code: '', x: 1, y: 3 },
+        ],
+        edges: [
+          { id: 'e1', from: 'controle', to: 'conforme', label: '' },
+          { id: 'e2', from: 'conforme', to: 'poursuite', label: 'Oui' },
+          { id: 'e3', from: 'conforme', to: 'isolement', label: 'Non' },
+          { id: 'e4', from: 'isolement', to: 'decision', label: '' },
+        ],
+      },
+      recall: vertical('Retrait / rappel', ['Alerte', 'Identification du lot', 'Blocage du stock', 'Identification des clients', 'Information autorites et clients', 'Retrait ou rappel', 'Bilan et action corrective'], ['start', 'process', 'storage', 'process', 'document', 'transport', 'end']),
+    };
+    return cloneDiagram(templates[key] || templates.blank);
+  }
+
+  function mermaidTemplateData(key = null) {
+    const templates = {
+      seafood_fabrication: {
+        name: 'Fabrication produits de la peche',
+        title: 'Diagramme de fabrication - Produits de la peche prepares',
+        description: 'Flux complet de preparation de produits de la peche avec branche non-conformite.',
+        category: 'Fabrication',
+        source: `flowchart TD
+    A([Début]) --> B[Réception des poissons]
+    B --> C[Contrôle à réception]
+    C --> D{Lot conforme ?}
+
+    D -- Oui --> E[Stockage en chambre froide ou préparation immédiate]
+    D -- Non --> NC1[Isolement du lot]
+    NC1 --> NC2[Création d'une non-conformité dans ALTA]
+    NC2 --> NC3[Photographies et information de la criée]
+    NC3 --> NC4[Décision : retour, avoir, destruction ou déclassement]
+
+    E --> F[Préparation]
+    F --> G[Découpe]
+    G --> H[Filetage]
+    H --> I[Parage]
+    I --> J[Pelage si nécessaire]
+    J --> K[Conditionnement]
+    K --> L[Mise sous glace]
+    L --> M[Filmage]
+    M --> N[Étiquetage]
+    N --> O[Préparation de la commande]
+    O --> P[Contrôle final]
+    P --> Q{Commande conforme ?}
+
+    Q -- Oui --> R[Chargement en véhicule frigorifique]
+    Q -- Non --> NC5[Isolement et correction de la commande]
+    NC5 --> P
+
+    R --> S[Expédition]
+    S --> T([Fin])`,
+      },
+      live_shellfish: {
+        name: 'Crustaces vivants',
+        title: 'Crustaces vivants',
+        description: 'Reception, controle et expedition de crustaces vivants.',
+        category: 'Fabrication',
+        source: `flowchart TD
+    A([Debut]) --> B[Reception des crustaces vivants]
+    B --> C[Controle vitalite et temperature]
+    C --> D{Lot conforme ?}
+    D -- Oui --> E[Stockage en vivier ou zone adaptee]
+    D -- Non --> NC1[Isolement du lot]
+    NC1 --> NC2[Non-conformite fournisseur]
+    E --> F[Preparation de commande]
+    F --> G[Controle final]
+    G --> H[Expedition]
+    H --> I([Fin])`,
+      },
+      trading_with_transit: {
+        name: 'Negoce avec transit',
+        title: 'Negoce avec transit',
+        description: 'Negoce avec passage physique en chambre froide.',
+        category: 'Flux',
+        source: `flowchart TD
+    A([Debut]) --> B[Reception produit]
+    B --> C[Controle documentaire et temperature]
+    C --> D{Conforme ?}
+    D -- Oui --> E[Transit en chambre froide]
+    D -- Non --> NC1[Isolement et non-conformite]
+    E --> F[Preparation expedition]
+    F --> G[Chargement]
+    G --> H[Livraison client]
+    H --> I([Fin])`,
+      },
+      trading_without_transit: {
+        name: 'Negoce sans transit',
+        title: 'Negoce sans transit',
+        description: 'Negoce sans passage physique par l atelier.',
+        category: 'Flux',
+        source: `flowchart TD
+    A([Debut]) --> B[Commande fournisseur]
+    B --> C[Controle documents et tracabilite]
+    C --> D[Expedition directe fournisseur vers client]
+    D --> E[Controle reception client]
+    E --> F{Anomalie ?}
+    F -- Non --> G([Fin])
+    F -- Oui --> NC1[Ouverture non-conformite]`,
+      },
+      non_conformity: {
+        name: 'Non-conformite',
+        title: 'Non-conformite',
+        description: 'Traitement d une anomalie produit ou fournisseur.',
+        category: 'Non-conformite',
+        source: `flowchart TD
+    A([Debut]) --> B[Detection anomalie]
+    B --> C[Isolement du produit]
+    C --> D[Enregistrement dans ALTA]
+    D --> E{Decision ?}
+    E -- Retour --> F[Retour fournisseur]
+    E -- Avoir --> G[Demande avoir]
+    E -- Destruction --> H[Destruction maitrisee]
+    F --> I([Fin])
+    G --> I
+    H --> I`,
+      },
+      recall: {
+        name: 'Retrait / rappel',
+        title: 'Retrait / rappel',
+        description: 'Gestion d une alerte, d un retrait ou d un rappel.',
+        category: 'Retrait / rappel',
+        source: `flowchart TD
+    A([Debut]) --> B[Alerte sanitaire ou interne]
+    B --> C[Identification du lot]
+    C --> D[Blocage du stock]
+    D --> E[Identification des clients]
+    E --> F[Information autorites et clients]
+    F --> G[Retrait ou rappel]
+    G --> H[Bilan et action corrective]
+    H --> I([Fin])`,
+      },
+      simple_process: {
+        name: 'Processus simple',
+        title: 'Processus simple',
+        description: 'Base courte pour decrire un processus controle.',
+        category: 'Flux',
+        source: `flowchart TD
+    A([Debut]) --> B[Etape]
+    B --> C[Controle]
+    C --> D{Conforme ?}
+    D -- Oui --> E([Fin])
+    D -- Non --> F[Action corrective]
+    F --> B`,
+      },
+    };
+    if (!key) return cloneDiagram(templates);
+    return cloneDiagram(templates[key] || templates.seafood_fabrication);
+  }
+
+  function diagramLayout(data) {
+    const horizontal = data.orientation === 'horizontal';
+    const nodeWidth = 190;
+    const nodeHeight = 74;
+    const gapX = 95;
+    const gapY = 70;
+    const nodes = (data.nodes || []).map((node, index) => {
+      const x = Number.isFinite(Number(node.x)) && Number(node.x) !== 0 ? Number(node.x) : (horizontal ? index : 0);
+      const y = Number.isFinite(Number(node.y)) && Number(node.y) !== 0 ? Number(node.y) : (horizontal ? 0 : index);
+      return { ...node, px: 40 + x * (nodeWidth + gapX), py: 52 + y * (nodeHeight + gapY), width: nodeWidth, height: nodeHeight };
+    });
+    return {
+      nodes,
+      width: Math.max(...nodes.map((node) => node.px + node.width), 360) + 40,
+      height: Math.max(...nodes.map((node) => node.py + node.height), 220) + 45,
+    };
+  }
+
+  function wrapSvgText(text, maxChars = 24) {
+    const words = String(text || '').split(/\s+/).filter(Boolean);
+    const lines = [];
+    let current = '';
+    words.forEach((word) => {
+      const next = current ? `${current} ${word}` : word;
+      if (next.length > maxChars && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = next;
+      }
+    });
+    if (current) lines.push(current);
+    return lines.slice(0, 3);
+  }
+
+  function renderNodeShape(node, meta) {
+    const common = `fill="${meta.fill}" stroke="${meta.stroke}" stroke-width="2"`;
+    if (meta.shape === 'pill') return `<rect x="${node.px}" y="${node.py}" width="${node.width}" height="${node.height}" rx="36" ${common}></rect>`;
+    if (meta.shape === 'diamond') {
+      const cx = node.px + node.width / 2;
+      const cy = node.py + node.height / 2;
+      return `<polygon points="${cx},${node.py} ${node.px + node.width},${cy} ${cx},${node.py + node.height} ${node.px},${cy}" ${common}></polygon>`;
+    }
+    if (meta.shape === 'octagon') {
+      const x = node.px; const y = node.py; const w = node.width; const h = node.height; const c = 18;
+      return `<polygon points="${x + c},${y} ${x + w - c},${y} ${x + w},${y + c} ${x + w},${y + h - c} ${x + w - c},${y + h} ${x + c},${y + h} ${x},${y + h - c} ${x},${y + c}" ${common}></polygon>`;
+    }
+    if (meta.shape === 'cylinder') {
+      const x = node.px; const y = node.py; const w = node.width; const h = node.height;
+      return `<path d="M${x} ${y + 12} C${x} ${y - 4}, ${x + w} ${y - 4}, ${x + w} ${y + 12} V${y + h - 12} C${x + w} ${y + h + 4}, ${x} ${y + h + 4}, ${x} ${y + h - 12} Z" ${common}></path><path d="M${x} ${y + 12} C${x} ${y + 28}, ${x + w} ${y + 28}, ${x + w} ${y + 12}" fill="none" stroke="${meta.stroke}" stroke-width="2"></path>`;
+    }
+    if (meta.shape === 'document') {
+      const x = node.px; const y = node.py; const w = node.width; const h = node.height;
+      return `<path d="M${x} ${y} H${x + w - 20} L${x + w} ${y + 20} V${y + h} H${x} Z" ${common}></path><path d="M${x + w - 20} ${y} V${y + 20} H${x + w}" fill="none" stroke="${meta.stroke}" stroke-width="2"></path>`;
+    }
+    if (meta.shape === 'note') {
+      const x = node.px; const y = node.py; const w = node.width; const h = node.height;
+      return `<path d="M${x} ${y} H${x + w - 22} L${x + w} ${y + 22} V${y + h} H${x} Z" ${common}></path><path d="M${x + w - 22} ${y} V${y + 22} H${x + w}" fill="#fff7c2" stroke="${meta.stroke}" stroke-width="2"></path>`;
+    }
+    return `<rect x="${node.px}" y="${node.py}" width="${node.width}" height="${node.height}" rx="10" ${common}></rect>`;
+  }
+
+  function renderDiagramSvg(data) {
+    const layout = diagramLayout(data);
+    const nodeMap = new Map(layout.nodes.map((node) => [node.id, node]));
+    const edges = (data.edges || []).map((edge) => {
+      const from = nodeMap.get(edge.from);
+      const to = nodeMap.get(edge.to);
+      if (!from || !to) return '';
+      const x1 = from.px + from.width / 2;
+      const y1 = from.py + from.height / 2;
+      const x2 = to.px + to.width / 2;
+      const y2 = to.py + to.height / 2;
+      return `<g><line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" marker-end="url(#arrow)" stroke="#334155" stroke-width="2"></line>${edge.label ? `<text x="${(x1 + x2) / 2}" y="${(y1 + y2) / 2 - 8}" text-anchor="middle" class="edge-label">${escapeHtml(edge.label)}</text>` : ''}</g>`;
+    }).join('');
+    const nodes = layout.nodes.map((node) => {
+      const meta = DIAGRAM_TYPE_STYLES[node.type] || DIAGRAM_TYPE_STYLES.process;
+      const label = wrapSvgText(node.label).map((line, index) => `<tspan x="${node.px + node.width / 2}" dy="${index === 0 ? 0 : 15}">${escapeHtml(line)}</tspan>`).join('');
+      return `<g class="diagram-node" data-node-id="${escapeHtml(node.id)}">
+        ${renderNodeShape(node, meta)}
+        <circle cx="${node.px + 18}" cy="${node.py + 18}" r="13" fill="#fff" stroke="${meta.stroke}" stroke-width="1.5"></circle>
+        <text x="${node.px + 18}" y="${node.py + 22}" text-anchor="middle" class="node-icon">${escapeHtml(meta.icon)}</text>
+        <text x="${node.px + node.width / 2}" y="${node.py + 31}" text-anchor="middle" class="node-label">${label}</text>
+        ${node.chapter_code ? `<text x="${node.px + node.width / 2}" y="${node.py + node.height - 9}" text-anchor="middle" class="chapter-code">${escapeHtml(node.chapter_code)}</text>` : ''}
+      </g>`;
+    }).join('');
+    return `<svg class="quality-diagram-svg" viewBox="0 0 ${layout.width} ${layout.height}" style="width:${diagramState.zoom}%">
+      <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="#334155"></path></marker></defs>
+      <style>.edge-label{fill:#334155;font:600 12px Arial;paint-order:stroke;stroke:#fff;stroke-width:4px}.node-label{fill:#0f172a;font:700 13px Arial}.node-icon{fill:#0f172a;font:700 10px Arial}.chapter-code{fill:#475569;font:700 10px Arial}</style>
+      ${edges}${nodes}
+    </svg>`;
+  }
+
+  function sanitizeMermaidSource(source) {
+    const text = String(source || '').replace(/\r\n/g, '\n').trim();
+    if (!text) throw new Error('Le code Mermaid est obligatoire.');
+    if (!/^flowchart\s+(TD|TB|BT|LR|RL)\b/i.test(text)) throw new Error('Seuls les diagrammes Mermaid flowchart sont autorises.');
+    if (/<[^>]+>/i.test(text) || /\bclick\b/i.test(text) || /\bhref\b/i.test(text) || /javascript\s*:/i.test(text) || /https?:\/\//i.test(text)) {
+      throw new Error('Le code Mermaid contient une instruction non autorisee.');
+    }
+    return text;
+  }
+
+  function sanitizeMermaidSvg(svg) {
+    const text = String(svg || '').trim();
+    if (!/^<svg[\s>]/i.test(text)) throw new Error('Mermaid n a pas produit de SVG.');
+    if (/<script[\s>]/i.test(text) || /<foreignObject[\s>]/i.test(text) || /\son[a-z]+\s*=/i.test(text) || /\b(?:href|xlink:href|src)\s*=\s*["']?\s*(?:javascript|data)\s*:/i.test(text)) {
+      throw new Error('Le SVG Mermaid contient un contenu non autorise.');
+    }
+    return text;
+  }
+
+  function formatMermaidSource(source) {
+    return String(source || '')
+      .replace(/\r\n/g, '\n')
+      .split('\n')
+      .map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) return '';
+        return index === 0 || /^flowchart\b/i.test(trimmed) ? trimmed : `    ${trimmed}`;
+      })
+      .join('\n')
+      .trim();
+  }
+
+  function mermaidErrorMessage(error) {
+    const message = String(error?.str || error?.message || error || 'Erreur Mermaid');
+    const hashLine = error?.hash?.loc?.first_line;
+    const match = message.match(/line\s+(\d+)/i);
+    const line = hashLine || match?.[1];
+    return line ? `Erreur Mermaid ligne ${line} : ${message}` : `Erreur Mermaid : ${message}`;
+  }
+
+  async function previewMermaid(options = {}) {
+    if (!window.mermaid) throw new Error('La bibliotheque Mermaid locale est indisponible.');
+    const sourceEl = options.sourceEl || els.mermaidSource;
+    const previewEl = options.previewEl || els.mermaidPreview;
+    const errorEl = options.errorEl || els.mermaidError;
+    const button = options.button || els.mermaidPreviewBtn;
+    const source = sanitizeMermaidSource(sourceEl.value);
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+    previewEl.innerHTML = '<div class="quality-empty-state">Generation de l apercu...</div>';
+    setMermaidStatus('Generation de l apercu...', 'loading');
+    if (button) button.disabled = true;
+    try {
+      if (window.mermaid.parse) await window.mermaid.parse(source);
+      const id = `quality-mermaid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const rendered = await window.mermaid.render(id, source);
+      const svg = sanitizeMermaidSvg(rendered.svg || rendered);
+      previewEl.innerHTML = svg;
+      diagramState.mermaidSvg = svg;
+      setMermaidStatus('Apercu genere.', 'success');
+      return svg;
+    } catch (error) {
+      diagramState.mermaidSvg = '';
+      previewEl.innerHTML = '';
+      errorEl.textContent = mermaidErrorMessage(error);
+      errorEl.classList.remove('hidden');
+      setMermaidStatus('Erreur Mermaid. Corrige le code puis relance la previsualisation.', 'error');
+      throw error;
+    } finally {
+      if (button) button.disabled = false;
+    }
   }
 
   function renderMetrics(dashboard = {}) {
@@ -177,6 +680,267 @@
     </article>`).join('') || '<p class="quality-muted">Aucune piece jointe.</p>';
   }
 
+  function pushDiagramHistory() {
+    if (!diagramState.data) return;
+    diagramState.history.push(cloneDiagram(diagramState.data));
+    if (diagramState.history.length > 30) diagramState.history.shift();
+    diagramState.future = [];
+  }
+
+  function mutateDiagram(mutator) {
+    pushDiagramHistory();
+    mutator(diagramState.data);
+    renderDiagramEditor();
+  }
+
+  function nodeTypeOptions(selected) {
+    return DIAGRAM_NODE_TYPES.map(([value, label]) => `<option value="${value}" ${value === selected ? 'selected' : ''}>${label}</option>`).join('');
+  }
+
+  function chapterOptions(selectedCode) {
+    return ['<option value="">Aucun chapitre</option>', ...activeSections()
+      .filter((section) => section.section_type !== 'tome')
+      .map((section) => `<option value="${escapeHtml(section.code)}" ${section.code === selectedCode ? 'selected' : ''}>${escapeHtml(section.code)} - ${escapeHtml(section.title)}</option>`)]
+      .join('');
+  }
+
+  function nodeOptions(selectedId) {
+    return (diagramState.data?.nodes || [])
+      .map((node) => `<option value="${escapeHtml(node.id)}" ${node.id === selectedId ? 'selected' : ''}>${escapeHtml(node.label)}</option>`)
+      .join('');
+  }
+
+  function renderDiagramEditor() {
+    const data = diagramState.data;
+    if (!data) return;
+    const isMermaid = diagramState.mode === 'mermaid';
+    els.diagramVisualTab.classList.toggle('active', !isMermaid);
+    els.diagramMermaidTab.classList.toggle('active', isMermaid);
+    els.diagramVisualPanel.classList.toggle('hidden', isMermaid);
+    els.diagramMermaidPanel.classList.toggle('hidden', !isMermaid);
+    els.diagramTitle.value = data.title || '';
+    els.mermaidTitle.value = data.title || '';
+    if (isMermaid) {
+      if (!diagramState.mermaidDirty) els.mermaidSource.value = data.source || '';
+      els.mermaidPreview.innerHTML = diagramState.mermaidSvg || data.rendered_svg || '';
+      return;
+    }
+    els.diagramOrientation.value = data.orientation || 'vertical';
+    els.diagramZoom.value = String(diagramState.zoom);
+    els.diagramPreview.innerHTML = renderDiagramSvg(data);
+    els.diagramNodeList.innerHTML = (data.nodes || []).map((node, index) => `<article class="quality-diagram-node-form" data-node-id="${escapeHtml(node.id)}">
+      <div class="quality-diagram-form-row">
+        <label>Libelle <input class="form-input" data-node-field="label" value="${escapeHtml(node.label)}"></label>
+        <label>Type <select class="form-input" data-node-field="type">${nodeTypeOptions(node.type)}</select></label>
+      </div>
+      <label>Description <textarea class="form-input" data-node-field="description">${escapeHtml(node.description || '')}</textarea></label>
+      <div class="quality-diagram-form-row">
+        <label>Chapitre associe <select class="form-input" data-node-field="chapter_code">${chapterOptions(node.chapter_code)}</select></label>
+        <label>Position <input class="form-input" data-node-field="position" value="${Number(node.x || 0)},${Number(node.y || index)}"></label>
+      </div>
+      <div class="quality-actions">
+        <button class="btn btn-secondary" data-node-action="duplicate" type="button">Dupliquer</button>
+        <button class="btn btn-secondary" data-node-action="delete" type="button">Supprimer</button>
+      </div>
+    </article>`).join('');
+    els.diagramEdgeList.innerHTML = (data.edges || []).map((edge) => `<article class="quality-diagram-edge-form" data-edge-id="${escapeHtml(edge.id)}">
+      <div class="quality-diagram-form-row">
+        <label>De <select class="form-input" data-edge-field="from">${nodeOptions(edge.from)}</select></label>
+        <label>Vers <select class="form-input" data-edge-field="to">${nodeOptions(edge.to)}</select></label>
+      </div>
+      <label>Libelle <input class="form-input" data-edge-field="label" value="${escapeHtml(edge.label || '')}"></label>
+      <button class="btn btn-secondary" data-edge-action="delete" type="button">Supprimer la liaison</button>
+    </article>`).join('');
+  }
+
+  function openDiagramModal(diagram = null) {
+    const baseData = diagram?.diagram_data || templateData(els.diagramTemplate.value || 'blank');
+    const mode = baseData.editor_mode === 'mermaid' ? 'mermaid' : 'structured';
+    diagramState = {
+      id: diagram?.id || null,
+      data: cloneDiagram(baseData),
+      history: [],
+      future: [],
+      zoom: 100,
+      mode,
+      mermaidSvg: baseData.rendered_svg || '',
+      mermaidDirty: false,
+    };
+    els.diagramDelete.classList.toggle('hidden', !diagramState.id);
+    els.diagramModal.classList.remove('hidden');
+    renderDiagramEditor();
+    if (mode === 'mermaid' && !diagramState.mermaidSvg) previewMermaid().catch(() => {});
+  }
+
+  function closeDiagramModal() {
+    els.diagramModal.classList.add('hidden');
+  }
+
+  function autoLayoutDiagram(data) {
+    const horizontal = data.orientation === 'horizontal';
+    (data.nodes || []).forEach((node, index) => {
+      node.x = horizontal ? index : 0;
+      node.y = horizontal ? 0 : index;
+    });
+  }
+
+  function switchDiagramMode(mode) {
+    if (!diagramState.data || diagramState.mode === mode) return;
+    if (diagramState.id && !window.confirm('Changer de mode remplace le contenu editable du diagramme. Continuer ?')) return;
+    diagramState.mode = mode;
+    if (mode === 'mermaid') {
+      const template = selectedMermaidTemplate();
+      diagramState.data = { editor_mode: 'mermaid', title: template.title, source: template.source, rendered_svg: '', schema_version: 1 };
+      diagramState.mermaidSvg = '';
+      diagramState.mermaidDirty = false;
+      renderDiagramEditor();
+      return;
+    }
+    diagramState.data = templateData(els.diagramTemplate.value || 'blank');
+    diagramState.mermaidSvg = '';
+    renderDiagramEditor();
+  }
+
+  async function saveDiagram() {
+    const section = currentSection();
+    if (!section || !diagramState.data) return;
+    els.diagramSave.disabled = true;
+    setMermaidStatus('Enregistrement...', 'loading');
+    setFeedback('Enregistrement du diagramme...');
+    try {
+      if (diagramState.mode === 'mermaid') {
+        const source = sanitizeMermaidSource(els.mermaidSource.value);
+        const svg = diagramState.mermaidSvg || await previewMermaid();
+        diagramState.data = {
+          editor_mode: 'mermaid',
+          schema_version: 1,
+          title: els.mermaidTitle.value || 'Diagramme Mermaid',
+          source,
+          rendered_svg: svg,
+        };
+      } else {
+        diagramState.data.title = els.diagramTitle.value || 'Diagramme qualite';
+        diagramState.data.orientation = els.diagramOrientation.value || 'vertical';
+        diagramState.data.editor_mode = 'structured';
+      }
+      const path = diagramState.id ? `/diagrams/${diagramState.id}` : `/sections/${section.id}/diagrams`;
+      const method = diagramState.id ? 'PUT' : 'POST';
+      const saved = await request(path, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ diagram_data: diagramState.data, editor_mode: diagramState.mode, confirm_mode_change: true }),
+      });
+      await load(section.id);
+      setFeedback('Diagramme enregistre.', 'success');
+      setMermaidStatus('Enregistre.', 'success');
+      closeDiagramModal();
+      return saved;
+    } catch (error) {
+      console.error('Erreur enregistrement diagramme', error);
+      setMermaidStatus(`Erreur d enregistrement : ${error.message}`, 'error');
+      setFeedback(error.message, 'error');
+      throw error;
+    } finally {
+      els.diagramSave.disabled = false;
+    }
+  }
+
+  function renderTemplateManager(selectedId = '') {
+    const templates = state.mermaidTemplates.length ? state.mermaidTemplates : systemMermaidTemplates();
+    els.mermaidTemplateList.innerHTML = templates.map((template) => `<article class="quality-template-list-item ${template.id === selectedId ? 'active' : ''}" data-template-id="${escapeHtml(template.id)}">
+      <button data-template-action="select" type="button">
+        <strong>${escapeHtml(template.name || template.title)}</strong>
+        <small>${escapeHtml(template.category || 'Autre')} - ${template.is_system ? 'Modele systeme' : 'Modele personnalise'}${template.updated_at ? ` - modifie le ${escapeHtml(String(template.updated_at).slice(0, 10))}` : ''}</small>
+        ${template.description ? `<small>${escapeHtml(template.description)}</small>` : ''}
+      </button>
+      <div class="quality-actions">
+        <button class="btn btn-secondary" data-template-action="load" type="button">Charger</button>
+        <button class="btn btn-secondary" data-template-action="duplicate" type="button">Dupliquer</button>
+        ${template.is_system ? '' : '<button class="btn btn-secondary" data-template-action="delete" type="button">Supprimer</button>'}
+      </div>
+    </article>`).join('');
+  }
+
+  function fillTemplateForm(template = null, duplicate = false) {
+    const item = template || selectedMermaidTemplate();
+    const isSystem = item?.is_system && !duplicate;
+    els.mermaidTemplateId.value = duplicate ? '' : (item?.id || '');
+    els.mermaidTemplateName.value = duplicate ? `Copie - ${item?.name || item?.title || ''}` : (item?.name || item?.title || '');
+    els.mermaidTemplateDescription.value = item?.description || '';
+    els.mermaidTemplateCategory.value = item?.category || 'Autre';
+    els.mermaidTemplateSource.value = item?.source || els.mermaidSource.value || '';
+    [els.mermaidTemplateName, els.mermaidTemplateDescription, els.mermaidTemplateCategory, els.mermaidTemplateSource].forEach((field) => {
+      field.disabled = isSystem;
+    });
+    els.mermaidTemplateDuplicate.disabled = !item;
+    els.mermaidTemplateDelete.disabled = isSystem || !item?.id;
+    els.mermaidTemplateForm.querySelector('button[type="submit"]').disabled = isSystem;
+  }
+
+  async function openTemplateManager() {
+    await loadMermaidTemplates();
+    const selected = selectedMermaidTemplate();
+    renderTemplateManager(selected?.id);
+    fillTemplateForm(selected);
+    els.mermaidTemplateManager.classList.remove('hidden');
+  }
+
+  async function saveCurrentAsTemplate() {
+    await loadMermaidTemplates();
+    renderTemplateManager('');
+    fillTemplateForm({
+      id: '',
+      name: els.mermaidTitle.value || '',
+      title: els.mermaidTitle.value || '',
+      description: '',
+      category: 'Autre',
+      source: els.mermaidSource.value,
+      is_system: false,
+    }, true);
+    els.mermaidTemplateManager.classList.remove('hidden');
+    setMermaidStatus('Complete le nom puis enregistre le modele.', 'loading');
+  }
+
+  function editorContentHtml() {
+    const clone = els.editor.cloneNode(true);
+    clone.querySelectorAll('[data-diagram-controls]').forEach((node) => node.remove());
+    return clone.innerHTML;
+  }
+
+  function decorateDiagramBlocks() {
+    els.editor.querySelectorAll('[data-diagram-id]').forEach((block) => {
+      if (block.querySelector('[data-diagram-controls]')) return;
+      const controls = document.createElement('div');
+      controls.className = 'quality-diagram-controls';
+      controls.setAttribute('data-diagram-controls', 'true');
+      controls.setAttribute('contenteditable', 'false');
+      controls.innerHTML = '<button class="btn btn-secondary" data-diagram-action="edit" type="button">Modifier</button><button class="btn btn-secondary" data-diagram-action="duplicate" type="button">Dupliquer</button><button class="btn btn-secondary" data-diagram-action="delete" type="button">Supprimer</button>';
+      block.prepend(controls);
+    });
+  }
+
+  async function deleteDiagramById(diagramId) {
+    if (!diagramId || !window.confirm('Supprimer ce diagramme du chapitre ? Cette action est definitive.')) return;
+    await request(`/diagrams/${diagramId}`, { method: 'DELETE' });
+    await load(state.currentId);
+    setFeedback('Diagramme supprime.', 'success');
+  }
+
+  async function duplicateDiagram(diagramId) {
+    const section = currentSection();
+    const diagram = state.diagrams.find((item) => item.id === diagramId);
+    if (!section || !diagram) return;
+    const copy = cloneDiagram(diagram.diagram_data || {});
+    copy.title = `${copy.title || diagram.title || 'Diagramme'} copie`;
+    await request(`/sections/${section.id}/diagrams`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ diagram_data: copy, editor_mode: copy.editor_mode || 'structured', diagram_type: diagram.diagram_type || 'process' }),
+    });
+    await load(section.id);
+    setFeedback('Diagramme duplique.', 'success');
+  }
+
   function renderStructureControls(section) {
     const descendants = descendantsOf(section.id);
     const parentOptions = activeSections()
@@ -199,7 +963,7 @@
   function renderEditor() {
     const section = currentSection();
     const disabled = !section || !canEdit;
-    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.textColor, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
+    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.textColor, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.insertDiagram, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
       if (!el) return;
       if ('disabled' in el) el.disabled = disabled;
       if (el === els.editor) el.setAttribute('contenteditable', disabled ? 'false' : 'true');
@@ -211,6 +975,7 @@
     els.statusBadge.textContent = section.status;
     els.titleInput.value = section.title || '';
     els.editor.innerHTML = section.content_html || '';
+    decorateDiagramBlocks();
     els.status.value = section.status || 'draft';
     els.version.value = section.version || '1.0';
     els.order.value = Number.isFinite(Number(section.display_order)) ? Number(section.display_order) : 0;
@@ -226,11 +991,13 @@
 
   async function load(selectId = null) {
     setFeedback('Chargement de la documentation...');
+    if (!state.mermaidTemplates.length) await loadMermaidTemplates();
     const data = await request('/default');
     state.collection = data.collection;
     state.sections = data.sections;
     state.missing = data.missing_items;
     state.attachments = data.attachments;
+    state.diagrams = data.diagrams || [];
     state.currentId = selectId || state.currentId || state.sections.find((section) => section.section_type !== 'tome')?.id || state.sections[0]?.id || null;
     els.title.textContent = state.collection.title;
     renderMetrics(data.dashboard);
@@ -242,7 +1009,7 @@
   function payload(extra = {}) {
     return {
       title: els.titleInput.value,
-      content_html: els.editor.innerHTML,
+      content_html: editorContentHtml(),
       status: els.status.value,
       version: els.version.value,
       parent_id: els.parent.value || null,
@@ -340,6 +1107,272 @@
   els.textColor.addEventListener('change', () => {
     applyTextColor(els.textColor.value);
     els.textColor.value = '';
+  });
+  els.insertDiagram.addEventListener('click', () => openDiagramModal());
+  els.editor.addEventListener('dblclick', (event) => {
+    const block = event.target.closest?.('[data-diagram-id]');
+    if (!block) return;
+    const diagram = state.diagrams.find((item) => item.id === block.dataset.diagramId);
+    if (diagram) openDiagramModal(diagram);
+  });
+  els.editor.addEventListener('click', (event) => {
+    const action = event.target.closest?.('[data-diagram-action]');
+    if (!action) return;
+    event.preventDefault();
+    const block = action.closest('[data-diagram-id]');
+    const diagramId = block?.dataset.diagramId;
+    const diagram = state.diagrams.find((item) => item.id === diagramId);
+    if (action.dataset.diagramAction === 'edit' && diagram) openDiagramModal(diagram);
+    if (action.dataset.diagramAction === 'duplicate') duplicateDiagram(diagramId).catch((error) => reportActionError(error, 'Erreur duplication diagramme'));
+    if (action.dataset.diagramAction === 'delete') deleteDiagramById(diagramId).catch((error) => reportActionError(error, 'Erreur suppression diagramme'));
+  });
+  els.diagramClose.addEventListener('click', closeDiagramModal);
+  els.diagramCancel.addEventListener('click', closeDiagramModal);
+  els.diagramVisualTab.addEventListener('click', () => switchDiagramMode('structured'));
+  els.diagramMermaidTab.addEventListener('click', () => switchDiagramMode('mermaid'));
+  els.diagramTemplate.addEventListener('change', () => {
+    if (diagramState.id || !diagramState.data) return;
+    diagramState.data = templateData(els.diagramTemplate.value);
+    renderDiagramEditor();
+  });
+  els.diagramTitle.addEventListener('input', () => {
+    if (diagramState.data) diagramState.data.title = els.diagramTitle.value;
+  });
+  els.diagramOrientation.addEventListener('change', () => mutateDiagram((data) => {
+    data.orientation = els.diagramOrientation.value;
+    autoLayoutDiagram(data);
+  }));
+  els.diagramZoom.addEventListener('input', () => {
+    diagramState.zoom = Number(els.diagramZoom.value || 100);
+    renderDiagramEditor();
+  });
+  els.diagramFit.addEventListener('click', () => {
+    diagramState.zoom = 100;
+    renderDiagramEditor();
+  });
+  els.diagramUndo.addEventListener('click', () => {
+    if (!diagramState.history.length) return;
+    diagramState.future.push(cloneDiagram(diagramState.data));
+    diagramState.data = diagramState.history.pop();
+    renderDiagramEditor();
+  });
+  els.diagramRedo.addEventListener('click', () => {
+    if (!diagramState.future.length) return;
+    diagramState.history.push(cloneDiagram(diagramState.data));
+    diagramState.data = diagramState.future.pop();
+    renderDiagramEditor();
+  });
+  els.diagramAutoLayout.addEventListener('click', () => mutateDiagram(autoLayoutDiagram));
+  els.diagramAddStep.addEventListener('click', () => mutateDiagram((data) => {
+    const index = data.nodes.length + 1;
+    data.nodes.push({ id: `etape-${Date.now()}`, label: `Etape ${index}`, type: 'process', description: '', chapter_code: '', x: data.orientation === 'horizontal' ? index - 1 : 0, y: data.orientation === 'horizontal' ? 0 : index - 1 });
+  }));
+  els.diagramAddDecision.addEventListener('click', () => mutateDiagram((data) => {
+    const index = data.nodes.length + 1;
+    data.nodes.push({ id: `decision-${Date.now()}`, label: 'Decision', type: 'decision', description: '', chapter_code: '', x: data.orientation === 'horizontal' ? index - 1 : 1, y: data.orientation === 'horizontal' ? 1 : index - 1 });
+  }));
+  els.diagramAddEdge.addEventListener('click', () => mutateDiagram((data) => {
+    if (data.nodes.length < 2) return;
+    data.edges.push({ id: `edge-${Date.now()}`, from: data.nodes[0].id, to: data.nodes[1].id, label: '' });
+  }));
+  els.mermaidLoadTemplate.addEventListener('click', () => {
+    if (diagramState.mermaidDirty && !window.confirm('Le chargement d un nouveau modele remplacera le code actuel. Continuer ?')) return;
+    const template = selectedMermaidTemplate();
+    if (!els.mermaidTitle.value.trim()) els.mermaidTitle.value = template.title || template.name || '';
+    els.mermaidSource.value = template.source;
+    diagramState.data = { editor_mode: 'mermaid', schema_version: 1, title: els.mermaidTitle.value || template.title || template.name, source: template.source, rendered_svg: '' };
+    diagramState.mermaidSvg = '';
+    diagramState.mermaidDirty = true;
+    els.mermaidPreview.innerHTML = '';
+    setMermaidStatus('Modele charge. Le code est modifiable et non sauvegarde.', 'success');
+  });
+  els.mermaidFormat.addEventListener('click', () => {
+    try {
+      els.mermaidSource.value = formatMermaidSource(els.mermaidSource.value);
+      diagramState.mermaidSvg = '';
+      diagramState.mermaidDirty = true;
+      setMermaidStatus('Code indente.', 'success');
+    } catch (error) {
+      setMermaidStatus(error.message, 'error');
+    }
+  });
+  els.mermaidPreviewBtn.addEventListener('click', () => previewMermaid().catch(() => {}));
+  els.mermaidExpand.addEventListener('click', () => {
+    const fullscreen = els.diagramModal.classList.toggle('quality-modal-fullscreen');
+    els.mermaidExpand.textContent = fullscreen ? 'Reduire l editeur' : 'Agrandir l editeur';
+    setMermaidStatus(fullscreen ? 'Editeur agrandi.' : 'Editeur reduit.', 'success');
+  });
+  function closeMermaidFullscreen(sync = true) {
+    if (sync) {
+      els.mermaidTitle.value = els.mermaidFullscreenTitle.value;
+      els.mermaidSource.value = els.mermaidFullscreenSource.value;
+      els.mermaidPreview.innerHTML = els.mermaidFullscreenPreview.innerHTML;
+      diagramState.mermaidDirty = true;
+      if (diagramState.data) {
+        diagramState.data.title = els.mermaidTitle.value;
+        diagramState.data.source = els.mermaidSource.value;
+      }
+    }
+    els.mermaidFullscreen.classList.add('hidden');
+  }
+  els.mermaidCollapse.addEventListener('click', () => closeMermaidFullscreen(true));
+  els.mermaidFullscreenClose.addEventListener('click', () => closeMermaidFullscreen(true));
+  els.mermaidFullscreenPreviewBtn.addEventListener('click', () => previewMermaid({
+    sourceEl: els.mermaidFullscreenSource,
+    previewEl: els.mermaidFullscreenPreview,
+    errorEl: els.mermaidFullscreenError,
+    button: els.mermaidFullscreenPreviewBtn,
+  }).catch(() => {}));
+  els.mermaidFullscreenSave.addEventListener('click', async () => {
+    closeMermaidFullscreen(true);
+    await saveDiagram().catch((error) => setFeedback(error.message, 'error'));
+  });
+  els.mermaidSource.addEventListener('input', () => {
+    diagramState.mermaidSvg = '';
+    diagramState.mermaidDirty = true;
+    if (diagramState.data) diagramState.data.source = els.mermaidSource.value;
+    setMermaidStatus('Code modifie. Relance la previsualisation avant enregistrement.', 'loading');
+  });
+  els.mermaidTitle.addEventListener('input', () => {
+    if (diagramState.data) diagramState.data.title = els.mermaidTitle.value;
+  });
+  els.mermaidSaveTemplate.addEventListener('click', () => saveCurrentAsTemplate().catch((error) => setMermaidStatus(error.message, 'error')));
+  els.mermaidManageTemplates.addEventListener('click', () => openTemplateManager().catch((error) => setMermaidStatus(error.message, 'error')));
+  els.mermaidTemplateManagerClose.addEventListener('click', () => els.mermaidTemplateManager.classList.add('hidden'));
+  els.mermaidTemplateList.addEventListener('click', (event) => {
+    const item = event.target.closest('[data-template-id]');
+    if (!item) return;
+    const action = event.target.closest('[data-template-action]')?.dataset.templateAction || 'select';
+    const template = state.mermaidTemplates.find((entry) => entry.id === item.dataset.templateId);
+    if (!template) return;
+    renderTemplateManager(item.dataset.templateId);
+    fillTemplateForm(template);
+    if (action === 'load') {
+      if (diagramState.mermaidDirty && !window.confirm('Le chargement d un nouveau modele remplacera le code actuel. Continuer ?')) return;
+      els.mermaidTitle.value = template.title || template.name || '';
+      els.mermaidSource.value = template.source || '';
+      diagramState.data = { editor_mode: 'mermaid', schema_version: 1, title: els.mermaidTitle.value, source: els.mermaidSource.value, rendered_svg: '' };
+      diagramState.mermaidSvg = '';
+      diagramState.mermaidDirty = true;
+      els.mermaidTemplateManager.classList.add('hidden');
+      setMermaidStatus('Modele charge.', 'success');
+    }
+    if (action === 'duplicate') {
+      fillTemplateForm(template, true);
+      setMermaidStatus('Modele duplique dans le formulaire. Enregistre pour l ajouter.', 'loading');
+    }
+    if (action === 'delete') {
+      if (template.is_system) return;
+      if (!window.confirm('Supprimer definitivement ce modele ?')) return;
+      request(`/diagrams/template-library/${template.id}`, { method: 'DELETE' })
+        .then(() => loadMermaidTemplates())
+        .then(() => {
+          renderTemplateManager();
+          fillTemplateForm(state.mermaidTemplates[0]);
+          setMermaidStatus('Modele supprime.', 'success');
+        })
+        .catch((error) => reportActionError(error, 'Erreur suppression modele'));
+    }
+  });
+  els.mermaidTemplateDuplicate.addEventListener('click', () => {
+    const template = state.mermaidTemplates.find((item) => item.id === els.mermaidTemplateId.value) || selectedMermaidTemplate();
+    fillTemplateForm(template, true);
+  });
+  els.mermaidTemplateDelete.addEventListener('click', async () => {
+    const id = els.mermaidTemplateId.value;
+    if (!id || id.startsWith('system:')) return;
+    if (!window.confirm('Supprimer ce modele personnalise ?')) return;
+    await request(`/diagrams/template-library/${id}`, { method: 'DELETE' });
+    await loadMermaidTemplates();
+    renderTemplateManager();
+    fillTemplateForm(state.mermaidTemplates[0]);
+    setMermaidStatus('Modele supprime.', 'success');
+  });
+  els.mermaidTemplateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const id = els.mermaidTemplateId.value;
+    const body = {
+      name: els.mermaidTemplateName.value,
+      description: els.mermaidTemplateDescription.value,
+      category: els.mermaidTemplateCategory.value,
+      source: els.mermaidTemplateSource.value,
+    };
+    const saved = await request(id ? `/diagrams/template-library/${id}` : '/diagrams/template-library', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    await loadMermaidTemplates();
+    els.mermaidTemplate.value = saved.id;
+    renderTemplateManager(saved.id);
+    fillTemplateForm(saved);
+    setMermaidStatus('Modele enregistre dans la bibliotheque.', 'success');
+  });
+  els.diagramNodeList.addEventListener('change', (event) => {
+    const field = event.target.dataset.nodeField;
+    const card = event.target.closest('[data-node-id]');
+    if (!field || !card) return;
+    mutateDiagram((data) => {
+      const node = data.nodes.find((item) => item.id === card.dataset.nodeId);
+      if (!node) return;
+      if (field === 'position') {
+        const [x, y] = String(event.target.value).split(',').map((value) => Number(value.trim()));
+        node.x = Number.isFinite(x) ? x : node.x;
+        node.y = Number.isFinite(y) ? y : node.y;
+      } else {
+        node[field] = event.target.value;
+      }
+    });
+  });
+  els.diagramNodeList.addEventListener('click', (event) => {
+    const action = event.target.dataset.nodeAction;
+    const card = event.target.closest('[data-node-id]');
+    if (!action || !card) return;
+    mutateDiagram((data) => {
+      const index = data.nodes.findIndex((item) => item.id === card.dataset.nodeId);
+      if (index < 0) return;
+      if (action === 'delete') {
+        const id = data.nodes[index].id;
+        data.nodes.splice(index, 1);
+        data.edges = data.edges.filter((edge) => edge.from !== id && edge.to !== id);
+      }
+      if (action === 'duplicate') {
+        const copy = cloneDiagram(data.nodes[index]);
+        copy.id = `${copy.id}-copie-${Date.now()}`;
+        copy.label = `${copy.label} copie`;
+        copy.y = Number(copy.y || 0) + 1;
+        data.nodes.splice(index + 1, 0, copy);
+      }
+    });
+  });
+  els.diagramEdgeList.addEventListener('change', (event) => {
+    const field = event.target.dataset.edgeField;
+    const card = event.target.closest('[data-edge-id]');
+    if (!field || !card) return;
+    mutateDiagram((data) => {
+      const edge = data.edges.find((item) => item.id === card.dataset.edgeId);
+      if (edge) edge[field] = event.target.value;
+    });
+  });
+  els.diagramEdgeList.addEventListener('click', (event) => {
+    if (event.target.dataset.edgeAction !== 'delete') return;
+    const card = event.target.closest('[data-edge-id]');
+    if (!card) return;
+    mutateDiagram((data) => {
+      data.edges = data.edges.filter((edge) => edge.id !== card.dataset.edgeId);
+    });
+  });
+  els.diagramSave.addEventListener('click', () => saveDiagram().catch((error) => reportActionError(error, 'Erreur enregistrement diagramme')));
+  els.diagramDelete.addEventListener('click', async () => {
+    if (!diagramState.id || !window.confirm('Supprimer ce diagramme du chapitre ? Cette action est definitive.')) return;
+    try {
+      await request(`/diagrams/${diagramState.id}`, { method: 'DELETE' });
+      await load(state.currentId);
+      closeDiagramModal();
+      setFeedback('Diagramme supprime.', 'success');
+    } catch (error) {
+      reportActionError(error, 'Erreur suppression diagramme');
+    }
   });
   [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment].forEach((el) => {
     el.addEventListener('input', () => { state.dirty = true; });
