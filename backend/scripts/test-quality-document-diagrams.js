@@ -1,6 +1,9 @@
 const assert = require('assert');
 
 const {
+  createDiagramTemplate,
+  deleteDiagramTemplate,
+  listDiagramTemplates,
   normalizeDiagramData,
   preparedFishDiagram,
   preparedFishMermaidSource,
@@ -70,4 +73,45 @@ mustThrow('svg mermaid dangereux', () => normalizeDiagramData({
   rendered_svg: '<svg><script>alert(1)</script></svg>',
 }));
 
-console.log('[quality diagrams:test] OK validation JSON, Mermaid et rendu SVG');
+(async () => {
+  const customRows = [];
+  const fakeDb = {
+    async query(sql, params) {
+      if (sql.includes('SELECT id, store_id, name')) return { rows: customRows };
+      if (sql.includes('INSERT INTO quality_document_diagram_templates')) {
+        const row = {
+          id: 'custom-1',
+          store_id: params[0],
+          name: params[1],
+          title: params[1],
+          description: params[2],
+          category: params[3],
+          editor_mode: 'mermaid',
+          source: params[4],
+          is_system: false,
+        };
+        customRows.push(row);
+        return { rows: [row] };
+      }
+      throw new Error(`Requete inattendue: ${sql}`);
+    },
+  };
+  const created = await createDiagramTemplate(fakeDb, 'store-a', 'user-a', {
+    name: 'Modele perso',
+    category: 'HACCP',
+    source: 'flowchart TD\n A[Debut] --> B[Fin]',
+  });
+  assert.strictEqual(created.store_id, 'store-a');
+  const library = await listDiagramTemplates(fakeDb, 'store-a');
+  assert.ok(library.some((template) => template.is_system), 'La bibliotheque doit inclure les modeles systeme');
+  assert.ok(library.some((template) => template.id === 'custom-1'), 'La bibliotheque doit inclure les modeles personnalises du magasin');
+  await assert.rejects(
+    () => deleteDiagramTemplate(fakeDb, 'store-a', 'system:recall', 'user-a'),
+    /systeme ne sont pas supprimables/
+  );
+
+  console.log('[quality diagrams:test] OK validation JSON, Mermaid, modeles et rendu SVG');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

@@ -25,6 +25,18 @@ const MAX_LABEL_LENGTH = 120;
 const MAX_DESCRIPTION_LENGTH = 500;
 const MAX_MERMAID_SOURCE_LENGTH = 20000;
 const MAX_MERMAID_SVG_LENGTH = 500000;
+const TEMPLATE_CATEGORIES = Object.freeze([
+  'Fabrication',
+  'HACCP',
+  'Non-conformite',
+  'Tracabilite',
+  'Retrait / rappel',
+  'Flux',
+  'Nettoyage',
+  'Maintenance',
+  'Urgence',
+  'Autre',
+]);
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
@@ -39,6 +51,11 @@ function escapeHtml(value) {
 function cleanText(value, maxLength, fallback = '') {
   const text = String(value ?? fallback).replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
   return text.slice(0, maxLength);
+}
+
+function cleanCategory(value) {
+  const category = cleanText(value, 80, 'Autre');
+  return TEMPLATE_CATEGORIES.includes(category) ? category : 'Autre';
 }
 
 function slugId(value, fallback) {
@@ -432,11 +449,25 @@ function templates() {
 function mermaidTemplates() {
   return {
     seafood_fabrication: {
+      id: 'system:seafood_fabrication',
+      key: 'seafood_fabrication',
+      name: 'Fabrication produits de la peche',
       title: 'Diagramme de fabrication - Produits de la peche prepares',
+      description: 'Flux complet de preparation de produits de la peche avec branche non-conformite.',
+      category: 'Fabrication',
+      is_system: true,
+      editor_mode: 'mermaid',
       source: preparedFishMermaidSource(),
     },
     live_shellfish: {
+      id: 'system:live_shellfish',
+      key: 'live_shellfish',
+      name: 'Crustaces vivants',
       title: 'Crustaces vivants',
+      description: 'Reception, controle et expedition de crustaces vivants.',
+      category: 'Fabrication',
+      is_system: true,
+      editor_mode: 'mermaid',
       source: `flowchart TD
     A([Debut]) --> B[Reception des crustaces vivants]
     B --> C[Controle vitalite et temperature]
@@ -450,7 +481,14 @@ function mermaidTemplates() {
     H --> I([Fin])`,
     },
     trading_with_transit: {
+      id: 'system:trading_with_transit',
+      key: 'trading_with_transit',
+      name: 'Negoce avec transit',
       title: 'Negoce avec transit',
+      description: 'Negoce avec passage physique en chambre froide.',
+      category: 'Flux',
+      is_system: true,
+      editor_mode: 'mermaid',
       source: `flowchart TD
     A([Debut]) --> B[Reception produit]
     B --> C[Controle documentaire et temperature]
@@ -463,7 +501,14 @@ function mermaidTemplates() {
     H --> I([Fin])`,
     },
     trading_without_transit: {
+      id: 'system:trading_without_transit',
+      key: 'trading_without_transit',
+      name: 'Negoce sans transit',
       title: 'Negoce sans transit',
+      description: 'Negoce sans passage physique par l atelier.',
+      category: 'Flux',
+      is_system: true,
+      editor_mode: 'mermaid',
       source: `flowchart TD
     A([Debut]) --> B[Commande fournisseur]
     B --> C[Controle documents et tracabilite]
@@ -474,7 +519,14 @@ function mermaidTemplates() {
     F -- Oui --> NC1[Ouverture non-conformite]`,
     },
     non_conformity: {
+      id: 'system:non_conformity',
+      key: 'non_conformity',
+      name: 'Non-conformite',
       title: 'Non-conformite',
+      description: 'Traitement d une anomalie produit ou fournisseur.',
+      category: 'Non-conformite',
+      is_system: true,
+      editor_mode: 'mermaid',
       source: `flowchart TD
     A([Debut]) --> B[Detection anomalie]
     B --> C[Isolement du produit]
@@ -488,7 +540,14 @@ function mermaidTemplates() {
     H --> I`,
     },
     recall: {
+      id: 'system:recall',
+      key: 'recall',
+      name: 'Retrait / rappel',
       title: 'Retrait / rappel',
+      description: 'Gestion d une alerte, d un retrait ou d un rappel.',
+      category: 'Retrait / rappel',
+      is_system: true,
+      editor_mode: 'mermaid',
       source: `flowchart TD
     A([Debut]) --> B[Alerte sanitaire ou interne]
     B --> C[Identification du lot]
@@ -500,7 +559,14 @@ function mermaidTemplates() {
     H --> I([Fin])`,
     },
     simple_process: {
+      id: 'system:simple_process',
+      key: 'simple_process',
+      name: 'Processus simple',
       title: 'Processus simple',
+      description: 'Base courte pour decrire un processus controle.',
+      category: 'Flux',
+      is_system: true,
+      editor_mode: 'mermaid',
       source: `flowchart TD
     A([Debut]) --> B[Etape]
     B --> C[Controle]
@@ -601,6 +667,84 @@ async function listDiagrams(db, storeId, sectionId) {
     [storeId, sectionId]
   );
   return result.rows;
+}
+
+function systemTemplateRows() {
+  return Object.values(mermaidTemplates()).map((template) => ({
+    id: template.id,
+    store_id: null,
+    name: template.name || template.title,
+    title: template.title,
+    description: template.description || '',
+    category: template.category || 'Autre',
+    editor_mode: 'mermaid',
+    source: template.source,
+    is_system: true,
+    created_at: null,
+    updated_at: null,
+  }));
+}
+
+async function listDiagramTemplates(db, storeId) {
+  const custom = await db.query(
+    `SELECT id, store_id, name, name AS title, description, category, editor_mode, source, is_system, created_at, updated_at
+     FROM quality_document_diagram_templates
+     WHERE archived_at IS NULL AND (store_id = $1 OR is_system = true)
+     ORDER BY is_system DESC, category ASC, name ASC`,
+    [storeId]
+  ).catch((err) => {
+    if (err.code === '42P01') return { rows: [] };
+    throw err;
+  });
+  return [...systemTemplateRows(), ...custom.rows];
+}
+
+async function createDiagramTemplate(db, storeId, userId, body = {}) {
+  const name = cleanText(body.name, 120);
+  if (!name) badRequest('Nom du modele obligatoire');
+  const source = sanitizeMermaidSource(body.source);
+  const result = await db.query(
+    `INSERT INTO quality_document_diagram_templates
+     (store_id, name, description, category, editor_mode, source, is_system, created_by, updated_by)
+     VALUES ($1,$2,$3,$4,'mermaid',$5,false,$6,$6)
+     RETURNING id, store_id, name, name AS title, description, category, editor_mode, source, is_system, created_at, updated_at`,
+    [storeId, name, cleanText(body.description, 500), cleanCategory(body.category), source, userId]
+  );
+  return result.rows[0];
+}
+
+async function updateDiagramTemplate(db, storeId, templateId, userId, body = {}) {
+  if (String(templateId).startsWith('system:')) badRequest('Les modeles systeme ne sont pas modifiables');
+  const before = await db.query(
+    `SELECT * FROM quality_document_diagram_templates
+     WHERE id = $1 AND store_id = $2 AND is_system = false AND archived_at IS NULL
+     LIMIT 1`,
+    [templateId, storeId]
+  );
+  if (!before.rows[0]) return null;
+  const name = cleanText(body.name ?? before.rows[0].name, 120);
+  if (!name) badRequest('Nom du modele obligatoire');
+  const source = sanitizeMermaidSource(body.source ?? before.rows[0].source);
+  const result = await db.query(
+    `UPDATE quality_document_diagram_templates
+     SET name = $3, description = $4, category = $5, source = $6, updated_by = $7, updated_at = now()
+     WHERE id = $1 AND store_id = $2 AND is_system = false AND archived_at IS NULL
+     RETURNING id, store_id, name, name AS title, description, category, editor_mode, source, is_system, created_at, updated_at`,
+    [templateId, storeId, name, cleanText(body.description ?? before.rows[0].description, 500), cleanCategory(body.category ?? before.rows[0].category), source, userId]
+  );
+  return result.rows[0] || null;
+}
+
+async function deleteDiagramTemplate(db, storeId, templateId, userId) {
+  if (String(templateId).startsWith('system:')) badRequest('Les modeles systeme ne sont pas supprimables');
+  const result = await db.query(
+    `UPDATE quality_document_diagram_templates
+     SET archived_at = COALESCE(archived_at, now()), updated_by = $3, updated_at = now()
+     WHERE id = $1 AND store_id = $2 AND is_system = false AND archived_at IS NULL
+     RETURNING id, store_id, name, name AS title, description, category, editor_mode, source, is_system, created_at, updated_at`,
+    [templateId, storeId, userId]
+  );
+  return result.rows[0] || null;
 }
 
 async function createDiagram(db, storeId, sectionId, userId, body = {}) {
@@ -724,9 +868,13 @@ async function ensureDefaultFabricationDiagram(db, storeId, userId) {
 
 module.exports = {
   NODE_TYPES,
+  TEMPLATE_CATEGORIES,
   archiveDiagram,
   createDiagram,
+  createDiagramTemplate,
+  deleteDiagramTemplate,
   ensureDefaultFabricationDiagram,
+  listDiagramTemplates,
   listDiagrams,
   normalizeDiagramData,
   mermaidTemplates,
@@ -737,4 +885,5 @@ module.exports = {
   renderDiagramSvg,
   templates,
   updateDiagram,
+  updateDiagramTemplate,
 };

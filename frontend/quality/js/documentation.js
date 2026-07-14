@@ -82,9 +82,33 @@
     mermaidLoadTemplate: $('mermaid-load-template-btn'),
     mermaidFormat: $('mermaid-format-btn'),
     mermaidPreviewBtn: $('mermaid-preview-btn'),
+    mermaidExpand: $('mermaid-expand-btn'),
+    mermaidStatus: $('mermaid-status'),
     mermaidSource: $('mermaid-source'),
     mermaidPreview: $('mermaid-preview'),
     mermaidError: $('mermaid-error'),
+    mermaidSaveTemplate: $('mermaid-save-template-btn'),
+    mermaidManageTemplates: $('mermaid-manage-templates-btn'),
+    mermaidFullscreen: $('mermaid-fullscreen'),
+    mermaidCollapse: $('mermaid-collapse-btn'),
+    mermaidFullscreenTitle: $('mermaid-fullscreen-title-input'),
+    mermaidFullscreenSource: $('mermaid-fullscreen-source'),
+    mermaidFullscreenPreview: $('mermaid-fullscreen-preview'),
+    mermaidFullscreenError: $('mermaid-fullscreen-error'),
+    mermaidFullscreenPreviewBtn: $('mermaid-fullscreen-preview-btn'),
+    mermaidFullscreenSave: $('mermaid-fullscreen-save-btn'),
+    mermaidFullscreenClose: $('mermaid-fullscreen-close-btn'),
+    mermaidTemplateManager: $('mermaid-template-manager'),
+    mermaidTemplateManagerClose: $('mermaid-template-manager-close-btn'),
+    mermaidTemplateList: $('mermaid-template-list'),
+    mermaidTemplateForm: $('mermaid-template-form'),
+    mermaidTemplateId: $('mermaid-template-id'),
+    mermaidTemplateName: $('mermaid-template-name'),
+    mermaidTemplateDescription: $('mermaid-template-description'),
+    mermaidTemplateCategory: $('mermaid-template-category'),
+    mermaidTemplateSource: $('mermaid-template-source'),
+    mermaidTemplateDuplicate: $('mermaid-template-duplicate-btn'),
+    mermaidTemplateDelete: $('mermaid-template-delete-btn'),
   };
 
   const DIAGRAM_NODE_TYPES = [
@@ -115,8 +139,8 @@
     note: { fill: '#fefce8', stroke: '#a16207', icon: 'i', shape: 'note' },
   };
 
-  let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], currentId: null, dirty: false, filter: 'all' };
-  let diagramState = { id: null, data: null, history: [], future: [], zoom: 100, mode: 'structured', mermaidSvg: '' };
+  let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], currentId: null, dirty: false, filter: 'all', mermaidTemplates: [] };
+  let diagramState = { id: null, data: null, history: [], future: [], zoom: 100, mode: 'structured', mermaidSvg: '', mermaidDirty: false };
 
   if (window.mermaid) {
     window.mermaid.initialize({
@@ -166,6 +190,50 @@
       throw new Error(data.error || 'Erreur export PDF');
     }
     return response.blob();
+  }
+
+  function setMermaidStatus(message = '', type = '') {
+    els.mermaidStatus.textContent = message;
+    els.mermaidStatus.className = message ? `quality-inline-status ${type}`.trim() : 'quality-inline-status hidden';
+  }
+
+  function systemMermaidTemplates() {
+    const builtIns = mermaidTemplateData();
+    return Object.entries(builtIns).map(([key, template]) => ({
+      id: `system:${key}`,
+      key,
+      name: template.name || template.title,
+      title: template.title,
+      description: template.description || '',
+      category: template.category || 'Autre',
+      source: template.source,
+      is_system: true,
+      editor_mode: 'mermaid',
+    }));
+  }
+
+  function renderMermaidTemplateSelect() {
+    const templates = state.mermaidTemplates.length ? state.mermaidTemplates : systemMermaidTemplates();
+    els.mermaidTemplate.innerHTML = templates.map((template) => {
+      const badge = template.is_system ? 'Systeme' : 'Personnalise';
+      return `<option value="${escapeHtml(template.id)}">${escapeHtml(template.category || 'Autre')} - ${escapeHtml(template.name || template.title)} (${badge})</option>`;
+    }).join('');
+  }
+
+  async function loadMermaidTemplates() {
+    try {
+      const templates = await request('/diagrams/template-library');
+      state.mermaidTemplates = templates;
+    } catch (error) {
+      state.mermaidTemplates = systemMermaidTemplates();
+    }
+    renderMermaidTemplateSelect();
+    return state.mermaidTemplates;
+  }
+
+  function selectedMermaidTemplate() {
+    const templates = state.mermaidTemplates.length ? state.mermaidTemplates : systemMermaidTemplates();
+    return templates.find((template) => template.id === els.mermaidTemplate.value) || templates[0] || systemMermaidTemplates()[0];
   }
 
   function currentSection() {
@@ -254,10 +322,13 @@
     return cloneDiagram(templates[key] || templates.blank);
   }
 
-  function mermaidTemplateData(key = 'seafood_fabrication') {
+  function mermaidTemplateData(key = null) {
     const templates = {
       seafood_fabrication: {
+        name: 'Fabrication produits de la peche',
         title: 'Diagramme de fabrication - Produits de la peche prepares',
+        description: 'Flux complet de preparation de produits de la peche avec branche non-conformite.',
+        category: 'Fabrication',
         source: `flowchart TD
     A([Début]) --> B[Réception des poissons]
     B --> C[Contrôle à réception]
@@ -290,7 +361,10 @@
     S --> T([Fin])`,
       },
       live_shellfish: {
+        name: 'Crustaces vivants',
         title: 'Crustaces vivants',
+        description: 'Reception, controle et expedition de crustaces vivants.',
+        category: 'Fabrication',
         source: `flowchart TD
     A([Debut]) --> B[Reception des crustaces vivants]
     B --> C[Controle vitalite et temperature]
@@ -304,7 +378,10 @@
     H --> I([Fin])`,
       },
       trading_with_transit: {
+        name: 'Negoce avec transit',
         title: 'Negoce avec transit',
+        description: 'Negoce avec passage physique en chambre froide.',
+        category: 'Flux',
         source: `flowchart TD
     A([Debut]) --> B[Reception produit]
     B --> C[Controle documentaire et temperature]
@@ -317,7 +394,10 @@
     H --> I([Fin])`,
       },
       trading_without_transit: {
+        name: 'Negoce sans transit',
         title: 'Negoce sans transit',
+        description: 'Negoce sans passage physique par l atelier.',
+        category: 'Flux',
         source: `flowchart TD
     A([Debut]) --> B[Commande fournisseur]
     B --> C[Controle documents et tracabilite]
@@ -328,7 +408,10 @@
     F -- Oui --> NC1[Ouverture non-conformite]`,
       },
       non_conformity: {
+        name: 'Non-conformite',
         title: 'Non-conformite',
+        description: 'Traitement d une anomalie produit ou fournisseur.',
+        category: 'Non-conformite',
         source: `flowchart TD
     A([Debut]) --> B[Detection anomalie]
     B --> C[Isolement du produit]
@@ -342,7 +425,10 @@
     H --> I`,
       },
       recall: {
+        name: 'Retrait / rappel',
         title: 'Retrait / rappel',
+        description: 'Gestion d une alerte, d un retrait ou d un rappel.',
+        category: 'Retrait / rappel',
         source: `flowchart TD
     A([Debut]) --> B[Alerte sanitaire ou interne]
     B --> C[Identification du lot]
@@ -354,7 +440,10 @@
     H --> I([Fin])`,
       },
       simple_process: {
+        name: 'Processus simple',
         title: 'Processus simple',
+        description: 'Base courte pour decrire un processus controle.',
+        category: 'Flux',
         source: `flowchart TD
     A([Debut]) --> B[Etape]
     B --> C[Controle]
@@ -364,6 +453,7 @@
     F --> B`,
       },
     };
+    if (!key) return cloneDiagram(templates);
     return cloneDiagram(templates[key] || templates.seafood_fabrication);
   }
 
@@ -500,25 +590,36 @@
     return line ? `Erreur Mermaid ligne ${line} : ${message}` : `Erreur Mermaid : ${message}`;
   }
 
-  async function previewMermaid() {
+  async function previewMermaid(options = {}) {
     if (!window.mermaid) throw new Error('La bibliotheque Mermaid locale est indisponible.');
-    const source = sanitizeMermaidSource(els.mermaidSource.value);
-    els.mermaidError.classList.add('hidden');
-    els.mermaidError.textContent = '';
+    const sourceEl = options.sourceEl || els.mermaidSource;
+    const previewEl = options.previewEl || els.mermaidPreview;
+    const errorEl = options.errorEl || els.mermaidError;
+    const button = options.button || els.mermaidPreviewBtn;
+    const source = sanitizeMermaidSource(sourceEl.value);
+    errorEl.classList.add('hidden');
+    errorEl.textContent = '';
+    previewEl.innerHTML = '<div class="quality-empty-state">Rendu Mermaid en cours...</div>';
+    setMermaidStatus('Previsualisation en cours...', 'loading');
+    if (button) button.disabled = true;
     try {
       if (window.mermaid.parse) await window.mermaid.parse(source);
       const id = `quality-mermaid-${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const rendered = await window.mermaid.render(id, source);
       const svg = sanitizeMermaidSvg(rendered.svg || rendered);
-      els.mermaidPreview.innerHTML = svg;
+      previewEl.innerHTML = svg;
       diagramState.mermaidSvg = svg;
+      setMermaidStatus('Previsualisation a jour.', 'success');
       return svg;
     } catch (error) {
       diagramState.mermaidSvg = '';
-      els.mermaidPreview.innerHTML = '';
-      els.mermaidError.textContent = mermaidErrorMessage(error);
-      els.mermaidError.classList.remove('hidden');
+      previewEl.innerHTML = '';
+      errorEl.textContent = mermaidErrorMessage(error);
+      errorEl.classList.remove('hidden');
+      setMermaidStatus('Erreur Mermaid. Corrige le code puis relance la previsualisation.', 'error');
       throw error;
+    } finally {
+      if (button) button.disabled = false;
     }
   }
 
@@ -614,7 +715,7 @@
     els.diagramTitle.value = data.title || '';
     els.mermaidTitle.value = data.title || '';
     if (isMermaid) {
-      els.mermaidSource.value = data.source || '';
+      if (!diagramState.mermaidDirty) els.mermaidSource.value = data.source || '';
       els.mermaidPreview.innerHTML = diagramState.mermaidSvg || data.rendered_svg || '';
       return;
     }
@@ -657,6 +758,7 @@
       zoom: 100,
       mode,
       mermaidSvg: baseData.rendered_svg || '',
+      mermaidDirty: false,
     };
     els.diagramDelete.classList.toggle('hidden', !diagramState.id);
     els.diagramModal.classList.remove('hidden');
@@ -681,11 +783,11 @@
     if (diagramState.id && !window.confirm('Changer de mode remplace le contenu editable du diagramme. Continuer ?')) return;
     diagramState.mode = mode;
     if (mode === 'mermaid') {
-      const template = mermaidTemplateData(els.mermaidTemplate.value || 'seafood_fabrication');
+      const template = selectedMermaidTemplate();
       diagramState.data = { editor_mode: 'mermaid', title: template.title, source: template.source, rendered_svg: '', schema_version: 1 };
       diagramState.mermaidSvg = '';
+      diagramState.mermaidDirty = false;
       renderDiagramEditor();
-      previewMermaid().catch(() => {});
       return;
     }
     diagramState.data = templateData(els.diagramTemplate.value || 'blank');
@@ -721,6 +823,54 @@
     await load(section.id);
     closeDiagramModal();
     return saved;
+  }
+
+  function renderTemplateManager(selectedId = '') {
+    const templates = state.mermaidTemplates.length ? state.mermaidTemplates : systemMermaidTemplates();
+    els.mermaidTemplateList.innerHTML = templates.map((template) => `<button class="${template.id === selectedId ? 'active' : ''}" data-template-id="${escapeHtml(template.id)}" type="button">
+      <strong>${escapeHtml(template.name || template.title)}</strong>
+      <small>${escapeHtml(template.category || 'Autre')} - ${template.is_system ? 'Modele systeme' : 'Modele personnalise'}</small>
+      ${template.description ? `<small>${escapeHtml(template.description)}</small>` : ''}
+    </button>`).join('');
+  }
+
+  function fillTemplateForm(template = null, duplicate = false) {
+    const item = template || selectedMermaidTemplate();
+    const isSystem = item?.is_system && !duplicate;
+    els.mermaidTemplateId.value = duplicate ? '' : (item?.id || '');
+    els.mermaidTemplateName.value = duplicate ? `Copie - ${item?.name || item?.title || ''}` : (item?.name || item?.title || '');
+    els.mermaidTemplateDescription.value = item?.description || '';
+    els.mermaidTemplateCategory.value = item?.category || 'Autre';
+    els.mermaidTemplateSource.value = item?.source || els.mermaidSource.value || '';
+    [els.mermaidTemplateName, els.mermaidTemplateDescription, els.mermaidTemplateCategory, els.mermaidTemplateSource].forEach((field) => {
+      field.disabled = isSystem;
+    });
+    els.mermaidTemplateDuplicate.disabled = !item;
+    els.mermaidTemplateDelete.disabled = isSystem || !item?.id;
+    els.mermaidTemplateForm.querySelector('button[type="submit"]').disabled = isSystem;
+  }
+
+  async function openTemplateManager() {
+    await loadMermaidTemplates();
+    const selected = selectedMermaidTemplate();
+    renderTemplateManager(selected?.id);
+    fillTemplateForm(selected);
+    els.mermaidTemplateManager.classList.remove('hidden');
+  }
+
+  async function saveCurrentAsTemplate() {
+    const name = window.prompt('Nom du nouveau modele', els.mermaidTitle.value || 'Nouveau modele Mermaid');
+    if (!name) return;
+    const description = window.prompt('Description facultative', '') || '';
+    const category = window.prompt('Categorie', 'Autre') || 'Autre';
+    const created = await request('/diagrams/template-library', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, description, category, source: els.mermaidSource.value }),
+    });
+    await loadMermaidTemplates();
+    els.mermaidTemplate.value = created.id;
+    setMermaidStatus('Modele personnalise enregistre.', 'success');
   }
 
   function renderStructureControls(section) {
@@ -772,6 +922,7 @@
 
   async function load(selectId = null) {
     setFeedback('Chargement de la documentation...');
+    if (!state.mermaidTemplates.length) await loadMermaidTemplates();
     const data = await request('/default');
     state.collection = data.collection;
     state.sections = data.sections;
@@ -945,25 +1096,109 @@
     data.edges.push({ id: `edge-${Date.now()}`, from: data.nodes[0].id, to: data.nodes[1].id, label: '' });
   }));
   els.mermaidLoadTemplate.addEventListener('click', () => {
-    if (els.mermaidSource.value.trim() && !window.confirm('Remplacer le code Mermaid actuel par ce modele ?')) return;
-    const template = mermaidTemplateData(els.mermaidTemplate.value);
-    els.mermaidTitle.value = template.title;
+    if (diagramState.mermaidDirty && !window.confirm('Le chargement d un nouveau modele remplacera le code actuel. Continuer ?')) return;
+    const template = selectedMermaidTemplate();
+    if (!els.mermaidTitle.value.trim()) els.mermaidTitle.value = template.title || template.name || '';
     els.mermaidSource.value = template.source;
-    diagramState.data = { editor_mode: 'mermaid', schema_version: 1, title: template.title, source: template.source, rendered_svg: '' };
+    diagramState.data = { editor_mode: 'mermaid', schema_version: 1, title: els.mermaidTitle.value || template.title || template.name, source: template.source, rendered_svg: '' };
     diagramState.mermaidSvg = '';
-    previewMermaid().catch(() => {});
+    diagramState.mermaidDirty = true;
+    els.mermaidPreview.innerHTML = '';
+    setMermaidStatus('Modele charge. Le code est modifiable et non sauvegarde.', 'success');
   });
   els.mermaidFormat.addEventListener('click', () => {
-    els.mermaidSource.value = formatMermaidSource(els.mermaidSource.value);
-    diagramState.mermaidSvg = '';
+    try {
+      els.mermaidSource.value = formatMermaidSource(els.mermaidSource.value);
+      diagramState.mermaidSvg = '';
+      diagramState.mermaidDirty = true;
+      setMermaidStatus('Code indente.', 'success');
+    } catch (error) {
+      setMermaidStatus(error.message, 'error');
+    }
   });
   els.mermaidPreviewBtn.addEventListener('click', () => previewMermaid().catch(() => {}));
+  els.mermaidExpand.addEventListener('click', () => {
+    els.mermaidFullscreenTitle.value = els.mermaidTitle.value;
+    els.mermaidFullscreenSource.value = els.mermaidSource.value;
+    els.mermaidFullscreenPreview.innerHTML = els.mermaidPreview.innerHTML;
+    els.mermaidFullscreenError.classList.add('hidden');
+    els.mermaidFullscreen.classList.remove('hidden');
+  });
+  function closeMermaidFullscreen(sync = true) {
+    if (sync) {
+      els.mermaidTitle.value = els.mermaidFullscreenTitle.value;
+      els.mermaidSource.value = els.mermaidFullscreenSource.value;
+      els.mermaidPreview.innerHTML = els.mermaidFullscreenPreview.innerHTML;
+      diagramState.mermaidDirty = true;
+      if (diagramState.data) {
+        diagramState.data.title = els.mermaidTitle.value;
+        diagramState.data.source = els.mermaidSource.value;
+      }
+    }
+    els.mermaidFullscreen.classList.add('hidden');
+  }
+  els.mermaidCollapse.addEventListener('click', () => closeMermaidFullscreen(true));
+  els.mermaidFullscreenClose.addEventListener('click', () => closeMermaidFullscreen(true));
+  els.mermaidFullscreenPreviewBtn.addEventListener('click', () => previewMermaid({
+    sourceEl: els.mermaidFullscreenSource,
+    previewEl: els.mermaidFullscreenPreview,
+    errorEl: els.mermaidFullscreenError,
+    button: els.mermaidFullscreenPreviewBtn,
+  }).catch(() => {}));
+  els.mermaidFullscreenSave.addEventListener('click', async () => {
+    closeMermaidFullscreen(true);
+    await saveDiagram().catch((error) => setFeedback(error.message, 'error'));
+  });
   els.mermaidSource.addEventListener('input', () => {
     diagramState.mermaidSvg = '';
+    diagramState.mermaidDirty = true;
     if (diagramState.data) diagramState.data.source = els.mermaidSource.value;
+    setMermaidStatus('Code modifie. Relance la previsualisation avant enregistrement.', 'loading');
   });
   els.mermaidTitle.addEventListener('input', () => {
     if (diagramState.data) diagramState.data.title = els.mermaidTitle.value;
+  });
+  els.mermaidSaveTemplate.addEventListener('click', () => saveCurrentAsTemplate().catch((error) => setMermaidStatus(error.message, 'error')));
+  els.mermaidManageTemplates.addEventListener('click', () => openTemplateManager().catch((error) => setMermaidStatus(error.message, 'error')));
+  els.mermaidTemplateManagerClose.addEventListener('click', () => els.mermaidTemplateManager.classList.add('hidden'));
+  els.mermaidTemplateList.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-template-id]');
+    if (!button) return;
+    const template = state.mermaidTemplates.find((item) => item.id === button.dataset.templateId);
+    renderTemplateManager(button.dataset.templateId);
+    fillTemplateForm(template);
+  });
+  els.mermaidTemplateDuplicate.addEventListener('click', () => {
+    const template = state.mermaidTemplates.find((item) => item.id === els.mermaidTemplateId.value) || selectedMermaidTemplate();
+    fillTemplateForm(template, true);
+  });
+  els.mermaidTemplateDelete.addEventListener('click', async () => {
+    const id = els.mermaidTemplateId.value;
+    if (!id || id.startsWith('system:')) return;
+    if (!window.confirm('Supprimer ce modele personnalise ?')) return;
+    await request(`/diagrams/template-library/${id}`, { method: 'DELETE' });
+    await loadMermaidTemplates();
+    renderTemplateManager();
+    fillTemplateForm(state.mermaidTemplates[0]);
+  });
+  els.mermaidTemplateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const id = els.mermaidTemplateId.value;
+    const body = {
+      name: els.mermaidTemplateName.value,
+      description: els.mermaidTemplateDescription.value,
+      category: els.mermaidTemplateCategory.value,
+      source: els.mermaidTemplateSource.value,
+    };
+    const saved = await request(id ? `/diagrams/template-library/${id}` : '/diagrams/template-library', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    await loadMermaidTemplates();
+    els.mermaidTemplate.value = saved.id;
+    renderTemplateManager(saved.id);
+    fillTemplateForm(saved);
   });
   els.diagramNodeList.addEventListener('change', (event) => {
     const field = event.target.dataset.nodeField;

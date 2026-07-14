@@ -501,15 +501,17 @@
 
 .quality-mermaid-code {
   font-family: Consolas, "Courier New", monospace;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.45;
-  min-height: 520px;
+  min-height: 560px;
+  overflow: auto;
   resize: vertical;
   white-space: pre;
+  width: 100%;
 }
 
 .quality-mermaid-preview {
-  min-height: 520px;
+  min-height: 420px;
 }
 
 .quality-mermaid-preview svg {
@@ -518,12 +520,102 @@
   max-width: 100%;
 }
 
+.quality-mermaid-commands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quality-inline-status {
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  padding: 8px 10px;
+}
+
+.quality-inline-status.hidden {
+  display: none;
+}
+
+.quality-inline-status.success {
+  background: #e8f7ef;
+  color: #15803d;
+}
+
+.quality-inline-status.loading {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.quality-inline-status.error {
+  background: #fef2f2;
+  color: #b42318;
+}
+
+.quality-mermaid-fullscreen-panel {
+  width: min(1500px, 98vw);
+}
+
+.quality-mermaid-code-full {
+  min-height: 70vh;
+}
+
+.quality-template-manager-panel {
+  width: min(1250px, 96vw);
+}
+
+.quality-template-manager-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(420px, 1.15fr);
+}
+
+.quality-template-list {
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 6px;
+  max-height: 680px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.quality-template-list button {
+  background: #fff;
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  cursor: pointer;
+  padding: 10px;
+  text-align: left;
+}
+
+.quality-template-list button.active {
+  border-color: var(--alta-blue);
+  box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.12);
+}
+
+.quality-template-list small {
+  color: var(--alta-muted);
+  display: block;
+  margin-top: 4px;
+}
+
+.quality-template-form {
+  display: grid;
+  gap: 10px;
+}
+
 @media (max-width: 1100px) {
   .quality-diagram-editor-grid,
   .quality-diagram-editors,
   .quality-mermaid-toolbar,
-  .quality-mermaid-grid {
+  .quality-mermaid-grid,
+  .quality-template-manager-grid {
     grid-template-columns: 1fr;
+  }
+
+  .quality-mermaid-code {
+    min-height: 360px;
   }
 }
 

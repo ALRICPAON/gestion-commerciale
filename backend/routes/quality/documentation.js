@@ -30,10 +30,14 @@ const {
 const {
   archiveDiagram,
   createDiagram,
+  createDiagramTemplate,
+  deleteDiagramTemplate,
+  listDiagramTemplates,
   listDiagrams,
   mermaidTemplates,
   templates: diagramTemplates,
   updateDiagram,
+  updateDiagramTemplate,
 } = require('../../services/quality/qualityDocumentationDiagramService');
 
 const router = express.Router();
@@ -204,9 +208,45 @@ router.post('/sections/:sectionId/diagrams', requireQualityPermission(QUALITY_PE
 
 router.get('/diagrams/templates', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
   try {
-    res.json({ structured: diagramTemplates(), mermaid: mermaidTemplates() });
+    res.json({ structured: diagramTemplates(), mermaid: mermaidTemplates(), library: await listDiagramTemplates(req.dbPool, req.user.store_id) });
   } catch (err) {
     handleError(res, err, 'Erreur GET /api/quality/documentation/diagrams/templates');
+  }
+});
+
+router.get('/diagrams/template-library', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    res.json(await listDiagramTemplates(req.dbPool, req.user.store_id));
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/documentation/diagrams/template-library');
+  }
+});
+
+router.post('/diagrams/template-library', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    res.status(201).json(await createDiagramTemplate(req.dbPool, req.user.store_id, req.user.id, req.body));
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/diagrams/template-library');
+  }
+});
+
+router.put('/diagrams/template-library/:templateId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const template = await updateDiagramTemplate(req.dbPool, req.user.store_id, req.params.templateId, req.user.id, req.body);
+    if (!template) return res.status(404).json({ error: 'Modele introuvable' });
+    res.json(template);
+  } catch (err) {
+    handleError(res, err, 'Erreur PUT /api/quality/documentation/diagrams/template-library/:templateId');
+  }
+});
+
+router.delete('/diagrams/template-library/:templateId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const template = await deleteDiagramTemplate(req.dbPool, req.user.store_id, req.params.templateId, req.user.id);
+    if (!template) return res.status(404).json({ error: 'Modele introuvable' });
+    res.json({ mode: 'archived', template });
+  } catch (err) {
+    handleError(res, err, 'Erreur DELETE /api/quality/documentation/diagrams/template-library/:templateId');
   }
 });
 

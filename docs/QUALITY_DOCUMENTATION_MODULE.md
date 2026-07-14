@@ -18,6 +18,7 @@ Tables creees :
 - `quality_documentation_attachments`
 - `quality_documentation_exports`
 - `quality_document_diagrams`
+- `quality_document_diagram_templates`
 
 Toutes les tables portent `store_id` et les requetes filtrent par le magasin connecte.
 
@@ -90,6 +91,14 @@ Deux modes d'edition existent :
 - `mermaid` : source Mermaid `flowchart` conservee comme verite editable, plus un SVG rendu inline pour l'affichage et le PDF.
 
 Le mode Mermaid utilise la bibliotheque locale `frontend/vendor/mermaid/mermaid.min.js`, sans CDN, initialisee avec `securityLevel: "strict"` et labels HTML desactives. Le backend rejette HTML, `click`, URL externes, `javascript:` et SVG dangereux (`script`, `foreignObject`, handlers `on*`).
+
+L'onglet Mermaid propose un editeur large, un mode agrandi, une previsualisation explicite et des etats visuels `chargement`, `succes`, `erreur`. Le bouton `Charger un modele` copie le code dans l'editeur sans conserver de lien dynamique avec la bibliotheque et sans sauvegarder automatiquement.
+
+Les modeles Mermaid reutilisables sont exposes par la bibliotheque de modeles :
+
+- modeles systeme fournis par ALTA, non modifiables et non supprimables ;
+- modeles personnalises stockes dans `quality_document_diagram_templates`, limites au `store_id` connecte ;
+- creation, duplication, modification et suppression logique des modeles personnalises selon les permissions documentaires existantes.
 
 Limites de validation :
 
