@@ -50,7 +50,6 @@ async function lossSales(db, storeId) {
   const result = await safeQuery(db, 'ventes a perte', `
     SELECT
       sl.id,
-      sd.document_number,
       sd.reference_number,
       sd.document_date,
       c.name AS client_name,
@@ -77,7 +76,7 @@ async function lossSales(db, storeId) {
       label: row.designation,
       detail: `${row.client_name || 'Client non renseigné'} - ${moneyValue(row.line_margin_ex_vat)} EUR de marge`,
       date: row.document_date,
-      reference: row.reference_number || row.document_number,
+      reference: row.reference_number,
     })),
   };
 }
@@ -317,7 +316,6 @@ async function unpaidCustomerInvoices(db, storeId) {
     SELECT
       sd.id,
       sd.reference_number,
-      sd.document_number,
       sd.document_date,
       sd.status,
       sd.total_ht,
@@ -336,9 +334,9 @@ async function unpaidCustomerInvoices(db, storeId) {
     available: result.available,
     items: result.rows.map((row) => ({
       label: row.client_name || 'Client non renseigné',
-      detail: `${row.reference_number || row.document_number || 'Sans référence'} - ${moneyValue(row.total_ht)} EUR HT`,
+      detail: `${row.reference_number || 'Sans référence'} - ${moneyValue(row.total_ht)} EUR HT`,
       date: row.document_date,
-      reference: row.reference_number || row.document_number,
+      reference: row.reference_number,
     })),
   };
 }
