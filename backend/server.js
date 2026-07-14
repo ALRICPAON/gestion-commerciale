@@ -8,7 +8,8 @@ require('dotenv').config({
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const rateLimit = require('express-rate-limit');
+const jwt = require('jsonwebtoken');
+const { ipKeyGenerator, rateLimit } = require('express-rate-limit');
 
 const authRoutes = require('./routes/auth');
 const usersRoutes = require('./routes/users');
@@ -123,22 +124,130 @@ const corsOptions = {
   optionsSuccessStatus: 204,
 };
 
-const apiRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 1000,
+function positiveIntegerEnv(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+const API_RATE_WINDOW_MS = positiveIntegerEnv('API_RATE_WINDOW_MS', 15 * 60 * 1000);
+const API_READ_RATE_LIMIT = positiveIntegerEnv('API_READ_RATE_LIMIT', 10000);
+const API_WRITE_RATE_LIMIT = positiveIntegerEnv('API_WRITE_RATE_LIMIT', 2000);
+const API_SENSITIVE_RATE_LIMIT = positiveIntegerEnv('API_SENSITIVE_RATE_LIMIT', 300);
+const LOGIN_RATE_LIMIT = positiveIntegerEnv('LOGIN_RATE_LIMIT', 10);
+
+function rateLimitKey(req) {
+  if (req.user?.id && req.user?.store_id) {
+    return `user:${req.user.store_id}:${req.user.id}`;
+  }
+  return ipKeyGenerator(req.ip);
+}
+
+function rateLimitHandler(req, res, next, options) {
+  console.warn('Rate limit atteint', {
+    method: req.method,
+    route: req.originalUrl,
+    user_id: req.user?.id || null,
+    store_id: req.user?.store_id || null,
+    ip: req.ip,
+    limit: options.limit,
+    window_ms: options.windowMs,
+  });
+
+  res.status(options.statusCode).json(options.message);
+}
+
+function optionalRateLimitUser(req, res, next) {
+  if (req.user) return next();
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return next();
+  }
+
+  try {
+    const decoded = jwt.verify(authHeader.split(' ')[1], process.env.JWT_SECRET);
+    if (decoded.id && decoded.store_id) {
+      req.user = {
+        ...decoded,
+        client_key: decoded.client_key || null,
+      };
+    }
+  } catch (err) {
+    // Les routes authentifiees renverront l'erreur 401 ensuite.
+  }
+
+  return next();
+}
+
+function isReadRequest(req) {
+  return req.method === 'GET' || req.method === 'HEAD';
+}
+
+function isWriteRequest(req) {
+  return ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+}
+
+function isSensitivePath(req) {
+  const pathname = String(req.path || req.originalUrl || '').toLowerCase();
+  if (pathname.startsWith('/ai') || pathname.startsWith('/agent')) return true;
+  if (pathname.startsWith('/communication/whatsapp') || pathname.startsWith('/communication/email')) return true;
+  if (pathname.startsWith('/customer-price-lists/email')) return true;
+  if (pathname.startsWith('/pdf') || pathname.includes('/export-pdf') || pathname.includes('/preview')) return true;
+  if (pathname.includes('/import')) return true;
+  return false;
+}
+
+function makeApiRateLimiter({ name, limit, skip }) {
+  return rateLimit({
+    windowMs: API_RATE_WINDOW_MS,
+    limit,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    keyGenerator: rateLimitKey,
+    skip: (req, res) => req.method === 'OPTIONS' || skip(req, res),
+    handler: rateLimitHandler,
+    message: { error: 'Trop de requetes, reessaie plus tard' },
+    requestPropertyName: `rateLimit${name}`,
+  });
+}
+
+const apiReadRateLimiter = makeApiRateLimiter({
+  name: 'Read',
+  limit: API_READ_RATE_LIMIT,
+  skip: (req) => !isReadRequest(req) || isSensitivePath(req),
+});
+
+const apiWriteRateLimiter = makeApiRateLimiter({
+  name: 'Write',
+  limit: API_WRITE_RATE_LIMIT,
+  skip: (req) => !isWriteRequest(req) || isSensitivePath(req),
+});
+
+const apiSensitiveRateLimiter = makeApiRateLimiter({
+  name: 'Sensitive',
+  limit: API_SENSITIVE_RATE_LIMIT,
+  skip: (req) => !isSensitivePath(req),
+});
+
+const mcpRateLimiter = rateLimit({
+  windowMs: API_RATE_WINDOW_MS,
+  limit: API_WRITE_RATE_LIMIT,
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.method === 'OPTIONS',
+  handler: rateLimitHandler,
   message: { error: 'Trop de requetes, reessaie plus tard' },
 });
 
 const loginRateLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: true,
+  windowMs: API_RATE_WINDOW_MS,
+  limit: LOGIN_RATE_LIMIT,
+  standardHeaders: 'draft-8',
   legacyHeaders: false,
   skipSuccessfulRequests: true,
   skip: (req) => req.method === 'OPTIONS',
+  keyGenerator: (req) => ipKeyGenerator(req.ip),
+  handler: rateLimitHandler,
   message: { error: 'Trop de tentatives de connexion, reessaie plus tard' },
 });
 
@@ -178,10 +287,10 @@ app.use('/uploads/sanitary-photos', express.static(SANITARY_PHOTOS_DIR, {
   maxAge: '7d',
 }));
 app.use(express.json());
-app.use('/mcp', apiRateLimiter);
+app.use('/mcp', mcpRateLimiter);
 app.use('/mcp', mcpServerRoutes);
 app.use('/api/login', loginRateLimiter);
-app.use('/api', apiRateLimiter);
+app.use('/api', optionalRateLimitUser, apiSensitiveRateLimiter, apiReadRateLimiter, apiWriteRateLimiter);
 app.use('/api', authRoutes);
 app.use('/api', usersRoutes);
 app.use('/api', storeSettingsRoutes);
