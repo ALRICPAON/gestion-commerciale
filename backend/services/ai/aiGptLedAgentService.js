@@ -446,7 +446,7 @@ async function getSalesDocuments({ db, user, args }) {
   if (args.client_id) { params.push(args.client_id); filters.push(`sd.client_id = $${params.length}`); }
   params.push(limit(args.limit, 30, 80));
   const result = await db.query(`
-    SELECT sd.id, sd.reference_number, sd.document_number, sd.document_date, sd.document_type, sd.status,
+    SELECT sd.id, sd.reference_number, sd.reference_number AS document_number, sd.document_date, sd.document_type, sd.status,
            sd.total_amount_ex_vat, sd.total_vat_amount, sd.total_amount_inc_vat,
            c.id AS client_id, c.code AS client_code, c.name AS client_name,
            COUNT(sl.id)::int AS line_count,
