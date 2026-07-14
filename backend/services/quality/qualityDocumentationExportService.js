@@ -5,6 +5,7 @@ const { renderHtmlToPdf } = require('../pdf/pdfRenderer');
 const { escapeHtml, fileSafe, formatDate, htmlDocument } = require('../pdf/pdfLayout');
 const { getCompanyIdentity } = require('./companyIdentityService');
 const { getDocumentation } = require('./qualityDocumentationService');
+const { renderDocumentBlock } = require('./qualityDocumentBlockService');
 
 const EXPORT_DIR = path.resolve(__dirname, '..', '..', 'uploads', 'quality-documentation-exports');
 
@@ -28,6 +29,14 @@ function renderSectionContent(section, includeMissing) {
     html = html.replace(/<span[^>]*class=["'][^"']*missing-info[^"']*["'][^>]*>[\s\S]*?<\/span>/gi, '');
   }
   return html;
+}
+
+function renderSectionBlocks(section, documentation, options = {}) {
+  const blocks = (documentation.blocks || [])
+    .filter((block) => block.chapter_id === section.id && block.is_visible !== false)
+    .sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
+  if (!blocks.length) return renderSectionContent(section, options.include_missing !== false);
+  return blocks.map((block) => renderDocumentBlock(block, options)).join('\n');
 }
 
 function buildHtml(documentation, identity, options = {}) {
@@ -54,7 +63,7 @@ function buildHtml(documentation, identity, options = {}) {
     <section class="${section.section_type === 'tome' ? 'pdf-tome' : 'pdf-section'}">
       <h${section.section_type === 'tome' ? '1' : '2'}>${escapeHtml(section.code)} - ${escapeHtml(section.title)}</h${section.section_type === 'tome' ? '1' : '2'}>
       <div class="section-meta">Version ${escapeHtml(section.version)} - Statut ${escapeHtml(section.status)} - Code ${escapeHtml(section.code)}</div>
-      <div class="rich-content">${renderSectionContent(section, options.include_missing !== false)}</div>
+      <div class="rich-content">${section.section_type === 'tome' ? renderSectionContent(section, options.include_missing !== false) : renderSectionBlocks(section, documentation, options)}</div>
     </section>
   `).join('');
   const missingRows = missingItems
@@ -121,6 +130,12 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-diagram-svg { max-width: 100%; height: auto; break-inside: avoid; page-break-inside: avoid; }
     .quality-table-block { break-inside: avoid; page-break-inside: avoid; margin: 14px 0; }
     .quality-table-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
+    .quality-to-complete-block { border: 1px solid #fca5a5; border-left: 4px solid #b42318; background: #fef2f2; color: #7f1d1d; font-weight: 600; margin: 12px 0; padding: 8px 10px; }
+    .quality-document-separator { border: 0; border-top: 1px solid #94a3b8; margin: 16px 0; }
+    .quality-image-block { break-inside: avoid; margin: 14px 0; }
+    .quality-image-block figcaption { color: #52616f; font-size: 10px; margin-top: 4px; }
+    .quality-attachment-block { border: 1px solid #cbd5e1; margin: 10px 0; padding: 8px 10px; }
+    .quality-attachment-block span { color: #52616f; display: block; font-size: 10px; margin-top: 2px; }
     .quality-table-scroll { overflow: visible; width: 100%; }
     .quality-data-table { border-collapse: collapse; table-layout: fixed; width: 100%; }
     .quality-data-table thead { display: table-header-group; }
