@@ -15,6 +15,7 @@ const temperaturesRoutes = require('./temperatures');
 const tasksRoutes = require('./tasks');
 const cleaningRoutes = require('./cleaning');
 const documentationRoutes = require('./documentation');
+const documentBlockRoutes = require('./documentBlocks');
 
 const router = express.Router();
 
@@ -23,6 +24,7 @@ router.use('/equipments', equipmentsRoutes);
 router.use('/temperatures', temperaturesRoutes);
 router.use('/tasks', tasksRoutes);
 router.use('/cleaning', cleaningRoutes);
+router.use('/', documentBlockRoutes);
 router.use('/documentation', documentationRoutes);
 
 router.get('/foundation', authenticateToken, attachDbContext, async (req, res) => {
