@@ -337,6 +337,123 @@
   margin: 6px 0;
 }
 
+.quality-modal {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.56);
+  bottom: 0;
+  display: flex;
+  justify-content: center;
+  left: 0;
+  padding: 18px;
+  position: fixed;
+  right: 0;
+  top: 0;
+  z-index: 50;
+}
+
+.quality-modal.hidden {
+  display: none;
+}
+
+.quality-modal-panel {
+  background: var(--alta-card);
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.28);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 18px;
+  width: min(1180px, 96vw);
+}
+
+.quality-diagram-editor-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.quality-diagram-side {
+  display: grid;
+  gap: 12px;
+}
+
+.quality-diagram-side label,
+.quality-diagram-node-form label,
+.quality-diagram-edge-form label {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.quality-diagram-main {
+  display: grid;
+  gap: 12px;
+}
+
+.quality-diagram-preview {
+  background: #f8fafc;
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  min-height: 360px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.quality-diagram-preview svg,
+.quality-diagram-block svg {
+  max-width: 100%;
+}
+
+.quality-diagram-block {
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  margin: 14px 0;
+  padding: 10px;
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+
+.quality-diagram-block figcaption {
+  color: var(--alta-navy);
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.quality-diagram-editors {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 1fr 1fr;
+}
+
+.quality-diagram-list {
+  display: grid;
+  gap: 8px;
+  max-height: 340px;
+  overflow: auto;
+}
+
+.quality-diagram-node-form,
+.quality-diagram-edge-form {
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.quality-diagram-form-row {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 1100px) {
+  .quality-diagram-editor-grid,
+  .quality-diagram-editors {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1100px) {
   .quality-doc-workbench,
   .quality-doc-hero {

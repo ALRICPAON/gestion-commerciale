@@ -17,6 +17,7 @@ Tables creees :
 - `quality_documentation_missing_items`
 - `quality_documentation_attachments`
 - `quality_documentation_exports`
+- `quality_document_diagrams`
 
 Toutes les tables portent `store_id` et les requetes filtrent par le magasin connecte.
 
@@ -27,6 +28,7 @@ Toutes les tables portent `store_id` et les requetes filtrent par le magasin con
 - `qualityDocumentationVersionService` historise les modifications et restaure une version.
 - `qualityDocumentationExportService` rend le HTML qualite et genere le PDF cote serveur.
 - `companyIdentityService` lit l'identite entreprise depuis `store_settings`.
+- `qualityDocumentationDiagramService` valide les diagrammes JSON, genere le rendu SVG et fournit les modeles metier.
 
 ## Routes
 
@@ -42,6 +44,11 @@ Toutes les tables portent `store_id` et les requetes filtrent par le magasin con
 - `GET /api/quality/documentation/sections/:sectionId/versions`
 - `POST /api/quality/documentation/sections/:sectionId/restore-version`
 - `POST /api/quality/documentation/sections/:sectionId/merge-into/:targetSectionId`
+- `GET /api/quality/documentation/sections/:sectionId/diagrams`
+- `POST /api/quality/documentation/sections/:sectionId/diagrams`
+- `GET /api/quality/documentation/diagrams/templates`
+- `PUT /api/quality/documentation/diagrams/:diagramId`
+- `DELETE /api/quality/documentation/diagrams/:diagramId`
 - `GET /api/quality/documentation/missing-items`
 - `POST /api/quality/documentation/missing-items`
 - `PATCH /api/quality/documentation/missing-items/:id`
@@ -70,6 +77,31 @@ Les roles `admin` et `responsable` restent privilegies via le mecanisme existant
 Le PDF est genere cote serveur par Puppeteer. L'apercu et l'export utilisent le meme template HTML.
 Le PDF inclut page de garde, historique de revisions, sommaire, informations a completer, corps documentaire, annexes listees, entetes/pieds de page CSS et pagination.
 Les couleurs appliquees dans l'editeur sont conservees dans le HTML du chapitre et restituees dans le PDF.
+Les diagrammes sont rendus en SVG inline par ALTA et proteges contre les coupures avec `break-inside: avoid` / `page-break-inside: avoid`.
+
+## Diagrammes
+
+Les diagrammes sont stockes dans `quality_document_diagrams` sous forme JSON controlee et versionnee (`schema_version = 1`).
+Le contenu riche du chapitre contient un bloc `<figure>` non editable avec un SVG snapshot. Ce snapshot est conserve dans `quality_documentation_versions.content_html`, ce qui permet a une ancienne version de conserver l'ancien rendu du diagramme.
+
+Limites de validation :
+
+- 100 noeuds maximum ;
+- 200 liaisons maximum ;
+- types de noeuds limites a `start`, `end`, `process`, `decision`, `control`, `storage`, `transport`, `document`, `non_conformity`, `external`, `note` ;
+- liaisons uniquement entre noeuds existants ;
+- identifiants de noeuds uniques ;
+- libelles et descriptions nettoyes, sans HTML libre.
+
+Modeles disponibles :
+
+- diagramme vide ;
+- processus simple ;
+- fabrication produits de la peche ;
+- decision / non-conformite ;
+- retrait / rappel.
+
+Un premier diagramme est initialise dans `T3-C18 - Diagrammes de fabrication` : `Diagramme de fabrication - Produits de la peche prepares`, avec flux principal, branche de non-conformite et associations de chapitres.
 
 ## Editeur de contenu
 
@@ -126,6 +158,8 @@ node --check backend/routes/quality/documentation.js
 node --check backend/services/quality/qualityDocumentationService.js
 node --check backend/services/quality/qualityDocumentationExportService.js
 node --check frontend/quality/js/documentation.js
+node --check backend/services/quality/qualityDocumentationDiagramService.js
+node backend/scripts/test-quality-document-diagrams.js
 ```
 
 Tests manuels recommandes apres migration :

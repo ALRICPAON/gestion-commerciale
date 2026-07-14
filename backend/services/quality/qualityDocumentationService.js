@@ -1,6 +1,7 @@
 const { logQualityEvent } = require('./eventLogger');
 const { initializeDefaultDocumentation, stripHtml } = require('./qualityDocumentationTemplateService');
 const { recordSectionVersion } = require('./qualityDocumentationVersionService');
+const { ensureDefaultFabricationDiagram } = require('./qualityDocumentationDiagramService');
 
 const STATUSES = new Set(['draft', 'to_complete', 'ready_for_review', 'validated', 'archived']);
 
@@ -49,6 +50,11 @@ async function getSection(db, storeId, sectionId) {
 
 async function getOrCreateDefaultDocumentation(db, storeId, userId) {
   const collection = await initializeDefaultDocumentation(db, storeId, userId);
+  try {
+    await ensureDefaultFabricationDiagram(db, storeId, userId);
+  } catch (err) {
+    console.warn('Initialisation diagramme T3-C18 ignoree :', err.message);
+  }
   return getDocumentation(db, storeId, collection.id);
 }
 
@@ -73,7 +79,7 @@ async function getDocumentation(db, storeId, id) {
   const collection = collectionResult.rows[0];
   if (!collection) return null;
 
-  const [sections, missing, attachments, exports] = await Promise.all([
+  const [sections, missing, attachments, exports, diagrams] = await Promise.all([
     db.query(
       `SELECT * FROM quality_documentation_sections
        WHERE collection_id = $1 AND store_id = $2
@@ -103,6 +109,16 @@ async function getDocumentation(db, storeId, id) {
        LIMIT 10`,
       [id, storeId]
     ),
+    db.query(
+      `SELECT *
+       FROM quality_document_diagrams
+       WHERE collection_id = $1 AND store_id = $2
+       ORDER BY archived_at NULLS FIRST, created_at ASC`,
+      [id, storeId]
+    ).catch((err) => {
+      if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+      throw err;
+    }),
   ]);
 
   const activeSections = sections.rows.filter((section) => !section.archived_at);
@@ -116,6 +132,7 @@ async function getDocumentation(db, storeId, id) {
     sections: sections.rows,
     missing_items: missing.rows,
     attachments: attachments.rows,
+    diagrams: diagrams.rows,
     exports: exports.rows,
     dashboard: {
       tome_count: activeSections.filter((section) => section.section_type === 'tome').length,

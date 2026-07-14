@@ -27,6 +27,13 @@ const {
   exportDocumentationPdf,
   renderDocumentationPdf,
 } = require('../../services/quality/qualityDocumentationExportService');
+const {
+  archiveDiagram,
+  createDiagram,
+  listDiagrams,
+  templates: diagramTemplates,
+  updateDiagram,
+} = require('../../services/quality/qualityDocumentationDiagramService');
 
 const router = express.Router();
 const UPLOAD_DIR = path.resolve(__dirname, '..', '..', 'uploads', 'quality-documentation-attachments');
@@ -173,6 +180,52 @@ router.post('/sections/:sectionId/restore-version', requireQualityPermission(QUA
     res.json(section);
   } catch (err) {
     handleError(res, err, 'Erreur POST /api/quality/documentation/sections/:sectionId/restore-version');
+  }
+});
+
+router.get('/sections/:sectionId/diagrams', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    res.json(await listDiagrams(req.dbPool, req.user.store_id, req.params.sectionId));
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/documentation/sections/:sectionId/diagrams');
+  }
+});
+
+router.post('/sections/:sectionId/diagrams', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const diagram = await createDiagram(req.dbPool, req.user.store_id, req.params.sectionId, req.user.id, req.body);
+    if (!diagram) return res.status(404).json({ error: 'Chapitre introuvable' });
+    res.status(201).json(diagram);
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/sections/:sectionId/diagrams');
+  }
+});
+
+router.get('/diagrams/templates', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    res.json(diagramTemplates());
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/documentation/diagrams/templates');
+  }
+});
+
+router.put('/diagrams/:diagramId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const diagram = await updateDiagram(req.dbPool, req.user.store_id, req.params.diagramId, req.user.id, req.body);
+    if (!diagram) return res.status(404).json({ error: 'Diagramme introuvable' });
+    res.json(diagram);
+  } catch (err) {
+    handleError(res, err, 'Erreur PUT /api/quality/documentation/diagrams/:diagramId');
+  }
+});
+
+router.delete('/diagrams/:diagramId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_DELETE), async (req, res) => {
+  try {
+    const diagram = await archiveDiagram(req.dbPool, req.user.store_id, req.params.diagramId, req.user.id);
+    if (!diagram) return res.status(404).json({ error: 'Diagramme introuvable' });
+    res.json({ mode: 'archived', diagram });
+  } catch (err) {
+    handleError(res, err, 'Erreur DELETE /api/quality/documentation/diagrams/:diagramId');
   }
 });
 
