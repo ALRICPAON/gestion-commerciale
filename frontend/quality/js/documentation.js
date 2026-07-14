@@ -47,6 +47,8 @@
     markMissing: $('mark-missing-btn'),
     insertDiagram: $('insert-diagram-btn'),
     insertTable: $('insert-table-btn'),
+    addBlock: $('add-block-btn'),
+    blockList: $('document-block-list'),
     textColor: $('text-color-select'),
     preview: $('preview-pdf-btn'),
     exportPdf: $('export-pdf-btn'),
@@ -175,7 +177,7 @@
     note: { fill: '#fefce8', stroke: '#a16207', icon: 'i', shape: 'note' },
   };
 
-  let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], tables: [], currentId: null, dirty: false, filter: 'all', mermaidTemplates: [], tableTemplates: [] };
+  let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], tables: [], blocks: [], currentId: null, dirty: false, filter: 'all', mermaidTemplates: [], tableTemplates: [] };
   let diagramState = { id: null, data: null, history: [], future: [], zoom: 100, mode: 'structured', mermaidSvg: '', mermaidDirty: false };
   let tableState = { id: null, data: null, mode: 'visual' };
 
@@ -862,11 +864,19 @@
       }
       const path = diagramState.id ? `/diagrams/${diagramState.id}` : `/sections/${section.id}/diagrams`;
       const method = diagramState.id ? 'PUT' : 'POST';
+      const wasNew = !diagramState.id;
       const saved = await request(path, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ diagram_data: diagramState.data, editor_mode: diagramState.mode, confirm_mode_change: true }),
       });
+      if (wasNew && saved?.id) {
+        await requestQuality(`/document-chapters/${section.id}/blocks`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ block_type: 'mermaid_diagram', title: saved.title, content: { diagram_id: saved.id } }),
+        });
+      }
       await load(section.id);
       setFeedback('Diagramme enregistre.', 'success');
       setMermaidStatus('Enregistre.', 'success');
@@ -936,6 +946,16 @@
     }, true);
     els.mermaidTemplateManager.classList.remove('hidden');
     setMermaidStatus('Complete le nom puis enregistre le modele.', 'loading');
+  }
+
+  async function requestQuality(path, options = {}) {
+    const response = await fetch(`${API_BASE_URL}/api/quality${path}`, {
+      ...options,
+      headers: headers(options.headers || {}),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Erreur qualite');
+    return data;
   }
 
   function tableTemplateData() {
@@ -1124,11 +1144,19 @@
     else updateTableFromGrid();
     tableState.data.title = els.tableTitle.value || tableState.data.title;
     const path = tableState.id ? `/tables/${tableState.id}` : `/sections/${section.id}/tables`;
-    await request(path, {
+    const wasNew = !tableState.id;
+    const saved = await request(path, {
       method: tableState.id ? 'PUT' : 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ table_data: tableState.data }),
     });
+    if (wasNew && saved?.id) {
+      await requestQuality(`/document-chapters/${section.id}/blocks`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ block_type: 'document_table', title: saved.title, content: { table_id: saved.id } }),
+      });
+    }
     closeTableModal();
     await load(section.id);
     setFeedback('Tableau enregistre.', 'success');
@@ -1242,10 +1270,133 @@
     els.mergeSection.disabled = !canEdit || !mergeOptions;
   }
 
+  function currentBlocks() {
+    return state.blocks
+      .filter((block) => block.chapter_id === state.currentId && block.is_visible !== false)
+      .sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
+  }
+
+  function blockLabel(type) {
+    return {
+      rich_text: 'Texte',
+      document_table: 'Tableau',
+      mermaid_diagram: 'Diagramme',
+      image: 'Image',
+      attachment: 'Piece jointe',
+      to_complete: 'A completer',
+      separator: 'Separateur',
+    }[type] || type;
+  }
+
+  function renderBlockBody(block) {
+    if (block.block_type === 'rich_text') {
+      return `<div class="quality-rich-editor" contenteditable="${canEdit ? 'true' : 'false'}" data-block-rich>${block.content?.html || ''}</div>`;
+    }
+    if (block.block_type === 'to_complete') {
+      return `<div class="quality-to-complete-block" contenteditable="${canEdit ? 'true' : 'false'}" data-block-missing>${escapeHtml(block.content?.text || block.title || 'A completer')}</div>`;
+    }
+    if (block.block_type === 'separator') return '<hr class="quality-document-separator">';
+    if (block.block_type === 'document_table') {
+      const table = block.table;
+      return table ? `<div class="quality-document-reference"><strong>${escapeHtml(table.title)}</strong><button class="btn btn-secondary" data-block-edit-table="${table.id}" type="button">Modifier le tableau</button></div>${renderTableHtml(table.table_data || {})}` : '<p class="quality-muted">Tableau introuvable.</p>';
+    }
+    if (block.block_type === 'mermaid_diagram') {
+      const diagram = block.diagram;
+      const data = diagram?.diagram_data || {};
+      const svg = data.editor_mode === 'mermaid' ? data.rendered_svg : (diagram ? renderDiagramSvg(data) : '');
+      return diagram ? `<div class="quality-document-reference"><strong>${escapeHtml(diagram.title)}</strong><button class="btn btn-secondary" data-block-edit-diagram="${diagram.id}" type="button">Modifier le diagramme</button></div><div class="quality-diagram-preview">${svg}</div>` : '<p class="quality-muted">Diagramme introuvable.</p>';
+    }
+    if (block.block_type === 'image' && block.attachment) {
+      return `<div class="quality-document-reference"><img src="${API_BASE_URL}/api/quality/documentation/attachments/${block.attachment.id}/download" alt="${escapeHtml(block.title || block.attachment.filename || '')}"><strong>${escapeHtml(block.title || block.attachment.filename || '')}</strong></div>`;
+    }
+    if (block.block_type === 'attachment' && block.attachment) {
+      return `<div class="quality-document-reference"><strong>${escapeHtml(block.attachment.filename || block.title || 'Piece jointe')}</strong><button class="btn btn-secondary" data-download-attachment="${block.attachment.id}" type="button">Consulter</button></div>`;
+    }
+    return '<p class="quality-muted">Bloc sans contenu.</p>';
+  }
+
+  function renderBlocks() {
+    const blocks = currentBlocks();
+    if (!els.blockList) return;
+    els.blockList.innerHTML = blocks.map((block, index) => `
+      <article class="quality-document-block" data-block-id="${escapeHtml(block.id)}" data-block-type="${escapeHtml(block.block_type)}">
+        <header class="quality-document-block-header">
+          <strong>${index + 1}. ${blockLabel(block.block_type)}${block.title ? ` - ${escapeHtml(block.title)}` : ''}</strong>
+          <div class="quality-document-block-actions">
+            <button class="btn btn-secondary" data-block-action="up" type="button" ${index === 0 || !canEdit ? 'disabled' : ''}>Monter</button>
+            <button class="btn btn-secondary" data-block-action="down" type="button" ${index === blocks.length - 1 || !canEdit ? 'disabled' : ''}>Descendre</button>
+            <button class="btn btn-secondary" data-block-action="duplicate" type="button" ${!canEdit ? 'disabled' : ''}>Dupliquer</button>
+            <button class="btn btn-secondary" data-block-action="delete" type="button" ${!canEdit ? 'disabled' : ''}>Supprimer</button>
+          </div>
+        </header>
+        <div class="quality-document-block-body">${renderBlockBody(block)}</div>
+      </article>
+    `).join('');
+  }
+
+  async function persistBlockOrder(blocks) {
+    const section = currentSection();
+    if (!section) return;
+    state.blocks = state.blocks.filter((block) => block.chapter_id !== section.id).concat(blocks.map((block, index) => ({ ...block, position: (index + 1) * 10 })));
+    renderBlocks();
+    const saved = await requestQuality(`/document-chapters/${section.id}/blocks/reorder`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ block_ids: blocks.map((block) => block.id) }),
+    });
+    state.blocks = state.blocks.filter((block) => block.chapter_id !== section.id).concat(saved);
+    renderBlocks();
+  }
+
+  async function addDocumentBlock() {
+    const section = currentSection();
+    if (!section || !canEdit) return;
+    const choice = window.prompt('Type de bloc : texte, tableau, diagramme, image, piece jointe, a completer, separateur', 'texte');
+    const key = String(choice || '').toLowerCase().trim();
+    const blockType = {
+      texte: 'rich_text',
+      text: 'rich_text',
+      tableau: 'document_table',
+      table: 'document_table',
+      diagramme: 'mermaid_diagram',
+      diagram: 'mermaid_diagram',
+      image: 'image',
+      'piece jointe': 'attachment',
+      piece: 'attachment',
+      attachment: 'attachment',
+      'a completer': 'to_complete',
+      completer: 'to_complete',
+      separateur: 'separator',
+      separator: 'separator',
+    }[key];
+    if (!blockType) return;
+    const payload = { block_type: blockType, content: {} };
+    if (blockType === 'rich_text') payload.content.html = '<p>Nouveau texte</p>';
+    if (blockType === 'to_complete') payload.content.text = 'A completer : ';
+    if (blockType === 'mermaid_diagram') payload.content.diagram_data = { editor_mode: 'mermaid', title: 'Diagramme Mermaid', source: 'flowchart TD\n    A([Debut]) --> B[Etape]\n    B --> C([Fin])' };
+    if (blockType === 'image' || blockType === 'attachment') {
+      const candidates = state.attachments.filter((item) => item.section_id === section.id && !item.archived_at);
+      const selected = candidates[0];
+      if (!selected) {
+        setFeedback('Ajoute d abord une piece jointe au chapitre, puis cree le bloc image ou piece jointe.', 'error');
+        return;
+      }
+      payload.content.attachment_id = selected.id;
+    }
+    const block = await requestQuality(`/document-chapters/${section.id}/blocks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    state.blocks.push(block);
+    renderBlocks();
+    await load(section.id);
+  }
+
   function renderEditor() {
     const section = currentSection();
     const disabled = !section || !canEdit;
-    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.textColor, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.insertDiagram, els.insertTable, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
+    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.textColor, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.insertDiagram, els.insertTable, els.addBlock, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
       if (!el) return;
       if ('disabled' in el) el.disabled = disabled;
       if (el === els.editor) el.setAttribute('contenteditable', disabled ? 'false' : 'true');
@@ -1256,9 +1407,14 @@
     els.heading.textContent = section.title;
     els.statusBadge.textContent = section.status;
     els.titleInput.value = section.title || '';
-    els.editor.innerHTML = section.content_html || '';
-    decorateDiagramBlocks();
-    decorateTableBlocks();
+    const blocks = currentBlocks();
+    els.editor.classList.toggle('hidden', blocks.length > 0);
+    els.editor.innerHTML = blocks.length ? '' : (section.content_html || '');
+    renderBlocks();
+    if (!blocks.length) {
+      decorateDiagramBlocks();
+      decorateTableBlocks();
+    }
     els.status.value = section.status || 'draft';
     els.version.value = section.version || '1.0';
     els.order.value = Number.isFinite(Number(section.display_order)) ? Number(section.display_order) : 0;
@@ -1283,6 +1439,7 @@
     state.attachments = data.attachments;
     state.diagrams = data.diagrams || [];
     state.tables = data.tables || [];
+    state.blocks = data.blocks || [];
     state.currentId = selectId || state.currentId || state.sections.find((section) => section.section_type !== 'tome')?.id || state.sections[0]?.id || null;
     els.title.textContent = state.collection.title;
     renderMetrics(data.dashboard);
@@ -1292,9 +1449,11 @@
   }
 
   function payload(extra = {}) {
+    const section = currentSection();
+    const hasBlocks = currentBlocks().length > 0;
     return {
       title: els.titleInput.value,
-      content_html: editorContentHtml(),
+      content_html: hasBlocks ? (section?.content_html || '') : editorContentHtml(),
       status: els.status.value,
       version: els.version.value,
       parent_id: els.parent.value || null,
@@ -1810,6 +1969,74 @@
     renderEditor();
   });
   els.search.addEventListener('input', renderTree);
+  els.addBlock?.addEventListener('click', () => addDocumentBlock().catch((error) => setFeedback(error.message, 'error')));
+  els.blockList?.addEventListener('click', async (event) => {
+    const card = event.target.closest('[data-block-id]');
+    if (!card) return;
+    const blockId = card.dataset.blockId;
+    const blocks = currentBlocks();
+    const index = blocks.findIndex((block) => block.id === blockId);
+    if (event.target.closest('[data-block-edit-table]')) {
+      const table = state.tables.find((item) => item.id === event.target.closest('[data-block-edit-table]').dataset.blockEditTable);
+      if (table) openTableModal(table);
+      return;
+    }
+    if (event.target.closest('[data-block-edit-diagram]')) {
+      const diagram = state.diagrams.find((item) => item.id === event.target.closest('[data-block-edit-diagram]').dataset.blockEditDiagram);
+      if (diagram) openDiagramModal(diagram);
+      return;
+    }
+    const download = event.target.closest('[data-download-attachment]');
+    if (download) {
+      await openProtectedAttachment(download.dataset.downloadAttachment);
+      return;
+    }
+    const action = event.target.closest('[data-block-action]')?.dataset.blockAction;
+    if (!action || index < 0) return;
+    try {
+      if (action === 'up' && index > 0) {
+        [blocks[index - 1], blocks[index]] = [blocks[index], blocks[index - 1]];
+        await persistBlockOrder(blocks);
+      }
+      if (action === 'down' && index < blocks.length - 1) {
+        [blocks[index + 1], blocks[index]] = [blocks[index], blocks[index + 1]];
+        await persistBlockOrder(blocks);
+      }
+      if (action === 'duplicate') {
+        await requestQuality(`/document-blocks/${blockId}/duplicate`, { method: 'POST' });
+        await load(state.currentId);
+      }
+      if (action === 'delete' && window.confirm('Supprimer ce bloc ?')) {
+        await requestQuality(`/document-blocks/${blockId}`, { method: 'DELETE' });
+        await load(state.currentId);
+      }
+    } catch (error) {
+      setFeedback(error.message, 'error');
+    }
+  });
+  els.blockList?.addEventListener('focusout', async (event) => {
+    const rich = event.target.closest('[data-block-rich]');
+    const missing = event.target.closest('[data-block-missing]');
+    const editor = rich || missing;
+    if (!editor || !canEdit) return;
+    const card = editor.closest('[data-block-id]');
+    const block = state.blocks.find((item) => item.id === card?.dataset.blockId);
+    if (!block) return;
+    const content = block.block_type === 'rich_text'
+      ? { html: editor.innerHTML }
+      : { text: editor.textContent.trim() || 'A completer' };
+    try {
+      const saved = await requestQuality(`/document-blocks/${block.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      });
+      Object.assign(block, saved);
+      setFeedback('Bloc enregistre.', 'success');
+    } catch (error) {
+      setFeedback(error.message, 'error');
+    }
+  });
   els.save.addEventListener('click', () => save().catch((error) => setFeedback(error.message, 'error')));
   els.saveNext.addEventListener('click', async () => {
     try {
@@ -1921,6 +2148,17 @@
       const data = await response.json().catch(() => ({}));
       throw new Error(data.error || 'Erreur piece jointe');
     }
+    const attachment = await response.json();
+    await requestQuality(`/document-chapters/${state.currentId}/blocks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        block_type: String(attachment.mime_type || '').startsWith('image/') ? 'image' : 'attachment',
+        title: attachment.filename,
+        content: { attachment_id: attachment.id },
+        is_visible: attachment.include_in_export !== false,
+      }),
+    });
     els.attachmentForm.reset();
     els.attachmentInclude.checked = true;
     await load(state.currentId);

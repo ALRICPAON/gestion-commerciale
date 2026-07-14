@@ -3,6 +3,7 @@ const { initializeDefaultDocumentation, stripHtml } = require('./qualityDocument
 const { recordSectionVersion } = require('./qualityDocumentationVersionService');
 const { ensureDefaultFabricationDiagram } = require('./qualityDocumentationDiagramService');
 const { ensureDefaultProductTables } = require('./qualityDocumentationTableService');
+const { hydrateBlocks } = require('./qualityDocumentBlockService');
 
 const STATUSES = new Set(['draft', 'to_complete', 'ready_for_review', 'validated', 'archived']);
 
@@ -85,7 +86,7 @@ async function getDocumentation(db, storeId, id) {
   const collection = collectionResult.rows[0];
   if (!collection) return null;
 
-  const [sections, missing, attachments, exports, diagrams, tables] = await Promise.all([
+  const [sections, missing, attachments, exports, diagrams, tables, blocks] = await Promise.all([
     db.query(
       `SELECT * FROM quality_documentation_sections
        WHERE collection_id = $1 AND store_id = $2
@@ -135,6 +136,16 @@ async function getDocumentation(db, storeId, id) {
       if (err.code === '42P01' || err.code === '42703') return { rows: [] };
       throw err;
     }),
+    db.query(
+      `SELECT *
+       FROM quality_document_blocks
+       WHERE collection_id = $1 AND store_id = $2
+       ORDER BY chapter_id ASC, position ASC, created_at ASC`,
+      [id, storeId]
+    ).catch((err) => {
+      if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+      throw err;
+    }),
   ]);
 
   const activeSections = sections.rows.filter((section) => !section.archived_at);
@@ -150,6 +161,7 @@ async function getDocumentation(db, storeId, id) {
     attachments: attachments.rows,
     diagrams: diagrams.rows,
     tables: tables.rows,
+    blocks: hydrateBlocks(blocks.rows, tables.rows, diagrams.rows, attachments.rows),
     exports: exports.rows,
     dashboard: {
       tome_count: activeSections.filter((section) => section.section_type === 'tome').length,
