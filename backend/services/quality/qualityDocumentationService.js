@@ -2,6 +2,7 @@ const { logQualityEvent } = require('./eventLogger');
 const { initializeDefaultDocumentation, stripHtml } = require('./qualityDocumentationTemplateService');
 const { recordSectionVersion } = require('./qualityDocumentationVersionService');
 const { ensureDefaultFabricationDiagram } = require('./qualityDocumentationDiagramService');
+const { ensureDefaultProductTables } = require('./qualityDocumentationTableService');
 
 const STATUSES = new Set(['draft', 'to_complete', 'ready_for_review', 'validated', 'archived']);
 
@@ -55,6 +56,11 @@ async function getOrCreateDefaultDocumentation(db, storeId, userId) {
   } catch (err) {
     console.warn('Initialisation diagramme T3-C18 ignoree :', err.message);
   }
+  try {
+    await ensureDefaultProductTables(db, storeId, userId);
+  } catch (err) {
+    console.warn('Initialisation tableaux qualite ignoree :', err.message);
+  }
   return getDocumentation(db, storeId, collection.id);
 }
 
@@ -79,7 +85,7 @@ async function getDocumentation(db, storeId, id) {
   const collection = collectionResult.rows[0];
   if (!collection) return null;
 
-  const [sections, missing, attachments, exports, diagrams] = await Promise.all([
+  const [sections, missing, attachments, exports, diagrams, tables] = await Promise.all([
     db.query(
       `SELECT * FROM quality_documentation_sections
        WHERE collection_id = $1 AND store_id = $2
@@ -119,6 +125,16 @@ async function getDocumentation(db, storeId, id) {
       if (err.code === '42P01' || err.code === '42703') return { rows: [] };
       throw err;
     }),
+    db.query(
+      `SELECT *
+       FROM quality_document_tables
+       WHERE collection_id = $1 AND store_id = $2
+       ORDER BY archived_at NULLS FIRST, created_at ASC`,
+      [id, storeId]
+    ).catch((err) => {
+      if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+      throw err;
+    }),
   ]);
 
   const activeSections = sections.rows.filter((section) => !section.archived_at);
@@ -133,6 +149,7 @@ async function getDocumentation(db, storeId, id) {
     missing_items: missing.rows,
     attachments: attachments.rows,
     diagrams: diagrams.rows,
+    tables: tables.rows,
     exports: exports.rows,
     dashboard: {
       tome_count: activeSections.filter((section) => section.section_type === 'tome').length,

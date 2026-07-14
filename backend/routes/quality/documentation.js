@@ -39,6 +39,18 @@ const {
   updateDiagram,
   updateDiagramTemplate,
 } = require('../../services/quality/qualityDocumentationDiagramService');
+const {
+  archiveTable,
+  createTable,
+  createTableTemplate,
+  deleteTableTemplate,
+  duplicateTable,
+  listTableTemplates,
+  listTables,
+  tableTemplates,
+  updateTable,
+  updateTableTemplate,
+} = require('../../services/quality/qualityDocumentationTableService');
 
 const router = express.Router();
 const UPLOAD_DIR = path.resolve(__dirname, '..', '..', 'uploads', 'quality-documentation-attachments');
@@ -267,6 +279,98 @@ router.delete('/diagrams/:diagramId', requireQualityPermission(QUALITY_PERMISSIO
     res.json({ mode: 'archived', diagram });
   } catch (err) {
     handleError(res, err, 'Erreur DELETE /api/quality/documentation/diagrams/:diagramId');
+  }
+});
+
+router.get('/sections/:sectionId/tables', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    res.json(await listTables(req.dbPool, req.user.store_id, req.params.sectionId));
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/documentation/sections/:sectionId/tables');
+  }
+});
+
+router.post('/sections/:sectionId/tables', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const table = await createTable(req.dbPool, req.user.store_id, req.params.sectionId, req.user.id, req.body);
+    if (!table) return res.status(404).json({ error: 'Chapitre introuvable' });
+    res.status(201).json(table);
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/sections/:sectionId/tables');
+  }
+});
+
+router.get('/tables/templates', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    res.json({ structured: tableTemplates(), library: await listTableTemplates(req.dbPool, req.user.store_id) });
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/documentation/tables/templates');
+  }
+});
+
+router.get('/tables/template-library', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    res.json(await listTableTemplates(req.dbPool, req.user.store_id));
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/documentation/tables/template-library');
+  }
+});
+
+router.post('/tables/template-library', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    res.status(201).json(await createTableTemplate(req.dbPool, req.user.store_id, req.user.id, req.body));
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/tables/template-library');
+  }
+});
+
+router.put('/tables/template-library/:templateId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const template = await updateTableTemplate(req.dbPool, req.user.store_id, req.params.templateId, req.user.id, req.body);
+    if (!template) return res.status(404).json({ error: 'Modele introuvable' });
+    res.json(template);
+  } catch (err) {
+    handleError(res, err, 'Erreur PUT /api/quality/documentation/tables/template-library/:templateId');
+  }
+});
+
+router.delete('/tables/template-library/:templateId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const template = await deleteTableTemplate(req.dbPool, req.user.store_id, req.params.templateId, req.user.id);
+    if (!template) return res.status(404).json({ error: 'Modele introuvable' });
+    res.json({ mode: 'archived', template });
+  } catch (err) {
+    handleError(res, err, 'Erreur DELETE /api/quality/documentation/tables/template-library/:templateId');
+  }
+});
+
+router.put('/tables/:tableId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const table = await updateTable(req.dbPool, req.user.store_id, req.params.tableId, req.user.id, req.body);
+    if (!table) return res.status(404).json({ error: 'Tableau introuvable' });
+    res.json(table);
+  } catch (err) {
+    handleError(res, err, 'Erreur PUT /api/quality/documentation/tables/:tableId');
+  }
+});
+
+router.post('/tables/:tableId/duplicate', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const table = await duplicateTable(req.dbPool, req.user.store_id, req.params.tableId, req.user.id);
+    if (!table) return res.status(404).json({ error: 'Tableau introuvable' });
+    res.status(201).json(table);
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/tables/:tableId/duplicate');
+  }
+});
+
+router.delete('/tables/:tableId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_DELETE), async (req, res) => {
+  try {
+    const table = await archiveTable(req.dbPool, req.user.store_id, req.params.tableId, req.user.id);
+    if (!table) return res.status(404).json({ error: 'Tableau introuvable' });
+    res.json({ mode: 'archived', table });
+  } catch (err) {
+    handleError(res, err, 'Erreur DELETE /api/quality/documentation/tables/:tableId');
   }
 });
 

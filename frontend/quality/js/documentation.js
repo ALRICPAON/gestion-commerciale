@@ -46,6 +46,7 @@
     validate: $('validate-section-btn'),
     markMissing: $('mark-missing-btn'),
     insertDiagram: $('insert-diagram-btn'),
+    insertTable: $('insert-table-btn'),
     textColor: $('text-color-select'),
     preview: $('preview-pdf-btn'),
     exportPdf: $('export-pdf-btn'),
@@ -109,6 +110,41 @@
     mermaidTemplateSource: $('mermaid-template-source'),
     mermaidTemplateDuplicate: $('mermaid-template-duplicate-btn'),
     mermaidTemplateDelete: $('mermaid-template-delete-btn'),
+    tableModal: $('table-modal'),
+    tableClose: $('table-close-btn'),
+    tableCancel: $('table-cancel-btn'),
+    tableSave: $('table-save-btn'),
+    tableDelete: $('table-delete-btn'),
+    tableVisualTab: $('table-visual-tab'),
+    tableMarkdownTab: $('table-markdown-tab'),
+    tableVisualPanel: $('table-visual-panel'),
+    tableMarkdownPanel: $('table-markdown-panel'),
+    tableTitle: $('table-title'),
+    tableTemplate: $('table-template'),
+    tableLoadTemplate: $('table-load-template-btn'),
+    tableSaveTemplate: $('table-save-template-btn'),
+    tableManageTemplates: $('table-manage-templates-btn'),
+    tableHeader: $('table-header-checkbox'),
+    tableGrid: $('table-grid'),
+    tableAddRow: $('table-add-row-btn'),
+    tableAddColumn: $('table-add-column-btn'),
+    tableRemoveRow: $('table-remove-row-btn'),
+    tableRemoveColumn: $('table-remove-column-btn'),
+    tableMarkdownSource: $('table-markdown-source'),
+    tableMarkdownPreviewBtn: $('table-markdown-preview-btn'),
+    tableMarkdownError: $('table-markdown-error'),
+    tableMarkdownPreview: $('table-markdown-preview'),
+    tableTemplateManager: $('table-template-manager'),
+    tableTemplateManagerClose: $('table-template-manager-close-btn'),
+    tableTemplateList: $('table-template-list'),
+    tableTemplateForm: $('table-template-form'),
+    tableTemplateId: $('table-template-id'),
+    tableTemplateName: $('table-template-name'),
+    tableTemplateDescription: $('table-template-description'),
+    tableTemplateCategory: $('table-template-category'),
+    tableTemplateSource: $('table-template-source'),
+    tableTemplateDuplicate: $('table-template-duplicate-btn'),
+    tableTemplateDelete: $('table-template-delete-btn'),
   };
 
   const DIAGRAM_NODE_TYPES = [
@@ -139,8 +175,9 @@
     note: { fill: '#fefce8', stroke: '#a16207', icon: 'i', shape: 'note' },
   };
 
-  let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], currentId: null, dirty: false, filter: 'all', mermaidTemplates: [] };
+  let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], tables: [], currentId: null, dirty: false, filter: 'all', mermaidTemplates: [], tableTemplates: [] };
   let diagramState = { id: null, data: null, history: [], future: [], zoom: 100, mode: 'structured', mermaidSvg: '', mermaidDirty: false };
+  let tableState = { id: null, data: null, mode: 'visual' };
 
   if (window.mermaid) {
     window.mermaid.initialize({
@@ -901,9 +938,242 @@
     setMermaidStatus('Complete le nom puis enregistre le modele.', 'loading');
   }
 
+  function tableTemplateData() {
+    const table = (title, columns, rows) => ({
+      schema_version: 1,
+      title,
+      header: true,
+      columns: columns.map((label, index) => ({ id: slugTableId(label, `col-${index + 1}`), label, alignment: 'left', width: null })),
+      rows: rows.map((values, rowIndex) => ({
+        id: `row-${rowIndex + 1}`,
+        cells: Object.fromEntries(columns.map((label, index) => [slugTableId(label, `col-${index + 1}`), values[index] || ''])),
+      })),
+    });
+    return {
+      blank: table('Nouveau tableau qualite', ['Point', 'Description', 'Responsable'], [['', '', '']]),
+      product_families: table('Familles de produits', ['Famille de produits', 'Exemples', 'Presentation', 'Temperature cible', 'Risques principaux', 'Surveillance associee'], [
+        ['Poissons entiers frais', 'Bar, dorade, lieu, merlu', 'Entier, sous glace', '0 a +2 C', 'Temperature, alterabilite, tracabilite', 'Controle reception, temperature, etiquetage'],
+        ['Filets et decoupes', 'Filets, darnes, portions', 'Bacs, caisses, sous glace', '0 a +2 C', 'Manipulation, contamination croisee', 'Hygiene, DLC/DDM, controle visuel'],
+        ['Coquillages et crustaces', 'Moules, huitres, langoustines', 'Vivant ou frais selon espece', 'Selon produit et reglementation', 'Vitalite, origine, contamination', 'Agrements, documents sanitaires, lots'],
+      ]),
+      storage_conditions: table('Conditions de conservation', ['Zone / produit', 'Temperature', 'Duree indicative', 'Surveillance', 'Action en cas d ecart'], [
+        ['Chambre froide produits frais', '0 a +2 C', 'Selon DLC ou rotation interne', 'Releve automatique ou manuel', 'Isolement, verification produit, action corrective'],
+        ['Atelier de preparation', 'Temperature maitrisee', 'Temps de presence limite', 'Controle visuel et temperature ambiante', 'Reduction du temps d exposition, retour au froid'],
+        ['Transport frigorifique', '0 a +2 C selon produit', 'Tournee de livraison', 'Controle au chargement et livraison', 'Information responsable qualite et decision lot'],
+      ]),
+      haccp_hazards: table('Analyse des dangers HACCP', ['Etape', 'Danger', 'Cause', 'Mesure de maitrise', 'Surveillance'], [['Reception', 'Rupture de temperature', 'Transport non conforme', 'Controle temperature reception', 'Fiche reception / ALTA']]),
+      monitoring_plan: table('Plan de surveillance', ['Point surveille', 'Frequence', 'Responsable', 'Preuve', 'Action si ecart'], [['Temperature chambre froide', 'Quotidienne', 'Responsable qualite', 'Releve temperature', 'Action corrective et evaluation produits']]),
+      cleaning_plan: table('Plan de nettoyage', ['Zone', 'Operation', 'Produit', 'Frequence', 'Controle'], [['Atelier', 'Nettoyage et desinfection', 'Produit homologue contact alimentaire', 'Chaque fin de production', 'Controle visuel']]),
+      equipment_list: table('Liste des equipements', ['Equipement', 'Zone', 'Usage', 'Maintenance'], [['Balance', 'Preparation', 'Pesage commandes', 'Verification periodique']]),
+      corrective_actions: table('Actions correctives', ['Ecart', 'Decision', 'Responsable', 'Delai', 'Preuve'], [['Temperature hors limite', 'Isolement du lot et evaluation', 'Qualite', 'Immediat', 'Fiche non-conformite']]),
+    };
+  }
+
+  function slugTableId(value, fallback) {
+    const text = String(value || fallback).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+    return text || fallback;
+  }
+
+  function normalizeTableClient(input = {}) {
+    const columns = Array.isArray(input.columns) && input.columns.length ? input.columns : tableTemplateData().blank.columns;
+    const normalizedColumns = columns.slice(0, 20).map((column, index) => ({
+      id: slugTableId(column.id || column.label, `col-${index + 1}`),
+      label: String(column.label || `Colonne ${index + 1}`).replace(/<[^>]+>/g, '').slice(0, 120),
+      alignment: ['left', 'center', 'right'].includes(column.alignment) ? column.alignment : 'left',
+      width: Number.isFinite(Number(column.width)) ? Number(column.width) : null,
+    }));
+    const rows = Array.isArray(input.rows) ? input.rows.slice(0, 500) : [];
+    return {
+      schema_version: 1,
+      title: String(input.title || 'Tableau qualite').replace(/<[^>]+>/g, '').slice(0, 160),
+      header: input.header !== false,
+      columns: normalizedColumns,
+      rows: rows.map((row, rowIndex) => ({
+        id: slugTableId(row.id, `row-${rowIndex + 1}`),
+        cells: Object.fromEntries(normalizedColumns.map((column) => {
+          const value = row.cells && Object.prototype.hasOwnProperty.call(row.cells, column.id) ? row.cells[column.id] : row[column.id];
+          return [column.id, String(value || '').replace(/<[^>]+>/g, '').slice(0, 1000)];
+        })),
+      })),
+    };
+  }
+
+  function systemTableTemplates() {
+    return Object.entries(tableTemplateData()).map(([key, table_data]) => ({
+      id: `system:${key}`,
+      key,
+      name: table_data.title,
+      title: table_data.title,
+      category: key === 'blank' ? 'Autre' : 'Produits',
+      description: '',
+      table_data,
+      is_system: true,
+    }));
+  }
+
+  async function loadTableTemplates() {
+    try {
+      state.tableTemplates = await request('/tables/template-library');
+    } catch (error) {
+      console.warn('Modeles de tableaux indisponibles', error);
+      state.tableTemplates = systemTableTemplates();
+    }
+    renderTableTemplateOptions();
+    return state.tableTemplates;
+  }
+
+  function renderTableTemplateOptions() {
+    const templates = state.tableTemplates.length ? state.tableTemplates : systemTableTemplates();
+    els.tableTemplate.innerHTML = templates.map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.category || 'Autre')} - ${escapeHtml(template.name || template.title)}</option>`).join('');
+  }
+
+  function selectedTableTemplate() {
+    const templates = state.tableTemplates.length ? state.tableTemplates : systemTableTemplates();
+    return templates.find((template) => template.id === els.tableTemplate.value) || templates[0] || systemTableTemplates()[0];
+  }
+
+  function renderTableHtml(data) {
+    const table = normalizeTableClient(data);
+    const head = table.header ? `<thead><tr>${table.columns.map((column) => `<th class="align-${column.alignment}">${escapeHtml(column.label)}</th>`).join('')}</tr></thead>` : '';
+    const rows = table.rows.map((row) => `<tr>${table.columns.map((column) => `<td class="align-${column.alignment}">${escapeHtml(row.cells[column.id] || '').replace(/\n/g, '<br>')}</td>`).join('')}</tr>`).join('');
+    return `<div class="quality-table-scroll"><table class="quality-data-table">${head}<tbody>${rows || `<tr><td colspan="${table.columns.length}">Aucune ligne renseignee.</td></tr>`}</tbody></table></div>`;
+  }
+
+  function renderTableGrid() {
+    const data = normalizeTableClient(tableState.data);
+    tableState.data = data;
+    els.tableTitle.value = data.title;
+    els.tableHeader.checked = data.header;
+    els.tableGrid.innerHTML = `<table><thead><tr>${data.columns.map((column, index) => `<th><input data-table-col-label="${index}" value="${escapeHtml(column.label)}" aria-label="Colonne ${index + 1}"></th>`).join('')}</tr></thead><tbody>${data.rows.map((row, rowIndex) => `<tr>${data.columns.map((column, colIndex) => `<td><textarea data-table-cell="${rowIndex}:${colIndex}" rows="2">${escapeHtml(row.cells[column.id] || '')}</textarea></td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    els.tableMarkdownSource.value = tableToMarkdown(data);
+    els.tableMarkdownPreview.innerHTML = renderTableHtml(data);
+  }
+
+  function setTableMode(mode) {
+    tableState.mode = mode;
+    els.tableVisualTab.classList.toggle('active', mode === 'visual');
+    els.tableMarkdownTab.classList.toggle('active', mode === 'markdown');
+    els.tableVisualPanel.classList.toggle('hidden', mode !== 'visual');
+    els.tableMarkdownPanel.classList.toggle('hidden', mode !== 'markdown');
+    if (mode === 'markdown') els.tableMarkdownSource.value = tableToMarkdown(tableState.data);
+  }
+
+  function openTableModal(table = null) {
+    const template = tableTemplateData().blank;
+    tableState = { id: table?.id || null, data: normalizeTableClient(table?.table_data || template), mode: 'visual' };
+    renderTableTemplateOptions();
+    renderTableGrid();
+    setTableMode('visual');
+    els.tableDelete.classList.toggle('hidden', !tableState.id);
+    els.tableModal.classList.remove('hidden');
+  }
+
+  function closeTableModal() {
+    els.tableModal.classList.add('hidden');
+    tableState = { id: null, data: null, mode: 'visual' };
+  }
+
+  function updateTableFromGrid() {
+    if (!tableState.data) return;
+    const data = normalizeTableClient(tableState.data);
+    data.title = els.tableTitle.value || data.title;
+    data.header = els.tableHeader.checked;
+    els.tableGrid.querySelectorAll('[data-table-col-label]').forEach((input) => {
+      const index = Number(input.dataset.tableColLabel);
+      if (data.columns[index]) data.columns[index].label = input.value;
+    });
+    els.tableGrid.querySelectorAll('[data-table-cell]').forEach((input) => {
+      const [rowIndex, colIndex] = input.dataset.tableCell.split(':').map(Number);
+      const row = data.rows[rowIndex];
+      const column = data.columns[colIndex];
+      if (row && column) row.cells[column.id] = input.value;
+    });
+    tableState.data = normalizeTableClient(data);
+  }
+
+  function tableToMarkdown(data) {
+    const table = normalizeTableClient(data);
+    const headers = table.columns.map((column) => column.label);
+    const separator = table.columns.map(() => '---');
+    const rows = table.rows.map((row) => table.columns.map((column) => String(row.cells[column.id] || '').replace(/\n/g, ' ')));
+    return [headers, separator, ...rows].map((line) => `| ${line.join(' | ')} |`).join('\n');
+  }
+
+  function parseMarkdownTable(text) {
+    const lines = String(text || '').replace(/\r\n/g, '\n').split('\n').map((line) => line.trim()).filter(Boolean);
+    if (!lines.length) throw new Error('Le tableau est vide.');
+    const split = (line) => {
+      if (line.includes('|')) return line.replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+      return line.split('\t').map((cell) => cell.trim());
+    };
+    const headers = split(lines[0]);
+    if (!headers.length) throw new Error('Le tableau doit contenir au moins une colonne.');
+    const start = lines[1] && /^[:\-\s|]+$/.test(lines[1]) ? 2 : 1;
+    const columns = headers.map((label, index) => ({ id: slugTableId(label, `col-${index + 1}`), label: label || `Colonne ${index + 1}`, alignment: 'left', width: null }));
+    const rows = lines.slice(start).map((line, rowIndex) => {
+      const values = split(line);
+      return { id: `row-${rowIndex + 1}`, cells: Object.fromEntries(columns.map((column, index) => [column.id, values[index] || ''])) };
+    });
+    return normalizeTableClient({ title: els.tableTitle.value || 'Tableau qualite', header: true, columns, rows });
+  }
+
+  async function saveTable() {
+    const section = currentSection();
+    if (!section || !canEdit) return;
+    if (tableState.mode === 'markdown') tableState.data = parseMarkdownTable(els.tableMarkdownSource.value);
+    else updateTableFromGrid();
+    tableState.data.title = els.tableTitle.value || tableState.data.title;
+    const path = tableState.id ? `/tables/${tableState.id}` : `/sections/${section.id}/tables`;
+    await request(path, {
+      method: tableState.id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table_data: tableState.data }),
+    });
+    closeTableModal();
+    await load(section.id);
+    setFeedback('Tableau enregistre.', 'success');
+  }
+
+  async function deleteTableById(tableId) {
+    if (!tableId || !window.confirm('Supprimer ce tableau du chapitre ? Cette action est definitive.')) return;
+    await request(`/tables/${tableId}`, { method: 'DELETE' });
+    await load(state.currentId);
+    setFeedback('Tableau supprime.', 'success');
+  }
+
+  async function duplicateTable(tableId) {
+    if (!tableId) return;
+    await request(`/tables/${tableId}/duplicate`, { method: 'POST' });
+    await load(state.currentId);
+    setFeedback('Tableau duplique.', 'success');
+  }
+
+  function renderTableTemplateManager(selectedId = '') {
+    const templates = state.tableTemplates.length ? state.tableTemplates : systemTableTemplates();
+    els.tableTemplateList.innerHTML = templates.map((template) => `<article class="quality-template-list-item ${template.id === selectedId ? 'active' : ''}">
+      <button data-table-template-id="${escapeHtml(template.id)}" type="button">
+        <strong>${escapeHtml(template.name || template.title)}</strong>
+        <small>${escapeHtml(template.category || 'Autre')} - ${template.is_system ? 'Modele systeme' : 'Modele personnalise'}</small>
+      </button>
+    </article>`).join('');
+  }
+
+  async function saveCurrentTableAsTemplate() {
+    updateTableFromGrid();
+    els.tableTemplateId.value = '';
+    els.tableTemplateName.value = els.tableTitle.value || tableState.data?.title || '';
+    els.tableTemplateDescription.value = '';
+    els.tableTemplateCategory.value = 'Autre';
+    els.tableTemplateSource.value = tableToMarkdown(tableState.data);
+    await loadTableTemplates();
+    renderTableTemplateManager('');
+    els.tableTemplateManager.classList.remove('hidden');
+  }
+
   function editorContentHtml() {
     const clone = els.editor.cloneNode(true);
     clone.querySelectorAll('[data-diagram-controls]').forEach((node) => node.remove());
+    clone.querySelectorAll('[data-table-controls]').forEach((node) => node.remove());
     return clone.innerHTML;
   }
 
@@ -915,6 +1185,18 @@
       controls.setAttribute('data-diagram-controls', 'true');
       controls.setAttribute('contenteditable', 'false');
       controls.innerHTML = '<button class="btn btn-secondary" data-diagram-action="edit" type="button">Modifier</button><button class="btn btn-secondary" data-diagram-action="duplicate" type="button">Dupliquer</button><button class="btn btn-secondary" data-diagram-action="delete" type="button">Supprimer</button>';
+      block.prepend(controls);
+    });
+  }
+
+  function decorateTableBlocks() {
+    els.editor.querySelectorAll('[data-table-id]').forEach((block) => {
+      if (block.querySelector('[data-table-controls]')) return;
+      const controls = document.createElement('div');
+      controls.className = 'quality-table-controls';
+      controls.setAttribute('data-table-controls', 'true');
+      controls.setAttribute('contenteditable', 'false');
+      controls.innerHTML = '<button class="btn btn-secondary" data-table-action="edit" type="button">Modifier</button><button class="btn btn-secondary" data-table-action="duplicate" type="button">Dupliquer</button><button class="btn btn-secondary" data-table-action="delete" type="button">Supprimer</button>';
       block.prepend(controls);
     });
   }
@@ -963,7 +1245,7 @@
   function renderEditor() {
     const section = currentSection();
     const disabled = !section || !canEdit;
-    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.textColor, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.insertDiagram, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
+    [els.titleInput, els.editor, els.status, els.version, els.parent, els.order, els.revision, els.includeExport, els.references, els.comment, els.textColor, els.save, els.saveNext, els.review, els.validate, els.markMissing, els.insertDiagram, els.insertTable, els.moveUp, els.moveDown, els.deleteSection].forEach((el) => {
       if (!el) return;
       if ('disabled' in el) el.disabled = disabled;
       if (el === els.editor) el.setAttribute('contenteditable', disabled ? 'false' : 'true');
@@ -976,6 +1258,7 @@
     els.titleInput.value = section.title || '';
     els.editor.innerHTML = section.content_html || '';
     decorateDiagramBlocks();
+    decorateTableBlocks();
     els.status.value = section.status || 'draft';
     els.version.value = section.version || '1.0';
     els.order.value = Number.isFinite(Number(section.display_order)) ? Number(section.display_order) : 0;
@@ -992,12 +1275,14 @@
   async function load(selectId = null) {
     setFeedback('Chargement de la documentation...');
     if (!state.mermaidTemplates.length) await loadMermaidTemplates();
+    if (!state.tableTemplates.length) await loadTableTemplates();
     const data = await request('/default');
     state.collection = data.collection;
     state.sections = data.sections;
     state.missing = data.missing_items;
     state.attachments = data.attachments;
     state.diagrams = data.diagrams || [];
+    state.tables = data.tables || [];
     state.currentId = selectId || state.currentId || state.sections.find((section) => section.section_type !== 'tome')?.id || state.sections[0]?.id || null;
     els.title.textContent = state.collection.title;
     renderMetrics(data.dashboard);
@@ -1109,13 +1394,31 @@
     els.textColor.value = '';
   });
   els.insertDiagram.addEventListener('click', () => openDiagramModal());
+  els.insertTable.addEventListener('click', () => openTableModal());
   els.editor.addEventListener('dblclick', (event) => {
+    const tableBlock = event.target.closest?.('[data-table-id]');
+    if (tableBlock) {
+      const table = state.tables.find((item) => item.id === tableBlock.dataset.tableId);
+      if (table) openTableModal(table);
+      return;
+    }
     const block = event.target.closest?.('[data-diagram-id]');
     if (!block) return;
     const diagram = state.diagrams.find((item) => item.id === block.dataset.diagramId);
     if (diagram) openDiagramModal(diagram);
   });
   els.editor.addEventListener('click', (event) => {
+    const tableAction = event.target.closest?.('[data-table-action]');
+    if (tableAction) {
+      event.preventDefault();
+      const block = tableAction.closest('[data-table-id]');
+      const tableId = block?.dataset.tableId;
+      const table = state.tables.find((item) => item.id === tableId);
+      if (tableAction.dataset.tableAction === 'edit' && table) openTableModal(table);
+      if (tableAction.dataset.tableAction === 'duplicate') duplicateTable(tableId).catch((error) => reportActionError(error, 'Erreur duplication tableau'));
+      if (tableAction.dataset.tableAction === 'delete') deleteTableById(tableId).catch((error) => reportActionError(error, 'Erreur suppression tableau'));
+      return;
+    }
     const action = event.target.closest?.('[data-diagram-action]');
     if (!action) return;
     event.preventDefault();
@@ -1125,6 +1428,126 @@
     if (action.dataset.diagramAction === 'edit' && diagram) openDiagramModal(diagram);
     if (action.dataset.diagramAction === 'duplicate') duplicateDiagram(diagramId).catch((error) => reportActionError(error, 'Erreur duplication diagramme'));
     if (action.dataset.diagramAction === 'delete') deleteDiagramById(diagramId).catch((error) => reportActionError(error, 'Erreur suppression diagramme'));
+  });
+  els.tableClose.addEventListener('click', closeTableModal);
+  els.tableCancel.addEventListener('click', closeTableModal);
+  els.tableVisualTab.addEventListener('click', () => setTableMode('visual'));
+  els.tableMarkdownTab.addEventListener('click', () => setTableMode('markdown'));
+  els.tableLoadTemplate.addEventListener('click', () => {
+    const template = selectedTableTemplate();
+    if (!template) return;
+    tableState.data = normalizeTableClient(template.table_data || tableTemplateData().blank);
+    renderTableGrid();
+  });
+  els.tableSave.addEventListener('click', () => saveTable().catch((error) => reportActionError(error, 'Erreur enregistrement tableau')));
+  els.tableDelete.addEventListener('click', () => {
+    const id = tableState.id;
+    closeTableModal();
+    deleteTableById(id).catch((error) => reportActionError(error, 'Erreur suppression tableau'));
+  });
+  els.tableTitle.addEventListener('input', () => {
+    if (tableState.data) tableState.data.title = els.tableTitle.value;
+  });
+  els.tableHeader.addEventListener('change', () => {
+    updateTableFromGrid();
+    tableState.data.header = els.tableHeader.checked;
+    renderTableGrid();
+  });
+  els.tableGrid.addEventListener('input', updateTableFromGrid);
+  els.tableAddRow.addEventListener('click', () => {
+    updateTableFromGrid();
+    const data = tableState.data;
+    data.rows.push({ id: `row-${data.rows.length + 1}`, cells: Object.fromEntries(data.columns.map((column) => [column.id, ''])) });
+    renderTableGrid();
+  });
+  els.tableAddColumn.addEventListener('click', () => {
+    updateTableFromGrid();
+    const data = tableState.data;
+    const id = `col-${data.columns.length + 1}`;
+    data.columns.push({ id, label: `Colonne ${data.columns.length + 1}`, alignment: 'left', width: null });
+    data.rows.forEach((row) => { row.cells[id] = ''; });
+    renderTableGrid();
+  });
+  els.tableRemoveRow.addEventListener('click', () => {
+    updateTableFromGrid();
+    if (tableState.data.rows.length > 1) tableState.data.rows.pop();
+    renderTableGrid();
+  });
+  els.tableRemoveColumn.addEventListener('click', () => {
+    updateTableFromGrid();
+    const data = tableState.data;
+    if (data.columns.length <= 1) return;
+    const removed = data.columns.pop();
+    data.rows.forEach((row) => { delete row.cells[removed.id]; });
+    renderTableGrid();
+  });
+  els.tableMarkdownPreviewBtn.addEventListener('click', () => {
+    try {
+      tableState.data = parseMarkdownTable(els.tableMarkdownSource.value);
+      els.tableMarkdownError.className = 'page-feedback error hidden';
+      els.tableMarkdownError.textContent = '';
+      els.tableMarkdownPreview.innerHTML = renderTableHtml(tableState.data);
+    } catch (error) {
+      els.tableMarkdownError.textContent = error.message;
+      els.tableMarkdownError.className = 'page-feedback error';
+    }
+  });
+  els.tableSaveTemplate.addEventListener('click', () => saveCurrentTableAsTemplate().catch((error) => reportActionError(error, 'Erreur modele tableau')));
+  els.tableManageTemplates.addEventListener('click', async () => {
+    await loadTableTemplates();
+    renderTableTemplateManager('');
+    els.tableTemplateManager.classList.remove('hidden');
+  });
+  els.tableTemplateManagerClose.addEventListener('click', () => els.tableTemplateManager.classList.add('hidden'));
+  els.tableTemplateList.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-table-template-id]');
+    if (!button) return;
+    const template = state.tableTemplates.find((item) => item.id === button.dataset.tableTemplateId);
+    if (!template) return;
+    els.tableTemplateId.value = template.is_system ? '' : template.id;
+    els.tableTemplateName.value = template.name || template.title || '';
+    els.tableTemplateDescription.value = template.description || '';
+    els.tableTemplateCategory.value = template.category || 'Autre';
+    els.tableTemplateSource.value = tableToMarkdown(template.table_data);
+    renderTableTemplateManager(template.id);
+  });
+  els.tableTemplateForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = parseMarkdownTable(els.tableTemplateSource.value);
+    data.title = els.tableTemplateName.value || data.title;
+    const body = {
+      name: els.tableTemplateName.value,
+      description: els.tableTemplateDescription.value,
+      category: els.tableTemplateCategory.value,
+      table_data: data,
+    };
+    const id = els.tableTemplateId.value;
+    await request(id ? `/tables/template-library/${id}` : '/tables/template-library', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    await loadTableTemplates();
+    renderTableTemplateOptions();
+    renderTableTemplateManager(id);
+    setFeedback('Modele de tableau enregistre.', 'success');
+  });
+  els.tableTemplateDuplicate.addEventListener('click', () => {
+    els.tableTemplateId.value = '';
+    els.tableTemplateName.value = `${els.tableTemplateName.value || 'Modele'} copie`;
+  });
+  els.tableTemplateDelete.addEventListener('click', async () => {
+    const id = els.tableTemplateId.value;
+    if (!id || !window.confirm('Supprimer ce modele de tableau ?')) return;
+    await request(`/tables/template-library/${id}`, { method: 'DELETE' });
+    await loadTableTemplates();
+    renderTableTemplateOptions();
+    renderTableTemplateManager('');
+    els.tableTemplateId.value = '';
+    els.tableTemplateName.value = '';
+    els.tableTemplateDescription.value = '';
+    els.tableTemplateSource.value = '';
+    setFeedback('Modele de tableau supprime.', 'success');
   });
   els.diagramClose.addEventListener('click', closeDiagramModal);
   els.diagramCancel.addEventListener('click', closeDiagramModal);

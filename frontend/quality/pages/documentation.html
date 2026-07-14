@@ -83,6 +83,7 @@
           <button class="btn btn-secondary" data-command="insertUnorderedList" type="button">Liste</button>
           <button id="mark-missing-btn" class="btn btn-secondary" type="button">Marquer a completer</button>
           <button id="insert-diagram-btn" class="btn btn-secondary" type="button">Inserer un diagramme</button>
+          <button id="insert-table-btn" class="btn btn-secondary" type="button">Inserer un tableau</button>
         </div>
         <div id="section-editor" class="quality-rich-editor" contenteditable="true"></div>
         <div class="quality-actions">
@@ -321,9 +322,112 @@
     </div>
   </div>
 
+  <div id="table-modal" class="quality-modal hidden" role="dialog" aria-modal="true" aria-labelledby="table-modal-title">
+    <div class="quality-modal-panel quality-table-modal">
+      <header class="quality-section-header">
+        <div>
+          <span class="section-kicker">Tableau</span>
+          <h3 id="table-modal-title">Editeur de tableau</h3>
+        </div>
+        <button id="table-close-btn" class="btn btn-secondary" type="button">Fermer</button>
+      </header>
+
+      <div class="quality-tabs" role="tablist" aria-label="Mode d'edition du tableau">
+        <button id="table-visual-tab" class="quality-tab active" type="button">Editeur visuel</button>
+        <button id="table-markdown-tab" class="quality-tab" type="button">Markdown / copier-coller</button>
+      </div>
+
+      <div class="quality-table-toolbar">
+        <label>Titre <input id="table-title" class="form-input"></label>
+        <label>Modele
+          <select id="table-template" class="form-input">
+            <option value="blank">Tableau vide</option>
+            <option value="product_families">Familles de produits</option>
+            <option value="storage_conditions">Conditions de conservation</option>
+            <option value="haccp_hazards">Analyse des dangers HACCP</option>
+            <option value="monitoring_plan">Plan de surveillance</option>
+            <option value="cleaning_plan">Plan de nettoyage</option>
+            <option value="equipment_list">Liste des equipements</option>
+            <option value="corrective_actions">Actions correctives</option>
+          </select>
+        </label>
+        <div class="quality-actions">
+          <button id="table-load-template-btn" class="btn btn-secondary" type="button">Charger un modele</button>
+          <button id="table-save-template-btn" class="btn btn-secondary" type="button">Enregistrer comme modele</button>
+          <button id="table-manage-templates-btn" class="btn btn-secondary" type="button">Gerer les modeles</button>
+        </div>
+      </div>
+
+      <section id="table-visual-panel" class="quality-table-panel">
+        <div class="quality-table-commands">
+          <label><input id="table-header-checkbox" type="checkbox" checked> Premiere ligne en en-tete</label>
+          <button id="table-add-row-btn" class="btn btn-secondary" type="button">Ajouter une ligne</button>
+          <button id="table-add-column-btn" class="btn btn-secondary" type="button">Ajouter une colonne</button>
+          <button id="table-remove-row-btn" class="btn btn-secondary" type="button">Retirer derniere ligne</button>
+          <button id="table-remove-column-btn" class="btn btn-secondary" type="button">Retirer derniere colonne</button>
+        </div>
+        <div id="table-grid" class="quality-table-editor"></div>
+      </section>
+
+      <section id="table-markdown-panel" class="quality-table-panel hidden">
+        <label class="quality-mermaid-code-label">Markdown ou texte tabule
+          <textarea id="table-markdown-source" class="form-input quality-table-code" spellcheck="false"></textarea>
+        </label>
+        <div class="quality-actions">
+          <button id="table-markdown-preview-btn" class="btn btn-primary" type="button">Previsualiser</button>
+        </div>
+        <div id="table-markdown-error" class="page-feedback error hidden"></div>
+        <div id="table-markdown-preview" class="quality-table-preview"></div>
+      </section>
+
+      <footer class="quality-actions">
+        <button id="table-save-btn" class="btn btn-primary" type="button">Enregistrer le tableau</button>
+        <button id="table-delete-btn" class="btn btn-secondary" type="button">Supprimer le tableau</button>
+        <button id="table-cancel-btn" class="btn btn-secondary" type="button">Annuler</button>
+      </footer>
+    </div>
+  </div>
+
+  <section id="table-template-manager" class="quality-modal hidden" role="dialog" aria-modal="true" aria-labelledby="table-template-manager-title">
+    <div class="quality-modal-panel quality-template-manager-panel">
+      <header class="quality-section-header">
+        <div>
+          <span class="section-kicker">Bibliotheque de tableaux</span>
+          <h3 id="table-template-manager-title">Gerer les modeles</h3>
+        </div>
+        <button id="table-template-manager-close-btn" class="btn btn-secondary" type="button">Fermer</button>
+      </header>
+      <div class="quality-template-manager-grid">
+        <div id="table-template-list" class="quality-template-list"></div>
+        <form id="table-template-form" class="quality-template-form">
+          <input id="table-template-id" type="hidden">
+          <label>Nom <input id="table-template-name" class="form-input"></label>
+          <label>Description <textarea id="table-template-description" class="form-input"></textarea></label>
+          <label>Categorie
+            <select id="table-template-category" class="form-input">
+              <option>Produits</option>
+              <option>HACCP</option>
+              <option>Surveillance</option>
+              <option>Nettoyage</option>
+              <option>Equipements</option>
+              <option>Non-conformite</option>
+              <option>Autre</option>
+            </select>
+          </label>
+          <label>Markdown du tableau <textarea id="table-template-source" class="form-input quality-table-code" spellcheck="false"></textarea></label>
+          <div class="quality-actions">
+            <button id="table-template-save-btn" class="btn btn-primary" type="submit">Enregistrer le modele</button>
+            <button id="table-template-duplicate-btn" class="btn btn-secondary" type="button">Dupliquer</button>
+            <button id="table-template-delete-btn" class="btn btn-secondary" type="button">Supprimer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </section>
+
   <script src="../../js/config.js"></script>
   <script src="../js/permissions.js?v=3"></script>
   <script src="../../vendor/mermaid/mermaid.min.js?v=1"></script>
-  <script src="../js/documentation.js?v=2"></script>
+  <script src="../js/documentation.js?v=3"></script>
 </body>
 </html>
