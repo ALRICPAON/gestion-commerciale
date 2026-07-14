@@ -119,6 +119,17 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-diagram-block { break-inside: avoid; page-break-inside: avoid; margin: 14px 0; }
     .quality-diagram-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
     .quality-diagram-svg { max-width: 100%; height: auto; break-inside: avoid; page-break-inside: avoid; }
+    .quality-table-block { break-inside: avoid; page-break-inside: avoid; margin: 14px 0; }
+    .quality-table-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
+    .quality-table-scroll { overflow: visible; width: 100%; }
+    .quality-data-table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+    .quality-data-table thead { display: table-header-group; }
+    .quality-data-table tr { break-inside: avoid; page-break-inside: avoid; }
+    .quality-data-table th,
+    .quality-data-table td { border: 1px solid #94a3b8; font-size: 10.5px; line-height: 1.35; padding: 5px 6px; vertical-align: top; word-break: break-word; }
+    .quality-data-table th { background: #eef2f7; color: #263746; font-weight: 700; }
+    .quality-data-table .align-center { text-align: center; }
+    .quality-data-table .align-right { text-align: right; }
     blockquote { border-left: 3px solid #0f5f73; margin-left: 0; padding-left: 10px; }
     img { max-width: 100%; }
     tr { break-inside: avoid; }

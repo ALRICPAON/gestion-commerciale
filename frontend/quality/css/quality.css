@@ -638,12 +638,146 @@
   gap: 10px;
 }
 
+.quality-table-block {
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  margin: 14px 0;
+  padding: 10px;
+}
+
+.quality-table-block figcaption {
+  color: var(--alta-navy);
+  font-weight: 800;
+  margin-bottom: 8px;
+}
+
+.quality-table-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.quality-table-scroll {
+  overflow-x: auto;
+  width: 100%;
+}
+
+.quality-data-table {
+  border-collapse: collapse;
+  min-width: 100%;
+  table-layout: fixed;
+}
+
+.quality-data-table th,
+.quality-data-table td {
+  border: 1px solid var(--alta-border);
+  padding: 8px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.quality-data-table th {
+  background: #eef2f7;
+  color: var(--alta-navy);
+  font-weight: 800;
+}
+
+.quality-data-table .align-center {
+  text-align: center;
+}
+
+.quality-data-table .align-right {
+  text-align: right;
+}
+
+.quality-table-modal {
+  width: min(1180px, calc(100vw - 24px));
+}
+
+.quality-table-toolbar {
+  align-items: end;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1fr) auto;
+}
+
+.quality-table-toolbar label,
+.quality-table-panel label {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.quality-table-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.quality-table-panel.hidden {
+  display: none;
+}
+
+.quality-table-commands {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.quality-table-editor,
+.quality-table-preview {
+  background: #f8fafc;
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  overflow: auto;
+  padding: 8px;
+}
+
+.quality-table-editor table {
+  border-collapse: collapse;
+  min-width: 760px;
+  width: 100%;
+}
+
+.quality-table-editor th,
+.quality-table-editor td {
+  border: 1px solid var(--alta-border);
+  padding: 4px;
+  vertical-align: top;
+}
+
+.quality-table-editor input,
+.quality-table-editor textarea {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  box-sizing: border-box;
+  font: inherit;
+  min-width: 140px;
+  padding: 6px;
+  width: 100%;
+}
+
+.quality-table-editor th input {
+  font-weight: 800;
+}
+
+.quality-table-code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+  min-height: 220px;
+}
+
 @media (max-width: 1100px) {
   .quality-diagram-editor-grid,
   .quality-diagram-editors,
   .quality-mermaid-toolbar,
   .quality-mermaid-grid,
-  .quality-template-manager-grid {
+  .quality-template-manager-grid,
+  .quality-table-toolbar {
     grid-template-columns: 1fr;
   }
 
