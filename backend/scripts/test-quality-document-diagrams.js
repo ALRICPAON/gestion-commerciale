@@ -59,10 +59,59 @@ assert.ok(mermaid.source.includes("Création d'une non-conformité"), 'La source
 assert.ok(mermaid.rendered_svg.includes('<svg'), 'Le mode Mermaid doit stocker un SVG rendu');
 assert.ok(renderDiagramSvg(mermaid).includes('quality-mermaid-svg'), 'Le rendu Mermaid doit retourner un SVG inline');
 
+const styledMermaidSource = `flowchart TD
+    A([Début]) --> B[Réception d'un lot]
+    B --> C{Lot conforme ?}
+    C -- Oui --> D[Stockage]
+    C -- Non --> NC1[Isolement]
+    classDef control fill:#ffffff,stroke:#1f2937,stroke-width:2px,color:#111827,font-size:14px,font-weight:700,stroke-dasharray:5 5
+    class B,C control
+    linkStyle default stroke:#334155,stroke-width:2px
+    style NC1 fill:#fef2f2,stroke:#b42318,stroke-width:2px`;
+
+const styledMermaid = normalizeDiagramData({
+  editor_mode: 'mermaid',
+  title: 'Style Mermaid',
+  source: styledMermaidSource,
+});
+assert.ok(styledMermaid.source.includes('classDef control'), 'classDef valide doit etre accepte');
+assert.ok(styledMermaid.source.includes('class B,C control'), 'class valide doit etre accepte');
+assert.ok(styledMermaid.source.includes('linkStyle default'), 'linkStyle valide doit etre accepte');
+assert.ok(styledMermaid.source.includes("Réception d'un lot"), 'Accents et apostrophes doivent etre conserves');
+assert.ok(styledMermaid.rendered_svg.includes('<svg'), 'Le Mermaid style doit conserver un rendu SVG');
+
 mustThrow('xss mermaid', () => normalizeDiagramData({
   editor_mode: 'mermaid',
   title: 'XSS',
   source: 'flowchart TD\n A[Ok] --> B[Bad]\n click A javascript:alert(1)',
+  rendered_svg: '<svg></svg>',
+}));
+
+mustThrow('javascript mermaid', () => normalizeDiagramData({
+  editor_mode: 'mermaid',
+  title: 'Javascript',
+  source: 'flowchart TD\n A[Ok] --> B[javascript:alert(1)]',
+  rendered_svg: '<svg></svg>',
+}));
+
+mustThrow('url externe mermaid', () => normalizeDiagramData({
+  editor_mode: 'mermaid',
+  title: 'URL',
+  source: 'flowchart TD\n A[Ok] --> B[https://example.com]',
+  rendered_svg: '<svg></svg>',
+}));
+
+mustThrow('css url mermaid', () => normalizeDiagramData({
+  editor_mode: 'mermaid',
+  title: 'CSS URL',
+  source: 'flowchart TD\n A[Ok] --> B[Fin]\n classDef bad fill:url(http://example.com/a.png)',
+  rendered_svg: '<svg></svg>',
+}));
+
+mustThrow('foreignObject mermaid', () => normalizeDiagramData({
+  editor_mode: 'mermaid',
+  title: 'ForeignObject',
+  source: 'flowchart TD\n A[Ok] --> B[foreignObject]',
   rendered_svg: '<svg></svg>',
 }));
 
@@ -99,9 +148,10 @@ mustThrow('svg mermaid dangereux', () => normalizeDiagramData({
   const created = await createDiagramTemplate(fakeDb, 'store-a', 'user-a', {
     name: 'Modele perso',
     category: 'HACCP',
-    source: 'flowchart TD\n A[Debut] --> B[Fin]',
+    source: styledMermaidSource,
   });
   assert.strictEqual(created.store_id, 'store-a');
+  assert.ok(created.source.includes('classDef control'), 'Le stockage du modele conserve les styles Mermaid');
   const library = await listDiagramTemplates(fakeDb, 'store-a');
   assert.ok(library.some((template) => template.is_system), 'La bibliotheque doit inclure les modeles systeme');
   assert.ok(library.some((template) => template.id === 'custom-1'), 'La bibliotheque doit inclure les modeles personnalises du magasin');

@@ -25,6 +25,15 @@ const MAX_LABEL_LENGTH = 120;
 const MAX_DESCRIPTION_LENGTH = 500;
 const MAX_MERMAID_SOURCE_LENGTH = 20000;
 const MAX_MERMAID_SVG_LENGTH = 500000;
+const SAFE_MERMAID_CSS_PROPERTIES = new Set([
+  'fill',
+  'stroke',
+  'stroke-width',
+  'color',
+  'font-size',
+  'font-weight',
+  'stroke-dasharray',
+]);
 const TEMPLATE_CATEGORIES = Object.freeze([
   'Fabrication',
   'HACCP',
@@ -74,25 +83,77 @@ function badRequest(message) {
   throw err;
 }
 
+function validateMermaidCss(cssText, context) {
+  const declarations = String(cssText || '').split(',').map((item) => item.trim()).filter(Boolean);
+  if (!declarations.length) badRequest(`${context} doit contenir au moins une propriete de style`);
+  declarations.forEach((declaration) => {
+    const separator = declaration.indexOf(':');
+    if (separator <= 0) badRequest(`${context} contient une propriete CSS invalide`);
+    const property = declaration.slice(0, separator).trim().toLowerCase();
+    const value = declaration.slice(separator + 1).trim();
+    if (!SAFE_MERMAID_CSS_PROPERTIES.has(property)) badRequest(`${context} contient une propriete CSS non autorisee : ${property}`);
+    if (!value || /url\s*\(/i.test(value) || /javascript\s*:/i.test(value) || /data\s*:/i.test(value) || /https?:\/\//i.test(value)) {
+      badRequest(`${context} contient une valeur CSS non autorisee`);
+    }
+    if (/\b(?:background-image|behavior|expression|position|z-index|content|filter|clip-path)\b/i.test(`${property}:${value}`)) {
+      badRequest(`${context} contient une propriete CSS dangereuse`);
+    }
+    if (!/^[#a-zA-Z0-9\s.,%()+-]+$/.test(value)) badRequest(`${context} contient une valeur CSS invalide`);
+  });
+}
+
+function validateMermaidStyleLine(line) {
+  const trimmed = line.trim();
+  if (/^classDef\s+/i.test(trimmed)) {
+    const match = trimmed.match(/^classDef\s+[A-Za-z0-9_-]+\s+(.+)$/i);
+    if (!match) badRequest('Directive classDef Mermaid invalide');
+    validateMermaidCss(match[1], 'Directive classDef');
+    return;
+  }
+  if (/^style\s+/i.test(trimmed)) {
+    const match = trimmed.match(/^style\s+[A-Za-z0-9_-]+\s+(.+)$/i);
+    if (!match) badRequest('Directive style Mermaid invalide');
+    validateMermaidCss(match[1], 'Directive style');
+    return;
+  }
+  if (/^linkStyle\s+/i.test(trimmed)) {
+    const match = trimmed.match(/^linkStyle\s+(default|\d+(?:\s*,\s*\d+)*)\s+(.+)$/i);
+    if (!match) badRequest('Directive linkStyle Mermaid invalide');
+    validateMermaidCss(match[2], 'Directive linkStyle');
+    return;
+  }
+  if (/^class\s+/i.test(trimmed)) {
+    if (!/^class\s+[A-Za-z0-9_,\s-]+\s+[A-Za-z0-9_-]+\s*$/i.test(trimmed)) badRequest('Directive class Mermaid invalide');
+  }
+}
+
 function sanitizeMermaidSource(source) {
   const text = String(source || '').replace(/\r\n/g, '\n').trim();
   if (!text) badRequest('Le code Mermaid est obligatoire');
   if (text.length > MAX_MERMAID_SOURCE_LENGTH) badRequest('Le code Mermaid est trop long');
-  if (!/^flowchart\s+(TD|TB|BT|LR|RL)\b/i.test(text)) badRequest('Seuls les diagrammes Mermaid flowchart sont autorises');
+  if (!/^(flowchart|graph)\s+(TD|TB|BT|LR|RL)\b/i.test(text)) badRequest('Seuls les diagrammes Mermaid flowchart/graph sont autorises');
   const forbidden = [
     /<[^>]+>/i,
     /\bclick\b/i,
     /\bhref\b/i,
+    /\bcallback\b/i,
     /\bcall\b/i,
     /\bscript\b/i,
-    /\bstyle\b/i,
+    /^%%\s*\{/im,
     /javascript\s*:/i,
+    /data\s*:/i,
     /\b(?:href|xlink:href|src)\s*=\s*["']?\s*(?:javascript|data)\s*:/i,
     /https?:\/\//i,
+    /\b(?:iframe|foreignObject)\b/i,
   ];
   if (forbidden.some((pattern) => pattern.test(text))) {
     badRequest('Le code Mermaid contient une instruction non autorisee');
   }
+  text.split('\n').forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('%%')) return;
+    validateMermaidStyleLine(trimmed);
+  });
   return text;
 }
 
