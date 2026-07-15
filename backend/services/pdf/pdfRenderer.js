@@ -108,6 +108,12 @@ async function renderHtmlToPdfAttempt(html, options = {}, hasRetried = false) {
     page = await browser.newPage();
     await page.setContent(html, { waitUntil: ['domcontentloaded', 'networkidle0'], timeout: 30000 });
     await page.emulateMediaType('print');
+    if (options.beforePdfScript) {
+      await page.evaluate((source) => {
+        const run = new Function(source);
+        run();
+      }, options.beforePdfScript);
+    }
     return await page.pdf({
       format: options.format || 'A4',
       printBackground: true,
