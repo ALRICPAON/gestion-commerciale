@@ -15,6 +15,39 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function paginationPreparationScript() {
+  return `
+    (() => {
+      const mmToPx = (mm) => (mm * 96) / 25.4;
+      const pageContentHeight = mmToPx(297 - 18 - 18);
+      const selectors = [
+        '.quality-pdf-block--keep',
+        '.quality-diagram-block',
+        '.quality-image-block',
+        '.quality-to-complete-block'
+      ].join(',');
+      const forceBreak = (element) => {
+        element.classList.add('quality-pdf-force-break');
+        element.style.breakBefore = 'page';
+        element.style.pageBreakBefore = 'always';
+      };
+      Array.from(document.querySelectorAll(selectors)).forEach((element) => {
+        element.classList.remove('quality-pdf-force-break');
+        element.style.breakBefore = '';
+        element.style.pageBreakBefore = '';
+      });
+      Array.from(document.querySelectorAll(selectors)).forEach((element) => {
+        const rect = element.getBoundingClientRect();
+        if (!rect.height || rect.height >= pageContentHeight) return;
+        const top = element.getBoundingClientRect().top + window.scrollY;
+        const usedOnPage = ((top % pageContentHeight) + pageContentHeight) % pageContentHeight;
+        const remaining = pageContentHeight - usedOnPage;
+        if (rect.height > remaining) forceBreak(element);
+      });
+    })();
+  `;
+}
+
 function filteredSections(sections, options = {}) {
   return sections
     .filter((section) => !section.archived_at)
@@ -36,7 +69,31 @@ function renderSectionBlocks(section, documentation, options = {}) {
     .filter((block) => block.chapter_id === section.id && block.is_visible !== false)
     .sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
   if (!blocks.length) return renderSectionContent(section, options.include_missing !== false);
-  return blocks.map((block) => renderDocumentBlock(block, options)).join('\n');
+  return blocks.map((block) => renderPdfBlock(block, options)).join('\n');
+}
+
+function tableRowCount(block) {
+  return Number(block?.table?.table_data?.rows?.length || 0);
+}
+
+function pdfBlockClasses(block) {
+  const classes = ['quality-pdf-block', `quality-pdf-block--${block.block_type}`];
+  if (block.block_type === 'document_table') {
+    classes.push(tableRowCount(block) > 18 ? 'quality-pdf-block--split-table' : 'quality-pdf-block--keep');
+  } else if (['mermaid_diagram', 'image', 'to_complete'].includes(block.block_type)) {
+    classes.push('quality-pdf-block--keep');
+  } else if (block.block_type === 'separator') {
+    classes.push('quality-pdf-block--separator');
+  } else {
+    classes.push('quality-pdf-block--flow');
+  }
+  return classes.join(' ');
+}
+
+function renderPdfBlock(block, options = {}) {
+  const html = renderDocumentBlock(block, options);
+  if (!html) return '';
+  return `<div class="${pdfBlockClasses(block)}" data-quality-block-type="${escapeHtml(block.block_type)}">${html}</div>`;
 }
 
 function buildHtml(documentation, identity, options = {}) {
@@ -119,26 +176,39 @@ function buildHtml(documentation, identity, options = {}) {
     .cover h1 { font-size: 30px; margin: 0 0 8mm; }
     .cover h2 { font-size: 20px; margin: 0 0 8mm; }
     .pdf-page, .pdf-tome { page-break-before: always; }
-    h1, h2, h3 { break-after: avoid; color: #263746; }
+    h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; color: #263746; orphans: 3; widows: 3; }
     h1 { font-size: 22px; }
     h2 { font-size: 17px; }
     .section-meta { color: #52616f; font-size: 10px; margin-bottom: 8px; }
-    .rich-content table { break-inside: avoid; }
+    .rich-content p { orphans: 3; widows: 3; }
+    .rich-content ul,
+    .rich-content ol { break-inside: avoid-page; page-break-inside: avoid; }
+    .rich-content li { break-inside: avoid; page-break-inside: avoid; }
+    .quality-pdf-block { margin: 0 0 10px; }
+    .quality-pdf-block--keep { break-inside: avoid-page; page-break-inside: avoid; }
+    .quality-pdf-block--flow { break-inside: auto; page-break-inside: auto; }
+    .quality-pdf-block--separator { break-inside: avoid; page-break-inside: avoid; }
+    .quality-pdf-block--split-table { break-inside: auto; page-break-inside: auto; }
+    .quality-pdf-force-break { break-before: page; page-break-before: always; }
+    .quality-pdf-block--split-table .quality-table-block { break-inside: auto; page-break-inside: auto; }
+    .rich-content table { break-inside: auto; page-break-inside: auto; }
     .missing, .missing-info { color: #b42318; font-weight: 700; }
-    .quality-diagram-block { break-inside: avoid; page-break-inside: avoid; margin: 14px 0; }
+    .quality-diagram-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
     .quality-diagram-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
-    .quality-diagram-svg { max-width: 100%; height: auto; break-inside: avoid; page-break-inside: avoid; }
-    .quality-table-block { break-inside: avoid; page-break-inside: avoid; margin: 14px 0; }
+    .quality-diagram-svg { max-height: 230mm; max-width: 100%; height: auto; break-inside: avoid-page; page-break-inside: avoid; }
+    .quality-table-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
     .quality-table-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
-    .quality-to-complete-block { border: 1px solid #fca5a5; border-left: 4px solid #b42318; background: #fef2f2; color: #7f1d1d; font-weight: 600; margin: 12px 0; padding: 8px 10px; }
+    .quality-to-complete-block { border: 1px solid #fca5a5; border-left: 4px solid #b42318; background: #fef2f2; color: #7f1d1d; font-weight: 600; margin: 12px 0; padding: 8px 10px; break-inside: avoid-page; page-break-inside: avoid; }
     .quality-document-separator { border: 0; border-top: 1px solid #94a3b8; margin: 16px 0; }
-    .quality-image-block { break-inside: avoid; margin: 14px 0; }
+    .quality-image-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
+    .quality-image-block img { display: block; max-height: 225mm; object-fit: contain; width: auto; }
     .quality-image-block figcaption { color: #52616f; font-size: 10px; margin-top: 4px; }
     .quality-attachment-block { border: 1px solid #cbd5e1; margin: 10px 0; padding: 8px 10px; }
     .quality-attachment-block span { color: #52616f; display: block; font-size: 10px; margin-top: 2px; }
     .quality-table-scroll { overflow: visible; width: 100%; }
     .quality-data-table { border-collapse: collapse; table-layout: fixed; width: 100%; }
-    .quality-data-table thead { display: table-header-group; }
+    .quality-data-table thead { display: table-header-group; break-inside: avoid; page-break-inside: avoid; }
+    .quality-data-table tbody { break-inside: auto; page-break-inside: auto; }
     .quality-data-table tr { break-inside: avoid; page-break-inside: avoid; }
     .quality-data-table th,
     .quality-data-table td { border: 1px solid #94a3b8; font-size: 10.5px; line-height: 1.35; padding: 5px 6px; vertical-align: top; word-break: break-word; }
@@ -157,7 +227,10 @@ async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
   if (!documentation) return null;
   const identity = await getCompanyIdentity(db, storeId);
   const html = buildHtml(documentation, identity, options);
-  const pdf = await renderHtmlToPdf(html, { margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' } });
+  const pdf = await renderHtmlToPdf(html, {
+    margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
+    beforePdfScript: paginationPreparationScript(),
+  });
   return { pdf, html, documentation, identity };
 }
 
@@ -180,5 +253,6 @@ async function exportDocumentationPdf(db, storeId, collectionId, userId, options
 module.exports = {
   buildHtml,
   exportDocumentationPdf,
+  paginationPreparationScript,
   renderDocumentationPdf,
 };
