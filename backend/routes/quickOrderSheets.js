@@ -4,6 +4,10 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { sendEmail } = require('../services/emailService');
+const {
+  resolveDocumentRecipients,
+  recipientsToEmailList,
+} = require('../services/documentRecipientService');
 const { renderHtmlToPdf, sendPdf } = require('../services/pdf/pdfRenderer');
 
 const router = express.Router();
@@ -386,7 +390,14 @@ router.post('/quick-order-sheets/send-supplier-email', authenticateToken, attach
     const sheet = normalizeSheetPayload(req.body);
     const supplier = await supplierById(req.dbPool, req.user.store_id, sheet.supplier_id);
     if (!supplier) return res.status(404).json({ error: 'Fournisseur actif introuvable' });
-    if (!supplier.email) return res.status(400).json({ error: 'Aucun email fournisseur disponible' });
+    const recipientResolution = await resolveDocumentRecipients(req.dbPool, {
+      entityType: 'supplier',
+      entityId: supplier.id,
+      documentType: 'purchase_order',
+      storeId: req.user.store_id,
+    });
+    const recipients = recipientsToEmailList(recipientResolution);
+    if (!recipients.length) return res.status(400).json({ error: 'Aucun destinataire email configuré pour ce document.' });
 
     const totals = productTotals(sheet);
     const pdf = await renderHtmlToPdf(renderSupplierSheetPdfHtml(sheet, supplier), {
@@ -396,7 +407,7 @@ router.post('/quick-order-sheets/send-supplier-email', authenticateToken, attach
     const subject = clean(req.body.subject) || `Fiche d'appel ${sheet.sheet_date} - ${sheet.title}`;
     const text = renderSupplierEmailText(sheet, totals);
     const email = await sendEmail({
-      to: supplier.email,
+      to: recipients,
       subject,
       text,
       html: renderSupplierEmailHtml(sheet, totals),
@@ -407,7 +418,7 @@ router.post('/quick-order-sheets/send-supplier-email', authenticateToken, attach
         contentType: 'application/pdf',
       }],
     });
-    res.json({ ok: true, to: supplier.email, supplier_id: supplier.id, email });
+    res.json({ ok: true, to: recipients, recipient_source: recipientResolution.source, supplier_id: supplier.id, email });
   } catch (err) {
     console.error('Erreur envoi fiche appel fournisseur :', err);
     res.status(err.status || 500).json({ error: err.message || 'Erreur envoi fournisseur' });

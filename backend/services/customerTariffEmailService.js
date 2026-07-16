@@ -4,6 +4,10 @@ const {
   renderMercurialePdf,
 } = require('./pdf/templates/mercurialePdfTemplate');
 const { priceWithRoyaleMareeCommission } = require('./royaleMareeCommission');
+const {
+  resolveDocumentRecipients,
+  recipientsToEmailList,
+} = require('./documentRecipientService');
 
 const VALID_PRICING_LEVELS = new Set([1, 2, 3]);
 
@@ -30,24 +34,24 @@ function buildPdfFilename() {
   return `Mercuriale_ALTA_MAREE_${todayIsoDate()}.pdf`;
 }
 
-function buildSummary(clients) {
+function buildSummary(recipients) {
   const summary = {
-    total_clients: clients.length,
+    total_clients: recipients.length,
     with_email: 0,
     without_email: 0,
     eligible: 0,
     not_sendable: 0,
   };
 
-  clients.forEach((client) => {
-    if (!hasEmail(client.email)) {
+  recipients.forEach((recipient) => {
+    if (!hasEmail(recipient.email)) {
       summary.without_email += 1;
       return;
     }
 
     summary.with_email += 1;
 
-    if (!normalizePricingLevel(client.tariff_level)) {
+    if (!normalizePricingLevel(recipient.tariff_level)) {
       summary.not_sendable += 1;
       return;
     }
@@ -154,17 +158,26 @@ async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {})
   return Object.fromEntries(entries);
 }
 
-function clientPreviewRow(client, productsByPricingLevel) {
+async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
   const pricingLevel = normalizePricingLevel(client.tariff_level);
   const clientName = client.name || client.legal_name || client.code || client.id;
+  const recipientResolution = await resolveDocumentRecipients(db, {
+    entityType: 'client',
+    entityId: client.id,
+    documentType: 'price_list',
+    storeId,
+  });
+  const recipients = recipientsToEmailList(recipientResolution);
+  const email = recipients.join(', ');
 
-  if (!hasEmail(client.email)) {
+  if (!hasEmail(email)) {
     return {
       client_id: client.id,
       client_name: clientName,
       email: null,
       status: 'skipped_no_email',
       item_count: 0,
+      recipient_source: recipientResolution.source,
     };
   }
 
@@ -172,18 +185,20 @@ function clientPreviewRow(client, productsByPricingLevel) {
     return {
       client_id: client.id,
       client_name: clientName,
-      email: client.email,
+      email,
       status: 'skipped_not_sendable',
       item_count: 0,
+      recipient_source: recipientResolution.source,
     };
   }
 
   return {
     client_id: client.id,
     client_name: clientName,
-    email: client.email,
+    email,
     status: 'ready',
     item_count: (productsByPricingLevel[pricingLevel] || []).length,
+    recipient_source: recipientResolution.source,
   };
 }
 
@@ -193,11 +208,11 @@ async function buildCustomerTariffEmailPreview(db, storeId) {
     fetchStoreSettings(db, storeId),
   ]);
   const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
-  const recipients = clients.map((client) => clientPreviewRow(client, productsByPricingLevel));
+  const recipients = await Promise.all(clients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel)));
 
   return {
     smtp: getSmtpStatus(),
-    summary: buildSummary(clients),
+    summary: buildSummary(recipients),
     recipients,
   };
 }
@@ -427,7 +442,8 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   ]);
   const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
 
-  const previewSummary = buildSummary(clients);
+  const previewRows = await Promise.all(clients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel)));
+  const previewSummary = buildSummary(previewRows);
   const batch = await createEmailBatch(db, storeId, options.user_id || null, previewSummary);
   const summary = {
     sent: 0,
@@ -444,7 +460,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
 
   for (const client of clients) {
     const pricingLevel = normalizePricingLevel(client.tariff_level);
-    const previewRow = clientPreviewRow(client, productsByPricingLevel);
+    const previewRow = await clientPreviewRow(db, storeId, client, productsByPricingLevel);
     const baseResult = {
       client_id: previewRow.client_id,
       client_name: previewRow.client_name,
@@ -477,7 +493,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
     try {
       const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings });
       const delivery = await sendEmail({
-        to: client.email,
+        to: previewRow.email,
         subject,
         replyTo,
         html: buildEmailHtml(storeSettings),

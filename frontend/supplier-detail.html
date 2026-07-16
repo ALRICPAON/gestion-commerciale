@@ -186,9 +186,39 @@
         </div>
       </section>
     </form>
+    <section class="suppliers-card" id="contacts-section">
+      <div class="page-actions">
+        <div><h3>Contacts</h3></div>
+        <button type="button" id="add-contact-btn" class="btn btn-secondary">Ajouter contact</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Nom</th><th>Rôle</th><th>Email</th><th>Téléphone</th><th>Usage</th><th>Statut</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="contacts-table-body"><tr><td colspan="7">Aucun contact.</td></tr></tbody>
+        </table>
+      </div>
+      <form id="contact-form" class="form-grid hidden">
+        <input id="contact-form-id" type="hidden" />
+        <div class="suppliers-field"><label for="contact-form-name">Nom *</label><input id="contact-form-name" type="text" required /></div>
+        <div class="suppliers-field"><label for="contact-form-role">Fonction / service</label><input id="contact-form-role" type="text" /></div>
+        <div class="suppliers-field"><label for="contact-form-email">Email</label><input id="contact-form-email" type="email" /></div>
+        <div class="suppliers-field"><label for="contact-form-phone">Téléphone</label><input id="contact-form-phone" type="tel" /></div>
+        <div class="suppliers-field"><label for="contact-form-mobile">Mobile</label><input id="contact-form-mobile" type="tel" /></div>
+        <div class="suppliers-field"><label for="contact-form-status">Statut</label><select id="contact-form-status"><option value="active">Actif</option><option value="inactive">Inactif</option></select></div>
+        <div class="suppliers-field"><label><input id="contact-form-primary" type="checkbox" /> Contact principal</label></div>
+        <div class="suppliers-field"><label><input id="contact-form-purchase-orders" type="checkbox" /> Bons de commande</label></div>
+        <div class="suppliers-field"><label><input id="contact-form-price-requests" type="checkbox" /> Demandes tarif</label></div>
+        <div class="suppliers-field"><label><input id="contact-form-delivery-claims" type="checkbox" /> Réclamations BL</label></div>
+        <div class="suppliers-field"><label><input id="contact-form-accounting" type="checkbox" /> Documents comptables</label></div>
+        <div class="suppliers-field form-group-span-2"><label for="contact-form-notes">Notes</label><textarea id="contact-form-notes" rows="3"></textarea></div>
+        <div class="page-actions-right form-group-span-2"><button type="button" id="cancel-contact-btn" class="btn btn-secondary">Annuler</button><button type="submit" id="save-contact-btn" class="btn btn-primary">Enregistrer contact</button></div>
+      </form>
+    </section>
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/supplier-detail.js?v=1"></script>
+  <script src="./js/supplier-detail.js?v=2"></script>
 </body>
 </html>
