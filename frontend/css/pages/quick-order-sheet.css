@@ -59,6 +59,14 @@
   min-width: 0;
 }
 
+.quick-margin-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(130px, 170px)) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 12px;
+}
+
 .quick-email-field output {
   display: flex;
   min-height: 38px;
@@ -135,7 +143,7 @@
 
 .product-columns-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: 10px;
   margin-top: 12px;
 }
@@ -191,6 +199,39 @@
   gap: 4px;
   font-size: 0.85rem;
   color: #41515a;
+}
+
+.price-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.price-grid label {
+  min-width: 0;
+}
+
+.price-grid small {
+  color: #667780;
+  min-height: 16px;
+}
+
+.manual-price-badge {
+  color: #9a5b00;
+  font-weight: 700;
+}
+
+.product-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.order-cell-price {
+  display: block;
+  padding: 2px 3px;
+  text-align: center;
+  color: #41515a;
+  font-size: 0.68rem;
 }
 
 .quick-preview-section {

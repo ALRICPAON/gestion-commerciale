@@ -163,6 +163,7 @@ function sourceQuery() {
   params.set('available_only', availableOnlySelect.value || 'true');
   params.set('limit', '1500');
   params.set('target_tariff_level', targetTariffValue());
+  params.set('price_list_date', priceListDateInput.value || todayIso());
   if (clientSelect.value) params.set('client_id', clientSelect.value);
   if (sourceSearchInput.value.trim()) params.set('search', sourceSearchInput.value.trim());
   if (sourceFamilyInput.value.trim()) params.set('family', sourceFamilyInput.value.trim());
@@ -197,7 +198,7 @@ function renderTableHead() {
         <th>Produit</th>
         <th>Famille</th>
         <th>Infos</th>
-        <th>Stock</th>
+        <th>Disponible fournisseur</th>
         <th>Vue Leclerc HT</th>
         <th>Vue B HT</th>
         <th>Vue C HT</th>
@@ -208,7 +209,7 @@ function renderTableHead() {
         <th>Produit</th>
         <th>Famille</th>
         <th>Infos</th>
-        <th>Stock</th>
+        <th>Disponible fournisseur</th>
         <th>Prix HT</th>
       </tr>`;
 }
@@ -447,6 +448,10 @@ function bindEvents() {
   courseTypeSelect.addEventListener('change', () => {
     if (!titleInput.value.trim()) titleInput.value = defaultTitle();
     renderPreview();
+  });
+  priceListDateInput.addEventListener('change', () => {
+    savedPriceListId = null;
+    loadSourceProducts().catch((error) => showFeedback(error.message, 'error'));
   });
   savePriceListBtn.addEventListener('click', savePriceList);
   previewBtn.addEventListener('click', () => {

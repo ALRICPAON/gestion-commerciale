@@ -100,6 +100,58 @@ async function fetchCommissionSettings(db, storeId) {
   return result.rows[0] || {};
 }
 
+async function fetchQuickOrderSheetProducts(db, storeId, priceListDate, targetTariffLevel) {
+  const date = clean(priceListDate);
+  if (!date) return null;
+  const sheet = await db.query(
+    `SELECT id
+     FROM quick_order_sheets
+     WHERE store_id = $1 AND sheet_date = $2::date
+     LIMIT 1`,
+    [storeId, date]
+  );
+  if (!sheet.rows.length) return null;
+
+  const result = await db.query(
+    `SELECT
+       qsp.article_id::text AS article_id,
+       qsp.plu,
+       qsp.designation_snapshot AS designation,
+       qsp.designation_snapshot AS display_name,
+       qsp.price_unit AS unit,
+       COALESCE(qsp.sale_unit, qsp.price_unit) AS sale_unit,
+       qsp.family_code,
+       COALESCE(qsp.family_name, 'Autre') AS family_name,
+       qsp.supplier_available_quantity AS stock_quantity,
+       qsp.purchase_price_ht AS pma,
+       NULL::date AS next_dlc,
+       NULL::text AS caliber_info,
+       NULL::text AS origin_label,
+       a.latin_name,
+       a.fao_zone,
+       a.sous_zone,
+       a.fishing_gear,
+       a.production_method,
+       qsp.sale_price_level_1_ht AS price_level_1_ht,
+       qsp.sale_price_level_2_ht AS price_level_2_ht,
+       qsp.sale_price_level_3_ht AS price_level_3_ht,
+       CASE $3::int
+         WHEN 1 THEN qsp.sale_price_level_1_ht
+         WHEN 2 THEN qsp.sale_price_level_2_ht
+         WHEN 3 THEN qsp.sale_price_level_3_ht
+         ELSE NULL
+       END AS suggested_price_ht,
+       'quick_order_sheet' AS suggested_price_source
+     FROM quick_order_sheet_products qsp
+     LEFT JOIN articles a ON a.id = qsp.article_id AND a.store_id = qsp.store_id
+     WHERE qsp.store_id = $1 AND qsp.sheet_id = $2
+       AND qsp.article_id IS NOT NULL
+     ORDER BY qsp.display_order ASC, qsp.designation_snapshot ASC`,
+    [storeId, sheet.rows[0].id, targetTariffLevel]
+  );
+  return result.rows;
+}
+
 function headerSelectSql() {
   return `
     SELECT
@@ -275,6 +327,34 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const clientId = normalizeUuid(req.query.client_id);
     const client = await getOptionalClient(req.dbPool, req.user.store_id, clientId);
     const targetTariffLevel = normalizeTargetTariff(req.query.target_tariff_level || req.query.tariff_level);
+    const requestedDate = clean(req.query.price_list_date || req.query.date);
+    const quickSheetProducts = await fetchQuickOrderSheetProducts(req.dbPool, req.user.store_id, requestedDate, targetTariffLevel);
+
+    if (requestedDate && quickSheetProducts === null) {
+      return res.status(404).json({ error: `Aucune tarification fiche d'appel configurée pour le ${requestedDate}` });
+    }
+
+    if (quickSheetProducts) {
+      const search = clean(req.query.search)?.toLowerCase();
+      const family = clean(req.query.family);
+      const filteredProducts = quickSheetProducts.filter((row) => {
+        const matchesSearch = !search || [
+          row.plu,
+          row.designation,
+          row.display_name,
+          row.family_name,
+        ].filter(Boolean).join(' ').toLowerCase().includes(search);
+        const matchesFamily = !family || row.family_code === family || row.family_name === family;
+        return matchesSearch && matchesFamily;
+      });
+      return res.json({
+        client,
+        target_tariff_level: targetTariffLevel,
+        source: 'quick_order_sheet',
+        products: filteredProducts,
+      });
+    }
+
     const commissionSettings = await fetchCommissionSettings(req.dbPool, req.user.store_id);
 
     const params = [req.user.store_id];

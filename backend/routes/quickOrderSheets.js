@@ -28,6 +28,39 @@ function pos(value, fallback = 0) {
   return Math.max(num(value, fallback), 0);
 }
 
+function nullablePositive(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace(',', '.'));
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    const error = new Error('Valeur numérique invalide');
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
+}
+
+function nullableNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace(',', '.'));
+  if (!Number.isFinite(parsed)) {
+    const error = new Error('Valeur numérique invalide');
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
+}
+
+function margin(value, fallback) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const parsed = Number(String(value).replace(',', '.'));
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed >= 1) {
+    const error = new Error('Marge invalide: elle doit être comprise entre 0% et 99,99%');
+    error.status = 400;
+    throw error;
+  }
+  return parsed;
+}
+
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
@@ -82,6 +115,178 @@ async function ensureGenerationTable(db) {
     )
   `);
 }
+
+function normalizeDailyPricingPayload(body = {}) {
+  const products = Array.isArray(body.products) ? body.products : [];
+  return {
+    title: clean(body.title) || "Fiche d'appel clients",
+    sheet_date: safeDate(body.date || body.sheet_date),
+    notes: clean(body.notes),
+    supplier_id: clean(body.supplier_id),
+    default_margin_level_1: margin(body.default_margin_level_1, 0.10),
+    default_margin_level_2: margin(body.default_margin_level_2, 0.15),
+    default_margin_level_3: margin(body.default_margin_level_3, 0.20),
+    selected_client_ids: Array.isArray(body.selected_client_ids) ? body.selected_client_ids.filter(isUuid) : [],
+    order_entries: body.entries && typeof body.entries === 'object' ? body.entries : {},
+    products: products.slice(0, 60).map((product, index) => ({
+      column_uid: clean(product.uid || product.column_uid) || `col-${index + 1}`,
+      article_id: isUuid(product.article_id) ? product.article_id : null,
+      supplier_id: isUuid(product.supplier_id || body.supplier_id) ? (product.supplier_id || body.supplier_id) : null,
+      plu: clean(product.plu),
+      designation_snapshot: clean(product.designation || product.designation_snapshot || product.label) || 'Produit',
+      display_order: Number.isFinite(Number(product.display_order)) ? Number(product.display_order) : index + 1,
+      purchase_price_ht: nullablePositive(product.purchase_price_ht),
+      price_unit: clean(product.price_unit || product.unit) || 'kg',
+      supplier_available_quantity: nullablePositive(product.supplier_available_quantity ?? product.stock),
+      sale_price_level_1_ht: nullablePositive(product.sale_price_level_1_ht ?? product.price_level_1_ht),
+      sale_price_level_2_ht: nullablePositive(product.sale_price_level_2_ht ?? product.price_level_2_ht),
+      sale_price_level_3_ht: nullablePositive(product.sale_price_level_3_ht ?? product.price_level_3_ht),
+      real_margin_level_1: nullableNumber(product.real_margin_level_1),
+      real_margin_level_2: nullableNumber(product.real_margin_level_2),
+      real_margin_level_3: nullableNumber(product.real_margin_level_3),
+      manual_price_level_1: Boolean(product.manual_price_level_1),
+      manual_price_level_2: Boolean(product.manual_price_level_2),
+      manual_price_level_3: Boolean(product.manual_price_level_3),
+      family_code: clean(product.family_code),
+      family_name: clean(product.family_name),
+      sale_unit: clean(product.sale_unit || product.unit),
+    })),
+  };
+}
+
+async function getDailySheet(db, storeId, sheetDate) {
+  const header = await db.query(
+    `SELECT id, store_id, sheet_date, title, notes, supplier_id,
+            default_margin_level_1, default_margin_level_2, default_margin_level_3,
+            selected_client_ids, order_entries, created_at, updated_at
+     FROM quick_order_sheets
+     WHERE store_id = $1 AND sheet_date = $2::date
+     LIMIT 1`,
+    [storeId, sheetDate]
+  );
+  if (!header.rows.length) return null;
+  const products = await db.query(
+    `SELECT *
+     FROM quick_order_sheet_products
+     WHERE store_id = $1 AND sheet_id = $2
+     ORDER BY display_order ASC, created_at ASC`,
+    [storeId, header.rows[0].id]
+  );
+  return { ...header.rows[0], products: products.rows };
+}
+
+router.get('/quick-order-sheets/by-date', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const sheetDate = safeDate(req.query.date);
+    const sheet = await getDailySheet(req.dbPool, req.user.store_id, sheetDate);
+    if (!sheet) return res.json({ exists: false, sheet_date: sheetDate });
+    return res.json({ exists: true, sheet });
+  } catch (err) {
+    console.error('Erreur GET fiche appel par date :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur chargement fiche appel' });
+  }
+});
+
+router.put('/quick-order-sheets/by-date', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    const payload = normalizeDailyPricingPayload(req.body);
+    await db.query('BEGIN');
+    const header = await db.query(
+      `INSERT INTO quick_order_sheets (
+        store_id, sheet_date, title, notes, supplier_id,
+        default_margin_level_1, default_margin_level_2, default_margin_level_3,
+        selected_client_ids, order_entries, created_by, updated_by
+      ) VALUES (
+        $1, $2::date, $3, $4, $5,
+        $6, $7, $8,
+        $9::jsonb, $10::jsonb, $11, $11
+      )
+      ON CONFLICT (store_id, sheet_date)
+      DO UPDATE SET
+        title = EXCLUDED.title,
+        notes = EXCLUDED.notes,
+        supplier_id = EXCLUDED.supplier_id,
+        default_margin_level_1 = EXCLUDED.default_margin_level_1,
+        default_margin_level_2 = EXCLUDED.default_margin_level_2,
+        default_margin_level_3 = EXCLUDED.default_margin_level_3,
+        selected_client_ids = EXCLUDED.selected_client_ids,
+        order_entries = EXCLUDED.order_entries,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = NOW()
+      RETURNING id`,
+      [
+        req.user.store_id,
+        payload.sheet_date,
+        payload.title,
+        payload.notes,
+        payload.supplier_id,
+        payload.default_margin_level_1,
+        payload.default_margin_level_2,
+        payload.default_margin_level_3,
+        JSON.stringify(payload.selected_client_ids),
+        JSON.stringify(payload.order_entries),
+        req.user.id,
+      ]
+    );
+    const sheetId = header.rows[0].id;
+    await db.query('DELETE FROM quick_order_sheet_products WHERE store_id = $1 AND sheet_id = $2', [req.user.store_id, sheetId]);
+    for (const product of payload.products) {
+      if (!product.article_id && !product.designation_snapshot) continue;
+      await db.query(
+        `INSERT INTO quick_order_sheet_products (
+          store_id, sheet_id, column_uid, article_id, supplier_id, plu, designation_snapshot,
+          display_order, purchase_price_ht, price_unit, supplier_available_quantity,
+          sale_price_level_1_ht, sale_price_level_2_ht, sale_price_level_3_ht,
+          real_margin_level_1, real_margin_level_2, real_margin_level_3,
+          manual_price_level_1, manual_price_level_2, manual_price_level_3,
+          family_code, family_name, sale_unit
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7,
+          $8, $9, $10, $11,
+          $12, $13, $14,
+          $15, $16, $17,
+          $18, $19, $20,
+          $21, $22, $23
+        )`,
+        [
+          req.user.store_id,
+          sheetId,
+          product.column_uid,
+          product.article_id,
+          product.supplier_id,
+          product.plu,
+          product.designation_snapshot,
+          product.display_order,
+          product.purchase_price_ht,
+          product.price_unit,
+          product.supplier_available_quantity,
+          product.sale_price_level_1_ht,
+          product.sale_price_level_2_ht,
+          product.sale_price_level_3_ht,
+          product.real_margin_level_1,
+          product.real_margin_level_2,
+          product.real_margin_level_3,
+          product.manual_price_level_1,
+          product.manual_price_level_2,
+          product.manual_price_level_3,
+          product.family_code,
+          product.family_name,
+          product.sale_unit,
+        ]
+      );
+    }
+    await db.query('COMMIT');
+    const sheet = await getDailySheet(req.dbPool, req.user.store_id, payload.sheet_date);
+    res.json({ ok: true, sheet });
+  } catch (err) {
+    await db.query('ROLLBACK').catch(() => {});
+    console.error('Erreur PUT fiche appel par date :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur sauvegarde fiche appel' });
+  } finally {
+    db.release();
+  }
+});
 
 function normalizeSheetPayload(body = {}) {
   const sheetId = clean(body.sheet_id);
@@ -184,7 +389,7 @@ function renderSupplierEmailHtml(sheet, totals) {
       <thead>
         <tr>
           <th style="text-align:left;border-bottom:1px solid #111;padding:6px">Produit</th>
-          <th style="text-align:right;border-bottom:1px solid #111;padding:6px">Stock initial</th>
+          <th style="text-align:right;border-bottom:1px solid #111;padding:6px">Dispo fournisseur</th>
           <th style="text-align:right;border-bottom:1px solid #111;padding:6px">Vendu</th>
           <th style="text-align:right;border-bottom:1px solid #111;padding:6px">Reste</th>
         </tr>
@@ -206,6 +411,7 @@ function renderSheetPdfHtml(sheet) {
             <div><span>Colis</span><strong>${escapeHtml(entry.colis || '')}</strong></div>
             <div><span>Kg</span><strong>${escapeHtml(entry.kg || '')}</strong></div>
           </div>
+          <small>Prix: ${escapeHtml(formatNumber(salePriceForClient(product, client), 2))} EUR</small>
         </td>
       `;
     }).join('');
@@ -221,8 +427,8 @@ function renderSheetPdfHtml(sheet) {
     return `
       <th>
         <div class="product">${escapeHtml(product.designation || product.label || product.plu || 'Produit')}</div>
-        <div>Prix: ${escapeHtml(product.price || '')} EUR</div>
-        <div>Stock: ${escapeHtml(formatNumber(total.stock || 0))}</div>
+        <div>T1 ${escapeHtml(formatNumber(product.sale_price_level_1_ht || product.price_level_1_ht || 0, 2))} / T2 ${escapeHtml(formatNumber(product.sale_price_level_2_ht || product.price_level_2_ht || 0, 2))} / T3 ${escapeHtml(formatNumber(product.sale_price_level_3_ht || product.price_level_3_ht || 0, 2))}</div>
+        <div>Dispo fournisseur: ${escapeHtml(formatNumber(total.stock || 0))}</div>
         <div>Vendu: ${escapeHtml(formatNumber(total.sold || 0))}</div>
         <div class="${Number(total.remaining || 0) < 0 ? 'alert' : ''}">Reste: ${escapeHtml(formatNumber(total.remaining || 0))}</div>
       </th>
@@ -491,6 +697,11 @@ function orderTargetForClient(client) {
   };
 }
 
+function salePriceForClient(product = {}, client = {}) {
+  const level = [1, 2, 3].includes(Number(client.tariff_level)) ? Number(client.tariff_level) : 1;
+  return pos(product[`sale_price_level_${level}_ht`] ?? product[`price_level_${level}_ht`] ?? product.price);
+}
+
 function deliveredSnapshotForLine(line, documentClientId, forceSourceClient = false) {
   if (!forceSourceClient && String(line.client.id) === String(documentClientId)) {
     return {
@@ -746,7 +957,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
 
       let lineNumber = 1;
       for (const line of group.lines) {
-        const unitPrice = pos(line.product.price);
+        const unitPrice = salePriceForClient(line.product, line.client);
         const lineVatRate = vatExempt ? 0 : num(line.article.vat_rate, vatRate);
         const amountHt = Number((line.quantity * unitPrice).toFixed(2));
         const vatAmount = Number((amountHt * lineVatRate / 100).toFixed(2));
