@@ -42,7 +42,9 @@ const purchaseLinesFeedback = document.getElementById("purchase-lines-feedback")
 
 const purchaseOrderDateInput = document.getElementById("purchase-order-date");
 const purchaseReceiptDateInput = document.getElementById("purchase-receipt-date");
+const purchaseSupplierIdInput = document.getElementById("purchase-supplier-id");
 const purchaseSupplierNameInput = document.getElementById("purchase-supplier-name");
+const changeSupplierBtn = document.getElementById("change-supplier-btn");
 const purchaseTypeInput = document.getElementById("purchase-type");
 const purchaseStatusInput = document.getElementById("purchase-status");
 const purchaseBlNumberInput = document.getElementById("purchase-bl-number");
@@ -54,6 +56,11 @@ const SYSTEM_STATUSES = ["received", "closed"];
 
 const purchaseLinesTableBody = document.getElementById("purchase-lines-table-body");
 const linesModeLabel = document.getElementById("lines-mode-label");
+
+const supplierModal = document.getElementById("supplier-modal");
+const closeSupplierModalBtn = document.getElementById("close-supplier-modal-btn");
+const supplierSearchInput = document.getElementById("supplier-search-input");
+const supplierModalTableBody = document.getElementById("supplier-modal-table-body");
 
 const articleModal = document.getElementById("article-modal");
 const closeArticleModalBtn = document.getElementById("close-article-modal-btn");
@@ -88,6 +95,7 @@ const sheetLinePhotoGallery = document.getElementById("sheet-line-photo-gallery"
 
 let purchase = null;
 let lines = [];
+let suppliers = [];
 let articleModalItems = [];
 let currentEditingLineId = null;
 let currentSheetLineId = null;
@@ -214,7 +222,15 @@ function getDisplayedHeaderStatus(realStatus) {
 }
 
 function isPurchaseLocked() {
-  return purchase?.status === "closed" || purchase?.status === "cancelled";
+  return [
+    "invoice_matched",
+    "invoice_difference",
+    "invoice_validated",
+    "cost_adjusted",
+    "sent_pennylane",
+    "closed",
+    "cancelled",
+  ].includes(purchase?.status);
 }
 
 function syncHeaderStatusUi() {
@@ -223,13 +239,14 @@ function syncHeaderStatusUi() {
 
   const locked = isPurchaseLocked();
 
-  purchaseStatusInput.disabled = realStatus === "received" || realStatus === "closed";
+  purchaseStatusInput.disabled = realStatus !== "ordered";
   purchaseTypeInput.disabled = locked;
   purchaseOrderDateInput.disabled = locked;
   purchaseReceiptDateInput.disabled = realStatus === "closed";
   purchaseBlNumberInput.disabled = locked;
   purchaseInvoiceNumberInput.disabled = locked;
   purchaseNotesInput.disabled = locked;
+  if (changeSupplierBtn) changeSupplierBtn.disabled = locked;
 
   savePurchaseBtn.disabled = locked;
   addLineBtn.disabled = locked;
@@ -263,6 +280,69 @@ async function apiFetch(path, options = {}) {
   }
 
   return data;
+}
+
+function supplierLabel(supplier) {
+  const code = supplier?.code ? `${supplier.code} - ` : "";
+  return `${code}${supplier?.name || ""}`.trim();
+}
+
+function renderSupplierModalTable() {
+  if (!supplierModalTableBody) return;
+  const search = String(supplierSearchInput?.value || "").trim().toLowerCase();
+  const filtered = suppliers.filter((supplier) => {
+    if (!search) return true;
+    return (
+      String(supplier.code || "").toLowerCase().includes(search) ||
+      String(supplier.name || "").toLowerCase().includes(search) ||
+      String(supplier.contact_name || "").toLowerCase().includes(search)
+    );
+  });
+
+  if (!filtered.length) {
+    supplierModalTableBody.innerHTML = `<tr><td colspan="5">Aucun fournisseur trouve</td></tr>`;
+    return;
+  }
+
+  supplierModalTableBody.innerHTML = filtered.map((supplier) => `
+    <tr data-supplier-id="${supplier.id}">
+      <td>${supplier.code || "-"}</td>
+      <td>${supplier.name || "-"}</td>
+      <td>${supplier.contact_name || "-"}</td>
+      <td>${supplier.phone || supplier.mobile || "-"}</td>
+      <td>${supplier.status || "active"}</td>
+    </tr>
+  `).join("");
+}
+
+async function loadSuppliers() {
+  suppliers = await apiFetch("/api/suppliers");
+  renderSupplierModalTable();
+}
+
+function openSupplierModal() {
+  if (isPurchaseLocked()) {
+    showFeedback(purchaseHeaderFeedback, "Achat verrouille : fournisseur non modifiable", true);
+    return;
+  }
+  supplierModal?.classList.remove("hidden");
+  if (supplierSearchInput) {
+    supplierSearchInput.value = "";
+    renderSupplierModalTable();
+    supplierSearchInput.focus();
+  }
+}
+
+function closeSupplierModal() {
+  supplierModal?.classList.add("hidden");
+}
+
+function selectSupplier(supplierId) {
+  const supplier = suppliers.find((item) => item.id === supplierId);
+  if (!supplier) return;
+  if (purchaseSupplierIdInput) purchaseSupplierIdInput.value = supplier.id;
+  if (purchaseSupplierNameInput) purchaseSupplierNameInput.value = supplierLabel(supplier);
+  closeSupplierModal();
 }
 
 function getSanitaryPhotoUrl(path) {
@@ -344,6 +424,7 @@ async function loadPurchase() {
 function renderPurchaseHeader() {
   purchaseOrderDateInput.value = formatDateForInput(purchase.order_date);
   purchaseReceiptDateInput.value = formatDateForInput(purchase.receipt_date);
+  if (purchaseSupplierIdInput) purchaseSupplierIdInput.value = purchase.supplier_id || "";
   purchaseSupplierNameInput.value = purchase.supplier_name || "";
   purchaseTypeInput.value = purchase.purchase_type || "order";
   purchaseBlNumberInput.value = purchase.bl_number || "";
@@ -523,6 +604,7 @@ if (selectedStatus === "cancelled") {
 }
 
 const payload = {
+  supplier_id: purchaseSupplierIdInput?.value || purchase?.supplier_id || null,
   order_date: purchaseOrderDateInput.value || null,
   receipt_date: purchaseReceiptDateInput.value || null,
   purchase_type: purchaseTypeInput.value || null,
@@ -1136,6 +1218,39 @@ if (savePurchaseBtn) {
   savePurchaseBtn.addEventListener("click", savePurchaseHeader);
 }
 
+if (changeSupplierBtn) {
+  changeSupplierBtn.addEventListener("click", openSupplierModal);
+}
+
+if (closeSupplierModalBtn) {
+  closeSupplierModalBtn.addEventListener("click", closeSupplierModal);
+}
+
+if (supplierSearchInput) {
+  supplierSearchInput.addEventListener("input", renderSupplierModalTable);
+  supplierSearchInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    const firstRow = supplierModalTableBody?.querySelector("tr[data-supplier-id]");
+    if (!firstRow) return;
+    event.preventDefault();
+    selectSupplier(firstRow.dataset.supplierId);
+  });
+}
+
+if (supplierModalTableBody) {
+  supplierModalTableBody.addEventListener("dblclick", (event) => {
+    const row = event.target.closest("tr[data-supplier-id]");
+    if (!row) return;
+    selectSupplier(row.dataset.supplierId);
+  });
+}
+
+if (supplierModal) {
+  supplierModal.addEventListener("click", (event) => {
+    if (event.target === supplierModal) closeSupplierModal();
+  });
+}
+
 if (validateReceptionBtn) {
   validateReceptionBtn.addEventListener("click", validateReception);
 }
@@ -1324,6 +1439,7 @@ async function init() {
   try {
     renderTopbar();
     renderDepartmentSelector();
+    await loadSuppliers();
     await loadPurchase();
   } catch (error) {
     console.error("Erreur init détail achat :", error);
