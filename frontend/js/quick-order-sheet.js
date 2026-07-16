@@ -1205,16 +1205,25 @@ function initEvents() {
     productColumns[index][input.dataset.field] = input.value;
     if (input.dataset.field === 'purchase_price_ht') {
       recalculateColumnPrices(productColumns[index], false);
-      renderProductColumns();
     }
     if (input.dataset.priceLevel) {
       productColumns[index][`manual_price_level_${input.dataset.priceLevel}`] = true;
-      renderProductColumns();
     }
     updatePreview();
     invalidateEmailPreview();
     saveDraft();
     saveSheetToServerDebounced();
+  });
+  productColumnsEl?.addEventListener('change', (event) => {
+    const input = event.target.closest('[data-field]');
+    if (!input) return;
+    renderProductColumns();
+  });
+  productColumnsEl?.addEventListener('keydown', (event) => {
+    const input = event.target.closest('[data-field]');
+    if (!input || event.key !== 'Enter') return;
+    event.preventDefault();
+    input.blur();
   });
   printTableWrap?.addEventListener('input', (event) => {
     const input = event.target.closest('[data-order-field]');
