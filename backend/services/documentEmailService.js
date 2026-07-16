@@ -3,6 +3,10 @@ const {
   renderDeliveryNotePdfAttachment,
   renderInvoicePdfAttachment,
 } = require('./documentPdfService');
+const {
+  resolveDocumentRecipients,
+  recipientsToEmailList,
+} = require('./documentRecipientService');
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -26,6 +30,8 @@ async function getDeliveryNoteContacts(db, { storeId, deliveryNoteId }) {
   const result = await db.query(
     `
     SELECT dn.id, dn.reference_number,
+      COALESCE(dn.billed_client_id, dn.client_id) AS billed_client_id,
+      dn.client_id AS delivered_client_id,
       delivered.email AS delivered_client_email,
       billed.email AS billed_client_email,
       settings.email AS reply_to
@@ -46,6 +52,8 @@ async function getInvoiceContacts(db, { storeId, invoiceId }) {
   const result = await db.query(
     `
     SELECT inv.id, inv.reference_number,
+      COALESCE(inv.billed_client_id, inv.client_id, dn.billed_client_id, dn.client_id) AS billed_client_id,
+      COALESCE(inv.client_id, dn.client_id) AS delivered_client_id,
       billed.email AS billed_client_email,
       delivered.email AS delivered_client_email,
       billed.phone AS billed_client_phone,
@@ -84,9 +92,18 @@ async function sendDeliveryNoteDocumentEmail(db, { storeId, deliveryNoteId, to, 
   }
 
   const reference = contacts.reference_number || contacts.id;
-  const recipient = clean(to) || firstValue(contacts.billed_client_email, contacts.delivered_client_email);
-  if (!recipient) {
-    const error = new Error('Aucun email client disponible pour ce BL');
+  const explicitRecipient = clean(to);
+  const recipientResolution = explicitRecipient
+    ? { recipients: [{ email: explicitRecipient, source: 'manual_override' }], source: 'manual_override' }
+    : await resolveDocumentRecipients(db, {
+      entityType: 'client',
+      entityId: contacts.delivered_client_id || contacts.billed_client_id,
+      documentType: 'delivery_note',
+      storeId,
+    });
+  const recipients = recipientsToEmailList(recipientResolution);
+  if (!recipients.length) {
+    const error = new Error('Aucun destinataire email configuré pour ce document.');
     error.status = 400;
     error.expose = true;
     throw error;
@@ -94,7 +111,7 @@ async function sendDeliveryNoteDocumentEmail(db, { storeId, deliveryNoteId, to, 
 
   const pdf = await renderDeliveryNotePdfAttachment(db, { storeId, deliveryNoteId });
   const email = await sendEmail({
-    to: recipient,
+    to: recipients,
     subject: clean(subject) || `Bon de livraison ${reference}`,
     text: clean(message) || defaultDeliveryNoteMessage(reference),
     replyTo: contacts.reply_to,
@@ -107,7 +124,8 @@ async function sendDeliveryNoteDocumentEmail(db, { storeId, deliveryNoteId, to, 
 
   return {
     ok: true,
-    to: recipient,
+    to: recipients,
+    recipient_source: recipientResolution.source,
     delivery_note_id: contacts.id,
     delivery_note_reference: reference,
     attachment: pdf.filename,
@@ -125,9 +143,18 @@ async function sendInvoiceDocumentEmail(db, { storeId, invoiceId, to, subject, m
   }
 
   const reference = contacts.reference_number || contacts.id;
-  const recipient = clean(to) || firstValue(contacts.billed_client_email, contacts.delivered_client_email);
-  if (!recipient) {
-    const error = new Error('Aucun email client disponible pour cette facture');
+  const explicitRecipient = clean(to);
+  const recipientResolution = explicitRecipient
+    ? { recipients: [{ email: explicitRecipient, source: 'manual_override' }], source: 'manual_override' }
+    : await resolveDocumentRecipients(db, {
+      entityType: 'client',
+      entityId: contacts.billed_client_id || contacts.delivered_client_id,
+      documentType: 'invoice',
+      storeId,
+    });
+  const recipients = recipientsToEmailList(recipientResolution);
+  if (!recipients.length) {
+    const error = new Error('Aucun destinataire email configuré pour ce document.');
     error.status = 400;
     error.expose = true;
     throw error;
@@ -135,7 +162,7 @@ async function sendInvoiceDocumentEmail(db, { storeId, invoiceId, to, subject, m
 
   const pdf = await renderInvoicePdfAttachment(db, { storeId, invoiceId });
   const email = await sendEmail({
-    to: recipient,
+    to: recipients,
     subject: clean(subject) || `Facture ${reference}`,
     text: clean(message) || defaultInvoiceMessage(reference),
     replyTo: contacts.reply_to,
@@ -148,7 +175,8 @@ async function sendInvoiceDocumentEmail(db, { storeId, invoiceId, to, subject, m
 
   return {
     ok: true,
-    to: recipient,
+    to: recipients,
+    recipient_source: recipientResolution.source,
     invoice_id: contacts.id,
     invoice_reference: reference,
     attachment: pdf.filename,
@@ -161,6 +189,12 @@ async function getInvoiceCommunicationDefaults(db, { storeId, invoiceId }) {
   if (!contacts) return null;
 
   const reference = contacts.reference_number || contacts.id;
+  const recipientResolution = await resolveDocumentRecipients(db, {
+    entityType: 'client',
+    entityId: contacts.billed_client_id || contacts.delivered_client_id,
+    documentType: 'invoice',
+    storeId,
+  });
   const phone = firstValue(
     contacts.billed_client_mobile,
     contacts.billed_client_phone,
@@ -171,7 +205,8 @@ async function getInvoiceCommunicationDefaults(db, { storeId, invoiceId }) {
   return {
     invoice_id: contacts.id,
     invoice_reference: reference,
-    email: firstValue(contacts.billed_client_email, contacts.delivered_client_email),
+    email: recipientsToEmailList(recipientResolution).join(', ') || firstValue(contacts.billed_client_email, contacts.delivered_client_email),
+    email_source: recipientResolution.source,
     phone,
     subject: `Facture ${reference}`,
     message: defaultInvoiceMessage(reference),

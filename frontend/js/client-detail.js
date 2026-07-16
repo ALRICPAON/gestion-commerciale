@@ -20,6 +20,7 @@ const contactsBody = $('contacts-table-body');
 const affiliatesBody = $('affiliates-table-body');
 const contactForm = $('contact-form');
 const affiliateForm = $('affiliate-form');
+const saveContactBtn = $('save-contact-btn');
 
 const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'parent_client_id', 'affiliate_label', 'affiliate_store_number', 'is_royale_maree_member', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
 let currentClient = null;
@@ -259,6 +260,95 @@ async function createContact(event) {
   showFeedback('Contact créé.');
 }
 
+function contactPayload() {
+  return {
+    contact_name: $('contact-form-name')?.value.trim() || null,
+    role: $('contact-form-role')?.value.trim() || null,
+    email: $('contact-form-email')?.value.trim() || null,
+    phone: $('contact-form-phone')?.value.trim() || null,
+    mobile: $('contact-form-mobile')?.value.trim() || null,
+    status: $('contact-form-status')?.value || 'active',
+    is_primary: $('contact-form-primary')?.checked || false,
+    receives_orders: $('contact-form-orders')?.checked || false,
+    receives_invoices: $('contact-form-invoices')?.checked || false,
+    receives_delivery_notes: $('contact-form-delivery')?.checked || false,
+    receives_credit_notes: $('contact-form-credit-notes')?.checked || false,
+    receives_price_lists: $('contact-form-price-lists')?.checked || false,
+    notes: $('contact-form-notes')?.value.trim() || null,
+  };
+}
+
+function resetContactForm() {
+  contactForm?.reset();
+  setFieldValue('contact-form-id', '');
+  if ($('contact-form-status')) $('contact-form-status').value = 'active';
+  contactForm?.classList.add('hidden');
+}
+
+function fillContactForm(contact) {
+  setFieldValue('contact-form-id', contact.id);
+  setFieldValue('contact-form-name', contact.contact_name);
+  setFieldValue('contact-form-role', contact.role);
+  setFieldValue('contact-form-email', contact.email);
+  setFieldValue('contact-form-phone', contact.phone);
+  setFieldValue('contact-form-mobile', contact.mobile);
+  setFieldValue('contact-form-status', contact.status || 'active');
+  setFieldValue('contact-form-primary', Boolean(contact.is_primary));
+  setFieldValue('contact-form-orders', Boolean(contact.receives_orders));
+  setFieldValue('contact-form-invoices', Boolean(contact.receives_invoices));
+  setFieldValue('contact-form-delivery', Boolean(contact.receives_delivery_notes));
+  setFieldValue('contact-form-credit-notes', Boolean(contact.receives_credit_notes));
+  setFieldValue('contact-form-price-lists', Boolean(contact.receives_price_lists));
+  setFieldValue('contact-form-notes', contact.notes);
+  contactForm?.classList.remove('hidden');
+}
+
+async function saveContact(event) {
+  event.preventDefault();
+  if (!clientId) return showFeedback('Enregistre le client avant d’ajouter un contact.', 'error');
+  const payload = contactPayload();
+  if (!payload.contact_name) return showFeedback('Le nom du contact est obligatoire.', 'error');
+  const contactId = $('contact-form-id')?.value || null;
+  const url = contactId ? `${API_BASE_URL}/api/clients/${clientId}/contacts/${contactId}` : `${API_BASE_URL}/api/clients/${clientId}/contacts`;
+  if (saveContactBtn) saveContactBtn.disabled = true;
+  const response = await apiFetch(url, {
+    method: contactId ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (saveContactBtn) saveContactBtn.disabled = false;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return showFeedback(data.error || 'Erreur enregistrement contact', 'error');
+  resetContactForm();
+  await loadContactsAndAffiliates();
+  showFeedback(contactId ? 'Contact mis à jour.' : 'Contact créé.');
+}
+
+async function deleteContact(contactId) {
+  if (!contactId) return;
+  const response = await apiFetch(`${API_BASE_URL}/api/clients/${clientId}/contacts/${contactId}`, { method: 'DELETE' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) return showFeedback(data.error || 'Erreur désactivation contact', 'error');
+  await loadContactsAndAffiliates();
+  showFeedback('Contact désactivé.');
+}
+
+function renderContacts() {
+  if (!contactsBody) return;
+  contactsBody.innerHTML = contacts.length ? contacts.map((contact) => {
+    const usage = [
+      contact.is_primary ? 'Principal' : null,
+      contact.receives_orders ? 'Commandes' : null,
+      contact.receives_delivery_notes ? 'BL' : null,
+      contact.receives_invoices ? 'Factures' : null,
+      contact.receives_credit_notes ? 'Avoirs' : null,
+      contact.receives_price_lists ? 'Mercuriales' : null,
+      contact.receives_statements ? 'Relevés' : null,
+    ].filter(Boolean).join(', ') || '-';
+    return `<tr><td>${esc(contact.contact_name)}</td><td>${esc(contact.role || '')}</td><td>${esc(contact.email || '')}</td><td>${esc(contact.phone || contact.mobile || '')}</td><td>${esc(usage)}</td><td>${esc(contact.status || 'active')}</td><td><button type="button" class="btn btn-secondary btn-sm" data-contact-action="edit" data-contact-id="${esc(contact.id)}">Modifier</button> <button type="button" class="btn btn-secondary btn-sm" data-contact-action="delete" data-contact-id="${esc(contact.id)}">Désactiver</button></td></tr>`;
+  }).join('') : '<tr><td colspan="7">Aucun contact.</td></tr>';
+}
+
 async function createAffiliate(event) {
   event.preventDefault();
   if (!clientId) return showFeedback('Enregistre le client avant d’ajouter un affilié.', 'error');
@@ -298,9 +388,20 @@ function bindEvents() {
   saveClientBtn?.addEventListener('click', saveClient);
   clientForm?.addEventListener('submit', (event) => { event.preventDefault(); saveClient(); });
   statusClientBtn?.addEventListener('click', () => changeClientStatus(statusClientBtn.dataset.status || 'inactive'));
-  $('add-contact-btn')?.addEventListener('click', () => contactForm?.classList.toggle('hidden'));
+  $('add-contact-btn')?.addEventListener('click', () => {
+    resetContactForm();
+    contactForm?.classList.remove('hidden');
+  });
+  $('cancel-contact-btn')?.addEventListener('click', resetContactForm);
   $('add-affiliate-btn')?.addEventListener('click', () => affiliateForm?.classList.toggle('hidden'));
-  contactForm?.addEventListener('submit', createContact);
+  contactForm?.addEventListener('submit', saveContact);
+  contactsBody?.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-contact-action]');
+    if (!button) return;
+    const contact = contacts.find((item) => item.id === button.dataset.contactId);
+    if (button.dataset.contactAction === 'edit' && contact) fillContactForm(contact);
+    if (button.dataset.contactAction === 'delete') deleteContact(button.dataset.contactId);
+  });
   if (affiliateForm) affiliateForm.noValidate = true;
   affiliateForm?.addEventListener('submit', createAffiliate);
   affiliateForm?.querySelector('button[type="submit"]')?.addEventListener('click', createAffiliate);

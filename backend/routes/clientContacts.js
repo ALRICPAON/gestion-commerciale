@@ -7,6 +7,18 @@ const { requireAdminOrManager } = require('../middleware/authorization');
 const router = express.Router();
 
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
+const normalizeEmail = (value) => {
+  const email = clean(value);
+  if (!email) return null;
+  const normalized = email.toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized)) {
+    const error = new Error('Adresse email invalide');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+  return normalized;
+};
 
 const bool = (value, fallback = false) => {
   if (value === undefined || value === null || value === '') return fallback;
@@ -21,14 +33,20 @@ function mapContactPayload(body = {}) {
   return {
     label: clean(body.label),
     contact_name: clean(body.contact_name),
+    first_name: clean(body.first_name),
+    last_name: clean(body.last_name),
     role: clean(body.role),
-    email: clean(body.email),
+    email: normalizeEmail(body.email),
     phone: clean(body.phone),
     mobile: clean(body.mobile),
     receives_orders: bool(body.receives_orders),
     receives_delivery_notes: bool(body.receives_delivery_notes),
     receives_invoices: bool(body.receives_invoices),
+    receives_credit_notes: bool(body.receives_credit_notes),
+    receives_price_lists: bool(body.receives_price_lists),
+    receives_promotions: bool(body.receives_promotions),
     receives_statements: bool(body.receives_statements),
+    is_primary: bool(body.is_primary),
     is_default_for_orders: bool(body.is_default_for_orders),
     is_default_for_delivery_notes: bool(body.is_default_for_delivery_notes),
     is_default_for_invoices: bool(body.is_default_for_invoices),
@@ -52,6 +70,17 @@ async function ensureClient(req, clientId) {
 
 async function clearDefaultFlags(db, { storeId, clientId, contactId, contact }) {
   const updates = [];
+
+  if (contact.is_primary) {
+    updates.push(
+      db.query(
+        `UPDATE client_contacts
+         SET is_primary = false, updated_at = NOW()
+         WHERE store_id = $1 AND client_id = $2 AND id <> $3`,
+        [storeId, clientId, contactId]
+      )
+    );
+  }
 
   if (contact.is_default_for_orders) {
     updates.push(
@@ -130,15 +159,17 @@ router.post('/clients/:clientId/contacts', authenticateToken, attachDbContext, r
 
     const created = await db.query(
       `INSERT INTO client_contacts (
-        store_id, client_id, label, contact_name, role, email, phone, mobile,
-        receives_orders, receives_delivery_notes, receives_invoices, receives_statements,
+        store_id, client_id, label, contact_name, first_name, last_name, role, email, phone, mobile,
+        receives_orders, receives_delivery_notes, receives_invoices, receives_credit_notes, receives_price_lists, receives_promotions, receives_statements,
+        is_primary,
         is_default_for_orders, is_default_for_delivery_notes, is_default_for_invoices,
         notes, status, created_by, updated_by
       ) VALUES (
-        $1, $2, $3, $4, $5, $6, $7, $8,
-        $9, $10, $11, $12,
-        $13, $14, $15,
-        $16, $17, $18, $18
+        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        $11, $12, $13, $14, $15, $16, $17,
+        $18,
+        $19, $20, $21,
+        $22, $23, $24, $24
       )
       RETURNING *`,
       [
@@ -146,6 +177,8 @@ router.post('/clients/:clientId/contacts', authenticateToken, attachDbContext, r
         req.params.clientId,
         contact.label,
         contact.contact_name,
+        contact.first_name,
+        contact.last_name,
         contact.role,
         contact.email,
         contact.phone,
@@ -153,7 +186,11 @@ router.post('/clients/:clientId/contacts', authenticateToken, attachDbContext, r
         contact.receives_orders,
         contact.receives_delivery_notes,
         contact.receives_invoices,
+        contact.receives_credit_notes,
+        contact.receives_price_lists,
+        contact.receives_promotions,
         contact.receives_statements,
+        contact.is_primary,
         contact.is_default_for_orders,
         contact.is_default_for_delivery_notes,
         contact.is_default_for_invoices,
@@ -200,26 +237,34 @@ router.put('/clients/:clientId/contacts/:contactId', authenticateToken, attachDb
       `UPDATE client_contacts
        SET label = $1,
            contact_name = $2,
-           role = $3,
-           email = $4,
-           phone = $5,
-           mobile = $6,
-           receives_orders = $7,
-           receives_delivery_notes = $8,
-           receives_invoices = $9,
-           receives_statements = $10,
-           is_default_for_orders = $11,
-           is_default_for_delivery_notes = $12,
-           is_default_for_invoices = $13,
-           notes = $14,
-           status = $15,
-           updated_by = $16,
+           first_name = $3,
+           last_name = $4,
+           role = $5,
+           email = $6,
+           phone = $7,
+           mobile = $8,
+           receives_orders = $9,
+           receives_delivery_notes = $10,
+           receives_invoices = $11,
+           receives_credit_notes = $12,
+           receives_price_lists = $13,
+           receives_promotions = $14,
+           receives_statements = $15,
+           is_primary = $16,
+           is_default_for_orders = $17,
+           is_default_for_delivery_notes = $18,
+           is_default_for_invoices = $19,
+           notes = $20,
+           status = $21,
+           updated_by = $22,
            updated_at = NOW()
-       WHERE id = $17 AND client_id = $18 AND store_id = $19
+       WHERE id = $23 AND client_id = $24 AND store_id = $25
        RETURNING *`,
       [
         contact.label,
         contact.contact_name,
+        contact.first_name,
+        contact.last_name,
         contact.role,
         contact.email,
         contact.phone,
@@ -227,7 +272,11 @@ router.put('/clients/:clientId/contacts/:contactId', authenticateToken, attachDb
         contact.receives_orders,
         contact.receives_delivery_notes,
         contact.receives_invoices,
+        contact.receives_credit_notes,
+        contact.receives_price_lists,
+        contact.receives_promotions,
         contact.receives_statements,
+        contact.is_primary,
         contact.is_default_for_orders,
         contact.is_default_for_delivery_notes,
         contact.is_default_for_invoices,
