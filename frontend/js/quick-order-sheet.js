@@ -25,6 +25,10 @@ const sheetDateInput = document.getElementById('sheet-date-input');
 const sheetNoteInput = document.getElementById('sheet-note-input');
 const supplierSelect = document.getElementById('supplier-select');
 const supplierEmailOutput = document.getElementById('supplier-email-output');
+const marginLevel1Input = document.getElementById('margin-level-1-input');
+const marginLevel2Input = document.getElementById('margin-level-2-input');
+const marginLevel3Input = document.getElementById('margin-level-3-input');
+const recalculateAllPricesBtn = document.getElementById('recalculate-all-prices-btn');
 const clientSearchInput = document.getElementById('client-search-input');
 const selectAllClientsBtn = document.getElementById('select-all-clients-btn');
 const clearClientsBtn = document.getElementById('clear-clients-btn');
@@ -65,6 +69,8 @@ let emailPreviewReady = false;
 let generatedOrderIds = [];
 let generatedOrders = [];
 let draftSupplierId = '';
+let serverSaveTimer = null;
+let isLoadingServerSheet = false;
 
 function authHeaders() {
   return { Authorization: `Bearer ${sessionToken}` };
@@ -116,6 +122,45 @@ function parseDecimal(value) {
   if (value === null || value === undefined || value === '') return 0;
   const parsed = Number(String(value).replace(',', '.'));
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parsePercent(value, fallback = 0) {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(Math.max(parsed, 0), 99.99) / 100;
+}
+
+function moneyNumber(value) {
+  const parsed = parseDecimal(value);
+  return parsed > 0 ? parsed : 0;
+}
+
+function salePriceFromMargin(purchasePrice, marginRate) {
+  const purchase = moneyNumber(purchasePrice);
+  if (purchase <= 0 || marginRate < 0 || marginRate >= 1) return '';
+  return (purchase / (1 - marginRate)).toFixed(2);
+}
+
+function realMargin(purchasePrice, salePrice) {
+  const purchase = moneyNumber(purchasePrice);
+  const sale = moneyNumber(salePrice);
+  if (purchase <= 0 || sale <= 0) return '';
+  return `${(((sale - purchase) / sale) * 100).toFixed(1)}%`;
+}
+
+function realMarginRate(purchasePrice, salePrice) {
+  const purchase = moneyNumber(purchasePrice);
+  const sale = moneyNumber(salePrice);
+  if (purchase <= 0 || sale <= 0) return null;
+  return Number(((sale - purchase) / sale).toFixed(4));
+}
+
+function defaultMargins() {
+  return {
+    1: parsePercent(marginLevel1Input?.value, 0.10),
+    2: parsePercent(marginLevel2Input?.value, 0.15),
+    3: parsePercent(marginLevel3Input?.value, 0.20),
+  };
 }
 
 function isValidUuid(value) {
@@ -211,6 +256,85 @@ function saveDraft() {
   updateSheetReferenceLabel();
 }
 
+function serverPayload() {
+  return {
+    ...buildSheetPayload(),
+    default_margin_level_1: defaultMargins()[1],
+    default_margin_level_2: defaultMargins()[2],
+    default_margin_level_3: defaultMargins()[3],
+    selected_client_ids: Array.from(selectedClientIds),
+  };
+}
+
+async function saveSheetToServer() {
+  if (isLoadingServerSheet) return;
+  await apiSend('/api/quick-order-sheets/by-date', serverPayload(), 'PUT');
+}
+
+function saveSheetToServerDebounced() {
+  if (isLoadingServerSheet) return;
+  window.clearTimeout(serverSaveTimer);
+  serverSaveTimer = window.setTimeout(() => {
+    saveSheetToServer().catch((error) => {
+      console.error('Erreur sauvegarde fiche appel :', error);
+      showFeedback(error.message || 'Erreur sauvegarde fiche appel', 'error');
+    });
+  }, 700);
+}
+
+function applyServerSheet(sheet) {
+  if (!sheet) return false;
+  isLoadingServerSheet = true;
+  sheetTitleInput.value = sheet.title || "Fiche d'appel clients";
+  sheetDateInput.value = String(sheet.sheet_date || todayIso()).slice(0, 10);
+  sheetNoteInput.value = sheet.notes || '';
+  supplierSelect.value = sheet.supplier_id || '';
+  marginLevel1Input.value = (Number(sheet.default_margin_level_1 ?? 0.10) * 100).toFixed(2);
+  marginLevel2Input.value = (Number(sheet.default_margin_level_2 ?? 0.15) * 100).toFixed(2);
+  marginLevel3Input.value = (Number(sheet.default_margin_level_3 ?? 0.20) * 100).toFixed(2);
+  selectedClientIds = new Set((Array.isArray(sheet.selected_client_ids) ? sheet.selected_client_ids : []).map(String));
+  draftHasClientSelection = selectedClientIds.size > 0;
+  orderEntries = sheet.order_entries && typeof sheet.order_entries === 'object' ? sheet.order_entries : {};
+  productColumns = (Array.isArray(sheet.products) ? sheet.products : []).map((product) => ({
+    ...emptyProductColumn(),
+    uid: product.column_uid || columnUid(),
+    article_id: product.article_id,
+    plu: product.plu || '',
+    designation: product.designation_snapshot || '',
+    purchase_price_ht: moneyInputValue(product.purchase_price_ht),
+    stock: product.supplier_available_quantity ?? '',
+    unit: product.price_unit || product.sale_unit || 'kg',
+    sale_unit: product.sale_unit || product.price_unit || 'kg',
+    sale_price_level_1_ht: moneyInputValue(product.sale_price_level_1_ht),
+    sale_price_level_2_ht: moneyInputValue(product.sale_price_level_2_ht),
+    sale_price_level_3_ht: moneyInputValue(product.sale_price_level_3_ht),
+    manual_price_level_1: Boolean(product.manual_price_level_1),
+    manual_price_level_2: Boolean(product.manual_price_level_2),
+    manual_price_level_3: Boolean(product.manual_price_level_3),
+    family_code: product.family_code || '',
+    family_name: product.family_name || '',
+  }));
+  ensureProductColumns();
+  updateSupplierEmailOutput();
+  renderClients();
+  renderProductColumns();
+  updatePreview();
+  saveDraft();
+  isLoadingServerSheet = false;
+  return true;
+}
+
+async function loadSheetFromServer() {
+  const date = sheetDateInput.value || todayIso();
+  const data = await apiGet(`/api/quick-order-sheets/by-date?date=${encodeURIComponent(date)}`);
+  if (data.exists && data.sheet) {
+    applyServerSheet(data.sheet);
+    showFeedback(`Fiche du ${formatDateFr(date)} rechargee.`, 'success');
+    return true;
+  }
+  return false;
+}
+
 function persistSheetIdInDraft() {
   ensureValidSheetId();
   const draft = safeJsonParse(localStorage.getItem(DRAFT_STORAGE_KEY), {});
@@ -229,9 +353,9 @@ async function apiGet(path) {
   return data;
 }
 
-async function apiSend(path, payload) {
+async function apiSend(path, payload, method = 'POST') {
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    method: 'POST',
+    method,
     headers: {
       ...authHeaders(),
       'Content-Type': 'application/json',
@@ -264,15 +388,44 @@ function emptyProductColumn() {
     article_id: null,
     plu: '',
     designation: '',
-    price: '',
+    purchase_price_ht: '',
+    sale_price_level_1_ht: '',
+    sale_price_level_2_ht: '',
+    sale_price_level_3_ht: '',
+    manual_price_level_1: false,
+    manual_price_level_2: false,
+    manual_price_level_3: false,
     stock: '',
     unit: '',
+    family_code: '',
+    family_name: '',
+    sale_unit: '',
   };
 }
 
 function ensureProductColumns() {
   if (productColumns.length > 0) return;
   productColumns = Array.from({ length: DEFAULT_PRODUCT_COLUMNS }, emptyProductColumn);
+}
+
+function recalculateColumnPrices(column, resetManual = false) {
+  const margins = defaultMargins();
+  [1, 2, 3].forEach((level) => {
+    const manualKey = `manual_price_level_${level}`;
+    const priceKey = `sale_price_level_${level}_ht`;
+    if (resetManual || !column[manualKey]) {
+      column[priceKey] = salePriceFromMargin(column.purchase_price_ht, margins[level]);
+      column[manualKey] = false;
+    }
+  });
+}
+
+function recalculateAllPrices(resetManual = false) {
+  productColumns.forEach((column) => recalculateColumnPrices(column, resetManual));
+  renderProductColumns();
+  invalidateEmailPreview();
+  saveDraft();
+  saveSheetToServerDebounced();
 }
 
 function selectedClients() {
@@ -365,6 +518,7 @@ function buildSheetPayload() {
         city: client.city,
         parent_client_id: client.parent_client_id,
         billed_client_id: client.billed_client_id,
+        tariff_level: client.tariff_level,
         is_royale_maree_member: client.is_royale_maree_member,
         store_identifier: client.store_identifier,
         affiliate_label: client.affiliate_label,
@@ -375,8 +529,22 @@ function buildSheetPayload() {
       article_id: product.article_id,
       plu: product.plu,
       designation: product.designation,
-      price: product.price,
+      price: product.sale_price_level_1_ht || product.price,
+      purchase_price_ht: product.purchase_price_ht,
+      supplier_available_quantity: product.stock,
       stock: product.stock,
+      sale_price_level_1_ht: product.sale_price_level_1_ht,
+      sale_price_level_2_ht: product.sale_price_level_2_ht,
+      sale_price_level_3_ht: product.sale_price_level_3_ht,
+      manual_price_level_1: Boolean(product.manual_price_level_1),
+      manual_price_level_2: Boolean(product.manual_price_level_2),
+      manual_price_level_3: Boolean(product.manual_price_level_3),
+      real_margin_level_1: realMarginRate(product.purchase_price_ht, product.sale_price_level_1_ht),
+      real_margin_level_2: realMarginRate(product.purchase_price_ht, product.sale_price_level_2_ht),
+      real_margin_level_3: realMarginRate(product.purchase_price_ht, product.sale_price_level_3_ht),
+      family_code: product.family_code,
+      family_name: product.family_name,
+      sale_unit: product.sale_unit || product.unit,
       unit: product.unit || 'kg',
     })),
     entries: orderEntries,
@@ -405,6 +573,7 @@ function orderCellHtml(client, column) {
   const entry = entryFor(client.id, column.uid);
   const clientId = escapeHtml(client.id);
   const columnId = escapeHtml(column.uid);
+  const price = priceForClient(column, client);
   return `<td>
     <div class="order-cell-grid">
       <label>
@@ -416,7 +585,13 @@ function orderCellHtml(client, column) {
         <input class="order-cell-input" type="text" inputmode="decimal" data-client-id="${clientId}" data-column-id="${columnId}" data-order-field="kg" value="${escapeHtml(entry.kg || '')}" aria-label="Kg ${escapeHtml(client.name || '')} ${escapeHtml(productLabel(column) || '')}" />
       </label>
     </div>
+    <small class="order-cell-price">Prix: ${escapeHtml(moneyInputValue(price) || '-')} EUR</small>
   </td>`;
+}
+
+function priceForClient(column, client) {
+  const level = [1, 2, 3].includes(Number(client?.tariff_level)) ? Number(client.tariff_level) : 1;
+  return column[`sale_price_level_${level}_ht`] || column.price || '';
 }
 
 function updateProductTotalsInPlace() {
@@ -458,11 +633,10 @@ function updatePreview() {
 
   const head = columns.map((column) => {
     const name = productLabel(column) || 'Produit';
-    const price = column.price ? `${escapeHtml(column.price)} EUR` : '&nbsp;';
     return `<th data-total-column-id="${escapeHtml(column.uid)}" class="${column.overstock ? 'product-overstock' : ''}">
       <div class="product-head-name">${escapeHtml(name)}</div>
-      <div class="product-head-meta">Prix: ${price}</div>
-      <div class="product-head-meta">Stock: <span data-total-field="stock">${escapeHtml(compactNumber(column.stock))}</span> ${escapeHtml(column.unit || 'kg')}</div>
+      <div class="product-head-meta">T1 ${escapeHtml(moneyInputValue(column.sale_price_level_1_ht) || '-')} / T2 ${escapeHtml(moneyInputValue(column.sale_price_level_2_ht) || '-')} / T3 ${escapeHtml(moneyInputValue(column.sale_price_level_3_ht) || '-')}</div>
+      <div class="product-head-meta">Dispo fournisseur: <span data-total-field="stock">${escapeHtml(compactNumber(column.stock))}</span> ${escapeHtml(column.unit || 'kg')}</div>
       <div class="product-head-meta">Vendu: <span data-total-field="sold">${escapeHtml(compactNumber(column.sold))}</span> kg</div>
       <div class="product-head-meta ${column.overstock ? 'stock-alert' : ''}" data-total-line="remaining">Reste: <span data-total-field="remaining">${escapeHtml(compactNumber(column.remaining))}</span> kg</div>
     </th>`;
@@ -511,8 +685,12 @@ function renderClients() {
 
 function renderProductColumns() {
   ensureProductColumns();
+  const margins = defaultMargins();
   productColumnsEl.innerHTML = productColumns.map((column, index) => {
     const label = productLabel(column) || 'Article non choisi';
+    const margin1 = realMargin(column.purchase_price_ht, column.sale_price_level_1_ht);
+    const margin2 = realMargin(column.purchase_price_ht, column.sale_price_level_2_ht);
+    const margin3 = realMargin(column.purchase_price_ht, column.sale_price_level_3_ht);
     return `<article class="product-column-editor" data-product-index="${index}">
       <div class="product-editor-title">
         <span>Colonne ${index + 1}</span>
@@ -526,11 +704,31 @@ function renderProductColumns() {
         <small>${escapeHtml(column.plu || 'F9 / rechercher article')}</small>
       </button>
       <label>
-        Prix de vente
-        <input type="text" inputmode="decimal" value="${escapeHtml(column.price)}" data-field="price" placeholder="ex. 12.90" />
+        Prix achat HT du jour
+        <input type="text" inputmode="decimal" value="${escapeHtml(column.purchase_price_ht || '')}" data-field="purchase_price_ht" placeholder="ex. 9.00" />
       </label>
+      <div class="price-grid">
+        <label>
+          PV T1
+          <input type="text" inputmode="decimal" value="${escapeHtml(column.sale_price_level_1_ht || '')}" data-field="sale_price_level_1_ht" data-price-level="1" placeholder="${escapeHtml(salePriceFromMargin(column.purchase_price_ht, margins[1]))}" />
+          <small>${escapeHtml(margin1 || '-')} ${column.manual_price_level_1 ? '<span class="manual-price-badge">manuel</span>' : ''}</small>
+        </label>
+        <label>
+          PV T2
+          <input type="text" inputmode="decimal" value="${escapeHtml(column.sale_price_level_2_ht || '')}" data-field="sale_price_level_2_ht" data-price-level="2" placeholder="${escapeHtml(salePriceFromMargin(column.purchase_price_ht, margins[2]))}" />
+          <small>${escapeHtml(margin2 || '-')} ${column.manual_price_level_2 ? '<span class="manual-price-badge">manuel</span>' : ''}</small>
+        </label>
+        <label>
+          PV T3
+          <input type="text" inputmode="decimal" value="${escapeHtml(column.sale_price_level_3_ht || '')}" data-field="sale_price_level_3_ht" data-price-level="3" placeholder="${escapeHtml(salePriceFromMargin(column.purchase_price_ht, margins[3]))}" />
+          <small>${escapeHtml(margin3 || '-')} ${column.manual_price_level_3 ? '<span class="manual-price-badge">manuel</span>' : ''}</small>
+        </label>
+      </div>
+      <div class="product-editor-actions">
+        <button class="btn btn-secondary btn-sm" type="button" data-action="recalculate-product">Recalculer la colonne</button>
+      </div>
       <label>
-        Stock disponible
+        Disponible fournisseur
         <input type="text" inputmode="decimal" value="${escapeHtml(column.stock)}" data-field="stock" placeholder="ex. 18 kg" />
       </label>
     </article>`;
@@ -647,15 +845,24 @@ function applyArticleResult(index) {
   const article = articleSearchResults[index];
   if (!article || activeProductIndex === null) return;
   const stock = article.stock_row;
-  const price = article.sale_price_ex_vat ?? stock?.sale_price_level_1_ht ?? stock?.sale_price_level_2_ht ?? stock?.sale_price_level_3_ht;
+  const purchasePrice = stock?.pma || article.purchase_price_ht || article.unit_cost_ex_vat || '';
+  const nextColumn = {
+    ...emptyProductColumn(),
+    ...productColumns[activeProductIndex],
+  };
+  nextColumn.article_id = article.id;
+  nextColumn.plu = article.plu || '';
+  nextColumn.designation = article.display_name || article.designation || '';
+  nextColumn.purchase_price_ht = nextColumn.purchase_price_ht || moneyInputValue(purchasePrice);
+  nextColumn.stock = nextColumn.stock || '';
+  nextColumn.unit = stock?.unit || article.stock_unit || article.sale_unit || article.unit || '';
+  nextColumn.sale_unit = article.sale_unit || article.unit || nextColumn.unit;
+  nextColumn.family_code = article.family_code || '';
+  nextColumn.family_name = article.family_name || '';
+  recalculateColumnPrices(nextColumn, false);
   productColumns[activeProductIndex] = {
+    ...nextColumn,
     uid: productColumns[activeProductIndex].uid || columnUid(),
-    article_id: article.id,
-    plu: article.plu || '',
-    designation: article.display_name || article.designation || '',
-    price: productColumns[activeProductIndex].price || moneyInputValue(price),
-    stock: productColumns[activeProductIndex].stock || compactNumber(stock?.stock_quantity),
-    unit: stock?.unit || article.stock_unit || article.sale_unit || article.unit || '',
   };
   closeArticleModal();
   renderProductColumns();
@@ -864,6 +1071,7 @@ async function refreshData() {
   showFeedback('Chargement clients...', '');
   try {
     await Promise.all([loadClients(), loadSuppliers()]);
+    await loadSheetFromServer();
     showFeedback('Clients actifs charges.', 'success');
   } catch (error) {
     console.error('Erreur chargement fiche appel :', error);
@@ -911,24 +1119,48 @@ function initEvents() {
     draftSupplierId = supplierSelect.value || '';
     updateSupplierEmailOutput();
     saveDraft();
+    saveSheetToServerDebounced();
   });
-  [sheetTitleInput, sheetDateInput, sheetNoteInput].forEach((input) => input?.addEventListener('input', () => {
+  [sheetTitleInput, sheetNoteInput].forEach((input) => input?.addEventListener('input', () => {
     updatePreview();
     invalidateEmailPreview();
     saveDraft();
+    saveSheetToServerDebounced();
   }));
+  sheetDateInput?.addEventListener('change', async () => {
+    resetGenerationState();
+    const loaded = await loadSheetFromServer().catch((error) => {
+      console.error('Erreur chargement fiche date :', error);
+      showFeedback(error.message || 'Erreur chargement fiche date', 'error');
+      return false;
+    });
+    if (!loaded) {
+      orderEntries = {};
+      productColumns = Array.from({ length: DEFAULT_PRODUCT_COLUMNS }, emptyProductColumn);
+      renderProductColumns();
+      updatePreview();
+      saveDraft();
+      saveSheetToServerDebounced();
+    }
+  });
+  [marginLevel1Input, marginLevel2Input, marginLevel3Input].forEach((input) => input?.addEventListener('change', () => {
+    recalculateAllPrices(false);
+  }));
+  recalculateAllPricesBtn?.addEventListener('click', () => recalculateAllPrices(true));
   clientSearchInput?.addEventListener('input', renderClients);
   selectAllClientsBtn?.addEventListener('click', () => {
     selectedClientIds = new Set(clients.map((client) => String(client.id)));
     renderClients();
     invalidateEmailPreview();
     saveDraft();
+    saveSheetToServerDebounced();
   });
   clearClientsBtn?.addEventListener('click', () => {
     selectedClientIds = new Set();
     renderClients();
     invalidateEmailPreview();
     saveDraft();
+    saveSheetToServerDebounced();
   });
   clientsList?.addEventListener('change', (event) => {
     const checkbox = event.target.closest('[data-client-id]');
@@ -938,12 +1170,14 @@ function initEvents() {
     renderClients();
     invalidateEmailPreview();
     saveDraft();
+    saveSheetToServerDebounced();
   });
   addProductColumnBtn?.addEventListener('click', () => {
     if (productColumns.length < MAX_PRODUCT_COLUMNS) productColumns.push(emptyProductColumn());
     renderProductColumns();
     invalidateEmailPreview();
     saveDraft();
+    saveSheetToServerDebounced();
   });
   productColumnsEl?.addEventListener('click', (event) => {
     const editor = event.target.closest('[data-product-index]');
@@ -953,8 +1187,15 @@ function initEvents() {
     if (action === 'pick-product') openArticleModal(index);
     if (action === 'duplicate-product') duplicateProduct(index);
     if (action === 'remove-product') removeProduct(index);
+    if (action === 'recalculate-product') {
+      recalculateColumnPrices(productColumns[index], true);
+      renderProductColumns();
+    }
     if (action === 'duplicate-product' || action === 'remove-product') invalidateEmailPreview();
-    if (['duplicate-product', 'remove-product'].includes(action)) saveDraft();
+    if (['duplicate-product', 'remove-product', 'recalculate-product'].includes(action)) {
+      saveDraft();
+      saveSheetToServerDebounced();
+    }
   });
   productColumnsEl?.addEventListener('input', (event) => {
     const input = event.target.closest('[data-field]');
@@ -962,9 +1203,27 @@ function initEvents() {
     if (!input || !editor) return;
     const index = Number(editor.dataset.productIndex);
     productColumns[index][input.dataset.field] = input.value;
+    if (input.dataset.field === 'purchase_price_ht') {
+      recalculateColumnPrices(productColumns[index], false);
+    }
+    if (input.dataset.priceLevel) {
+      productColumns[index][`manual_price_level_${input.dataset.priceLevel}`] = true;
+    }
     updatePreview();
     invalidateEmailPreview();
     saveDraft();
+    saveSheetToServerDebounced();
+  });
+  productColumnsEl?.addEventListener('change', (event) => {
+    const input = event.target.closest('[data-field]');
+    if (!input) return;
+    renderProductColumns();
+  });
+  productColumnsEl?.addEventListener('keydown', (event) => {
+    const input = event.target.closest('[data-field]');
+    if (!input || event.key !== 'Enter') return;
+    event.preventDefault();
+    input.blur();
   });
   printTableWrap?.addEventListener('input', (event) => {
     const input = event.target.closest('[data-order-field]');
@@ -973,6 +1232,7 @@ function initEvents() {
     updateProductTotalsInPlace();
     invalidateEmailPreview();
     saveDraft();
+    saveSheetToServerDebounced();
   });
   printTableWrap?.addEventListener('keydown', (event) => {
     const input = event.target.closest('[data-order-field]');
@@ -1000,6 +1260,7 @@ function initEvents() {
     const row = event.target.closest('[data-result-index]');
     if (!row) return;
     applyArticleResult(Number(row.dataset.resultIndex));
+    saveSheetToServerDebounced();
   });
   document.addEventListener('keydown', (event) => {
     if (event.key === 'F9') {

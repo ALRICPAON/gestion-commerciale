@@ -3,11 +3,11 @@ const { renderHtmlToPdf } = require('./pdf/pdfRenderer');
 const {
   renderMercurialePdf,
 } = require('./pdf/templates/mercurialePdfTemplate');
-const { priceWithRoyaleMareeCommission } = require('./royaleMareeCommission');
 const {
   resolveDocumentRecipients,
   recipientsToEmailList,
 } = require('./documentRecipientService');
+const { royaleMareeCommissionAmount } = require('./royaleMareeCommission');
 
 const VALID_PRICING_LEVELS = new Set([1, 2, 3]);
 
@@ -20,6 +20,26 @@ function clean(value) {
 function normalizePricingLevel(value) {
   const parsed = Number(value);
   return VALID_PRICING_LEVELS.has(parsed) ? parsed : null;
+}
+
+function parsePrice(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function applyRoyaleMareeCommission(products, client, storeSettings) {
+  if (client?.is_royale_maree_member !== true) return products;
+  const commission = royaleMareeCommissionAmount(storeSettings);
+  if (!commission) return products;
+  return products.map((product) => {
+    const price = parsePrice(product.price_ht);
+    if (price === null) return product;
+    return {
+      ...product,
+      price_ht: Number((price + commission).toFixed(4)),
+    };
+  });
 }
 
 function hasEmail(value) {
@@ -101,7 +121,8 @@ async function fetchActiveClients(db, storeId) {
       name,
       legal_name,
       email,
-      tariff_level
+      tariff_level,
+      COALESCE(is_royale_maree_member, false) AS is_royale_maree_member
     FROM clients
     WHERE store_id = $1
       AND status = 'active'
@@ -116,38 +137,40 @@ async function fetchActiveClients(db, storeId) {
 async function fetchProductsForPricingLevel(db, storeId, pricingLevel, commissionSettings = {}) {
   const normalizedPricingLevel = normalizePricingLevel(pricingLevel);
   if (!normalizedPricingLevel) return [];
+  const sheetDate = todayIsoDate();
 
-  const result = await db.query(
-    `
-    SELECT
-      a.id::text AS article_id,
-      a.plu,
-      a.designation,
-      COALESCE(a.display_name, a.designation) AS display_name,
-      COALESCE(a.family_name, 'Autre') AS family_name,
-      COALESCE(a.sale_unit, a.unit) AS sale_unit,
-      ss.stock_quantity,
-      CASE $2::int
-        WHEN 1 THEN COALESCE(a.sale_price_level_1_ht, a.sale_price_ex_vat)
-        WHEN 2 THEN COALESCE(a.sale_price_level_2_ht, a.sale_price_ex_vat)
-        WHEN 3 THEN COALESCE(a.sale_price_level_3_ht, a.sale_price_ex_vat)
-      END AS base_price_ht
-    FROM stock_summary ss
-    JOIN articles a ON a.id = ss.article_id AND a.store_id = ss.store_id
-    WHERE ss.store_id = $1
-      AND ss.stock_quantity > 0
-    ORDER BY COALESCE(a.family_name, 'Autre') ASC, a.designation ASC
-    LIMIT 2000
-    `,
-    [storeId, normalizedPricingLevel]
+  const dailySheet = await db.query(
+    `SELECT id
+     FROM quick_order_sheets
+     WHERE store_id = $1 AND sheet_date = $2::date
+     LIMIT 1`,
+    [storeId, sheetDate]
   );
-
-  return result.rows
-    .filter((row) => row.base_price_ht !== null && row.base_price_ht !== undefined)
-    .map((row) => ({
-      ...row,
-      price_ht: priceWithRoyaleMareeCommission(row.base_price_ht, normalizedPricingLevel, commissionSettings),
-    }));
+  if (dailySheet.rows.length) {
+    const dailyProducts = await db.query(
+      `SELECT
+         qsp.article_id::text AS article_id,
+         qsp.plu,
+         qsp.designation_snapshot AS designation,
+         qsp.designation_snapshot AS display_name,
+         COALESCE(qsp.family_name, 'Autre') AS family_name,
+         COALESCE(qsp.sale_unit, qsp.price_unit) AS sale_unit,
+         qsp.supplier_available_quantity AS stock_quantity,
+         CASE $3::int
+           WHEN 1 THEN qsp.sale_price_level_1_ht
+           WHEN 2 THEN qsp.sale_price_level_2_ht
+           WHEN 3 THEN qsp.sale_price_level_3_ht
+         END AS price_ht
+       FROM quick_order_sheet_products qsp
+       WHERE qsp.store_id = $1
+         AND qsp.sheet_id = $2
+         AND qsp.article_id IS NOT NULL
+       ORDER BY qsp.display_order ASC, qsp.designation_snapshot ASC`,
+      [storeId, dailySheet.rows[0].id, normalizedPricingLevel]
+    );
+    return dailyProducts.rows.filter((row) => row.price_ht !== null && row.price_ht !== undefined);
+  }
+  return [];
 }
 
 async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {}) {
@@ -208,6 +231,12 @@ async function buildCustomerTariffEmailPreview(db, storeId) {
     fetchStoreSettings(db, storeId),
   ]);
   const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
+  if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
+    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${todayIsoDate()}`);
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
   const recipients = await Promise.all(clients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel)));
 
   return {
@@ -441,6 +470,12 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
     fetchStoreSettings(db, storeId),
   ]);
   const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
+  if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
+    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${todayIsoDate()}`);
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
 
   const previewRows = await Promise.all(clients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel)));
   const previewSummary = buildSummary(previewRows);
@@ -488,7 +523,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
       continue;
     }
 
-    const products = productsByPricingLevel[pricingLevel] || [];
+    const products = applyRoyaleMareeCommission(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
 
     try {
       const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings });
