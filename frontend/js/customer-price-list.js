@@ -64,10 +64,12 @@ let currentPriceList = null;
 window.CustomerPriceListState = {
   emailContext() {
     const storedDate = currentPriceList?.price_list_date ? String(currentPriceList.price_list_date).slice(0, 10) : null;
+    const inputDate = priceListDateInput?.value || null;
+    const resolvedDate = storedDate || inputDate || null;
     return {
-      price_list_id: currentPriceList?.id || savedPriceListId,
-      mercuriale_date: storedDate || null,
-      price_list_date: storedDate || priceListDateInput.value || null,
+      price_list_id: currentPriceList?.id || savedPriceListId || null,
+      mercuriale_date: resolvedDate,
+      price_list_date: resolvedDate,
     };
   },
 };

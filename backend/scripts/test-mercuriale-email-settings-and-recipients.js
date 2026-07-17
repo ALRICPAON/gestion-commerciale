@@ -472,6 +472,9 @@ function deselectedSendDb() {
     'utf8'
   );
   assert.ok(frontendController.includes('currentPriceList?.price_list_date'), 'frontend utilise la date de la mercuriale chargee');
+  assert.ok(frontendController.includes('const inputDate = priceListDateInput?.value || null'), 'frontend lit la date visible si mercuriale non enregistree');
+  assert.ok(frontendController.includes('const resolvedDate = storedDate || inputDate || null'), 'frontend resout une date unique pour les emails');
+  assert.ok(frontendController.includes('mercuriale_date: resolvedDate'), 'frontend transmet mercuriale_date meme avant enregistrement');
   assert.ok(frontendController.includes('currentPriceList = data.price_list'), 'frontend conserve la mercuriale courante');
 
   console.log('mercuriale-email-settings-and-recipients: ok');
