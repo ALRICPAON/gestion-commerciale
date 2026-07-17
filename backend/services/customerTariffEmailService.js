@@ -51,12 +51,35 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function formatTodayFr() {
-  return todayIsoDate().split('-').reverse().join('/');
+function normalizeIsoDate(value) {
+  const text = clean(value);
+  if (!text) return null;
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
 }
 
-function buildPdfFilename() {
-  return `Mercuriale_ALTA_MAREE_${todayIsoDate()}.pdf`;
+function formatDateFr(value) {
+  const date = normalizeIsoDate(value);
+  return date ? date.split('-').reverse().join('/') : '';
+}
+
+function buildPdfFilename(mercurialeDate) {
+  const date = normalizeIsoDate(mercurialeDate);
+  return `Mercuriale_ALTA_MAREE_${date || 'date_non_renseignee'}.pdf`;
+}
+
+function defaultCommonMessage() {
+  return [
+    'Veuillez trouver ci-joint notre mercuriale mise à jour.',
+    '',
+    "N'hésitez pas à nous contacter pour toute demande de disponibilité, de réservation ou de renseignement.",
+    '',
+    'Nous vous remercions de votre confiance.',
+  ].join('\n');
+}
+
+function resolveCommonMessage(value) {
+  return clean(value) || defaultCommonMessage();
 }
 
 function resolveCompanyEmail(storeSettings = {}) {
@@ -183,6 +206,44 @@ async function fetchStoreSettings(db, storeId) {
   return result.rows[0] || {};
 }
 
+async function resolveMercurialeEmailContext(db, storeId, options = {}) {
+  const priceListId = clean(options.price_list_id);
+  if (priceListId) {
+    const result = await db.query(
+      `
+      SELECT id::text AS price_list_id, price_list_date
+      FROM customer_price_lists
+      WHERE store_id = $1 AND id = $2
+      LIMIT 1
+      `,
+      [storeId, priceListId]
+    );
+    if (!result.rows.length) {
+      const error = new Error('Mercuriale introuvable pour préparer les emails');
+      error.status = 404;
+      error.expose = true;
+      throw error;
+    }
+    return {
+      price_list_id: result.rows[0].price_list_id,
+      mercuriale_date: normalizeIsoDate(result.rows[0].price_list_date),
+    };
+  }
+
+  const mercurialeDate = normalizeIsoDate(options.price_list_date || options.mercuriale_date);
+  if (!mercurialeDate) {
+    const error = new Error('Date de mercuriale requise pour préparer les emails');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+
+  return {
+    price_list_id: null,
+    mercuriale_date: mercurialeDate,
+  };
+}
+
 async function fetchActiveClients(db, storeId) {
   const result = await db.query(
     `
@@ -233,10 +294,11 @@ function applyDisplayedPricesForClient(products, client, storeSettings) {
   }));
 }
 
-async function fetchProductsForPricingLevel(db, storeId, pricingLevel, commissionSettings = {}) {
+async function fetchProductsForPricingLevel(db, storeId, pricingLevel, commissionSettings = {}, mercurialeDate) {
   const normalizedPricingLevel = normalizePricingLevel(pricingLevel);
   if (!normalizedPricingLevel) return [];
-  const sheetDate = todayIsoDate();
+  const sheetDate = normalizeIsoDate(mercurialeDate);
+  if (!sheetDate) return [];
 
   const dailySheet = await db.query(
     `SELECT id
@@ -272,10 +334,10 @@ async function fetchProductsForPricingLevel(db, storeId, pricingLevel, commissio
   return [];
 }
 
-async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {}) {
+async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {}, mercurialeDate) {
   const entries = await Promise.all([1, 2, 3].map(async (level) => [
     level,
-    await fetchProductsForPricingLevel(db, storeId, level, commissionSettings),
+    await fetchProductsForPricingLevel(db, storeId, level, commissionSettings, mercurialeDate),
   ]));
   return Object.fromEntries(entries);
 }
@@ -369,25 +431,30 @@ function isMercurialEmailSendReady(preview = {}) {
   return Boolean(preview.smtp?.configured && Number(preview.summary?.eligible || 0) > 0);
 }
 
-async function buildCustomerTariffEmailPreview(db, storeId) {
+async function buildCustomerTariffEmailPreview(db, storeId, options = {}) {
+  const context = await resolveMercurialeEmailContext(db, storeId, options);
+  const commonMessage = resolveCommonMessage(options.common_message);
   const [clients, storeSettings] = await Promise.all([
     fetchActiveClients(db, storeId),
     fetchStoreSettings(db, storeId),
   ]);
-  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date);
   if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
-    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${todayIsoDate()}`);
+    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${context.mercuriale_date}`);
     error.status = 400;
     error.expose = true;
     throw error;
   }
-  const filename = buildPdfFilename();
+  const filename = buildPdfFilename(context.mercuriale_date);
   const recipients = (await Promise.all(clients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel))))
     .map((recipient) => {
       if (recipient.status !== 'ready') return recipient;
       const mail = buildMercurialeEmailMessage({
-        storeSettings,
+        companySettings: storeSettings,
         recipientResolution: recipient.recipient_resolution,
+        mercurialeDate: context.mercuriale_date,
+        commonMessage,
+        clientTariffLevel: recipient.resolved_tariff_level,
         pdfFilename: filename,
       });
       const { recipient_resolution: ignored, ...row } = recipient;
@@ -399,6 +466,9 @@ async function buildCustomerTariffEmailPreview(db, storeId) {
     sender: resolveReplyTo(storeSettings),
     test_recipient: resolveCompanyEmail(storeSettings),
     attachment_filename: filename,
+    common_message: commonMessage,
+    mercuriale_date: context.mercuriale_date,
+    price_list_id: context.price_list_id,
     summary: buildSummary(recipients),
     recipients,
   };
@@ -414,22 +484,18 @@ function escapeHtml(value) {
   }[char]));
 }
 
-function buildSubject(storeSettings) {
-  return `Mercuriale ALTA MARÉE - ${formatTodayFr()}`;
+function buildSubject(mercurialeDate) {
+  return `Mercuriale ALTA MARÉE - Départ du ${formatDateFr(mercurialeDate)}`;
 }
 
-function buildEmailText(storeSettings, salutation = 'Bonjour,') {
+function buildEmailText(storeSettings, salutation = 'Bonjour,', commonMessage = defaultCommonMessage()) {
   const companyEmail = resolveCompanyEmail(storeSettings) || '';
   const website = resolveCompanyWebsite(storeSettings) || '';
 
   return [
     salutation,
     '',
-    'Veuillez trouver ci-joint notre mercuriale mise à jour.',
-    '',
-    "N'hésitez pas à nous contacter pour toute demande de disponibilité, de réservation ou de renseignement.",
-    '',
-    'Nous vous remercions de votre confiance.',
+    resolveCommonMessage(commonMessage),
     '',
     'Bien cordialement,',
     '',
@@ -441,29 +507,45 @@ function buildEmailText(storeSettings, salutation = 'Bonjour,') {
   ].join('\n');
 }
 
-function buildEmailHtml(storeSettings, salutation = 'Bonjour,') {
-  return buildEmailText(storeSettings, salutation)
+function buildEmailHtml(storeSettings, salutation = 'Bonjour,', commonMessage = defaultCommonMessage()) {
+  return buildEmailText(storeSettings, salutation, commonMessage)
     .split('\n')
     .map((line) => (line ? `<p>${escapeHtml(line)}</p>` : '<br>'))
     .join('');
 }
 
-function buildMercurialeEmailMessage({ storeSettings, recipientResolution, pdfFilename } = {}) {
-  const contactName = resolveFirstContactName(recipientResolution);
-  const salutation = resolveEmailSalutation(contactName);
-  const text = buildEmailText(storeSettings || {}, salutation);
-  const replyTo = resolveReplyTo(storeSettings || {});
+function buildMercurialeEmailMessage({
+  contactName,
+  recipientResolution,
+  mercurialeDate,
+  commonMessage,
+  companySettings,
+  storeSettings,
+  clientTariffLevel,
+  pdfFilename,
+} = {}) {
+  const settings = companySettings || storeSettings || {};
+  const resolvedContactName = clean(contactName) || resolveFirstContactName(recipientResolution);
+  const salutation = resolveEmailSalutation(resolvedContactName);
+  const message = resolveCommonMessage(commonMessage);
+  const text = buildEmailText(settings, salutation, message);
+  const replyTo = resolveReplyTo(settings);
 
   return {
     from: replyTo,
     replyTo,
-    subject: buildSubject(storeSettings || {}),
-    html: buildEmailHtml(storeSettings || {}, salutation),
+    subject: buildSubject(mercurialeDate),
+    html: buildEmailHtml(settings, salutation, message),
     text,
     body: text,
+    textBody: text,
+    htmlBody: buildEmailHtml(settings, salutation, message),
     salutation,
-    contact_name: contactName,
-    attachment_filename: pdfFilename || buildPdfFilename(),
+    contact_name: resolvedContactName,
+    common_message: message,
+    mercuriale_date: normalizeIsoDate(mercurialeDate),
+    client_tariff_level: normalizePricingLevel(clientTariffLevel),
+    attachment_filename: pdfFilename || buildPdfFilename(mercurialeDate),
   };
 }
 
@@ -487,7 +569,12 @@ function transformProductsForTemplate(products = [], tariff = null) {
       return (a.designation || '').localeCompare(b.designation || '', 'fr');
     })
     .map((product) => ({
-      ...product,
+      article_id: product.article_id,
+      plu: product.plu,
+      designation: product.designation,
+      display_name: product.display_name,
+      family_name: product.family_name,
+      stock_quantity: product.stock_quantity,
       designation_snapshot: product.display_name || product.designation,
       sale_unit: product.sale_unit,
       price_ht: product.price_ht,
@@ -497,21 +584,21 @@ function transformProductsForTemplate(products = [], tariff = null) {
   return sorted;
 }
 
-function customerMercurialPdfPriceList(client = {}) {
+function customerMercurialPdfPriceList(client = {}, mercurialeDate = null) {
   const safeClient = client || {};
   const pricingLevel = resolveClientPricingLevel(client);
   return {
     client_name: safeClient.name || safeClient.legal_name || safeClient.code || '',
     tariff_level: pricingLevel,
-    price_list_date: new Date(),
+    price_list_date: normalizeIsoDate(mercurialeDate),
   };
 }
 
-async function buildCustomerMercurialPdf({ client, products, storeSettings }) {
+async function buildCustomerMercurialPdf({ client, products, storeSettings, mercurialeDate }) {
   const transformedLines = transformProductsForTemplate(products);
 
   const html = renderMercurialePdf({
-    priceListOrClient: customerMercurialPdfPriceList(client),
+    priceListOrClient: customerMercurialPdfPriceList(client, mercurialeDate),
     lines: transformedLines,
     storeSettings,
   });
@@ -644,19 +731,26 @@ function logTariffEmailResult(result) {
 }
 
 async function sendCustomerTariffEmails(db, storeId, options = {}) {
+  const context = await resolveMercurialeEmailContext(db, storeId, options);
+  const commonMessage = resolveCommonMessage(options.common_message);
+  const hasExplicitSelection = Array.isArray(options.selected_client_ids);
+  const selectedClientIds = new Set((options.selected_client_ids || []).map((id) => clean(id)).filter(Boolean));
   const [clients, storeSettings] = await Promise.all([
     fetchActiveClients(db, storeId),
     fetchStoreSettings(db, storeId),
   ]);
-  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
+  const selectedClients = hasExplicitSelection
+    ? clients.filter((client) => selectedClientIds.has(String(client.id)))
+    : clients;
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date);
   if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
-    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${todayIsoDate()}`);
+    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${context.mercuriale_date}`);
     error.status = 400;
     error.expose = true;
     throw error;
   }
 
-  const previewRows = await Promise.all(clients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel)));
+  const previewRows = await Promise.all(selectedClients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel)));
   const previewSummary = buildSummary(previewRows);
   const batch = await createEmailBatch(db, storeId, options.user_id || null, previewSummary);
   const summary = {
@@ -669,9 +763,9 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   };
   const results = [];
   const smtpErrors = [];
-  const filename = buildPdfFilename();
+  const filename = buildPdfFilename(context.mercuriale_date);
 
-  for (const client of clients) {
+  for (const client of selectedClients) {
     const pricingLevel = resolveClientPricingLevel(client);
     const previewRow = await clientPreviewRow(db, storeId, client, productsByPricingLevel);
     const baseResult = {
@@ -713,13 +807,16 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
 
     const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
     const mail = buildMercurialeEmailMessage({
-      storeSettings,
+      companySettings: storeSettings,
       recipientResolution: previewRow.recipient_resolution,
+      mercurialeDate: context.mercuriale_date,
+      commonMessage,
+      clientTariffLevel: pricingLevel,
       pdfFilename: filename,
     });
 
     try {
-      const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings });
+      const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings, mercurialeDate: context.mercuriale_date });
       const delivery = await sendEmail({
         to: previewRow.email,
         subject: mail.subject,
@@ -774,13 +871,20 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
 }
 
 async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
+  const context = await resolveMercurialeEmailContext(db, storeId, options);
+  const commonMessage = resolveCommonMessage(options.common_message);
+  const hasExplicitSelection = Array.isArray(options.selected_client_ids);
+  const selectedClientIds = new Set((options.selected_client_ids || []).map((id) => clean(id)).filter(Boolean));
   const [clients, storeSettings] = await Promise.all([
     fetchActiveClients(db, storeId),
     fetchStoreSettings(db, storeId),
   ]);
-  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
+  const selectedClients = hasExplicitSelection
+    ? clients.filter((client) => selectedClientIds.has(String(client.id)))
+    : clients;
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date);
   if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
-    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${todayIsoDate()}`);
+    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${context.mercuriale_date}`);
     error.status = 400;
     error.expose = true;
     throw error;
@@ -794,19 +898,22 @@ async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
     throw error;
   }
 
-  for (const client of clients) {
+  for (const client of selectedClients) {
     const pricingLevel = resolveClientPricingLevel(client);
     if (!pricingLevel) continue;
 
     const previewRow = await clientPreviewRow(db, storeId, client, productsByPricingLevel);
     if (previewRow.status !== 'ready') continue;
 
-    const filename = buildPdfFilename();
+    const filename = buildPdfFilename(context.mercuriale_date);
     const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
-    const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings });
+    const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings, mercurialeDate: context.mercuriale_date });
     const mail = buildMercurialeEmailMessage({
-      storeSettings,
+      companySettings: storeSettings,
       recipientResolution: previewRow.recipient_resolution,
+      mercurialeDate: context.mercuriale_date,
+      commonMessage,
+      clientTariffLevel: pricingLevel,
       pdfFilename: filename,
     });
     const delivery = await sendEmail({

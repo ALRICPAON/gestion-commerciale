@@ -172,6 +172,38 @@
   min-height: 420px;
 }
 
+.merc-email-controls {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.merc-email-controls > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.merc-email-controls label {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.merc-email-controls textarea {
+  width: 100%;
+  min-height: 118px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  color: #111827;
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+}
+
 .merc-email-list {
   border-right: 1px solid #e5e7eb;
   background: #f9fafb;
@@ -180,7 +212,9 @@
 }
 
 .merc-email-recipient {
-  display: block;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
   width: 100%;
   padding: 12px 14px;
   border: 0;
@@ -190,13 +224,24 @@
   cursor: pointer;
 }
 
+.merc-email-recipient input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: var(--theme-main);
+}
+
 .merc-email-recipient.active,
 .merc-email-recipient:hover {
   background: #eef6ff;
 }
 
+.merc-email-recipient > span {
+  min-width: 0;
+}
+
 .merc-email-recipient strong,
-.merc-email-recipient span {
+.merc-email-recipient em {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -208,10 +253,11 @@
   font-size: 13px;
 }
 
-.merc-email-recipient span {
+.merc-email-recipient em {
   margin-top: 3px;
   color: #6b7280;
   font-size: 12px;
+  font-style: normal;
 }
 
 .merc-email-card {

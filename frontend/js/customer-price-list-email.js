@@ -28,7 +28,7 @@
   }
 
   function canSendMercurialEmails(preview) {
-    return Boolean(preview?.smtp?.configured && Number(preview?.summary?.eligible || 0) > 0);
+    return Boolean(preview?.smtp?.configured && selectedReadyRecipients(preview).length > 0);
   }
 
   function statusLabel(status) {
@@ -50,6 +50,28 @@
     return (preview?.recipients || []).filter((row) => row.status === 'ready' && row.mail_preview);
   }
 
+  function selectedReadyRecipients(preview) {
+    return readyRecipients(preview).filter((row) => row.selected !== false);
+  }
+
+  function emailContext(extra = {}) {
+    const base = window.CustomerPriceListState?.emailContext ? window.CustomerPriceListState.emailContext() : {};
+    return {
+      ...base,
+      common_message: getEl('email-common-message')?.value || window.__customerMercurialCommonMessage || '',
+      selected_client_ids: selectedReadyRecipients(window.__customerMercurialEmailPreview).map((row) => row.client_id),
+      ...extra,
+    };
+  }
+
+  function updateSelectedCount(preview) {
+    const selected = selectedReadyRecipients(preview).length;
+    const countEl = getEl('email-selected-count');
+    if (countEl) countEl.textContent = `${selected} email${selected > 1 ? 's' : ''} selectionne${selected > 1 ? 's' : ''}`;
+    const sendBtn = getEl('email-send-btn');
+    if (sendBtn) sendBtn.disabled = !canSendMercurialEmails(preview);
+  }
+
   function renderSummary(preview) {
     const summaryEl = getEl('email-send-summary');
     if (!summaryEl) return;
@@ -68,7 +90,7 @@
       `Clients sans niveau tarifaire : ${summary.without_tariff || 0}`,
       `Clients sans produit fiche d'appel : ${summary.without_products || 0}`,
       `Clients avec fallback contact/email : ${summary.fallback_recipients || 0}`,
-      `Emails qui seront envoyes : ${summary.eligible || 0}`,
+      `Emails qui seront envoyes : ${selectedReadyRecipients(preview).length || summary.eligible || 0}`,
     ];
 
     if (!smtp.configured) {
@@ -91,10 +113,13 @@
 
   function renderRecipientOptions(rows) {
     return rows.map((row, index) => `
-      <button type="button" class="merc-email-recipient ${index === 0 ? 'active' : ''}" data-index="${index}">
-        <strong>${escapeHtml(row.client_name || row.client_id || 'Client')}</strong>
-        <span>${escapeHtml(row.email || '')}</span>
-      </button>
+      <label class="merc-email-recipient ${index === 0 ? 'active' : ''}" data-index="${index}">
+        <input type="checkbox" class="merc-email-select" data-client-id="${escapeHtml(row.client_id)}" ${row.selected === false ? '' : 'checked'}>
+        <span>
+          <strong>${escapeHtml(row.client_name || row.client_id || 'Client')}</strong>
+          <em>${escapeHtml(contactNames(row))} - ${escapeHtml(row.email || '')}</em>
+        </span>
+      </label>
     `).join('');
   }
 
@@ -133,11 +158,15 @@
             <span>A</span>
             <div class="merc-email-to">${recipientAddressBlock(row)}</div>
           </div>
-          <div>
-            <span>Objet</span>
-            <strong>${escapeHtml(mail.subject || '')}</strong>
-          </div>
+        <div>
+          <span>Objet</span>
+          <strong>${escapeHtml(mail.subject || '')}</strong>
         </div>
+        <div>
+          <span>Tarif</span>
+          <strong>Tarif ${escapeHtml(mail.client_tariff_level || row.resolved_tariff_level || '')}</strong>
+        </div>
+      </div>
         <div class="merc-email-meta">
           <div><span>Client</span><strong>${escapeHtml(row.client_name || row.client_id || '')}</strong></div>
           <div><span>Contact</span><strong>${escapeHtml(contactNames(row))}</strong></div>
@@ -169,7 +198,7 @@
       <div class="merc-email-preview-header">
         <div>
           <h3>Previsualisation des emails</h3>
-          <p>${rows.length} email${rows.length > 1 ? 's' : ''} pret${rows.length > 1 ? 's' : ''} a envoyer. Aucun email n'est envoye a cette etape.</p>
+          <p><span id="email-selected-count"></span> sur ${rows.length} pret${rows.length > 1 ? 's' : ''}. Aucun email n'est envoye a cette etape.</p>
         </div>
         <div class="merc-email-test">
           <label for="email-test-recipient">Email de test</label>
@@ -179,15 +208,66 @@
           </div>
         </div>
       </div>
+      <div class="merc-email-controls">
+        <div>
+          <button id="email-select-all-btn" type="button" class="btn btn-secondary">Tout selectionner</button>
+          <button id="email-unselect-all-btn" type="button" class="btn btn-secondary">Tout deselectionner</button>
+        </div>
+        <label for="email-common-message">Message commun</label>
+        <textarea id="email-common-message" rows="5">${escapeHtml(preview.common_message || '')}</textarea>
+      </div>
       <div class="merc-email-preview-grid">
         <div class="merc-email-list">${renderRecipientOptions(rows)}</div>
         ${renderMailCard(rows[index])}
       </div>
     `;
 
-    panel.querySelectorAll('.merc-email-recipient').forEach((button) => {
-      button.addEventListener('click', () => renderEmailPreview(preview, button.dataset.index));
+    updateSelectedCount(preview);
+
+    panel.querySelectorAll('.merc-email-recipient').forEach((rowEl) => {
+      rowEl.addEventListener('click', (event) => {
+        if (event.target.classList.contains('merc-email-select')) return;
+        renderEmailPreview(preview, rowEl.dataset.index);
+      });
     });
+
+    panel.querySelectorAll('.merc-email-select').forEach((input) => {
+      input.addEventListener('change', () => {
+        const row = rows.find((entry) => String(entry.client_id) === String(input.dataset.clientId));
+        if (row) row.selected = input.checked;
+        updateSelectedCount(preview);
+        renderSummary(preview);
+      });
+    });
+
+    const selectAllBtn = getEl('email-select-all-btn');
+    if (selectAllBtn) {
+      selectAllBtn.addEventListener('click', () => {
+        rows.forEach((row) => { row.selected = true; });
+        renderEmailPreview(preview, index);
+        renderSummary(preview);
+      });
+    }
+
+    const unselectAllBtn = getEl('email-unselect-all-btn');
+    if (unselectAllBtn) {
+      unselectAllBtn.addEventListener('click', () => {
+        rows.forEach((row) => { row.selected = false; });
+        renderEmailPreview(preview, index);
+        renderSummary(preview);
+      });
+    }
+
+    const commonMessage = getEl('email-common-message');
+    if (commonMessage) {
+      commonMessage.addEventListener('input', () => {
+        window.__customerMercurialCommonMessage = commonMessage.value;
+        window.clearTimeout(window.__customerMercurialPreviewTimer);
+        window.__customerMercurialPreviewTimer = window.setTimeout(() => {
+          previewMercurialEmails({ preserveSelection: true }).catch((err) => showMessage('error', err.message || 'Erreur preview email'));
+        }, 500);
+      });
+    }
 
     const testBtn = getEl('email-test-btn');
     if (testBtn) {
@@ -224,10 +304,25 @@
     return data;
   }
 
-  async function previewMercurialEmails() {
+  function previewQuery() {
+    const context = emailContext();
+    const params = new URLSearchParams();
+    if (context.price_list_id) params.set('price_list_id', context.price_list_id);
+    if (context.price_list_date) params.set('price_list_date', context.price_list_date);
+    if (context.common_message) params.set('common_message', context.common_message);
+    const query = params.toString();
+    return query ? `?${query}` : '';
+  }
+
+  async function previewMercurialEmails(options = {}) {
+    const previousSelected = new Set(selectedReadyRecipients(window.__customerMercurialEmailPreview).map((row) => row.client_id));
     showMessage('', 'Preparation de la preview email...');
-    const preview = await requestJson('/api/customer-price-lists/email/preview', { method: 'GET' });
+    const preview = await requestJson(`/api/customer-price-lists/email/preview${previewQuery()}`, { method: 'GET' });
+    readyRecipients(preview).forEach((row) => {
+      row.selected = options.preserveSelection && previousSelected.size ? previousSelected.has(row.client_id) : true;
+    });
     window.__customerMercurialEmailPreview = preview;
+    window.__customerMercurialCommonMessage = preview.common_message || '';
     renderSummary(preview);
     renderEmailPreview(preview);
 
@@ -252,7 +347,7 @@
     showMessage('', 'Envoi du test en cours...');
     const result = await requestJson('/api/customer-price-lists/email/test', {
       method: 'POST',
-      body: JSON.stringify({ to: testRecipient }),
+      body: JSON.stringify(emailContext({ to: testRecipient })),
     });
 
     showMessage('success', `Email de test envoye a ${result.to}.`);
@@ -292,7 +387,7 @@
     showMessage('', 'Envoi des mercuriales en cours...');
     const result = await requestJson('/api/customer-price-lists/email/send', {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(emailContext()),
     });
 
     window.__customerMercurialEmailPreview = null;

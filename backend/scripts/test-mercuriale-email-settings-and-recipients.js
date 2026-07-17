@@ -16,6 +16,7 @@ const {
   resolveClientPricingLevelSource,
   resolveEmailSalutation,
   resolveMercurialeTargetTariff,
+  sendCustomerTariffEmails,
 } = require('../services/customerTariffEmailService');
 const { resolveCompanyEmail } = require('../services/pdf/pdfLayout');
 const {
@@ -195,6 +196,36 @@ function emailPreviewDb() {
   };
 }
 
+function deselectedSendDb() {
+  return {
+    async query(sql) {
+      const text = String(sql);
+      if (text.includes('FROM clients c') && text.includes("c.status = 'active'")) {
+        return {
+          rows: [{
+            id: 'client-1',
+            name: 'Client test',
+            email: 'client@example.com',
+            tariff_level: 1,
+          }],
+        };
+      }
+      if (text.includes('FROM store_settings')) {
+        return { rows: [{ contact_email: 'contact@altamaree.fr', email_sender_address: 'commercial@altamaree.fr' }] };
+      }
+      if (text.includes('FROM quick_order_sheets')) return { rows: [{ id: 'sheet-1' }] };
+      if (text.includes('FROM quick_order_sheet_products')) {
+        return { rows: [{ article_id: 'article-1', designation: 'Produit', family_name: 'Famille', sale_unit: 'kg', price_ht: 10 }] };
+      }
+      if (text.includes('INSERT INTO customer_price_list_email_batches')) {
+        return { rows: [{ id: 'batch-1', created_at: '2026-07-20T00:00:00Z' }] };
+      }
+      if (text.includes('UPDATE customer_price_list_email_batches')) return { rows: [] };
+      throw new Error(`Requete envoi deselection inattendue: ${text.slice(0, 80)}`);
+    },
+  };
+}
+
 (async () => {
   const preferred = await resolveClient([
     [{ contact_id: 'c1', contact_name: 'Mercuriale', email: 'prix@example.com', source: 'contact_preference' }],
@@ -278,11 +309,15 @@ function emailPreviewDb() {
     recipientResolution: {
       recipients: [{ contact_name: 'Jean Dupont', email: 'jean@example.com' }],
     },
+    mercurialeDate: '2026-07-20',
+    commonMessage: 'Message commun modifie.',
+    clientTariffLevel: 2,
     pdfFilename: 'Mercuriale_ALTA_MAREE_2026-07-17.pdf',
   });
-  assert.ok(renderedMail.subject.startsWith('Mercuriale ALTA MARÉE - '), 'objet nouveau modele');
+  assert.equal(renderedMail.subject, 'Mercuriale ALTA MARÉE - Départ du 20/07/2026', 'objet utilise la date mercuriale');
   assert.ok(renderedMail.body.includes('Bonjour Jean,'), 'corps personnalise avec prenom');
-  assert.ok(renderedMail.body.includes('Veuillez trouver ci-joint notre mercuriale mise à jour.'), 'corps nouveau modele');
+  assert.ok(renderedMail.body.includes('Message commun modifie.'), 'message commun modifie dans le corps');
+  assert.equal(renderedMail.client_tariff_level, 2, 'preview expose le niveau tarifaire client');
   assert.equal(renderedMail.attachment_filename, 'Mercuriale_ALTA_MAREE_2026-07-17.pdf', 'nom PDF expose dans preview');
   assert.equal(
     resolveClientPricingLevel({
@@ -330,11 +365,25 @@ function emailPreviewDb() {
   assert.equal(sourceWithInheritedParent.statusCode, 200, 'source-products client affilie retourne 200');
   assert.equal(sourceWithInheritedParent.body.target_tariff_level, 1, 'source-products client affilie herite du tarif parent');
 
-  const emailPreview = await buildCustomerTariffEmailPreview(emailPreviewDb(), 'store-1');
+  const emailPreview = await buildCustomerTariffEmailPreview(emailPreviewDb(), 'store-1', {
+    price_list_date: '2026-07-20',
+    common_message: 'Message commun modifie.',
+  });
   assert.equal(emailPreview.summary.eligible, 1, 'preview email globale fonctionne sans client transmis');
+  assert.equal(emailPreview.mercuriale_date, '2026-07-20', 'preview utilise la date de mercuriale fournie');
   assert.equal(emailPreview.recipients[0].mail_preview.salutation, 'Bonjour Jean,', 'preview email affiche la salutation personnalisee');
   assert.equal(emailPreview.recipients[0].mail_preview.text, emailPreview.recipients[0].mail_preview.body, 'preview affiche le meme texte que l envoi');
+  assert.ok(emailPreview.recipients[0].mail_preview.body.includes('Message commun modifie.'), 'preview utilise le message commun modifie');
+  assert.equal(emailPreview.recipients[0].mail_preview.client_tariff_level, 1, 'preview expose le tarif unique du client');
   assert.equal(emailPreview.recipients[0].mail_preview.attachment_filename, emailPreview.attachment_filename, 'preview expose le PDF joint exact');
+
+  const deselectedSend = await sendCustomerTariffEmails(deselectedSendDb(), 'store-1', {
+    price_list_date: '2026-07-20',
+    selected_client_ids: [],
+    common_message: 'Message commun modifie.',
+  });
+  assert.equal(deselectedSend.summary.sent, 0, 'destinataire decoche non envoye');
+  assert.equal(deselectedSend.summary.skipped, 0, 'destinataire decoche exclu sans diagnostic parasite');
 
   const pdfWithoutTarget = await callCustomerPriceListPdf();
   assert.equal(pdfWithoutTarget.statusCode, 400, 'PDF personnalise sans client ni tarif retourne 400');
@@ -402,6 +451,8 @@ function emailPreviewDb() {
   assert.ok(frontendEmail.includes('mail_preview'), 'frontend utilise la preview email backend');
   assert.ok(frontendEmail.includes('/api/customer-price-lists/email/test'), 'frontend expose l envoi de test');
   assert.ok(frontendEmail.includes('Envoyer un test'), 'frontend affiche le bouton envoyer un test');
+  assert.ok(frontendEmail.includes('selected_client_ids'), 'frontend envoie la selection visible');
+  assert.ok(frontendEmail.includes('Message commun'), 'frontend affiche le message commun');
 
   console.log('mercuriale-email-settings-and-recipients: ok');
 })().catch((err) => {

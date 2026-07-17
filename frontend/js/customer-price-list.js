@@ -60,6 +60,15 @@ let featuredArticleIds = new Set();
 let savedPriceListId = null;
 let lastStoreSettings = {};
 
+window.CustomerPriceListState = {
+  emailContext() {
+    return {
+      price_list_id: savedPriceListId,
+      price_list_date: priceListDateInput.value || null,
+    };
+  },
+};
+
 function authHeaders(json = false) {
   const headers = { Authorization: `Bearer ${sessionToken}` };
   if (json) headers['Content-Type'] = 'application/json';

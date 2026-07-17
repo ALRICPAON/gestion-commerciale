@@ -21,7 +21,12 @@ function requireTariffEmailSender(req, res, next) {
 
 router.get('/preview', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
   try {
-    const preview = await buildCustomerTariffEmailPreview(req.dbPool, req.user.store_id);
+    const preview = await buildCustomerTariffEmailPreview(req.dbPool, req.user.store_id, {
+      price_list_id: req.query.price_list_id,
+      price_list_date: req.query.price_list_date,
+      mercuriale_date: req.query.mercuriale_date,
+      common_message: req.query.common_message,
+    });
     res.json(preview);
   } catch (err) {
     console.error('Erreur GET /api/customer-price-lists/email/preview :', err);
@@ -31,7 +36,14 @@ router.get('/preview', authenticateToken, attachDbContext, requireTariffEmailSen
 
 router.post('/send', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
   try {
-    const result = await sendCustomerTariffEmails(req.dbPool, req.user.store_id, { user_id: req.user.id });
+    const result = await sendCustomerTariffEmails(req.dbPool, req.user.store_id, {
+      user_id: req.user.id,
+      price_list_id: req.body?.price_list_id,
+      price_list_date: req.body?.price_list_date,
+      mercuriale_date: req.body?.mercuriale_date,
+      common_message: req.body?.common_message,
+      selected_client_ids: req.body?.selected_client_ids,
+    });
 
     res.json(result);
   } catch (err) {
@@ -45,6 +57,11 @@ router.post('/test', authenticateToken, attachDbContext, requireTariffEmailSende
     const result = await sendCustomerTariffTestEmail(req.dbPool, req.user.store_id, {
       to: req.body?.to,
       user_id: req.user.id,
+      price_list_id: req.body?.price_list_id,
+      price_list_date: req.body?.price_list_date,
+      mercuriale_date: req.body?.mercuriale_date,
+      common_message: req.body?.common_message,
+      selected_client_ids: req.body?.selected_client_ids,
     });
 
     res.json(result);
