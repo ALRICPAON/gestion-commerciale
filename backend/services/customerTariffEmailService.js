@@ -51,8 +51,47 @@ function todayIsoDate() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function formatTodayFr() {
+  return todayIsoDate().split('-').reverse().join('/');
+}
+
 function buildPdfFilename() {
   return `Mercuriale_ALTA_MAREE_${todayIsoDate()}.pdf`;
+}
+
+function resolveCompanyEmail(storeSettings = {}) {
+  return clean(storeSettings.contact_email)
+    || clean(storeSettings.email)
+    || clean(storeSettings.email_sender_address);
+}
+
+function resolveReplyTo(storeSettings = {}) {
+  return clean(storeSettings.email_sender_address) || resolveCompanyEmail(storeSettings);
+}
+
+function resolveCompanyWebsite(storeSettings = {}) {
+  return clean(storeSettings.website)
+    || clean(storeSettings.site_url)
+    || clean(storeSettings.website_url)
+    || clean(storeSettings.company_website);
+}
+
+function resolveFirstContactName(recipientResolution = {}) {
+  const recipient = (recipientResolution.recipients || []).find((entry) => clean(entry.contact_name));
+  return clean(recipient?.contact_name);
+}
+
+function resolveEmailSalutation(contactName) {
+  const name = clean(contactName);
+  if (!name) return 'Bonjour,';
+
+  const parts = name.split(/\s+/).filter(Boolean);
+  const first = parts[0];
+  if (parts.length >= 2 && /^[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ'-]*$/.test(first)) {
+    return `Bonjour ${first},`;
+  }
+
+  return `Bonjour ${name},`;
 }
 
 function buildSummary(recipients) {
@@ -129,6 +168,10 @@ async function fetchStoreSettings(db, storeId) {
       legal_mentions,
       contact_email,
       email_sender_address,
+      to_jsonb(store_settings)->>'website' AS website,
+      to_jsonb(store_settings)->>'site_url' AS site_url,
+      to_jsonb(store_settings)->>'website_url' AS website_url,
+      to_jsonb(store_settings)->>'company_website' AS company_website,
       royale_maree_commission_eur_per_kg
     FROM store_settings
     WHERE store_id = $1
@@ -252,6 +295,11 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
   const email = recipients.join(', ');
   const priceListContactCount = Number(recipientResolution.preferred_count || 0);
   const itemCount = pricingLevel ? (productsByPricingLevel[pricingLevel] || []).length : 0;
+  const recipientDetails = (recipientResolution.recipients || []).map((recipient) => ({
+    name: recipient.contact_name || null,
+    email: recipient.email,
+    source: recipient.source,
+  }));
 
   if (!hasEmail(email)) {
     return {
@@ -262,6 +310,7 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
       item_count: 0,
       recipient_source: recipientResolution.source,
       recipient_count: 0,
+      recipients: [],
       price_list_contact_count: priceListContactCount,
       resolved_tariff_level: pricingLevel,
       pricing_level_source: pricingLevelSource,
@@ -277,6 +326,7 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
       item_count: 0,
       recipient_source: recipientResolution.source,
       recipient_count: recipients.length,
+      recipients: recipientDetails,
       price_list_contact_count: priceListContactCount,
       resolved_tariff_level: null,
       pricing_level_source: null,
@@ -292,6 +342,7 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
       item_count: 0,
       recipient_source: recipientResolution.source,
       recipient_count: recipients.length,
+      recipients: recipientDetails,
       price_list_contact_count: priceListContactCount,
       resolved_tariff_level: pricingLevel,
       pricing_level_source: pricingLevelSource,
@@ -306,6 +357,8 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
     item_count: itemCount,
     recipient_source: recipientResolution.source,
     recipient_count: recipients.length,
+    recipients: recipientDetails,
+    recipient_resolution: recipientResolution,
     price_list_contact_count: priceListContactCount,
     resolved_tariff_level: pricingLevel,
     pricing_level_source: pricingLevelSource,
@@ -328,10 +381,24 @@ async function buildCustomerTariffEmailPreview(db, storeId) {
     error.expose = true;
     throw error;
   }
-  const recipients = await Promise.all(clients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel)));
+  const filename = buildPdfFilename();
+  const recipients = (await Promise.all(clients.map((client) => clientPreviewRow(db, storeId, client, productsByPricingLevel))))
+    .map((recipient) => {
+      if (recipient.status !== 'ready') return recipient;
+      const mail = buildMercurialeEmailMessage({
+        storeSettings,
+        recipientResolution: recipient.recipient_resolution,
+        pdfFilename: filename,
+      });
+      const { recipient_resolution: ignored, ...row } = recipient;
+      return { ...row, mail_preview: mail };
+    });
 
   return {
     smtp: getSmtpStatus(),
+    sender: resolveReplyTo(storeSettings),
+    test_recipient: resolveCompanyEmail(storeSettings),
+    attachment_filename: filename,
     summary: buildSummary(recipients),
     recipients,
   };
@@ -348,41 +415,56 @@ function escapeHtml(value) {
 }
 
 function buildSubject(storeSettings) {
-  const companyName = clean(storeSettings.company_name) || 'ALTA MAREE';
-  return `Mercuriale ${companyName}`;
+  return `Mercuriale ALTA MARÉE - ${formatTodayFr()}`;
 }
 
-function buildEmailHtml(storeSettings) {
-  const companyName = clean(storeSettings.company_name) || 'ALTA MAREE';
-
-  return `
-    <div style="font-family:Arial,sans-serif;color:#111827;line-height:1.5;">
-      <p>Bonjour,</p>
-      <p>Veuillez trouver ci-joint votre mercuriale ${escapeHtml(companyName)}.</p>
-      <p>Cette mercuriale annule et remplace la precedente.</p>
-      <p>Pour toute question, notre equipe reste a votre disposition.</p>
-      <p>Cordialement,</p>
-      <p>${escapeHtml(companyName)}</p>
-    </div>
-  `;
-}
-
-function buildEmailText(storeSettings) {
-  const companyName = clean(storeSettings.company_name) || 'ALTA MAREE';
+function buildEmailText(storeSettings, salutation = 'Bonjour,') {
+  const companyEmail = resolveCompanyEmail(storeSettings) || '';
+  const website = resolveCompanyWebsite(storeSettings) || '';
 
   return [
-    'Bonjour,',
+    salutation,
     '',
-    `Veuillez trouver ci-joint votre mercuriale ${companyName}.`,
+    'Veuillez trouver ci-joint notre mercuriale mise à jour.',
     '',
-    'Cette mercuriale annule et remplace la precedente.',
+    "N'hésitez pas à nous contacter pour toute demande de disponibilité, de réservation ou de renseignement.",
     '',
-    'Pour toute question, notre equipe reste a votre disposition.',
+    'Nous vous remercions de votre confiance.',
     '',
-    'Cordialement,',
+    'Bien cordialement,',
     '',
-    companyName,
+    "L'équipe ALTA MARÉE",
+    '',
+    `Téléphone : ${clean(storeSettings.phone) || ''}`,
+    `Email : ${companyEmail}`,
+    `Site internet : ${website}`,
   ].join('\n');
+}
+
+function buildEmailHtml(storeSettings, salutation = 'Bonjour,') {
+  return buildEmailText(storeSettings, salutation)
+    .split('\n')
+    .map((line) => (line ? `<p>${escapeHtml(line)}</p>` : '<br>'))
+    .join('');
+}
+
+function buildMercurialeEmailMessage({ storeSettings, recipientResolution, pdfFilename } = {}) {
+  const contactName = resolveFirstContactName(recipientResolution);
+  const salutation = resolveEmailSalutation(contactName);
+  const text = buildEmailText(storeSettings || {}, salutation);
+  const replyTo = resolveReplyTo(storeSettings || {});
+
+  return {
+    from: replyTo,
+    replyTo,
+    subject: buildSubject(storeSettings || {}),
+    html: buildEmailHtml(storeSettings || {}, salutation),
+    text,
+    body: text,
+    salutation,
+    contact_name: contactName,
+    attachment_filename: pdfFilename || buildPdfFilename(),
+  };
 }
 
 function groupProductsByFamily(products = []) {
@@ -587,8 +669,6 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   };
   const results = [];
   const smtpErrors = [];
-  const replyTo = clean(storeSettings.email_sender_address) || clean(storeSettings.contact_email) || clean(storeSettings.email);
-  const subject = buildSubject(storeSettings);
   const filename = buildPdfFilename();
 
   for (const client of clients) {
@@ -632,17 +712,22 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
     }
 
     const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
+    const mail = buildMercurialeEmailMessage({
+      storeSettings,
+      recipientResolution: previewRow.recipient_resolution,
+      pdfFilename: filename,
+    });
 
     try {
       const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings });
       const delivery = await sendEmail({
         to: previewRow.email,
-        subject,
-        replyTo,
-        html: buildEmailHtml(storeSettings),
-        text: buildEmailText(storeSettings),
+        subject: mail.subject,
+        replyTo: mail.replyTo,
+        html: mail.html,
+        text: mail.text,
         attachments: [{
-          filename,
+          filename: mail.attachment_filename,
           content: pdfBuffer,
           contentType: 'application/pdf',
         }],
@@ -688,7 +773,75 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   };
 }
 
+async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
+  const [clients, storeSettings] = await Promise.all([
+    fetchActiveClients(db, storeId),
+    fetchStoreSettings(db, storeId),
+  ]);
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings);
+  if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
+    const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${todayIsoDate()}`);
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+
+  const testRecipient = resolveCompanyEmail(storeSettings) || clean(options.to);
+  if (!testRecipient) {
+    const error = new Error('Adresse email de test requise');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+
+  for (const client of clients) {
+    const pricingLevel = resolveClientPricingLevel(client);
+    if (!pricingLevel) continue;
+
+    const previewRow = await clientPreviewRow(db, storeId, client, productsByPricingLevel);
+    if (previewRow.status !== 'ready') continue;
+
+    const filename = buildPdfFilename();
+    const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
+    const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings });
+    const mail = buildMercurialeEmailMessage({
+      storeSettings,
+      recipientResolution: previewRow.recipient_resolution,
+      pdfFilename: filename,
+    });
+    const delivery = await sendEmail({
+      to: testRecipient,
+      subject: mail.subject,
+      replyTo: mail.replyTo,
+      html: mail.html,
+      text: mail.text,
+      attachments: [{
+        filename: mail.attachment_filename,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+      }],
+    });
+
+    return {
+      ok: true,
+      to: testRecipient,
+      original_to: previewRow.email,
+      client_id: previewRow.client_id,
+      client_name: previewRow.client_name,
+      subject: mail.subject,
+      attachment_filename: mail.attachment_filename,
+      message_id: delivery.message_id,
+    };
+  }
+
+  const error = new Error('Aucun email mercuriale éligible pour envoyer un test');
+  error.status = 400;
+  error.expose = true;
+  throw error;
+}
+
 module.exports = {
+  buildMercurialeEmailMessage,
   buildCustomerTariffEmailPreview,
   buildSummary,
   customerMercurialPdfPriceList,
@@ -697,5 +850,7 @@ module.exports = {
   resolveClientPricingLevel,
   resolveClientPricingLevelSource,
   resolveMercurialeTargetTariff,
+  resolveEmailSalutation,
   sendCustomerTariffEmails,
+  sendCustomerTariffTestEmail,
 };

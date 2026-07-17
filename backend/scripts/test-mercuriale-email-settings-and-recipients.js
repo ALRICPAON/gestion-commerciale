@@ -7,12 +7,14 @@ const {
   recipientsToEmailList,
 } = require('../services/documentRecipientService');
 const {
+  buildMercurialeEmailMessage,
   buildCustomerTariffEmailPreview,
   buildSummary,
   customerMercurialPdfPriceList,
   isMercurialEmailSendReady,
   resolveClientPricingLevel,
   resolveClientPricingLevelSource,
+  resolveEmailSalutation,
   resolveMercurialeTargetTariff,
 } = require('../services/customerTariffEmailService');
 const { resolveCompanyEmail } = require('../services/pdf/pdfLayout');
@@ -159,7 +161,16 @@ function emailPreviewDb() {
         };
       }
       if (text.includes('FROM store_settings')) {
-        return { rows: [{ contact_email: 'contact@altamaree.fr', royale_maree_commission_eur_per_kg: 0 }] };
+        return {
+          rows: [{
+            company_name: 'ALTA MAREE',
+            phone: '06 87 34 34 55',
+            contact_email: 'contact@altamaree.fr',
+            email_sender_address: 'commercial@altamaree.fr',
+            website: 'https://altamaree.fr',
+            royale_maree_commission_eur_per_kg: 0,
+          }],
+        };
       }
       if (text.includes('FROM quick_order_sheets')) return { rows: [{ id: 'sheet-1' }] };
       if (text.includes('FROM quick_order_sheet_products')) {
@@ -175,7 +186,7 @@ function emailPreviewDb() {
         };
       }
       if (text.includes('FROM client_contacts') && text.includes('receives_price_lists = true')) {
-        return { rows: [{ contact_id: 'contact-1', contact_name: 'Mercuriale', email: 'prix@example.com', source: 'contact_preference' }] };
+        return { rows: [{ contact_id: 'contact-1', contact_name: 'Jean Dupont', email: 'prix@example.com', source: 'contact_preference' }] };
       }
       if (text.includes('FROM client_contacts')) return { rows: [] };
       if (text.includes('NULL::uuid AS contact_id')) return { rows: [] };
@@ -254,6 +265,25 @@ function emailPreviewDb() {
     1,
     'target_tariff_level explicite prioritaire'
   );
+  assert.equal(resolveEmailSalutation('Jean Dupont'), 'Bonjour Jean,', 'salutation utilise le prenom');
+  assert.equal(resolveEmailSalutation('Jean-Pierre Martin'), 'Bonjour Jean-Pierre,', 'salutation conserve le prenom compose');
+  assert.equal(resolveEmailSalutation(''), 'Bonjour,', 'salutation generique sans contact');
+  const renderedMail = buildMercurialeEmailMessage({
+    storeSettings: {
+      phone: '06 87 34 34 55',
+      contact_email: 'contact@altamaree.fr',
+      email_sender_address: 'commercial@altamaree.fr',
+      website: 'https://altamaree.fr',
+    },
+    recipientResolution: {
+      recipients: [{ contact_name: 'Jean Dupont', email: 'jean@example.com' }],
+    },
+    pdfFilename: 'Mercuriale_ALTA_MAREE_2026-07-17.pdf',
+  });
+  assert.ok(renderedMail.subject.startsWith('Mercuriale ALTA MARÉE - '), 'objet nouveau modele');
+  assert.ok(renderedMail.body.includes('Bonjour Jean,'), 'corps personnalise avec prenom');
+  assert.ok(renderedMail.body.includes('Veuillez trouver ci-joint notre mercuriale mise à jour.'), 'corps nouveau modele');
+  assert.equal(renderedMail.attachment_filename, 'Mercuriale_ALTA_MAREE_2026-07-17.pdf', 'nom PDF expose dans preview');
   assert.equal(
     resolveClientPricingLevel({
       is_royale_maree_member: true,
@@ -302,6 +332,9 @@ function emailPreviewDb() {
 
   const emailPreview = await buildCustomerTariffEmailPreview(emailPreviewDb(), 'store-1');
   assert.equal(emailPreview.summary.eligible, 1, 'preview email globale fonctionne sans client transmis');
+  assert.equal(emailPreview.recipients[0].mail_preview.salutation, 'Bonjour Jean,', 'preview email affiche la salutation personnalisee');
+  assert.equal(emailPreview.recipients[0].mail_preview.text, emailPreview.recipients[0].mail_preview.body, 'preview affiche le meme texte que l envoi');
+  assert.equal(emailPreview.recipients[0].mail_preview.attachment_filename, emailPreview.attachment_filename, 'preview expose le PDF joint exact');
 
   const pdfWithoutTarget = await callCustomerPriceListPdf();
   assert.equal(pdfWithoutTarget.statusCode, 400, 'PDF personnalise sans client ni tarif retourne 400');
@@ -361,6 +394,14 @@ function emailPreviewDb() {
   );
   assert.ok(frontendPrint.includes("MERCURIALE_PRICE_MENTION = 'Prix rendu'"), 'apercu contient Prix rendu');
   assert.ok(frontendPrint.includes('settings.contact_email || settings.email || settings.email_sender_address'), 'apercu resout email societe');
+
+  const frontendEmail = fs.readFileSync(
+    path.resolve(__dirname, '../../frontend/js/customer-price-list-email.js'),
+    'utf8'
+  );
+  assert.ok(frontendEmail.includes('mail_preview'), 'frontend utilise la preview email backend');
+  assert.ok(frontendEmail.includes('/api/customer-price-lists/email/test'), 'frontend expose l envoi de test');
+  assert.ok(frontendEmail.includes('Envoyer un test'), 'frontend affiche le bouton envoyer un test');
 
   console.log('mercuriale-email-settings-and-recipients: ok');
 })().catch((err) => {

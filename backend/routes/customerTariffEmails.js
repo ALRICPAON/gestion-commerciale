@@ -6,6 +6,7 @@ const {
   buildCustomerTariffEmailPreview,
   fetchCustomerTariffEmailHistory,
   sendCustomerTariffEmails,
+  sendCustomerTariffTestEmail,
 } = require('../services/customerTariffEmailService');
 
 const router = express.Router();
@@ -36,6 +37,20 @@ router.post('/send', authenticateToken, attachDbContext, requireTariffEmailSende
   } catch (err) {
     console.error('Erreur POST /api/customer-price-lists/email/send :', err);
     res.status(err.status || 500).json({ error: err.message || 'Erreur serveur envoi emails tarifs' });
+  }
+});
+
+router.post('/test', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
+  try {
+    const result = await sendCustomerTariffTestEmail(req.dbPool, req.user.store_id, {
+      to: req.body?.to,
+      user_id: req.user.id,
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('Erreur POST /api/customer-price-lists/email/test :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur serveur test email mercuriale' });
   }
 });
 
