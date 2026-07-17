@@ -7,7 +7,7 @@ const {
   resolveDocumentRecipients,
   recipientsToEmailList,
 } = require('./documentRecipientService');
-const { royaleMareeCommissionAmount } = require('./royaleMareeCommission');
+const { getCustomerDisplayedPrice } = require('./royaleMareeCommission');
 
 const VALID_PRICING_LEVELS = new Set([1, 2, 3]);
 
@@ -20,26 +20,6 @@ function clean(value) {
 function normalizePricingLevel(value) {
   const parsed = Number(value);
   return VALID_PRICING_LEVELS.has(parsed) ? parsed : null;
-}
-
-function parsePrice(value) {
-  if (value === undefined || value === null || value === '') return null;
-  const parsed = Number(String(value).replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function applyRoyaleMareeCommission(products, client, storeSettings) {
-  if (client?.is_royale_maree_member !== true) return products;
-  const commission = royaleMareeCommissionAmount(storeSettings);
-  if (!commission) return products;
-  return products.map((product) => {
-    const price = parsePrice(product.price_ht);
-    if (price === null) return product;
-    return {
-      ...product,
-      price_ht: Number((price + commission).toFixed(4)),
-    };
-  });
 }
 
 function hasEmail(value) {
@@ -116,22 +96,47 @@ async function fetchActiveClients(db, storeId) {
   const result = await db.query(
     `
     SELECT
-      id::text AS id,
-      code,
-      name,
-      legal_name,
-      email,
-      tariff_level,
-      COALESCE(is_royale_maree_member, false) AS is_royale_maree_member
-    FROM clients
-    WHERE store_id = $1
-      AND status = 'active'
-    ORDER BY COALESCE(name, legal_name, code) ASC
+      c.id::text AS id,
+      c.code,
+      c.name,
+      c.legal_name,
+      c.email,
+      c.tariff_level,
+      COALESCE(c.is_royale_maree_member, false) AS is_royale_maree_member,
+      c.parent_client_id,
+      c.billed_client_id,
+      parent.code AS parent_client_code,
+      parent.name AS parent_client_name,
+      COALESCE(parent.is_royale_maree_member, false) AS parent_is_royale_maree_member,
+      billed.code AS billed_client_code,
+      billed.name AS billed_client_name,
+      COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member
+    FROM clients c
+    LEFT JOIN clients parent ON parent.id = c.parent_client_id AND parent.store_id = c.store_id
+    LEFT JOIN clients billed ON billed.id = COALESCE(c.billed_client_id, c.id) AND billed.store_id = c.store_id
+    WHERE c.store_id = $1
+      AND c.status = 'active'
+    ORDER BY COALESCE(c.name, c.legal_name, c.code) ASC
     `,
     [storeId]
   );
 
   return result.rows;
+}
+
+function applyDisplayedPricesForClient(products, client, storeSettings) {
+  const pricingLevel = normalizePricingLevel(client?.tariff_level);
+  if (!pricingLevel) return [];
+  return (products || []).map((product) => ({
+    ...product,
+    price_ht: getCustomerDisplayedPrice({
+      price: product.price_ht,
+      pricingLevel,
+      client,
+      storeSettings,
+      context: { targetTariffLevel: pricingLevel },
+    }),
+  }));
 }
 
 async function fetchProductsForPricingLevel(db, storeId, pricingLevel, commissionSettings = {}) {
@@ -523,7 +528,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
       continue;
     }
 
-    const products = applyRoyaleMareeCommission(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
+    const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
 
     try {
       const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings });

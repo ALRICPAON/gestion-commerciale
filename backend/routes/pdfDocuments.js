@@ -15,6 +15,7 @@ const {
   renderSaleOrderPdf,
   saleOrderFilename,
 } = require('../services/pdf/templates/saleOrderPdfTemplate');
+const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
 
 const router = express.Router();
 
@@ -31,7 +32,8 @@ async function getStoreSettings(db, storeId) {
     `
     SELECT company_name, logo_url, address_line1, address_line2, postal_code, city, country,
       phone, email, siret, vat_number, sanitary_approval_number, iban, bic,
-      payment_terms, legal_mentions, terms_and_conditions, delivery_note_footer, invoice_footer
+      payment_terms, legal_mentions, terms_and_conditions, delivery_note_footer, invoice_footer,
+      royale_maree_commission_eur_per_kg
     FROM store_settings
     WHERE store_id = $1
     LIMIT 1
@@ -88,9 +90,22 @@ router.get('/customer-price-lists/:id/pdf', authenticateToken, attachDbContext, 
     const [headerResult, linesResult, storeSettings] = await Promise.all([
       req.dbPool.query(
         `
-        SELECT cpl.*, cl.name AS client_name, cl.code AS client_code
+        SELECT cpl.*, cl.name AS client_name, cl.code AS client_code,
+          cl.legal_name AS client_legal_name,
+          cl.tariff_level AS client_tariff_level,
+          COALESCE(cl.is_royale_maree_member, false) AS is_royale_maree_member,
+          cl.parent_client_id,
+          cl.billed_client_id,
+          parent.code AS parent_client_code,
+          parent.name AS parent_client_name,
+          COALESCE(parent.is_royale_maree_member, false) AS parent_is_royale_maree_member,
+          billed.code AS billed_client_code,
+          billed.name AS billed_client_name,
+          COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member
         FROM customer_price_lists cpl
         LEFT JOIN clients cl ON cl.id = cpl.client_id AND cl.store_id = cpl.store_id
+        LEFT JOIN clients parent ON parent.id = cl.parent_client_id AND parent.store_id = cl.store_id
+        LEFT JOIN clients billed ON billed.id = COALESCE(cl.billed_client_id, cl.id) AND billed.store_id = cl.store_id
         WHERE cpl.id = $1 AND cpl.store_id = $2
         LIMIT 1
         `,
@@ -110,7 +125,16 @@ router.get('/customer-price-lists/:id/pdf', authenticateToken, attachDbContext, 
 
     if (!headerResult.rows.length) return res.status(404).json({ error: 'Mercuriale introuvable' });
     const priceList = { ...headerResult.rows[0], target_tariff_level: headerResult.rows[0].tariff_level };
-    const html = renderCustomerPriceListPdf({ priceList, lines: linesResult.rows, storeSettings });
+    const client = priceList.client_id ? priceList : null;
+    const lines = linesResult.rows.map((line) => decorateLineWithDisplayedPrices(line, {
+      client,
+      storeSettings,
+      context: {
+        targetTariffLevel: priceList.tariff_level,
+        clientOptionalTargetTariff: client ? null : priceList.tariff_level,
+      },
+    }));
+    const html = renderCustomerPriceListPdf({ priceList, lines, storeSettings });
     return renderAndSend(res, html, customerPriceListFilename(priceList));
   } catch (err) {
     console.error('Erreur PDF mercuriale :', err);
