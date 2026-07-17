@@ -48,10 +48,10 @@
   }
 
   function priceForTariff(line, tariff) {
-    if (tariff === 1) return line.price_level_1_ht ?? line.price_ht;
-    if (tariff === 2) return line.price_level_2_ht ?? line.price_ht;
-    if (tariff === 3) return line.price_level_3_ht ?? line.price_ht;
-    return line.price_ht;
+    if (tariff === 1) return line.display_price_level_1_ht ?? line.price_level_1_ht ?? line.display_price_ht ?? line.price_ht;
+    if (tariff === 2) return line.display_price_level_2_ht ?? line.price_level_2_ht ?? line.display_price_ht ?? line.price_ht;
+    if (tariff === 3) return line.display_price_level_3_ht ?? line.price_level_3_ht ?? line.display_price_ht ?? line.price_ht;
+    return line.display_price_ht ?? line.price_ht;
   }
 
   /**

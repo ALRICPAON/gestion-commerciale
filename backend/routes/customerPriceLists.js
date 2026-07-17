@@ -2,7 +2,7 @@ const express = require('express');
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
-const { royaleMareeCommissionAmount } = require('../services/royaleMareeCommission');
+const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
 
 const router = express.Router();
 
@@ -79,34 +79,51 @@ function safeLimit(value, fallback = 1000, max = 2000) {
   return Math.min(Number.isFinite(parsed) && parsed > 0 ? parsed : fallback, max);
 }
 
-function applyRoyaleMareeCommission(price, client, commissionSettings = {}) {
-  const basePrice = parseNumber(price);
-  if (basePrice === null) return price ?? null;
-  if (client?.is_royale_maree_member !== true) return basePrice;
-  return Number((basePrice + royaleMareeCommissionAmount(commissionSettings)).toFixed(4));
-}
-
-function priceForLevel(row, tariffLevel, client, commissionSettings = {}) {
+function priceForLevel(row, tariffLevel) {
   if (![1, 2, 3].includes(Number(tariffLevel))) return null;
   const value = row[`sale_price_level_${tariffLevel}_ht`];
-  const basePrice = value !== null && value !== undefined ? value : row.sale_price_ex_vat ?? null;
-  return applyRoyaleMareeCommission(basePrice, client, commissionSettings);
+  return value !== null && value !== undefined ? value : row.sale_price_ex_vat ?? null;
 }
 
-function applyCommissionToSourceProduct(row, client, commissionSettings = {}) {
-  return {
+function decorateCourseLine(row, { client = null, storeSettings = {}, targetTariffLevel = null } = {}) {
+  const line = {
     ...row,
-    suggested_price_ht: applyRoyaleMareeCommission(row.suggested_price_ht, client, commissionSettings),
-    price_level_1_ht: applyRoyaleMareeCommission(row.price_level_1_ht, client, commissionSettings),
-    price_level_2_ht: applyRoyaleMareeCommission(row.price_level_2_ht, client, commissionSettings),
-    price_level_3_ht: applyRoyaleMareeCommission(row.price_level_3_ht, client, commissionSettings),
+    price_ht: row.price_ht ?? row.suggested_price_ht ?? null,
+    price_level_1_ht: row.price_level_1_ht ?? row.sale_price_level_1_ht ?? null,
+    price_level_2_ht: row.price_level_2_ht ?? row.sale_price_level_2_ht ?? null,
+    price_level_3_ht: row.price_level_3_ht ?? row.sale_price_level_3_ht ?? null,
+    tariff_level: row.tariff_level ?? targetTariffLevel,
   };
+  return decorateLineWithDisplayedPrices(line, {
+    client,
+    storeSettings,
+    context: {
+      targetTariffLevel,
+      clientOptionalTargetTariff: client ? null : targetTariffLevel,
+    },
+  });
 }
 
 async function fetchCommissionSettings(db, storeId) {
   const result = await db.query(
     `
     SELECT royale_maree_commission_eur_per_kg
+    FROM store_settings
+    WHERE store_id = $1
+    LIMIT 1
+    `,
+    [storeId]
+  );
+
+  return result.rows[0] || {};
+}
+
+async function fetchStoreSettingsForPresentation(db, storeId) {
+  const result = await db.query(
+    `
+    SELECT company_name, logo_url, address_line1, address_line2, postal_code, city, country,
+      phone, email, siret, vat_number, sanitary_approval_number, legal_mentions,
+      royale_maree_commission_eur_per_kg
     FROM store_settings
     WHERE store_id = $1
     LIMIT 1
@@ -231,11 +248,27 @@ async function getOptionalClient(db, storeId, clientId) {
   if (!clientId) return null;
   const result = await db.query(
     `
-    SELECT id, code, name, tariff_level, COALESCE(is_royale_maree_member, false) AS is_royale_maree_member
-    FROM clients
-    WHERE id = $1
-      AND store_id = $2
-      AND status <> 'inactive'
+    SELECT
+      c.id,
+      c.code,
+      c.name,
+      c.legal_name,
+      c.tariff_level,
+      COALESCE(c.is_royale_maree_member, false) AS is_royale_maree_member,
+      c.parent_client_id,
+      c.billed_client_id,
+      parent.code AS parent_client_code,
+      parent.name AS parent_client_name,
+      COALESCE(parent.is_royale_maree_member, false) AS parent_is_royale_maree_member,
+      billed.code AS billed_client_code,
+      billed.name AS billed_client_name,
+      COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member
+    FROM clients c
+    LEFT JOIN clients parent ON parent.id = c.parent_client_id AND parent.store_id = c.store_id
+    LEFT JOIN clients billed ON billed.id = COALESCE(c.billed_client_id, c.id) AND billed.store_id = c.store_id
+    WHERE c.id = $1
+      AND c.store_id = $2
+      AND c.status <> 'inactive'
     LIMIT 1
     `,
     [clientId, storeId]
@@ -364,7 +397,11 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
         ].filter(Boolean).join(' ').toLowerCase().includes(search);
         const matchesFamily = !family || row.family_code === family || row.family_name === family;
         return matchesSearch && matchesFamily;
-      }).map((row) => applyCommissionToSourceProduct(row, client, commissionSettings));
+      }).map((row) => decorateCourseLine(row, {
+        client,
+        storeSettings: commissionSettings,
+        targetTariffLevel,
+      }));
       return res.json({
         client,
         target_tariff_level: targetTariffLevel,
@@ -445,11 +482,15 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const rows = result.rows.map((row) => ({
       ...row,
       target_tariff_level: targetTariffLevel,
-      suggested_price_ht: targetTariffLevel ? priceForLevel(row, targetTariffLevel, client, commissionSettings) : null,
+      suggested_price_ht: targetTariffLevel ? priceForLevel(row, targetTariffLevel) : null,
       suggested_price_source: targetTariffLevel ? 'target_tariff' : 'none',
-      price_level_1_ht: priceForLevel(row, 1, client, commissionSettings),
-      price_level_2_ht: priceForLevel(row, 2, client, commissionSettings),
-      price_level_3_ht: priceForLevel(row, 3, client, commissionSettings),
+      price_level_1_ht: priceForLevel(row, 1),
+      price_level_2_ht: priceForLevel(row, 2),
+      price_level_3_ht: priceForLevel(row, 3),
+    })).map((row) => decorateCourseLine(row, {
+      client,
+      storeSettings: commissionSettings,
+      targetTariffLevel,
     }));
 
     res.json({
@@ -576,22 +617,19 @@ router.get('/:id/presentation', authenticateToken, attachDbContext, async (req, 
     const header = await getHeader(req.dbPool, req.user.store_id, priceListId);
     if (!header) return res.status(404).json({ error: 'Mercuriale introuvable' });
 
-    const [lines, settingsResult] = await Promise.all([
+    const [lines, storeSettings] = await Promise.all([
       getLines(req.dbPool, priceListId),
-      req.dbPool.query(
-        `
-        SELECT company_name, logo_url, address_line1, address_line2, postal_code, city, country,
-          phone, email, siret, vat_number, sanitary_approval_number, legal_mentions
-        FROM store_settings
-        WHERE store_id = $1
-        LIMIT 1
-        `,
-        [req.user.store_id]
-      ),
+      fetchStoreSettingsForPresentation(req.dbPool, req.user.store_id),
     ]);
+    const client = await getOptionalClient(req.dbPool, req.user.store_id, header.client_id);
+    const decoratedLines = lines.map((line) => decorateCourseLine(line, {
+      client,
+      storeSettings,
+      targetTariffLevel: header.tariff_level,
+    }));
 
-    const featured = lines.filter((line) => line.is_featured);
-    const families = lines.filter((line) => !line.is_featured).reduce((acc, line) => {
+    const featured = decoratedLines.filter((line) => line.is_featured);
+    const families = decoratedLines.filter((line) => !line.is_featured).reduce((acc, line) => {
       const key = line.family_name || 'Autre';
       if (!acc[key]) acc[key] = [];
       acc[key].push(line);
@@ -600,10 +638,10 @@ router.get('/:id/presentation', authenticateToken, attachDbContext, async (req, 
 
     res.json({
       price_list: { ...header, target_tariff_level: header.tariff_level },
-      store_settings: settingsResult.rows[0] || {},
+      store_settings: storeSettings,
       featured_lines: featured,
       families,
-      lines,
+      lines: decoratedLines,
       future_channels: {
         pdf: false,
         email: false,

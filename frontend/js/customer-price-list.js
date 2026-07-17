@@ -182,12 +182,12 @@ function usefulInfo(row) {
 function priceLabel(row) {
   if (isMultiTariff()) {
     return [
-      formatMoney(row.price_level_1_ht),
-      formatMoney(row.price_level_2_ht),
-      formatMoney(row.price_level_3_ht),
+      formatMoney(row.display_price_level_1_ht ?? row.price_level_1_ht),
+      formatMoney(row.display_price_level_2_ht ?? row.price_level_2_ht),
+      formatMoney(row.display_price_level_3_ht ?? row.price_level_3_ht),
     ];
   }
-  return [formatMoney(row.suggested_price_ht)];
+  return [formatMoney(row.display_price_ht ?? row.suggested_price_ht)];
 }
 
 function renderTableHead() {
@@ -265,6 +265,10 @@ function buildLineFromSource(row, index) {
     price_level_1_ht: row.price_level_1_ht,
     price_level_2_ht: row.price_level_2_ht,
     price_level_3_ht: row.price_level_3_ht,
+    display_price_ht: tariffLevel ? row.display_price_ht : null,
+    display_price_level_1_ht: row.display_price_level_1_ht,
+    display_price_level_2_ht: row.display_price_level_2_ht,
+    display_price_level_3_ht: row.display_price_level_3_ht,
     price_source: tariffLevel ? 'target_tariff' : 'none',
     tariff_level: tariffLevel,
     line_note: '',
