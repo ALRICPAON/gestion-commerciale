@@ -37,12 +37,16 @@ function joinAddress(settings = {}) {
   ].filter(Boolean);
 }
 
+function resolveCompanyEmail(settings = {}) {
+  return settings.contact_email || settings.email || settings.email_sender_address || null;
+}
+
 function companyHeader(settings = {}, title = '', subtitle = '') {
   const companyName = settings.company_name || 'Gestion Commerciale';
   const address = joinAddress(settings).map((part) => `<p>${escapeHtml(part)}</p>`).join('');
   const meta = [
     settings.phone ? `Tel. ${settings.phone}` : null,
-    settings.email,
+    resolveCompanyEmail(settings),
     settings.siret ? `SIRET ${settings.siret}` : null,
     settings.vat_number ? `TVA ${settings.vat_number}` : null,
     settings.sanitary_approval_number ? `Agrement sanitaire ${settings.sanitary_approval_number}` : null,
@@ -121,4 +125,5 @@ module.exports = {
   money,
   number,
   qty,
+  resolveCompanyEmail,
 };

@@ -7,6 +7,8 @@ const {
   money,
 } = require('../pdfLayout');
 
+const MERCURIALE_PRICE_MENTION = 'Prix rendu';
+
 function targetTariff(priceListOrClient) {
   const value = priceListOrClient.target_tariff_level ?? priceListOrClient.tariff_level;
   const parsed = Number(value);
@@ -112,7 +114,7 @@ function singleSheetHtml(priceListOrClient, lines, storeSettings, tariff) {
       
       <section class="mercuriale-intro">
         ${clientBlock}
-        <p class="mercuriale-subtitle">Prix net départ</p>
+        <p class="mercuriale-subtitle">${escapeHtml(MERCURIALE_PRICE_MENTION)}</p>
       </section>
 
       ${featuredBlock(lines, tariff)}
@@ -358,6 +360,7 @@ function mercurialeFilename(priceListOrClient = {}) {
 }
 
 module.exports = {
+  MERCURIALE_PRICE_MENTION,
   mercurialeFilename,
   renderMercurialePdf,
   targetTariff,

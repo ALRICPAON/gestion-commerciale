@@ -4,10 +4,6 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { renderHtmlToPdf, sendPdf } = require('../services/pdf/pdfRenderer');
 const {
-  customerPriceListFilename,
-  renderCustomerPriceListPdf,
-} = require('../services/pdf/templates/customerPriceListPdfTemplate');
-const {
   deliveryNoteFilename,
   renderDeliveryNotePdf,
 } = require('../services/pdf/templates/deliveryNotePdfTemplate');
@@ -15,10 +11,9 @@ const {
   renderSaleOrderPdf,
   saleOrderFilename,
 } = require('../services/pdf/templates/saleOrderPdfTemplate');
-const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
+const { generateCustomerPriceListPdf } = require('../services/customerPriceListPdfService');
 
 const router = express.Router();
-
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
@@ -31,7 +26,8 @@ async function getStoreSettings(db, storeId) {
   const result = await db.query(
     `
     SELECT company_name, logo_url, address_line1, address_line2, postal_code, city, country,
-      phone, email, siret, vat_number, sanitary_approval_number, iban, bic,
+      phone, contact_email, email, email_sender_address,
+      siret, vat_number, sanitary_approval_number, iban, bic,
       payment_terms, legal_mentions, terms_and_conditions, delivery_note_footer, invoice_footer,
       royale_maree_commission_eur_per_kg
     FROM store_settings
@@ -86,57 +82,20 @@ async function renderAndSend(res, html, filename) {
 router.get('/customer-price-lists/:id/pdf', authenticateToken, attachDbContext, async (req, res) => {
   try {
     if (!isUuid(req.params.id)) return badId(res);
+    const query = req.query || {};
 
-    const [headerResult, linesResult, storeSettings] = await Promise.all([
-      req.dbPool.query(
-        `
-        SELECT cpl.*, cl.name AS client_name, cl.code AS client_code,
-          cl.legal_name AS client_legal_name,
-          cl.tariff_level AS client_tariff_level,
-          COALESCE(cl.is_royale_maree_member, false) AS is_royale_maree_member,
-          cl.parent_client_id,
-          cl.billed_client_id,
-          parent.code AS parent_client_code,
-          parent.name AS parent_client_name,
-          COALESCE(parent.is_royale_maree_member, false) AS parent_is_royale_maree_member,
-          billed.code AS billed_client_code,
-          billed.name AS billed_client_name,
-          COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member
-        FROM customer_price_lists cpl
-        LEFT JOIN clients cl ON cl.id = cpl.client_id AND cl.store_id = cpl.store_id
-        LEFT JOIN clients parent ON parent.id = cl.parent_client_id AND parent.store_id = cl.store_id
-        LEFT JOIN clients billed ON billed.id = COALESCE(cl.billed_client_id, cl.id) AND billed.store_id = cl.store_id
-        WHERE cpl.id = $1 AND cpl.store_id = $2
-        LIMIT 1
-        `,
-        [req.params.id, req.user.store_id]
-      ),
-      req.dbPool.query(
-        `
-        SELECT *
-        FROM customer_price_list_lines
-        WHERE price_list_id = $1 AND store_id = $2
-        ORDER BY is_featured DESC, COALESCE(family_name, 'Autre') ASC, display_order ASC, designation_snapshot ASC
-        `,
-        [req.params.id, req.user.store_id]
-      ),
-      getStoreSettings(req.dbPool, req.user.store_id),
-    ]);
-
-    if (!headerResult.rows.length) return res.status(404).json({ error: 'Mercuriale introuvable' });
-    const priceList = { ...headerResult.rows[0], target_tariff_level: headerResult.rows[0].tariff_level };
-    const client = priceList.client_id ? priceList : null;
-    const lines = linesResult.rows.map((line) => decorateLineWithDisplayedPrices(line, {
-      client,
-      storeSettings,
-      context: {
-        targetTariffLevel: priceList.tariff_level,
-        clientOptionalTargetTariff: client ? null : priceList.tariff_level,
-      },
-    }));
-    const html = renderCustomerPriceListPdf({ priceList, lines, storeSettings });
-    return renderAndSend(res, html, customerPriceListFilename(priceList));
+    const result = await generateCustomerPriceListPdf({
+      db: req.dbPool,
+      storeId: req.user.store_id,
+      priceListId: req.params.id,
+      clientId: query.client_id,
+      targetTariffLevel: query.target_tariff_level || query.tariff_level,
+      resolvedTariffLevel: query.resolved_tariff_level,
+      requireTargetTariff: false,
+    });
+    return sendPdf(res, result.pdf, result.filename);
   } catch (err) {
+    if (err.status && err.expose) return res.status(err.status).json({ error: err.message });
     console.error('Erreur PDF mercuriale :', err);
     return res.status(500).json({ error: 'Erreur generation PDF mercuriale' });
   }

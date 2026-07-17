@@ -85,8 +85,10 @@ function messageToHtml(message) {
 }
 
 async function sendEmail({ to, subject, html, text, replyTo, attachments }) {
-  const recipient = clean(to);
-  if (!recipient) {
+  const recipients = Array.isArray(to)
+    ? to.map(clean).filter(Boolean)
+    : clean(to);
+  if (!recipients || (Array.isArray(recipients) && !recipients.length)) {
     const error = new Error('Destinataire email manquant');
     error.status = 400;
     error.expose = true;
@@ -100,7 +102,7 @@ async function sendEmail({ to, subject, html, text, replyTo, attachments }) {
       name: config.fromName,
       address: config.fromAddress,
     },
-    to: recipient,
+    to: recipients,
     subject: clean(subject) || 'Message ALTA MARÉE',
     html: html || undefined,
     text: text || undefined,

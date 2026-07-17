@@ -112,6 +112,251 @@
   background: #f9fafb;
 }
 
+.merc-email-preview {
+  margin: 18px 0;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.merc-email-preview.hidden {
+  display: none;
+}
+
+.merc-email-preview-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.merc-email-preview-header h3 {
+  margin: 0 0 4px;
+  color: #111827;
+  font-size: 18px;
+}
+
+.merc-email-preview-header p,
+.merc-email-test label {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.merc-email-test {
+  min-width: 320px;
+}
+
+.merc-email-test > div {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.merc-email-test input {
+  min-width: 0;
+  flex: 1;
+  height: 38px;
+  padding: 0 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+}
+
+.merc-email-preview-grid {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  min-height: 420px;
+}
+
+.merc-email-controls {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #ffffff;
+}
+
+.merc-email-controls > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.merc-email-controls label {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.merc-email-controls textarea {
+  width: 100%;
+  min-height: 118px;
+  padding: 10px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  color: #111827;
+  font: inherit;
+  line-height: 1.45;
+  resize: vertical;
+}
+
+.merc-email-list {
+  border-right: 1px solid #e5e7eb;
+  background: #f9fafb;
+  max-height: 620px;
+  overflow: auto;
+}
+
+.merc-email-recipient {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 12px 14px;
+  border: 0;
+  border-bottom: 1px solid #e5e7eb;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.merc-email-recipient input {
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  accent-color: var(--theme-main);
+}
+
+.merc-email-recipient.active,
+.merc-email-recipient:hover {
+  background: #eef6ff;
+}
+
+.merc-email-recipient > span {
+  min-width: 0;
+}
+
+.merc-email-recipient strong,
+.merc-email-recipient em {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.merc-email-recipient strong {
+  color: #111827;
+  font-size: 13px;
+}
+
+.merc-email-recipient em {
+  margin-top: 3px;
+  color: #6b7280;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.merc-email-card {
+  padding: 22px;
+  background: #ffffff;
+}
+
+.merc-email-head {
+  display: grid;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.merc-email-head > div,
+.merc-email-meta > div {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 12px;
+  align-items: baseline;
+}
+
+.merc-email-head span,
+.merc-email-meta span {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.merc-email-head strong,
+.merc-email-meta strong {
+  min-width: 0;
+  color: #111827;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.merc-email-to div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.merc-email-to div + div {
+  margin-top: 4px;
+}
+
+.merc-email-to span {
+  color: #4b5563;
+  font-size: 13px;
+  font-weight: 400;
+  text-transform: none;
+}
+
+.merc-email-meta {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+
+.merc-email-body {
+  padding: 10px 0 18px;
+  color: #111827;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.merc-email-body p {
+  margin: 0 0 8px;
+}
+
+.merc-email-attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  background: #f8fbff;
+  color: #003f7f;
+}
+
+.merc-email-attachment span {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  font-weight: 800;
+}
+
 .cpl-print-document {
   max-width: 980px;
   margin: 0 auto 22px;
@@ -255,6 +500,32 @@
   .course-form-grid,
   .source-filters {
     grid-template-columns: 1fr;
+  }
+
+  .merc-email-preview-header,
+  .merc-email-test > div {
+    flex-direction: column;
+  }
+
+  .merc-email-test {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .merc-email-preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .merc-email-list {
+    max-height: 220px;
+    border-right: 0;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .merc-email-head > div,
+  .merc-email-meta > div {
+    grid-template-columns: 1fr;
+    gap: 4px;
   }
 
   .cpl-print-header {

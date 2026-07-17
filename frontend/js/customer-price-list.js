@@ -59,6 +59,23 @@ let selectedArticleIds = new Set();
 let featuredArticleIds = new Set();
 let savedPriceListId = null;
 let lastStoreSettings = {};
+let currentPriceList = null;
+
+window.CustomerPriceListState = {
+  emailContext() {
+    const storedDate = currentPriceList?.price_list_date ? String(currentPriceList.price_list_date).slice(0, 10) : null;
+    const inputDate = priceListDateInput?.value || null;
+    const resolvedDate = storedDate || inputDate || null;
+    return {
+      price_list_id: currentPriceList?.id || savedPriceListId || null,
+      mercuriale_date: resolvedDate,
+      price_list_date: resolvedDate,
+      client_id: clientSelect?.value || currentPriceList?.client_id || null,
+      target_tariff_level: targetTariffLevel(),
+      tariff_level: targetTariffLevel(),
+    };
+  },
+};
 
 function authHeaders(json = false) {
   const headers = { Authorization: `Bearer ${sessionToken}` };
@@ -350,6 +367,7 @@ async function savePriceList() {
       ? await apiSend(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}`, 'PUT', body)
       : await apiSend('/api/customer-price-lists', 'POST', body);
     savedPriceListId = saved.id;
+    currentPriceList = saved;
     showFeedback('Mercuriale enregistree.', 'success');
     await loadPresentation();
     return saved;
@@ -381,6 +399,10 @@ async function loadPresentation() {
 
   const data = await apiGet(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}/presentation`);
   lastStoreSettings = data.store_settings || {};
+  currentPriceList = data.price_list || currentPriceList;
+  if (currentPriceList?.price_list_date) {
+    priceListDateInput.value = String(currentPriceList.price_list_date).slice(0, 10);
+  }
   renderPreview(data.price_list, data.lines || [], lastStoreSettings);
 }
 
@@ -408,7 +430,14 @@ async function downloadPriceListPdf() {
       const saved = await savePriceList();
       if (!saved?.id && !savedPriceListId) return;
     }
-    await downloadPdf(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}/pdf`, 'mercuriale.pdf');
+    const context = window.CustomerPriceListState?.emailContext ? window.CustomerPriceListState.emailContext() : {};
+    const params = new URLSearchParams();
+    if (context.client_id) params.set('client_id', context.client_id);
+    if (context.target_tariff_level) params.set('target_tariff_level', context.target_tariff_level);
+    if (context.tariff_level) params.set('tariff_level', context.tariff_level);
+    if (context.mercuriale_date) params.set('mercuriale_date', context.mercuriale_date);
+    const query = params.toString();
+    await downloadPdf(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}/pdf${query ? `?${query}` : ''}`, 'mercuriale.pdf');
     showFeedback('PDF mercuriale genere.', 'success');
   } catch (error) {
     console.error(error);
@@ -440,6 +469,7 @@ function bindEvents() {
   });
   targetTariffSelect.addEventListener('change', () => {
     savedPriceListId = null;
+    currentPriceList = null;
     if (!titleInput.value.trim() || Object.values(TARGET_LABELS).includes(titleInput.value.trim())) {
       titleInput.value = defaultTitle();
     }
@@ -455,6 +485,7 @@ function bindEvents() {
   });
   priceListDateInput.addEventListener('change', () => {
     savedPriceListId = null;
+    currentPriceList = null;
     loadSourceProducts().catch((error) => showFeedback(error.message, 'error'));
   });
   savePriceListBtn.addEventListener('click', savePriceList);
