@@ -34,6 +34,21 @@ router.get('/preview', authenticateToken, attachDbContext, requireTariffEmailSen
   }
 });
 
+router.post('/preview', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
+  try {
+    const preview = await buildCustomerTariffEmailPreview(req.dbPool, req.user.store_id, {
+      price_list_id: req.body?.price_list_id,
+      price_list_date: req.body?.price_list_date,
+      mercuriale_date: req.body?.mercuriale_date,
+      common_message: req.body?.common_message,
+    });
+    res.json(preview);
+  } catch (err) {
+    console.error('Erreur POST /api/customer-price-lists/email/preview :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur serveur preview emails tarifs' });
+  }
+});
+
 router.post('/send', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
   try {
     const result = await sendCustomerTariffEmails(req.dbPool, req.user.store_id, {

@@ -304,20 +304,14 @@
     return data;
   }
 
-  function previewQuery() {
-    const context = emailContext();
-    const params = new URLSearchParams();
-    if (context.price_list_id) params.set('price_list_id', context.price_list_id);
-    if (context.price_list_date) params.set('price_list_date', context.price_list_date);
-    if (context.common_message) params.set('common_message', context.common_message);
-    const query = params.toString();
-    return query ? `?${query}` : '';
-  }
-
   async function previewMercurialEmails(options = {}) {
     const previousSelected = new Set(selectedReadyRecipients(window.__customerMercurialEmailPreview).map((row) => row.client_id));
     showMessage('', 'Preparation de la preview email...');
-    const preview = await requestJson(`/api/customer-price-lists/email/preview${previewQuery()}`, { method: 'GET' });
+    const payload = emailContext();
+    const preview = await requestJson('/api/customer-price-lists/email/preview', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
     readyRecipients(preview).forEach((row) => {
       row.selected = options.preserveSelection && previousSelected.size ? previousSelected.has(row.client_id) : true;
     });

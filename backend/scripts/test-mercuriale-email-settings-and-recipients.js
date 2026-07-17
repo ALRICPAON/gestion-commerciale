@@ -463,6 +463,9 @@ function deselectedSendDb() {
   );
   assert.ok(frontendEmail.includes('mail_preview'), 'frontend utilise la preview email backend');
   assert.ok(frontendEmail.includes('/api/customer-price-lists/email/test'), 'frontend expose l envoi de test');
+  assert.ok(frontendEmail.includes("requestJson('/api/customer-price-lists/email/preview'"), 'frontend appelle la preview email');
+  assert.ok(frontendEmail.includes("method: 'POST'"), 'frontend prepare les emails en POST');
+  assert.ok(!frontendEmail.includes("email/preview${previewQuery()}"), 'frontend ne prepare plus les emails en GET');
   assert.ok(frontendEmail.includes('Envoyer un test'), 'frontend affiche le bouton envoyer un test');
   assert.ok(frontendEmail.includes('selected_client_ids'), 'frontend envoie la selection visible');
   assert.ok(frontendEmail.includes('Message commun'), 'frontend affiche le message commun');
