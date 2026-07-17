@@ -23,16 +23,24 @@ function normalizePricingLevel(value) {
 }
 
 function resolveClientPricingLevel(client = {}) {
-  return normalizePricingLevel(client.tariff_level)
-    || normalizePricingLevel(client.parent_tariff_level)
-    || normalizePricingLevel(client.billed_tariff_level);
+  const safeClient = client || {};
+
+  return normalizePricingLevel(safeClient.tariff_level)
+    || normalizePricingLevel(safeClient.parent_tariff_level)
+    || normalizePricingLevel(safeClient.billed_tariff_level);
 }
 
 function resolveClientPricingLevelSource(client = {}) {
-  if (normalizePricingLevel(client.tariff_level)) return 'client';
-  if (normalizePricingLevel(client.parent_tariff_level)) return 'parent';
-  if (normalizePricingLevel(client.billed_tariff_level)) return 'billed';
+  const safeClient = client || {};
+
+  if (normalizePricingLevel(safeClient.tariff_level)) return 'client';
+  if (normalizePricingLevel(safeClient.parent_tariff_level)) return 'parent';
+  if (normalizePricingLevel(safeClient.billed_tariff_level)) return 'billed';
   return null;
+}
+
+function resolveMercurialeTargetTariff({ targetTariffLevel, client } = {}) {
+  return normalizePricingLevel(targetTariffLevel) || resolveClientPricingLevel(client);
 }
 
 function hasEmail(value) {
@@ -167,6 +175,7 @@ async function fetchActiveClients(db, storeId) {
 }
 
 function applyDisplayedPricesForClient(products, client, storeSettings) {
+  const safeClient = client || {};
   const pricingLevel = resolveClientPricingLevel(client);
   if (!pricingLevel) return [];
   return (products || []).map((product) => ({
@@ -174,7 +183,7 @@ function applyDisplayedPricesForClient(products, client, storeSettings) {
     price_ht: getCustomerDisplayedPrice({
       price: product.price_ht,
       pricingLevel,
-      client,
+      client: safeClient,
       storeSettings,
       context: { targetTariffLevel: pricingLevel },
     }),
@@ -229,12 +238,13 @@ async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {})
 }
 
 async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
+  const safeClient = client || {};
   const pricingLevel = resolveClientPricingLevel(client);
   const pricingLevelSource = resolveClientPricingLevelSource(client);
-  const clientName = client.name || client.legal_name || client.code || client.id;
+  const clientName = safeClient.name || safeClient.legal_name || safeClient.code || safeClient.id;
   const recipientResolution = await resolveDocumentRecipients(db, {
     entityType: 'client',
-    entityId: client.id,
+    entityId: safeClient.id,
     documentType: 'price_list',
     storeId,
   });
@@ -245,7 +255,7 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
 
   if (!hasEmail(email)) {
     return {
-      client_id: client.id,
+      client_id: safeClient.id,
       client_name: clientName,
       email: null,
       status: 'skipped_no_email',
@@ -260,7 +270,7 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
 
   if (!pricingLevel) {
     return {
-      client_id: client.id,
+      client_id: safeClient.id,
       client_name: clientName,
       email,
       status: 'skipped_not_sendable',
@@ -275,7 +285,7 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
 
   if (itemCount <= 0) {
     return {
-      client_id: client.id,
+      client_id: safeClient.id,
       client_name: clientName,
       email,
       status: 'skipped_no_products',
@@ -289,7 +299,7 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
   }
 
   return {
-    client_id: client.id,
+    client_id: safeClient.id,
     client_name: clientName,
     email,
     status: 'ready',
@@ -406,9 +416,10 @@ function transformProductsForTemplate(products = [], tariff = null) {
 }
 
 function customerMercurialPdfPriceList(client = {}) {
+  const safeClient = client || {};
   const pricingLevel = resolveClientPricingLevel(client);
   return {
-    client_name: client.name || client.legal_name || client.code || '',
+    client_name: safeClient.name || safeClient.legal_name || safeClient.code || '',
     tariff_level: pricingLevel,
     price_list_date: new Date(),
   };
@@ -685,5 +696,6 @@ module.exports = {
   isMercurialEmailSendReady,
   resolveClientPricingLevel,
   resolveClientPricingLevelSource,
+  resolveMercurialeTargetTariff,
   sendCustomerTariffEmails,
 };

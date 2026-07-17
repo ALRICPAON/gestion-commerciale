@@ -15,10 +15,11 @@ const {
   renderSaleOrderPdf,
   saleOrderFilename,
 } = require('../services/pdf/templates/saleOrderPdfTemplate');
-const { resolveClientPricingLevel } = require('../services/customerTariffEmailService');
+const { resolveMercurialeTargetTariff } = require('../services/customerTariffEmailService');
 const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
 
 const router = express.Router();
+const MISSING_MERCURIALE_TARGET_ERROR = 'Client ou niveau tarifaire requis pour générer la mercuriale';
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
@@ -133,7 +134,13 @@ router.get('/customer-price-lists/:id/pdf', authenticateToken, attachDbContext, 
       ...header,
       tariff_level: header.client_tariff_level,
     } : null;
-    const effectiveTargetTariffLevel = header.tariff_level || resolveClientPricingLevel(client);
+    const effectiveTargetTariffLevel = resolveMercurialeTargetTariff({
+      targetTariffLevel: header.tariff_level,
+      client,
+    });
+    if (!effectiveTargetTariffLevel) {
+      return res.status(400).json({ error: MISSING_MERCURIALE_TARGET_ERROR });
+    }
     const priceList = {
       ...header,
       tariff_level: effectiveTargetTariffLevel,

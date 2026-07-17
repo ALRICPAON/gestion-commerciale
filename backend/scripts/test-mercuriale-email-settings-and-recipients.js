@@ -12,6 +12,7 @@ const {
   isMercurialEmailSendReady,
   resolveClientPricingLevel,
   resolveClientPricingLevelSource,
+  resolveMercurialeTargetTariff,
 } = require('../services/customerTariffEmailService');
 const { resolveCompanyEmail } = require('../services/pdf/pdfLayout');
 const {
@@ -82,6 +83,7 @@ async function resolveClient(queryRows) {
 
   assert.equal(resolveClientPricingLevel({ tariff_level: 3 }), 3, 'client avec tarif propre');
   assert.equal(resolveClientPricingLevelSource({ tariff_level: 3 }), 'client', 'source tarif propre');
+  assert.equal(resolveClientPricingLevel({ id: 'client-sans-parent', tariff_level: 1 }), 1, 'preparation emails client sans parent ne plante pas');
   assert.equal(resolveClientPricingLevel({ tariff_level: null, parent_tariff_level: 1 }), 1, 'client sans tarif herite du parent');
   assert.equal(resolveClientPricingLevelSource({ tariff_level: null, parent_tariff_level: 1 }), 'parent', 'source tarif parent');
   assert.equal(resolveClientPricingLevel({ tariff_level: null, parent_tariff_level: null, billed_tariff_level: 2 }), 2, 'client sans parent herite du facture');
@@ -90,6 +92,19 @@ async function resolveClient(queryRows) {
   assert.equal(resolveClientPricingLevel({ tariff_level: null, parent_tariff_level: 1, billed_tariff_level: 2 }), 1, 'priorite parent sur facture');
   assert.equal(resolveClientPricingLevel({ tariff_level: null, parent_tariff_level: null, billed_tariff_level: null }), null, 'aucun tarif valide');
   assert.equal(resolveClientPricingLevel({ tariff_level: 9, parent_tariff_level: 0, billed_tariff_level: 'x' }), null, 'tarifs invalides ignores');
+  assert.equal(resolveClientPricingLevel(null), null, 'client null sans TypeError');
+  assert.equal(resolveClientPricingLevelSource(null), null, 'source client null sans TypeError');
+  assert.equal(resolveClientPricingLevel(undefined), null, 'client undefined sans TypeError');
+  assert.equal(
+    resolveMercurialeTargetTariff({ targetTariffLevel: 2, client: null }),
+    2,
+    'route PDF sans client utilise le niveau tarifaire fourni'
+  );
+  assert.equal(
+    resolveMercurialeTargetTariff({ targetTariffLevel: null, client: null }),
+    null,
+    'route PDF sans client ni tarif detecte la 400 metier'
+  );
   assert.equal(
     resolveClientPricingLevel({
       is_royale_maree_member: true,
@@ -105,6 +120,7 @@ async function resolveClient(queryRows) {
     1,
     'PDF email utilise le tarif resolu'
   );
+  assert.equal(customerMercurialPdfPriceList(null).tariff_level, null, 'PDF email accepte un client null');
 
   const summary = buildSummary([
     { email: 'a@example.com', resolved_tariff_level: 1, pricing_level_source: 'client', item_count: 3, price_list_contact_count: 1, recipient_source: 'contact_preference' },

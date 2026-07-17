@@ -2,7 +2,7 @@ const express = require('express');
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
-const { resolveClientPricingLevel } = require('../services/customerTariffEmailService');
+const { resolveMercurialeTargetTariff } = require('../services/customerTariffEmailService');
 const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
 
 const router = express.Router();
@@ -10,6 +10,7 @@ const router = express.Router();
 const COURSE_TYPES = new Set(['general', 'client', 'promotion', 'daily_arrival']);
 const STATUSES = new Set(['draft', 'ready', 'archived']);
 const PRICE_SOURCES = new Set(['target_tariff', 'client_tariff', 'manual', 'none']);
+const MISSING_MERCURIALE_TARGET_ERROR = 'Client ou niveau tarifaire requis pour générer la mercuriale';
 
 function requireCourseEditor(req, res, next) {
   const allowedRoles = ['admin', 'responsable', 'commercial'];
@@ -381,7 +382,10 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const clientId = normalizeUuid(req.query.client_id);
     const client = await getOptionalClient(req.dbPool, req.user.store_id, clientId);
     const targetTariffLevel = normalizeTargetTariff(req.query.target_tariff_level || req.query.tariff_level);
-    const effectiveTargetTariffLevel = targetTariffLevel || resolveClientPricingLevel(client);
+    const effectiveTargetTariffLevel = resolveMercurialeTargetTariff({ targetTariffLevel, client });
+    if (!effectiveTargetTariffLevel) {
+      return res.status(400).json({ error: MISSING_MERCURIALE_TARGET_ERROR });
+    }
     const requestedDate = clean(req.query.price_list_date || req.query.date);
     const quickSheetProducts = await fetchQuickOrderSheetProducts(req.dbPool, req.user.store_id, requestedDate, effectiveTargetTariffLevel);
     const commissionSettings = await fetchCommissionSettings(req.dbPool, req.user.store_id);
@@ -627,7 +631,13 @@ router.get('/:id/presentation', authenticateToken, attachDbContext, async (req, 
       fetchStoreSettingsForPresentation(req.dbPool, req.user.store_id),
     ]);
     const client = await getOptionalClient(req.dbPool, req.user.store_id, header.client_id);
-    const effectiveTargetTariffLevel = header.tariff_level || resolveClientPricingLevel(client);
+    const effectiveTargetTariffLevel = resolveMercurialeTargetTariff({
+      targetTariffLevel: header.tariff_level,
+      client,
+    });
+    if (!effectiveTargetTariffLevel) {
+      return res.status(400).json({ error: MISSING_MERCURIALE_TARGET_ERROR });
+    }
     const decoratedLines = lines.map((line) => decorateCourseLine(line, {
       client,
       storeSettings,
