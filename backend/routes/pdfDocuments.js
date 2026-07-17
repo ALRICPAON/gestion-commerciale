@@ -15,6 +15,7 @@ const {
   renderSaleOrderPdf,
   saleOrderFilename,
 } = require('../services/pdf/templates/saleOrderPdfTemplate');
+const { resolveClientPricingLevel } = require('../services/customerTariffEmailService');
 const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
 
 const router = express.Router();
@@ -99,9 +100,11 @@ router.get('/customer-price-lists/:id/pdf', authenticateToken, attachDbContext, 
           cl.billed_client_id,
           parent.code AS parent_client_code,
           parent.name AS parent_client_name,
+          parent.tariff_level AS parent_tariff_level,
           COALESCE(parent.is_royale_maree_member, false) AS parent_is_royale_maree_member,
           billed.code AS billed_client_code,
           billed.name AS billed_client_name,
+          billed.tariff_level AS billed_tariff_level,
           COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member
         FROM customer_price_lists cpl
         LEFT JOIN clients cl ON cl.id = cpl.client_id AND cl.store_id = cpl.store_id
@@ -125,14 +128,23 @@ router.get('/customer-price-lists/:id/pdf', authenticateToken, attachDbContext, 
     ]);
 
     if (!headerResult.rows.length) return res.status(404).json({ error: 'Mercuriale introuvable' });
-    const priceList = { ...headerResult.rows[0], target_tariff_level: headerResult.rows[0].tariff_level };
-    const client = priceList.client_id ? priceList : null;
+    const header = headerResult.rows[0];
+    const client = header.client_id ? {
+      ...header,
+      tariff_level: header.client_tariff_level,
+    } : null;
+    const effectiveTargetTariffLevel = header.tariff_level || resolveClientPricingLevel(client);
+    const priceList = {
+      ...header,
+      tariff_level: effectiveTargetTariffLevel,
+      target_tariff_level: effectiveTargetTariffLevel,
+    };
     const lines = linesResult.rows.map((line) => decorateLineWithDisplayedPrices(line, {
       client,
       storeSettings,
       context: {
-        targetTariffLevel: priceList.tariff_level,
-        clientOptionalTargetTariff: client ? null : priceList.tariff_level,
+        targetTariffLevel: effectiveTargetTariffLevel,
+        clientOptionalTargetTariff: client ? null : effectiveTargetTariffLevel,
       },
     }));
     const html = renderCustomerPriceListPdf({ priceList, lines, storeSettings });

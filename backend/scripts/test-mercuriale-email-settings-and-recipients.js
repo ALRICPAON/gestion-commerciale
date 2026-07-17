@@ -8,7 +8,10 @@ const {
 } = require('../services/documentRecipientService');
 const {
   buildSummary,
+  customerMercurialPdfPriceList,
   isMercurialEmailSendReady,
+  resolveClientPricingLevel,
+  resolveClientPricingLevelSource,
 } = require('../services/customerTariffEmailService');
 const { resolveCompanyEmail } = require('../services/pdf/pdfLayout');
 const {
@@ -77,17 +80,46 @@ async function resolveClient(queryRows) {
   assert.deepEqual(recipientsToEmailList(clientEmailFallback), ['client@example.com'], 'fallback email fiche client');
   assert.equal(clientEmailFallback.source, 'legacy_client_email');
 
+  assert.equal(resolveClientPricingLevel({ tariff_level: 3 }), 3, 'client avec tarif propre');
+  assert.equal(resolveClientPricingLevelSource({ tariff_level: 3 }), 'client', 'source tarif propre');
+  assert.equal(resolveClientPricingLevel({ tariff_level: null, parent_tariff_level: 1 }), 1, 'client sans tarif herite du parent');
+  assert.equal(resolveClientPricingLevelSource({ tariff_level: null, parent_tariff_level: 1 }), 'parent', 'source tarif parent');
+  assert.equal(resolveClientPricingLevel({ tariff_level: null, parent_tariff_level: null, billed_tariff_level: 2 }), 2, 'client sans parent herite du facture');
+  assert.equal(resolveClientPricingLevelSource({ tariff_level: null, parent_tariff_level: null, billed_tariff_level: 2 }), 'billed', 'source tarif facture');
+  assert.equal(resolveClientPricingLevel({ tariff_level: 2, parent_tariff_level: 1, billed_tariff_level: 3 }), 2, 'priorite tarif client sur parent');
+  assert.equal(resolveClientPricingLevel({ tariff_level: null, parent_tariff_level: 1, billed_tariff_level: 2 }), 1, 'priorite parent sur facture');
+  assert.equal(resolveClientPricingLevel({ tariff_level: null, parent_tariff_level: null, billed_tariff_level: null }), null, 'aucun tarif valide');
+  assert.equal(resolveClientPricingLevel({ tariff_level: 9, parent_tariff_level: 0, billed_tariff_level: 'x' }), null, 'tarifs invalides ignores');
+  assert.equal(
+    resolveClientPricingLevel({
+      is_royale_maree_member: true,
+      parent_client_name: 'ROYALE MAREE',
+      tariff_level: null,
+      parent_tariff_level: 1,
+    }),
+    1,
+    'affilie Royale Maree sans tarif propre utilise le tarif parent'
+  );
+  assert.equal(
+    customerMercurialPdfPriceList({ name: 'Leclerc affilie', tariff_level: null, parent_tariff_level: 1 }).tariff_level,
+    1,
+    'PDF email utilise le tarif resolu'
+  );
+
   const summary = buildSummary([
-    { email: 'a@example.com', tariff_level: 1, item_count: 3, price_list_contact_count: 1, recipient_source: 'contact_preference' },
-    { email: 'b@example.com', tariff_level: null, item_count: 3, price_list_contact_count: 1, recipient_source: 'contact_preference' },
-    { email: null, tariff_level: 1, item_count: 3, price_list_contact_count: 0, recipient_source: null },
-    { email: 'c@example.com', tariff_level: 2, item_count: 0, price_list_contact_count: 0, recipient_source: 'legacy_client_email' },
+    { email: 'a@example.com', resolved_tariff_level: 1, pricing_level_source: 'client', item_count: 3, price_list_contact_count: 1, recipient_source: 'contact_preference' },
+    { email: 'b@example.com', resolved_tariff_level: null, pricing_level_source: null, item_count: 3, price_list_contact_count: 1, recipient_source: 'contact_preference' },
+    { email: null, resolved_tariff_level: 1, pricing_level_source: 'parent', item_count: 3, price_list_contact_count: 0, recipient_source: null },
+    { email: 'c@example.com', resolved_tariff_level: 2, pricing_level_source: 'billed', item_count: 0, price_list_contact_count: 0, recipient_source: 'legacy_client_email' },
   ]);
   assert.equal(summary.eligible, 1, 'un seul client eligible');
   assert.equal(summary.without_tariff, 1, 'client sans tarif diagnostique');
   assert.equal(summary.without_email, 1, 'client sans email diagnostique');
   assert.equal(summary.without_products, 1, 'client sans produit diagnostique');
   assert.equal(summary.price_list_contacts, 2, 'contacts mercuriale comptes');
+  assert.equal(summary.own_tariff, 1, 'tarifs propres comptes');
+  assert.equal(summary.parent_tariff, 1, 'tarifs herites parent comptes');
+  assert.equal(summary.billed_tariff, 1, 'tarifs herites facture comptes');
 
   assert.equal(
     isMercurialEmailSendReady({ smtp: { configured: true }, summary: { eligible: 1 } }),

@@ -22,6 +22,19 @@ function normalizePricingLevel(value) {
   return VALID_PRICING_LEVELS.has(parsed) ? parsed : null;
 }
 
+function resolveClientPricingLevel(client = {}) {
+  return normalizePricingLevel(client.tariff_level)
+    || normalizePricingLevel(client.parent_tariff_level)
+    || normalizePricingLevel(client.billed_tariff_level);
+}
+
+function resolveClientPricingLevelSource(client = {}) {
+  if (normalizePricingLevel(client.tariff_level)) return 'client';
+  if (normalizePricingLevel(client.parent_tariff_level)) return 'parent';
+  if (normalizePricingLevel(client.billed_tariff_level)) return 'billed';
+  return null;
+}
+
 function hasEmail(value) {
   return Boolean(clean(value));
 }
@@ -46,9 +59,13 @@ function buildSummary(recipients) {
     without_products: 0,
     without_price_list_contact: 0,
     fallback_recipients: 0,
+    own_tariff: 0,
+    parent_tariff: 0,
+    billed_tariff: 0,
   };
 
   recipients.forEach((recipient) => {
+    const hasResolvedTariff = Boolean(normalizePricingLevel(recipient.resolved_tariff_level));
     summary.price_list_contacts += Number(recipient.price_list_contact_count || 0);
     if (!recipient.price_list_contact_count) {
       summary.without_price_list_contact += 1;
@@ -56,6 +73,10 @@ function buildSummary(recipients) {
     if (recipient.recipient_source && recipient.recipient_source !== 'contact_preference') {
       summary.fallback_recipients += 1;
     }
+    if (recipient.pricing_level_source === 'client') summary.own_tariff += 1;
+    if (recipient.pricing_level_source === 'parent') summary.parent_tariff += 1;
+    if (recipient.pricing_level_source === 'billed') summary.billed_tariff += 1;
+    if (!hasResolvedTariff) summary.without_tariff += 1;
 
     if (!hasEmail(recipient.email)) {
       summary.without_email += 1;
@@ -64,9 +85,8 @@ function buildSummary(recipients) {
 
     summary.with_email += 1;
 
-    if (!normalizePricingLevel(recipient.tariff_level)) {
+    if (!hasResolvedTariff) {
       summary.not_sendable += 1;
-      summary.without_tariff += 1;
       return;
     }
 
@@ -122,6 +142,8 @@ async function fetchActiveClients(db, storeId) {
       c.legal_name,
       c.email,
       c.tariff_level,
+      parent.tariff_level AS parent_tariff_level,
+      billed.tariff_level AS billed_tariff_level,
       COALESCE(c.is_royale_maree_member, false) AS is_royale_maree_member,
       c.parent_client_id,
       c.billed_client_id,
@@ -145,7 +167,7 @@ async function fetchActiveClients(db, storeId) {
 }
 
 function applyDisplayedPricesForClient(products, client, storeSettings) {
-  const pricingLevel = normalizePricingLevel(client?.tariff_level);
+  const pricingLevel = resolveClientPricingLevel(client);
   if (!pricingLevel) return [];
   return (products || []).map((product) => ({
     ...product,
@@ -207,7 +229,8 @@ async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {})
 }
 
 async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
-  const pricingLevel = normalizePricingLevel(client.tariff_level);
+  const pricingLevel = resolveClientPricingLevel(client);
+  const pricingLevelSource = resolveClientPricingLevelSource(client);
   const clientName = client.name || client.legal_name || client.code || client.id;
   const recipientResolution = await resolveDocumentRecipients(db, {
     entityType: 'client',
@@ -230,6 +253,8 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
       recipient_source: recipientResolution.source,
       recipient_count: 0,
       price_list_contact_count: priceListContactCount,
+      resolved_tariff_level: pricingLevel,
+      pricing_level_source: pricingLevelSource,
     };
   }
 
@@ -243,6 +268,8 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
       recipient_source: recipientResolution.source,
       recipient_count: recipients.length,
       price_list_contact_count: priceListContactCount,
+      resolved_tariff_level: null,
+      pricing_level_source: null,
     };
   }
 
@@ -256,6 +283,8 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
       recipient_source: recipientResolution.source,
       recipient_count: recipients.length,
       price_list_contact_count: priceListContactCount,
+      resolved_tariff_level: pricingLevel,
+      pricing_level_source: pricingLevelSource,
     };
   }
 
@@ -268,6 +297,8 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
     recipient_source: recipientResolution.source,
     recipient_count: recipients.length,
     price_list_contact_count: priceListContactCount,
+    resolved_tariff_level: pricingLevel,
+    pricing_level_source: pricingLevelSource,
   };
 }
 
@@ -374,15 +405,20 @@ function transformProductsForTemplate(products = [], tariff = null) {
   return sorted;
 }
 
+function customerMercurialPdfPriceList(client = {}) {
+  const pricingLevel = resolveClientPricingLevel(client);
+  return {
+    client_name: client.name || client.legal_name || client.code || '',
+    tariff_level: pricingLevel,
+    price_list_date: new Date(),
+  };
+}
+
 async function buildCustomerMercurialPdf({ client, products, storeSettings }) {
   const transformedLines = transformProductsForTemplate(products);
-  
+
   const html = renderMercurialePdf({
-    priceListOrClient: {
-      client_name: client.name || client.legal_name || client.code || '',
-      tariff_level: client.tariff_level,
-      price_list_date: new Date(),
-    },
+    priceListOrClient: customerMercurialPdfPriceList(client),
     lines: transformedLines,
     storeSettings,
   });
@@ -545,7 +581,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   const filename = buildPdfFilename();
 
   for (const client of clients) {
-    const pricingLevel = normalizePricingLevel(client.tariff_level);
+    const pricingLevel = resolveClientPricingLevel(client);
     const previewRow = await clientPreviewRow(db, storeId, client, productsByPricingLevel);
     const baseResult = {
       client_id: previewRow.client_id,
@@ -644,7 +680,10 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
 module.exports = {
   buildCustomerTariffEmailPreview,
   buildSummary,
+  customerMercurialPdfPriceList,
   fetchCustomerTariffEmailHistory,
   isMercurialEmailSendReady,
+  resolveClientPricingLevel,
+  resolveClientPricingLevelSource,
   sendCustomerTariffEmails,
 };

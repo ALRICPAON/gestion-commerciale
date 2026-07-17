@@ -2,6 +2,7 @@ const express = require('express');
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
+const { resolveClientPricingLevel } = require('../services/customerTariffEmailService');
 const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
 
 const router = express.Router();
@@ -260,9 +261,11 @@ async function getOptionalClient(db, storeId, clientId) {
       c.billed_client_id,
       parent.code AS parent_client_code,
       parent.name AS parent_client_name,
+      parent.tariff_level AS parent_tariff_level,
       COALESCE(parent.is_royale_maree_member, false) AS parent_is_royale_maree_member,
       billed.code AS billed_client_code,
       billed.name AS billed_client_name,
+      billed.tariff_level AS billed_tariff_level,
       COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member
     FROM clients c
     LEFT JOIN clients parent ON parent.id = c.parent_client_id AND parent.store_id = c.store_id
@@ -378,8 +381,9 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const clientId = normalizeUuid(req.query.client_id);
     const client = await getOptionalClient(req.dbPool, req.user.store_id, clientId);
     const targetTariffLevel = normalizeTargetTariff(req.query.target_tariff_level || req.query.tariff_level);
+    const effectiveTargetTariffLevel = targetTariffLevel || resolveClientPricingLevel(client);
     const requestedDate = clean(req.query.price_list_date || req.query.date);
-    const quickSheetProducts = await fetchQuickOrderSheetProducts(req.dbPool, req.user.store_id, requestedDate, targetTariffLevel);
+    const quickSheetProducts = await fetchQuickOrderSheetProducts(req.dbPool, req.user.store_id, requestedDate, effectiveTargetTariffLevel);
     const commissionSettings = await fetchCommissionSettings(req.dbPool, req.user.store_id);
 
     if (requestedDate && quickSheetProducts === null) {
@@ -401,11 +405,11 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
       }).map((row) => decorateCourseLine(row, {
         client,
         storeSettings: commissionSettings,
-        targetTariffLevel,
+        targetTariffLevel: effectiveTargetTariffLevel,
       }));
       return res.json({
         client,
-        target_tariff_level: targetTariffLevel,
+        target_tariff_level: effectiveTargetTariffLevel,
         source: 'quick_order_sheet',
         products: filteredProducts,
       });
@@ -482,21 +486,21 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
 
     const rows = result.rows.map((row) => ({
       ...row,
-      target_tariff_level: targetTariffLevel,
-      suggested_price_ht: targetTariffLevel ? priceForLevel(row, targetTariffLevel) : null,
-      suggested_price_source: targetTariffLevel ? 'target_tariff' : 'none',
+      target_tariff_level: effectiveTargetTariffLevel,
+      suggested_price_ht: effectiveTargetTariffLevel ? priceForLevel(row, effectiveTargetTariffLevel) : null,
+      suggested_price_source: effectiveTargetTariffLevel ? 'target_tariff' : 'none',
       price_level_1_ht: priceForLevel(row, 1),
       price_level_2_ht: priceForLevel(row, 2),
       price_level_3_ht: priceForLevel(row, 3),
     })).map((row) => decorateCourseLine(row, {
       client,
       storeSettings: commissionSettings,
-      targetTariffLevel,
+      targetTariffLevel: effectiveTargetTariffLevel,
     }));
 
     res.json({
       client,
-      target_tariff_level: targetTariffLevel,
+      target_tariff_level: effectiveTargetTariffLevel,
       products: rows,
     });
   } catch (err) {
@@ -623,10 +627,11 @@ router.get('/:id/presentation', authenticateToken, attachDbContext, async (req, 
       fetchStoreSettingsForPresentation(req.dbPool, req.user.store_id),
     ]);
     const client = await getOptionalClient(req.dbPool, req.user.store_id, header.client_id);
+    const effectiveTargetTariffLevel = header.tariff_level || resolveClientPricingLevel(client);
     const decoratedLines = lines.map((line) => decorateCourseLine(line, {
       client,
       storeSettings,
-      targetTariffLevel: header.tariff_level,
+      targetTariffLevel: effectiveTargetTariffLevel,
     }));
 
     const featured = decoratedLines.filter((line) => line.is_featured);
@@ -638,7 +643,7 @@ router.get('/:id/presentation', authenticateToken, attachDbContext, async (req, 
     }, {});
 
     res.json({
-      price_list: { ...header, target_tariff_level: header.tariff_level },
+      price_list: { ...header, tariff_level: effectiveTargetTariffLevel, target_tariff_level: effectiveTargetTariffLevel },
       store_settings: storeSettings,
       featured_lines: featured,
       families,
