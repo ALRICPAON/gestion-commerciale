@@ -148,6 +148,9 @@ function emailPreviewDb() {
   return {
     async query(sql, params = []) {
       const text = String(sql);
+      if (text.includes('FROM customer_price_lists')) {
+        return { rows: [{ price_list_id: TEST_UUID, price_list_date: '2026-07-20' }] };
+      }
       if (text.includes('FROM clients c') && text.includes("c.status = 'active'")) {
         return {
           rows: [{
@@ -200,6 +203,9 @@ function deselectedSendDb() {
   return {
     async query(sql) {
       const text = String(sql);
+      if (text.includes('FROM customer_price_lists')) {
+        return { rows: [{ price_list_id: TEST_UUID, price_list_date: '2026-07-20' }] };
+      }
       if (text.includes('FROM clients c') && text.includes("c.status = 'active'")) {
         return {
           rows: [{
@@ -366,11 +372,18 @@ function deselectedSendDb() {
   assert.equal(sourceWithInheritedParent.body.target_tariff_level, 1, 'source-products client affilie herite du tarif parent');
 
   const emailPreview = await buildCustomerTariffEmailPreview(emailPreviewDb(), 'store-1', {
-    price_list_date: '2026-07-20',
+    price_list_id: TEST_UUID,
     common_message: 'Message commun modifie.',
   });
   assert.equal(emailPreview.summary.eligible, 1, 'preview email globale fonctionne sans client transmis');
   assert.equal(emailPreview.mercuriale_date, '2026-07-20', 'preview utilise la date de mercuriale fournie');
+  assert.equal(emailPreview.stored_mercuriale_date, '2026-07-20', 'preview retrouve la date en base depuis price_list_id');
+  assert.equal(emailPreview.resolved_mercuriale_date, '2026-07-20', 'diagnostic date resolue expose');
+  assert.equal(
+    emailPreview.recipients[0].mail_preview.subject,
+    'Mercuriale ALTA MARÉE - Départ du 20/07/2026',
+    'objet utilise la date en base de la mercuriale'
+  );
   assert.equal(emailPreview.recipients[0].mail_preview.salutation, 'Bonjour Jean,', 'preview email affiche la salutation personnalisee');
   assert.equal(emailPreview.recipients[0].mail_preview.text, emailPreview.recipients[0].mail_preview.body, 'preview affiche le meme texte que l envoi');
   assert.ok(emailPreview.recipients[0].mail_preview.body.includes('Message commun modifie.'), 'preview utilise le message commun modifie');
@@ -378,7 +391,7 @@ function deselectedSendDb() {
   assert.equal(emailPreview.recipients[0].mail_preview.attachment_filename, emailPreview.attachment_filename, 'preview expose le PDF joint exact');
 
   const deselectedSend = await sendCustomerTariffEmails(deselectedSendDb(), 'store-1', {
-    price_list_date: '2026-07-20',
+    price_list_id: TEST_UUID,
     selected_client_ids: [],
     common_message: 'Message commun modifie.',
   });
@@ -453,6 +466,13 @@ function deselectedSendDb() {
   assert.ok(frontendEmail.includes('Envoyer un test'), 'frontend affiche le bouton envoyer un test');
   assert.ok(frontendEmail.includes('selected_client_ids'), 'frontend envoie la selection visible');
   assert.ok(frontendEmail.includes('Message commun'), 'frontend affiche le message commun');
+
+  const frontendController = fs.readFileSync(
+    path.resolve(__dirname, '../../frontend/js/customer-price-list.js'),
+    'utf8'
+  );
+  assert.ok(frontendController.includes('currentPriceList?.price_list_date'), 'frontend utilise la date de la mercuriale chargee');
+  assert.ok(frontendController.includes('currentPriceList = data.price_list'), 'frontend conserve la mercuriale courante');
 
   console.log('mercuriale-email-settings-and-recipients: ok');
 })().catch((err) => {

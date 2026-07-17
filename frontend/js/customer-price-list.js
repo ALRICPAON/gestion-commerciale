@@ -59,12 +59,15 @@ let selectedArticleIds = new Set();
 let featuredArticleIds = new Set();
 let savedPriceListId = null;
 let lastStoreSettings = {};
+let currentPriceList = null;
 
 window.CustomerPriceListState = {
   emailContext() {
+    const storedDate = currentPriceList?.price_list_date ? String(currentPriceList.price_list_date).slice(0, 10) : null;
     return {
-      price_list_id: savedPriceListId,
-      price_list_date: priceListDateInput.value || null,
+      price_list_id: currentPriceList?.id || savedPriceListId,
+      mercuriale_date: storedDate || null,
+      price_list_date: storedDate || priceListDateInput.value || null,
     };
   },
 };
@@ -359,6 +362,7 @@ async function savePriceList() {
       ? await apiSend(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}`, 'PUT', body)
       : await apiSend('/api/customer-price-lists', 'POST', body);
     savedPriceListId = saved.id;
+    currentPriceList = saved;
     showFeedback('Mercuriale enregistree.', 'success');
     await loadPresentation();
     return saved;
@@ -390,6 +394,10 @@ async function loadPresentation() {
 
   const data = await apiGet(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}/presentation`);
   lastStoreSettings = data.store_settings || {};
+  currentPriceList = data.price_list || currentPriceList;
+  if (currentPriceList?.price_list_date) {
+    priceListDateInput.value = String(currentPriceList.price_list_date).slice(0, 10);
+  }
   renderPreview(data.price_list, data.lines || [], lastStoreSettings);
 }
 
@@ -449,6 +457,7 @@ function bindEvents() {
   });
   targetTariffSelect.addEventListener('change', () => {
     savedPriceListId = null;
+    currentPriceList = null;
     if (!titleInput.value.trim() || Object.values(TARGET_LABELS).includes(titleInput.value.trim())) {
       titleInput.value = defaultTitle();
     }
@@ -464,6 +473,7 @@ function bindEvents() {
   });
   priceListDateInput.addEventListener('change', () => {
     savedPriceListId = null;
+    currentPriceList = null;
     loadSourceProducts().catch((error) => showFeedback(error.message, 'error'));
   });
   savePriceListBtn.addEventListener('click', savePriceList);

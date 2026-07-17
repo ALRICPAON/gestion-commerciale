@@ -208,6 +208,7 @@ async function fetchStoreSettings(db, storeId) {
 
 async function resolveMercurialeEmailContext(db, storeId, options = {}) {
   const priceListId = clean(options.price_list_id);
+  const receivedMercurialeDate = normalizeIsoDate(options.mercuriale_date || options.price_list_date);
   if (priceListId) {
     const result = await db.query(
       `
@@ -224,13 +225,17 @@ async function resolveMercurialeEmailContext(db, storeId, options = {}) {
       error.expose = true;
       throw error;
     }
+    const storedMercurialeDate = normalizeIsoDate(result.rows[0].price_list_date);
     return {
       price_list_id: result.rows[0].price_list_id,
-      mercuriale_date: normalizeIsoDate(result.rows[0].price_list_date),
+      mercuriale_date: storedMercurialeDate || receivedMercurialeDate,
+      received_mercuriale_date: receivedMercurialeDate,
+      stored_mercuriale_date: storedMercurialeDate,
+      resolved_mercuriale_date: storedMercurialeDate || receivedMercurialeDate,
     };
   }
 
-  const mercurialeDate = normalizeIsoDate(options.price_list_date || options.mercuriale_date);
+  const mercurialeDate = receivedMercurialeDate;
   if (!mercurialeDate) {
     const error = new Error('Date de mercuriale requise pour préparer les emails');
     error.status = 400;
@@ -241,6 +246,9 @@ async function resolveMercurialeEmailContext(db, storeId, options = {}) {
   return {
     price_list_id: null,
     mercuriale_date: mercurialeDate,
+    received_mercuriale_date: receivedMercurialeDate,
+    stored_mercuriale_date: null,
+    resolved_mercuriale_date: mercurialeDate,
   };
 }
 
@@ -469,6 +477,9 @@ async function buildCustomerTariffEmailPreview(db, storeId, options = {}) {
     common_message: commonMessage,
     mercuriale_date: context.mercuriale_date,
     price_list_id: context.price_list_id,
+    received_mercuriale_date: context.received_mercuriale_date,
+    stored_mercuriale_date: context.stored_mercuriale_date,
+    resolved_mercuriale_date: context.resolved_mercuriale_date,
     summary: buildSummary(recipients),
     recipients,
   };
