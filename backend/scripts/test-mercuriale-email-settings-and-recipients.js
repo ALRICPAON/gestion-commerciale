@@ -24,11 +24,36 @@ const {
   MERCURIALE_PRICE_MENTION,
   renderMercurialePdf,
 } = require('../services/pdf/templates/mercurialePdfTemplate');
+const {
+  buildCustomerPriceListPdfPayload,
+  fetchSavedPriceListProductsByPricingLevel,
+} = require('../services/customerPriceListPdfService');
 const customerPriceListsRouter = require('../routes/customerPriceLists');
 const customerTariffEmailsRouter = require('../routes/customerTariffEmails');
 const pdfDocumentsRouter = require('../routes/pdfDocuments');
 
 const TEST_UUID = '550e8400-e29b-41d4-a716-446655440000';
+
+function savedPriceListLines() {
+  return [{
+    id: 'line-1',
+    store_id: 'store-1',
+    price_list_id: TEST_UUID,
+    article_id: 'article-current',
+    designation_snapshot: 'Produit courant enregistre',
+    display_name: 'Produit courant enregistre',
+    family_name: 'Famille',
+    sale_unit: 'kg',
+    stock_quantity_snapshot: 7,
+    price_ht: null,
+    price_level_1_ht: 11,
+    price_level_2_ht: 22,
+    price_level_3_ht: 33,
+    tariff_level: null,
+    is_featured: true,
+    display_order: 1,
+  }];
+}
 
 function findRouteHandler(router, pathPattern, method = 'get') {
   const layer = router.stack.find((entry) => entry.route?.path === pathPattern && entry.route.methods[method]);
@@ -121,16 +146,19 @@ async function callSourceProducts(query = {}, db = sourceProductsDb()) {
   return res;
 }
 
-function pdfRouteDb() {
+function pdfRouteDb({ header = null, client = null, lines = savedPriceListLines() } = {}) {
   return {
-    async query(sql) {
+    async query(sql, params = []) {
       const text = String(sql);
       if (text.includes('FROM customer_price_lists cpl')) {
-        return { rows: [{ id: TEST_UUID, client_id: null, tariff_level: null, title: 'Mercuriale generale' }] };
+        return { rows: [header || { id: TEST_UUID, client_id: null, tariff_level: null, title: 'Mercuriale generale', price_list_date: '2026-07-20' }] };
       }
-      if (text.includes('FROM customer_price_list_lines')) return { rows: [] };
-      if (text.includes('FROM store_settings')) return { rows: [{}] };
-      throw new Error(`Requete PDF inattendue: ${text.slice(0, 80)}`);
+      if (text.includes('FROM clients c')) {
+        return { rows: client ? [client] : [] };
+      }
+      if (text.includes('FROM customer_price_list_lines')) return { rows: lines };
+      if (text.includes('FROM store_settings')) return { rows: [{ royale_maree_commission_eur_per_kg: 0 }] };
+      throw new Error(`Requete PDF inattendue: ${text.slice(0, 80)} | ${JSON.stringify(params)}`);
     },
   };
 }
@@ -189,6 +217,7 @@ function emailPreviewDb() {
           }],
         };
       }
+      if (text.includes('FROM customer_price_list_lines')) return { rows: savedPriceListLines() };
       if (text.includes('FROM quick_order_sheets')) return { rows: [{ id: 'sheet-1' }] };
       if (text.includes('FROM quick_order_sheet_products')) {
         return {
@@ -232,6 +261,7 @@ function deselectedSendDb() {
       if (text.includes('FROM store_settings')) {
         return { rows: [{ contact_email: 'contact@altamaree.fr', email_sender_address: 'commercial@altamaree.fr' }] };
       }
+      if (text.includes('FROM customer_price_list_lines')) return { rows: savedPriceListLines() };
       if (text.includes('FROM quick_order_sheets')) return { rows: [{ id: 'sheet-1' }] };
       if (text.includes('FROM quick_order_sheet_products')) {
         return { rows: [{ article_id: 'article-1', designation: 'Produit', family_name: 'Famille', sale_unit: 'kg', price_ht: 10 }] };
@@ -263,6 +293,7 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
       if (text.includes('FROM store_settings')) {
         return { rows: [withCompanyEmail ? { contact_email: 'test@altamaree.fr', email_sender_address: 'commercial@altamaree.fr' } : { email_sender_address: 'commercial@altamaree.fr' }] };
       }
+      if (text.includes('FROM customer_price_list_lines')) return { rows: savedPriceListLines() };
       if (text.includes('FROM quick_order_sheets')) return { rows: [{ id: 'sheet-1' }] };
       if (text.includes('FROM quick_order_sheet_products')) {
         return { rows: [{ article_id: 'article-1', designation: 'Produit', display_name: 'Produit', family_name: 'Famille', sale_unit: 'kg', price_ht: 10 }] };
@@ -449,11 +480,15 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
   assert.equal(emptySelectionResponse.body.error, 'Aucun client sélectionné pour l’envoi', 'route envoi retourne une erreur claire selection vide');
 
   const sentMessages = [];
+  const emailPdfInputs = [];
   const selectedSend = await sendCustomerTariffEmails(selectedSendDb(), 'store-1', {
     price_list_id: TEST_UUID,
     selected_client_ids: ['client-a'],
     common_message: 'Message commun modifie.',
-    buildPdf: async () => Buffer.from('PDF tarif unique'),
+    buildPdf: async (input) => {
+      emailPdfInputs.push(input);
+      return Buffer.from('PDF tarif unique');
+    },
     sendEmail: async (message) => {
       sentMessages.push(message);
       return { message_id: `message-${sentMessages.length}` };
@@ -462,6 +497,8 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
   assert.equal(selectedSend.summary.sent, 1, 'un seul client selectionne envoye');
   assert.equal(sentMessages.length, 1, 'aucun envoi aux autres clients actifs');
   assert.deepEqual(sentMessages[0].to, ['merc1@test.fr', 'merc2@test.fr'], 'tous les contacts mercuriale transmis au SMTP');
+  assert.equal(emailPdfInputs[0].products[0].designation_snapshot, 'Produit courant enregistre', 'PDF email recoit les produits courants');
+  assert.equal(emailPdfInputs[0].products[0].price_ht, 11, 'PDF email recoit le prix courant du tarif client');
 
   const testMessages = [];
   await sendCustomerTariffTestEmail(selectedSendDb({ withCompanyEmail: false }), 'store-1', {
@@ -477,12 +514,53 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
   assert.equal(testMessages.length, 1, 'email test envoye une seule fois');
   assert.equal(testMessages[0].to, 'test-destinataire@altamaree.fr', 'email test envoye uniquement a l adresse test');
 
-  const pdfWithoutTarget = await callCustomerPriceListPdf();
-  assert.equal(pdfWithoutTarget.statusCode, 400, 'PDF personnalise sans client ni tarif retourne 400');
-  assert.equal(
-    pdfWithoutTarget.body.error,
-    'Client ou niveau tarifaire requis pour générer la mercuriale',
-    'PDF personnalise sans tarif retourne une erreur claire'
+  const savedProductsByLevel = await fetchSavedPriceListProductsByPricingLevel(
+    pdfRouteDb(),
+    'store-1',
+    TEST_UUID,
+    { royale_maree_commission_eur_per_kg: 0 }
+  );
+  assert.equal(savedProductsByLevel[1][0].designation_snapshot, 'Produit courant enregistre', 'email charge les lignes de la mercuriale enregistree');
+  assert.equal(savedProductsByLevel[1][0].price_ht, 11, 'email utilise le prix niveau 1 enregistre');
+  assert.equal(savedProductsByLevel[2][0].price_ht, 22, 'email utilise le prix niveau 2 enregistre');
+
+  const generalPdfPayload = await buildCustomerPriceListPdfPayload(pdfRouteDb(), {
+    storeId: 'store-1',
+    priceListId: TEST_UUID,
+    requireTargetTariff: false,
+  });
+  assert.equal(generalPdfPayload.lines[0].designation_snapshot, 'Produit courant enregistre', 'PDF telecharge charge les produits courants');
+  assert.equal(generalPdfPayload.lines[0].price_level_1_ht, 11, 'PDF telecharge conserve le tarif 1 courant');
+  assert.equal(generalPdfPayload.lines[0].price_level_2_ht, 22, 'PDF telecharge conserve le tarif 2 courant');
+  assert.equal(generalPdfPayload.lines[0].price_level_3_ht, 33, 'PDF telecharge conserve le tarif 3 courant');
+
+  const directTariffPdfPayload = await buildCustomerPriceListPdfPayload(pdfRouteDb({
+    header: { id: TEST_UUID, client_id: null, tariff_level: 2, title: 'Mercuriale tarif 2', price_list_date: '2026-07-20' },
+  }), {
+    storeId: 'store-1',
+    priceListId: TEST_UUID,
+    requireTargetTariff: true,
+  });
+  assert.equal(directTariffPdfPayload.resolvedTariffLevel, 2, 'PDF sans client utilise le niveau tarifaire direct');
+
+  const inheritedTariffPdfPayload = await buildCustomerPriceListPdfPayload(pdfRouteDb({
+    header: { id: TEST_UUID, client_id: 'client-rm', tariff_level: null, title: 'Mercuriale client', price_list_date: '2026-07-20' },
+    client: { id: 'client-rm', name: 'Leclerc affilie', tariff_level: null, parent_tariff_level: 1, billed_tariff_level: 2 },
+  }), {
+    storeId: 'store-1',
+    priceListId: TEST_UUID,
+    requireTargetTariff: true,
+  });
+  assert.equal(inheritedTariffPdfPayload.resolvedTariffLevel, 1, 'PDF client herite le tarif parent');
+
+  await assert.rejects(
+    () => buildCustomerPriceListPdfPayload(pdfRouteDb({ header: { id: TEST_UUID, client_id: null, tariff_level: null, title: 'Sans tarif' } }), {
+      storeId: 'store-1',
+      priceListId: TEST_UUID,
+      requireTargetTariff: true,
+    }),
+    /Client ou niveau tarifaire requis pour générer la mercuriale/,
+    'PDF personnalise sans client ni tarif retourne une erreur claire'
   );
 
   const summary = buildSummary([

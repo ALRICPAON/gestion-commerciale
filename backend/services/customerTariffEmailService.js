@@ -8,6 +8,10 @@ const {
   recipientsToEmailList,
 } = require('./documentRecipientService');
 const { getCustomerDisplayedPrice } = require('./royaleMareeCommission');
+const {
+  fetchSavedPriceListProductsByPricingLevel,
+  generateCustomerPriceListPdf,
+} = require('./customerPriceListPdfService');
 
 const VALID_PRICING_LEVELS = new Set([1, 2, 3]);
 
@@ -342,7 +346,13 @@ async function fetchProductsForPricingLevel(db, storeId, pricingLevel, commissio
   return [];
 }
 
-async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {}, mercurialeDate) {
+async function fetchProductsByPricingLevel(db, storeId, commissionSettings = {}, mercurialeDate, priceListId = null) {
+  if (priceListId) {
+    const savedProducts = await fetchSavedPriceListProductsByPricingLevel(db, storeId, priceListId, commissionSettings);
+    if (savedProducts && Object.values(savedProducts).some((products) => products.length > 0)) {
+      return savedProducts;
+    }
+  }
   const entries = await Promise.all([1, 2, 3].map(async (level) => [
     level,
     await fetchProductsForPricingLevel(db, storeId, level, commissionSettings, mercurialeDate),
@@ -446,7 +456,7 @@ async function buildCustomerTariffEmailPreview(db, storeId, options = {}) {
     fetchActiveClients(db, storeId),
     fetchStoreSettings(db, storeId),
   ]);
-  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date);
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date, context.price_list_id);
   if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
     const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${context.mercuriale_date}`);
     error.status = 400;
@@ -759,7 +769,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   const selectedClients = hasExplicitSelection
     ? clients.filter((client) => selectedClientIds.has(String(client.id)))
     : clients;
-  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date);
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date, context.price_list_id);
   if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
     const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${context.mercuriale_date}`);
     error.status = 400;
@@ -782,7 +792,20 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   const smtpErrors = [];
   const filename = buildPdfFilename(context.mercuriale_date);
   const sendEmailFn = options.sendEmail || sendEmail;
-  const buildPdfFn = options.buildPdf || buildCustomerMercurialPdf;
+  const buildPdfFn = options.buildPdf || (async (args) => {
+    if (args.priceListId) {
+      const generated = await generateCustomerPriceListPdf({
+        db: args.db,
+        storeId: args.storeId,
+        priceListId: args.priceListId,
+        clientId: args.clientId,
+        resolvedTariffLevel: args.resolvedTariffLevel,
+        requireTargetTariff: true,
+      });
+      return generated.pdf;
+    }
+    return buildCustomerMercurialPdf(args);
+  });
 
   for (const client of selectedClients) {
     const pricingLevel = resolveClientPricingLevel(client);
@@ -835,7 +858,17 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
     });
 
     try {
-      const pdfBuffer = await buildPdfFn({ client, products, storeSettings, mercurialeDate: context.mercuriale_date });
+      const pdfBuffer = await buildPdfFn({
+        db,
+        storeId,
+        priceListId: context.price_list_id,
+        client,
+        clientId: client.id,
+        products,
+        storeSettings,
+        mercurialeDate: context.mercuriale_date,
+        resolvedTariffLevel: pricingLevel,
+      });
       const delivery = await sendEmailFn({
         to: (previewRow.recipients || []).map((recipient) => recipient.email),
         subject: mail.subject,
@@ -901,7 +934,7 @@ async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
   const selectedClients = hasExplicitSelection
     ? clients.filter((client) => selectedClientIds.has(String(client.id)))
     : clients;
-  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date);
+  const productsByPricingLevel = await fetchProductsByPricingLevel(db, storeId, storeSettings, context.mercuriale_date, context.price_list_id);
   if (!Object.values(productsByPricingLevel).some((products) => products.length > 0)) {
     const error = new Error(`Aucune tarification fiche d'appel configurée pour le ${context.mercuriale_date}`);
     error.status = 400;
@@ -926,7 +959,31 @@ async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
 
     const filename = buildPdfFilename(context.mercuriale_date);
     const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
-    const pdfBuffer = await (options.buildPdf || buildCustomerMercurialPdf)({ client, products, storeSettings, mercurialeDate: context.mercuriale_date });
+    const buildPdf = options.buildPdf || (async (args) => {
+      if (args.priceListId) {
+        const generated = await generateCustomerPriceListPdf({
+          db: args.db,
+          storeId: args.storeId,
+          priceListId: args.priceListId,
+          clientId: args.clientId,
+          resolvedTariffLevel: args.resolvedTariffLevel,
+          requireTargetTariff: true,
+        });
+        return generated.pdf;
+      }
+      return buildCustomerMercurialPdf(args);
+    });
+    const pdfBuffer = await buildPdf({
+      db,
+      storeId,
+      priceListId: context.price_list_id,
+      client,
+      clientId: client.id,
+      products,
+      storeSettings,
+      mercurialeDate: context.mercuriale_date,
+      resolvedTariffLevel: pricingLevel,
+    });
     const mail = buildMercurialeEmailMessage({
       companySettings: storeSettings,
       recipientResolution: previewRow.recipient_resolution,

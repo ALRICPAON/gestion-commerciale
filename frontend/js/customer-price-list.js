@@ -70,6 +70,9 @@ window.CustomerPriceListState = {
       price_list_id: currentPriceList?.id || savedPriceListId || null,
       mercuriale_date: resolvedDate,
       price_list_date: resolvedDate,
+      client_id: clientSelect?.value || currentPriceList?.client_id || null,
+      target_tariff_level: targetTariffLevel(),
+      tariff_level: targetTariffLevel(),
     };
   },
 };
@@ -427,7 +430,14 @@ async function downloadPriceListPdf() {
       const saved = await savePriceList();
       if (!saved?.id && !savedPriceListId) return;
     }
-    await downloadPdf(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}/pdf`, 'mercuriale.pdf');
+    const context = window.CustomerPriceListState?.emailContext ? window.CustomerPriceListState.emailContext() : {};
+    const params = new URLSearchParams();
+    if (context.client_id) params.set('client_id', context.client_id);
+    if (context.target_tariff_level) params.set('target_tariff_level', context.target_tariff_level);
+    if (context.tariff_level) params.set('tariff_level', context.tariff_level);
+    if (context.mercuriale_date) params.set('mercuriale_date', context.mercuriale_date);
+    const query = params.toString();
+    await downloadPdf(`/api/customer-price-lists/${encodeURIComponent(savedPriceListId)}/pdf${query ? `?${query}` : ''}`, 'mercuriale.pdf');
     showFeedback('PDF mercuriale genere.', 'success');
   } catch (error) {
     console.error(error);

@@ -4,10 +4,6 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { renderHtmlToPdf, sendPdf } = require('../services/pdf/pdfRenderer');
 const {
-  customerPriceListFilename,
-  renderCustomerPriceListPdf,
-} = require('../services/pdf/templates/customerPriceListPdfTemplate');
-const {
   deliveryNoteFilename,
   renderDeliveryNotePdf,
 } = require('../services/pdf/templates/deliveryNotePdfTemplate');
@@ -15,12 +11,9 @@ const {
   renderSaleOrderPdf,
   saleOrderFilename,
 } = require('../services/pdf/templates/saleOrderPdfTemplate');
-const { resolveMercurialeTargetTariff } = require('../services/customerTariffEmailService');
-const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
+const { generateCustomerPriceListPdf } = require('../services/customerPriceListPdfService');
 
 const router = express.Router();
-const MISSING_MERCURIALE_TARGET_ERROR = 'Client ou niveau tarifaire requis pour générer la mercuriale';
-
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
@@ -89,74 +82,20 @@ async function renderAndSend(res, html, filename) {
 router.get('/customer-price-lists/:id/pdf', authenticateToken, attachDbContext, async (req, res) => {
   try {
     if (!isUuid(req.params.id)) return badId(res);
+    const query = req.query || {};
 
-    const [headerResult, linesResult, storeSettings] = await Promise.all([
-      req.dbPool.query(
-        `
-        SELECT cpl.*, cl.name AS client_name, cl.code AS client_code,
-          cl.legal_name AS client_legal_name,
-          cl.tariff_level AS client_tariff_level,
-          COALESCE(cl.is_royale_maree_member, false) AS is_royale_maree_member,
-          cl.parent_client_id,
-          cl.billed_client_id,
-          parent.code AS parent_client_code,
-          parent.name AS parent_client_name,
-          parent.tariff_level AS parent_tariff_level,
-          COALESCE(parent.is_royale_maree_member, false) AS parent_is_royale_maree_member,
-          billed.code AS billed_client_code,
-          billed.name AS billed_client_name,
-          billed.tariff_level AS billed_tariff_level,
-          COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member
-        FROM customer_price_lists cpl
-        LEFT JOIN clients cl ON cl.id = cpl.client_id AND cl.store_id = cpl.store_id
-        LEFT JOIN clients parent ON parent.id = cl.parent_client_id AND parent.store_id = cl.store_id
-        LEFT JOIN clients billed ON billed.id = COALESCE(cl.billed_client_id, cl.id) AND billed.store_id = cl.store_id
-        WHERE cpl.id = $1 AND cpl.store_id = $2
-        LIMIT 1
-        `,
-        [req.params.id, req.user.store_id]
-      ),
-      req.dbPool.query(
-        `
-        SELECT *
-        FROM customer_price_list_lines
-        WHERE price_list_id = $1 AND store_id = $2
-        ORDER BY is_featured DESC, COALESCE(family_name, 'Autre') ASC, display_order ASC, designation_snapshot ASC
-        `,
-        [req.params.id, req.user.store_id]
-      ),
-      getStoreSettings(req.dbPool, req.user.store_id),
-    ]);
-
-    if (!headerResult.rows.length) return res.status(404).json({ error: 'Mercuriale introuvable' });
-    const header = headerResult.rows[0];
-    const client = header.client_id ? {
-      ...header,
-      tariff_level: header.client_tariff_level,
-    } : null;
-    const effectiveTargetTariffLevel = resolveMercurialeTargetTariff({
-      targetTariffLevel: header.tariff_level,
-      client,
+    const result = await generateCustomerPriceListPdf({
+      db: req.dbPool,
+      storeId: req.user.store_id,
+      priceListId: req.params.id,
+      clientId: query.client_id,
+      targetTariffLevel: query.target_tariff_level || query.tariff_level,
+      resolvedTariffLevel: query.resolved_tariff_level,
+      requireTargetTariff: false,
     });
-    if (!effectiveTargetTariffLevel) {
-      return res.status(400).json({ error: MISSING_MERCURIALE_TARGET_ERROR });
-    }
-    const priceList = {
-      ...header,
-      tariff_level: effectiveTargetTariffLevel,
-      target_tariff_level: effectiveTargetTariffLevel,
-    };
-    const lines = linesResult.rows.map((line) => decorateLineWithDisplayedPrices(line, {
-      client,
-      storeSettings,
-      context: {
-        targetTariffLevel: effectiveTargetTariffLevel,
-        clientOptionalTargetTariff: client ? null : effectiveTargetTariffLevel,
-      },
-    }));
-    const html = renderCustomerPriceListPdf({ priceList, lines, storeSettings });
-    return renderAndSend(res, html, customerPriceListFilename(priceList));
+    return sendPdf(res, result.pdf, result.filename);
   } catch (err) {
+    if (err.status && err.expose) return res.status(err.status).json({ error: err.message });
     console.error('Erreur PDF mercuriale :', err);
     return res.status(500).json({ error: 'Erreur generation PDF mercuriale' });
   }
