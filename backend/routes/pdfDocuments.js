@@ -31,7 +31,8 @@ async function getStoreSettings(db, storeId) {
   const result = await db.query(
     `
     SELECT company_name, logo_url, address_line1, address_line2, postal_code, city, country,
-      phone, email, siret, vat_number, sanitary_approval_number, iban, bic,
+      phone, contact_email, email, email_sender_address,
+      siret, vat_number, sanitary_approval_number, iban, bic,
       payment_terms, legal_mentions, terms_and_conditions, delivery_note_footer, invoice_footer,
       royale_maree_commission_eur_per_kg
     FROM store_settings

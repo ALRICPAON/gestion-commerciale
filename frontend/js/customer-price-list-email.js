@@ -17,6 +17,25 @@
     summaryEl.textContent = message;
   }
 
+  function canSendMercurialEmails(preview) {
+    return Boolean(preview?.smtp?.configured && Number(preview?.summary?.eligible || 0) > 0);
+  }
+
+  function statusLabel(status) {
+    return {
+      skipped_no_email: 'aucun contact mercuriale ni email de secours',
+      skipped_not_sendable: 'niveau tarifaire manquant',
+      skipped_no_products: 'aucun produit pour ce niveau tarifaire',
+    }[status] || status || 'ignore';
+  }
+
+  function clientList(preview, statuses) {
+    const wanted = new Set(statuses);
+    const rows = (preview.recipients || []).filter((row) => wanted.has(row.status));
+    if (!rows.length) return [];
+    return rows.slice(0, 8).map((row) => `- ${row.client_name || row.client_id} : ${statusLabel(row.status)}`);
+  }
+
   function renderSummary(preview) {
     const summaryEl = getEl('email-send-summary');
     if (!summaryEl) return;
@@ -25,17 +44,31 @@
     const smtp = preview.smtp || {};
     const lines = [
       `Clients actifs : ${summary.total_clients || 0}`,
-      `Clients avec email : ${summary.with_email || 0}`,
-      `Clients sans email : ${summary.without_email || 0}`,
+      `Contacts mercuriale selectionnes : ${summary.price_list_contacts || 0}`,
+      `Clients avec destinataire resolu : ${summary.with_email || 0}`,
+      `Clients sans destinataire : ${summary.without_email || 0}`,
+      `Clients sans contact mercuriale coche : ${summary.without_price_list_contact || 0}`,
+      `Clients sans niveau tarifaire : ${summary.without_tariff || 0}`,
+      `Clients sans produit fiche d'appel : ${summary.without_products || 0}`,
+      `Clients avec fallback contact/email : ${summary.fallback_recipients || 0}`,
       `Emails qui seront envoyes : ${summary.eligible || 0}`,
-      'Chaque client recevra une mercuriale PDF personnalisee.',
     ];
 
     if (!smtp.configured) {
       lines.push(`SMTP incomplet : ${(smtp.missing || []).join(', ') || 'configuration manquante'}`);
     }
 
-    summaryEl.className = `page-feedback ${smtp.configured ? 'success' : 'error'}`;
+    if (!summary.eligible) {
+      lines.push('Aucun client eligible : il faut au moins un destinataire, un tarif 1/2/3 et un produit dans la fiche d appel du jour.');
+    }
+
+    const details = clientList(preview, ['skipped_no_email', 'skipped_not_sendable', 'skipped_no_products']);
+    if (details.length) {
+      lines.push('Clients ignores :');
+      lines.push(...details);
+    }
+
+    summaryEl.className = `page-feedback ${canSendMercurialEmails(preview) ? 'success' : 'error'}`;
     summaryEl.innerHTML = lines.map((line) => `<div>${line}</div>`).join('');
   }
 
@@ -76,7 +109,7 @@
 
     const sendBtn = getEl('email-send-btn');
     if (sendBtn) {
-      sendBtn.disabled = !(preview.smtp && preview.smtp.configured && preview.summary && preview.summary.eligible > 0);
+      sendBtn.disabled = !canSendMercurialEmails(preview);
     }
 
     return preview;
@@ -119,7 +152,7 @@
       body: JSON.stringify({}),
     });
 
-    window.__customerMercurialEmailPreview = null;
+  window.__customerMercurialEmailPreview = null;
     renderSendResult(result);
   }
 
@@ -135,9 +168,14 @@
 
     if (sendBtn) {
       sendBtn.disabled = true;
+      showMessage('', 'Prepare les emails pour verifier le SMTP, les contacts mercuriale et les clients eligibles.');
       sendBtn.addEventListener('click', () => {
         sendMercurialEmails().catch((err) => showMessage('error', err.message || 'Erreur envoi email'));
       });
     }
   });
+
+  window.CustomerPriceListEmail = {
+    canSendMercurialEmails,
+  };
 })();

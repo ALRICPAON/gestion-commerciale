@@ -39,11 +39,24 @@ function buildSummary(recipients) {
     total_clients: recipients.length,
     with_email: 0,
     without_email: 0,
+    price_list_contacts: 0,
     eligible: 0,
     not_sendable: 0,
+    without_tariff: 0,
+    without_products: 0,
+    without_price_list_contact: 0,
+    fallback_recipients: 0,
   };
 
   recipients.forEach((recipient) => {
+    summary.price_list_contacts += Number(recipient.price_list_contact_count || 0);
+    if (!recipient.price_list_contact_count) {
+      summary.without_price_list_contact += 1;
+    }
+    if (recipient.recipient_source && recipient.recipient_source !== 'contact_preference') {
+      summary.fallback_recipients += 1;
+    }
+
     if (!hasEmail(recipient.email)) {
       summary.without_email += 1;
       return;
@@ -53,6 +66,13 @@ function buildSummary(recipients) {
 
     if (!normalizePricingLevel(recipient.tariff_level)) {
       summary.not_sendable += 1;
+      summary.without_tariff += 1;
+      return;
+    }
+
+    if (!recipient.item_count) {
+      summary.not_sendable += 1;
+      summary.without_products += 1;
       return;
     }
 
@@ -197,6 +217,8 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
   });
   const recipients = recipientsToEmailList(recipientResolution);
   const email = recipients.join(', ');
+  const priceListContactCount = Number(recipientResolution.preferred_count || 0);
+  const itemCount = pricingLevel ? (productsByPricingLevel[pricingLevel] || []).length : 0;
 
   if (!hasEmail(email)) {
     return {
@@ -206,6 +228,8 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
       status: 'skipped_no_email',
       item_count: 0,
       recipient_source: recipientResolution.source,
+      recipient_count: 0,
+      price_list_contact_count: priceListContactCount,
     };
   }
 
@@ -217,6 +241,21 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
       status: 'skipped_not_sendable',
       item_count: 0,
       recipient_source: recipientResolution.source,
+      recipient_count: recipients.length,
+      price_list_contact_count: priceListContactCount,
+    };
+  }
+
+  if (itemCount <= 0) {
+    return {
+      client_id: client.id,
+      client_name: clientName,
+      email,
+      status: 'skipped_no_products',
+      item_count: 0,
+      recipient_source: recipientResolution.source,
+      recipient_count: recipients.length,
+      price_list_contact_count: priceListContactCount,
     };
   }
 
@@ -225,9 +264,15 @@ async function clientPreviewRow(db, storeId, client, productsByPricingLevel) {
     client_name: clientName,
     email,
     status: 'ready',
-    item_count: (productsByPricingLevel[pricingLevel] || []).length,
+    item_count: itemCount,
     recipient_source: recipientResolution.source,
+    recipient_count: recipients.length,
+    price_list_contact_count: priceListContactCount,
   };
+}
+
+function isMercurialEmailSendReady(preview = {}) {
+  return Boolean(preview.smtp?.configured && Number(preview.summary?.eligible || 0) > 0);
 }
 
 async function buildCustomerTariffEmailPreview(db, storeId) {
@@ -491,6 +536,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
     errors: 0,
     skipped_no_email: 0,
     skipped_not_sendable: 0,
+    skipped_no_products: 0,
   };
   const results = [];
   const smtpErrors = [];
@@ -522,6 +568,16 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
       const result = { ...baseResult, status: 'skipped_not_sendable' };
       summary.skipped += 1;
       summary.skipped_not_sendable += 1;
+      results.push(result);
+      await recordEmailResult(db, storeId, batch.id, result);
+      logTariffEmailResult(result);
+      continue;
+    }
+
+    if (previewRow.status === 'skipped_no_products') {
+      const result = { ...baseResult, status: 'skipped_no_products' };
+      summary.skipped += 1;
+      summary.skipped_no_products += 1;
       results.push(result);
       await recordEmailResult(db, storeId, batch.id, result);
       logTariffEmailResult(result);
@@ -587,6 +643,8 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
 
 module.exports = {
   buildCustomerTariffEmailPreview,
+  buildSummary,
   fetchCustomerTariffEmailHistory,
+  isMercurialEmailSendReady,
   sendCustomerTariffEmails,
 };

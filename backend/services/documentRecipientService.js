@@ -66,7 +66,8 @@ async function resolveClientRecipients(db, { storeId, entityId, documentType }) 
     [storeId, entityId]
   );
   let recipients = uniqueEmails(preferred.rows);
-  if (recipients.length) return { recipients, source: 'contact_preference' };
+  const preferredCount = preferred.rows.length;
+  if (recipients.length) return { recipients, source: 'contact_preference', preferred_count: preferredCount };
 
   const primary = await db.query(
     `
@@ -79,7 +80,7 @@ async function resolveClientRecipients(db, { storeId, entityId, documentType }) 
     [storeId, entityId]
   );
   recipients = uniqueEmails(primary.rows);
-  if (recipients.length) return { recipients, source: 'primary_contact' };
+  if (recipients.length) return { recipients, source: 'primary_contact', preferred_count: preferredCount };
 
   const fallback = await db.query(
     `
@@ -91,9 +92,9 @@ async function resolveClientRecipients(db, { storeId, entityId, documentType }) 
     [storeId, entityId]
   );
   recipients = uniqueEmails(fallback.rows);
-  if (recipients.length) return { recipients, source: 'legacy_client_email' };
+  if (recipients.length) return { recipients, source: 'legacy_client_email', preferred_count: preferredCount };
 
-  return { recipients: [], source: null };
+  return { recipients: [], source: null, preferred_count: preferredCount };
 }
 
 async function resolveSupplierRecipients(db, { storeId, entityId, documentType }) {

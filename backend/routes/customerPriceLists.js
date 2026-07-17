@@ -122,7 +122,8 @@ async function fetchStoreSettingsForPresentation(db, storeId) {
   const result = await db.query(
     `
     SELECT company_name, logo_url, address_line1, address_line2, postal_code, city, country,
-      phone, email, siret, vat_number, sanitary_approval_number, legal_mentions,
+      phone, contact_email, email, email_sender_address,
+      siret, vat_number, sanitary_approval_number, legal_mentions,
       royale_maree_commission_eur_per_kg
     FROM store_settings
     WHERE store_id = $1

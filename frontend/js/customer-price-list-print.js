@@ -1,4 +1,6 @@
 (function () {
+  const MERCURIALE_PRICE_MENTION = 'Prix rendu';
+
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
       '&': '&amp;',
@@ -39,10 +41,14 @@
     ].filter(Boolean).join(' - ');
   }
 
+  function resolveCompanyEmail(settings = {}) {
+    return settings.contact_email || settings.email || settings.email_sender_address || null;
+  }
+
   function companyMeta(settings) {
     return [
       settings.phone ? `Tel. ${settings.phone}` : null,
-      settings.email,
+      resolveCompanyEmail(settings),
       settings.sanitary_approval_number ? `Agrement sanitaire ${settings.sanitary_approval_number}` : null,
     ].filter(Boolean).join(' | ');
   }
@@ -155,7 +161,7 @@
 
         <section class="mercuriale-intro">
           ${clientName ? `<p class="mercuriale-client">Client : <strong>${escapeHtml(clientName)}</strong></p>` : ''}
-          <p class="mercuriale-subtitle">Prix net départ</p>
+          <p class="mercuriale-subtitle">${escapeHtml(MERCURIALE_PRICE_MENTION)}</p>
         </section>
 
         ${featuredBlock(lines, tariff)}
@@ -190,5 +196,6 @@
     escapeHtml,
     formatDate,
     money,
+    resolveCompanyEmail,
   };
 }());
