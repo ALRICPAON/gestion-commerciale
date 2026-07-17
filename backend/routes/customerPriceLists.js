@@ -10,7 +10,6 @@ const router = express.Router();
 const COURSE_TYPES = new Set(['general', 'client', 'promotion', 'daily_arrival']);
 const STATUSES = new Set(['draft', 'ready', 'archived']);
 const PRICE_SOURCES = new Set(['target_tariff', 'client_tariff', 'manual', 'none']);
-const MISSING_MERCURIALE_TARGET_ERROR = 'Client ou niveau tarifaire requis pour générer la mercuriale';
 
 function requireCourseEditor(req, res, next) {
   const allowedRoles = ['admin', 'responsable', 'commercial'];
@@ -27,7 +26,7 @@ function clean(value) {
 }
 
 function isUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
     String(value || '')
   );
 }
@@ -178,7 +177,10 @@ async function fetchQuickOrderSheetProducts(db, storeId, priceListDate, targetTa
          WHEN 3 THEN qsp.sale_price_level_3_ht
          ELSE NULL
        END AS suggested_price_ht,
-       'quick_order_sheet' AS suggested_price_source
+       CASE
+         WHEN $3::int IN (1, 2, 3) THEN 'quick_order_sheet'
+         ELSE 'none'
+       END AS suggested_price_source
      FROM quick_order_sheet_products qsp
      LEFT JOIN articles a ON a.id = qsp.article_id AND a.store_id = qsp.store_id
      WHERE qsp.store_id = $1 AND qsp.sheet_id = $2
@@ -383,9 +385,6 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const client = await getOptionalClient(req.dbPool, req.user.store_id, clientId);
     const targetTariffLevel = normalizeTargetTariff(req.query.target_tariff_level || req.query.tariff_level);
     const effectiveTargetTariffLevel = resolveMercurialeTargetTariff({ targetTariffLevel, client });
-    if (!effectiveTargetTariffLevel) {
-      return res.status(400).json({ error: MISSING_MERCURIALE_TARGET_ERROR });
-    }
     const requestedDate = clean(req.query.price_list_date || req.query.date);
     const quickSheetProducts = await fetchQuickOrderSheetProducts(req.dbPool, req.user.store_id, requestedDate, effectiveTargetTariffLevel);
     const commissionSettings = await fetchCommissionSettings(req.dbPool, req.user.store_id);
@@ -635,9 +634,6 @@ router.get('/:id/presentation', authenticateToken, attachDbContext, async (req, 
       targetTariffLevel: header.tariff_level,
       client,
     });
-    if (!effectiveTargetTariffLevel) {
-      return res.status(400).json({ error: MISSING_MERCURIALE_TARGET_ERROR });
-    }
     const decoratedLines = lines.map((line) => decorateCourseLine(line, {
       client,
       storeSettings,

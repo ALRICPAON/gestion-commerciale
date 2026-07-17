@@ -7,6 +7,7 @@ const {
   recipientsToEmailList,
 } = require('../services/documentRecipientService');
 const {
+  buildCustomerTariffEmailPreview,
   buildSummary,
   customerMercurialPdfPriceList,
   isMercurialEmailSendReady,
@@ -19,6 +20,38 @@ const {
   MERCURIALE_PRICE_MENTION,
   renderMercurialePdf,
 } = require('../services/pdf/templates/mercurialePdfTemplate');
+const customerPriceListsRouter = require('../routes/customerPriceLists');
+const pdfDocumentsRouter = require('../routes/pdfDocuments');
+
+const TEST_UUID = '550e8400-e29b-41d4-a716-446655440000';
+
+function findRouteHandler(router, pathPattern, method = 'get') {
+  const layer = router.stack.find((entry) => entry.route?.path === pathPattern && entry.route.methods[method]);
+  assert.ok(layer, `route ${method.toUpperCase()} ${pathPattern} trouvee`);
+  return layer.route.stack[layer.route.stack.length - 1].handle;
+}
+
+function mockRes() {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+    send(payload) {
+      this.body = payload;
+      return this;
+    },
+    setHeader() {
+      return this;
+    },
+  };
+}
 
 function mockDb(queryRows) {
   let index = 0;
@@ -38,6 +71,117 @@ async function resolveClient(queryRows) {
     documentType: 'price_list',
     storeId: 'store-1',
   });
+}
+
+function sourceProductsDb({ clientRows = [] } = {}) {
+  return {
+    async query(sql) {
+      const text = String(sql);
+      if (text.includes('FROM clients c')) return { rows: clientRows };
+      if (text.includes('FROM store_settings')) return { rows: [{ royale_maree_commission_eur_per_kg: 0 }] };
+      if (text.includes('FROM quick_order_sheets')) return { rows: [] };
+      if (text.includes('FROM stock_summary')) {
+        return {
+          rows: [{
+            article_id: 'article-1',
+            plu: 'PLU1',
+            designation: 'Produit test',
+            display_name: 'Produit test',
+            unit: 'kg',
+            sale_unit: 'kg',
+            family_code: 'FAM',
+            family_name: 'Famille',
+            sale_price_ex_vat: 9,
+            sale_price_level_1_ht: 10,
+            sale_price_level_2_ht: 20,
+            sale_price_level_3_ht: 30,
+            stock_quantity: 5,
+            pma: 6,
+          }],
+        };
+      }
+      throw new Error(`Requete source-products inattendue: ${text.slice(0, 80)}`);
+    },
+  };
+}
+
+async function callSourceProducts(query = {}, db = sourceProductsDb()) {
+  const handler = findRouteHandler(customerPriceListsRouter, '/source-products');
+  const res = mockRes();
+  await handler({
+    query,
+    user: { store_id: 'store-1' },
+    dbPool: db,
+  }, res);
+  return res;
+}
+
+function pdfRouteDb() {
+  return {
+    async query(sql) {
+      const text = String(sql);
+      if (text.includes('FROM customer_price_lists cpl')) {
+        return { rows: [{ id: TEST_UUID, client_id: null, tariff_level: null, title: 'Mercuriale generale' }] };
+      }
+      if (text.includes('FROM customer_price_list_lines')) return { rows: [] };
+      if (text.includes('FROM store_settings')) return { rows: [{}] };
+      throw new Error(`Requete PDF inattendue: ${text.slice(0, 80)}`);
+    },
+  };
+}
+
+async function callCustomerPriceListPdf(db = pdfRouteDb()) {
+  const handler = findRouteHandler(pdfDocumentsRouter, '/customer-price-lists/:id/pdf');
+  const res = mockRes();
+  await handler({
+    params: { id: TEST_UUID },
+    user: { store_id: 'store-1' },
+    dbPool: db,
+  }, res);
+  return res;
+}
+
+function emailPreviewDb() {
+  return {
+    async query(sql, params = []) {
+      const text = String(sql);
+      if (text.includes('FROM clients c') && text.includes("c.status = 'active'")) {
+        return {
+          rows: [{
+            id: 'client-1',
+            code: 'C1',
+            name: 'Client test',
+            email: 'client@example.com',
+            tariff_level: 1,
+            parent_tariff_level: null,
+            billed_tariff_level: null,
+          }],
+        };
+      }
+      if (text.includes('FROM store_settings')) {
+        return { rows: [{ contact_email: 'contact@altamaree.fr', royale_maree_commission_eur_per_kg: 0 }] };
+      }
+      if (text.includes('FROM quick_order_sheets')) return { rows: [{ id: 'sheet-1' }] };
+      if (text.includes('FROM quick_order_sheet_products')) {
+        return {
+          rows: [{
+            article_id: 'article-1',
+            designation: 'Produit test',
+            display_name: 'Produit test',
+            family_name: 'Famille',
+            sale_unit: 'kg',
+            price_ht: params[2] === 1 ? 10 : 20,
+          }],
+        };
+      }
+      if (text.includes('FROM client_contacts') && text.includes('receives_price_lists = true')) {
+        return { rows: [{ contact_id: 'contact-1', contact_name: 'Mercuriale', email: 'prix@example.com', source: 'contact_preference' }] };
+      }
+      if (text.includes('FROM client_contacts')) return { rows: [] };
+      if (text.includes('NULL::uuid AS contact_id')) return { rows: [] };
+      throw new Error(`Requete preview inattendue: ${text.slice(0, 80)}`);
+    },
+  };
 }
 
 (async () => {
@@ -106,6 +250,11 @@ async function resolveClient(queryRows) {
     'route PDF sans client ni tarif detecte la 400 metier'
   );
   assert.equal(
+    resolveMercurialeTargetTariff({ targetTariffLevel: 1, client: { tariff_level: 2, parent_tariff_level: 3 } }),
+    1,
+    'target_tariff_level explicite prioritaire'
+  );
+  assert.equal(
     resolveClientPricingLevel({
       is_royale_maree_member: true,
       parent_client_name: 'ROYALE MAREE',
@@ -121,6 +270,46 @@ async function resolveClient(queryRows) {
     'PDF email utilise le tarif resolu'
   );
   assert.equal(customerMercurialPdfPriceList(null).tariff_level, null, 'PDF email accepte un client null');
+
+  const sourceWithoutTarget = await callSourceProducts();
+  assert.equal(sourceWithoutTarget.statusCode, 200, 'source-products sans client ni tarif retourne 200');
+  assert.equal(sourceWithoutTarget.body.target_tariff_level, null, 'source-products accepte un tarif cible null');
+  assert.equal(sourceWithoutTarget.body.products[0].price_level_1_ht, 10, 'source-products conserve le prix niveau 1');
+  assert.equal(sourceWithoutTarget.body.products[0].price_level_2_ht, 20, 'source-products conserve le prix niveau 2');
+  assert.equal(sourceWithoutTarget.body.products[0].price_level_3_ht, 30, 'source-products conserve le prix niveau 3');
+  assert.equal(sourceWithoutTarget.body.products[0].suggested_price_ht, null, 'source-products sans tarif ne suggere pas de prix unique');
+  assert.equal(sourceWithoutTarget.body.products[0].suggested_price_source, 'none', 'source-products sans tarif garde source none');
+
+  const sourceWithTarget = await callSourceProducts({ target_tariff_level: '1' });
+  assert.equal(sourceWithTarget.statusCode, 200, 'source-products avec tarif explicite retourne 200');
+  assert.equal(sourceWithTarget.body.target_tariff_level, 1, 'source-products target_tariff_level=1 utilise le tarif 1');
+  assert.equal(sourceWithTarget.body.products[0].suggested_price_ht, 10, 'source-products target_tariff_level=1 suggere le prix niveau 1');
+
+  const sourceWithInheritedParent = await callSourceProducts(
+    { client_id: TEST_UUID },
+    sourceProductsDb({
+      clientRows: [{
+        id: TEST_UUID,
+        name: 'Leclerc affilie',
+        tariff_level: null,
+        parent_tariff_level: 1,
+        billed_tariff_level: null,
+      }],
+    })
+  );
+  assert.equal(sourceWithInheritedParent.statusCode, 200, 'source-products client affilie retourne 200');
+  assert.equal(sourceWithInheritedParent.body.target_tariff_level, 1, 'source-products client affilie herite du tarif parent');
+
+  const emailPreview = await buildCustomerTariffEmailPreview(emailPreviewDb(), 'store-1');
+  assert.equal(emailPreview.summary.eligible, 1, 'preview email globale fonctionne sans client transmis');
+
+  const pdfWithoutTarget = await callCustomerPriceListPdf();
+  assert.equal(pdfWithoutTarget.statusCode, 400, 'PDF personnalise sans client ni tarif retourne 400');
+  assert.equal(
+    pdfWithoutTarget.body.error,
+    'Client ou niveau tarifaire requis pour générer la mercuriale',
+    'PDF personnalise sans tarif retourne une erreur claire'
+  );
 
   const summary = buildSummary([
     { email: 'a@example.com', resolved_tariff_level: 1, pricing_level_source: 'client', item_count: 3, price_list_contact_count: 1, recipient_source: 'contact_preference' },
