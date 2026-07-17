@@ -50,8 +50,15 @@
     return (preview?.recipients || []).filter((row) => row.status === 'ready' && row.mail_preview);
   }
 
+  function currentSelectionSet() {
+    if (!window.__customerMercurialSelectionTouched) return null;
+    return new Set(window.__customerMercurialSelectedClientIds || []);
+  }
+
   function selectedReadyRecipients(preview) {
-    return readyRecipients(preview).filter((row) => row.selected !== false);
+    const selection = currentSelectionSet();
+    if (!selection) return readyRecipients(preview).filter((row) => row.selected !== false);
+    return readyRecipients(preview).filter((row) => selection.has(String(row.client_id)));
   }
 
   function emailContext(extra = {}) {
@@ -90,7 +97,7 @@
       `Clients sans niveau tarifaire : ${summary.without_tariff || 0}`,
       `Clients sans produit fiche d'appel : ${summary.without_products || 0}`,
       `Clients avec fallback contact/email : ${summary.fallback_recipients || 0}`,
-      `Emails qui seront envoyes : ${selectedReadyRecipients(preview).length || summary.eligible || 0}`,
+      `Emails qui seront envoyes : ${selectedReadyRecipients(preview).length}`,
     ];
 
     if (!smtp.configured) {
@@ -235,6 +242,8 @@
       input.addEventListener('change', () => {
         const row = rows.find((entry) => String(entry.client_id) === String(input.dataset.clientId));
         if (row) row.selected = input.checked;
+        window.__customerMercurialSelectionTouched = true;
+        window.__customerMercurialSelectedClientIds = rows.filter((entry) => entry.selected !== false).map((entry) => entry.client_id);
         updateSelectedCount(preview);
         renderSummary(preview);
       });
@@ -244,6 +253,8 @@
     if (selectAllBtn) {
       selectAllBtn.addEventListener('click', () => {
         rows.forEach((row) => { row.selected = true; });
+        window.__customerMercurialSelectionTouched = true;
+        window.__customerMercurialSelectedClientIds = rows.map((row) => row.client_id);
         renderEmailPreview(preview, index);
         renderSummary(preview);
       });
@@ -253,6 +264,8 @@
     if (unselectAllBtn) {
       unselectAllBtn.addEventListener('click', () => {
         rows.forEach((row) => { row.selected = false; });
+        window.__customerMercurialSelectionTouched = true;
+        window.__customerMercurialSelectedClientIds = [];
         renderEmailPreview(preview, index);
         renderSummary(preview);
       });
@@ -313,8 +326,10 @@
       body: JSON.stringify(payload),
     });
     readyRecipients(preview).forEach((row) => {
-      row.selected = options.preserveSelection && previousSelected.size ? previousSelected.has(row.client_id) : true;
+      row.selected = options.preserveSelection && window.__customerMercurialSelectionTouched ? previousSelected.has(row.client_id) : true;
     });
+    window.__customerMercurialSelectedClientIds = selectedReadyRecipients(preview).map((row) => row.client_id);
+    if (!options.preserveSelection) window.__customerMercurialSelectionTouched = false;
     window.__customerMercurialEmailPreview = preview;
     window.__customerMercurialCommonMessage = preview.common_message || '';
     renderSummary(preview);
@@ -348,15 +363,13 @@
   }
 
   function buildConfirmationMessage(preview) {
-    const summary = preview.summary || {};
+    const selectedRows = selectedReadyRecipients(preview);
 
     return [
-      `Clients actifs : ${summary.total_clients || 0}`,
-      `Clients avec email : ${summary.with_email || 0}`,
-      `Clients sans email : ${summary.without_email || 0}`,
-      `Emails qui seront envoyes : ${summary.eligible || 0}`,
+      `Clients selectionnes : ${selectedRows.length}`,
+      `Emails qui seront envoyes : ${selectedRows.length}`,
       '',
-      'Chaque client recevra son propre PDF personnalise.',
+      'Chaque client selectionne recevra son propre PDF personnalise.',
       'Confirmer l envoi des mercuriales ?',
     ].join('\n');
   }
@@ -369,8 +382,9 @@
       return;
     }
 
-    if (!(preview.summary && preview.summary.eligible > 0)) {
-      showMessage('error', 'Aucun client eligible pour l envoi.');
+    const selectedRows = selectedReadyRecipients(preview);
+    if (!selectedRows.length) {
+      showMessage('error', 'Selectionne au moins un client.');
       return;
     }
 

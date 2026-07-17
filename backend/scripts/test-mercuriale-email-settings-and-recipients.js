@@ -17,6 +17,7 @@ const {
   resolveEmailSalutation,
   resolveMercurialeTargetTariff,
   sendCustomerTariffEmails,
+  sendCustomerTariffTestEmail,
 } = require('../services/customerTariffEmailService');
 const { resolveCompanyEmail } = require('../services/pdf/pdfLayout');
 const {
@@ -24,6 +25,7 @@ const {
   renderMercurialePdf,
 } = require('../services/pdf/templates/mercurialePdfTemplate');
 const customerPriceListsRouter = require('../routes/customerPriceLists');
+const customerTariffEmailsRouter = require('../routes/customerTariffEmails');
 const pdfDocumentsRouter = require('../routes/pdfDocuments');
 
 const TEST_UUID = '550e8400-e29b-41d4-a716-446655440000';
@@ -144,6 +146,17 @@ async function callCustomerPriceListPdf(db = pdfRouteDb()) {
   return res;
 }
 
+async function callTariffEmailSend(body = {}) {
+  const handler = findRouteHandler(customerTariffEmailsRouter, '/send', 'post');
+  const res = mockRes();
+  await handler({
+    body,
+    user: { id: 'user-1', store_id: 'store-1' },
+    dbPool: deselectedSendDb(),
+  }, res);
+  return res;
+}
+
 function emailPreviewDb() {
   return {
     async query(sql, params = []) {
@@ -190,7 +203,7 @@ function emailPreviewDb() {
         };
       }
       if (text.includes('FROM client_contacts') && text.includes('receives_price_lists = true')) {
-        return { rows: [{ contact_id: 'contact-1', contact_name: 'Jean Dupont', email: 'prix@example.com', source: 'contact_preference' }] };
+        return { rows: [{ contact_id: 'contact-1', contact_name: 'Jean Dupont', email: 'prix@example.com', source: 'mercuriale_contact' }] };
       }
       if (text.includes('FROM client_contacts')) return { rows: [] };
       if (text.includes('NULL::uuid AS contact_id')) return { rows: [] };
@@ -232,19 +245,59 @@ function deselectedSendDb() {
   };
 }
 
+function selectedSendDb({ withCompanyEmail = true } = {}) {
+  return {
+    async query(sql, params = []) {
+      const text = String(sql);
+      if (text.includes('FROM customer_price_lists')) {
+        return { rows: [{ price_list_id: TEST_UUID, price_list_date: '2026-07-20' }] };
+      }
+      if (text.includes('FROM clients c') && text.includes("c.status = 'active'")) {
+        return {
+          rows: [
+            { id: 'client-a', name: 'Client A', email: 'principal-a@test.fr', tariff_level: 1 },
+            { id: 'client-b', name: 'Client B', email: 'principal-b@test.fr', tariff_level: 1 },
+          ],
+        };
+      }
+      if (text.includes('FROM store_settings')) {
+        return { rows: [withCompanyEmail ? { contact_email: 'test@altamaree.fr', email_sender_address: 'commercial@altamaree.fr' } : { email_sender_address: 'commercial@altamaree.fr' }] };
+      }
+      if (text.includes('FROM quick_order_sheets')) return { rows: [{ id: 'sheet-1' }] };
+      if (text.includes('FROM quick_order_sheet_products')) {
+        return { rows: [{ article_id: 'article-1', designation: 'Produit', display_name: 'Produit', family_name: 'Famille', sale_unit: 'kg', price_ht: 10 }] };
+      }
+      if (text.includes('FROM client_contacts') && text.includes('receives_price_lists = true')) {
+        return {
+          rows: [
+            { contact_id: 'contact-1', contact_name: 'Contact 1', email: 'merc1@test.fr', source: 'mercuriale_contact' },
+            { contact_id: 'contact-2', contact_name: 'Contact 2', email: 'merc2@test.fr', source: 'mercuriale_contact' },
+          ],
+        };
+      }
+      if (text.includes('INSERT INTO customer_price_list_email_batches')) {
+        return { rows: [{ id: 'batch-1', created_at: '2026-07-20T00:00:00Z' }] };
+      }
+      if (text.includes('INSERT INTO customer_price_list_email_results')) return { rows: [] };
+      if (text.includes('UPDATE customer_price_list_email_batches')) return { rows: [] };
+      throw new Error(`Requete envoi selection inattendue: ${text.slice(0, 100)} | ${JSON.stringify(params)}`);
+    },
+  };
+}
+
 (async () => {
   const preferred = await resolveClient([
-    [{ contact_id: 'c1', contact_name: 'Mercuriale', email: 'prix@example.com', source: 'contact_preference' }],
+    [{ contact_id: 'c1', contact_name: 'Mercuriale', email: 'prix@example.com', source: 'mercuriale_contact' }],
   ]);
   assert.deepEqual(recipientsToEmailList(preferred), ['prix@example.com'], 'contact mercuriale actif utilise');
-  assert.equal(preferred.source, 'contact_preference');
+  assert.equal(preferred.source, 'mercuriale_contact');
   assert.equal(preferred.preferred_count, 1);
 
   const multiplePreferred = await resolveClient([
     [
-      { contact_id: 'c1', contact_name: 'A', email: 'prix@example.com', source: 'contact_preference' },
-      { contact_id: 'c2', contact_name: 'B', email: 'prix2@example.com', source: 'contact_preference' },
-      { contact_id: 'c3', contact_name: 'Doublon', email: 'PRIX@example.com', source: 'contact_preference' },
+      { contact_id: 'c1', contact_name: 'A', email: 'prix@example.com', source: 'mercuriale_contact' },
+      { contact_id: 'c2', contact_name: 'B', email: 'prix2@example.com', source: 'mercuriale_contact' },
+      { contact_id: 'c3', contact_name: 'Doublon', email: 'PRIX@example.com', source: 'mercuriale_contact' },
     ],
   ]);
   assert.deepEqual(
@@ -258,20 +311,12 @@ function deselectedSendDb() {
   assert.deepEqual(recipientsToEmailList(unchecked), [], 'contact mercuriale non coche non retenu');
   assert.equal(unchecked.preferred_count, 0);
 
-  const primaryFallback = await resolveClient([
-    [],
-    [{ contact_id: 'c4', contact_name: 'Principal', email: 'principal@example.com', source: 'primary_contact' }],
-  ]);
-  assert.deepEqual(recipientsToEmailList(primaryFallback), ['principal@example.com'], 'fallback contact principal');
-  assert.equal(primaryFallback.source, 'primary_contact');
-
   const clientEmailFallback = await resolveClient([
     [],
-    [],
-    [{ contact_id: null, contact_name: 'Client', email: 'client@example.com', source: 'legacy_client_email' }],
+    [{ contact_id: null, contact_name: 'Client', email: 'client@example.com', source: 'client_fallback' }],
   ]);
   assert.deepEqual(recipientsToEmailList(clientEmailFallback), ['client@example.com'], 'fallback email fiche client');
-  assert.equal(clientEmailFallback.source, 'legacy_client_email');
+  assert.equal(clientEmailFallback.source, 'client_fallback');
 
   assert.equal(resolveClientPricingLevel({ tariff_level: 3 }), 3, 'client avec tarif propre');
   assert.equal(resolveClientPricingLevelSource({ tariff_level: 3 }), 'client', 'source tarif propre');
@@ -390,13 +435,47 @@ function deselectedSendDb() {
   assert.equal(emailPreview.recipients[0].mail_preview.client_tariff_level, 1, 'preview expose le tarif unique du client');
   assert.equal(emailPreview.recipients[0].mail_preview.attachment_filename, emailPreview.attachment_filename, 'preview expose le PDF joint exact');
 
-  const deselectedSend = await sendCustomerTariffEmails(deselectedSendDb(), 'store-1', {
+  await assert.rejects(
+    () => sendCustomerTariffEmails(deselectedSendDb(), 'store-1', {
+      price_list_id: TEST_UUID,
+      selected_client_ids: [],
+      common_message: 'Message commun modifie.',
+    }),
+    /Aucun client sélectionné pour l’envoi/,
+    'selection vide refusee cote backend'
+  );
+  const emptySelectionResponse = await callTariffEmailSend({ selected_client_ids: [] });
+  assert.equal(emptySelectionResponse.statusCode, 400, 'route envoi refuse une selection vide');
+  assert.equal(emptySelectionResponse.body.error, 'Aucun client sélectionné pour l’envoi', 'route envoi retourne une erreur claire selection vide');
+
+  const sentMessages = [];
+  const selectedSend = await sendCustomerTariffEmails(selectedSendDb(), 'store-1', {
     price_list_id: TEST_UUID,
-    selected_client_ids: [],
+    selected_client_ids: ['client-a'],
     common_message: 'Message commun modifie.',
+    buildPdf: async () => Buffer.from('PDF tarif unique'),
+    sendEmail: async (message) => {
+      sentMessages.push(message);
+      return { message_id: `message-${sentMessages.length}` };
+    },
   });
-  assert.equal(deselectedSend.summary.sent, 0, 'destinataire decoche non envoye');
-  assert.equal(deselectedSend.summary.skipped, 0, 'destinataire decoche exclu sans diagnostic parasite');
+  assert.equal(selectedSend.summary.sent, 1, 'un seul client selectionne envoye');
+  assert.equal(sentMessages.length, 1, 'aucun envoi aux autres clients actifs');
+  assert.deepEqual(sentMessages[0].to, ['merc1@test.fr', 'merc2@test.fr'], 'tous les contacts mercuriale transmis au SMTP');
+
+  const testMessages = [];
+  await sendCustomerTariffTestEmail(selectedSendDb({ withCompanyEmail: false }), 'store-1', {
+    price_list_id: TEST_UUID,
+    selected_client_ids: ['client-a'],
+    to: 'test-destinataire@altamaree.fr',
+    buildPdf: async () => Buffer.from('PDF test tarif unique'),
+    sendEmail: async (message) => {
+      testMessages.push(message);
+      return { message_id: 'test-message' };
+    },
+  });
+  assert.equal(testMessages.length, 1, 'email test envoye une seule fois');
+  assert.equal(testMessages[0].to, 'test-destinataire@altamaree.fr', 'email test envoye uniquement a l adresse test');
 
   const pdfWithoutTarget = await callCustomerPriceListPdf();
   assert.equal(pdfWithoutTarget.statusCode, 400, 'PDF personnalise sans client ni tarif retourne 400');
@@ -468,6 +547,13 @@ function deselectedSendDb() {
   assert.ok(!frontendEmail.includes("email/preview${previewQuery()}"), 'frontend ne prepare plus les emails en GET');
   assert.ok(frontendEmail.includes('Envoyer un test'), 'frontend affiche le bouton envoyer un test');
   assert.ok(frontendEmail.includes('selected_client_ids'), 'frontend envoie la selection visible');
+  assert.ok(frontendEmail.includes('selectedReadyRecipients(preview)'), 'frontend calcule la selection courante');
+  assert.ok(frontendEmail.includes('Clients selectionnes'), 'confirmation utilise les clients selectionnes');
+  const confirmationFunction = frontendEmail.slice(
+    frontendEmail.indexOf('function buildConfirmationMessage'),
+    frontendEmail.indexOf('async function sendMercurialEmails')
+  );
+  assert.ok(!confirmationFunction.includes('summary.total_clients'), 'confirmation n utilise plus le total global');
   assert.ok(frontendEmail.includes('Message commun'), 'frontend affiche le message commun');
 
   const frontendController = fs.readFileSync(

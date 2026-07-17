@@ -58,16 +58,32 @@ async function resolveClientRecipients(db, { storeId, entityId, documentType }) 
 
   const preferred = await db.query(
     `
-    SELECT id AS contact_id, contact_name, email, 'contact_preference' AS source
+    SELECT id AS contact_id, contact_name, email, $3::text AS source
     FROM client_contacts
     WHERE store_id = $1 AND client_id = $2 AND status = 'active' AND ${preferenceColumn} = true
     ORDER BY is_primary DESC, contact_name ASC
     `,
-    [storeId, entityId]
+    [storeId, entityId, documentType === 'price_list' ? 'mercuriale_contact' : 'contact_preference']
   );
   let recipients = uniqueEmails(preferred.rows);
   const preferredCount = preferred.rows.length;
-  if (recipients.length) return { recipients, source: 'contact_preference', preferred_count: preferredCount };
+  if (recipients.length) return { recipients, source: documentType === 'price_list' ? 'mercuriale_contact' : 'contact_preference', preferred_count: preferredCount };
+
+  if (documentType === 'price_list') {
+    const fallback = await db.query(
+      `
+      SELECT NULL::uuid AS contact_id, contact_name, email, 'client_fallback' AS source
+      FROM clients
+      WHERE store_id = $1 AND id = $2
+      LIMIT 1
+      `,
+      [storeId, entityId]
+    );
+    recipients = uniqueEmails(fallback.rows);
+    if (recipients.length) return { recipients, source: 'client_fallback', preferred_count: preferredCount };
+
+    return { recipients: [], source: null, preferred_count: preferredCount };
+  }
 
   const primary = await db.query(
     `

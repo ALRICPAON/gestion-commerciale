@@ -140,7 +140,7 @@ function buildSummary(recipients) {
     if (!recipient.price_list_contact_count) {
       summary.without_price_list_contact += 1;
     }
-    if (recipient.recipient_source && recipient.recipient_source !== 'contact_preference') {
+    if (recipient.recipient_source && !['contact_preference', 'mercuriale_contact'].includes(recipient.recipient_source)) {
       summary.fallback_recipients += 1;
     }
     if (recipient.pricing_level_source === 'client') summary.own_tariff += 1;
@@ -746,6 +746,12 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   const commonMessage = resolveCommonMessage(options.common_message);
   const hasExplicitSelection = Array.isArray(options.selected_client_ids);
   const selectedClientIds = new Set((options.selected_client_ids || []).map((id) => clean(id)).filter(Boolean));
+  if (hasExplicitSelection && !selectedClientIds.size) {
+    const error = new Error('Aucun client sélectionné pour l’envoi');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
   const [clients, storeSettings] = await Promise.all([
     fetchActiveClients(db, storeId),
     fetchStoreSettings(db, storeId),
@@ -775,6 +781,8 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   const results = [];
   const smtpErrors = [];
   const filename = buildPdfFilename(context.mercuriale_date);
+  const sendEmailFn = options.sendEmail || sendEmail;
+  const buildPdfFn = options.buildPdf || buildCustomerMercurialPdf;
 
   for (const client of selectedClients) {
     const pricingLevel = resolveClientPricingLevel(client);
@@ -827,9 +835,9 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
     });
 
     try {
-      const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings, mercurialeDate: context.mercuriale_date });
-      const delivery = await sendEmail({
-        to: previewRow.email,
+      const pdfBuffer = await buildPdfFn({ client, products, storeSettings, mercurialeDate: context.mercuriale_date });
+      const delivery = await sendEmailFn({
+        to: (previewRow.recipients || []).map((recipient) => recipient.email),
         subject: mail.subject,
         replyTo: mail.replyTo,
         html: mail.html,
@@ -901,7 +909,7 @@ async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
     throw error;
   }
 
-  const testRecipient = resolveCompanyEmail(storeSettings) || clean(options.to);
+  const testRecipient = clean(options.to) || resolveCompanyEmail(storeSettings);
   if (!testRecipient) {
     const error = new Error('Adresse email de test requise');
     error.status = 400;
@@ -918,7 +926,7 @@ async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
 
     const filename = buildPdfFilename(context.mercuriale_date);
     const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
-    const pdfBuffer = await buildCustomerMercurialPdf({ client, products, storeSettings, mercurialeDate: context.mercuriale_date });
+    const pdfBuffer = await (options.buildPdf || buildCustomerMercurialPdf)({ client, products, storeSettings, mercurialeDate: context.mercuriale_date });
     const mail = buildMercurialeEmailMessage({
       companySettings: storeSettings,
       recipientResolution: previewRow.recipient_resolution,
@@ -927,7 +935,7 @@ async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
       clientTariffLevel: pricingLevel,
       pdfFilename: filename,
     });
-    const delivery = await sendEmail({
+    const delivery = await (options.sendEmail || sendEmail)({
       to: testRecipient,
       subject: mail.subject,
       replyTo: mail.replyTo,

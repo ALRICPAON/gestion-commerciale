@@ -51,13 +51,20 @@ router.post('/preview', authenticateToken, attachDbContext, requireTariffEmailSe
 
 router.post('/send', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
   try {
+    const selectedClientIds = Array.isArray(req.body?.selected_client_ids)
+      ? req.body.selected_client_ids.filter(Boolean)
+      : [];
+    if (!selectedClientIds.length) {
+      return res.status(400).json({ error: 'Aucun client sélectionné pour l’envoi' });
+    }
+
     const result = await sendCustomerTariffEmails(req.dbPool, req.user.store_id, {
       user_id: req.user.id,
       price_list_id: req.body?.price_list_id,
       price_list_date: req.body?.price_list_date,
       mercuriale_date: req.body?.mercuriale_date,
       common_message: req.body?.common_message,
-      selected_client_ids: req.body?.selected_client_ids,
+      selected_client_ids: selectedClientIds,
     });
 
     res.json(result);
