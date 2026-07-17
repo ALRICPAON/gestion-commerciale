@@ -11,13 +11,6 @@ function normalizePricingLevel(value) {
   return [1, 2, 3].includes(parsed) ? parsed : null;
 }
 
-function normalizeSearch(value) {
-  return String(value || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase();
-}
-
 function royaleMareeCommissionAmount(settings = {}) {
   return Math.max(0, parseDecimal(settings.royale_maree_commission_eur_per_kg, 0));
 }
@@ -26,31 +19,9 @@ function isRoyaleMareeCommissionPricingLevel(pricingLevel) {
   return normalizePricingLevel(pricingLevel) === ROYALE_MAREE_COMMISSION_PRICING_LEVEL;
 }
 
-function isRoyaleMareeText(value) {
-  return normalizeSearch(value).includes('ROYALE MAREE');
-}
-
-function isRoyaleMareeLeclercCircuit(client = null, context = {}) {
-  if (context.forceRoyaleMareeCircuit === true) return true;
-  if (!client) return context.clientOptionalTargetTariff === ROYALE_MAREE_COMMISSION_PRICING_LEVEL;
-  return (
-    client.is_royale_maree_member === true
-    || client.parent_is_royale_maree_member === true
-    || client.billed_is_royale_maree_member === true
-    || isRoyaleMareeText(client.name)
-    || isRoyaleMareeText(client.legal_name)
-    || isRoyaleMareeText(client.code)
-    || isRoyaleMareeText(client.parent_client_name)
-    || isRoyaleMareeText(client.parent_client_code)
-    || isRoyaleMareeText(client.billed_client_name)
-    || isRoyaleMareeText(client.billed_client_code)
-  );
-}
-
-function shouldApplyRoyaleMareeCommission({ pricingLevel, client = null, context = {} } = {}) {
+function shouldApplyRoyaleMareeCommission({ pricingLevel, context = {} } = {}) {
   return (
     isRoyaleMareeCommissionPricingLevel(pricingLevel)
-    && isRoyaleMareeLeclercCircuit(client, context)
     && royaleMareeCommissionAmount(context.storeSettings || context.settings || {}) > 0
   );
 }
@@ -60,7 +31,7 @@ function getCustomerDisplayedPrice({ price, pricingLevel, client = null, storeSe
   const parsedPrice = parseDecimal(price, null);
   if (parsedPrice === null) return price;
   const settings = storeSettings || context.storeSettings || {};
-  if (!shouldApplyRoyaleMareeCommission({ pricingLevel, client, context: { ...context, storeSettings: settings } })) {
+  if (!shouldApplyRoyaleMareeCommission({ pricingLevel, context: { ...context, storeSettings: settings } })) {
     return parsedPrice;
   }
   return Number((parsedPrice + royaleMareeCommissionAmount(settings)).toFixed(4));
@@ -71,7 +42,6 @@ function priceWithRoyaleMareeCommission(price, pricingLevel, settings = {}) {
     price,
     pricingLevel,
     storeSettings: settings,
-    context: { forceRoyaleMareeCircuit: true },
   });
 }
 
@@ -113,7 +83,6 @@ module.exports = {
   ROYALE_MAREE_COMMISSION_PRICING_LEVEL,
   decorateLineWithDisplayedPrices,
   getCustomerDisplayedPrice,
-  isRoyaleMareeLeclercCircuit,
   isRoyaleMareeCommissionPricingLevel,
   priceWithRoyaleMareeCommission,
   royaleMareeCommissionAmount,
