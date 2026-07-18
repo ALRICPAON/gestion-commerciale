@@ -11,6 +11,15 @@ const {
   VALIDATED_PAYMENT_STATUS,
   syncValidatedSupplierInvoiceStatusToPennylane,
 } = require('../services/pennylane');
+const {
+  isSupplierCreditNote,
+  normalizeCreditNoteReason,
+  normalizeSupplierDocumentType,
+  positiveAmount,
+  registerSupplierReturn,
+  signedFinancialAmount,
+  createCreditNoteApplication,
+} = require('../services/supplierCreditNoteService');
 
 const router = express.Router();
 const DOCUMENTS_ROOT = path.join(__dirname, '..', 'uploads', 'supplier-invoices');
@@ -69,8 +78,11 @@ function invoiceDocumentUrl(invoiceId) {
 }
 
 function buildPennylanePayload(invoice, lines) {
+  const documentType = normalizeSupplierDocumentType(invoice.document_type) || 'invoice';
   return {
-    type: 'supplier_invoice',
+    type: documentType === 'credit_note' ? 'supplier_credit_note' : 'supplier_invoice',
+    document_type: documentType,
+    credit_note_reason: documentType === 'credit_note' ? normalizeCreditNoteReason(invoice.credit_note_reason) : null,
     source: 'gestion-commerciale',
     invoice_id: invoice.id,
     store_id: invoice.store_id,
@@ -84,6 +96,11 @@ function buildPennylanePayload(invoice, lines) {
     fees_ex_vat: Number(invoice.fees_ex_vat || 0),
     vat_amount: Number(invoice.vat_amount || 0),
     total_inc_vat: Number(invoice.total_inc_vat || 0),
+    financial_effect_ex_vat: signedFinancialAmount(invoice, 'total_ex_vat'),
+    financial_effect_inc_vat: signedFinancialAmount(invoice, 'total_inc_vat'),
+    stock_effect: invoice.stock_effect || 'none',
+    source_supplier_invoice_id: invoice.source_supplier_invoice_id || null,
+    source_purchase_id: invoice.source_purchase_id || null,
     lines: lines.map((line) => ({
       article_id: line.article_id,
       supplier_reference: line.supplier_reference,
@@ -113,6 +130,14 @@ function buildValidatedPennylanePayload(invoice, lines) {
 function getPennylaneSupplierInvoiceId(invoice) {
   const payload = jsonObject(invoice.pennylane_payload);
   return clean(payload.pennylane_supplier_invoice_id || invoice.pennylane_supplier_invoice_id);
+}
+
+function documentTypeFromBody(body = {}) {
+  return normalizeSupplierDocumentType(body.document_type || body.type) || 'invoice';
+}
+
+function normalizeDocumentAmount(documentType, value) {
+  return documentType === 'credit_note' ? positiveAmount(value) : num(value);
 }
 
 async function recordPennylaneStatusSyncFailure(db, { invoice, error, userId }) {
@@ -214,6 +239,8 @@ router.get('/supplier-invoices', authenticateToken, attachDbContext, async (req,
 
     const result = await req.dbPool.query(
       `SELECT si.*, s.name supplier_name, s.code supplier_code,
+              CASE WHEN si.document_type = 'credit_note' THEN -ABS(COALESCE(si.total_ex_vat, 0)) ELSE COALESCE(si.total_ex_vat, 0) END financial_total_ex_vat,
+              CASE WHEN si.document_type = 'credit_note' THEN -ABS(COALESCE(si.total_inc_vat, 0)) ELSE COALESCE(si.total_inc_vat, 0) END financial_total_inc_vat,
               COUNT(DISTINCT sil.id) line_count,
               COUNT(DISTINCT sim.id) match_count
        FROM supplier_invoices si
@@ -239,6 +266,8 @@ router.post('/supplier-invoices', authenticateToken, attachDbContext, requireAdm
     const supplierId = clean(req.body.supplier_id);
     const invoiceNumber = clean(req.body.invoice_number);
     if (!supplierId || !invoiceNumber) return res.status(400).json({ error: 'supplier_id et invoice_number obligatoires' });
+    const documentType = documentTypeFromBody(req.body);
+    const creditNoteReason = documentType === 'credit_note' ? normalizeCreditNoteReason(req.body.credit_note_reason) : null;
 
     await client.query('BEGIN');
     const supplier = await client.query('SELECT id, supplier_type FROM suppliers WHERE id = $1 AND store_id = $2 LIMIT 1', [supplierId, req.user.store_id]);
@@ -251,9 +280,10 @@ router.post('/supplier-invoices', authenticateToken, attachDbContext, requireAdm
       `INSERT INTO supplier_invoices(
         id, store_id, client_key, supplier_id, invoice_number, invoice_date, due_date,
         supplier_type, total_ex_vat, product_total_ex_vat, fees_ex_vat, vat_amount,
-        total_inc_vat, notes, created_by
+        total_inc_vat, notes, created_by, document_type, credit_note_reason,
+        source_supplier_invoice_id, source_purchase_id, stock_effect
        )
-       VALUES(gen_random_uuid(), $1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12, $13, $14)
+       VALUES(gen_random_uuid(), $1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, 'none')
        RETURNING *`,
       [
         req.user.store_id,
@@ -263,13 +293,17 @@ router.post('/supplier-invoices', authenticateToken, attachDbContext, requireAdm
         clean(req.body.invoice_date),
         clean(req.body.due_date),
         clean(req.body.supplier_type) || supplier.rows[0].supplier_type || null,
-        num(req.body.total_ex_vat),
-        num(req.body.product_total_ex_vat),
-        num(req.body.fees_ex_vat),
-        num(req.body.vat_amount),
-        num(req.body.total_inc_vat),
+        normalizeDocumentAmount(documentType, req.body.total_ex_vat),
+        normalizeDocumentAmount(documentType, req.body.product_total_ex_vat),
+        normalizeDocumentAmount(documentType, req.body.fees_ex_vat),
+        normalizeDocumentAmount(documentType, req.body.vat_amount),
+        normalizeDocumentAmount(documentType, req.body.total_inc_vat),
         clean(req.body.notes),
         req.user.id,
+        documentType,
+        creditNoteReason,
+        clean(req.body.source_supplier_invoice_id),
+        clean(req.body.source_purchase_id),
       ]
     );
 
@@ -291,15 +325,15 @@ router.post('/supplier-invoices', authenticateToken, attachDbContext, requireAdm
           clean(line.article_id),
           clean(line.supplier_reference),
           clean(line.supplier_label),
-          num(line.quantity),
+          positiveAmount(line.quantity),
           num(line.colis, null),
           num(line.pieces, null),
           clean(line.price_unit),
-          num(line.unit_price_ex_vat),
-          num(line.line_amount_ex_vat),
+          positiveAmount(line.unit_price_ex_vat),
+          positiveAmount(line.line_amount_ex_vat),
           num(line.vat_rate),
-          num(line.vat_amount),
-          num(line.line_amount_inc_vat),
+          positiveAmount(line.vat_amount),
+          positiveAmount(line.line_amount_inc_vat),
         ]
       );
     }
@@ -328,6 +362,8 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
     await client.query('BEGIN');
     const supplierId = clean(req.body.supplier_id);
     const invoiceNumber = clean(req.body.invoice_number) || path.parse(req.file.originalname || req.file.filename).name;
+    const documentType = documentTypeFromBody(req.body);
+    const creditNoteReason = documentType === 'credit_note' ? normalizeCreditNoteReason(req.body.credit_note_reason) : null;
     if (!supplierId) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'supplier_id obligatoire' });
@@ -343,9 +379,10 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
       `INSERT INTO supplier_invoices(
         id, store_id, client_key, supplier_id, invoice_number, invoice_date, due_date,
         supplier_type, total_ex_vat, product_total_ex_vat, fees_ex_vat, vat_amount,
-        total_inc_vat, document_url, notes, created_by
+        total_inc_vat, document_url, notes, created_by, document_type, credit_note_reason,
+        source_supplier_invoice_id, source_purchase_id, stock_effect
        )
-       VALUES(gen_random_uuid(), $1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12, NULL, $13, $14)
+       VALUES(gen_random_uuid(), $1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12, NULL, $13, $14, $15, $16, $17, $18, 'none')
        RETURNING *`,
       [
         req.user.store_id,
@@ -355,13 +392,17 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
         clean(req.body.invoice_date),
         clean(req.body.due_date),
         clean(req.body.supplier_type) || supplier.rows[0].supplier_type || null,
-        num(req.body.total_ex_vat),
-        num(req.body.product_total_ex_vat),
-        num(req.body.fees_ex_vat),
-        num(req.body.vat_amount),
-        num(req.body.total_inc_vat),
+        normalizeDocumentAmount(documentType, req.body.total_ex_vat),
+        normalizeDocumentAmount(documentType, req.body.product_total_ex_vat),
+        normalizeDocumentAmount(documentType, req.body.fees_ex_vat),
+        normalizeDocumentAmount(documentType, req.body.vat_amount),
+        normalizeDocumentAmount(documentType, req.body.total_inc_vat),
         clean(req.body.notes),
         req.user.id,
+        documentType,
+        creditNoteReason,
+        clean(req.body.source_supplier_invoice_id),
+        clean(req.body.source_purchase_id),
       ]
     );
 
@@ -371,8 +412,8 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
       `INSERT INTO supplier_invoice_documents(
         id, supplier_invoice_id, store_id, document_type, original_name, mime_type, storage_path, public_url, uploaded_by
        )
-       VALUES(gen_random_uuid(), $1, $2, 'invoice', $3, $4, $5, $6, $7)`,
-      [invoice.rows[0].id, req.user.store_id, req.file.originalname || null, req.file.mimetype || null, req.file.path, url, req.user.id]
+       VALUES(gen_random_uuid(), $1, $2, $8, $3, $4, $5, $6, $7)`,
+      [invoice.rows[0].id, req.user.store_id, req.file.originalname || null, req.file.mimetype || null, req.file.path, url, req.user.id, documentType]
     );
 
     await client.query('COMMIT');
@@ -403,7 +444,9 @@ router.get('/supplier-invoices/:id', authenticateToken, attachDbContext, async (
       [invoice.id]
     );
     const documents = await req.dbPool.query('SELECT * FROM supplier_invoice_documents WHERE supplier_invoice_id = $1 ORDER BY created_at DESC', [invoice.id]);
-    return res.json({ invoice, lines, matches: matches.rows, documents: documents.rows });
+    const applications = await req.dbPool.query('SELECT * FROM supplier_credit_note_applications WHERE credit_note_invoice_id = $1 ORDER BY created_at ASC', [invoice.id]).catch(() => ({ rows: [] }));
+    const returns = await req.dbPool.query('SELECT * FROM supplier_credit_note_returns WHERE credit_note_invoice_id = $1 ORDER BY created_at ASC', [invoice.id]).catch(() => ({ rows: [] }));
+    return res.json({ invoice, lines, matches: matches.rows, documents: documents.rows, credit_note_applications: applications.rows, supplier_returns: returns.rows });
   } catch (error) {
     console.error('Erreur detail facture fournisseur :', error);
     return res.status(500).json({ error: 'Erreur detail facture fournisseur' });
@@ -437,6 +480,10 @@ router.post('/supplier-invoices/:id/auto-match', authenticateToken, attachDbCont
     if (!invoice) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Facture fournisseur introuvable' });
+    }
+    if (isSupplierCreditNote(invoice)) {
+      await client.query('COMMIT');
+      return res.json({ ok: true, skipped: true, reason: 'credit_note_manual_attachment_required', matches: 0, differences: 0 });
     }
 
     await client.query('DELETE FROM supplier_invoice_matches WHERE supplier_invoice_id = $1', [invoice.id]);
@@ -613,6 +660,46 @@ router.post('/supplier-invoices/:id/validate', authenticateToken, attachDbContex
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Validation manuelle obligatoire en cas d ecart', code: 'INVOICE_DIFFERENCE_CONFIRMATION_REQUIRED' });
     }
+    if (isSupplierCreditNote(invoice)) {
+      const amount = signedFinancialAmount(invoice, 'total_ex_vat');
+      const selectedSourceInvoiceId = clean(req.body.source_supplier_invoice_id) || invoice.source_supplier_invoice_id || null;
+      const selectedSourcePurchaseId = clean(req.body.source_purchase_id) || invoice.source_purchase_id || null;
+      await createCreditNoteApplication(client, {
+        storeId: req.user.store_id,
+        creditNoteInvoiceId: invoice.id,
+        sourceSupplierInvoiceId: selectedSourceInvoiceId,
+        sourcePurchaseId: selectedSourcePurchaseId,
+        applicationType: 'financial',
+        amountExVat: Math.abs(amount),
+        notes: clean(req.body.notes) || 'Affectation avoir fournisseur',
+        userId: req.user.id,
+      });
+      const lines = await getInvoiceLines(client, invoice.id);
+      const payload = buildValidatedPennylanePayload(invoice, lines);
+      await client.query(
+        `UPDATE supplier_invoices
+         SET status = 'invoice_validated',
+             match_status = CASE WHEN match_status = 'unmatched' THEN 'partial' ELSE match_status END,
+             pennylane_status = 'ready_to_send',
+             pennylane_payload = $2::jsonb,
+             source_supplier_invoice_id = COALESCE(source_supplier_invoice_id, $3),
+             source_purchase_id = COALESCE(source_purchase_id, $4),
+             validated_by = $5,
+             validated_at = NOW(),
+             updated_at = NOW()
+         WHERE id = $1`,
+        [invoice.id, JSON.stringify(payload), selectedSourceInvoiceId, selectedSourcePurchaseId, req.user.id]
+      );
+      await client.query('COMMIT');
+      return res.json({
+        ok: true,
+        status: 'invoice_validated',
+        adjusted_lots: 0,
+        financial_effect_ex_vat: amount,
+        stock_effect: invoice.stock_effect || 'none',
+        warning: 'Avoir fournisseur valide sans mouvement de stock automatique',
+      });
+    }
 
     const pennylaneSupplierInvoiceId = getPennylaneSupplierInvoiceId(invoice);
     const adjustedLots = req.body.adjust_costs === true ? await applyCostAdjustments(client, invoice, req.user.id) : 0;
@@ -683,6 +770,76 @@ router.post('/supplier-invoices/:id/validate', authenticateToken, attachDbContex
     await client.query('ROLLBACK');
     console.error('Erreur validation facture fournisseur :', error);
     return res.status(500).json({ error: error.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/supplier-invoices/:id/credit-note-application', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    await client.query('BEGIN');
+    const invoice = await getInvoice(client, req.params.id, req.user.store_id);
+    if (!invoice) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Avoir fournisseur introuvable' });
+    }
+    if (!isSupplierCreditNote(invoice)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Le document selectionne n est pas un avoir fournisseur' });
+    }
+    const sourceSupplierInvoiceId = clean(req.body.source_supplier_invoice_id);
+    const sourcePurchaseId = clean(req.body.source_purchase_id);
+    const application = await createCreditNoteApplication(client, {
+      storeId: req.user.store_id,
+      creditNoteInvoiceId: invoice.id,
+      sourceSupplierInvoiceId,
+      sourcePurchaseId,
+      applicationType: clean(req.body.application_type) === 'supplier_return' ? 'supplier_return' : 'financial',
+      amountExVat: req.body.amount_ex_vat !== undefined ? req.body.amount_ex_vat : invoice.total_ex_vat,
+      notes: clean(req.body.notes) || 'Rattachement avoir fournisseur',
+      userId: req.user.id,
+    });
+    await client.query(
+      `UPDATE supplier_invoices
+       SET source_supplier_invoice_id = COALESCE($2, source_supplier_invoice_id),
+           source_purchase_id = COALESCE($3, source_purchase_id),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [invoice.id, sourceSupplierInvoiceId, sourcePurchaseId]
+    );
+    await client.query('COMMIT');
+    return res.json({ ok: true, application });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erreur rattachement avoir fournisseur :', error);
+    return res.status(error.status || 500).json({ error: error.message || 'Erreur rattachement avoir fournisseur' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/supplier-invoices/:id/supplier-return', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await registerSupplierReturn(client, {
+      storeId: req.user.store_id,
+      creditNoteInvoiceId: req.params.id,
+      purchaseId: clean(req.body.purchase_id),
+      purchaseLineId: clean(req.body.purchase_line_id),
+      lotId: clean(req.body.lot_id),
+      quantity: req.body.quantity,
+      notes: clean(req.body.notes),
+      userId: req.user.id,
+    });
+    await client.query('COMMIT');
+    await recomputeArticleStock(req.dbPool, result.return.article_id, req.user.store_id).catch(() => {});
+    return res.json({ ok: true, ...result, warning: 'Retour fournisseur enregistre avec mouvement de stock explicite supplier_return' });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Erreur retour fournisseur depuis avoir :', error);
+    return res.status(error.status || 500).json({ error: error.message || 'Erreur retour fournisseur' });
   } finally {
     client.release();
   }

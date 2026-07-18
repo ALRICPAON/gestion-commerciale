@@ -19,6 +19,8 @@ const logoutBtn = document.getElementById("logout-btn");
 const refreshBtn = document.getElementById("refresh-btn");
 const supplierSelect = document.getElementById("supplier-select");
 const invoiceNumberInput = document.getElementById("invoice-number-input");
+const documentTypeInput = document.getElementById("document-type-input");
+const creditNoteReasonInput = document.getElementById("credit-note-reason-input");
 const invoiceDateInput = document.getElementById("invoice-date-input");
 const dueDateInput = document.getElementById("due-date-input");
 const productTotalInput = document.getElementById("product-total-input");
@@ -51,6 +53,8 @@ const confirmManualMatchBtn = document.getElementById("confirm-manual-match-btn"
 const invoiceDocumentLink = document.getElementById("invoice-document-link");
 const autoMatchBtn = document.getElementById("auto-match-btn");
 const confirmMatchBtn = document.getElementById("confirm-match-btn");
+const attachCreditNoteBtn = document.getElementById("attach-credit-note-btn");
+const supplierReturnBtn = document.getElementById("supplier-return-btn");
 const validateBtn = document.getElementById("validate-btn");
 const validateAdjustBtn = document.getElementById("validate-adjust-btn");
 const payloadBtn = document.getElementById("payload-btn");
@@ -139,6 +143,32 @@ function formatCurrency(value) {
   });
 }
 
+function isCreditNote(invoice) {
+  return invoice?.document_type === "credit_note";
+}
+
+function documentTypeLabel(invoice) {
+  return isCreditNote(invoice) ? "Avoir fournisseur" : "Facture fournisseur";
+}
+
+function creditNoteReasonLabel(reason) {
+  const map = {
+    commercial_discount: "Remise commerciale",
+    price_error: "Erreur de prix",
+    supplier_return: "Retour fournisseur",
+    full_cancellation: "Annulation complete",
+    other: "Autre",
+  };
+  return map[reason] || reason || "-";
+}
+
+function financialCurrency(invoice, field) {
+  const raw = invoice?.[`financial_${field}`];
+  if (raw !== undefined && raw !== null) return formatCurrency(raw);
+  const value = Number(invoice?.[field] || 0);
+  return formatCurrency(isCreditNote(invoice) ? -Math.abs(value) : value);
+}
+
 function statusLabel(status) {
   const map = {
     draft: "Brouillon",
@@ -201,11 +231,11 @@ function renderInvoices() {
     <tr data-id="${invoice.id}" class="${invoice.id === selectedInvoiceId ? "is-selected" : ""}">
       <td>${formatDate(invoice.invoice_date)}</td>
       <td>${escapeHtml(invoice.supplier_name || "-")}</td>
-      <td>${escapeHtml(invoice.invoice_number || "-")}</td>
+      <td>${escapeHtml(invoice.invoice_number || "-")}<br><small>${escapeHtml(documentTypeLabel(invoice))}</small></td>
       <td><span class="invoice-status status-${escapeHtml(invoice.status)}">${statusLabel(invoice.status)}</span></td>
       <td>${matchLabel(invoice.match_status)}</td>
-      <td>${formatCurrency(invoice.total_ex_vat)}</td>
-      <td>${formatCurrency(invoice.total_inc_vat)}</td>
+      <td>${financialCurrency(invoice, "total_ex_vat")}</td>
+      <td>${financialCurrency(invoice, "total_inc_vat")}</td>
       <td><button class="btn btn-secondary btn-sm" data-action="open" data-id="${invoice.id}">Ouvrir</button></td>
     </tr>
   `).join("");
@@ -222,6 +252,8 @@ function formPayload() {
     total_ex_vat: totalExVatValue(),
     vat_amount: Number(vatInput.value || 0),
     total_inc_vat: Number(totalIncInput.value || 0),
+    document_type: documentTypeInput?.value || "invoice",
+    credit_note_reason: creditNoteReasonInput?.value || "other",
     notes: notesInput.value.trim() || null,
   };
 }
@@ -326,14 +358,25 @@ function renderDetail(data) {
   const invoice = data.invoice;
   invoiceSummary.innerHTML = `
     <div><span>Fournisseur</span><strong>${escapeHtml(invoice.supplier_name || "-")}</strong></div>
-    <div><span>Facture</span><strong>${escapeHtml(invoice.invoice_number || "-")}</strong></div>
+    <div><span>Document</span><strong>${escapeHtml(documentTypeLabel(invoice))}</strong></div>
+    <div><span>Facture / avoir</span><strong>${escapeHtml(invoice.invoice_number || "-")}</strong></div>
+    <div><span>Motif avoir</span><strong>${escapeHtml(isCreditNote(invoice) ? creditNoteReasonLabel(invoice.credit_note_reason) : "-")}</strong></div>
+    <div><span>Source liee</span><strong>${escapeHtml(invoice.source_supplier_invoice_id || invoice.source_purchase_id || "-")}</strong></div>
     <div><span>Statut</span><strong>${statusLabel(invoice.status)}</strong></div>
     <div><span>Rapprochement</span><strong>${matchLabel(invoice.match_status)}</strong></div>
-    <div><span>Produits HT</span><strong>${formatCurrency(invoice.product_total_ex_vat)}</strong></div>
+    <div><span>Produits HT</span><strong>${financialCurrency(invoice, "product_total_ex_vat")}</strong></div>
     <div><span>Prestations / taxes HT</span><strong>${formatCurrency(invoice.fees_ex_vat)}</strong></div>
     <div><span>TVA</span><strong>${formatCurrency(invoice.vat_amount)}</strong></div>
-    <div><span>Total TTC</span><strong>${formatCurrency(invoice.total_inc_vat)}</strong></div>
+    <div><span>Total TTC</span><strong>${financialCurrency(invoice, "total_inc_vat")}</strong></div>
   `;
+
+  const creditNote = isCreditNote(invoice);
+  manualMatchBtn?.classList.toggle("hidden", creditNote);
+  autoMatchBtn?.classList.toggle("hidden", creditNote);
+  confirmMatchBtn?.classList.toggle("hidden", creditNote);
+  validateAdjustBtn?.classList.toggle("hidden", creditNote);
+  attachCreditNoteBtn?.classList.toggle("hidden", !creditNote);
+  supplierReturnBtn?.classList.toggle("hidden", !creditNote || invoice.credit_note_reason !== "supplier_return");
 
   invoiceDocumentLink.href = "#";
   invoiceDocumentLink.dataset.documentUrl = invoice.document_url || "";
@@ -568,6 +611,39 @@ async function validateSelected(adjustCosts = false) {
   await openInvoice(selectedInvoiceId);
 }
 
+async function attachCreditNoteSelected() {
+  if (!selectedInvoiceId || !selectedInvoice || !isCreditNote(selectedInvoice)) return;
+  const sourceSupplierInvoiceId = prompt("ID facture fournisseur ALTA source (laisser vide si rattachement a un BL)");
+  const sourcePurchaseId = sourceSupplierInvoiceId ? "" : prompt("ID BL / achat source (laisser vide si non affecte)");
+  const data = await apiFetch(`/api/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}/credit-note-application`, {
+    method: "POST",
+    body: JSON.stringify({
+      source_supplier_invoice_id: sourceSupplierInvoiceId || null,
+      source_purchase_id: sourcePurchaseId || null,
+      amount_ex_vat: selectedInvoice.total_ex_vat,
+    }),
+  });
+  showFeedback(detailFeedback, `Avoir rattache : ${formatCurrency(data.application?.amount_ex_vat || 0)} HT`);
+  await loadInvoices();
+  await openInvoice(selectedInvoiceId);
+}
+
+async function registerSupplierReturnSelected() {
+  if (!selectedInvoiceId || !selectedInvoice || !isCreditNote(selectedInvoice)) return;
+  const warning = "Cette action sortira physiquement du stock un lot achat. Continuer ?";
+  if (!confirm(warning)) return;
+  const purchaseId = prompt("ID achat / BL");
+  const purchaseLineId = prompt("ID ligne achat");
+  const lotId = prompt("ID lot");
+  const quantity = prompt("Quantite a retourner");
+  const data = await apiFetch(`/api/supplier-invoices/${encodeURIComponent(selectedInvoiceId)}/supplier-return`, {
+    method: "POST",
+    body: JSON.stringify({ purchase_id: purchaseId, purchase_line_id: purchaseLineId, lot_id: lotId, quantity }),
+  });
+  showFeedback(detailFeedback, data.warning || "Retour fournisseur enregistre");
+  await openInvoice(selectedInvoiceId);
+}
+
 async function deleteSelectedInvoice() {
   if (!selectedInvoiceId || !selectedInvoice) return;
   clearFeedback(detailFeedback);
@@ -624,6 +700,8 @@ reloadManualCandidatesBtn?.addEventListener("click", () => loadManualCandidates(
 confirmManualMatchBtn?.addEventListener("click", () => confirmManualMatchSelected().catch((error) => showFeedback(manualMatchFeedback || detailFeedback, error.message, true)));
 autoMatchBtn?.addEventListener("click", () => autoMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
 confirmMatchBtn?.addEventListener("click", () => confirmMatchSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
+attachCreditNoteBtn?.addEventListener("click", () => attachCreditNoteSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
+supplierReturnBtn?.addEventListener("click", () => registerSupplierReturnSelected().catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateBtn?.addEventListener("click", () => validateSelected(false).catch((error) => showFeedback(detailFeedback, error.message, true)));
 validateAdjustBtn?.addEventListener("click", () => validateSelected(true).catch((error) => showFeedback(detailFeedback, error.message, true)));
 payloadBtn?.addEventListener("click", () => showPayload().catch((error) => showFeedback(detailFeedback, error.message, true)));

@@ -94,6 +94,30 @@ function formatSignedCurrency(value) {
   return `${sign}${formatCurrency(amount)}`;
 }
 
+function isCreditNote(invoice) {
+  return invoice?.document_type === "credit_note";
+}
+
+function documentTypeLabel(invoice) {
+  return isCreditNote(invoice) ? "Avoir fournisseur" : "Facture fournisseur";
+}
+
+function creditNoteReasonLabel(reason) {
+  const map = {
+    commercial_discount: "Remise commerciale",
+    price_error: "Erreur de prix",
+    supplier_return: "Retour fournisseur",
+    full_cancellation: "Annulation complete",
+    other: "Autre",
+  };
+  return map[reason] || reason || "-";
+}
+
+function documentFinancialAmount(invoice, field) {
+  const amount = Number(invoice?.[field] ?? invoice?.[`currency_${field}`] ?? 0);
+  return isCreditNote(invoice) ? -Math.abs(amount) : amount;
+}
+
 function altaStatusLabel(status) {
   const map = {
     nouvelle: "Nouvelle",
@@ -182,12 +206,12 @@ function renderInvoices() {
     return `
       <tr class="${invoice.id === selectedInvoiceId ? "is-selected" : ""}">
         <td>${escapeHtml(invoice.supplier_name || invoice.pennylane_supplier_id || "-")}</td>
-        <td>${escapeHtml(invoice.invoice_number || "-")}</td>
+        <td>${escapeHtml(invoice.invoice_number || "-")}<br><small>${escapeHtml(documentTypeLabel(invoice))}${isCreditNote(invoice) ? ` - ${escapeHtml(creditNoteReasonLabel(invoice.credit_note_reason))}` : ""}</small></td>
         <td>${formatDate(invoice.invoice_date)}</td>
         <td>${formatDate(invoice.due_date)}</td>
-        <td>${formatCurrency(invoice.amount_ex_vat || invoice.currency_amount_ex_vat)}</td>
-        <td>${formatCurrency(invoice.amount_vat || invoice.currency_amount_vat)}</td>
-        <td>${formatCurrency(invoice.amount_inc_vat || invoice.currency_amount_inc_vat)}</td>
+        <td>${formatCurrency(documentFinancialAmount(invoice, "amount_ex_vat"))}</td>
+        <td>${formatCurrency(documentFinancialAmount(invoice, "amount_vat"))}</td>
+        <td>${formatCurrency(documentFinancialAmount(invoice, "amount_inc_vat"))}</td>
         <td>${escapeHtml(pennylaneStatus(invoice))}</td>
         <td><span class="invoice-status status-${escapeHtml(status)}">${altaStatusLabel(status)}</span></td>
         <td>${formatNumber(invoice.auto_bl_count, 0)}</td>
@@ -226,7 +250,10 @@ function renderDetail(data) {
   invoiceSummary.innerHTML = `
     <div><span>Fournisseur ALTA</span><strong>${escapeHtml(invoice.supplier_name || "Non rapproché")}</strong></div>
     <div><span>Fournisseur Pennylane</span><strong>${escapeHtml(invoice.pennylane_supplier_id || "-")}</strong></div>
-    <div><span>Facture</span><strong>${escapeHtml(invoice.invoice_number || "-")}</strong></div>
+    <div><span>Document</span><strong>${escapeHtml(documentTypeLabel(invoice))}</strong></div>
+    <div><span>Facture / avoir</span><strong>${escapeHtml(invoice.invoice_number || "-")}</strong></div>
+    <div><span>Motif avoir</span><strong>${escapeHtml(isCreditNote(invoice) ? creditNoteReasonLabel(invoice.credit_note_reason) : "-")}</strong></div>
+    <div><span>Source liee</span><strong>${escapeHtml(invoice.source_supplier_invoice_id || invoice.source_purchase_id || "-")}</strong></div>
     <div><span>Date facture</span><strong>${formatDate(invoice.invoice_date)}</strong></div>
     <div><span>Échéance</span><strong>${formatDate(invoice.due_date)}</strong></div>
     <div><span>Statut Pennylane</span><strong>${escapeHtml(pennylaneStatus(invoice))}</strong></div>
@@ -235,9 +262,9 @@ function renderDetail(data) {
     <div><span>Propositions globales</span><strong>${formatNumber(effectiveMatchedCount(invoice), 0)}</strong></div>
     <div><span>Anomalies montant</span><strong>${formatNumber(effectiveAnomalyCount(invoice), 0)}</strong></div>
     <div><span>Confiance</span><strong>${formatNumber(invoice.auto_conformity_score, 2)} %</strong></div>
-    <div><span>Total HT</span><strong>${formatCurrency(invoice.amount_ex_vat || invoice.currency_amount_ex_vat)}</strong></div>
-    <div><span>Total TVA</span><strong>${formatCurrency(invoice.amount_vat || invoice.currency_amount_vat)}</strong></div>
-    <div><span>Total TTC</span><strong>${formatCurrency(invoice.amount_inc_vat || invoice.currency_amount_inc_vat)}</strong></div>
+    <div><span>Total HT</span><strong>${formatCurrency(documentFinancialAmount(invoice, "amount_ex_vat"))}</strong></div>
+    <div><span>Total TVA</span><strong>${formatCurrency(documentFinancialAmount(invoice, "amount_vat"))}</strong></div>
+    <div><span>Total TTC</span><strong>${formatCurrency(documentFinancialAmount(invoice, "amount_inc_vat"))}</strong></div>
   `;
 
   pdfLink.href = invoice.public_file_url || "#";
