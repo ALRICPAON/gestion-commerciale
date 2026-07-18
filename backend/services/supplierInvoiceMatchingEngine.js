@@ -2,6 +2,7 @@ const DEFAULT_BATCH_SIZE = 20;
 const DEFAULT_DATE_WINDOW_DAYS = 21;
 const DEFAULT_AMOUNT_TOLERANCE = 1;
 const DEFAULT_AMOUNT_RATIO_TOLERANCE = 0.005;
+const { isSupplierCreditNote, signedFinancialAmount } = require('./supplierCreditNoteService');
 
 const FINAL_ALTA_STATUSES = new Set(['validee_a_payer', 'payee', 'litige', 'refusee']);
 const MATCHABLE_PURCHASE_STATUSES = ['received', 'received_pending_invoice', 'invoice_difference'];
@@ -126,7 +127,7 @@ async function loadGlobalPurchaseCandidates(client, invoice, dateWindowDays) {
 }
 
 function scorePurchaseCandidate(invoice, candidate, dateWindowDays) {
-  const invoiceExVat = toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat);
+  const invoiceExVat = Math.abs(toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat));
   const purchaseExVat = toNumber(candidate.purchase_amount_ex_vat);
   const amountScore = scoreNumericCloseness(invoiceExVat, purchaseExVat);
   const dateDistance = daysBetween(invoice.invoice_date, candidate.receipt_date);
@@ -136,9 +137,9 @@ function scorePurchaseCandidate(invoice, candidate, dateWindowDays) {
 
   return {
     ...candidate,
-    invoice_amount_ex_vat: invoiceExVat,
+    invoice_amount_ex_vat: isSupplierCreditNote(invoice) ? -invoiceExVat : invoiceExVat,
     purchase_amount_ex_vat: purchaseExVat,
-    amount_difference: round(invoiceExVat - purchaseExVat, 4),
+    amount_difference: round(invoiceExVat - Math.abs(purchaseExVat), 4),
     date_distance_days: dateDistance,
     amount_score: round(amountScore, 4),
     date_score: round(dateScore, 4),
@@ -159,6 +160,8 @@ function rankGlobalCandidates(invoice, candidates, dateWindowDays) {
 }
 
 function buildGlobalResult(invoice, candidate, matchStatus, anomalyCode = null, anomalyLabel = null) {
+  const creditNote = isSupplierCreditNote(invoice);
+  const invoiceAmountExVat = Math.abs(toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat));
   return {
     store_id: invoice.store_id,
     supplier_invoice_id: invoice.id,
@@ -168,13 +171,13 @@ function buildGlobalResult(invoice, candidate, matchStatus, anomalyCode = null, 
     purchase_id: candidate?.purchase_id || null,
     purchase_line_id: null,
     lot_id: null,
-    match_source: candidate ? 'global_amount_date' : 'none',
+    match_source: candidate ? (creditNote ? 'credit_note_source_candidate' : 'global_amount_date') : 'none',
     match_status: matchStatus,
     anomaly_code: anomalyCode,
     anomaly_label: anomalyLabel,
     supplier_reference: null,
-    invoice_label: invoice.invoice_number || 'Facture fournisseur Pennylane',
-    article_label: 'Rapprochement global facture',
+    invoice_label: invoice.invoice_number || (creditNote ? 'Avoir fournisseur Pennylane' : 'Facture fournisseur Pennylane'),
+    article_label: creditNote ? 'Rattachement avoir fournisseur' : 'Rapprochement global facture',
     purchase_bl_number: candidate?.bl_number || null,
     purchase_receipt_date: candidate?.receipt_date || null,
     ordered_quantity: null,
@@ -186,24 +189,25 @@ function buildGlobalResult(invoice, candidate, matchStatus, anomalyCode = null, 
     unit_price_difference: null,
     amount_difference: candidate?.amount_difference ?? null,
     vat_difference: null,
-    invoice_amount_ex_vat: toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat),
+    invoice_amount_ex_vat: creditNote ? -invoiceAmountExVat : invoiceAmountExVat,
     purchase_amount_ex_vat: candidate?.purchase_amount_ex_vat ?? null,
     invoice_vat_amount: toNumber(invoice.amount_vat ?? invoice.currency_amount_vat),
     confidence: candidate?.score ?? 0,
     ai_context: {
-      mode: 'global_amount_date',
+      mode: creditNote ? 'credit_note_source_candidate' : 'global_amount_date',
+      document_type: creditNote ? 'credit_note' : 'invoice',
       invoice_number: invoice.invoice_number,
       supplier_name: invoice.supplier_name,
       invoice_date: invoice.invoice_date,
-      invoice_amount_ex_vat: toNumber(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat),
-      invoice_amount_vat: toNumber(invoice.amount_vat ?? invoice.currency_amount_vat),
-      invoice_amount_inc_vat: toNumber(invoice.amount_inc_vat ?? invoice.currency_amount_inc_vat),
+      invoice_amount_ex_vat: signedFinancialAmount(invoice, 'amount_ex_vat'),
+      invoice_amount_vat: signedFinancialAmount(invoice, 'amount_vat'),
+      invoice_amount_inc_vat: signedFinancialAmount(invoice, 'amount_inc_vat'),
       purchase_amount_ex_vat: candidate?.purchase_amount_ex_vat ?? null,
       amount_tolerance: amountTolerance(invoice.amount_ex_vat ?? invoice.currency_amount_ex_vat),
-      recommendation: anomalyCode ? 'controle_manuel' : 'proposition_rapprochement',
+      recommendation: creditNote ? 'rattachement_avoir_a_confirmer' : (anomalyCode ? 'controle_manuel' : 'proposition_rapprochement'),
     },
     raw_payload: {
-      mode: 'global_amount_date',
+      mode: creditNote ? 'credit_note_source_candidate' : 'global_amount_date',
       candidate: candidate || null,
     },
   };
@@ -224,7 +228,7 @@ function summarizeGlobal(invoice, candidates, result) {
     total_ex_vat_difference: result?.amount_difference ?? null,
     total_vat_difference: null,
     anomaly_counts: hasAmountMismatch ? { ecart_prix: 1 } : {},
-    mode: 'global_amount_date',
+    mode: isSupplierCreditNote(invoice) ? 'credit_note_source_candidate' : 'global_amount_date',
     candidate_count: candidates.length,
   };
 }

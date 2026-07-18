@@ -45,6 +45,23 @@
           <input id="invoice-number-input" type="text" />
         </div>
         <div class="form-group">
+          <label for="document-type-input">Type document</label>
+          <select id="document-type-input">
+            <option value="invoice">Facture fournisseur</option>
+            <option value="credit_note">Avoir fournisseur</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="credit-note-reason-input">Motif avoir</label>
+          <select id="credit-note-reason-input">
+            <option value="other">Autre</option>
+            <option value="commercial_discount">Remise commerciale</option>
+            <option value="price_error">Erreur de prix</option>
+            <option value="supplier_return">Retour fournisseur</option>
+            <option value="full_cancellation">Annulation complete</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label for="invoice-date-input">Date facture</label>
           <input id="invoice-date-input" type="date" />
         </div>
@@ -185,6 +202,8 @@
           <button id="manual-match-btn" class="btn btn-secondary">Rapprocher manuellement</button>
           <button id="auto-match-btn" class="btn btn-secondary">Rapprocher automatiquement</button>
           <button id="confirm-match-btn" class="btn btn-primary">Confirmer rapprochement</button>
+          <button id="attach-credit-note-btn" class="btn btn-secondary">Rattacher</button>
+          <button id="supplier-return-btn" class="btn btn-secondary">Enregistrer un retour fournisseur</button>
           <button id="validate-btn" class="btn btn-primary">Valider</button>
           <button id="validate-adjust-btn" class="btn btn-primary">Valider + ajuster coûts</button>
           <button id="payload-btn" class="btn btn-secondary">Payload Pennylane</button>

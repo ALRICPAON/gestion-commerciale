@@ -7,6 +7,13 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { parseSupplierInvoice } = require('../services/supplier-invoices/import-supplier-invoice');
+const {
+  isSupplierCreditNote,
+  normalizeCreditNoteReason,
+  normalizeSupplierDocumentType,
+  positiveAmount,
+  signedFinancialAmount,
+} = require('../services/supplierCreditNoteService');
 
 const router = express.Router();
 const DOCUMENTS_ROOT = path.join(__dirname, '..', 'uploads', 'supplier-invoices');
@@ -101,7 +108,8 @@ function purchaseLineTotalQuantity(line) {
 }
 
 function invoiceComparableTotal(invoice) {
-  return Number(invoice.product_total_ex_vat || invoice.total_ex_vat || 0);
+  const total = Number(invoice.product_total_ex_vat || invoice.total_ex_vat || 0);
+  return isSupplierCreditNote(invoice) ? Math.abs(total) : total;
 }
 
 function purchaseComparableTotal(purchase) {
@@ -129,8 +137,11 @@ function reviewPayload({ confidence, matches, differences, proposedPurchaseIds }
 }
 
 function buildPennylanePayload(invoice, lines) {
+  const documentType = normalizeSupplierDocumentType(invoice.document_type) || 'invoice';
   return {
-    type: 'supplier_invoice',
+    type: documentType === 'credit_note' ? 'supplier_credit_note' : 'supplier_invoice',
+    document_type: documentType,
+    credit_note_reason: documentType === 'credit_note' ? normalizeCreditNoteReason(invoice.credit_note_reason) : null,
     source: 'gestion-commerciale',
     invoice_id: invoice.id,
     store_id: invoice.store_id,
@@ -144,6 +155,8 @@ function buildPennylanePayload(invoice, lines) {
     fees_ex_vat: Number(invoice.fees_ex_vat || 0),
     vat_amount: Number(invoice.vat_amount || 0),
     total_inc_vat: Number(invoice.total_inc_vat || 0),
+    financial_effect_ex_vat: signedFinancialAmount(invoice, 'total_ex_vat'),
+    stock_effect: invoice.stock_effect || 'none',
     lines: lines.map((line) => ({
       article_id: line.article_id,
       supplier_reference: line.supplier_reference,
@@ -427,6 +440,7 @@ async function updateReviewState(client, invoiceId, { confidence, matches, diffe
 async function createMatchProposal(client, invoiceId, storeId, options = {}) {
   const invoice = await getInvoice(client, invoiceId, storeId);
   if (!invoice) return { ok: false, reason: 'invoice_not_found', matches: 0, differences: 0 };
+  if (isSupplierCreditNote(invoice)) return { ok: true, skipped: true, reason: 'credit_note_manual_attachment_required', matches: 0, differences: 0 };
   const invoiceTotal = invoiceComparableTotal(invoice);
   if (invoiceTotal <= 0) return { ok: true, skipped: true, reason: 'zero_total', matches: 0, differences: 0 };
 
@@ -570,6 +584,8 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
 
     const supplierId = clean(req.body.supplier_id);
     const invoiceNumber = clean(req.body.invoice_number) || clean(parsed.invoice_number) || path.parse(req.file.originalname || req.file.filename).name;
+    const documentType = normalizeSupplierDocumentType(req.body.document_type || req.body.type) || 'invoice';
+    const creditNoteReason = documentType === 'credit_note' ? normalizeCreditNoteReason(req.body.credit_note_reason || parsed.credit_note_reason || parsed.reason) : null;
     if (!supplierId) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'supplier_id obligatoire' });
@@ -585,23 +601,29 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
     const totalExVat = pickNumber(req.body.total_ex_vat, parsed.total_ex_vat || productTotalExVat + feesExVat, productTotalExVat + feesExVat);
     const vatAmount = pickNumber(req.body.vat_amount, parsed.vat_amount, 0);
     const totalIncVat = pickNumber(req.body.total_inc_vat, parsed.total_inc_vat, totalExVat + vatAmount);
+    const storedProductTotalExVat = documentType === 'credit_note' ? positiveAmount(productTotalExVat) : productTotalExVat;
+    const storedFeesExVat = documentType === 'credit_note' ? positiveAmount(feesExVat) : feesExVat;
+    const storedTotalExVat = documentType === 'credit_note' ? positiveAmount(totalExVat) : totalExVat;
+    const storedVatAmount = documentType === 'credit_note' ? positiveAmount(vatAmount) : vatAmount;
+    const storedTotalIncVat = documentType === 'credit_note' ? positiveAmount(totalIncVat) : totalIncVat;
 
     const invoice = await client.query(
       `INSERT INTO supplier_invoices(
         id, store_id, client_key, supplier_id, invoice_number, invoice_date, due_date,
         supplier_type, supplier_invoice_bl_number, customer_code, total_ex_vat, product_total_ex_vat,
-        fees_ex_vat, vat_amount, total_inc_vat, document_url, notes, parsed_payload, created_by
-       ) VALUES(gen_random_uuid(), $1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, NULL, $15, $16::jsonb, $17)
+        fees_ex_vat, vat_amount, total_inc_vat, document_url, notes, parsed_payload, created_by,
+        document_type, credit_note_reason, stock_effect
+       ) VALUES(gen_random_uuid(), $1, $2, $3, $4, $5::date, $6::date, $7, $8, $9, $10, $11, $12, $13, $14, NULL, $15, $16::jsonb, $17, $18, $19, 'none')
        RETURNING *`,
-      [req.user.store_id, req.user.client_key || null, supplierId, invoiceNumber, clean(req.body.invoice_date) || clean(parsed.invoice_date), clean(req.body.due_date) || clean(parsed.due_date), clean(req.body.supplier_type) || supplier.rows[0].supplier_type || null, clean(parsed.supplier_invoice_bl_number), clean(parsed.customer_code), totalExVat, productTotalExVat, feesExVat, vatAmount, totalIncVat, clean(req.body.notes), JSON.stringify(parsed.parsed_payload || {}), req.user.id]
+      [req.user.store_id, req.user.client_key || null, supplierId, invoiceNumber, clean(req.body.invoice_date) || clean(parsed.invoice_date), clean(req.body.due_date) || clean(parsed.due_date), clean(req.body.supplier_type) || supplier.rows[0].supplier_type || null, clean(parsed.supplier_invoice_bl_number), clean(parsed.customer_code), storedTotalExVat, storedProductTotalExVat, storedFeesExVat, storedVatAmount, storedTotalIncVat, clean(req.body.notes), JSON.stringify(parsed.parsed_payload || {}), req.user.id, documentType, creditNoteReason]
     );
 
     const url = invoiceDocumentUrl(invoice.rows[0].id);
     await client.query('UPDATE supplier_invoices SET document_url = $1 WHERE id = $2', [url, invoice.rows[0].id]);
     await client.query(
       `INSERT INTO supplier_invoice_documents(id, supplier_invoice_id, store_id, document_type, original_name, mime_type, storage_path, public_url, uploaded_by)
-       VALUES(gen_random_uuid(), $1, $2, 'invoice', $3, $4, $5, $6, $7)`,
-      [invoice.rows[0].id, req.user.store_id, req.file.originalname || null, req.file.mimetype || null, req.file.path, url, req.user.id]
+       VALUES(gen_random_uuid(), $1, $2, $8, $3, $4, $5, $6, $7)`,
+      [invoice.rows[0].id, req.user.store_id, req.file.originalname || null, req.file.mimetype || null, req.file.path, url, req.user.id, documentType]
     );
 
     const invoiceLines = jsonLines(req.body.lines).length ? jsonLines(req.body.lines) : parsed.lines || [];
@@ -614,7 +636,7 @@ router.post('/supplier-invoices/import', authenticateToken, attachDbContext, req
           unit_price_ex_vat, line_amount_ex_vat, vat_rate, vat_amount, line_amount_inc_vat,
           parsed_payload
          ) VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, 'kg'), $12, $13, $14, $15, $16, $17::jsonb)`,
-        [invoice.rows[0].id, req.user.store_id, supplierId, lineNumber++, clean(line.article_id), clean(line.supplier_reference), clean(line.supplier_label || line.designation), num(line.quantity ?? line.quantity_kg), num(line.colis ?? line.ordered_colis, null), num(line.pieces, null), clean(line.price_unit), num(line.unit_price_ex_vat), num(line.line_amount_ex_vat), num(line.vat_rate), num(line.vat_amount), num(line.line_amount_inc_vat), JSON.stringify(line.parsed_payload || {})]
+        [invoice.rows[0].id, req.user.store_id, supplierId, lineNumber++, clean(line.article_id), clean(line.supplier_reference), clean(line.supplier_label || line.designation), positiveAmount(line.quantity ?? line.quantity_kg), positiveAmount(line.colis ?? line.ordered_colis), positiveAmount(line.pieces), clean(line.price_unit), positiveAmount(line.unit_price_ex_vat), positiveAmount(line.line_amount_ex_vat), num(line.vat_rate), positiveAmount(line.vat_amount), positiveAmount(line.line_amount_inc_vat), JSON.stringify(line.parsed_payload || {})]
       );
     }
 
@@ -690,6 +712,7 @@ router.post('/supplier-invoices/:id/validate', authenticateToken, attachDbContex
   try {
     const invoice = await getInvoice(req.dbPool, req.params.id, req.user.store_id);
     if (!invoice) return res.status(404).json({ error: 'Facture fournisseur introuvable' });
+    if (isSupplierCreditNote(invoice)) return next();
     if (!['matched', 'discrepancy'].includes(invoice.match_status)) return res.status(409).json({ error: 'Rapprochement a confirmer avant validation facture', code: 'SUPPLIER_INVOICE_MATCH_CONFIRMATION_REQUIRED', status: invoice.status, match_status: invoice.match_status });
     if (invoice.match_status === 'discrepancy' && req.body.confirm_difference !== true) return res.status(409).json({ error: 'Validation manuelle obligatoire en cas d ecart', code: 'INVOICE_DIFFERENCE_CONFIRMATION_REQUIRED' });
     return next();
