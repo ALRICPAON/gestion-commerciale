@@ -45,6 +45,11 @@ const printTitle = document.getElementById('print-title');
 const printNote = document.getElementById('print-note');
 const printDate = document.getElementById('print-date');
 const printTableWrap = document.getElementById('print-table-wrap');
+
+const PRINT_PRODUCT_COLUMN_WIDTH_MM = 46;
+const PRINT_CLIENT_COLUMN_WIDTH_MM = 22;
+const PRINT_A4_LANDSCAPE_WIDTH_MM = 297;
+const PRINT_PAGE_MARGIN_MM = 7;
 const articleModal = document.getElementById('article-modal');
 const closeArticleModalBtn = document.getElementById('close-article-modal-btn');
 const articleSearchInput = document.getElementById('article-search-input');
@@ -596,18 +601,108 @@ function priceForClient(column, client) {
 
 function updateProductTotalsInPlace() {
   selectedProductTotals().forEach((column) => {
-    const head = printTableWrap.querySelector(`[data-total-column-id="${CSS.escape(String(column.uid))}"]`);
-    if (!head) return;
-    head.classList.toggle('product-overstock', column.overstock);
-    const stockEl = head.querySelector('[data-total-field="stock"]');
-    const soldEl = head.querySelector('[data-total-field="sold"]');
-    const remainingEl = head.querySelector('[data-total-field="remaining"]');
-    const remainingLine = head.querySelector('[data-total-line="remaining"]');
-    if (stockEl) stockEl.textContent = compactNumber(column.stock);
-    if (soldEl) soldEl.textContent = compactNumber(column.sold);
-    if (remainingEl) remainingEl.textContent = compactNumber(column.remaining);
-    remainingLine?.classList.toggle('stock-alert', column.overstock);
+    const heads = printTableWrap.querySelectorAll(`[data-total-column-id="${CSS.escape(String(column.uid))}"]`);
+    heads.forEach((head) => {
+      head.classList.toggle('product-overstock', column.overstock);
+      const stockEl = head.querySelector('[data-total-field="stock"]');
+      const soldEl = head.querySelector('[data-total-field="sold"]');
+      const remainingEl = head.querySelector('[data-total-field="remaining"]');
+      const remainingLine = head.querySelector('[data-total-line="remaining"]');
+      if (stockEl) stockEl.textContent = compactNumber(column.stock);
+      if (soldEl) soldEl.textContent = compactNumber(column.sold);
+      if (remainingEl) remainingEl.textContent = compactNumber(column.remaining);
+      remainingLine?.classList.toggle('stock-alert', column.overstock);
+    });
   });
+}
+
+function maxPrintableClientColumns() {
+  const printableWidth = PRINT_A4_LANDSCAPE_WIDTH_MM - (PRINT_PAGE_MARGIN_MM * 2);
+  const availableClientWidth = printableWidth - PRINT_PRODUCT_COLUMN_WIDTH_MM;
+  return Math.max(1, Math.floor(availableClientWidth / PRINT_CLIENT_COLUMN_WIDTH_MM));
+}
+
+function chunkArray(items, size) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function printBlockHeaderHtml({ title, note, date, pageIndex, pageTotal, startClient, endClient }) {
+  return `<div class="print-sheet-header print-block-header">
+    <div>
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(note || 'Arrivage du jour')}</p>
+      <p class="print-page-counter">Page ${pageIndex}/${pageTotal} - Clients ${startClient} a ${endClient}</p>
+    </div>
+    <div class="print-date-block">
+      <span>Date</span>
+      <strong>${escapeHtml(formatDateFr(date))}</strong>
+    </div>
+  </div>`;
+}
+
+function printRepeatHeaderHtml({ title, note, date, pageIndex, pageTotal, startClient, endClient, colspan }) {
+  return `<tr class="print-repeat-title-row">
+    <th colspan="${colspan}">
+      <div class="print-repeat-title">
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(note || 'Arrivage du jour')}</span>
+          <span>Page ${pageIndex}/${pageTotal} - Clients ${startClient} a ${endClient}</span>
+        </div>
+        <div>
+          <span>Date</span>
+          <strong>${escapeHtml(formatDateFr(date))}</strong>
+        </div>
+      </div>
+    </th>
+  </tr>`;
+}
+
+function clientColumnHeadHtml(client) {
+  return `<th class="client-head">
+    <strong>${escapeHtml(client.name || client.legal_name || 'Client')}</strong>
+    <span>${escapeHtml([client.code, client.city].filter(Boolean).join(' - '))}</span>
+  </th>`;
+}
+
+function productRowHeadHtml(column) {
+  const name = productLabel(column) || 'Produit';
+  return `<th scope="row" data-total-column-id="${escapeHtml(column.uid)}" class="product-row-head ${column.overstock ? 'product-overstock' : ''}">
+    <div class="product-head-name">${escapeHtml(name)}</div>
+    <div class="product-head-meta">T1 ${escapeHtml(moneyInputValue(column.sale_price_level_1_ht) || '-')} / T2 ${escapeHtml(moneyInputValue(column.sale_price_level_2_ht) || '-')} / T3 ${escapeHtml(moneyInputValue(column.sale_price_level_3_ht) || '-')}</div>
+    <div class="product-head-meta">Dispo fournisseur: <span data-total-field="stock">${escapeHtml(compactNumber(column.stock))}</span> ${escapeHtml(column.unit || 'kg')}</div>
+    <div class="product-head-meta">Vendu: <span data-total-field="sold">${escapeHtml(compactNumber(column.sold))}</span> kg</div>
+    <div class="product-head-meta ${column.overstock ? 'stock-alert' : ''}" data-total-line="remaining">Reste: <span data-total-field="remaining">${escapeHtml(compactNumber(column.remaining))}</span> kg</div>
+  </th>`;
+}
+
+function orderTableHtml({ clients: tableClients, columns, pageIndex, pageTotal, title, note, date, startClient, endClient }) {
+  const headerArgs = { title, note, date, pageIndex, pageTotal, startClient, endClient };
+  const colgroup = [
+    '<col class="product-label-col" />',
+    ...tableClients.map(() => '<col class="client-order-col" />'),
+  ].join('');
+  const head = tableClients.map(clientColumnHeadHtml).join('');
+  const body = columns.map((column) => `<tr>
+    ${productRowHeadHtml(column)}
+    ${tableClients.map((client) => orderCellHtml(client, column)).join('')}
+  </tr>`).join('');
+
+  return `<section class="print-table-page" aria-label="Page ${pageIndex} sur ${pageTotal}">
+    ${printBlockHeaderHtml(headerArgs)}
+    <table class="quick-print-table">
+      <colgroup>${colgroup}</colgroup>
+      <thead>
+        ${printRepeatHeaderHtml({ ...headerArgs, colspan: tableClients.length + 1 })}
+        <tr><th class="product-corner-head">Produit</th>${head}</tr>
+      </thead>
+      <tbody>${body}</tbody>
+    </table>
+  </section>`;
 }
 
 function updatePreview() {
@@ -626,35 +721,19 @@ function updatePreview() {
     return;
   }
 
-  const colgroup = [
-    '<col class="client-col" />',
-    ...columns.map(() => '<col class="product-col" />'),
-  ].join('');
-
-  const head = columns.map((column) => {
-    const name = productLabel(column) || 'Produit';
-    return `<th data-total-column-id="${escapeHtml(column.uid)}" class="${column.overstock ? 'product-overstock' : ''}">
-      <div class="product-head-name">${escapeHtml(name)}</div>
-      <div class="product-head-meta">T1 ${escapeHtml(moneyInputValue(column.sale_price_level_1_ht) || '-')} / T2 ${escapeHtml(moneyInputValue(column.sale_price_level_2_ht) || '-')} / T3 ${escapeHtml(moneyInputValue(column.sale_price_level_3_ht) || '-')}</div>
-      <div class="product-head-meta">Dispo fournisseur: <span data-total-field="stock">${escapeHtml(compactNumber(column.stock))}</span> ${escapeHtml(column.unit || 'kg')}</div>
-      <div class="product-head-meta">Vendu: <span data-total-field="sold">${escapeHtml(compactNumber(column.sold))}</span> kg</div>
-      <div class="product-head-meta ${column.overstock ? 'stock-alert' : ''}" data-total-line="remaining">Reste: <span data-total-field="remaining">${escapeHtml(compactNumber(column.remaining))}</span> kg</div>
-    </th>`;
-  }).join('');
-
-  const body = rows.map((client) => `<tr>
-    <th scope="row">
-      <strong>${escapeHtml(client.name || client.legal_name || 'Client')}</strong>
-      <span>${escapeHtml([client.code, client.city].filter(Boolean).join(' - '))}</span>
-    </th>
-    ${columns.map((column) => orderCellHtml(client, column)).join('')}
-  </tr>`).join('');
-
-  printTableWrap.innerHTML = `<table class="quick-print-table">
-    <colgroup>${colgroup}</colgroup>
-    <thead><tr><th>Clients</th>${head}</tr></thead>
-    <tbody>${body}</tbody>
-  </table>`;
+  const clientChunks = chunkArray(rows, maxPrintableClientColumns());
+  const pageTotal = clientChunks.length;
+  printTableWrap.innerHTML = clientChunks.map((tableClients, index) => orderTableHtml({
+    clients: tableClients,
+    columns,
+    pageIndex: index + 1,
+    pageTotal,
+    title,
+    note,
+    date,
+    startClient: (index * maxPrintableClientColumns()) + 1,
+    endClient: (index * maxPrintableClientColumns()) + tableClients.length,
+  })).join('');
 }
 
 function renderClients() {
