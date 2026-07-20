@@ -263,6 +263,10 @@
   color: #333;
 }
 
+.print-sheet > .print-sheet-header:not(.print-block-header) {
+  display: none;
+}
+
 .print-date-block {
   min-width: 150px;
   text-align: right;
@@ -280,22 +284,49 @@
 }
 
 .print-table-wrap {
-  overflow-x: auto;
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.print-table-page {
+  margin-bottom: 18px;
+}
+
+.print-table-page:last-child {
+  margin-bottom: 0;
+}
+
+.print-block-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 8px 0;
+  background: #fff;
+}
+
+.print-page-counter {
+  font-weight: 800;
+  color: #1f2933 !important;
+}
+
+.print-repeat-title-row {
+  display: none;
 }
 
 .quick-print-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
   font-size: 0.82rem;
 }
 
-.quick-print-table .client-col {
-  width: 190px;
+.quick-print-table .product-label-col {
+  width: 260px;
 }
 
-.quick-print-table .product-col {
-  width: 118px;
+.quick-print-table .client-order-col {
+  width: 132px;
 }
 
 .quick-print-table th,
@@ -305,40 +336,44 @@
 }
 
 .quick-print-table thead th {
-  height: 74px;
+  position: sticky;
+  top: 70px;
+  z-index: 4;
+  height: 54px;
   padding: 5px;
   text-align: center;
   background: #eef3f5;
 }
 
-.quick-print-table thead th.product-overstock {
+.quick-print-table .product-overstock {
   background: #fff1f0;
 }
 
-.quick-print-table thead th:first-child,
-.quick-print-table tbody th {
+.quick-print-table .product-corner-head,
+.quick-print-table .product-row-head {
   position: sticky;
   left: 0;
-  z-index: 2;
-}
-
-.quick-print-table thead th:first-child {
   z-index: 3;
 }
 
-.quick-print-table tbody th {
-  height: 42px;
+.quick-print-table .product-corner-head {
+  top: 70px;
+  z-index: 6;
+}
+
+.quick-print-table .product-row-head {
+  height: 50px;
   padding: 5px;
   text-align: left;
   background: #f8fafb;
 }
 
-.quick-print-table tbody th strong,
-.quick-print-table tbody th span {
+.quick-print-table .client-head strong,
+.quick-print-table .client-head span {
   display: block;
 }
 
-.quick-print-table tbody th span {
+.quick-print-table .client-head span {
   margin-top: 2px;
   font-size: 0.72rem;
   font-weight: 400;
@@ -346,14 +381,14 @@
 }
 
 .quick-print-table tbody td {
-  height: 42px;
+  height: 50px;
   background: #fff;
 }
 
 .order-cell-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  min-height: 42px;
+  min-height: 50px;
 }
 
 .order-cell-grid label {
@@ -401,7 +436,7 @@
 }
 
 .product-head-name {
-  min-height: 28px;
+  min-height: 0;
   font-weight: 800;
   overflow-wrap: anywhere;
 }
@@ -577,7 +612,7 @@
 @media print {
   @page {
     size: A4 landscape;
-    margin: 8mm;
+    margin: 7mm;
   }
 
   body {
@@ -607,33 +642,101 @@
     width: 100%;
   }
 
-  .print-sheet-header {
-    margin-bottom: 6px;
-  }
-
-  .print-sheet-header h1 {
-    font-size: 17pt;
-  }
-
   .print-table-wrap {
+    max-height: none;
     overflow: visible;
   }
 
+  .print-table-page {
+    break-after: page;
+    page-break-after: always;
+    margin: 0;
+  }
+
+  .print-table-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  .print-block-header {
+    display: none;
+  }
+
+  .print-repeat-title-row {
+    display: table-row;
+  }
+
+  .print-repeat-title-row th {
+    padding: 0 0 3mm;
+    border: 0;
+    background: #fff;
+    text-align: left;
+  }
+
+  .print-repeat-title {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8mm;
+  }
+
+  .print-repeat-title div:first-child,
+  .print-repeat-title div:first-child span {
+    display: grid;
+    gap: 1mm;
+  }
+
+  .print-repeat-title strong {
+    display: block;
+    font-size: 15pt;
+  }
+
+  .print-repeat-title span {
+    display: block;
+    font-size: 8.5pt;
+    color: #333;
+  }
+
+  .print-repeat-title div:last-child {
+    min-width: 30mm;
+    text-align: right;
+  }
+
+  .print-sheet-header h1 {
+    font-size: 15pt;
+  }
+
+  .print-sheet-header p {
+    font-size: 8.5pt;
+  }
+
+  .print-page-counter {
+    margin-top: 2mm !important;
+    font-size: 9pt !important;
+  }
+
   .quick-print-table {
-    font-size: 7.8pt;
+    width: 100%;
+    min-width: 0;
+    font-size: 7.4pt;
     page-break-inside: auto;
   }
 
-  .quick-print-table .client-col {
-    width: 38mm;
+  .quick-print-table .product-label-col {
+    width: 46mm;
+  }
+
+  .quick-print-table .client-order-col {
+    width: 22mm;
   }
 
   .quick-print-table thead {
     display: table-header-group;
   }
 
-  .quick-print-table thead th:first-child,
-  .quick-print-table tbody th {
+  .quick-print-table thead th,
+  .quick-print-table .product-corner-head,
+  .quick-print-table .product-row-head {
     position: static;
   }
 
@@ -642,11 +745,11 @@
   }
 
   .quick-print-table thead th {
-    height: 17mm;
-    padding: 2mm;
+    height: 13mm;
+    padding: 1.2mm;
   }
 
-  .quick-print-table thead th.product-overstock {
+  .quick-print-table .product-overstock {
     background: #fff1f0;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
@@ -654,20 +757,20 @@
 
   .quick-print-table tbody th,
   .quick-print-table tbody td {
-    height: 11mm;
+    height: 10.5mm;
     padding: 0;
   }
 
   .quick-print-table tbody th {
-    padding: 1.4mm;
+    padding: 1mm;
   }
 
   .product-head-name {
-    min-height: 8mm;
+    min-height: 0;
   }
 
   .order-cell-grid {
-    min-height: 11mm;
+    min-height: 10.5mm;
   }
 
   .order-cell-grid label {
