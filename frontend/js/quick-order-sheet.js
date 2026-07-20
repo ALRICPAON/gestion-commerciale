@@ -17,6 +17,8 @@ const logoutBtn = document.getElementById('logout-btn');
 const refreshDataBtn = document.getElementById('refresh-data-btn');
 const printSheetBtn = document.getElementById('print-sheet-btn');
 const printSheetBtnSecondary = document.getElementById('print-sheet-btn-secondary');
+const downloadPdfBtn = document.getElementById('download-pdf-btn');
+const downloadPdfBtnSecondary = document.getElementById('download-pdf-btn-secondary');
 const clearEntriesBtn = document.getElementById('clear-entries-btn');
 const newSheetBtn = document.getElementById('new-sheet-btn');
 const pageFeedback = document.getElementById('page-feedback');
@@ -375,6 +377,24 @@ async function apiSend(path, payload, method = 'POST') {
     throw error;
   }
   return data;
+}
+
+async function apiDownload(path, payload) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: {
+      ...authHeaders(),
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    const error = new Error(data.error || 'Erreur telechargement PDF');
+    error.status = response.status;
+    throw error;
+  }
+  return response.blob();
 }
 
 function clientLabel(client) {
@@ -1163,6 +1183,47 @@ function printSheet() {
   window.print();
 }
 
+function pdfFileName() {
+  const date = sheetDateInput.value || todayIso();
+  return `Fiche_appel_ALTA_MAREE_${date}.pdf`;
+}
+
+function setPdfButtonsLoading(isLoading) {
+  [downloadPdfBtn, downloadPdfBtnSecondary].forEach((button) => {
+    if (!button) return;
+    button.disabled = isLoading;
+    if (isLoading) {
+      button.dataset.defaultLabel = button.textContent;
+      button.textContent = 'Generation du PDF...';
+    } else {
+      button.textContent = button.dataset.defaultLabel || 'Telecharger en PDF';
+      delete button.dataset.defaultLabel;
+    }
+  });
+}
+
+async function downloadSheetPdf() {
+  setPdfButtonsLoading(true);
+  try {
+    updatePreview();
+    const blob = await apiDownload('/api/quick-order-sheets/pdf', buildSheetPayload());
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = pdfFileName();
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    showFeedback('PDF genere.', 'success');
+  } catch (error) {
+    console.error('Erreur telechargement PDF fiche appel :', { message: error.message, status: error.status });
+    showFeedback(error.message || 'Erreur generation PDF fiche appel', 'error');
+  } finally {
+    setPdfButtonsLoading(false);
+  }
+}
+
 function initEvents() {
   backHomeBtn?.addEventListener('click', () => { window.location.href = './home.html'; });
   logoutBtn?.addEventListener('click', () => {
@@ -1177,6 +1238,8 @@ function initEvents() {
   refreshDataBtn?.addEventListener('click', refreshData);
   printSheetBtn?.addEventListener('click', printSheet);
   printSheetBtnSecondary?.addEventListener('click', printSheet);
+  downloadPdfBtn?.addEventListener('click', downloadSheetPdf);
+  downloadPdfBtnSecondary?.addEventListener('click', downloadSheetPdf);
   clearEntriesBtn?.addEventListener('click', clearEntries);
   newSheetBtn?.addEventListener('click', newSheet);
   emailPreviewBtn?.addEventListener('click', previewSupplierEmail);

@@ -402,8 +402,22 @@ function renderSupplierEmailHtml(sheet, totals) {
 
 function renderSheetPdfHtml(sheet) {
   const totals = productTotals(sheet);
-  const rows = sheet.clients.map((client) => {
-    const cells = sheet.products.filter((product) => product.article_id).map((product) => {
+  const products = sheet.products.filter((product) => product.article_id);
+  const clientsPerPage = 10;
+  const clientPages = [];
+  for (let index = 0; index < sheet.clients.length; index += clientsPerPage) {
+    clientPages.push(sheet.clients.slice(index, index + clientsPerPage));
+  }
+  const pages = (clientPages.length ? clientPages : [[]]).map((pageClients, pageIndex) => {
+    const heads = pageClients.map((client) => `
+      <th class="client-head">
+        <strong>${escapeHtml(client.name || client.legal_name || 'Client')}</strong>
+        <small>${escapeHtml([client.code, client.city].filter(Boolean).join(' - '))}</small>
+      </th>
+    `).join('');
+    const rows = products.map((product) => {
+      const total = totals.find((row) => String(row.uid) === String(product.uid)) || {};
+      const cells = pageClients.map((client) => {
       const entry = sheet.entries[String(client.id)]?.[String(product.uid)] || {};
       return `
         <td>
@@ -417,21 +431,40 @@ function renderSheetPdfHtml(sheet) {
     }).join('');
     return `
       <tr>
-        <th><strong>${escapeHtml(client.name || client.legal_name || 'Client')}</strong><small>${escapeHtml([client.code, client.city].filter(Boolean).join(' - '))}</small></th>
+        <th class="product-head">
+          <div class="product">${escapeHtml(product.designation || product.label || product.plu || 'Produit')}</div>
+          <div>T1 ${escapeHtml(formatNumber(product.sale_price_level_1_ht || product.price_level_1_ht || 0, 2))} / T2 ${escapeHtml(formatNumber(product.sale_price_level_2_ht || product.price_level_2_ht || 0, 2))} / T3 ${escapeHtml(formatNumber(product.sale_price_level_3_ht || product.price_level_3_ht || 0, 2))}</div>
+          <div>Dispo fournisseur: ${escapeHtml(formatNumber(total.stock || 0))}</div>
+          <div>Vendu: ${escapeHtml(formatNumber(total.sold || 0))}</div>
+          <div class="${Number(total.remaining || 0) < 0 ? 'alert' : ''}">Reste: ${escapeHtml(formatNumber(total.remaining || 0))}</div>
+        </th>
         ${cells}
       </tr>
     `;
-  }).join('');
-  const heads = sheet.products.filter((product) => product.article_id).map((product) => {
-    const total = totals.find((row) => String(row.uid) === String(product.uid)) || {};
+    }).join('');
+    const startClient = (pageIndex * clientsPerPage) + 1;
+    const endClient = (pageIndex * clientsPerPage) + pageClients.length;
     return `
-      <th>
-        <div class="product">${escapeHtml(product.designation || product.label || product.plu || 'Produit')}</div>
-        <div>T1 ${escapeHtml(formatNumber(product.sale_price_level_1_ht || product.price_level_1_ht || 0, 2))} / T2 ${escapeHtml(formatNumber(product.sale_price_level_2_ht || product.price_level_2_ht || 0, 2))} / T3 ${escapeHtml(formatNumber(product.sale_price_level_3_ht || product.price_level_3_ht || 0, 2))}</div>
-        <div>Dispo fournisseur: ${escapeHtml(formatNumber(total.stock || 0))}</div>
-        <div>Vendu: ${escapeHtml(formatNumber(total.sold || 0))}</div>
-        <div class="${Number(total.remaining || 0) < 0 ? 'alert' : ''}">Reste: ${escapeHtml(formatNumber(total.remaining || 0))}</div>
-      </th>
+      <section class="sheet-page">
+        <table>
+          <thead>
+            <tr class="title-row">
+              <th colspan="${pageClients.length + 1}">
+                <div class="title-wrap">
+                  <div>
+                    <h1>${escapeHtml(sheet.title)}</h1>
+                    ${sheet.notes ? `<p>${escapeHtml(sheet.notes)}</p>` : ''}
+                    <p>Page ${pageIndex + 1}/${clientPages.length || 1} - Clients ${startClient} a ${endClient || 0}</p>
+                  </div>
+                  <strong>${escapeHtml(sheet.sheet_date)}</strong>
+                </div>
+              </th>
+            </tr>
+            <tr><th class="corner-head">Produit</th>${heads}</tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="1">Aucun produit.</td></tr>'}</tbody>
+        </table>
+      </section>
     `;
   }).join('');
   return `
@@ -440,39 +473,33 @@ function renderSheetPdfHtml(sheet) {
     <head>
       <meta charset="utf-8" />
       <style>
-        @page { size: A4 landscape; margin: 8mm; }
+        @page { size: A4 landscape; margin: 7mm; }
         body { font-family: Arial, sans-serif; color:#111; }
-        header { display:flex; justify-content:space-between; gap:16px; margin-bottom:8px; }
-        h1 { font-size:18pt; margin:0; }
+        h1 { font-size:15pt; margin:0; }
         p { margin:3px 0; }
-        table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:7.5pt; }
+        .sheet-page { break-after:page; page-break-after:always; }
+        .sheet-page:last-child { break-after:auto; page-break-after:auto; }
+        table { width:100%; border-collapse:collapse; table-layout:fixed; font-size:7.4pt; }
         th, td { border:1px solid #111; vertical-align:top; }
-        thead th { height:19mm; padding:1.5mm; background:#eef3f5; }
-        tbody th { width:38mm; padding:1.4mm; text-align:left; background:#f8fafb; }
-        tbody th small { display:block; margin-top:1mm; font-weight:400; }
-        tbody td { height:11mm; padding:0; }
-        .product { min-height:7mm; font-weight:700; overflow-wrap:anywhere; }
+        thead { display:table-header-group; }
+        thead th { height:13mm; padding:1.2mm; background:#eef3f5; }
+        .title-row th { height:auto; padding:0 0 3mm; border:0; background:#fff; }
+        .title-wrap { display:flex; justify-content:space-between; gap:8mm; text-align:left; }
+        .title-wrap > strong { min-width:30mm; text-align:right; }
+        .client-head small { display:block; margin-top:1mm; font-weight:400; }
+        .product-head { width:46mm; padding:1mm; text-align:left; background:#f8fafb; }
+        .corner-head { width:46mm; }
+        tbody td { height:10.5mm; padding:0; }
+        .product { font-weight:700; overflow-wrap:anywhere; }
         .alert { color:#b42318; font-weight:700; }
-        .cell { display:grid; grid-template-columns:1fr 1fr; min-height:11mm; }
+        .cell { display:grid; grid-template-columns:1fr 1fr; min-height:10.5mm; }
         .cell div { display:grid; grid-template-rows:3.5mm 1fr; border-right:1px solid #aaa; text-align:center; }
         .cell div:last-child { border-right:0; }
         .cell span { border-bottom:1px solid #bbb; background:#f8fafb; font-size:5.5pt; font-weight:700; text-transform:uppercase; }
         .cell strong { font-size:8pt; padding-top:1.5mm; }
       </style>
     </head>
-    <body>
-      <header>
-        <div>
-          <h1>${escapeHtml(sheet.title)}</h1>
-          ${sheet.notes ? `<p>${escapeHtml(sheet.notes)}</p>` : ''}
-        </div>
-        <strong>${escapeHtml(sheet.sheet_date)}</strong>
-      </header>
-      <table>
-        <thead><tr><th>Clients</th>${heads}</tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </body>
+    <body>${pages}</body>
     </html>
   `;
 }
@@ -576,9 +603,9 @@ router.post('/quick-order-sheets/pdf', authenticateToken, attachDbContext, requi
     const sheet = normalizeSheetPayload(req.body);
     const pdf = await renderHtmlToPdf(renderSheetPdfHtml(sheet), {
       format: 'A4',
-      margin: { top: '8mm', right: '8mm', bottom: '8mm', left: '8mm' },
+      margin: { top: '7mm', right: '7mm', bottom: '7mm', left: '7mm' },
     });
-    return sendPdf(res, pdf, `fiche-appel-${sheet.sheet_date}.pdf`);
+    return sendPdf(res, pdf, `Fiche_appel_ALTA_MAREE_${sheet.sheet_date}.pdf`);
   } catch (err) {
     console.error('Erreur PDF fiche appel :', err);
     res.status(err.status || 500).json({ error: err.message || 'Erreur generation PDF fiche appel' });
