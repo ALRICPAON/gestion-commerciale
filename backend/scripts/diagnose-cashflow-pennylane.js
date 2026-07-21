@@ -23,6 +23,24 @@ function statusLine(label, result, receivedKey = 'read') {
   return `[OK] ${label}: ${received} received${pages ? ` over ${pages} pages` : ''}${inserted}${ignored}`;
 }
 
+function asJson(value) {
+  return JSON.stringify(value || {}, null, 2);
+}
+
+async function latestSample(resource, storeId) {
+  const result = await db.query(
+    `
+    SELECT item_shape
+    FROM cashflow_pennylane_response_samples
+    WHERE store_id = $1 AND resource = $2
+    ORDER BY captured_at DESC
+    LIMIT 1
+    `,
+    [storeId, resource]
+  ).catch(() => ({ rows: [] }));
+  return result.rows[0]?.item_shape || null;
+}
+
 async function main() {
   const config = getPennylaneConfig();
   if (!config.enabled) {
@@ -49,14 +67,42 @@ async function main() {
   console.log(statusLine('Supplier invoices', result.supplier_invoices));
   console.log(statusLine('Supplier payments', result.supplier_payments));
   console.log(`[OK] Open supplier invoices: ${counts.openSupplierInvoices}`);
+  console.log(`[OK] Paid supplier invoices: ${counts.paidSupplierInvoices}`);
+  console.log(`[OK] Supplier invoices needing review: ${counts.reviewSupplierInvoices}`);
   console.log(`[OK] Trial balance accounts: ${counts.trialBalanceAccounts}`);
-  console.log(`[OK] Class 6 accounts: ${counts.class6Accounts}`);
+  console.log(`[OK] Class 6 accounts: received=${counts.class6Received}, database=${counts.class6InDatabase}, api=${counts.class6ReturnedByApi}`);
   console.log(`[OK] DISTRIMER: ${distrimer.items?.length || 0} open invoices, ${Number(distrimer.exposure || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR outstanding`);
+
+  const transactionSample = await latestSample('transaction', storeId);
+  if (transactionSample) {
+    console.log('\nTransaction sample shape:');
+    console.log(asJson(transactionSample));
+  }
+
+  const supplierSample = await latestSample('supplier_invoice', storeId);
+  if (supplierSample) {
+    console.log('\nSupplier invoice sample shape:');
+    console.log(asJson(supplierSample));
+  }
 
   if (Array.isArray(counts.latestResourceLogs)) {
     console.log('\nResource logs:');
     counts.latestResourceLogs.forEach((row) => {
       console.log(`- ${row.resource}: received=${row.received_count}, normalized=${row.normalized_count}, inserted=${row.inserted_count}, updated=${row.updated_count}, ignored=${row.ignored_count}, errors=${row.error_count}${row.error_message ? `, error=${row.error_message}` : ''}`);
+      if (row.resource === 'transactions' && Array.isArray(row.error_details) && row.error_details.length) {
+        console.log('  transaction SQL errors:');
+        row.error_details.forEach((error) => {
+          console.log(`  - id=${error.resource_id || '-'} op=${error.operation || '-'} pg_code=${error.pg_code || '-'} constraint=${error.pg_constraint || '-'} column=${error.pg_column || '-'} message=${error.message || '-'}`);
+          console.log(`    value_types=${JSON.stringify(error.value_types || {})}`);
+        });
+      }
+    });
+  }
+
+  if (Array.isArray(counts.suppliersFound) && counts.suppliersFound.length) {
+    console.log('\nSuppliers found:');
+    counts.suppliersFound.forEach((row) => {
+      console.log(`- ${row.supplier_name || '-'} (pennylane=${row.pennylane_supplier_id || '-'}, invoices=${row.invoice_count || 0})`);
     });
   }
 }

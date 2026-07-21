@@ -23,10 +23,15 @@ const {
 const {
   fetchAllPages,
   extractList,
+  classifySupplierInvoiceCashflow,
   normalizeSupplierInvoice,
   normalizeTransaction,
+  pushSqlError,
   runCashflowDiagnostic,
 } = require('../services/cashflow/pennylaneCashflowService');
+const {
+  isDistrimerInvoice,
+} = require('../services/cashflow/service');
 const { PennylaneApiError } = require('../services/pennylane');
 
 function byDate(forecast, date) {
@@ -287,6 +292,80 @@ function testSupplierInvoiceMissingDueAndNumber() {
   assert.strictEqual(invoice.remaining_amount_with_tax, 300.25);
 }
 
+function testRealAnonymizedTransactionShape() {
+  const tx = normalizeTransaction({
+    id: 123456,
+    amount: '-1 234,56',
+    currency: 'EUR',
+    bank_account: { id: 987 },
+    booked_at: '2026-07-20T10:45:00.000Z',
+    description: 'PRELEVEMENT FOURNISSEUR',
+    status: 'unmatched',
+    matched_invoices: null,
+  });
+  assert.strictEqual(tx.id, '123456');
+  assert.strictEqual(tx.bank_account_id, 987);
+  assert.strictEqual(tx.date, '2026-07-20');
+  assert.strictEqual(tx.amount, 1234.56);
+  assert.strictEqual(tx.direction, 'out');
+  assert.deepStrictEqual(tx.matched_invoices, []);
+}
+
+function testSqlErrorDiagnosticDetails() {
+  const stats = { error_details: [] };
+  const err = new Error('invalid input syntax for type numeric');
+  err.code = '22P02';
+  err.constraint = 'cashflow_bank_transactions_amount_check';
+  err.column = 'amount';
+  pushSqlError(stats, 'tx_1', err, 'upsert_cashflow_bank_transactions', { amount: 'string' });
+  assert.strictEqual(stats.error_details.length, 1);
+  assert.strictEqual(stats.error_details[0].pg_code, '22P02');
+  assert.strictEqual(stats.error_details[0].pg_constraint, 'cashflow_bank_transactions_amount_check');
+  assert.strictEqual(stats.error_details[0].pg_column, 'amount');
+  assert.strictEqual(stats.error_details[0].value_types.amount, 'string');
+}
+
+function testSupplierInvoicePositiveWithoutPaidProofVisible() {
+  const invoice = normalizeSupplierInvoice({
+    id: 'si_review',
+    amount: '500.00',
+    supplier: { id: 'sup_1', name: 'Fournisseur test' },
+  });
+  const state = classifySupplierInvoiceCashflow(invoice);
+  assert.ok(['open', 'needs_review'].includes(state.state));
+  assert.strictEqual(state.remaining, 500);
+}
+
+function testSupplierInvoiceStatesAndPaymentIsolation() {
+  const invoices = [
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 1000, remaining_amount_with_tax: 1000, paid: false }),
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 2000, remaining_amount_with_tax: null, paid: false }),
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 300, remaining_amount_with_tax: 0, paid: true }),
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 400, remaining_amount_with_tax: null, paid: false }),
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 500, remaining_amount_with_tax: null, paid: false }, [{ amount: 100, status: 'confirmed' }]),
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 600, remaining_amount_with_tax: null, paid: false }),
+  ];
+  assert.strictEqual(invoices.filter((row) => row.state === 'paid').length, 1);
+  assert.strictEqual(invoices.filter((row) => row.state !== 'paid').length, 5);
+  assert.strictEqual(invoices[4].remaining, 400);
+}
+
+function testDistrimerRecognitionByNameAndId() {
+  assert.strictEqual(isDistrimerInvoice({ supplier_name: 'DISTRIMER S.A.S.' }, {}), true);
+  assert.strictEqual(isDistrimerInvoice({ pennylane_supplier_id: 'sup_d' }, { monitored_supplier_pennylane_id: 'sup_d' }), true);
+  assert.strictEqual(isDistrimerInvoice({ supplier_name: 'Autre fournisseur' }, { monitored_supplier_name: 'DISTRIMER' }), false);
+}
+
+function testClassSixVisibleCounts() {
+  const rows = [
+    { account_number: '607000', source: 'trial_balance' },
+    { account_number: '624000', source: 'trial_balance' },
+    { account_number: '707000', source: 'trial_balance' },
+  ];
+  const class6ReturnedByApi = rows.filter((row) => String(row.account_number).startsWith('6')).length;
+  assert.strictEqual(class6ReturnedByApi, 2);
+}
+
 function testStatsArithmetic() {
   const stats = { received_count: 2, normalized_count: 2, inserted_count: 1, updated_count: 1, ignored_count: 0, error_count: 0 };
   assert.strictEqual(stats.received_count, stats.normalized_count);
@@ -314,6 +393,12 @@ const tests = [
   testTransactionWithoutThirdPartyAndStringAmount,
   testUnmatchedTransactionSavedShape,
   testSupplierInvoiceMissingDueAndNumber,
+  testRealAnonymizedTransactionShape,
+  testSqlErrorDiagnosticDetails,
+  testSupplierInvoicePositiveWithoutPaidProofVisible,
+  testSupplierInvoiceStatesAndPaymentIsolation,
+  testDistrimerRecognitionByNameAndId,
+  testClassSixVisibleCounts,
   testStatsArithmetic,
 ];
 

@@ -106,6 +106,7 @@ function makeStats(resource, endpoint, queryParams = {}) {
     ignored_count: 0,
     error_count: 0,
     ignored_reasons: {},
+    error_details: [],
     first_item_shape: null,
     error_message: null,
   };
@@ -117,9 +118,9 @@ async function saveResourceLog(db, storeId, stats) {
     INSERT INTO cashflow_sync_resource_logs(
       store_id, resource, endpoint, query_params, http_status, pages_count, received_count,
       normalized_count, inserted_count, updated_count, ignored_count, error_count,
-      ignored_reasons, first_item_shape, error_message
+      ignored_reasons, first_item_shape, error_message, error_details
     )
-    VALUES($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
+    VALUES($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16::jsonb)
     `,
     [
       storeId,
@@ -137,8 +138,29 @@ async function saveResourceLog(db, storeId, stats) {
       JSON.stringify(stats.ignored_reasons || {}),
       JSON.stringify(stats.first_item_shape || {}),
       stats.error_message,
+      JSON.stringify((stats.error_details || []).slice(0, 25)),
     ]
   ).catch(() => {});
+}
+
+function pushSqlError(stats, resourceId, err, operation, valueTypes = {}) {
+  stats.error_details.push({
+    resource_id: resourceId ? String(resourceId) : null,
+    operation,
+    pg_code: err.code || null,
+    pg_constraint: err.constraint || null,
+    pg_column: err.column || null,
+    message: err.message || 'Erreur SQL',
+    value_types: valueTypes,
+  });
+}
+
+function sqlValueTypes(values = {}) {
+  return Object.fromEntries(Object.entries(values).map(([key, value]) => {
+    if (value === null || value === undefined) return [key, String(value)];
+    if (Array.isArray(value)) return [key, `array:${value.length}`];
+    return [key, typeof value];
+  }));
 }
 
 async function saveResponseSample(db, storeId, resource, endpoint, firstItem) {
@@ -203,6 +225,13 @@ function toMoney(value, fallback = null) {
   const normalized = typeof value === 'string' ? value.replace(/\s/g, '').replace(',', '.') : value;
   const number = Number(normalized);
   return Number.isFinite(number) ? number : fallback;
+}
+
+function toDateOrNull(value) {
+  if (!value) return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 }
 
 async function runCashflowDiagnostic(db, { storeId, client = createPennylaneClient(getPennylaneConfig()) } = {}) {
@@ -359,7 +388,7 @@ function normalizeBankAccount(account = {}) {
     id: String(firstPresent(account, ['id', 'bank_account_id'])),
     name: firstPresent(account, ['name', 'label']) || 'Compte bancaire',
     currency: firstPresent(account, ['currency']) || 'EUR',
-    balance: Number(firstPresent(account, ['balance', 'current_balance', 'amount']) || 0),
+    balance: toMoney(firstPresent(account, ['balance', 'current_balance', 'amount']), 0),
     updated_at: firstPresent(account, ['updated_at', 'balance_updated_at']),
     bank_establishment_name: firstPresent(establishment, ['name', 'label']),
     bank_establishment_id: firstPresent(establishment, ['id']),
@@ -448,17 +477,19 @@ async function refreshBankSnapshot(db, storeId) {
 }
 
 function normalizeTransaction(tx = {}) {
-  const amount = Number(firstPresent(tx, ['amount', 'currency_amount']) || 0);
+  const id = nestedFirstPresent(tx, ['id', 'transaction_id']);
+  const amount = toMoney(nestedFirstPresent(tx, ['amount', 'currency_amount', 'value']), 0);
   const bankAccount = firstPresent(tx, ['bank_account']) || {};
   const supplier = firstPresent(tx, ['supplier']) || {};
   const customer = firstPresent(tx, ['customer']) || {};
   const matchedInvoices = firstPresent(tx, ['matched_invoices', 'invoices']) || [];
   const categories = firstPresent(tx, ['categories']) || [];
   const status = firstPresent(tx, ['reconciliation_status', 'status', 'state']);
+  const rawDate = nestedFirstPresent(tx, ['date', 'transaction_date', 'emitted_at', 'booked_at', 'created_at']);
   return {
-    id: String(firstPresent(tx, ['id', 'transaction_id'])),
+    id: id ? String(id) : null,
     bank_account_id: firstPresent(tx, ['bank_account_id']) || firstPresent(bankAccount, ['id']),
-    date: firstPresent(tx, ['date', 'transaction_date']),
+    date: toDateOrNull(rawDate),
     label: firstPresent(tx, ['label', 'description', 'name']) || 'Mouvement bancaire',
     amount: Math.abs(amount),
     direction: amount < 0 || String(firstPresent(tx, ['direction', 'type']) || '').toLowerCase().includes('debit') ? 'out' : 'in',
@@ -468,7 +499,7 @@ function normalizeTransaction(tx = {}) {
     categories,
     matched_invoices: Array.isArray(matchedInvoices) ? matchedInvoices : [],
     reconciliation_status: status || (Array.isArray(matchedInvoices) && matchedInvoices.length ? 'matched' : null),
-    unmatched_amount: Number(firstPresent(tx, ['outstanding_balance', 'unmatched_amount']) || 0),
+    unmatched_amount: toMoney(firstPresent(tx, ['outstanding_balance', 'unmatched_amount']), 0),
     created_at: firstPresent(tx, ['created_at']),
     updated_at: firstPresent(tx, ['updated_at']),
     raw: tx,
@@ -513,8 +544,8 @@ function normalizeSupplierInvoice(invoice = {}) {
     supplier_id: normalizeSupplierId(invoice) ? String(normalizeSupplierId(invoice)) : null,
     supplier_name: normalizeSupplierName(invoice),
     invoice_number: firstPresent(invoice, ['invoice_number', 'number', 'reference']) || 'A completer',
-    invoice_date: firstPresent(invoice, ['date', 'invoice_date', 'created_at']),
-    due_date: firstPresent(invoice, ['deadline', 'due_date']),
+    invoice_date: toDateOrNull(firstPresent(invoice, ['date', 'invoice_date', 'created_at'])),
+    due_date: toDateOrNull(firstPresent(invoice, ['deadline', 'due_date'])),
     currency: firstPresent(invoice, ['currency']) || 'EUR',
     amount_ex_vat: toMoney(firstPresent(invoice, ['amount_before_tax', 'amount_ex_vat', 'amount_without_tax']), null),
     amount_vat: toMoney(firstPresent(invoice, ['tax', 'amount_vat', 'vat_amount']), null),
@@ -523,10 +554,44 @@ function normalizeSupplierInvoice(invoice = {}) {
     paid_amount: paid,
     accounting_status: firstPresent(invoice, ['accounting_status', 'status']),
     payment_status: firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']) || (remaining === 0 ? 'paid' : 'to_complete'),
-    paid: firstPresent(invoice, ['paid']) === true || remaining === 0,
+    paid: firstPresent(invoice, ['paid']) === true || remaining === 0 || ['paid', 'paid_out', 'confirmed'].includes(String(firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']) || '').toLowerCase()),
     updated_at: firstPresent(invoice, ['updated_at']),
     raw: invoice,
   };
+}
+
+function classifySupplierInvoiceCashflow(invoice, payments = [], matchedTransactions = []) {
+  const total = toMoney(invoice.amount_inc_vat, 0);
+  const officialRemaining = toMoney(invoice.remaining_amount_with_tax, null);
+  const confirmedPayments = payments
+    .filter((payment) => classifySupplierPaymentStatus(payment.status).is_confirmed)
+    .reduce((sum, payment) => sum + toMoney(payment.amount, 0), 0);
+  const matchedTotal = matchedTransactions.reduce((sum, tx) => sum + toMoney(tx.amount, 0), 0);
+  const paymentStatus = String(invoice.payment_status || '').toLowerCase();
+  const explicitPaid = invoice.paid === true || ['paid', 'paid_out', 'confirmed'].includes(paymentStatus);
+
+  if (officialRemaining !== null && officialRemaining > 0) {
+    return { state: 'open', remaining: officialRemaining, paidAmount: Math.max(total - officialRemaining, confirmedPayments), reason: 'official_remaining_positive' };
+  }
+  if (officialRemaining === 0 || explicitPaid) {
+    return { state: 'paid', remaining: 0, paidAmount: Math.max(confirmedPayments, total), reason: officialRemaining === 0 ? 'official_remaining_zero' : 'official_paid_status' };
+  }
+  if (total > 0 && confirmedPayments > 0 && confirmedPayments < total) {
+    return { state: 'open', remaining: Math.max(total - confirmedPayments, 0), paidAmount: confirmedPayments, reason: 'partial_confirmed_payment' };
+  }
+  if (total > 0 && confirmedPayments >= total) {
+    return { state: 'paid', remaining: 0, paidAmount: confirmedPayments, reason: 'payments_cover_total' };
+  }
+  if (total > 0 && matchedTotal > 0 && matchedTotal < total) {
+    return { state: 'open', remaining: Math.max(total - matchedTotal, 0), paidAmount: matchedTotal, reason: 'partial_matched_transactions' };
+  }
+  if (total > 0 && matchedTotal >= total) {
+    return { state: 'paid', remaining: 0, paidAmount: matchedTotal, reason: 'matched_transactions_cover_total' };
+  }
+  if (total > 0) {
+    return { state: 'needs_review', remaining: total, paidAmount: confirmedPayments, reason: 'missing_remaining_no_paid_proof' };
+  }
+  return { state: 'needs_review', remaining: 0, paidAmount: confirmedPayments, reason: 'missing_total_amount' };
 }
 
 async function findAltaSupplierId(db, storeId, pennylaneSupplierId, supplierName) {
@@ -563,6 +628,7 @@ async function syncSupplierInvoicesDirect(db, { storeId, client }) {
       stats.normalized_count += 1;
       try {
         const altaSupplierId = await findAltaSupplierId(db, storeId, invoice.supplier_id, invoice.supplier_name);
+        const cashflowState = classifySupplierInvoiceCashflow(invoice);
         const result = await db.query(
           `
           INSERT INTO pennylane_supplier_invoices(
@@ -570,9 +636,10 @@ async function syncSupplierInvoicesDirect(db, { storeId, client }) {
             invoice_number, invoice_date, due_date, currency, amount_ex_vat, amount_vat, amount_inc_vat,
             remaining_amount_with_tax, accounting_status, payment_status, paid,
             alta_business_status, sync_status, raw_payload, last_synced_at, cashflow_last_direct_sync_at,
-            cashflow_normalization_status
+            cashflow_normalization_status, cashflow_open_state, cashflow_remaining_amount,
+            cashflow_paid_amount, cashflow_state_reason, cashflow_supplier_name
           )
-          VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6::date, $7::date, $8, $9, $10, $11, $12, $13, $14, $15, 'a_rapprocher', 'synced', $16::jsonb, now(), now(), 'ok')
+          VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6::date, $7::date, $8, $9, $10, $11, $12, $13, $14, $15, 'a_rapprocher', 'synced', $16::jsonb, now(), now(), 'ok', $17, $18, $19, $20, $21)
           ON CONFLICT (store_id, pennylane_supplier_invoice_id) DO UPDATE
           SET pennylane_supplier_id = EXCLUDED.pennylane_supplier_id,
             supplier_id = COALESCE(EXCLUDED.supplier_id, pennylane_supplier_invoices.supplier_id),
@@ -592,6 +659,11 @@ async function syncSupplierInvoicesDirect(db, { storeId, client }) {
             last_synced_at = now(),
             cashflow_last_direct_sync_at = now(),
             cashflow_normalization_status = 'ok',
+            cashflow_open_state = EXCLUDED.cashflow_open_state,
+            cashflow_remaining_amount = EXCLUDED.cashflow_remaining_amount,
+            cashflow_paid_amount = EXCLUDED.cashflow_paid_amount,
+            cashflow_state_reason = EXCLUDED.cashflow_state_reason,
+            cashflow_supplier_name = EXCLUDED.cashflow_supplier_name,
             updated_at = now()
           RETURNING (xmax = 0) AS inserted
           `,
@@ -612,6 +684,11 @@ async function syncSupplierInvoicesDirect(db, { storeId, client }) {
             invoice.payment_status,
             invoice.paid,
             JSON.stringify(invoice.raw),
+            cashflowState.state,
+            cashflowState.remaining,
+            cashflowState.paidAmount,
+            cashflowState.reason,
+            invoice.supplier_name,
           ]
         );
         if (result.rows[0]?.inserted) stats.inserted_count += 1;
@@ -619,6 +696,14 @@ async function syncSupplierInvoicesDirect(db, { storeId, client }) {
       } catch (err) {
         stats.error_count += 1;
         incrementReason(stats.ignored_reasons, 'database_constraint');
+        pushSqlError(stats, invoice.id, err, 'upsert_pennylane_supplier_invoices', sqlValueTypes({
+          supplier_id: invoice.supplier_id,
+          invoice_date: invoice.invoice_date,
+          due_date: invoice.due_date,
+          amount_inc_vat: invoice.amount_inc_vat,
+          remaining_amount_with_tax: invoice.remaining_amount_with_tax,
+          paid: invoice.paid,
+        }));
       }
     }
     await saveResourceLog(db, storeId, stats);
@@ -650,11 +735,6 @@ async function syncTransactions(db, { storeId, client }) {
         incrementReason(stats.ignored_reasons, 'missing_id');
         continue;
       }
-      if (!tx.date) {
-        stats.ignored_count += 1;
-        incrementReason(stats.ignored_reasons, 'missing_date');
-        continue;
-      }
       stats.normalized_count += 1;
       try {
         const result = await db.query(
@@ -664,7 +744,7 @@ async function syncTransactions(db, { storeId, client }) {
         direction, amount, currency, supplier_id, customer_id, categories, matched_invoices,
         reconciliation_status, reconciled, unmatched_amount, pennylane_created_at, pennylane_updated_at, raw_payload
       )
-      VALUES($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14, $15, $16::timestamptz, $17::timestamptz, $18::jsonb)
+      VALUES($1, $2, $3, $4::date, $5, $6, $7::numeric, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14, $15::numeric, $16::timestamptz, $17::timestamptz, $18::jsonb)
       ON CONFLICT (store_id, pennylane_transaction_id) DO UPDATE
       SET bank_account_pennylane_id = EXCLUDED.bank_account_pennylane_id,
         transaction_date = EXCLUDED.transaction_date,
@@ -688,11 +768,19 @@ async function syncTransactions(db, { storeId, client }) {
           [storeId, tx.id, tx.bank_account_id ? String(tx.bank_account_id) : null, tx.date, tx.label, tx.direction, tx.amount, tx.currency, tx.supplier_id ? String(tx.supplier_id) : null, tx.customer_id ? String(tx.customer_id) : null, JSON.stringify(tx.categories), JSON.stringify(tx.matched_invoices), tx.reconciliation_status, ['matched', 'reconciled'].includes(String(tx.reconciliation_status || '').toLowerCase()), tx.unmatched_amount, tx.created_at || null, tx.updated_at || null, JSON.stringify(tx.raw)]
         );
         if (result.rows[0]?.inserted) stats.inserted_count += 1;
-        else stats.updated_count += 1;
+        else if (result.rowCount > 0) stats.updated_count += 1;
         await upsertTransactionInvoiceLinks(db, storeId, tx);
       } catch (err) {
         stats.error_count += 1;
         incrementReason(stats.ignored_reasons, 'database_constraint');
+        pushSqlError(stats, tx.id, err, 'upsert_cashflow_bank_transactions', {
+          transaction_date: tx.date === null ? 'null' : typeof tx.date,
+          amount: typeof tx.amount,
+          unmatched_amount: typeof tx.unmatched_amount,
+          bank_account_id: tx.bank_account_id === null ? 'null' : typeof tx.bank_account_id,
+          supplier_id: tx.supplier_id === null ? 'null' : typeof tx.supplier_id,
+          customer_id: tx.customer_id === null ? 'null' : typeof tx.customer_id,
+        });
       }
     }
     await refreshRecurringSuggestions(db, storeId);
@@ -784,6 +872,7 @@ async function syncSupplierInvoicePayments(db, { storeId, client }) {
         upserted += 1;
       }
       await syncSupplierInvoiceMatchedTransactions(db, { storeId, client, invoiceId: invoice.pennylane_supplier_invoice_id });
+      await refreshSupplierInvoiceCashflowState(db, storeId, invoice.pennylane_supplier_invoice_id);
     } catch (err) {
       failed += 1;
       stats.error_count += 1;
@@ -794,6 +883,60 @@ async function syncSupplierInvoicePayments(db, { storeId, client }) {
   stats.error_count += failed;
   await saveResourceLog(db, storeId, stats);
   return { invoices: invoices.rows.length, read, upserted, failed, stats };
+}
+
+async function refreshSupplierInvoiceCashflowState(db, storeId, invoiceId) {
+  const invoiceResult = await db.query(
+    `
+    SELECT *
+    FROM pennylane_supplier_invoices
+    WHERE store_id = $1 AND pennylane_supplier_invoice_id = $2
+    LIMIT 1
+    `,
+    [storeId, String(invoiceId)]
+  ).catch(() => ({ rows: [] }));
+  const invoice = invoiceResult.rows[0];
+  if (!invoice) return null;
+  const payments = await db.query(
+    `
+    SELECT amount, status
+    FROM cashflow_supplier_invoice_payments
+    WHERE store_id = $1 AND pennylane_supplier_invoice_id = $2
+    `,
+    [storeId, String(invoiceId)]
+  ).then((r) => r.rows).catch(() => []);
+  const matchedTransactions = await db.query(
+    `
+    SELECT amount
+    FROM cashflow_invoice_transaction_links
+    WHERE store_id = $1 AND invoice_type = 'supplier_invoice' AND pennylane_invoice_id = $2
+    `,
+    [storeId, String(invoiceId)]
+  ).then((r) => r.rows).catch(() => []);
+  const rawPayload = invoice.raw_payload && typeof invoice.raw_payload === 'object' ? invoice.raw_payload : {};
+  const hasOfficialRemaining = ['remaining_amount_with_tax', 'remaining_amount', 'amount_due', 'due_amount']
+    .some((key) => Object.prototype.hasOwnProperty.call(rawPayload, key));
+  const state = classifySupplierInvoiceCashflow({
+    amount_inc_vat: invoice.amount_inc_vat,
+    remaining_amount_with_tax: hasOfficialRemaining
+      ? invoice.remaining_amount_with_tax
+      : null,
+    payment_status: invoice.payment_status,
+    paid: invoice.paid,
+  }, payments, matchedTransactions);
+  await db.query(
+    `
+    UPDATE pennylane_supplier_invoices
+    SET cashflow_open_state = $3,
+      cashflow_remaining_amount = $4,
+      cashflow_paid_amount = $5,
+      cashflow_state_reason = $6,
+      updated_at = now()
+    WHERE store_id = $1 AND pennylane_supplier_invoice_id = $2
+    `,
+    [storeId, String(invoiceId), state.state, state.remaining, state.paidAmount, state.reason]
+  ).catch(() => {});
+  return state;
 }
 
 async function syncSupplierInvoiceMatchedTransactions(db, { storeId, client, invoiceId }) {
@@ -994,6 +1137,8 @@ module.exports = {
   itemShape,
   normalizeSupplierInvoice,
   normalizeTransaction,
+  classifySupplierInvoiceCashflow,
+  pushSqlError,
   runCashflowDiagnostic,
   syncBankAccounts,
   syncCashflowData,
@@ -1001,4 +1146,5 @@ module.exports = {
   syncSupplierInvoicePayments,
   syncTransactions,
   syncClass6ChargeHistory,
+  refreshSupplierInvoiceCashflowState,
 };

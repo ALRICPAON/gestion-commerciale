@@ -232,16 +232,17 @@ function renderPayables(data = {}) {
   state.payables = data.invoices || [];
   els.payables.innerHTML = table(
     [
-      { label: 'Fournisseur' }, { label: 'Facture' }, { label: 'Echeance' }, { label: 'Montant restant', className: 'num' }, { label: 'Paye confirme', className: 'num' }, { label: 'En cours', className: 'num' }, { label: 'Paiement prevu' }, { label: 'Priorite' },
+      { label: 'Fournisseur' }, { label: 'Facture' }, { label: 'Etat' }, { label: 'Echeance' }, { label: 'Montant restant', className: 'num' }, { label: 'Paye confirme', className: 'num' }, { label: 'En cours' }, { label: 'Paiement prevu' }, { label: 'Priorite' },
     ],
     state.payables.map((row) => `
       <tr>
         <td>${escapeHtml(row.supplier_name)}</td>
         <td>${escapeHtml(row.invoice_number || '-')}</td>
+        <td><span class="cashflow-badge ${row.cashflow_open_state === 'needs_review' ? 'orange' : 'vert'}">${escapeHtml(row.cashflow_open_state || 'open')}</span><br><small>${escapeHtml(row.cashflow_state_reason || '')}</small></td>
         <td>${dateFr(row.due_date)}</td>
         <td class="num">${money(row.remaining_amount)}</td>
         <td class="num">${money(row.confirmed_paid_amount)}</td>
-        <td class="num">${money(row.pending_payment_amount)}</td>
+        <td>${money(row.pending_payment_amount)}<br><small>${row.matched_transaction_count || 0} rapprochement(s)</small></td>
         <td>${dateFr(row.planned_payment_date)}</td>
         <td>${escapeHtml(row.priority || 'normale')}</td>
       </tr>
@@ -372,7 +373,7 @@ async function loadCharges() {
     (recurring.charges || []).map((row) => `
       <tr><td>${escapeHtml(row.label)}</td><td>${escapeHtml(row.category_code)}</td><td class="num">${money(row.cash_amount)}</td><td>${dateFr(row.first_due_date)}</td><td>${escapeHtml(row.frequency)}</td></tr>
     `),
-    'Aucune charge recurrente configuree.'
+    'Aucune charge recurrente future configuree.'
   );
   els.chargeHistoryTable.innerHTML = table(
     [{ label: 'Mois' }, { label: 'Compte' }, { label: 'Libelle' }, { label: 'Categorie' }, { label: 'Debit', className: 'num' }, { label: 'Credit', className: 'num' }, { label: 'Charge nette', className: 'num' }],
@@ -387,7 +388,7 @@ async function loadCharges() {
         <td class="num">${money(row.net_charge)}</td>
       </tr>
     `),
-    'Aucune analyse de charges Pennylane disponible. Synchroniser le compte d exploitation puis la tresorerie.'
+    'Aucune charge historique de classe 6 disponible. Synchroniser le compte d exploitation puis la tresorerie.'
   );
 }
 
@@ -398,14 +399,23 @@ async function loadDebugCounts() {
     els.debugCountsTable.innerHTML = table(
       [{ label: 'Donnee' }, { label: 'Nombre', className: 'num' }],
       [
-        ['Comptes bancaires', data.bankAccounts],
-        ['Transactions', data.bankTransactions],
-        ['Factures fournisseurs', data.supplierInvoices],
-        ['Factures ouvertes', data.openSupplierInvoices],
+        ['Comptes bancaires recus', data.bankAccountsReceived],
+        ['Comptes bancaires en base', data.bankAccountsInDatabase],
+        ['Transactions recues', data.transactionsReceived],
+        ['Transactions normalisees', data.transactionsNormalized],
+        ['Transactions en base', data.transactionsInDatabase],
+        ['Erreurs transactions', data.transactionErrors],
+        ['Factures fournisseurs recues', data.supplierInvoicesReceived],
+        ['Factures fournisseurs en base', data.supplierInvoicesInDatabase],
+        ['Factures ouvertes / a revoir', data.openSupplierInvoices],
+        ['Factures payees', data.paidSupplierInvoices],
+        ['Factures a verifier', data.reviewSupplierInvoices],
         ['Paiements fournisseurs', data.supplierPayments],
         ['Comptes de balance', data.trialBalanceAccounts],
-        ['Comptes de charges', data.class6Accounts],
-        ['Charges recurrentes', data.recurringCharges],
+        ['Classe 6 recue', data.class6Received],
+        ['Classe 6 historique en base', data.class6InDatabase],
+        ['Classe 6 retournee API', data.class6ReturnedByApi],
+        ['Charges recurrentes futures', data.recurringCharges],
         ['Factures fournisseur surveille', data.distrimerInvoices],
       ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td class="num">${value || 0}</td></tr>`)
     );

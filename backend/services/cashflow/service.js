@@ -24,6 +24,13 @@ function parseScenario(value) {
   return ['prudent', 'realiste', 'optimiste'].includes(text) ? text : 'realiste';
 }
 
+function coalesceCashflowAmount(...values) {
+  for (const value of values) {
+    if (value !== null && value !== undefined && value !== '') return Number(value || 0);
+  }
+  return 0;
+}
+
 async function getSettings(db, storeId) {
   const result = await db.query(
     `
@@ -175,15 +182,18 @@ async function listSupplierPayables(db, storeId) {
       psi.pennylane_supplier_invoice_id,
       psi.pennylane_supplier_id,
       psi.supplier_id,
-      COALESCE(s.name, psi.pennylane_supplier_id, 'Fournisseur') AS supplier_name,
+      COALESCE(s.name, psi.cashflow_supplier_name, psi.pennylane_supplier_id, 'Fournisseur') AS supplier_name,
       psi.invoice_number,
       psi.invoice_date,
       psi.due_date,
-      COALESCE(psi.remaining_amount_with_tax, psi.amount_inc_vat, psi.currency_amount_inc_vat, 0) AS remaining_amount,
+      COALESCE(psi.cashflow_remaining_amount, psi.remaining_amount_with_tax, psi.amount_inc_vat, psi.currency_amount_inc_vat, 0) AS remaining_amount,
       psi.amount_inc_vat AS total_amount,
       psi.payment_status,
       psi.paid,
       psi.accounting_status,
+      COALESCE(psi.cashflow_open_state, 'needs_review') AS cashflow_open_state,
+      psi.cashflow_state_reason,
+      psi.cashflow_supplier_name,
       psi.last_synced_at,
       'pennylane' AS source,
       COALESCE(pay.confirmed_paid_amount, 0) AS confirmed_paid_amount,
@@ -210,9 +220,11 @@ async function listSupplierPayables(db, storeId) {
     ) link ON link.store_id = psi.store_id AND link.pennylane_invoice_id = psi.pennylane_supplier_invoice_id
     WHERE psi.store_id = $1
       AND psi.pennylane_deleted_at IS NULL
-      AND COALESCE(psi.paid, false) = false
-      AND COALESCE(psi.payment_status, '') NOT IN ('paid')
-      AND COALESCE(psi.remaining_amount_with_tax, psi.amount_inc_vat, psi.currency_amount_inc_vat, 0) > 0
+      AND COALESCE(psi.cashflow_open_state, CASE
+        WHEN COALESCE(psi.paid, false) = true OR COALESCE(psi.payment_status, '') IN ('paid') THEN 'paid'
+        WHEN COALESCE(psi.remaining_amount_with_tax, psi.amount_inc_vat, psi.currency_amount_inc_vat, 0) > 0 THEN 'open'
+        ELSE 'needs_review'
+      END) IN ('open', 'needs_review')
     ORDER BY psi.due_date ASC NULLS LAST, psi.invoice_date ASC
     LIMIT 500
     `,
@@ -220,6 +232,9 @@ async function listSupplierPayables(db, storeId) {
   ).catch(() => ({ rows: [] }));
   return result.rows.map((row) => ({
     ...row,
+    supplier_name: row.supplier_name || row.cashflow_supplier_name || row.pennylane_supplier_id || 'Fournisseur a completer',
+    remaining_amount: coalesceCashflowAmount(row.remaining_amount, row.total_amount),
+    is_open: ['open', 'needs_review'].includes(String(row.cashflow_open_state || '').toLowerCase()),
     ...calculateSupplierInvoicePaymentAmounts({
       totalAmount: row.total_amount,
       pennylaneRemainingAmount: row.remaining_amount,
@@ -395,11 +410,55 @@ async function debugCounts(db, storeId) {
   const single = async (sql, params = [storeId]) => db.query(sql, params).then((r) => Number(Object.values(r.rows[0] || { count: 0 })[0] || 0)).catch(() => 0);
   const settings = await getSettings(db, storeId).catch(() => ({}));
   const payables = await listSupplierPayables(db, storeId);
+  const latestResourceLogs = await db.query(
+    `
+    SELECT DISTINCT ON (resource) resource, endpoint, pages_count, received_count, normalized_count,
+      inserted_count, updated_count, ignored_count, error_count, ignored_reasons, error_message,
+      error_details, first_item_shape, created_at
+    FROM cashflow_sync_resource_logs
+    WHERE store_id = $1
+    ORDER BY resource, created_at DESC
+    `,
+    [storeId]
+  ).then((r) => r.rows).catch(() => []);
+  const latestFor = (resource) => latestResourceLogs.find((row) => row.resource === resource) || {};
+  const supplierStateCounts = await db.query(
+    `
+    SELECT COALESCE(cashflow_open_state, 'needs_review') AS state, COUNT(*)::int AS count
+    FROM pennylane_supplier_invoices
+    WHERE store_id = $1 AND pennylane_deleted_at IS NULL
+    GROUP BY COALESCE(cashflow_open_state, 'needs_review')
+    `,
+    [storeId]
+  ).then((r) => r.rows.reduce((acc, row) => ({ ...acc, [row.state]: Number(row.count || 0) }), {})).catch(() => ({}));
+  const suppliersFound = await db.query(
+    `
+    SELECT DISTINCT
+      COALESCE(s.name, psi.cashflow_supplier_name, psi.pennylane_supplier_id, 'Fournisseur a completer') AS supplier_name,
+      psi.pennylane_supplier_id,
+      COUNT(*)::int AS invoice_count
+    FROM pennylane_supplier_invoices psi
+    LEFT JOIN suppliers s ON s.id = psi.supplier_id AND s.store_id = psi.store_id
+    WHERE psi.store_id = $1 AND psi.pennylane_deleted_at IS NULL
+    GROUP BY COALESCE(s.name, psi.cashflow_supplier_name, psi.pennylane_supplier_id, 'Fournisseur a completer'), psi.pennylane_supplier_id
+    ORDER BY invoice_count DESC, supplier_name ASC
+    LIMIT 50
+    `,
+    [storeId]
+  ).then((r) => r.rows).catch(() => []);
+  const class6InDatabase = await single('SELECT COUNT(*) FROM cashflow_charge_history WHERE store_id = $1');
   return {
-    bankAccounts: await single('SELECT COUNT(*) FROM cashflow_bank_accounts WHERE store_id = $1'),
-    bankTransactions: await single('SELECT COUNT(*) FROM cashflow_bank_transactions WHERE store_id = $1'),
-    supplierInvoices: await single('SELECT COUNT(*) FROM pennylane_supplier_invoices WHERE store_id = $1 AND pennylane_deleted_at IS NULL'),
+    bankAccountsReceived: Number(latestFor('bank_accounts').received_count || 0),
+    bankAccountsInDatabase: await single('SELECT COUNT(*) FROM cashflow_bank_accounts WHERE store_id = $1'),
+    transactionsReceived: Number(latestFor('transactions').received_count || 0),
+    transactionsNormalized: Number(latestFor('transactions').normalized_count || 0),
+    transactionsInDatabase: await single('SELECT COUNT(*) FROM cashflow_bank_transactions WHERE store_id = $1'),
+    transactionErrors: Number(latestFor('transactions').error_count || 0),
+    supplierInvoicesReceived: Number(latestFor('supplier_invoices').received_count || 0),
+    supplierInvoicesInDatabase: await single('SELECT COUNT(*) FROM pennylane_supplier_invoices WHERE store_id = $1 AND pennylane_deleted_at IS NULL'),
     openSupplierInvoices: payables.length,
+    paidSupplierInvoices: Number(supplierStateCounts.paid || 0),
+    reviewSupplierInvoices: Number(supplierStateCounts.needs_review || 0),
     supplierPayments: await single('SELECT COUNT(*) FROM cashflow_supplier_invoice_payments WHERE store_id = $1'),
     trialBalanceAccounts: await single(`
       SELECT COUNT(*)
@@ -407,6 +466,9 @@ async function debugCounts(db, storeId) {
       INNER JOIN pennylane_trial_balance_snapshots snap ON snap.id = line.snapshot_id
       WHERE snap.store_id = $1
     `),
+    class6Received: Number(latestFor('class6_trial_balance').received_count || 0),
+    class6InDatabase,
+    class6ReturnedByApi: class6InDatabase,
     class6Accounts: await single(`
       SELECT COUNT(DISTINCT line.account_number)
       FROM pennylane_trial_balance_lines line
@@ -415,16 +477,8 @@ async function debugCounts(db, storeId) {
     `),
     recurringCharges: await single('SELECT COUNT(*) FROM cashflow_recurring_charges WHERE store_id = $1'),
     distrimerInvoices: payables.filter((invoice) => isDistrimerInvoice(invoice, settings)).length,
-    latestResourceLogs: await db.query(
-      `
-      SELECT DISTINCT ON (resource) resource, endpoint, pages_count, received_count, normalized_count,
-        inserted_count, updated_count, ignored_count, error_count, ignored_reasons, error_message, created_at
-      FROM cashflow_sync_resource_logs
-      WHERE store_id = $1
-      ORDER BY resource, created_at DESC
-      `,
-      [storeId]
-    ).then((r) => r.rows).catch(() => []),
+    suppliersFound,
+    latestResourceLogs,
   };
 }
 
@@ -631,4 +685,6 @@ module.exports = {
   chargeCompletionAlerts,
   calculateCustomerBehaviour,
   settingsForDistrimer,
+  isDistrimerInvoice,
+  normalizeName,
 };
