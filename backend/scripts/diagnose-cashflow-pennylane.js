@@ -33,7 +33,7 @@ async function latestSample(resource, storeId) {
     SELECT item_shape
     FROM cashflow_pennylane_response_samples
     WHERE store_id = $1 AND resource = $2
-    ORDER BY captured_at DESC
+    ORDER BY received_at DESC
     LIMIT 1
     `,
     [storeId, resource]
@@ -69,9 +69,11 @@ async function main() {
   console.log(`[OK] Open supplier invoices: ${counts.openSupplierInvoices}`);
   console.log(`[OK] Paid supplier invoices: ${counts.paidSupplierInvoices}`);
   console.log(`[OK] Supplier invoices needing review: ${counts.reviewSupplierInvoices}`);
+  console.log(`[OK] Supplier invoice state total: ${Number(counts.openSupplierInvoices || 0) + Number(counts.paidSupplierInvoices || 0) + Number(counts.reviewSupplierInvoices || 0)} / ${counts.totalSupplierInvoices || counts.supplierInvoicesInDatabase || 0}`);
   console.log(`[OK] Trial balance accounts: ${counts.trialBalanceAccounts}`);
   console.log(`[OK] Class 6 accounts: received=${counts.class6Received}, database=${counts.class6InDatabase}, api=${counts.class6ReturnedByApi}`);
-  console.log(`[OK] DISTRIMER: ${distrimer.items?.length || 0} open invoices, ${Number(distrimer.exposure || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR outstanding`);
+  console.log(`[OK] DISTRIMER: ${distrimer.open_invoice_count || 0} open invoices, ${Number((distrimer.confirmed_outstanding ?? distrimer.exposure) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR outstanding`);
+  console.log(`[OK] DISTRIMER details: total=${distrimer.total_invoice_count || 0}, open=${distrimer.open_invoice_count || 0}, paid=${distrimer.paid_invoice_count || 0}, needs_review=${distrimer.review_invoice_count || 0}, potential_review=${Number(distrimer.potential_review_outstanding || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR, potential_total=${Number(distrimer.potential_outstanding || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR, pending_payments=${Number(distrimer.pending_payment_amount || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR`);
 
   const transactionSample = await latestSample('transaction', storeId);
   if (transactionSample) {

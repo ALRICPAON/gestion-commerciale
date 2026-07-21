@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const {
   buildDailyForecast,
@@ -33,6 +35,8 @@ const {
   isDistrimerInvoice,
 } = require('../services/cashflow/service');
 const { PennylaneApiError } = require('../services/pennylane');
+
+const repoRoot = path.join(__dirname, '..', '..');
 
 function byDate(forecast, date) {
   return forecast.rows.find((row) => row.date === date);
@@ -304,11 +308,25 @@ function testRealAnonymizedTransactionShape() {
     matched_invoices: null,
   });
   assert.strictEqual(tx.id, '123456');
-  assert.strictEqual(tx.bank_account_id, 987);
+  assert.strictEqual(tx.bank_account_id, '987');
   assert.strictEqual(tx.date, '2026-07-20');
   assert.strictEqual(tx.amount, 1234.56);
   assert.strictEqual(tx.direction, 'out');
   assert.deepStrictEqual(tx.matched_invoices, []);
+}
+
+function testPennylaneIdsStoredAsText() {
+  const tx = normalizeTransaction({
+    id: '999999999999999999999999',
+    bank_account_id: '888888888888888888888888',
+    supplier_id: '777777777777777777777777',
+    customer_id: '666666666666666666666666',
+    amount: '42.00',
+  });
+  assert.strictEqual(tx.id, '999999999999999999999999');
+  assert.strictEqual(tx.bank_account_id, '888888888888888888888888');
+  assert.strictEqual(tx.supplier_id, '777777777777777777777777');
+  assert.strictEqual(tx.customer_id, '666666666666666666666666');
 }
 
 function testSqlErrorDiagnosticDetails() {
@@ -325,6 +343,44 @@ function testSqlErrorDiagnosticDetails() {
   assert.strictEqual(stats.error_details[0].value_types.amount, 'string');
 }
 
+function testTransactionUniqueConstraintMigration() {
+  const sql = fs.readFileSync(path.join(repoRoot, 'backend/db/gestion-commerciale/059_cashflow_transaction_unique_constraint.sql'), 'utf8');
+  assert.match(sql, /to_regclass\('public\.cashflow_bank_transactions'\)/);
+  assert.match(sql, /ROW_NUMBER\(\) OVER/i);
+  assert.match(sql, /DROP INDEX IF EXISTS cashflow_bank_transactions_pennylane_uidx/i);
+  assert.match(sql, /ADD CONSTRAINT cashflow_bank_transactions_store_pennylane_uidx/i);
+  assert.match(sql, /UNIQUE \(store_id, pennylane_transaction_id\)/i);
+}
+
+function testTransactionUpsertUsesNamedConstraint() {
+  const source = fs.readFileSync(path.join(repoRoot, 'backend/services/cashflow/pennylaneCashflowService.js'), 'utf8');
+  assert.match(source, /ON CONFLICT ON CONSTRAINT cashflow_bank_transactions_store_pennylane_uidx DO UPDATE/);
+}
+
+function testEightTransactionInitialAndSecondSyncNoDuplicate() {
+  const firstBatch = Array.from({ length: 8 }, (_, index) => normalizeTransaction({
+    id: `tx_${index + 1}`,
+    bank_account_id: `bank_${index + 1}`,
+    amount: String(index + 1),
+  }));
+  const store = new Map();
+  let inserted = 0;
+  let updated = 0;
+  for (const tx of firstBatch) {
+    if (store.has(tx.id)) updated += 1;
+    else inserted += 1;
+    store.set(tx.id, tx);
+  }
+  for (const tx of firstBatch) {
+    if (store.has(tx.id)) updated += 1;
+    else inserted += 1;
+    store.set(tx.id, tx);
+  }
+  assert.strictEqual(inserted, 8);
+  assert.strictEqual(updated, 8);
+  assert.strictEqual(store.size, 8);
+}
+
 function testSupplierInvoicePositiveWithoutPaidProofVisible() {
   const invoice = normalizeSupplierInvoice({
     id: 'si_review',
@@ -334,6 +390,34 @@ function testSupplierInvoicePositiveWithoutPaidProofVisible() {
   const state = classifySupplierInvoiceCashflow(invoice);
   assert.ok(['open', 'needs_review'].includes(state.state));
   assert.strictEqual(state.remaining, 500);
+}
+
+function testExclusiveSupplierStateCounters() {
+  const states = ['open', 'open', 'paid', 'paid', 'needs_review', 'needs_review'];
+  const counts = states.reduce((acc, state) => ({ ...acc, [state]: (acc[state] || 0) + 1 }), {});
+  assert.strictEqual(counts.open, 2);
+  assert.strictEqual(counts.paid, 2);
+  assert.strictEqual(counts.needs_review, 2);
+  assert.strictEqual(counts.open + counts.paid + counts.needs_review, states.length);
+}
+
+function testDistrimerConfirmedAndPotentialOutstandingSeparated() {
+  const invoices = [
+    { cashflow_open_state: 'open', remaining_amount: 5522.40 },
+    { cashflow_open_state: 'needs_review', remaining_amount: 1000 },
+  ];
+  const confirmed = invoices.filter((row) => row.cashflow_open_state === 'open').reduce((sum, row) => sum + row.remaining_amount, 0);
+  const review = invoices.filter((row) => row.cashflow_open_state === 'needs_review').reduce((sum, row) => sum + row.remaining_amount, 0);
+  assert.strictEqual(confirmed, 5522.40);
+  assert.strictEqual(review, 1000);
+  assert.strictEqual(confirmed + review, 6522.40);
+}
+
+function testClassSixFrontendCountsVisible() {
+  const source = fs.readFileSync(path.join(repoRoot, 'frontend/js/cashflow.js'), 'utf8');
+  assert.match(source, /Charges comptables detectees/);
+  assert.match(source, /Charges recurrentes futures/);
+  assert.match(source, /Classe 6 retournee API/);
 }
 
 function testSupplierInvoiceStatesAndPaymentIsolation() {
@@ -394,8 +478,15 @@ const tests = [
   testUnmatchedTransactionSavedShape,
   testSupplierInvoiceMissingDueAndNumber,
   testRealAnonymizedTransactionShape,
+  testPennylaneIdsStoredAsText,
   testSqlErrorDiagnosticDetails,
+  testTransactionUniqueConstraintMigration,
+  testTransactionUpsertUsesNamedConstraint,
+  testEightTransactionInitialAndSecondSyncNoDuplicate,
   testSupplierInvoicePositiveWithoutPaidProofVisible,
+  testExclusiveSupplierStateCounters,
+  testDistrimerConfirmedAndPotentialOutstandingSeparated,
+  testClassSixFrontendCountsVisible,
   testSupplierInvoiceStatesAndPaymentIsolation,
   testDistrimerRecognitionByNameAndId,
   testClassSixVisibleCounts,

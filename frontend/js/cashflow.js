@@ -254,6 +254,11 @@ function renderDistrimer(data = {}) {
   state.distrimer = data;
   els.distrimerBox.innerHTML = `
     <p><strong>Encours DISTRIMER :</strong> ${money(data.exposure)}</p>
+    <p><strong>Factures DISTRIMER :</strong> ${data.total_invoice_count || 0} total, ${data.open_invoice_count || 0} ouvertes, ${data.paid_invoice_count || 0} payees, ${data.review_invoice_count || 0} a verifier</p>
+    <p><strong>Encours confirme :</strong> ${money(data.confirmed_outstanding ?? data.exposure)}</p>
+    <p><strong>Encours potentiel a verifier :</strong> ${money(data.potential_review_outstanding)}</p>
+    <p><strong>Encours potentiel total :</strong> ${money(data.potential_outstanding ?? data.exposure)}</p>
+    <p><strong>Paiements en cours :</strong> ${money(data.pending_payment_amount)}</p>
     <p><strong>Limite assuree :</strong> ${money(data.limit)}</p>
     <p><strong>Marge restante :</strong> ${money(data.remaining_margin)}</p>
     <p><span class="cashflow-badge ${escapeHtml(data.level)}">${escapeHtml(data.level || 'vert')}</span></p>
@@ -368,6 +373,12 @@ async function loadCharges() {
     `),
     'Aucune charge manquante detectee.'
   );
+  els.chargesAlerts.insertAdjacentHTML('afterbegin', `
+    <div class="cashflow-warning">
+      Charges comptables detectees : ${history.charges?.length || 0}<br>
+      Charges recurrentes futures : ${recurring.charges?.length || 0}
+    </div>
+  `);
   els.recurringChargesTable.innerHTML = table(
     [{ label: 'Libelle' }, { label: 'Categorie' }, { label: 'Montant', className: 'num' }, { label: 'Premiere echeance' }, { label: 'Frequence' }],
     (recurring.charges || []).map((row) => `
@@ -407,16 +418,24 @@ async function loadDebugCounts() {
         ['Erreurs transactions', data.transactionErrors],
         ['Factures fournisseurs recues', data.supplierInvoicesReceived],
         ['Factures fournisseurs en base', data.supplierInvoicesInDatabase],
-        ['Factures ouvertes / a revoir', data.openSupplierInvoices],
+        ['Factures fournisseurs total etats', data.totalSupplierInvoices],
+        ['Factures ouvertes', data.openSupplierInvoices],
         ['Factures payees', data.paidSupplierInvoices],
         ['Factures a verifier', data.reviewSupplierInvoices],
+        ['Factures a payer ou verifier', data.payableOrReviewSupplierInvoices],
         ['Paiements fournisseurs', data.supplierPayments],
         ['Comptes de balance', data.trialBalanceAccounts],
         ['Classe 6 recue', data.class6Received],
         ['Classe 6 historique en base', data.class6InDatabase],
         ['Classe 6 retournee API', data.class6ReturnedByApi],
         ['Charges recurrentes futures', data.recurringCharges],
-        ['Factures fournisseur surveille', data.distrimerInvoices],
+        ['Factures DISTRIMER total', data.distrimerInvoices],
+        ['Factures DISTRIMER ouvertes', data.distrimerOpenInvoices],
+        ['Factures DISTRIMER payees', data.distrimerPaidInvoices],
+        ['Factures DISTRIMER a verifier', data.distrimerReviewInvoices],
+        ['Encours DISTRIMER confirme', data.distrimerConfirmedOutstanding],
+        ['Encours DISTRIMER potentiel', data.distrimerPotentialOutstanding],
+        ['Paiements DISTRIMER en cours', data.distrimerPendingPayments],
       ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td class="num">${value || 0}</td></tr>`)
     );
   } catch (error) {

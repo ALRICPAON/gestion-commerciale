@@ -234,6 +234,11 @@ function toDateOrNull(value) {
   return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
 }
 
+function toTextOrNull(value) {
+  if (value === undefined || value === null || value === '') return null;
+  return String(value);
+}
+
 async function runCashflowDiagnostic(db, { storeId, client = createPennylaneClient(getPennylaneConfig()) } = {}) {
   const rows = [];
   let sampleSupplierInvoiceId = null;
@@ -381,11 +386,12 @@ async function saveDiagnosticRow(db, storeId, diagnostic) {
 }
 
 function normalizeBankAccount(account = {}) {
+  const id = firstPresent(account, ['id', 'bank_account_id']);
   const establishment = firstPresent(account, ['bank_establishment']) || {};
   const journal = firstPresent(account, ['journal']) || {};
   const ledger = firstPresent(account, ['ledger_account', 'accounting_account']) || {};
   return {
-    id: String(firstPresent(account, ['id', 'bank_account_id'])),
+    id: toTextOrNull(id),
     name: firstPresent(account, ['name', 'label']) || 'Compte bancaire',
     currency: firstPresent(account, ['currency']) || 'EUR',
     balance: toMoney(firstPresent(account, ['balance', 'current_balance', 'amount']), 0),
@@ -488,14 +494,14 @@ function normalizeTransaction(tx = {}) {
   const rawDate = nestedFirstPresent(tx, ['date', 'transaction_date', 'emitted_at', 'booked_at', 'created_at']);
   return {
     id: id ? String(id) : null,
-    bank_account_id: firstPresent(tx, ['bank_account_id']) || firstPresent(bankAccount, ['id']),
+    bank_account_id: toTextOrNull(firstPresent(tx, ['bank_account_id']) || firstPresent(bankAccount, ['id'])),
     date: toDateOrNull(rawDate),
     label: firstPresent(tx, ['label', 'description', 'name']) || 'Mouvement bancaire',
     amount: Math.abs(amount),
     direction: amount < 0 || String(firstPresent(tx, ['direction', 'type']) || '').toLowerCase().includes('debit') ? 'out' : 'in',
     currency: firstPresent(tx, ['currency']) || 'EUR',
-    supplier_id: firstPresent(tx, ['supplier_id']) || firstPresent(supplier, ['id']),
-    customer_id: firstPresent(tx, ['customer_id']) || firstPresent(customer, ['id']),
+    supplier_id: toTextOrNull(firstPresent(tx, ['supplier_id']) || firstPresent(supplier, ['id'])),
+    customer_id: toTextOrNull(firstPresent(tx, ['customer_id']) || firstPresent(customer, ['id'])),
     categories,
     matched_invoices: Array.isArray(matchedInvoices) ? matchedInvoices : [],
     reconciliation_status: status || (Array.isArray(matchedInvoices) && matchedInvoices.length ? 'matched' : null),
@@ -745,7 +751,7 @@ async function syncTransactions(db, { storeId, client }) {
         reconciliation_status, reconciled, unmatched_amount, pennylane_created_at, pennylane_updated_at, raw_payload
       )
       VALUES($1, $2, $3, $4::date, $5, $6, $7::numeric, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14, $15::numeric, $16::timestamptz, $17::timestamptz, $18::jsonb)
-      ON CONFLICT (store_id, pennylane_transaction_id) DO UPDATE
+      ON CONFLICT ON CONSTRAINT cashflow_bank_transactions_store_pennylane_uidx DO UPDATE
       SET bank_account_pennylane_id = EXCLUDED.bank_account_pennylane_id,
         transaction_date = EXCLUDED.transaction_date,
         label = EXCLUDED.label,

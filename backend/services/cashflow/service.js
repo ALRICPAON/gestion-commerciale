@@ -361,16 +361,62 @@ function normalizeName(value) {
 async function getDistrimer(db, storeId) {
   const settings = await getSettings(db, storeId);
   const payables = await listSupplierPayables(db, storeId);
-  const invoices = payables.filter((invoice) => isDistrimerInvoice(invoice, settings)).map((invoice) => ({
+  const allDistrimerInvoices = await db.query(
+    `
+    SELECT
+      psi.id,
+      psi.pennylane_supplier_invoice_id,
+      psi.pennylane_supplier_id,
+      psi.supplier_id,
+      COALESCE(s.name, psi.cashflow_supplier_name, psi.pennylane_supplier_id, 'Fournisseur') AS supplier_name,
+      psi.invoice_number,
+      psi.invoice_date,
+      psi.due_date,
+      COALESCE(psi.cashflow_open_state, 'needs_review') AS cashflow_open_state,
+      COALESCE(psi.cashflow_remaining_amount, psi.remaining_amount_with_tax, psi.amount_inc_vat, psi.currency_amount_inc_vat, 0) AS remaining_amount,
+      COALESCE(pay.pending_payment_amount, 0) AS pending_payment_amount
+    FROM pennylane_supplier_invoices psi
+    LEFT JOIN suppliers s ON s.id = psi.supplier_id AND s.store_id = psi.store_id
+    LEFT JOIN (
+      SELECT store_id, pennylane_supplier_invoice_id, SUM(CASE WHEN is_pending THEN amount ELSE 0 END) AS pending_payment_amount
+      FROM cashflow_supplier_invoice_payments
+      GROUP BY store_id, pennylane_supplier_invoice_id
+    ) pay ON pay.store_id = psi.store_id AND pay.pennylane_supplier_invoice_id = psi.pennylane_supplier_invoice_id
+    WHERE psi.store_id = $1 AND psi.pennylane_deleted_at IS NULL
+    `,
+    [storeId]
+  ).then((r) => r.rows.filter((invoice) => isDistrimerInvoice(invoice, settings))).catch(() => []);
+  const invoices = allDistrimerInvoices.filter((invoice) => invoice.cashflow_open_state === 'open').map((invoice) => ({
     ...invoice,
     amount: invoice.remaining_amount,
     date: invoice.due_date || invoice.invoice_date,
   }));
-  return calculateDistrimerExposure({
+  const exposure = calculateDistrimerExposure({
     invoices,
     plannedPurchases: [],
     settings: settingsForDistrimer(settings),
   });
+  const reviewInvoices = allDistrimerInvoices.filter((invoice) => invoice.cashflow_open_state === 'needs_review');
+  const paidInvoices = allDistrimerInvoices.filter((invoice) => invoice.cashflow_open_state === 'paid');
+  const potentialOutstanding = reviewInvoices.reduce((sum, invoice) => sum + Number(invoice.remaining_amount || 0), Number(exposure.exposure || 0));
+  return {
+    ...exposure,
+    total_invoice_count: allDistrimerInvoices.length,
+    open_invoice_count: invoices.length,
+    paid_invoice_count: paidInvoices.length,
+    review_invoice_count: reviewInvoices.length,
+    confirmed_outstanding: exposure.exposure,
+    potential_review_outstanding: reviewInvoices.reduce((sum, invoice) => sum + Number(invoice.remaining_amount || 0), 0),
+    potential_outstanding: money(potentialOutstanding),
+    pending_payment_amount: allDistrimerInvoices.reduce((sum, invoice) => sum + Number(invoice.pending_payment_amount || 0), 0),
+    review_items: reviewInvoices.map((invoice) => ({
+      id: invoice.id,
+      label: invoice.invoice_number || 'Facture DISTRIMER a verifier',
+      date: invoice.due_date || invoice.invoice_date,
+      amount: invoice.remaining_amount,
+      source: 'pennylane_review',
+    })),
+  };
 }
 
 async function supplierExposure(db, storeId) {
@@ -446,7 +492,9 @@ async function debugCounts(db, storeId) {
     `,
     [storeId]
   ).then((r) => r.rows).catch(() => []);
+  const totalSupplierInvoices = await single('SELECT COUNT(*) FROM pennylane_supplier_invoices WHERE store_id = $1 AND pennylane_deleted_at IS NULL');
   const class6InDatabase = await single('SELECT COUNT(*) FROM cashflow_charge_history WHERE store_id = $1');
+  const distrimer = await getDistrimer(db, storeId).catch(() => ({}));
   return {
     bankAccountsReceived: Number(latestFor('bank_accounts').received_count || 0),
     bankAccountsInDatabase: await single('SELECT COUNT(*) FROM cashflow_bank_accounts WHERE store_id = $1'),
@@ -455,10 +503,12 @@ async function debugCounts(db, storeId) {
     transactionsInDatabase: await single('SELECT COUNT(*) FROM cashflow_bank_transactions WHERE store_id = $1'),
     transactionErrors: Number(latestFor('transactions').error_count || 0),
     supplierInvoicesReceived: Number(latestFor('supplier_invoices').received_count || 0),
-    supplierInvoicesInDatabase: await single('SELECT COUNT(*) FROM pennylane_supplier_invoices WHERE store_id = $1 AND pennylane_deleted_at IS NULL'),
-    openSupplierInvoices: payables.length,
+    supplierInvoicesInDatabase: totalSupplierInvoices,
+    totalSupplierInvoices,
+    openSupplierInvoices: Number(supplierStateCounts.open || 0),
     paidSupplierInvoices: Number(supplierStateCounts.paid || 0),
     reviewSupplierInvoices: Number(supplierStateCounts.needs_review || 0),
+    payableOrReviewSupplierInvoices: payables.length,
     supplierPayments: await single('SELECT COUNT(*) FROM cashflow_supplier_invoice_payments WHERE store_id = $1'),
     trialBalanceAccounts: await single(`
       SELECT COUNT(*)
@@ -476,7 +526,13 @@ async function debugCounts(db, storeId) {
       WHERE snap.store_id = $1 AND line.account_number LIKE '6%'
     `),
     recurringCharges: await single('SELECT COUNT(*) FROM cashflow_recurring_charges WHERE store_id = $1'),
-    distrimerInvoices: payables.filter((invoice) => isDistrimerInvoice(invoice, settings)).length,
+    distrimerInvoices: Number(distrimer.total_invoice_count || 0),
+    distrimerOpenInvoices: Number(distrimer.open_invoice_count || 0),
+    distrimerPaidInvoices: Number(distrimer.paid_invoice_count || 0),
+    distrimerReviewInvoices: Number(distrimer.review_invoice_count || 0),
+    distrimerConfirmedOutstanding: Number(distrimer.confirmed_outstanding || 0),
+    distrimerPotentialOutstanding: Number(distrimer.potential_outstanding || 0),
+    distrimerPendingPayments: Number(distrimer.pending_payment_amount || 0),
     suppliersFound,
     latestResourceLogs,
   };
