@@ -87,6 +87,15 @@ function money(value) {
   });
 }
 
+function moneyPrecise(value) {
+  return Number(value || 0).toLocaleString('fr-FR', {
+    style: 'currency',
+    currency: 'EUR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function percent(value) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
   return `${Number(value).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} %`;
@@ -192,6 +201,7 @@ function renderKpis(report = {}, compare = {}) {
 }
 
 function sectionClass(section = {}) {
+  if (section.section_code === 'to_classify') return 'is-alert';
   if (section.subsection_code === 'revenue') return 'is-revenue';
   if (section.subsection_code === 'goods_purchases' || section.subsection_code === 'purchases') return 'is-purchase';
   if (section.section_code === 'operating_expenses') return 'is-expense';
@@ -219,8 +229,28 @@ function renderStatement(report = {}) {
     incomeStatementEl.innerHTML = '<div class="financial-empty">Aucune balance comptable chargee pour cette periode.</div>';
     return;
   }
-  const warning = report.incomplete
-    ? '<div class="financial-warning">Certaines donnees sont incompletes ou non classees. Le resultat reste provisoire.</div>'
+  const unknownAccounts = Array.isArray(report.unknown_accounts) ? report.unknown_accounts : [];
+  const unknownAmount = unknownAccounts.reduce((sum, account) => sum + Math.abs(Number(account.amount || 0)), 0);
+  const unclassifiedWarning = unknownAccounts.length
+    ? `<div class="financial-warning">
+        <div>
+          <strong>${unknownAccounts.length} compte${unknownAccounts.length > 1 ? 's' : ''} representant ${escapeHtml(moneyPrecise(unknownAmount))} restent a classer.</strong>
+          <span>Ils sont inclus dans les totaux du compte d exploitation.</span>
+        </div>
+        <button class="btn btn-secondary btn-sm" type="button" data-action="open-accounting-settings">Parametres comptables</button>
+      </div>`
+    : '';
+  const control = report.consistency_control || {};
+  const controlIsOk = control.status === 'conforme';
+  const controlHtml = control.status
+    ? `<div class="financial-control ${controlIsOk ? 'is-ok' : 'is-alert'}">
+        <strong>${controlIsOk ? 'Controle conforme avec la balance Pennylane' : 'Ecart detecte avec la balance Pennylane'}</strong>
+        <span>Charges ${escapeHtml(moneyPrecise(control.alta?.charges))} / Produits ${escapeHtml(moneyPrecise(control.alta?.products))} / Resultat ${escapeHtml(moneyPrecise(control.alta?.result))}</span>
+        ${controlIsOk ? '' : `<span>Ecart resultat : ${escapeHtml(moneyPrecise(control.gaps?.result))}</span>`}
+      </div>`
+    : '';
+  const warning = report.incomplete && !unknownAccounts.length
+    ? '<div class="financial-warning">Certaines donnees sont incompletes. Le resultat reste provisoire.</div>'
     : '';
   const sectionHtml = sections.map((section) => `
     <details class="financial-section ${sectionClass(section)}" open>
@@ -252,7 +282,7 @@ function renderStatement(report = {}) {
       <strong>${escapeHtml(money(value))}</strong>
     </div>
   `).join('');
-  incomeStatementEl.innerHTML = `${warning}<div class="financial-result-stack">${totals}</div>${sectionHtml}`;
+  incomeStatementEl.innerHTML = `${unclassifiedWarning}${controlHtml}${warning}<div class="financial-result-stack">${totals}</div>${sectionHtml}`;
 }
 
 function renderComparison(compare = {}) {
@@ -440,6 +470,10 @@ function initEvents() {
   syncBtn.addEventListener('click', syncReport);
   exportPdfBtn.addEventListener('click', () => exportReport('pdf'));
   exportCsvBtn.addEventListener('click', () => exportReport('csv'));
+  incomeStatementEl.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-action="open-accounting-settings"]')) return;
+    window.location.href = './accounting-settings.html';
+  });
 }
 
 setPresetDates();

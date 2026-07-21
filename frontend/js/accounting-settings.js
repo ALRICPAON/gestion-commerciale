@@ -54,11 +54,12 @@ function renderMappings(mappings = []) {
   const canEdit = sessionUser.role === 'admin';
   mappingsTableEl.innerHTML = `
     <table class="financial-table">
-      <thead><tr><th>Prefixe</th><th>Rubrique</th><th>Sous-rubrique</th><th>Libelle dirigeant</th><th>Signe</th><th>Ordre</th><th>Actif</th><th></th></tr></thead>
+      <thead><tr><th>Prefixe</th><th>Priorite</th><th>Rubrique</th><th>Sous-rubrique</th><th>Libelle dirigeant</th><th>Signe</th><th>Ordre</th><th>Actif</th><th></th></tr></thead>
       <tbody>
         ${mappings.map((mapping) => `
           <tr data-mapping-id="${escapeHtml(mapping.id)}">
             <td><input data-field="account_prefix" value="${escapeHtml(mapping.account_prefix || '')}" ${canEdit ? '' : 'disabled'} /></td>
+            <td>${String(mapping.account_prefix || '').length}</td>
             <td><input data-field="section_code" value="${escapeHtml(mapping.section_code || '')}" ${canEdit ? '' : 'disabled'} /></td>
             <td><input data-field="subsection_code" value="${escapeHtml(mapping.subsection_code || '')}" ${canEdit ? '' : 'disabled'} /></td>
             <td><input data-field="display_label" value="${escapeHtml(mapping.display_label || '')}" ${canEdit ? '' : 'disabled'} /></td>

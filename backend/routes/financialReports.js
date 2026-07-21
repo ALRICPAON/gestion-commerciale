@@ -112,6 +112,9 @@ async function businessBreakdown(db, { storeId, periodStart, periodEnd }) {
 }
 
 function reportHtml(report, compare = null) {
+  const unknownAccounts = report.unknown_accounts || [];
+  const unknownAmount = unknownAccounts.reduce((sum, account) => sum + Math.abs(Number(account.amount || 0)), 0);
+  const control = report.consistency_control || null;
   const sections = (report.sections || []).map((section) => `
     <h2>${section.section_label} - ${section.display_label}</h2>
     <table>
@@ -151,6 +154,8 @@ function reportHtml(report, compare = null) {
         th { background: #eef3f8; }
         .num { text-align: right; }
         .total td { font-weight: 700; background: #f8fafc; }
+        .alert { border: 1px solid #fedf89; background: #fffbeb; color: #92400e; padding: 8px; margin: 8px 0; }
+        .ok { border: 1px solid #bbf7d0; background: #f0fdf4; color: #067647; padding: 8px; margin: 8px 0; }
         .notice { margin-top: 18px; font-size: 8pt; color: #555; }
       </style>
     </head>
@@ -163,6 +168,8 @@ function reportHtml(report, compare = null) {
         </div>
         <strong>${report.provisional ? 'Provisoire' : 'Definitif'}</strong>
       </header>
+      ${unknownAccounts.length ? `<div class="alert">${unknownAccounts.length} compte(s) representant ${money(unknownAmount)} restent a classer. Ils sont inclus dans les totaux.</div>` : ''}
+      ${control ? `<div class="${control.status === 'conforme' ? 'ok' : 'alert'}">Controle ${control.status === 'conforme' ? 'conforme' : 'en ecart'} - Charges ${money(control.alta?.charges)} / Produits ${money(control.alta?.products)} / Resultat ${money(control.alta?.result)}</div>` : ''}
       <h2>Indicateurs</h2>
       <table>
         <tbody>

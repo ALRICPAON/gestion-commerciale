@@ -18,10 +18,15 @@ const mappings = [
   { account_prefix: '603', section_code: 'operating_expenses', subsection_code: 'stock_variation', display_label: 'Variation stock', calculation_sign: -1, display_order: 21 },
   { account_prefix: '60', section_code: 'operating_expenses', subsection_code: 'purchases', display_label: 'Autres achats', calculation_sign: -1, display_order: 30 },
   { account_prefix: '61', section_code: 'operating_expenses', subsection_code: 'external_services', display_label: 'Services exterieurs', calculation_sign: -1, display_order: 40 },
+  { account_prefix: '6226', section_code: 'operating_expenses', subsection_code: 'other_external_services', display_label: 'Honoraires', calculation_sign: -1, display_order: 44 },
   { account_prefix: '62', section_code: 'operating_expenses', subsection_code: 'other_external_services', display_label: 'Autres services', calculation_sign: -1, display_order: 45 },
+  { account_prefix: '624', section_code: 'operating_expenses', subsection_code: 'transport', display_label: 'Transport', calculation_sign: -1, display_order: 47 },
+  { account_prefix: '625', section_code: 'operating_expenses', subsection_code: 'other_external_services', display_label: 'Receptions', calculation_sign: -1, display_order: 48 },
   { account_prefix: '63', section_code: 'operating_expenses', subsection_code: 'taxes', display_label: 'Taxes', calculation_sign: -1, display_order: 50 },
   { account_prefix: '645', section_code: 'operating_expenses', subsection_code: 'social_charges', display_label: 'Charges sociales', calculation_sign: -1, display_order: 58 },
+  { account_prefix: '641', section_code: 'operating_expenses', subsection_code: 'wages', display_label: 'Salaires appointements', calculation_sign: -1, display_order: 59 },
   { account_prefix: '64', section_code: 'operating_expenses', subsection_code: 'wages', display_label: 'Salaires', calculation_sign: -1, display_order: 60 },
+  { account_prefix: '65', section_code: 'operating_expenses', subsection_code: 'other_operating_expenses', display_label: 'Autres charges de gestion', calculation_sign: -1, display_order: 65 },
   { account_prefix: '68', section_code: 'operating_expenses', subsection_code: 'depreciation', display_label: 'Dotations', calculation_sign: -1, display_order: 70 },
   { account_prefix: '76', section_code: 'financial_result', subsection_code: 'financial_income', display_label: 'Produits financiers', calculation_sign: 1, display_order: 80 },
   { account_prefix: '66', section_code: 'financial_result', subsection_code: 'financial_expenses', display_label: 'Charges financieres', calculation_sign: -1, display_order: 90 },
@@ -61,6 +66,22 @@ function sampleReport(extraLines = []) {
       ...extraLines,
     ],
     mappings,
+    periodStart: '2026-01-01',
+    periodEnd: '2026-01-31',
+    now: new Date('2026-02-15T00:00:00Z'),
+    snapshot: { status: 'success' },
+  });
+}
+
+function pennylaneSampleReport(customMappings = mappings) {
+  return calculateIncomeStatement({
+    lines: [
+      line('607000000', 9230.50, 0, 'Achats de marchandises'),
+      line('622600000', 1870.08, 0, 'Honoraires'),
+      line('625700000', 49.82, 0, 'Receptions'),
+      line('707000000', 185, 10517, 'Ventes de marchandises'),
+    ],
+    mappings: customMappings,
     periodStart: '2026-01-01',
     periodEnd: '2026-01-31',
     now: new Date('2026-02-15T00:00:00Z'),
@@ -136,12 +157,27 @@ async function run() {
   assert.equal(report.calculations.exceptional_result, 20, 'resultat exceptionnel');
   assert.equal(report.calculations.net_result, 2500, 'resultat net');
   assert.equal(matchMapping(line('603700', 1, 0), mappings).account_prefix, '6037', 'correspondance la plus precise');
+  assert.equal(matchMapping(line('622600000', 1, 0), mappings).account_prefix, '6226', 'prefixe honoraires prioritaire');
+  assert.equal(matchMapping(line('624100000', 1, 0), mappings).account_prefix, '624', 'prefixe transport prioritaire sur 62');
+
+  const pennylaneSample = pennylaneSampleReport();
+  assert.equal(pennylaneSample.calculations.total_charges, 11150.40, 'charges sample Pennylane');
+  assert.equal(pennylaneSample.calculations.total_products, 10332, 'produits sample Pennylane avec debit produit');
+  assert.equal(pennylaneSample.calculations.net_result, -818.40, 'resultat sample Pennylane');
+  assert.equal(pennylaneSample.consistency_control.gaps.result, 0, 'aucun ecart sample Pennylane');
+  assert.equal(pennylaneSample.consistency_control.status, 'conforme', 'controle conforme sample Pennylane');
+  assert.equal(pennylaneSample.unknown_accounts.length, 0, 'aucun compte 6/7 ignore si mapping present');
 
   const empty = calculateIncomeStatement({ lines: [], mappings, periodStart: '2026-01-01', periodEnd: '2026-01-31', now: new Date('2026-02-15T00:00:00Z'), snapshot: { status: 'success' } });
   assert.equal(empty.incomplete, true, 'periode vide incomplete');
 
-  const unknown = calculateIncomeStatement({ lines: [line('471000', 10, 0)], mappings, snapshot: { status: 'success' } });
-  assert.equal(unknown.unknown_accounts.length, 1, 'correspondance inconnue');
+  const mappingsWithout65 = mappings.filter((mapping) => mapping.account_prefix !== '65');
+  const unknown = calculateIncomeStatement({ lines: [line('658900000', 1250, 0, 'Compte a classer')], mappings: mappingsWithout65, snapshot: { status: 'success' } });
+  assert.equal(unknown.unknown_accounts.length, 1, 'classe 6 inconnue a classer');
+  assert.equal(unknown.sections.find((section) => section.section_code === 'to_classify').amount, 1250, 'classe 6 inconnue incluse dans les totaux');
+  assert.equal(unknown.calculations.total_charges, 1250, 'classe 6 inconnue incluse dans les charges');
+  assert.equal(unknown.consistency_control.status, 'conforme', 'classe 6 inconnue reconciliee avec la balance');
+  assert.equal(calculateIncomeStatement({ lines: [line('471000', 10, 0)], mappings, snapshot: { status: 'success' } }).unknown_accounts.length, 0, 'classe hors 6/7 ignoree hors compte de resultat');
 
   const scope = functionalPennylaneError(new PennylaneApiError('Erreur API Pennylane', { status: 403 }));
   assert.equal(scope.code, 'PENNYLANE_TRIAL_BALANCE_SCOPE_MISSING', 'absence scope explicite');
