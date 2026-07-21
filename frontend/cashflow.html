@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tresorerie - ALTA MAREE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/cashflow.css?v=1" />
+</head>
+<body class="app-page cashflow-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">ALTA MAREE</h1>
+      <p class="app-subtitle">Tresorerie</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content cashflow-layout">
+    <section class="cashflow-panel cashflow-toolbar">
+      <div>
+        <span class="section-kicker">Pilotage</span>
+        <h2>Suivi et previsionnel de tresorerie</h2>
+        <p id="cashflow-status">Chargement des donnees.</p>
+      </div>
+      <div class="cashflow-actions">
+        <select id="scenario-select" aria-label="Scenario">
+          <option value="realiste">Scenario realiste</option>
+          <option value="prudent">Scenario prudent</option>
+          <option value="optimiste">Scenario optimiste</option>
+        </select>
+        <select id="horizon-select" aria-label="Horizon">
+          <option value="7">7 jours</option>
+          <option value="30" selected>30 jours</option>
+          <option value="60">60 jours</option>
+          <option value="90">90 jours</option>
+        </select>
+        <button id="sync-btn" class="btn btn-primary" type="button">Synchroniser Pennylane</button>
+        <button id="export-pdf-btn" class="btn btn-secondary" type="button">Export PDF</button>
+        <button id="export-csv-btn" class="btn btn-secondary" type="button">Export CSV</button>
+      </div>
+    </section>
+
+    <div id="page-feedback" class="page-feedback hidden"></div>
+
+    <section id="kpi-grid" class="cashflow-kpis" aria-label="Indicateurs tresorerie"></section>
+
+    <section class="cashflow-tabs" aria-label="Navigation tresorerie">
+      <button class="cashflow-tab is-active" type="button" data-tab="overview">Vue d'ensemble</button>
+      <button class="cashflow-tab" type="button" data-tab="receivables">Encaissements clients</button>
+      <button class="cashflow-tab" type="button" data-tab="payables">Paiements fournisseurs</button>
+      <button class="cashflow-tab" type="button" data-tab="distrimer">DISTRIMER</button>
+      <button class="cashflow-tab" type="button" data-tab="bank">Mouvements bancaires</button>
+      <button class="cashflow-tab" type="button" data-tab="charges">Charges a completer</button>
+      <button class="cashflow-tab" type="button" data-tab="settings">Parametres</button>
+    </section>
+
+    <section class="cashflow-tab-panel is-active" data-panel="overview">
+      <div class="cashflow-grid">
+        <article class="cashflow-panel cashflow-wide">
+          <div class="cashflow-section-title">
+            <div>
+              <h3>Courbe previsionnelle</h3>
+              <p id="forecast-alert">Solde previsionnel cumule avec ligne zero.</p>
+            </div>
+          </div>
+          <div id="forecast-chart" class="cashflow-chart"></div>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title">
+            <div>
+              <h3>Fiabilite</h3>
+              <p>Sources et controles de prise en compte.</p>
+            </div>
+          </div>
+          <div id="reliability-box" class="cashflow-reliability"></div>
+        </article>
+      </div>
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title">
+          <div>
+            <h3>Vue hebdomadaire</h3>
+            <p>Solde debut, encaissements, decaissements et solde fin.</p>
+          </div>
+        </div>
+        <div id="weekly-table"></div>
+      </article>
+    </section>
+
+    <section class="cashflow-tab-panel" data-panel="receivables">
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Factures clients a encaisser</h3></div>
+        <div id="receivables-table"></div>
+      </article>
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Delais reels observes</h3></div>
+        <div id="behaviour-table"></div>
+      </article>
+    </section>
+
+    <section class="cashflow-tab-panel" data-panel="payables">
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Factures fournisseurs a payer</h3></div>
+        <div id="payables-table"></div>
+      </article>
+    </section>
+
+    <section class="cashflow-tab-panel" data-panel="distrimer">
+      <div class="cashflow-grid">
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Surveillance DISTRIMER</h3></div>
+          <div id="distrimer-box"></div>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Combien payer cette semaine ?</h3></div>
+          <div class="cashflow-form">
+            <label>Achats prevus <input id="distrimer-planned" type="number" min="0" step="0.01" value="0"></label>
+            <label>Paiement simule <input id="distrimer-payment" type="number" min="0" step="0.01"></label>
+            <button id="simulate-distrimer-btn" class="btn btn-primary" type="button">Simuler</button>
+          </div>
+          <div id="distrimer-simulation"></div>
+        </article>
+      </div>
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Factures DISTRIMER</h3></div>
+        <div id="distrimer-table"></div>
+      </article>
+    </section>
+
+    <section class="cashflow-tab-panel" data-panel="bank">
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Comptes bancaires Pennylane</h3></div>
+        <div id="bank-accounts-table"></div>
+      </article>
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Derniers mouvements bancaires</h3></div>
+        <div id="bank-warning" class="cashflow-warning"></div>
+        <div id="bank-table"></div>
+      </article>
+    </section>
+
+    <section class="cashflow-tab-panel" data-panel="charges">
+      <div class="cashflow-grid">
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Charges a completer</h3></div>
+          <div id="charges-alerts"></div>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Charges recurrentes configurees</h3></div>
+          <div id="recurring-charges-table"></div>
+        </article>
+      </div>
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Analyse des charges Pennylane</h3></div>
+        <div id="charge-history-table"></div>
+      </article>
+    </section>
+
+    <section class="cashflow-tab-panel" data-panel="settings">
+      <div class="cashflow-grid">
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Mouvements previsionnels manuels</h3></div>
+          <form id="manual-form" class="cashflow-form">
+            <label>Libelle <input id="manual-label" required></label>
+            <label>Type <select id="manual-direction"><option value="out">Sortie</option><option value="in">Entree</option></select></label>
+            <label>Montant <input id="manual-amount" type="number" min="0.01" step="0.01" required></label>
+            <label>Date prevue <input id="manual-date" type="date" required></label>
+            <label>Recurrence <select id="manual-recurrence"><option value="unique">Unique</option><option value="weekly">Hebdomadaire</option><option value="monthly">Mensuelle</option><option value="quarterly">Trimestrielle</option><option value="yearly">Annuelle</option></select></label>
+            <label>Categorie <input id="manual-category"></label>
+            <button class="btn btn-primary" type="submit">Ajouter</button>
+          </form>
+          <div id="manual-table"></div>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Parametres tresorerie</h3></div>
+          <form id="settings-form" class="cashflow-form">
+            <label>Solde de depart manuel <input id="setting-opening-balance" type="number" step="0.01"></label>
+            <label>Compte bancaire principal <input id="setting-bank-label"></label>
+            <label>Limite DISTRIMER <input id="setting-distrimer-limit" type="number" step="0.01"></label>
+            <label>Encours cible apres paiement <input id="setting-distrimer-target" type="number" step="0.01"></label>
+            <label>Fournisseur surveille - ID Pennylane <input id="setting-monitored-supplier-id"></label>
+            <label>Fournisseur surveille - nom <input id="setting-monitored-supplier-name" placeholder="DISTRIMER"></label>
+            <label>Delai client par defaut <input id="setting-default-delay" type="number" step="1"></label>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </form>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title">
+            <div>
+              <h3>Diagnostic de connexion Pennylane</h3>
+              <p>Un refus d'autorisation est affiche comme un scope manquant.</p>
+            </div>
+            <button id="run-diagnostic-btn" class="btn btn-secondary" type="button">Tester les acces</button>
+          </div>
+          <div id="diagnostic-table"></div>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Etat de synchronisation</h3></div>
+          <div id="debug-counts-table"></div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/cashflow.js?v=1"></script>
+</body>
+</html>

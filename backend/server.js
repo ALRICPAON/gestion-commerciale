@@ -65,6 +65,7 @@ const intelligenceCenterRoutes = require('./routes/intelligenceCenter');
 const pennylaneIntegrationRoutes = require('./routes/pennylaneIntegration');
 const pennylaneSupplierInvoicesRoutes = require('./routes/pennylaneSupplierInvoices');
 const financialReportsRoutes = require('./routes/financialReports');
+const cashflowRoutes = require('./routes/cashflow');
 const qualityRoutes = require('./routes/quality');
 
 const app = express();
@@ -347,6 +348,7 @@ app.use('/api', intelligenceCenterRoutes);
 app.use('/api', pennylaneIntegrationRoutes);
 app.use('/api', pennylaneSupplierInvoicesRoutes);
 app.use('/api', financialReportsRoutes);
+app.use('/api', cashflowRoutes);
 app.get('/', (req, res) => {
   res.send('API ALTA MARÉE fonctionne');
 });
