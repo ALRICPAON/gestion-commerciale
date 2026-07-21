@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Reporting financier - ALTA MAREE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/financial-reporting.css?v=1" />
+</head>
+<body class="app-page financial-reporting-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">ALTA MAREE</h1>
+      <p class="app-subtitle">Reporting financier</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content financial-layout">
+    <section class="financial-panel">
+      <div class="financial-toolbar">
+        <div>
+          <h2>Compte de resultat</h2>
+          <p id="report-status">Selectionner une periode puis actualiser.</p>
+        </div>
+        <div class="financial-actions">
+          <button id="sync-btn" class="btn btn-primary" type="button">Actualiser depuis Pennylane</button>
+          <button id="export-pdf-btn" class="btn btn-secondary" type="button">Export PDF</button>
+          <button id="export-csv-btn" class="btn btn-secondary" type="button">Export CSV</button>
+        </div>
+      </div>
+      <div id="page-feedback" class="page-feedback hidden"></div>
+      <div class="financial-filters">
+        <label>
+          Periode
+          <select id="period-preset">
+            <option value="current-month">Mois en cours</option>
+            <option value="previous-month">Mois precedent</option>
+            <option value="current-year">Annee en cours</option>
+            <option value="custom">Personnalisee</option>
+          </select>
+        </label>
+        <label>
+          Debut
+          <input id="period-start" type="date" />
+        </label>
+        <label>
+          Fin
+          <input id="period-end" type="date" />
+        </label>
+        <label>
+          Debut comparaison
+          <input id="comparison-start" type="date" />
+        </label>
+        <label>
+          Fin comparaison
+          <input id="comparison-end" type="date" />
+        </label>
+        <button id="load-report-btn" class="btn btn-secondary" type="button">Charger</button>
+      </div>
+    </section>
+
+    <section class="financial-kpis" id="kpi-grid"></section>
+
+    <section class="financial-panel">
+      <div class="financial-section-title">
+        <div>
+          <h3>Compte de resultat hierarchique</h3>
+          <p id="sync-info">Aucune synchronisation chargee.</p>
+        </div>
+        <span id="provisional-badge" class="financial-badge">Provisoire</span>
+      </div>
+      <div id="income-statement" class="financial-statement"></div>
+    </section>
+
+    <section class="financial-panel">
+      <div class="financial-section-title">
+        <div>
+          <h3>Comparaison</h3>
+          <p>Periode actuelle, periode precedente, ecarts en euros et pourcentage.</p>
+        </div>
+      </div>
+      <div id="comparison-table" class="financial-comparison"></div>
+    </section>
+
+    <section class="financial-panel">
+      <div class="financial-section-title">
+        <div>
+          <h3>Mappings comptables</h3>
+          <p>Regles configurables par prefixes de comptes. Modification reservee aux administrateurs.</p>
+        </div>
+        <button id="load-mappings-btn" class="btn btn-secondary" type="button">Charger mappings</button>
+      </div>
+      <div id="mappings-table" class="financial-comparison"></div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/financial-reporting.js?v=1"></script>
+</body>
+</html>
