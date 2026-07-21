@@ -56,7 +56,9 @@ async function updateSettings(db, storeId, body = {}) {
       included_bank_account_ids = COALESCE($13::text[], included_bank_account_ids),
       excluded_bank_account_ids = COALESCE($14::text[], excluded_bank_account_ids),
       balance_stale_after_hours = $15,
-      settings = COALESCE($16::jsonb, settings),
+      monitored_supplier_pennylane_id = $16,
+      monitored_supplier_name = $17,
+      settings = COALESCE($18::jsonb, settings),
       updated_at = now()
     WHERE store_id = $1
     RETURNING *
@@ -77,6 +79,8 @@ async function updateSettings(db, storeId, body = {}) {
       Array.isArray(body.included_bank_account_ids) ? body.included_bank_account_ids.map(String) : null,
       Array.isArray(body.excluded_bank_account_ids) ? body.excluded_bank_account_ids.map(String) : null,
       body.balance_stale_after_hours ?? current.balance_stale_after_hours ?? 24,
+      body.monitored_supplier_pennylane_id ?? current.monitored_supplier_pennylane_id ?? body.distrimer_pennylane_supplier_id ?? current.distrimer_pennylane_supplier_id,
+      body.monitored_supplier_name ?? current.monitored_supplier_name,
       body.settings ? JSON.stringify(body.settings) : null,
     ]
   );
@@ -243,6 +247,20 @@ async function listRecurringCharges(db, storeId) {
   return result.rows;
 }
 
+async function listChargeHistory(db, storeId) {
+  const result = await db.query(
+    `
+    SELECT *
+    FROM cashflow_charge_history
+    WHERE store_id = $1
+    ORDER BY month_key DESC NULLS LAST, account_number ASC
+    LIMIT 300
+    `,
+    [storeId]
+  ).catch(() => ({ rows: [] }));
+  return result.rows;
+}
+
 async function forecastItems(db, storeId, { days = 30 } = {}) {
   const [receivables, payables, manualItems, recurringCharges] = await Promise.all([
     listCustomerReceivables(db, storeId),
@@ -308,9 +326,21 @@ function settingsForDistrimer(settings = {}) {
 }
 
 function isDistrimerInvoice(invoice, settings = {}) {
+  if (settings.monitored_supplier_pennylane_id && invoice.pennylane_supplier_id && String(settings.monitored_supplier_pennylane_id) === String(invoice.pennylane_supplier_id)) return true;
+  if (settings.monitored_supplier_name && normalizeName(invoice.supplier_name) === normalizeName(settings.monitored_supplier_name)) return true;
   if (settings.distrimer_supplier_id && invoice.supplier_id && String(settings.distrimer_supplier_id) === String(invoice.supplier_id)) return true;
   if (settings.distrimer_pennylane_supplier_id && invoice.pennylane_supplier_id && String(settings.distrimer_pennylane_supplier_id) === String(invoice.pennylane_supplier_id)) return true;
-  return String(invoice.supplier_name || '').toUpperCase().includes('DISTRIMER');
+  return normalizeName(invoice.supplier_name).includes('DISTRIMER');
+}
+
+function normalizeName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase();
 }
 
 async function getDistrimer(db, storeId) {
@@ -326,6 +356,76 @@ async function getDistrimer(db, storeId) {
     plannedPurchases: [],
     settings: settingsForDistrimer(settings),
   });
+}
+
+async function supplierExposure(db, storeId) {
+  const payables = await listSupplierPayables(db, storeId);
+  const bySupplier = new Map();
+  for (const invoice of payables) {
+    const key = invoice.pennylane_supplier_id || invoice.supplier_id || invoice.supplier_name || 'unknown';
+    if (!bySupplier.has(key)) {
+      bySupplier.set(key, {
+        supplier_id: invoice.supplier_id || null,
+        pennylane_supplier_id: invoice.pennylane_supplier_id || null,
+        supplier_name: invoice.supplier_name || 'Fournisseur a completer',
+        open_invoice_count: 0,
+        total_amount: 0,
+        confirmed_paid_amount: 0,
+        pending_payment_amount: 0,
+        remaining_amount: 0,
+        oldest_due_date: null,
+        invoices: [],
+      });
+    }
+    const row = bySupplier.get(key);
+    row.open_invoice_count += 1;
+    row.total_amount += Number(invoice.total_amount || 0);
+    row.confirmed_paid_amount += Number(invoice.confirmed_paid_amount || 0);
+    row.pending_payment_amount += Number(invoice.pending_payment_amount || 0);
+    row.remaining_amount += Number(invoice.remaining_amount || 0);
+    if (invoice.due_date && (!row.oldest_due_date || isoDate(invoice.due_date) < isoDate(row.oldest_due_date))) {
+      row.oldest_due_date = invoice.due_date;
+    }
+    row.invoices.push(invoice);
+  }
+  return Array.from(bySupplier.values()).sort((a, b) => b.remaining_amount - a.remaining_amount);
+}
+
+async function debugCounts(db, storeId) {
+  const single = async (sql, params = [storeId]) => db.query(sql, params).then((r) => Number(Object.values(r.rows[0] || { count: 0 })[0] || 0)).catch(() => 0);
+  const settings = await getSettings(db, storeId).catch(() => ({}));
+  const payables = await listSupplierPayables(db, storeId);
+  return {
+    bankAccounts: await single('SELECT COUNT(*) FROM cashflow_bank_accounts WHERE store_id = $1'),
+    bankTransactions: await single('SELECT COUNT(*) FROM cashflow_bank_transactions WHERE store_id = $1'),
+    supplierInvoices: await single('SELECT COUNT(*) FROM pennylane_supplier_invoices WHERE store_id = $1 AND pennylane_deleted_at IS NULL'),
+    openSupplierInvoices: payables.length,
+    supplierPayments: await single('SELECT COUNT(*) FROM cashflow_supplier_invoice_payments WHERE store_id = $1'),
+    trialBalanceAccounts: await single(`
+      SELECT COUNT(*)
+      FROM pennylane_trial_balance_lines line
+      INNER JOIN pennylane_trial_balance_snapshots snap ON snap.id = line.snapshot_id
+      WHERE snap.store_id = $1
+    `),
+    class6Accounts: await single(`
+      SELECT COUNT(DISTINCT line.account_number)
+      FROM pennylane_trial_balance_lines line
+      INNER JOIN pennylane_trial_balance_snapshots snap ON snap.id = line.snapshot_id
+      WHERE snap.store_id = $1 AND line.account_number LIKE '6%'
+    `),
+    recurringCharges: await single('SELECT COUNT(*) FROM cashflow_recurring_charges WHERE store_id = $1'),
+    distrimerInvoices: payables.filter((invoice) => isDistrimerInvoice(invoice, settings)).length,
+    latestResourceLogs: await db.query(
+      `
+      SELECT DISTINCT ON (resource) resource, endpoint, pages_count, received_count, normalized_count,
+        inserted_count, updated_count, ignored_count, error_count, ignored_reasons, error_message, created_at
+      FROM cashflow_sync_resource_logs
+      WHERE store_id = $1
+      ORDER BY resource, created_at DESC
+      `,
+      [storeId]
+    ).then((r) => r.rows).catch(() => []),
+  };
 }
 
 async function latestDiagnostics(db, storeId) {
@@ -518,6 +618,9 @@ module.exports = {
   listBankTransactions,
   listBankAccounts,
   listRecurringCharges,
+  listChargeHistory,
+  supplierExposure,
+  debugCounts,
   listCustomerReceivables,
   listPaidCustomerHistory,
   listSupplierPayables,

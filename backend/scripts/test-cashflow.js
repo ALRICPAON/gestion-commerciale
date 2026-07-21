@@ -22,6 +22,9 @@ const {
 } = require('../services/cashflow/recurringChargeService');
 const {
   fetchAllPages,
+  extractList,
+  normalizeSupplierInvoice,
+  normalizeTransaction,
   runCashflowDiagnostic,
 } = require('../services/cashflow/pennylaneCashflowService');
 const { PennylaneApiError } = require('../services/pennylane');
@@ -247,6 +250,49 @@ function testDistrimerWithPayments() {
   assert.strictEqual(amounts.remaining_to_pay, 8500);
 }
 
+function testExtractDataItemsShape() {
+  const rows = extractList({ data: { items: [{ id: 'a' }] } });
+  assert.strictEqual(rows.length, 1);
+}
+
+function testTransactionWithoutThirdPartyAndStringAmount() {
+  const tx = normalizeTransaction({
+    id: 'tx_1',
+    date: '2026-07-01',
+    amount: '-123.45',
+    label: 'Debit carte',
+  });
+  assert.strictEqual(tx.id, 'tx_1');
+  assert.strictEqual(tx.amount, 123.45);
+  assert.strictEqual(tx.direction, 'out');
+  assert.strictEqual(tx.supplier_id, null);
+}
+
+function testUnmatchedTransactionSavedShape() {
+  const tx = normalizeTransaction({ id: 'tx_2', date: '2026-07-01', amount: '10.00' });
+  assert.strictEqual(tx.matched_invoices.length, 0);
+  assert.strictEqual(tx.reconciliation_status, null);
+}
+
+function testSupplierInvoiceMissingDueAndNumber() {
+  const invoice = normalizeSupplierInvoice({
+    id: 'si_1',
+    amount: '800.50',
+    remaining_amount: '300.25',
+    supplier: { id: 'sup_1', name: 'DISTRIMER S.A.S.' },
+  });
+  assert.strictEqual(invoice.id, 'si_1');
+  assert.strictEqual(invoice.invoice_number, 'A completer');
+  assert.strictEqual(invoice.due_date, null);
+  assert.strictEqual(invoice.remaining_amount_with_tax, 300.25);
+}
+
+function testStatsArithmetic() {
+  const stats = { received_count: 2, normalized_count: 2, inserted_count: 1, updated_count: 1, ignored_count: 0, error_count: 0 };
+  assert.strictEqual(stats.received_count, stats.normalized_count);
+  assert.strictEqual(stats.inserted_count + stats.updated_count + stats.ignored_count, 2);
+}
+
 const tests = [
   testCustomerInflow,
   testSupplierOutflow,
@@ -264,6 +310,11 @@ const tests = [
   testRecurringSuggestionNotIntegrated,
   testClassSixAnalysis,
   testDistrimerWithPayments,
+  testExtractDataItemsShape,
+  testTransactionWithoutThirdPartyAndStringAmount,
+  testUnmatchedTransactionSavedShape,
+  testSupplierInvoiceMissingDueAndNumber,
+  testStatsArithmetic,
 ];
 
 async function main() {

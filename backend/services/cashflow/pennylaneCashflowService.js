@@ -55,22 +55,101 @@ function extractList(body) {
   if (!body || typeof body !== 'object') return [];
   if (Array.isArray(body.items)) return body.items;
   if (Array.isArray(body.data)) return body.data;
+  if (Array.isArray(body.results)) return body.results;
   if (Array.isArray(body.bank_accounts)) return body.bank_accounts;
   if (Array.isArray(body.transactions)) return body.transactions;
   if (Array.isArray(body.supplier_invoices)) return body.supplier_invoices;
   if (Array.isArray(body.customer_invoices)) return body.customer_invoices;
   if (Array.isArray(body.payments)) return body.payments;
   if (Array.isArray(body.balances)) return body.balances;
+  if (body.data && Array.isArray(body.data.items)) return body.data.items;
+  if (body.data && Array.isArray(body.data.results)) return body.data.results;
   if (body.data && typeof body.data === 'object') return extractList(body.data);
   return [];
 }
 
 function hasMore(body) {
-  return Boolean(body?.has_more || body?.meta?.has_more);
+  return Boolean(body?.has_more || body?.meta?.has_more || body?.metadata?.has_more);
 }
 
 function nextCursor(body) {
-  return body?.next_cursor || body?.meta?.next_cursor || null;
+  return body?.next_cursor || body?.meta?.next_cursor || body?.metadata?.next_cursor || body?.pagination?.next_cursor || null;
+}
+
+function valueShape(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return value.length ? [`array:${typeof value[0]}`] : [];
+  if (typeof value === 'object') return Object.fromEntries(Object.keys(value).slice(0, 20).map((key) => [key, valueShape(value[key])]));
+  return typeof value;
+}
+
+function itemShape(item) {
+  if (!item || typeof item !== 'object') return {};
+  return Object.fromEntries(Object.entries(item).slice(0, 40).map(([key, value]) => [key, valueShape(value)]));
+}
+
+function incrementReason(reasons, reason) {
+  reasons[reason] = (reasons[reason] || 0) + 1;
+}
+
+function makeStats(resource, endpoint, queryParams = {}) {
+  return {
+    resource,
+    endpoint,
+    query_params: queryParams,
+    http_status: null,
+    pages_count: 0,
+    received_count: 0,
+    normalized_count: 0,
+    inserted_count: 0,
+    updated_count: 0,
+    ignored_count: 0,
+    error_count: 0,
+    ignored_reasons: {},
+    first_item_shape: null,
+    error_message: null,
+  };
+}
+
+async function saveResourceLog(db, storeId, stats) {
+  await db.query(
+    `
+    INSERT INTO cashflow_sync_resource_logs(
+      store_id, resource, endpoint, query_params, http_status, pages_count, received_count,
+      normalized_count, inserted_count, updated_count, ignored_count, error_count,
+      ignored_reasons, first_item_shape, error_message
+    )
+    VALUES($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15)
+    `,
+    [
+      storeId,
+      stats.resource,
+      stats.endpoint,
+      JSON.stringify(stats.query_params || {}),
+      stats.http_status,
+      stats.pages_count,
+      stats.received_count,
+      stats.normalized_count,
+      stats.inserted_count,
+      stats.updated_count,
+      stats.ignored_count,
+      stats.error_count,
+      JSON.stringify(stats.ignored_reasons || {}),
+      JSON.stringify(stats.first_item_shape || {}),
+      stats.error_message,
+    ]
+  ).catch(() => {});
+}
+
+async function saveResponseSample(db, storeId, resource, endpoint, firstItem) {
+  if (!firstItem) return;
+  await db.query(
+    `
+    INSERT INTO cashflow_pennylane_response_samples(store_id, resource, endpoint, item_shape)
+    VALUES($1, $2, $3, $4::jsonb)
+    `,
+    [storeId, resource, endpoint, JSON.stringify(itemShape(firstItem))]
+  ).catch(() => {});
 }
 
 function sanitizePennylaneError(error) {
@@ -87,7 +166,7 @@ function sanitizePennylaneError(error) {
   return { status: null, code: null, message: error.message || 'Erreur Pennylane inattendue' };
 }
 
-async function fetchAllPages(client, endpoint, { limit = 100, maxPages = 30 } = {}) {
+async function fetchAllPages(client, endpoint, { limit = 100, maxPages = 30, stats = null } = {}) {
   const separator = endpoint.includes('?') ? '&' : '?';
   let cursor = null;
   let pages = 0;
@@ -95,16 +174,41 @@ async function fetchAllPages(client, endpoint, { limit = 100, maxPages = 30 } = 
   do {
     const url = `${endpoint}${separator}limit=${limit}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`;
     const response = await client.get(url);
-    items.push(...extractList(response.body));
+    if (stats) stats.http_status = response.status;
+    const pageItems = extractList(response.body);
+    items.push(...pageItems);
     cursor = hasMore(response.body) ? nextCursor(response.body) : null;
     pages += 1;
+    if (stats) {
+      stats.pages_count = pages;
+      stats.received_count = items.length;
+      if (!stats.first_item_shape && pageItems[0]) stats.first_item_shape = itemShape(pageItems[0]);
+    }
   } while (cursor && pages < maxPages);
   return { items, pages };
+}
+
+function buildJsonFilter(field, operator, value) {
+  return encodeURIComponent(JSON.stringify([{ field, operator, value }]));
+}
+
+function monthsAgoIso(months) {
+  const date = new Date();
+  date.setUTCMonth(date.getUTCMonth() - Number(months || 12));
+  return date.toISOString().slice(0, 10);
+}
+
+function toMoney(value, fallback = null) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const normalized = typeof value === 'string' ? value.replace(/\s/g, '').replace(',', '.') : value;
+  const number = Number(normalized);
+  return Number.isFinite(number) ? number : fallback;
 }
 
 async function runCashflowDiagnostic(db, { storeId, client = createPennylaneClient(getPennylaneConfig()) } = {}) {
   const rows = [];
   let sampleSupplierInvoiceId = null;
+  let sampleBankAccountId = null;
   for (const target of DIAGNOSTIC_TARGETS) {
     let diagnostic;
     try {
@@ -112,6 +216,9 @@ async function runCashflowDiagnostic(db, { storeId, client = createPennylaneClie
       const items = extractList(response.body);
       if (target.key === 'supplier_invoices' && items[0]) {
         sampleSupplierInvoiceId = firstPresent(items[0], ['id', 'supplier_invoice_id']);
+      }
+      if (target.key === 'bank_accounts' && items[0]) {
+        sampleBankAccountId = firstPresent(items[0], ['id', 'bank_account_id']);
       }
       diagnostic = {
         endpoint: `GET ${target.endpoint.split('?')[0]}`,
@@ -134,6 +241,38 @@ async function runCashflowDiagnostic(db, { storeId, client = createPennylaneClie
         item_count: 0,
         error_message: clean.message,
         action_required: clean.status === 403 ? `Ajouter le scope ${target.scope} a la cle Pennylane.` : 'Verifier la connexion Pennylane.',
+      };
+    }
+    rows.push(diagnostic);
+    await saveDiagnosticRow(db, storeId, diagnostic);
+  }
+  if (sampleBankAccountId) {
+    const endpoint = `/transactions?limit=1&filter=${buildJsonFilter('bank_account_id', 'eq', String(sampleBankAccountId))}`;
+    let diagnostic;
+    try {
+      const response = await client.get(endpoint);
+      const items = extractList(response.body);
+      diagnostic = {
+        endpoint: 'GET /transactions?filter=bank_account_id',
+        label: 'Transactions du compte bancaire',
+        http_status: response.status,
+        required_scope: 'transactions:readonly',
+        access_status: 'accessible',
+        item_count: items.length,
+        error_message: null,
+        action_required: items.length ? null : 'Endpoint accessible, aucune transaction recue sur le compte teste.',
+      };
+    } catch (error) {
+      const clean = sanitizePennylaneError(error);
+      diagnostic = {
+        endpoint: 'GET /transactions?filter=bank_account_id',
+        label: 'Transactions du compte bancaire',
+        http_status: clean.status,
+        required_scope: 'transactions:readonly',
+        access_status: clean.status === 403 ? 'forbidden' : (clean.status === 401 ? 'unauthorized' : 'error'),
+        item_count: 0,
+        error_message: clean.message,
+        action_required: clean.status === 400 ? 'Filtre bank_account_id refuse par Pennylane : verifier la syntaxe exacte.' : (clean.status === 403 ? 'Ajouter le scope transactions:readonly a la cle Pennylane.' : 'Verifier les transactions Pennylane.'),
       };
     }
     rows.push(diagnostic);
@@ -233,11 +372,21 @@ function normalizeBankAccount(account = {}) {
 }
 
 async function syncBankAccounts(db, { storeId, client }) {
-  const { items, pages } = await fetchAllPages(client, '/bank_accounts', { limit: 100 });
-  let upserted = 0;
-  for (const account of items.map(normalizeBankAccount).filter((row) => row.id && row.id !== 'undefined')) {
-    await db.query(
-      `
+  const stats = makeStats('bank_accounts', 'GET /bank_accounts');
+  try {
+    const { items, pages } = await fetchAllPages(client, '/bank_accounts', { limit: 100, stats });
+    await saveResponseSample(db, storeId, 'bank_account', '/bank_accounts', items[0]);
+    stats.pages_count = pages;
+    for (const raw of items) {
+      const account = normalizeBankAccount(raw);
+      if (!account.id || account.id === 'undefined') {
+        stats.ignored_count += 1;
+        incrementReason(stats.ignored_reasons, 'missing_id');
+        continue;
+      }
+      stats.normalized_count += 1;
+      const result = await db.query(
+        `
       INSERT INTO cashflow_bank_accounts(
         store_id, pennylane_bank_account_id, name, currency, balance, pennylane_updated_at,
         bank_establishment_name, bank_establishment_id, journal_id, journal_label,
@@ -258,13 +407,22 @@ async function syncBankAccounts(db, { storeId, client }) {
         raw_payload = EXCLUDED.raw_payload,
         last_synced_at = now(),
         updated_at = now()
+      RETURNING (xmax = 0) AS inserted
       `,
-      [storeId, account.id, account.name, account.currency, account.balance, account.updated_at || null, account.bank_establishment_name, account.bank_establishment_id ? String(account.bank_establishment_id) : null, account.journal_id ? String(account.journal_id) : null, account.journal_label, account.ledger_account_id ? String(account.ledger_account_id) : null, account.ledger_account_number, JSON.stringify(account.raw)]
-    );
-    upserted += 1;
+        [storeId, account.id, account.name, account.currency, account.balance, account.updated_at || null, account.bank_establishment_name, account.bank_establishment_id ? String(account.bank_establishment_id) : null, account.journal_id ? String(account.journal_id) : null, account.journal_label, account.ledger_account_id ? String(account.ledger_account_id) : null, account.ledger_account_number, JSON.stringify(account.raw)]
+      );
+      if (result.rows[0]?.inserted) stats.inserted_count += 1;
+      else stats.updated_count += 1;
+    }
+    await refreshBankSnapshot(db, storeId);
+    await saveResourceLog(db, storeId, stats);
+    return { read: stats.received_count, upserted: stats.inserted_count + stats.updated_count, pages, stats };
+  } catch (err) {
+    stats.error_count += 1;
+    stats.error_message = sanitizePennylaneError(err).message;
+    await saveResourceLog(db, storeId, stats);
+    throw err;
   }
-  await refreshBankSnapshot(db, storeId);
-  return { read: items.length, upserted, pages };
 }
 
 async function refreshBankSnapshot(db, storeId) {
@@ -317,12 +475,190 @@ function normalizeTransaction(tx = {}) {
   };
 }
 
+function normalizeSupplierId(invoice) {
+  const supplier = firstPresent(invoice, ['supplier', 'provider', 'vendor']) || {};
+  return firstPresent(invoice, ['supplier_id', 'pennylane_supplier_id', 'thirdparty_id'])
+    || firstPresent(supplier, ['id', 'supplier_id']);
+}
+
+function normalizeSupplierName(invoice) {
+  const supplier = firstPresent(invoice, ['supplier', 'provider', 'vendor']) || {};
+  return firstPresent(invoice, ['supplier_name', 'vendor_name', 'counterparty_name'])
+    || firstPresent(supplier, ['name', 'label'])
+    || 'Fournisseur a completer';
+}
+
+function normalizeSupplierInvoice(invoice = {}) {
+  const id = firstPresent(invoice, ['id', 'supplier_invoice_id']);
+  const total = toMoney(firstPresent(invoice, [
+    'amount',
+    'amount_inc_vat',
+    'amount_with_tax',
+    'currency_amount',
+    'total_amount',
+  ]), 0);
+  const remaining = toMoney(firstPresent(invoice, [
+    'remaining_amount_with_tax',
+    'remaining_amount',
+    'amount_due',
+    'due_amount',
+  ]), null);
+  const paid = toMoney(firstPresent(invoice, [
+    'paid_amount_with_tax',
+    'paid_amount',
+    'amount_paid',
+  ]), null);
+  return {
+    id: id ? String(id) : null,
+    supplier_id: normalizeSupplierId(invoice) ? String(normalizeSupplierId(invoice)) : null,
+    supplier_name: normalizeSupplierName(invoice),
+    invoice_number: firstPresent(invoice, ['invoice_number', 'number', 'reference']) || 'A completer',
+    invoice_date: firstPresent(invoice, ['date', 'invoice_date', 'created_at']),
+    due_date: firstPresent(invoice, ['deadline', 'due_date']),
+    currency: firstPresent(invoice, ['currency']) || 'EUR',
+    amount_ex_vat: toMoney(firstPresent(invoice, ['amount_before_tax', 'amount_ex_vat', 'amount_without_tax']), null),
+    amount_vat: toMoney(firstPresent(invoice, ['tax', 'amount_vat', 'vat_amount']), null),
+    amount_inc_vat: total,
+    remaining_amount_with_tax: remaining === null ? Math.max(total - (paid || 0), 0) : remaining,
+    paid_amount: paid,
+    accounting_status: firstPresent(invoice, ['accounting_status', 'status']),
+    payment_status: firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']) || (remaining === 0 ? 'paid' : 'to_complete'),
+    paid: firstPresent(invoice, ['paid']) === true || remaining === 0,
+    updated_at: firstPresent(invoice, ['updated_at']),
+    raw: invoice,
+  };
+}
+
+async function findAltaSupplierId(db, storeId, pennylaneSupplierId, supplierName) {
+  if (pennylaneSupplierId) {
+    const byId = await db.query(
+      'SELECT id FROM suppliers WHERE store_id = $1 AND pennylane_supplier_id::text = $2::text LIMIT 1',
+      [storeId, String(pennylaneSupplierId)]
+    ).catch(() => ({ rows: [] }));
+    if (byId.rows[0]) return byId.rows[0].id;
+  }
+  if (supplierName) {
+    const byName = await db.query(
+      'SELECT id FROM suppliers WHERE store_id = $1 AND UPPER(name) = UPPER($2) LIMIT 1',
+      [storeId, supplierName]
+    ).catch(() => ({ rows: [] }));
+    if (byName.rows[0]) return byName.rows[0].id;
+  }
+  return null;
+}
+
+async function syncSupplierInvoicesDirect(db, { storeId, client }) {
+  const stats = makeStats('supplier_invoices', 'GET /supplier_invoices', { direct_list: true });
+  try {
+    const { items, pages } = await fetchAllPages(client, '/supplier_invoices?sort=-id', { limit: 100, maxPages: 80, stats });
+    await saveResponseSample(db, storeId, 'supplier_invoice', '/supplier_invoices', items[0]);
+    stats.pages_count = pages;
+    for (const raw of items) {
+      const invoice = normalizeSupplierInvoice(raw);
+      if (!invoice.id) {
+        stats.ignored_count += 1;
+        incrementReason(stats.ignored_reasons, 'missing_id');
+        continue;
+      }
+      stats.normalized_count += 1;
+      try {
+        const altaSupplierId = await findAltaSupplierId(db, storeId, invoice.supplier_id, invoice.supplier_name);
+        const result = await db.query(
+          `
+          INSERT INTO pennylane_supplier_invoices(
+            id, store_id, pennylane_supplier_invoice_id, pennylane_supplier_id, supplier_id,
+            invoice_number, invoice_date, due_date, currency, amount_ex_vat, amount_vat, amount_inc_vat,
+            remaining_amount_with_tax, accounting_status, payment_status, paid,
+            alta_business_status, sync_status, raw_payload, last_synced_at, cashflow_last_direct_sync_at,
+            cashflow_normalization_status
+          )
+          VALUES(gen_random_uuid(), $1, $2, $3, $4, $5, $6::date, $7::date, $8, $9, $10, $11, $12, $13, $14, $15, 'a_rapprocher', 'synced', $16::jsonb, now(), now(), 'ok')
+          ON CONFLICT (store_id, pennylane_supplier_invoice_id) DO UPDATE
+          SET pennylane_supplier_id = EXCLUDED.pennylane_supplier_id,
+            supplier_id = COALESCE(EXCLUDED.supplier_id, pennylane_supplier_invoices.supplier_id),
+            invoice_number = EXCLUDED.invoice_number,
+            invoice_date = EXCLUDED.invoice_date,
+            due_date = EXCLUDED.due_date,
+            currency = EXCLUDED.currency,
+            amount_ex_vat = EXCLUDED.amount_ex_vat,
+            amount_vat = EXCLUDED.amount_vat,
+            amount_inc_vat = EXCLUDED.amount_inc_vat,
+            remaining_amount_with_tax = EXCLUDED.remaining_amount_with_tax,
+            accounting_status = EXCLUDED.accounting_status,
+            payment_status = EXCLUDED.payment_status,
+            paid = EXCLUDED.paid,
+            raw_payload = EXCLUDED.raw_payload,
+            sync_status = 'synced',
+            last_synced_at = now(),
+            cashflow_last_direct_sync_at = now(),
+            cashflow_normalization_status = 'ok',
+            updated_at = now()
+          RETURNING (xmax = 0) AS inserted
+          `,
+          [
+            storeId,
+            invoice.id,
+            invoice.supplier_id,
+            altaSupplierId,
+            invoice.invoice_number,
+            invoice.invoice_date ? String(invoice.invoice_date).slice(0, 10) : null,
+            invoice.due_date ? String(invoice.due_date).slice(0, 10) : null,
+            invoice.currency,
+            invoice.amount_ex_vat,
+            invoice.amount_vat,
+            invoice.amount_inc_vat,
+            invoice.remaining_amount_with_tax,
+            invoice.accounting_status,
+            invoice.payment_status,
+            invoice.paid,
+            JSON.stringify(invoice.raw),
+          ]
+        );
+        if (result.rows[0]?.inserted) stats.inserted_count += 1;
+        else stats.updated_count += 1;
+      } catch (err) {
+        stats.error_count += 1;
+        incrementReason(stats.ignored_reasons, 'database_constraint');
+      }
+    }
+    await saveResourceLog(db, storeId, stats);
+    return { read: stats.received_count, upserted: stats.inserted_count + stats.updated_count, pages, stats };
+  } catch (err) {
+    stats.error_count += 1;
+    stats.error_message = sanitizePennylaneError(err).message;
+    await saveResourceLog(db, storeId, stats);
+    throw err;
+  }
+}
+
 async function syncTransactions(db, { storeId, client }) {
-  const { items, pages } = await fetchAllPages(client, '/transactions', { limit: 100 });
-  let upserted = 0;
-  for (const tx of items.map(normalizeTransaction).filter((row) => row.id && row.id !== 'undefined' && row.date)) {
-    await db.query(
-      `
+  const historyMonths = await db.query(
+    'SELECT initial_bank_history_months FROM cashflow_settings WHERE store_id = $1 LIMIT 1',
+    [storeId]
+  ).then((r) => r.rows[0]?.initial_bank_history_months || 12).catch(() => 12);
+  const since = monthsAgoIso(historyMonths);
+  const endpoint = `/transactions?filter=${buildJsonFilter('date', 'gteq', since)}&sort=-id`;
+  const stats = makeStats('transactions', 'GET /transactions', { date_gteq: since, filtered: true });
+  try {
+    const { items, pages } = await fetchAllPages(client, endpoint, { limit: 100, maxPages: 80, stats });
+    await saveResponseSample(db, storeId, 'transaction', '/transactions', items[0]);
+    stats.pages_count = pages;
+    for (const raw of items) {
+      const tx = normalizeTransaction(raw);
+      if (!tx.id || tx.id === 'undefined') {
+        stats.ignored_count += 1;
+        incrementReason(stats.ignored_reasons, 'missing_id');
+        continue;
+      }
+      if (!tx.date) {
+        stats.ignored_count += 1;
+        incrementReason(stats.ignored_reasons, 'missing_date');
+        continue;
+      }
+      stats.normalized_count += 1;
+      try {
+        const result = await db.query(
+          `
       INSERT INTO cashflow_bank_transactions(
         store_id, pennylane_transaction_id, bank_account_pennylane_id, transaction_date, label,
         direction, amount, currency, supplier_id, customer_id, categories, matched_invoices,
@@ -347,14 +683,27 @@ async function syncTransactions(db, { storeId, client }) {
         pennylane_updated_at = EXCLUDED.pennylane_updated_at,
         raw_payload = EXCLUDED.raw_payload,
         updated_at = now()
+      RETURNING (xmax = 0) AS inserted
       `,
-      [storeId, tx.id, tx.bank_account_id ? String(tx.bank_account_id) : null, tx.date, tx.label, tx.direction, tx.amount, tx.currency, tx.supplier_id ? String(tx.supplier_id) : null, tx.customer_id ? String(tx.customer_id) : null, JSON.stringify(tx.categories), JSON.stringify(tx.matched_invoices), tx.reconciliation_status, ['matched', 'reconciled'].includes(String(tx.reconciliation_status || '').toLowerCase()), tx.unmatched_amount, tx.created_at || null, tx.updated_at || null, JSON.stringify(tx.raw)]
-    );
-    await upsertTransactionInvoiceLinks(db, storeId, tx);
-    upserted += 1;
+          [storeId, tx.id, tx.bank_account_id ? String(tx.bank_account_id) : null, tx.date, tx.label, tx.direction, tx.amount, tx.currency, tx.supplier_id ? String(tx.supplier_id) : null, tx.customer_id ? String(tx.customer_id) : null, JSON.stringify(tx.categories), JSON.stringify(tx.matched_invoices), tx.reconciliation_status, ['matched', 'reconciled'].includes(String(tx.reconciliation_status || '').toLowerCase()), tx.unmatched_amount, tx.created_at || null, tx.updated_at || null, JSON.stringify(tx.raw)]
+        );
+        if (result.rows[0]?.inserted) stats.inserted_count += 1;
+        else stats.updated_count += 1;
+        await upsertTransactionInvoiceLinks(db, storeId, tx);
+      } catch (err) {
+        stats.error_count += 1;
+        incrementReason(stats.ignored_reasons, 'database_constraint');
+      }
+    }
+    await refreshRecurringSuggestions(db, storeId);
+    await saveResourceLog(db, storeId, stats);
+    return { read: stats.received_count, upserted: stats.inserted_count + stats.updated_count, pages, stats };
+  } catch (err) {
+    stats.error_count += 1;
+    stats.error_message = sanitizePennylaneError(err).message;
+    await saveResourceLog(db, storeId, stats);
+    throw err;
   }
-  await refreshRecurringSuggestions(db, storeId);
-  return { read: items.length, upserted, pages };
 }
 
 async function upsertTransactionInvoiceLinks(db, storeId, tx) {
@@ -375,6 +724,7 @@ async function upsertTransactionInvoiceLinks(db, storeId, tx) {
 }
 
 async function syncSupplierInvoicePayments(db, { storeId, client }) {
+  const stats = makeStats('supplier_payments', 'GET /supplier_invoices/{id}/payments');
   const invoices = await db.query(
     `
     SELECT pennylane_supplier_invoice_id
@@ -390,15 +740,24 @@ async function syncSupplierInvoicePayments(db, { storeId, client }) {
   let read = 0;
   let upserted = 0;
   let failed = 0;
+  let firstPayment = null;
   for (const invoice of invoices.rows) {
     try {
       const { items } = await fetchAllPages(client, `/supplier_invoices/${encodeURIComponent(invoice.pennylane_supplier_invoice_id)}/payments`, { limit: 100, maxPages: 10 });
       read += items.length;
+      stats.pages_count += 1;
+      stats.received_count += items.length;
+      if (!firstPayment && items[0]) firstPayment = items[0];
       for (const payment of items) {
         const paymentId = firstPresent(payment, ['id', 'payment_id']);
-        if (!paymentId) continue;
+        if (!paymentId) {
+          stats.ignored_count += 1;
+          incrementReason(stats.ignored_reasons, 'missing_id');
+          continue;
+        }
+        stats.normalized_count += 1;
         const classification = classifySupplierPaymentStatus(firstPresent(payment, ['status', 'state']));
-        await db.query(
+        const result = await db.query(
           `
           INSERT INTO cashflow_supplier_invoice_payments(
             store_id, pennylane_supplier_invoice_id, pennylane_payment_id, label, amount, currency,
@@ -416,17 +775,47 @@ async function syncSupplierInvoicePayments(db, { storeId, client }) {
             pennylane_updated_at = EXCLUDED.pennylane_updated_at,
             raw_payload = EXCLUDED.raw_payload,
             updated_at = now()
+          RETURNING (xmax = 0) AS inserted
           `,
           [storeId, String(invoice.pennylane_supplier_invoice_id), String(paymentId), firstPresent(payment, ['label', 'description']), Number(firstPresent(payment, ['amount', 'currency_amount']) || 0), firstPresent(payment, ['currency']) || 'EUR', classification.status, classification.is_confirmed, classification.is_pending, firstPresent(payment, ['created_at']) || null, firstPresent(payment, ['updated_at']) || null, JSON.stringify(payment)]
         );
+        if (result.rows[0]?.inserted) stats.inserted_count += 1;
+        else stats.updated_count += 1;
         upserted += 1;
       }
+      await syncSupplierInvoiceMatchedTransactions(db, { storeId, client, invoiceId: invoice.pennylane_supplier_invoice_id });
     } catch (err) {
       failed += 1;
+      stats.error_count += 1;
       if (err instanceof PennylaneApiError && err.status === 403) throw err;
     }
   }
-  return { invoices: invoices.rows.length, read, upserted, failed };
+  await saveResponseSample(db, storeId, 'supplier_payment', '/supplier_invoices/{id}/payments', firstPayment);
+  stats.error_count += failed;
+  await saveResourceLog(db, storeId, stats);
+  return { invoices: invoices.rows.length, read, upserted, failed, stats };
+}
+
+async function syncSupplierInvoiceMatchedTransactions(db, { storeId, client, invoiceId }) {
+  try {
+    const { items } = await fetchAllPages(client, `/supplier_invoices/${encodeURIComponent(invoiceId)}/matched_transactions`, { limit: 100, maxPages: 5 });
+    for (const raw of items) {
+      const tx = normalizeTransaction(raw);
+      if (!tx.id || tx.id === 'undefined') continue;
+      await db.query(
+        `
+        INSERT INTO cashflow_invoice_transaction_links(store_id, invoice_type, pennylane_invoice_id, pennylane_transaction_id, amount, source, raw_payload)
+        VALUES($1, 'supplier_invoice', $2, $3, $4, 'supplier_invoice_matched_transactions', $5::jsonb)
+        ON CONFLICT (store_id, invoice_type, pennylane_invoice_id, pennylane_transaction_id) DO UPDATE
+        SET amount = EXCLUDED.amount, source = EXCLUDED.source, raw_payload = EXCLUDED.raw_payload, updated_at = now()
+        `,
+        [storeId, String(invoiceId), tx.id, tx.amount, JSON.stringify(raw)]
+      );
+    }
+  } catch (err) {
+    if (err instanceof PennylaneApiError && [403, 404].includes(err.status)) return;
+    throw err;
+  }
 }
 
 async function refreshRecurringSuggestions(db, storeId) {
@@ -455,6 +844,83 @@ async function refreshRecurringSuggestions(db, storeId) {
   }
 }
 
+async function syncClass6ChargeHistory(db, storeId) {
+  const stats = makeStats('class6_trial_balance', 'LOCAL pennylane_trial_balance_lines');
+  const result = await db.query(
+    `
+    SELECT DISTINCT ON (line.account_number)
+      snap.period_start,
+      snap.period_end,
+      line.account_number,
+      line.account_label,
+      line.total_debit,
+      line.total_credit,
+      (COALESCE(line.total_debit, 0) - COALESCE(line.total_credit, 0)) AS net_charge
+    FROM pennylane_trial_balance_snapshots snap
+    INNER JOIN pennylane_trial_balance_lines line ON line.snapshot_id = snap.id
+    WHERE snap.store_id = $1
+      AND line.account_number LIKE '6%'
+    ORDER BY line.account_number, snap.fetched_at DESC
+    `,
+    [storeId]
+  ).catch(() => ({ rows: [] }));
+  stats.received_count = result.rows.length;
+  stats.normalized_count = result.rows.length;
+  if (result.rows[0]) stats.first_item_shape = itemShape(result.rows[0]);
+  for (const row of result.rows) {
+    const inserted = await db.query(
+      `
+      INSERT INTO cashflow_charge_history(
+        store_id, source, period_start, period_end, month_key, account_number, account_label,
+        category_code, total_debit, total_credit, net_charge, raw_payload
+      )
+      VALUES($1, 'trial_balance', $2::date, $3::date, to_char($3::date, 'YYYY-MM'), $4, $5, $6, $7, $8, $9, $10::jsonb)
+      ON CONFLICT (store_id, source, COALESCE(period_start, '1900-01-01'::date), COALESCE(period_end, '1900-01-01'::date), account_number)
+      DO UPDATE SET account_label = EXCLUDED.account_label,
+        category_code = EXCLUDED.category_code,
+        total_debit = EXCLUDED.total_debit,
+        total_credit = EXCLUDED.total_credit,
+        net_charge = EXCLUDED.net_charge,
+        raw_payload = EXCLUDED.raw_payload,
+        updated_at = now()
+      RETURNING (xmax = 0) AS inserted
+      `,
+      [
+        storeId,
+        row.period_start,
+        row.period_end,
+        row.account_number,
+        row.account_label,
+        categoryForAccount(row.account_number),
+        Number(row.total_debit || 0),
+        Number(row.total_credit || 0),
+        Number(row.net_charge || 0),
+        JSON.stringify(row),
+      ]
+    ).catch(() => ({ rows: [] }));
+    if (inserted.rows[0]?.inserted) stats.inserted_count += 1;
+    else stats.updated_count += 1;
+  }
+  await saveResourceLog(db, storeId, stats);
+  return { read: stats.received_count, upserted: stats.inserted_count + stats.updated_count, stats };
+}
+
+function categoryForAccount(accountNumber) {
+  const value = String(accountNumber || '');
+  if (value.startsWith('607')) return 'goods_purchases';
+  if (value.startsWith('624')) return 'transport';
+  if (value.startsWith('6226')) return 'fees';
+  if (value.startsWith('625')) return 'travel_reception';
+  if (value.startsWith('613') || value.startsWith('614')) return 'rent';
+  if (value.startsWith('616')) return 'insurance';
+  if (value.startsWith('627')) return 'bank_fees';
+  if (value.startsWith('641')) return 'wages';
+  if (value.startsWith('645')) return 'social_charges';
+  if (value.startsWith('63')) return 'taxes';
+  if (value.startsWith('612')) return 'leasing';
+  return 'charges_a_classer';
+}
+
 async function syncCashflowData(db, { storeId, userId }) {
   const config = getPennylaneConfig();
   const client = createPennylaneClient(config);
@@ -464,6 +930,7 @@ async function syncCashflowData(db, { storeId, userId }) {
     transactions: null,
     supplier_invoices: null,
     supplier_payments: null,
+    class6_charge_history: null,
     customer_invoice_queue: null,
   };
 
@@ -478,10 +945,11 @@ async function syncCashflowData(db, { storeId, userId }) {
     result.transactions = { failed: true, ...sanitizePennylaneError(err) };
   }
   try {
-    result.supplier_invoices = await processPennylaneSupplierInvoiceImportSync(db, {
+    result.supplier_invoices = await syncSupplierInvoicesDirect(db, { storeId, client });
+    result.supplier_invoice_changelog = await processPennylaneSupplierInvoiceImportSync(db, {
       storeId,
       workerId: `manual-cashflow-supplier-sync-${userId || 'system'}`,
-    });
+    }).catch((err) => ({ failed: true, error: err.message }));
   } catch (err) {
     result.supplier_invoices = { failed: true, error: err.message };
   }
@@ -490,6 +958,7 @@ async function syncCashflowData(db, { storeId, userId }) {
   } catch (err) {
     result.supplier_payments = { failed: true, ...sanitizePennylaneError(err) };
   }
+  result.class6_charge_history = await syncClass6ChargeHistory(db, storeId);
   try {
     result.customer_invoice_queue = await processPennylaneCustomerInvoiceSyncQueue(db, {
       workerId: `manual-cashflow-customer-sync-${userId || 'system'}`,
@@ -522,9 +991,14 @@ module.exports = {
   PENNYLANE_CASHFLOW_CAPABILITIES,
   extractList,
   fetchAllPages,
+  itemShape,
+  normalizeSupplierInvoice,
+  normalizeTransaction,
   runCashflowDiagnostic,
   syncBankAccounts,
   syncCashflowData,
+  syncSupplierInvoicesDirect,
   syncSupplierInvoicePayments,
   syncTransactions,
+  syncClass6ChargeHistory,
 };

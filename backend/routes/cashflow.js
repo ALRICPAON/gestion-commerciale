@@ -7,6 +7,7 @@ const { runCashflowDiagnostic, syncCashflowData, PENNYLANE_CASHFLOW_CAPABILITIES
 const {
   chargeCompletionAlerts,
   calculateCustomerBehaviour,
+  debugCounts,
   getDashboard,
   getDistrimer,
   getForecast,
@@ -14,12 +15,14 @@ const {
   latestDiagnostics,
   listBankAccounts,
   listBankTransactions,
+  listChargeHistory,
   listCustomerReceivables,
   listPaidCustomerHistory,
   listRecurringCharges,
   listSupplierPayables,
   sendForecastExport,
   settingsForDistrimer,
+  supplierExposure,
   simulateDistrimerPayment,
   updateSettings,
 } = require('../services/cashflow/service');
@@ -129,6 +132,22 @@ router.get('/cashflow/supplier-payables', requireCashflowPermission(CASHFLOW_PER
   }
 });
 
+router.get('/cashflow/supplier-exposure', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
+  try {
+    return res.json({ suppliers: await supplierExposure(req.dbPool, req.user.store_id) });
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
+router.get('/cashflow/debug/counts', requireCashflowPermission(CASHFLOW_PERMISSIONS.SETTINGS), async (req, res) => {
+  try {
+    return res.json(await debugCounts(req.dbPool, req.user.store_id));
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
 router.get('/cashflow/bank-transactions', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
   try {
     return res.json({
@@ -227,6 +246,14 @@ router.post('/cashflow/recurring-charges', requireCashflowPermission(CASHFLOW_PE
 router.get('/cashflow/charges-to-complete', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
   try {
     return res.json(await chargeCompletionAlerts(req.dbPool, req.user.store_id));
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
+router.get('/cashflow/charge-history', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
+  try {
+    return res.json({ charges: await listChargeHistory(req.dbPool, req.user.store_id) });
   } catch (err) {
     return handleError(res, err);
   }

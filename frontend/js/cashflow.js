@@ -38,7 +38,9 @@ const els = {
   bankTable: document.getElementById('bank-table'),
   chargesAlerts: document.getElementById('charges-alerts'),
   recurringChargesTable: document.getElementById('recurring-charges-table'),
+  chargeHistoryTable: document.getElementById('charge-history-table'),
   diagnosticTable: document.getElementById('diagnostic-table'),
+  debugCountsTable: document.getElementById('debug-counts-table'),
   runDiagnostic: document.getElementById('run-diagnostic-btn'),
   manualForm: document.getElementById('manual-form'),
   manualTable: document.getElementById('manual-table'),
@@ -47,6 +49,8 @@ const els = {
   settingBankLabel: document.getElementById('setting-bank-label'),
   settingDistrimerLimit: document.getElementById('setting-distrimer-limit'),
   settingDistrimerTarget: document.getElementById('setting-distrimer-target'),
+  settingMonitoredSupplierId: document.getElementById('setting-monitored-supplier-id'),
+  settingMonitoredSupplierName: document.getElementById('setting-monitored-supplier-name'),
   settingDefaultDelay: document.getElementById('setting-default-delay'),
 };
 
@@ -351,9 +355,10 @@ function renderDiagnostic(data = {}) {
 }
 
 async function loadCharges() {
-  const [completion, recurring] = await Promise.all([
+  const [completion, recurring, history] = await Promise.all([
     requestJson('/api/cashflow/charges-to-complete'),
     requestJson('/api/cashflow/recurring-charges'),
+    requestJson('/api/cashflow/charge-history'),
   ]);
   els.chargesAlerts.innerHTML = table(
     [{ label: 'Alerte' }, { label: 'Action' }],
@@ -369,6 +374,44 @@ async function loadCharges() {
     `),
     'Aucune charge recurrente configuree.'
   );
+  els.chargeHistoryTable.innerHTML = table(
+    [{ label: 'Mois' }, { label: 'Compte' }, { label: 'Libelle' }, { label: 'Categorie' }, { label: 'Debit', className: 'num' }, { label: 'Credit', className: 'num' }, { label: 'Charge nette', className: 'num' }],
+    (history.charges || []).map((row) => `
+      <tr>
+        <td>${escapeHtml(row.month_key || '-')}</td>
+        <td>${escapeHtml(row.account_number)}</td>
+        <td>${escapeHtml(row.account_label || '-')}</td>
+        <td>${escapeHtml(row.category_code || 'charges_a_classer')}</td>
+        <td class="num">${money(row.total_debit)}</td>
+        <td class="num">${money(row.total_credit)}</td>
+        <td class="num">${money(row.net_charge)}</td>
+      </tr>
+    `),
+    'Aucune analyse de charges Pennylane disponible. Synchroniser le compte d exploitation puis la tresorerie.'
+  );
+}
+
+async function loadDebugCounts() {
+  if (!els.debugCountsTable) return;
+  try {
+    const data = await requestJson('/api/cashflow/debug/counts');
+    els.debugCountsTable.innerHTML = table(
+      [{ label: 'Donnee' }, { label: 'Nombre', className: 'num' }],
+      [
+        ['Comptes bancaires', data.bankAccounts],
+        ['Transactions', data.bankTransactions],
+        ['Factures fournisseurs', data.supplierInvoices],
+        ['Factures ouvertes', data.openSupplierInvoices],
+        ['Paiements fournisseurs', data.supplierPayments],
+        ['Comptes de balance', data.trialBalanceAccounts],
+        ['Comptes de charges', data.class6Accounts],
+        ['Charges recurrentes', data.recurringCharges],
+        ['Factures fournisseur surveille', data.distrimerInvoices],
+      ].map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td class="num">${value || 0}</td></tr>`)
+    );
+  } catch (error) {
+    els.debugCountsTable.innerHTML = '<div class="cashflow-warning">Etat de synchronisation reserve aux administrateurs.</div>';
+  }
 }
 
 async function loadManualItems() {
@@ -395,6 +438,8 @@ async function loadSettings() {
   els.settingBankLabel.value = state.settings.main_bank_account_label || '';
   els.settingDistrimerLimit.value = state.settings.distrimer_limit ?? 10000;
   els.settingDistrimerTarget.value = state.settings.distrimer_target_after_payment ?? 7500;
+  els.settingMonitoredSupplierId.value = state.settings.monitored_supplier_pennylane_id || state.settings.distrimer_pennylane_supplier_id || '';
+  els.settingMonitoredSupplierName.value = state.settings.monitored_supplier_name || '';
   els.settingDefaultDelay.value = state.settings.default_customer_delay_days ?? 30;
 }
 
@@ -416,7 +461,7 @@ async function loadAll() {
   renderReceivables(receivables);
   renderPayables(payables);
   renderDistrimer(distrimer);
-  await Promise.all([loadBank(), loadCharges(), loadManualItems(), loadSettings()]);
+  await Promise.all([loadBank(), loadCharges(), loadManualItems(), loadSettings(), loadDebugCounts()]);
   els.status.textContent = `Scenario ${els.scenario.options[els.scenario.selectedIndex].textContent.toLowerCase()} sur ${els.horizon.value} jours.`;
 }
 
@@ -516,6 +561,8 @@ function bindEvents() {
         main_bank_account_label: els.settingBankLabel.value,
         distrimer_limit: Number(els.settingDistrimerLimit.value || 10000),
         distrimer_target_after_payment: Number(els.settingDistrimerTarget.value || 7500),
+        monitored_supplier_pennylane_id: els.settingMonitoredSupplierId.value,
+        monitored_supplier_name: els.settingMonitoredSupplierName.value,
         default_customer_delay_days: Number(els.settingDefaultDelay.value || 30),
       }),
     });

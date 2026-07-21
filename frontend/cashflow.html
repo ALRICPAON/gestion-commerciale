@@ -156,6 +156,10 @@
           <div id="recurring-charges-table"></div>
         </article>
       </div>
+      <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Analyse des charges Pennylane</h3></div>
+        <div id="charge-history-table"></div>
+      </article>
     </section>
 
     <section class="cashflow-tab-panel" data-panel="settings">
@@ -180,6 +184,8 @@
             <label>Compte bancaire principal <input id="setting-bank-label"></label>
             <label>Limite DISTRIMER <input id="setting-distrimer-limit" type="number" step="0.01"></label>
             <label>Encours cible apres paiement <input id="setting-distrimer-target" type="number" step="0.01"></label>
+            <label>Fournisseur surveille - ID Pennylane <input id="setting-monitored-supplier-id"></label>
+            <label>Fournisseur surveille - nom <input id="setting-monitored-supplier-name" placeholder="DISTRIMER"></label>
             <label>Delai client par defaut <input id="setting-default-delay" type="number" step="1"></label>
             <button class="btn btn-primary" type="submit">Enregistrer</button>
           </form>
@@ -193,6 +199,10 @@
             <button id="run-diagnostic-btn" class="btn btn-secondary" type="button">Tester les acces</button>
           </div>
           <div id="diagnostic-table"></div>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Etat de synchronisation</h3></div>
+          <div id="debug-counts-table"></div>
         </article>
       </div>
     </section>
