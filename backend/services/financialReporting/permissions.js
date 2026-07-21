@@ -25,7 +25,7 @@ function hasFinancialReportPermission(user, permission) {
 function requireFinancialReportPermission(permission) {
   return (req, res, next) => {
     if (hasFinancialReportPermission(req.user, permission)) return next();
-    return res.status(403).json({ error: 'Acces reporting financier interdit' });
+    return res.status(403).json({ error: 'Acces compte d exploitation interdit' });
   };
 }
 

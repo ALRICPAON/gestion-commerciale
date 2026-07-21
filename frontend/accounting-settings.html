@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Parametres comptables - ALTA MAREE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/financial-reporting.css?v=2" />
+</head>
+<body class="app-page financial-reporting-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">ALTA MAREE</h1>
+      <p class="app-subtitle">Parametres comptables</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content financial-layout">
+    <section class="financial-panel">
+      <div class="financial-toolbar">
+        <div>
+          <h2>Correspondance comptable</h2>
+          <p>Parametrage avance : prefixes de comptes vers rubriques du compte de resultat.</p>
+        </div>
+        <button id="load-mappings-btn" class="btn btn-primary" type="button">Recharger</button>
+      </div>
+      <div id="page-feedback" class="page-feedback hidden"></div>
+      <div id="mappings-table" class="financial-comparison"></div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/accounting-settings.js?v=1"></script>
+</body>
+</html>

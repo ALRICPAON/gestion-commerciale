@@ -26,20 +26,20 @@ function bool(value) {
 function handleError(res, err) {
   const status = err.status || 500;
   if (status >= 500) {
-    console.error('Erreur reporting financier :', {
+    console.error('Erreur compte exploitation :', {
       message: err.message,
       status,
       code: err.code || null,
     });
   } else {
-    console.warn('Erreur fonctionnelle reporting financier :', {
+    console.warn('Erreur fonctionnelle compte exploitation :', {
       message: err.message,
       status,
       code: err.code || null,
     });
   }
   return res.status(status).json({
-    error: err.message || 'Erreur reporting financier',
+    error: err.message || 'Erreur compte d exploitation',
     code: err.code || null,
   });
 }
@@ -52,7 +52,7 @@ function csvEscape(value) {
 
 function reportCsv(report) {
   const rows = [
-    ['Section', 'Sous-section', 'Compte', 'Libelle', 'Debit', 'Credit', 'Solde', 'Montant reporting'],
+    ['Rubrique', 'Sous-rubrique', 'Compte', 'Libelle', 'Debit', 'Credit', 'Solde', 'Montant compte de resultat'],
   ];
   for (const section of report.sections || []) {
     for (const account of section.accounts || []) {
@@ -73,6 +73,42 @@ function reportCsv(report) {
 
 function money(value) {
   return Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+async function businessBreakdown(db, { storeId, periodStart, periodEnd }) {
+  const clients = await db.query(
+    `SELECT COALESCE(c.name, c.legal_name, 'Client') AS label,
+            COALESCE(SUM(sd.total_amount_ex_vat), 0) AS amount
+     FROM sales_documents sd
+     LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
+     WHERE sd.store_id = $1
+       AND sd.document_date BETWEEN $2::date AND $3::date
+       AND sd.document_type IN ('INVOICE', 'DELIVERY_NOTE', 'ORDER')
+       AND COALESCE(sd.status, '') NOT IN ('cancelled')
+     GROUP BY COALESCE(c.name, c.legal_name, 'Client')
+     ORDER BY amount DESC
+     LIMIT 8`,
+    [storeId, periodStart, periodEnd]
+  ).catch(() => ({ rows: [] }));
+
+  const suppliers = await db.query(
+    `SELECT COALESCE(s.name, s.legal_name, 'Fournisseur') AS label,
+            COALESCE(SUM(CASE WHEN si.document_type = 'credit_note' THEN -ABS(si.total_ex_vat) ELSE si.total_ex_vat END), 0) AS amount
+     FROM supplier_invoices si
+     LEFT JOIN suppliers s ON s.id = si.supplier_id AND s.store_id = si.store_id
+     WHERE si.store_id = $1
+       AND si.invoice_date BETWEEN $2::date AND $3::date
+       AND COALESCE(si.status, '') NOT IN ('cancelled', 'deleted')
+     GROUP BY COALESCE(s.name, s.legal_name, 'Fournisseur')
+     ORDER BY amount DESC
+     LIMIT 8`,
+    [storeId, periodStart, periodEnd]
+  ).catch(() => ({ rows: [] }));
+
+  return {
+    top_clients: clients.rows.map((row) => ({ label: row.label, amount: Number(row.amount || 0) })),
+    top_suppliers: suppliers.rows.map((row) => ({ label: row.label, amount: Number(row.amount || 0) })),
+  };
 }
 
 function reportHtml(report, compare = null) {
@@ -121,7 +157,7 @@ function reportHtml(report, compare = null) {
     <body>
       <header>
         <div>
-          <h1>ALTA MAREE - Reporting financier</h1>
+          <h1>ALTA MAREE - Compte d exploitation</h1>
           <p>Periode : ${report.period_start || '-'} au ${report.period_end || '-'}</p>
           <p>Genere le ${new Date().toLocaleString('fr-FR')}</p>
         </div>
@@ -174,6 +210,11 @@ router.get(
         storeId: req.user.store_id,
         ...period,
         refresh: bool(req.query.refresh),
+      });
+      report.business_breakdown = await businessBreakdown(req.dbPool, {
+        storeId: req.user.store_id,
+        periodStart: period.periodStart,
+        periodEnd: period.periodEnd,
       });
       return res.json(report);
     } catch (err) {
@@ -240,7 +281,7 @@ router.put(
         storeId: req.user.store_id,
         patch: req.body,
       });
-      if (!mapping) return res.status(404).json({ error: 'Mapping introuvable' });
+      if (!mapping) return res.status(404).json({ error: 'Correspondance comptable introuvable' });
       return res.json({ mapping });
     } catch (err) {
       return handleError(res, err);
@@ -270,10 +311,10 @@ router.get(
             })
           : null;
         const pdf = await renderHtmlToPdf(reportHtml(report, compare), { format: 'A4' });
-        return sendPdf(res, pdf, `reporting-financier-${period.periodStart}-${period.periodEnd}.pdf`);
+        return sendPdf(res, pdf, `compte-exploitation-${period.periodStart}-${period.periodEnd}.pdf`);
       }
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', `attachment; filename="reporting-financier-${period.periodStart}-${period.periodEnd}.csv"`);
+      res.setHeader('Content-Disposition', `attachment; filename="compte-exploitation-${period.periodStart}-${period.periodEnd}.csv"`);
       return res.send(`\ufeff${reportCsv(report)}`);
     } catch (err) {
       return handleError(res, err);

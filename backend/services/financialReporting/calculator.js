@@ -116,18 +116,37 @@ function calculateIncomeStatement({
 
   const revenue = subsectionTotal(sections, 'revenue');
   const operatingRevenue = sectionTotal(sections, 'operating_revenue');
-  const purchases = subsectionTotal(sections, 'purchases');
+  const goodsPurchases = subsectionTotal(sections, 'goods_purchases');
+  const otherPurchases = subsectionTotal(sections, 'purchases');
+  const purchases = rounded(goodsPurchases + otherPurchases);
   const stockVariation = subsectionTotal(sections, 'stock_variation');
   const purchasesConsumed = rounded(purchases + stockVariation);
   const grossMargin = rounded(revenue - purchasesConsumed);
   const marginRate = revenue ? rounded((grossMargin / revenue) * 100) : null;
-  const externalCharges = subsectionTotal(sections, 'external_charges');
+  const externalServices = subsectionTotal(sections, 'external_services');
+  const otherExternalServices = subsectionTotal(sections, 'other_external_services');
+  const transport = subsectionTotal(sections, 'transport');
+  const externalCharges = rounded(externalServices + otherExternalServices + transport);
   const taxes = subsectionTotal(sections, 'taxes');
-  const staffCosts = subsectionTotal(sections, 'staff_costs');
+  const wages = subsectionTotal(sections, 'wages');
+  const socialCharges = subsectionTotal(sections, 'social_charges');
+  const staffCosts = rounded(wages + socialCharges + subsectionTotal(sections, 'staff_costs'));
   const depreciation = subsectionTotal(sections, 'depreciation');
   const otherOperatingExpenses = sumBy(sections, (section) => (
     section.section_code === 'operating_expenses'
-    && !['purchases', 'stock_variation', 'external_charges', 'taxes', 'staff_costs', 'depreciation'].includes(section.subsection_code)
+    && ![
+      'goods_purchases',
+      'purchases',
+      'stock_variation',
+      'external_services',
+      'other_external_services',
+      'transport',
+      'taxes',
+      'wages',
+      'social_charges',
+      'staff_costs',
+      'depreciation',
+    ].includes(section.subsection_code)
   ));
   const operatingExpenses = sectionTotal(sections, 'operating_expenses');
   const ebitda = rounded(operatingRevenue - purchasesConsumed - externalCharges - taxes - staffCosts - otherOperatingExpenses);
@@ -148,27 +167,37 @@ function calculateIncomeStatement({
     period_start: periodStart || snapshot?.period_start || null,
     period_end: periodEnd || snapshot?.period_end || null,
     snapshot,
-    convention: 'Solde brut = credit - debit. Les mappings de charges utilisent calculation_sign = -1 pour produire un montant de charge positif; les resultats soustraient ensuite ces charges.',
+    convention: 'Solde comptable = credit - debit. Les correspondances de charges transforment ce solde en montant de charge positif; les resultats soustraient ensuite ces charges.',
     provisional,
     incomplete: grouped.unknown_accounts.length > 0 || lines.length === 0,
     kpis: {
       revenue,
+      purchases,
       gross_margin: grossMargin,
       margin_rate: marginRate,
       operating_charges: rounded(operatingExpenses - purchasesConsumed),
       ebitda,
+      operating_result: operatingResult,
+      current_result: currentResult,
       net_result: netResult,
     },
     calculations: {
       revenue,
       operating_revenue: operatingRevenue,
+      goods_purchases: goodsPurchases,
+      other_purchases: otherPurchases,
       purchases,
       stock_variation: stockVariation,
       purchases_consumed: purchasesConsumed,
       gross_margin: grossMargin,
       margin_rate: marginRate,
+      external_services: externalServices,
+      other_external_services: otherExternalServices,
+      transport,
       external_charges: externalCharges,
       taxes,
+      wages,
+      social_charges: socialCharges,
       staff_costs: staffCosts,
       ebitda,
       depreciation,

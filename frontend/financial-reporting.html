@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Reporting financier - ALTA MAREE</title>
+  <title>Compte d'exploitation - ALTA MAREE</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
@@ -13,7 +13,7 @@
   <header class="topbar">
     <div>
       <h1 class="app-title">ALTA MAREE</h1>
-      <p class="app-subtitle">Reporting financier</p>
+      <p class="app-subtitle">Compte d'exploitation</p>
     </div>
     <div class="topbar-right">
       <div class="user-box"><span id="user-name">Utilisateur</span></div>
@@ -26,8 +26,8 @@
     <section class="financial-panel">
       <div class="financial-toolbar">
         <div>
-          <h2>Compte de resultat</h2>
-          <p id="report-status">Selectionner une periode puis actualiser.</p>
+          <h2>Tableau de bord financier</h2>
+          <p id="report-status">Sélectionner une période puis actualiser.</p>
         </div>
         <div class="financial-actions">
           <button id="sync-btn" class="btn btn-primary" type="button">Actualiser depuis Pennylane</button>
@@ -38,16 +38,16 @@
       <div id="page-feedback" class="page-feedback hidden"></div>
       <div class="financial-filters">
         <label>
-          Periode
+          Période
           <select id="period-preset">
             <option value="current-month">Mois en cours</option>
-            <option value="previous-month">Mois precedent</option>
-            <option value="current-year">Annee en cours</option>
-            <option value="custom">Personnalisee</option>
+            <option value="previous-month">Mois précédent</option>
+            <option value="current-year">Année en cours</option>
+            <option value="custom">Personnalisée</option>
           </select>
         </label>
         <label>
-          Debut
+          Début
           <input id="period-start" type="date" />
         </label>
         <label>
@@ -55,7 +55,7 @@
           <input id="period-end" type="date" />
         </label>
         <label>
-          Debut comparaison
+          Début comparaison
           <input id="comparison-start" type="date" />
         </label>
         <label>
@@ -68,11 +68,59 @@
 
     <section class="financial-kpis" id="kpi-grid"></section>
 
+    <section class="financial-dashboard-grid">
+      <article class="financial-panel financial-analysis-panel">
+        <div class="financial-section-title">
+          <div>
+            <h3>Analyse automatique</h3>
+            <p>Lecture dirigeant à partir du compte d'exploitation.</p>
+          </div>
+        </div>
+        <div id="auto-analysis" class="financial-analysis"></div>
+      </article>
+      <article class="financial-panel">
+        <div class="financial-section-title">
+          <div>
+            <h3>Évolution</h3>
+            <p>Comparaison avec la période précédente.</p>
+          </div>
+        </div>
+        <div id="trend-chart" class="financial-chart"></div>
+      </article>
+      <article class="financial-panel">
+        <div class="financial-section-title">
+          <div>
+            <h3>Où part l'argent</h3>
+            <p>Répartition des principales charges.</p>
+          </div>
+        </div>
+        <div id="charges-chart" class="financial-chart"></div>
+      </article>
+      <article class="financial-panel">
+        <div class="financial-section-title">
+          <div>
+            <h3>Top clients</h3>
+            <p>Clients qui génèrent le plus de chiffre d'affaires.</p>
+          </div>
+        </div>
+        <div id="clients-chart" class="financial-chart"></div>
+      </article>
+      <article class="financial-panel">
+        <div class="financial-section-title">
+          <div>
+            <h3>Top fournisseurs</h3>
+            <p>Fournisseurs qui pèsent le plus dans les achats.</p>
+          </div>
+        </div>
+        <div id="suppliers-chart" class="financial-chart"></div>
+      </article>
+    </section>
+
     <section class="financial-panel">
       <div class="financial-section-title">
         <div>
-          <h3>Compte de resultat hierarchique</h3>
-          <p id="sync-info">Aucune synchronisation chargee.</p>
+          <h3>Compte de résultat</h3>
+          <p id="sync-info">Aucune synchronisation chargée.</p>
         </div>
         <span id="provisional-badge" class="financial-badge">Provisoire</span>
       </div>
@@ -83,21 +131,10 @@
       <div class="financial-section-title">
         <div>
           <h3>Comparaison</h3>
-          <p>Periode actuelle, periode precedente, ecarts en euros et pourcentage.</p>
+          <p>Période actuelle, période précédente, écarts en euros et pourcentage.</p>
         </div>
       </div>
       <div id="comparison-table" class="financial-comparison"></div>
-    </section>
-
-    <section class="financial-panel">
-      <div class="financial-section-title">
-        <div>
-          <h3>Mappings comptables</h3>
-          <p>Regles configurables par prefixes de comptes. Modification reservee aux administrateurs.</p>
-        </div>
-        <button id="load-mappings-btn" class="btn btn-secondary" type="button">Charger mappings</button>
-      </div>
-      <div id="mappings-table" class="financial-comparison"></div>
     </section>
   </main>
 
