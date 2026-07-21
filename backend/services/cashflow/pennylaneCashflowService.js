@@ -233,6 +233,11 @@ function toMoney(value, fallback = null) {
   return Number.isFinite(number) ? number : fallback;
 }
 
+function toPositiveMoney(value, fallback = null) {
+  const number = toMoney(value, null);
+  return number === null ? fallback : Math.abs(number);
+}
+
 function toDateOrNull(value) {
   if (!value) return null;
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
@@ -542,8 +547,8 @@ function normalizeSupplierInvoice(invoice = {}) {
     'currency_amount',
     'total_amount',
   ]), 0);
-  const remaining = toMoney(rawRemainingWithTax, null);
-  const fallbackRemaining = toMoney(firstPresent(invoice, [
+  const remaining = toPositiveMoney(rawRemainingWithTax, null);
+  const fallbackRemaining = toPositiveMoney(firstPresent(invoice, [
     'remaining_amount',
     'amount_due',
     'due_amount',
@@ -572,7 +577,7 @@ function normalizeSupplierInvoice(invoice = {}) {
     paid_amount: paid,
     accounting_status: firstPresent(invoice, ['accounting_status', 'status']),
     payment_status: firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']),
-    paid: firstPresent(invoice, ['paid']) === true || ['paid', 'paid_out', 'confirmed', 'completed', 'settled', 'fully_paid'].includes(String(firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']) || '').toLowerCase()),
+    paid: firstPresent(invoice, ['paid']) === true || ['paid', 'paid_out', 'paid_offline', 'confirmed', 'completed', 'settled', 'fully_paid'].includes(String(firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']) || '').toLowerCase()),
     reconciled: firstPresent(invoice, ['reconciled']) === true,
     updated_at: firstPresent(invoice, ['updated_at']),
     raw: invoice,
@@ -581,7 +586,7 @@ function normalizeSupplierInvoice(invoice = {}) {
 
 function classifySupplierInvoiceCashflow(invoice, payments = [], matchedTransactions = []) {
   const total = toMoney(invoice.amount_inc_vat, 0);
-  const officialRemaining = toMoney(invoice.remaining_amount_with_tax, null);
+  const officialRemaining = toPositiveMoney(invoice.remaining_amount_with_tax, null);
   const hasOfficialRemaining = invoice.has_official_remaining_amount_with_tax === true
     || (invoice.official_remaining_amount_with_tax_raw !== undefined && invoice.official_remaining_amount_with_tax_raw !== null)
     || (invoice.raw && Object.prototype.hasOwnProperty.call(invoice.raw, 'remaining_amount_with_tax'));
@@ -590,7 +595,7 @@ function classifySupplierInvoiceCashflow(invoice, payments = [], matchedTransact
     .reduce((sum, payment) => sum + toMoney(payment.amount, 0), 0);
   const matchedTotal = matchedTransactions.reduce((sum, tx) => sum + toMoney(tx.amount, 0), 0);
   const paymentStatus = String(invoice.payment_status || '').toLowerCase();
-  const paidStatuses = ['paid', 'paid_out', 'confirmed', 'completed', 'settled', 'fully_paid'];
+  const paidStatuses = ['paid', 'paid_out', 'paid_offline', 'confirmed', 'completed', 'settled', 'fully_paid'];
   const cancelledStatuses = ['cancelled', 'canceled', 'void', 'archived'];
   const explicitPaid = invoice.paid === true || paidStatuses.includes(paymentStatus);
   const cancelled = cancelledStatuses.includes(paymentStatus) || cancelledStatuses.includes(String(invoice.accounting_status || '').toLowerCase());

@@ -406,6 +406,34 @@ function testOfficialRemainingPositiveIsOpen() {
   assert.strictEqual(state.reason, 'official_remaining_positive');
 }
 
+function testNegativeSupplierRemainingNormalizesPositive() {
+  const invoice = normalizeSupplierInvoice({
+    id: 'si_negative',
+    amount: '3040.51',
+    remaining_amount_with_tax: '-3040.51',
+    payment_status: 'to_be_paid',
+    paid: false,
+  });
+  assert.strictEqual(invoice.remaining_amount_with_tax, 3040.51);
+  const state = classifySupplierInvoiceCashflow(invoice);
+  assert.strictEqual(state.state, 'open');
+  assert.strictEqual(state.remaining, 3040.51);
+  assert.strictEqual(state.reason, 'official_remaining_positive');
+}
+
+function testNegativeSupplierRemainingUnknownStatusIsOpen() {
+  const invoice = normalizeSupplierInvoice({
+    id: 'si_unknown_negative',
+    amount: '2481.89',
+    remaining_amount_with_tax: '-2481.89',
+    payment_status: 'observed_but_unmapped',
+    paid: false,
+  });
+  const state = classifySupplierInvoiceCashflow(invoice);
+  assert.strictEqual(state.state, 'open');
+  assert.strictEqual(state.remaining, 2481.89);
+}
+
 function testOfficialRemainingZeroAndPaidTrueIsPaid() {
   const invoice = normalizeSupplierInvoice({
     id: 'si_paid',
@@ -416,6 +444,18 @@ function testOfficialRemainingZeroAndPaidTrueIsPaid() {
   const state = classifySupplierInvoiceCashflow(invoice);
   assert.strictEqual(state.state, 'paid');
   assert.strictEqual(state.reason, 'official_remaining_zero_paid_confirmed');
+}
+
+function testOfficialRemainingZeroPaidOfflineIsPaid() {
+  const invoice = normalizeSupplierInvoice({
+    id: 'si_paid_offline',
+    amount: '2128.46',
+    remaining_amount_with_tax: '0.0',
+    payment_status: 'paid_offline',
+    paid: false,
+  });
+  const state = classifySupplierInvoiceCashflow(invoice);
+  assert.strictEqual(state.state, 'paid');
 }
 
 function testOfficialRemainingMissingNeedsReview() {
@@ -473,6 +513,28 @@ function testTwoOpenDistrimerInvoicesTotalConfirmed() {
   assert.strictEqual(invoices.filter((row) => row.state === 'paid').length, 2);
   assert.strictEqual(invoices.filter((row) => row.state === 'needs_review').length, 0);
   assert.strictEqual(confirmed, 5522.40);
+}
+
+function testNegativeDistrimerInvoicesTotalConfirmedNoReview() {
+  const invoices = [
+    classifySupplierInvoiceCashflow(normalizeSupplierInvoice({ amount: '3040.51', remaining_amount_with_tax: '-3040.51', payment_status: 'to_be_paid', paid: false })),
+    classifySupplierInvoiceCashflow(normalizeSupplierInvoice({ amount: '2481.89', remaining_amount_with_tax: '-2481.89', payment_status: 'to_be_paid', paid: false })),
+    classifySupplierInvoiceCashflow(normalizeSupplierInvoice({ amount: '2128.46', remaining_amount_with_tax: '0.00', payment_status: 'paid_offline', paid: false })),
+    classifySupplierInvoiceCashflow(normalizeSupplierInvoice({ amount: '2087.32', remaining_amount_with_tax: '0.00', payment_status: 'fully_paid', paid: false })),
+  ];
+  const open = invoices.filter((row) => row.state === 'open');
+  const review = invoices.filter((row) => row.state === 'needs_review');
+  const confirmed = open.reduce((sum, row) => sum + row.remaining, 0);
+  assert.strictEqual(open.length, 2);
+  assert.strictEqual(review.length, 0);
+  assert.strictEqual(confirmed, 5522.40);
+}
+
+function testNegativeRemainingSecondSyncIdempotent() {
+  const first = normalizeSupplierInvoice({ id: 'si_1', amount: '3040.51', remaining_amount_with_tax: '-3040.51', payment_status: 'to_be_paid' });
+  const second = normalizeSupplierInvoice({ id: 'si_1', amount: '3040.51', remaining_amount_with_tax: '-3040.51', payment_status: 'to_be_paid' });
+  assert.strictEqual(first.remaining_amount_with_tax, second.remaining_amount_with_tax);
+  assert.strictEqual(classifySupplierInvoiceCashflow(first).state, classifySupplierInvoiceCashflow(second).state);
 }
 
 function testSupplierPaymentSecondaryErrorsDoNotHideSavedPayment() {
@@ -564,12 +626,17 @@ const tests = [
   testEightTransactionInitialAndSecondSyncNoDuplicate,
   testSupplierInvoicePositiveWithoutPaidProofVisible,
   testOfficialRemainingPositiveIsOpen,
+  testNegativeSupplierRemainingNormalizesPositive,
+  testNegativeSupplierRemainingUnknownStatusIsOpen,
   testOfficialRemainingZeroAndPaidTrueIsPaid,
+  testOfficialRemainingZeroPaidOfflineIsPaid,
   testOfficialRemainingMissingNeedsReview,
   testUnknownStatusWithPositiveOfficialRemainingIsOpen,
   testExclusiveSupplierStateCounters,
   testDistrimerConfirmedAndPotentialOutstandingSeparated,
   testTwoOpenDistrimerInvoicesTotalConfirmed,
+  testNegativeDistrimerInvoicesTotalConfirmedNoReview,
+  testNegativeRemainingSecondSyncIdempotent,
   testSupplierPaymentSecondaryErrorsDoNotHideSavedPayment,
   testSupplierPaymentSavedDespiteMatchedTransactionError,
   testClassSixFrontendCountsVisible,
