@@ -360,7 +360,6 @@ function normalizeName(value) {
 
 async function getDistrimer(db, storeId) {
   const settings = await getSettings(db, storeId);
-  const payables = await listSupplierPayables(db, storeId);
   const allDistrimerInvoices = await db.query(
     `
     SELECT
@@ -372,7 +371,14 @@ async function getDistrimer(db, storeId) {
       psi.invoice_number,
       psi.invoice_date,
       psi.due_date,
+      psi.amount_inc_vat AS amount,
+      psi.payment_status,
+      psi.paid,
+      psi.accounting_status,
+      psi.raw_payload->>'reconciled' AS reconciled,
+      psi.raw_payload->>'remaining_amount_with_tax' AS raw_remaining_amount_with_tax,
       COALESCE(psi.cashflow_open_state, 'needs_review') AS cashflow_open_state,
+      psi.cashflow_state_reason,
       COALESCE(psi.cashflow_remaining_amount, psi.remaining_amount_with_tax, psi.amount_inc_vat, psi.currency_amount_inc_vat, 0) AS remaining_amount,
       COALESCE(pay.pending_payment_amount, 0) AS pending_payment_amount
     FROM pennylane_supplier_invoices psi
@@ -409,6 +415,17 @@ async function getDistrimer(db, storeId) {
     potential_review_outstanding: reviewInvoices.reduce((sum, invoice) => sum + Number(invoice.remaining_amount || 0), 0),
     potential_outstanding: money(potentialOutstanding),
     pending_payment_amount: allDistrimerInvoices.reduce((sum, invoice) => sum + Number(invoice.pending_payment_amount || 0), 0),
+    invoice_diagnostics: allDistrimerInvoices.map((invoice) => ({
+      invoice_id: invoice.pennylane_supplier_invoice_id,
+      paid: invoice.paid,
+      payment_status: invoice.payment_status,
+      reconciled: invoice.reconciled,
+      amount: invoice.amount,
+      raw_remaining_amount_with_tax: invoice.raw_remaining_amount_with_tax,
+      normalized_remaining_amount_with_tax: invoice.remaining_amount,
+      calculated_state: invoice.cashflow_open_state,
+      state_reason: invoice.cashflow_state_reason,
+    })),
     review_items: reviewInvoices.map((invoice) => ({
       id: invoice.id,
       label: invoice.invoice_number || 'Facture DISTRIMER a verifier',
@@ -492,6 +509,16 @@ async function debugCounts(db, storeId) {
     `,
     [storeId]
   ).then((r) => r.rows).catch(() => []);
+  const supplierPaymentStatuses = await db.query(
+    `
+    SELECT COALESCE(payment_status, '<null>') AS payment_status, COUNT(*)::int AS count
+    FROM pennylane_supplier_invoices
+    WHERE store_id = $1 AND pennylane_deleted_at IS NULL
+    GROUP BY COALESCE(payment_status, '<null>')
+    ORDER BY count DESC, payment_status ASC
+    `,
+    [storeId]
+  ).then((r) => r.rows).catch(() => []);
   const totalSupplierInvoices = await single('SELECT COUNT(*) FROM pennylane_supplier_invoices WHERE store_id = $1 AND pennylane_deleted_at IS NULL');
   const class6InDatabase = await single('SELECT COUNT(*) FROM cashflow_charge_history WHERE store_id = $1');
   const distrimer = await getDistrimer(db, storeId).catch(() => ({}));
@@ -534,6 +561,7 @@ async function debugCounts(db, storeId) {
     distrimerPotentialOutstanding: Number(distrimer.potential_outstanding || 0),
     distrimerPendingPayments: Number(distrimer.pending_payment_amount || 0),
     suppliersFound,
+    supplierPaymentStatuses,
     latestResourceLogs,
   };
 }

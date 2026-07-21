@@ -147,12 +147,18 @@ function pushSqlError(stats, resourceId, err, operation, valueTypes = {}) {
   stats.error_details.push({
     resource_id: resourceId ? String(resourceId) : null,
     operation,
+    http_status: err.status || null,
+    error_code: err.code || (err.status ? `HTTP_${err.status}` : null),
     pg_code: err.code || null,
     pg_constraint: err.constraint || null,
     pg_column: err.column || null,
     message: err.message || 'Erreur SQL',
     value_types: valueTypes,
   });
+}
+
+function pushOperationError(stats, resourceId, err, operation, valueTypes = {}) {
+  pushSqlError(stats, resourceId, err, operation, valueTypes);
 }
 
 function sqlValueTypes(values = {}) {
@@ -527,6 +533,8 @@ function normalizeSupplierName(invoice) {
 
 function normalizeSupplierInvoice(invoice = {}) {
   const id = firstPresent(invoice, ['id', 'supplier_invoice_id']);
+  const rawRemainingWithTax = firstPresent(invoice, ['remaining_amount_with_tax']);
+  const rawRemainingWithoutTax = firstPresent(invoice, ['remaining_amount_without_tax']);
   const total = toMoney(firstPresent(invoice, [
     'amount',
     'amount_inc_vat',
@@ -534,8 +542,8 @@ function normalizeSupplierInvoice(invoice = {}) {
     'currency_amount',
     'total_amount',
   ]), 0);
-  const remaining = toMoney(firstPresent(invoice, [
-    'remaining_amount_with_tax',
+  const remaining = toMoney(rawRemainingWithTax, null);
+  const fallbackRemaining = toMoney(firstPresent(invoice, [
     'remaining_amount',
     'amount_due',
     'due_amount',
@@ -556,11 +564,16 @@ function normalizeSupplierInvoice(invoice = {}) {
     amount_ex_vat: toMoney(firstPresent(invoice, ['amount_before_tax', 'amount_ex_vat', 'amount_without_tax']), null),
     amount_vat: toMoney(firstPresent(invoice, ['tax', 'amount_vat', 'vat_amount']), null),
     amount_inc_vat: total,
-    remaining_amount_with_tax: remaining === null ? Math.max(total - (paid || 0), 0) : remaining,
+    remaining_amount_with_tax: remaining === null ? (fallbackRemaining === null ? Math.max(total - (paid || 0), 0) : fallbackRemaining) : remaining,
+    official_remaining_amount_with_tax: remaining,
+    official_remaining_amount_with_tax_raw: rawRemainingWithTax ?? null,
+    official_remaining_amount_without_tax_raw: rawRemainingWithoutTax ?? null,
+    has_official_remaining_amount_with_tax: remaining !== null,
     paid_amount: paid,
     accounting_status: firstPresent(invoice, ['accounting_status', 'status']),
-    payment_status: firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']) || (remaining === 0 ? 'paid' : 'to_complete'),
-    paid: firstPresent(invoice, ['paid']) === true || remaining === 0 || ['paid', 'paid_out', 'confirmed'].includes(String(firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']) || '').toLowerCase()),
+    payment_status: firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']),
+    paid: firstPresent(invoice, ['paid']) === true || ['paid', 'paid_out', 'confirmed', 'completed', 'settled', 'fully_paid'].includes(String(firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']) || '').toLowerCase()),
+    reconciled: firstPresent(invoice, ['reconciled']) === true,
     updated_at: firstPresent(invoice, ['updated_at']),
     raw: invoice,
   };
@@ -569,18 +582,39 @@ function normalizeSupplierInvoice(invoice = {}) {
 function classifySupplierInvoiceCashflow(invoice, payments = [], matchedTransactions = []) {
   const total = toMoney(invoice.amount_inc_vat, 0);
   const officialRemaining = toMoney(invoice.remaining_amount_with_tax, null);
+  const hasOfficialRemaining = invoice.has_official_remaining_amount_with_tax === true
+    || (invoice.official_remaining_amount_with_tax_raw !== undefined && invoice.official_remaining_amount_with_tax_raw !== null)
+    || (invoice.raw && Object.prototype.hasOwnProperty.call(invoice.raw, 'remaining_amount_with_tax'));
   const confirmedPayments = payments
     .filter((payment) => classifySupplierPaymentStatus(payment.status).is_confirmed)
     .reduce((sum, payment) => sum + toMoney(payment.amount, 0), 0);
   const matchedTotal = matchedTransactions.reduce((sum, tx) => sum + toMoney(tx.amount, 0), 0);
   const paymentStatus = String(invoice.payment_status || '').toLowerCase();
-  const explicitPaid = invoice.paid === true || ['paid', 'paid_out', 'confirmed'].includes(paymentStatus);
+  const paidStatuses = ['paid', 'paid_out', 'confirmed', 'completed', 'settled', 'fully_paid'];
+  const cancelledStatuses = ['cancelled', 'canceled', 'void', 'archived'];
+  const explicitPaid = invoice.paid === true || paidStatuses.includes(paymentStatus);
+  const cancelled = cancelledStatuses.includes(paymentStatus) || cancelledStatuses.includes(String(invoice.accounting_status || '').toLowerCase());
 
-  if (officialRemaining !== null && officialRemaining > 0) {
+  if (hasOfficialRemaining && officialRemaining !== null && officialRemaining > 0 && explicitPaid) {
+    return { state: 'needs_review', remaining: officialRemaining, paidAmount: confirmedPayments, reason: 'contradictory_paid_with_official_remaining' };
+  }
+  if (hasOfficialRemaining && officialRemaining !== null && officialRemaining > 0 && cancelled) {
+    return { state: 'needs_review', remaining: officialRemaining, paidAmount: confirmedPayments, reason: 'cancelled_or_archived_with_official_remaining' };
+  }
+  if (hasOfficialRemaining && officialRemaining !== null && officialRemaining > 0) {
     return { state: 'open', remaining: officialRemaining, paidAmount: Math.max(total - officialRemaining, confirmedPayments), reason: 'official_remaining_positive' };
   }
-  if (officialRemaining === 0 || explicitPaid) {
-    return { state: 'paid', remaining: 0, paidAmount: Math.max(confirmedPayments, total), reason: officialRemaining === 0 ? 'official_remaining_zero' : 'official_paid_status' };
+  if (hasOfficialRemaining && officialRemaining === 0 && explicitPaid) {
+    return { state: 'paid', remaining: 0, paidAmount: Math.max(confirmedPayments, total), reason: 'official_remaining_zero_paid_confirmed' };
+  }
+  if (hasOfficialRemaining && officialRemaining === 0 && invoice.reconciled === true) {
+    return { state: 'paid', remaining: 0, paidAmount: Math.max(confirmedPayments, total), reason: 'official_remaining_zero_reconciled' };
+  }
+  if (hasOfficialRemaining && officialRemaining === 0) {
+    return { state: 'needs_review', remaining: 0, paidAmount: confirmedPayments, reason: 'official_remaining_zero_without_paid_proof' };
+  }
+  if (explicitPaid) {
+    return { state: 'paid', remaining: 0, paidAmount: Math.max(confirmedPayments, total), reason: 'official_paid_status' };
   }
   if (total > 0 && confirmedPayments > 0 && confirmedPayments < total) {
     return { state: 'open', remaining: Math.max(total - confirmedPayments, 0), paidAmount: confirmedPayments, reason: 'partial_confirmed_payment' };
@@ -834,16 +868,29 @@ async function syncSupplierInvoicePayments(db, { storeId, client }) {
   let read = 0;
   let upserted = 0;
   let failed = 0;
+  let secondaryErrors = 0;
   let firstPayment = null;
   for (const invoice of invoices.rows) {
+    const invoiceId = String(invoice.pennylane_supplier_invoice_id);
+    let items = [];
     try {
-      const { items } = await fetchAllPages(client, `/supplier_invoices/${encodeURIComponent(invoice.pennylane_supplier_invoice_id)}/payments`, { limit: 100, maxPages: 10 });
+      const fetched = await fetchAllPages(client, `/supplier_invoices/${encodeURIComponent(invoiceId)}/payments`, { limit: 100, maxPages: 10 });
+      items = fetched.items;
       read += items.length;
       stats.pages_count += 1;
       stats.received_count += items.length;
       if (!firstPayment && items[0]) firstPayment = items[0];
-      for (const payment of items) {
-        const paymentId = firstPresent(payment, ['id', 'payment_id']);
+    } catch (err) {
+      failed += 1;
+      stats.error_count += 1;
+      pushOperationError(stats, invoiceId, err, 'fetch_supplier_invoice_payments', { invoice_id: typeof invoiceId });
+      if (err instanceof PennylaneApiError && err.status === 403) throw err;
+      continue;
+    }
+
+    for (const payment of items) {
+      const paymentId = firstPresent(payment, ['id', 'payment_id']);
+      try {
         if (!paymentId) {
           stats.ignored_count += 1;
           incrementReason(stats.ignored_reasons, 'missing_id');
@@ -871,24 +918,39 @@ async function syncSupplierInvoicePayments(db, { storeId, client }) {
             updated_at = now()
           RETURNING (xmax = 0) AS inserted
           `,
-          [storeId, String(invoice.pennylane_supplier_invoice_id), String(paymentId), firstPresent(payment, ['label', 'description']), Number(firstPresent(payment, ['amount', 'currency_amount']) || 0), firstPresent(payment, ['currency']) || 'EUR', classification.status, classification.is_confirmed, classification.is_pending, firstPresent(payment, ['created_at']) || null, firstPresent(payment, ['updated_at']) || null, JSON.stringify(payment)]
+          [storeId, invoiceId, String(paymentId), firstPresent(payment, ['label', 'description']), toMoney(firstPresent(payment, ['amount', 'currency_amount']), 0), firstPresent(payment, ['currency']) || 'EUR', classification.status, classification.is_confirmed, classification.is_pending, firstPresent(payment, ['created_at']) || null, firstPresent(payment, ['updated_at']) || null, JSON.stringify(payment)]
         );
         if (result.rows[0]?.inserted) stats.inserted_count += 1;
         else stats.updated_count += 1;
         upserted += 1;
+      } catch (err) {
+        failed += 1;
+        stats.error_count += 1;
+        pushOperationError(stats, invoiceId, err, 'upsert_supplier_invoice_payment', {
+          payment_id: paymentId === null ? 'null' : typeof paymentId,
+          amount: typeof firstPresent(payment, ['amount', 'currency_amount']),
+        });
       }
-      await syncSupplierInvoiceMatchedTransactions(db, { storeId, client, invoiceId: invoice.pennylane_supplier_invoice_id });
-      await refreshSupplierInvoiceCashflowState(db, storeId, invoice.pennylane_supplier_invoice_id);
+    }
+
+    try {
+      await syncSupplierInvoiceMatchedTransactions(db, { storeId, client, invoiceId });
     } catch (err) {
-      failed += 1;
+      secondaryErrors += 1;
       stats.error_count += 1;
-      if (err instanceof PennylaneApiError && err.status === 403) throw err;
+      pushOperationError(stats, invoiceId, err, 'sync_supplier_invoice_matched_transactions', { invoice_id: typeof invoiceId });
+    }
+    try {
+      await refreshSupplierInvoiceCashflowState(db, storeId, invoiceId);
+    } catch (err) {
+      secondaryErrors += 1;
+      stats.error_count += 1;
+      pushOperationError(stats, invoiceId, err, 'refresh_supplier_invoice_cashflow_state', { invoice_id: typeof invoiceId });
     }
   }
   await saveResponseSample(db, storeId, 'supplier_payment', '/supplier_invoices/{id}/payments', firstPayment);
-  stats.error_count += failed;
   await saveResourceLog(db, storeId, stats);
-  return { invoices: invoices.rows.length, read, upserted, failed, stats };
+  return { invoices: invoices.rows.length, read, upserted, failed, secondary_errors: secondaryErrors, stats };
 }
 
 async function refreshSupplierInvoiceCashflowState(db, storeId, invoiceId) {
@@ -920,15 +982,21 @@ async function refreshSupplierInvoiceCashflowState(db, storeId, invoiceId) {
     [storeId, String(invoiceId)]
   ).then((r) => r.rows).catch(() => []);
   const rawPayload = invoice.raw_payload && typeof invoice.raw_payload === 'object' ? invoice.raw_payload : {};
-  const hasOfficialRemaining = ['remaining_amount_with_tax', 'remaining_amount', 'amount_due', 'due_amount']
-    .some((key) => Object.prototype.hasOwnProperty.call(rawPayload, key));
+  const rawRemainingWithTax = Object.prototype.hasOwnProperty.call(rawPayload, 'remaining_amount_with_tax')
+    ? rawPayload.remaining_amount_with_tax
+    : undefined;
+  const hasOfficialRemaining = rawRemainingWithTax !== undefined;
   const state = classifySupplierInvoiceCashflow({
     amount_inc_vat: invoice.amount_inc_vat,
     remaining_amount_with_tax: hasOfficialRemaining
       ? invoice.remaining_amount_with_tax
       : null,
+    official_remaining_amount_with_tax_raw: rawRemainingWithTax,
+    has_official_remaining_amount_with_tax: hasOfficialRemaining,
     payment_status: invoice.payment_status,
     paid: invoice.paid,
+    reconciled: rawPayload.reconciled === true,
+    accounting_status: invoice.accounting_status,
   }, payments, matchedTransactions);
   await db.query(
     `

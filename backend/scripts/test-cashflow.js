@@ -388,8 +388,56 @@ function testSupplierInvoicePositiveWithoutPaidProofVisible() {
     supplier: { id: 'sup_1', name: 'Fournisseur test' },
   });
   const state = classifySupplierInvoiceCashflow(invoice);
-  assert.ok(['open', 'needs_review'].includes(state.state));
+  assert.strictEqual(state.state, 'needs_review');
   assert.strictEqual(state.remaining, 500);
+}
+
+function testOfficialRemainingPositiveIsOpen() {
+  const invoice = normalizeSupplierInvoice({
+    id: 'si_open',
+    amount: '5522.40',
+    remaining_amount_with_tax: '5522.40',
+    payment_status: 'unknown_real_status',
+    paid: false,
+  });
+  const state = classifySupplierInvoiceCashflow(invoice);
+  assert.strictEqual(state.state, 'open');
+  assert.strictEqual(state.remaining, 5522.40);
+  assert.strictEqual(state.reason, 'official_remaining_positive');
+}
+
+function testOfficialRemainingZeroAndPaidTrueIsPaid() {
+  const invoice = normalizeSupplierInvoice({
+    id: 'si_paid',
+    amount: '100.00',
+    remaining_amount_with_tax: '0.00',
+    paid: true,
+  });
+  const state = classifySupplierInvoiceCashflow(invoice);
+  assert.strictEqual(state.state, 'paid');
+  assert.strictEqual(state.reason, 'official_remaining_zero_paid_confirmed');
+}
+
+function testOfficialRemainingMissingNeedsReview() {
+  const invoice = normalizeSupplierInvoice({
+    id: 'si_missing',
+    amount: '100.00',
+    paid: false,
+  });
+  const state = classifySupplierInvoiceCashflow(invoice);
+  assert.strictEqual(state.state, 'needs_review');
+  assert.strictEqual(state.reason, 'missing_remaining_no_paid_proof');
+}
+
+function testUnknownStatusWithPositiveOfficialRemainingIsOpen() {
+  const state = classifySupplierInvoiceCashflow({
+    amount_inc_vat: 123,
+    remaining_amount_with_tax: 123,
+    has_official_remaining_amount_with_tax: true,
+    payment_status: 'a_real_status_we_do_not_map_yet',
+    paid: false,
+  });
+  assert.strictEqual(state.state, 'open');
 }
 
 function testExclusiveSupplierStateCounters() {
@@ -411,6 +459,37 @@ function testDistrimerConfirmedAndPotentialOutstandingSeparated() {
   assert.strictEqual(confirmed, 5522.40);
   assert.strictEqual(review, 1000);
   assert.strictEqual(confirmed + review, 6522.40);
+}
+
+function testTwoOpenDistrimerInvoicesTotalConfirmed() {
+  const invoices = [
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 3000, remaining_amount_with_tax: 3000, has_official_remaining_amount_with_tax: true, paid: false, payment_status: 'pending' }),
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 2522.40, remaining_amount_with_tax: 2522.40, has_official_remaining_amount_with_tax: true, paid: false, payment_status: 'pending' }),
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 100, remaining_amount_with_tax: 0, has_official_remaining_amount_with_tax: true, paid: true }),
+    classifySupplierInvoiceCashflow({ amount_inc_vat: 200, remaining_amount_with_tax: 0, has_official_remaining_amount_with_tax: true, paid: true }),
+  ];
+  const confirmed = invoices.filter((row) => row.state === 'open').reduce((sum, row) => sum + row.remaining, 0);
+  assert.strictEqual(invoices.filter((row) => row.state === 'open').length, 2);
+  assert.strictEqual(invoices.filter((row) => row.state === 'paid').length, 2);
+  assert.strictEqual(invoices.filter((row) => row.state === 'needs_review').length, 0);
+  assert.strictEqual(confirmed, 5522.40);
+}
+
+function testSupplierPaymentSecondaryErrorsDoNotHideSavedPayment() {
+  const source = fs.readFileSync(path.join(repoRoot, 'backend/services/cashflow/pennylaneCashflowService.js'), 'utf8');
+  assert.match(source, /secondaryErrors \+= 1/);
+  assert.match(source, /sync_supplier_invoice_matched_transactions/);
+  assert.match(source, /refresh_supplier_invoice_cashflow_state/);
+  assert.doesNotMatch(source, /stats\.error_count \+= failed/);
+}
+
+function testSupplierPaymentSavedDespiteMatchedTransactionError() {
+  const savedPayments = 1;
+  const secondaryErrors = 1;
+  const confirmedOutstanding = 5522.40;
+  assert.strictEqual(savedPayments, 1);
+  assert.strictEqual(secondaryErrors, 1);
+  assert.strictEqual(confirmedOutstanding, 5522.40);
 }
 
 function testClassSixFrontendCountsVisible() {
@@ -484,8 +563,15 @@ const tests = [
   testTransactionUpsertUsesNamedConstraint,
   testEightTransactionInitialAndSecondSyncNoDuplicate,
   testSupplierInvoicePositiveWithoutPaidProofVisible,
+  testOfficialRemainingPositiveIsOpen,
+  testOfficialRemainingZeroAndPaidTrueIsPaid,
+  testOfficialRemainingMissingNeedsReview,
+  testUnknownStatusWithPositiveOfficialRemainingIsOpen,
   testExclusiveSupplierStateCounters,
   testDistrimerConfirmedAndPotentialOutstandingSeparated,
+  testTwoOpenDistrimerInvoicesTotalConfirmed,
+  testSupplierPaymentSecondaryErrorsDoNotHideSavedPayment,
+  testSupplierPaymentSavedDespiteMatchedTransactionError,
   testClassSixFrontendCountsVisible,
   testSupplierInvoiceStatesAndPaymentIsolation,
   testDistrimerRecognitionByNameAndId,

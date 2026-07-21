@@ -20,7 +20,9 @@ function statusLine(label, result, receivedKey = 'read') {
   const received = result[receivedKey] ?? result.stats?.received_count ?? 0;
   const inserted = result.stats ? `, ${result.stats.inserted_count || 0} inserted, ${result.stats.updated_count || 0} updated` : '';
   const ignored = result.stats?.ignored_count ? `, ${result.stats.ignored_count} ignored` : '';
-  return `[OK] ${label}: ${received} received${pages ? ` over ${pages} pages` : ''}${inserted}${ignored}`;
+  const errors = result.stats?.error_count ? `, ${result.stats.error_count} errors` : '';
+  const secondary = result.secondary_errors ? `, ${result.secondary_errors} secondary errors` : '';
+  return `[OK] ${label}: ${received} received${pages ? ` over ${pages} pages` : ''}${inserted}${ignored}${secondary}${errors}`;
 }
 
 function asJson(value) {
@@ -75,6 +77,20 @@ async function main() {
   console.log(`[OK] DISTRIMER: ${distrimer.open_invoice_count || 0} open invoices, ${Number((distrimer.confirmed_outstanding ?? distrimer.exposure) || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR outstanding`);
   console.log(`[OK] DISTRIMER details: total=${distrimer.total_invoice_count || 0}, open=${distrimer.open_invoice_count || 0}, paid=${distrimer.paid_invoice_count || 0}, needs_review=${distrimer.review_invoice_count || 0}, potential_review=${Number(distrimer.potential_review_outstanding || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR, potential_total=${Number(distrimer.potential_outstanding || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR, pending_payments=${Number(distrimer.pending_payment_amount || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2 })} EUR`);
 
+  if (Array.isArray(counts.supplierPaymentStatuses) && counts.supplierPaymentStatuses.length) {
+    console.log('\nSupplier invoice payment_status values:');
+    counts.supplierPaymentStatuses.forEach((row) => {
+      console.log(`- ${row.payment_status}: ${row.count}`);
+    });
+  }
+
+  if (Array.isArray(distrimer.invoice_diagnostics) && distrimer.invoice_diagnostics.length) {
+    console.log('\nDISTRIMER invoice diagnostics:');
+    distrimer.invoice_diagnostics.forEach((invoice) => {
+      console.log(`- invoice_id=${invoice.invoice_id || '-'} paid=${invoice.paid} payment_status=${invoice.payment_status || '-'} reconciled=${invoice.reconciled || '-'} amount=${invoice.amount || 0} raw_remaining=${invoice.raw_remaining_amount_with_tax ?? '-'} normalized_remaining=${invoice.normalized_remaining_amount_with_tax || 0} state=${invoice.calculated_state || '-'} reason=${invoice.state_reason || '-'}`);
+    });
+  }
+
   const transactionSample = await latestSample('transaction', storeId);
   if (transactionSample) {
     console.log('\nTransaction sample shape:');
@@ -91,10 +107,10 @@ async function main() {
     console.log('\nResource logs:');
     counts.latestResourceLogs.forEach((row) => {
       console.log(`- ${row.resource}: received=${row.received_count}, normalized=${row.normalized_count}, inserted=${row.inserted_count}, updated=${row.updated_count}, ignored=${row.ignored_count}, errors=${row.error_count}${row.error_message ? `, error=${row.error_message}` : ''}`);
-      if (row.resource === 'transactions' && Array.isArray(row.error_details) && row.error_details.length) {
-        console.log('  transaction SQL errors:');
+      if (['transactions', 'supplier_payments'].includes(row.resource) && Array.isArray(row.error_details) && row.error_details.length) {
+        console.log(`  ${row.resource} errors:`);
         row.error_details.forEach((error) => {
-          console.log(`  - id=${error.resource_id || '-'} op=${error.operation || '-'} pg_code=${error.pg_code || '-'} constraint=${error.pg_constraint || '-'} column=${error.pg_column || '-'} message=${error.message || '-'}`);
+          console.log(`  - id=${error.resource_id || '-'} op=${error.operation || '-'} http=${error.http_status || '-'} code=${error.error_code || error.pg_code || '-'} constraint=${error.pg_constraint || '-'} column=${error.pg_column || '-'} message=${error.message || '-'}`);
           console.log(`    value_types=${JSON.stringify(error.value_types || {})}`);
         });
       }
