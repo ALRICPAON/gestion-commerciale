@@ -12,6 +12,19 @@ async function latestBankSnapshot(db, storeId) {
   return result.rows[0] || null;
 }
 
+async function listBankAccounts(db, storeId) {
+  const result = await db.query(
+    `
+    SELECT *
+    FROM cashflow_bank_accounts
+    WHERE store_id = $1
+    ORDER BY include_in_cashflow DESC, is_main DESC, name ASC
+    `,
+    [storeId]
+  ).catch(() => ({ rows: [] }));
+  return result.rows;
+}
+
 async function listBankTransactions(db, storeId, query = {}) {
   const params = [storeId];
   const where = ['store_id = $1'];
@@ -48,5 +61,6 @@ async function listBankTransactions(db, storeId, query = {}) {
 
 module.exports = {
   latestBankSnapshot,
+  listBankAccounts,
   listBankTransactions,
 };

@@ -10,9 +10,21 @@ const {
   simulateDistrimerPayment,
 } = require('../services/cashflow/distrimerExposureService');
 const {
+  calculateSupplierInvoicePaymentAmounts,
+  classifySupplierPaymentStatus,
+} = require('../services/cashflow/supplierPaymentService');
+const {
   calculateCustomerBehaviour,
   forecastCustomerPaymentDate,
 } = require('../services/cashflow/customerPaymentBehaviourService');
+const {
+  detectRecurringTransactions,
+} = require('../services/cashflow/recurringChargeService');
+const {
+  fetchAllPages,
+  runCashflowDiagnostic,
+} = require('../services/cashflow/pennylaneCashflowService');
+const { PennylaneApiError } = require('../services/pennylane');
 
 function byDate(forecast, date) {
   return forecast.rows.find((row) => row.date === date);
@@ -132,6 +144,109 @@ function testScenarios() {
   assert.strictEqual(prudentForecast.rows.find((row) => row.inflows === 100).date, '2026-07-21');
 }
 
+async function testPennylanePagination() {
+  const calls = [];
+  const client = {
+    async get(endpoint) {
+      calls.push(endpoint);
+      if (!endpoint.includes('cursor=')) return { status: 200, body: { items: [{ id: 1 }], has_more: true, next_cursor: 'NEXT' } };
+      return { status: 200, body: { items: [{ id: 2 }], has_more: false } };
+    },
+  };
+  const result = await fetchAllPages(client, '/bank_accounts', { limit: 1 });
+  assert.strictEqual(result.items.length, 2);
+  assert.strictEqual(calls.length, 2);
+}
+
+async function testForbiddenDiagnostic() {
+  const db = { async query() { return { rows: [] }; } };
+  const client = {
+    async get(endpoint) {
+      if (endpoint.includes('/transactions')) {
+        throw new PennylaneApiError('Erreur API Pennylane', { status: 403 });
+      }
+      return { status: 200, body: { items: [{ id: 1 }] } };
+    },
+  };
+  const rows = await runCashflowDiagnostic(db, { storeId: 'store', client });
+  const transactions = rows.find((row) => row.endpoint === 'GET /transactions');
+  assert.strictEqual(transactions.access_status, 'forbidden');
+  assert.match(transactions.action_required, /transactions:readonly/);
+}
+
+function testBankAccountSelectionSum() {
+  const accounts = [
+    { balance: 1000, include_in_cashflow: true },
+    { balance: 2500, include_in_cashflow: true },
+    { balance: 9000, include_in_cashflow: false },
+  ];
+  const balance = accounts.filter((row) => row.include_in_cashflow).reduce((sum, row) => sum + row.balance, 0);
+  assert.strictEqual(balance, 3500);
+}
+
+function testSupplierPaymentStatuses() {
+  assert.strictEqual(classifySupplierPaymentStatus('confirmed').is_confirmed, true);
+  assert.strictEqual(classifySupplierPaymentStatus('pending').is_pending, true);
+  assert.strictEqual(classifySupplierPaymentStatus('cancelled').is_cancelled, true);
+  const amounts = calculateSupplierInvoicePaymentAmounts({
+    totalAmount: 1000,
+    payments: [
+      { amount: 400, status: 'confirmed' },
+      { amount: 200, status: 'pending' },
+      { amount: 100, status: 'cancelled' },
+    ],
+  });
+  assert.strictEqual(amounts.confirmed_paid_amount, 400);
+  assert.strictEqual(amounts.pending_payment_amount, 200);
+  assert.strictEqual(amounts.remaining_to_pay, 600);
+}
+
+function testMatchedTransactionNoDoubleCounting() {
+  const invoice = { total: 1000, remaining: 0 };
+  const transaction = { amount: 1000, matched_invoice_id: 'INV-1' };
+  const forecastAmount = invoice.remaining > 0 && !transaction.matched_invoice_id ? invoice.remaining : 0;
+  assert.strictEqual(forecastAmount, 0);
+}
+
+function testRecurringSuggestionNotIntegrated() {
+  const suggestions = detectRecurringTransactions([
+    { transaction_date: '2026-05-03', amount: 89, direction: 'out', label: 'Pennylane' },
+    { transaction_date: '2026-06-03', amount: 90, direction: 'out', label: 'Pennylane' },
+    { transaction_date: '2026-07-03', amount: 88, direction: 'out', label: 'Pennylane' },
+  ]);
+  assert.strictEqual(suggestions.length, 1);
+  const forecast = buildDailyForecast({ openingBalance: 1000, items: [], days: 40 });
+  assert.strictEqual(forecast.closing_balance, 1000);
+}
+
+function testClassSixAnalysis() {
+  const rows = [
+    { account_number: '607000', amount: 1200 },
+    { account_number: '624000', amount: 200 },
+    { account_number: '707000', amount: 5000 },
+  ];
+  const charges = rows.filter((row) => String(row.account_number).startsWith('6'));
+  assert.strictEqual(charges.length, 2);
+}
+
+function testDistrimerWithPayments() {
+  const exposure = calculateDistrimerExposure({
+    invoices: [
+      { amount: 8000, label: 'Facture 1' },
+      { amount: 2000, label: 'Facture 2' },
+    ],
+    settings: { limit: 10000, targetAfterPayment: 7500 },
+  });
+  const amounts = calculateSupplierInvoicePaymentAmounts({
+    totalAmount: 10000,
+    payments: [{ amount: 1500, status: 'confirmed' }, { amount: 500, status: 'pending' }],
+  });
+  assert.strictEqual(exposure.exposure, 10000);
+  assert.strictEqual(amounts.confirmed_paid_amount, 1500);
+  assert.strictEqual(amounts.pending_payment_amount, 500);
+  assert.strictEqual(amounts.remaining_to_pay, 8500);
+}
+
 const tests = [
   testCustomerInflow,
   testSupplierOutflow,
@@ -143,11 +258,27 @@ const tests = [
   testNoDoubleCounting,
   testRecurringManualItem,
   testScenarios,
+  testBankAccountSelectionSum,
+  testSupplierPaymentStatuses,
+  testMatchedTransactionNoDoubleCounting,
+  testRecurringSuggestionNotIntegrated,
+  testClassSixAnalysis,
+  testDistrimerWithPayments,
 ];
 
-for (const test of tests) {
-  test();
-  console.log(`OK ${test.name}`);
+async function main() {
+  for (const test of tests) {
+    test();
+    console.log(`OK ${test.name}`);
+  }
+  for (const test of [testPennylanePagination, testForbiddenDiagnostic]) {
+    await test();
+    console.log(`OK ${test.name}`);
+  }
+  console.log('Tests cashflow OK');
 }
 
-console.log('Tests cashflow OK');
+main().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

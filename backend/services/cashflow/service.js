@@ -8,9 +8,11 @@ const {
 } = require('./forecastService');
 const { calculateCustomerBehaviour, forecastCustomerPaymentDate } = require('./customerPaymentBehaviourService');
 const { calculateDistrimerExposure, simulateDistrimerPayment, DEFAULT_SETTINGS } = require('./distrimerExposureService');
-const { latestBankSnapshot, listBankTransactions } = require('./bankTransactionService');
+const { latestBankSnapshot, listBankAccounts, listBankTransactions } = require('./bankTransactionService');
 const { PENNYLANE_CASHFLOW_CAPABILITIES } = require('./pennylaneCashflowService');
 const { listManualItems } = require('./manualForecastService');
+const { calculateSupplierInvoicePaymentAmounts } = require('./supplierPaymentService');
+const { expandRecurringCharges } = require('./recurringChargeService');
 
 function parseHorizon(value) {
   const horizon = Number(value || 30);
@@ -51,7 +53,10 @@ async function updateSettings(db, storeId, body = {}) {
       distrimer_target_after_payment = $10,
       default_customer_delay_days = $11,
       cautious_customer_delay_days = $12,
-      settings = COALESCE($13::jsonb, settings),
+      included_bank_account_ids = COALESCE($13::text[], included_bank_account_ids),
+      excluded_bank_account_ids = COALESCE($14::text[], excluded_bank_account_ids),
+      balance_stale_after_hours = $15,
+      settings = COALESCE($16::jsonb, settings),
       updated_at = now()
     WHERE store_id = $1
     RETURNING *
@@ -69,10 +74,34 @@ async function updateSettings(db, storeId, body = {}) {
       body.distrimer_target_after_payment ?? current.distrimer_target_after_payment,
       body.default_customer_delay_days ?? current.default_customer_delay_days,
       body.cautious_customer_delay_days ?? current.cautious_customer_delay_days,
+      Array.isArray(body.included_bank_account_ids) ? body.included_bank_account_ids.map(String) : null,
+      Array.isArray(body.excluded_bank_account_ids) ? body.excluded_bank_account_ids.map(String) : null,
+      body.balance_stale_after_hours ?? current.balance_stale_after_hours ?? 24,
       body.settings ? JSON.stringify(body.settings) : null,
     ]
   );
+  await applyBankAccountSelection(db, storeId, result.rows[0]);
   return result.rows[0];
+}
+
+async function applyBankAccountSelection(db, storeId, settings) {
+  const included = Array.isArray(settings.included_bank_account_ids) ? settings.included_bank_account_ids : [];
+  const excluded = Array.isArray(settings.excluded_bank_account_ids) ? settings.excluded_bank_account_ids : [];
+  if (!included.length && !excluded.length) return;
+  await db.query(
+    `
+    UPDATE cashflow_bank_accounts
+    SET include_in_cashflow = CASE
+        WHEN pennylane_bank_account_id = ANY($2::text[]) THEN true
+        WHEN pennylane_bank_account_id = ANY($3::text[]) THEN false
+        ELSE include_in_cashflow
+      END,
+      is_main = CASE WHEN pennylane_bank_account_id = $4 THEN true ELSE false END,
+      updated_at = now()
+    WHERE store_id = $1
+    `,
+    [storeId, included, excluded, included[0] || null]
+  ).catch(() => {});
 }
 
 async function listCustomerReceivables(db, storeId) {
@@ -152,9 +181,29 @@ async function listSupplierPayables(db, storeId) {
       psi.paid,
       psi.accounting_status,
       psi.last_synced_at,
-      'pennylane' AS source
+      'pennylane' AS source,
+      COALESCE(pay.confirmed_paid_amount, 0) AS confirmed_paid_amount,
+      COALESCE(pay.pending_payment_amount, 0) AS pending_payment_amount,
+      COALESCE(pay.payment_count, 0)::int AS payment_count,
+      COALESCE(link.link_count, 0)::int AS matched_transaction_count
     FROM pennylane_supplier_invoices psi
     LEFT JOIN suppliers s ON s.id = psi.supplier_id AND s.store_id = psi.store_id
+    LEFT JOIN (
+      SELECT
+        store_id,
+        pennylane_supplier_invoice_id,
+        SUM(CASE WHEN is_confirmed THEN amount ELSE 0 END) AS confirmed_paid_amount,
+        SUM(CASE WHEN is_pending THEN amount ELSE 0 END) AS pending_payment_amount,
+        COUNT(*) AS payment_count
+      FROM cashflow_supplier_invoice_payments
+      GROUP BY store_id, pennylane_supplier_invoice_id
+    ) pay ON pay.store_id = psi.store_id AND pay.pennylane_supplier_invoice_id = psi.pennylane_supplier_invoice_id
+    LEFT JOIN (
+      SELECT store_id, pennylane_invoice_id, COUNT(*) AS link_count
+      FROM cashflow_invoice_transaction_links
+      WHERE invoice_type = 'supplier_invoice'
+      GROUP BY store_id, pennylane_invoice_id
+    ) link ON link.store_id = psi.store_id AND link.pennylane_invoice_id = psi.pennylane_supplier_invoice_id
     WHERE psi.store_id = $1
       AND psi.pennylane_deleted_at IS NULL
       AND COALESCE(psi.paid, false) = false
@@ -167,22 +216,47 @@ async function listSupplierPayables(db, storeId) {
   ).catch(() => ({ rows: [] }));
   return result.rows.map((row) => ({
     ...row,
+    ...calculateSupplierInvoicePaymentAmounts({
+      totalAmount: row.total_amount,
+      pennylaneRemainingAmount: row.remaining_amount,
+      payments: [
+        { amount: row.confirmed_paid_amount, status: 'confirmed' },
+        { amount: row.pending_payment_amount, status: 'pending' },
+      ],
+    }),
     planned_payment_date: row.due_date || row.invoice_date || isoDate(new Date()),
     priority: row.due_date && isoDate(row.due_date) <= isoDate(new Date()) ? 'haute' : 'normale',
   }));
 }
 
+async function listRecurringCharges(db, storeId) {
+  const result = await db.query(
+    `
+    SELECT *
+    FROM cashflow_recurring_charges
+    WHERE store_id = $1
+    ORDER BY active DESC, first_due_date ASC
+    LIMIT 500
+    `,
+    [storeId]
+  ).catch(() => ({ rows: [] }));
+  return result.rows;
+}
+
 async function forecastItems(db, storeId, { days = 30 } = {}) {
-  const [receivables, payables, manualItems] = await Promise.all([
+  const [receivables, payables, manualItems, recurringCharges] = await Promise.all([
     listCustomerReceivables(db, storeId),
     listSupplierPayables(db, storeId),
     listManualItems(db, storeId).catch(() => []),
+    listRecurringCharges(db, storeId),
   ]);
   const expandedManual = expandManualItems(manualItems.map((item) => ({
     ...item,
     date: item.forecast_date,
     type: item.direction,
   })), { days });
+
+  const recurringItems = expandRecurringCharges(recurringCharges, { days });
 
   return [
     ...receivables.map((invoice) => ({
@@ -217,6 +291,7 @@ async function forecastItems(db, storeId, { days = 30 } = {}) {
       counterparty_name: item.category,
       status: item.active === false ? 'inactive' : 'active',
     })),
+    ...recurringItems,
   ];
 }
 
@@ -253,15 +328,82 @@ async function getDistrimer(db, storeId) {
   });
 }
 
+async function latestDiagnostics(db, storeId) {
+  const result = await db.query(
+    `
+    SELECT DISTINCT ON (endpoint) *
+    FROM cashflow_scope_diagnostics
+    WHERE store_id = $1
+    ORDER BY endpoint, tested_at DESC
+    `,
+    [storeId]
+  ).catch(() => ({ rows: [] }));
+  return result.rows;
+}
+
+async function chargeCompletionAlerts(db, storeId) {
+  const [categories, recurring, transactions] = await Promise.all([
+    db.query(
+      `
+      SELECT DISTINCT ON (SUBSTRING(line.account_number FROM 1 FOR 3))
+        SUBSTRING(line.account_number FROM 1 FOR 3) AS account_prefix,
+        line.account_label,
+        line.net_balance
+      FROM pennylane_trial_balance_snapshots snap
+      INNER JOIN pennylane_trial_balance_lines line ON line.snapshot_id = snap.id
+      WHERE snap.store_id = $1
+        AND line.account_number LIKE ANY(ARRAY['60%', '61%', '62%', '63%', '64%', '65%', '66%'])
+      ORDER BY SUBSTRING(line.account_number FROM 1 FOR 3), snap.fetched_at DESC
+      `,
+      [storeId]
+    ).then((r) => r.rows).catch(async () => db.query(
+      `
+      SELECT *
+      FROM financial_report_mappings
+      WHERE (store_id = $1 OR store_id IS NULL)
+        AND is_active = true
+        AND account_prefix LIKE ANY(ARRAY['60%', '61%', '62%', '63%', '64%', '65%', '66%'])
+      `,
+      [storeId]
+    ).then((r) => r.rows).catch(() => [])),
+    listRecurringCharges(db, storeId),
+    listBankTransactions(db, storeId, { direction: 'out' }).catch(() => []),
+  ]);
+  const recurringCategories = new Set(recurring.filter((row) => row.active !== false).map((row) => row.category_code));
+  const alerts = [];
+  const checks = [
+    ['fees', 'Des honoraires ont ete comptabilises mais aucune echeance future n est configuree.'],
+    ['wages', 'Aucune charge de salaire n est configuree.'],
+    ['social_charges', 'Aucune prevision de cotisations sociales n est renseignee.'],
+    ['taxes', 'Aucune prevision de TVA ou impots n est renseignee.'],
+  ];
+  for (const [code, message] of checks) {
+    if (!recurringCategories.has(code)) alerts.push({ code, message, action: 'Creer une charge recurrente' });
+  }
+  if (categories.length && !recurring.length) {
+    alerts.push({ code: 'historical_charges', message: 'Des comptes de classe 6 existent dans le compte d exploitation, mais aucune charge recurrente n est configuree.', action: 'Completer les charges recurrentes' });
+  }
+  return {
+    alerts,
+    historical_charge_categories_count: categories.length,
+    configured_recurring_charges_count: recurring.length,
+    observed_bank_outflows_count: transactions.length,
+  };
+}
+
 async function getDashboard(db, storeId, query = {}) {
   const settings = await getSettings(db, storeId);
   const snapshot = await latestBankSnapshot(db, storeId).catch(() => null);
   const openingBalance = money(snapshot?.balance ?? settings.opening_balance ?? 0);
-  const [items, receivables, payables, manualItems, syncLog] = await Promise.all([
+  const bankAccounts = await listBankAccounts(db, storeId);
+  const [items, receivables, payables, manualItems, recurringCharges, diagnostics, completion, syncLog] = await Promise.all([
     forecastItems(db, storeId, { days: 90 }),
     listCustomerReceivables(db, storeId),
     listSupplierPayables(db, storeId),
     listManualItems(db, storeId).catch(() => []),
+    listRecurringCharges(db, storeId),
+    latestDiagnostics(db, storeId),
+    chargeCompletionAlerts(db, storeId),
     db.query('SELECT * FROM cashflow_sync_logs WHERE store_id = $1 ORDER BY started_at DESC LIMIT 1', [storeId]).then((r) => r.rows[0]).catch(() => null),
   ]);
   const scenario = parseScenario(query.scenario);
@@ -275,6 +417,10 @@ async function getDashboard(db, storeId, query = {}) {
       bank_balance: openingBalance,
       bank_balance_source: snapshot ? 'snapshot_bancaire_alta' : 'parametre_manuel',
       bank_balance_updated_at: snapshot?.snapshot_at || settings.updated_at,
+      bank_balance_stale: snapshot?.snapshot_at
+        ? ((Date.now() - new Date(snapshot.snapshot_at).getTime()) / 3600000) > Number(settings.balance_stale_after_hours || 24)
+        : true,
+      included_bank_accounts: bankAccounts.filter((account) => account.include_in_cashflow).map((account) => account.name),
       forecast_7_days: daily7.closing_balance,
       forecast_30_days: daily30.closing_balance,
       expected_inflows: money(items.filter((item) => item.direction === 'in').reduce((sum, item) => sum + Number(item.amount || 0), 0)),
@@ -292,7 +438,11 @@ async function getDashboard(db, storeId, query = {}) {
       customer_invoice_count: receivables.length,
       supplier_invoice_count: payables.length,
       manual_item_count: manualItems.length,
+      recurring_charge_count: recurringCharges.length,
       unplanned_items: items.filter((item) => !item.date).length,
+      bank_accounts: bankAccounts,
+      diagnostics,
+      charge_completion: completion,
     },
     forecast: daily30,
     weekly_forecast: buildWeeklyForecast(daily30.rows),
@@ -366,12 +516,16 @@ module.exports = {
   getForecast,
   getSettings,
   listBankTransactions,
+  listBankAccounts,
+  listRecurringCharges,
   listCustomerReceivables,
   listPaidCustomerHistory,
   listSupplierPayables,
   sendForecastExport,
   simulateDistrimerPayment,
   updateSettings,
+  latestDiagnostics,
+  chargeCompletionAlerts,
   calculateCustomerBehaviour,
   settingsForDistrimer,
 };

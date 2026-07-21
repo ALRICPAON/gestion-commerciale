@@ -57,6 +57,7 @@
       <button class="cashflow-tab" type="button" data-tab="payables">Paiements fournisseurs</button>
       <button class="cashflow-tab" type="button" data-tab="distrimer">DISTRIMER</button>
       <button class="cashflow-tab" type="button" data-tab="bank">Mouvements bancaires</button>
+      <button class="cashflow-tab" type="button" data-tab="charges">Charges a completer</button>
       <button class="cashflow-tab" type="button" data-tab="settings">Parametres</button>
     </section>
 
@@ -134,10 +135,27 @@
 
     <section class="cashflow-tab-panel" data-panel="bank">
       <article class="cashflow-panel">
+        <div class="cashflow-section-title"><h3>Comptes bancaires Pennylane</h3></div>
+        <div id="bank-accounts-table"></div>
+      </article>
+      <article class="cashflow-panel">
         <div class="cashflow-section-title"><h3>Derniers mouvements bancaires</h3></div>
         <div id="bank-warning" class="cashflow-warning"></div>
         <div id="bank-table"></div>
       </article>
+    </section>
+
+    <section class="cashflow-tab-panel" data-panel="charges">
+      <div class="cashflow-grid">
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Charges a completer</h3></div>
+          <div id="charges-alerts"></div>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title"><h3>Charges recurrentes configurees</h3></div>
+          <div id="recurring-charges-table"></div>
+        </article>
+      </div>
     </section>
 
     <section class="cashflow-tab-panel" data-panel="settings">
@@ -165,6 +183,16 @@
             <label>Delai client par defaut <input id="setting-default-delay" type="number" step="1"></label>
             <button class="btn btn-primary" type="submit">Enregistrer</button>
           </form>
+        </article>
+        <article class="cashflow-panel">
+          <div class="cashflow-section-title">
+            <div>
+              <h3>Diagnostic de connexion Pennylane</h3>
+              <p>Un refus d'autorisation est affiche comme un scope manquant.</p>
+            </div>
+            <button id="run-diagnostic-btn" class="btn btn-secondary" type="button">Tester les acces</button>
+          </div>
+          <div id="diagnostic-table"></div>
         </article>
       </div>
     </section>

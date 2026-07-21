@@ -3,16 +3,20 @@ const express = require('express');
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { CASHFLOW_PERMISSIONS, requireCashflowPermission } = require('../services/cashflow/permissions');
-const { syncCashflowData, PENNYLANE_CASHFLOW_CAPABILITIES } = require('../services/cashflow/pennylaneCashflowService');
+const { runCashflowDiagnostic, syncCashflowData, PENNYLANE_CASHFLOW_CAPABILITIES } = require('../services/cashflow/pennylaneCashflowService');
 const {
+  chargeCompletionAlerts,
   calculateCustomerBehaviour,
   getDashboard,
   getDistrimer,
   getForecast,
   getSettings,
+  latestDiagnostics,
+  listBankAccounts,
   listBankTransactions,
   listCustomerReceivables,
   listPaidCustomerHistory,
+  listRecurringCharges,
   listSupplierPayables,
   sendForecastExport,
   settingsForDistrimer,
@@ -77,6 +81,25 @@ router.post('/cashflow/sync', requireCashflowPermission(CASHFLOW_PERMISSIONS.SYN
   }
 });
 
+router.post('/cashflow/diagnostic', requireCashflowPermission(CASHFLOW_PERMISSIONS.SYNC), async (req, res) => {
+  try {
+    return res.json({
+      diagnostics: await runCashflowDiagnostic(req.dbPool, { storeId: req.user.store_id }),
+      pennylane: PENNYLANE_CASHFLOW_CAPABILITIES,
+    });
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
+router.get('/cashflow/diagnostic', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
+  try {
+    return res.json({ diagnostics: await latestDiagnostics(req.dbPool, req.user.store_id) });
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
 router.get('/cashflow/forecast', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
   try {
     return res.json(await getForecast(req.dbPool, req.user.store_id, req.query));
@@ -110,8 +133,16 @@ router.get('/cashflow/bank-transactions', requireCashflowPermission(CASHFLOW_PER
   try {
     return res.json({
       transactions: await listBankTransactions(req.dbPool, req.user.store_id, req.query),
-      warning: 'Transactions bancaires Pennylane preparees mais aucun endpoint bancaire n est encore valide dans ce depot.',
+      warning: null,
     });
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
+router.get('/cashflow/bank-accounts', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
+  try {
+    return res.json({ accounts: await listBankAccounts(req.dbPool, req.user.store_id) });
   } catch (err) {
     return handleError(res, err);
   }
@@ -145,6 +176,57 @@ router.post('/cashflow/distrimer/simulate', requireCashflowPermission(CASHFLOW_P
 router.get('/cashflow/manual-items', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
   try {
     return res.json({ items: await listManualItems(req.dbPool, req.user.store_id) });
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
+router.get('/cashflow/recurring-charges', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
+  try {
+    return res.json({ charges: await listRecurringCharges(req.dbPool, req.user.store_id) });
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
+router.post('/cashflow/recurring-charges', requireCashflowPermission(CASHFLOW_PERMISSIONS.MANAGE), async (req, res) => {
+  try {
+    const amount = Number(req.body.cash_amount || req.body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return res.status(400).json({ error: 'Montant invalide' });
+    if (!req.body.label || !req.body.first_due_date) return res.status(400).json({ error: 'Libelle et premiere echeance obligatoires' });
+    const result = await req.dbPool.query(
+      `
+      INSERT INTO cashflow_recurring_charges(
+        store_id, label, category_code, cash_amount, first_due_date, frequency, due_day,
+        end_date, active, adjust_non_working_days, comment, created_by
+      )
+      VALUES($1, $2, $3, $4, $5::date, $6, $7, $8::date, $9, $10, $11, $12)
+      RETURNING *
+      `,
+      [
+        req.user.store_id,
+        String(req.body.label).trim(),
+        req.body.category_code || 'other',
+        amount,
+        req.body.first_due_date,
+        req.body.frequency || 'monthly',
+        req.body.due_day || null,
+        req.body.end_date || null,
+        req.body.active !== false,
+        req.body.adjust_non_working_days === true,
+        req.body.comment || null,
+        req.user.id,
+      ]
+    );
+    return res.status(201).json({ charge: result.rows[0] });
+  } catch (err) {
+    return handleError(res, err);
+  }
+});
+
+router.get('/cashflow/charges-to-complete', requireCashflowPermission(CASHFLOW_PERMISSIONS.READ), async (req, res) => {
+  try {
+    return res.json(await chargeCompletionAlerts(req.dbPool, req.user.store_id));
   } catch (err) {
     return handleError(res, err);
   }

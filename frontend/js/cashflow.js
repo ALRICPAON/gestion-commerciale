@@ -34,7 +34,12 @@ const els = {
   distrimerSimulation: document.getElementById('distrimer-simulation'),
   simulateDistrimer: document.getElementById('simulate-distrimer-btn'),
   bankWarning: document.getElementById('bank-warning'),
+  bankAccounts: document.getElementById('bank-accounts-table'),
   bankTable: document.getElementById('bank-table'),
+  chargesAlerts: document.getElementById('charges-alerts'),
+  recurringChargesTable: document.getElementById('recurring-charges-table'),
+  diagnosticTable: document.getElementById('diagnostic-table'),
+  runDiagnostic: document.getElementById('run-diagnostic-btn'),
   manualForm: document.getElementById('manual-form'),
   manualTable: document.getElementById('manual-table'),
   settingsForm: document.getElementById('settings-form'),
@@ -148,14 +153,18 @@ function renderChart(forecast = {}) {
 
 function renderReliability(reliability = {}) {
   const source = reliability.source || {};
+  const diagnostics = reliability.diagnostics || [];
   els.reliability.innerHTML = `
     <p><strong>Derniere synchronisation :</strong> ${reliability.last_sync?.completed_at ? new Date(reliability.last_sync.completed_at).toLocaleString('fr-FR') : 'Aucune synchronisation cashflow'}</p>
     <p><strong>Compte bancaire :</strong> ${escapeHtml(reliability.bank_account || '-')}</p>
+    <p><strong>Comptes inclus :</strong> ${escapeHtml((reliability.bank_accounts || []).filter((account) => account.include_in_cashflow).map((account) => account.name).join(', ') || '-')}</p>
     <p><strong>Factures clients :</strong> ${reliability.customer_invoice_count || 0}</p>
     <p><strong>Factures fournisseurs :</strong> ${reliability.supplier_invoice_count || 0}</p>
     <p><strong>Mouvements manuels :</strong> ${reliability.manual_item_count || 0}</p>
-    <p><strong>Donnees bancaires :</strong> ${escapeHtml((source.unavailable_data || [])[0] || 'Non disponible')}</p>
+    <p><strong>Charges recurrentes :</strong> ${reliability.recurring_charge_count || 0}</p>
+    <p><strong>Diagnostic Pennylane :</strong> ${diagnostics.length ? `${diagnostics.filter((row) => row.access_status === 'accessible').length}/${diagnostics.length} acces OK` : escapeHtml((source.required_scopes || []).join(', '))}</p>
   `;
+  renderDiagnostic({ diagnostics });
 }
 
 function renderWeekly(rows = []) {
@@ -219,7 +228,7 @@ function renderPayables(data = {}) {
   state.payables = data.invoices || [];
   els.payables.innerHTML = table(
     [
-      { label: 'Fournisseur' }, { label: 'Facture' }, { label: 'Echeance' }, { label: 'Montant restant', className: 'num' }, { label: 'Paiement prevu' }, { label: 'Priorite' }, { label: 'Statut' },
+      { label: 'Fournisseur' }, { label: 'Facture' }, { label: 'Echeance' }, { label: 'Montant restant', className: 'num' }, { label: 'Paye confirme', className: 'num' }, { label: 'En cours', className: 'num' }, { label: 'Paiement prevu' }, { label: 'Priorite' },
     ],
     state.payables.map((row) => `
       <tr>
@@ -227,9 +236,10 @@ function renderPayables(data = {}) {
         <td>${escapeHtml(row.invoice_number || '-')}</td>
         <td>${dateFr(row.due_date)}</td>
         <td class="num">${money(row.remaining_amount)}</td>
+        <td class="num">${money(row.confirmed_paid_amount)}</td>
+        <td class="num">${money(row.pending_payment_amount)}</td>
         <td>${dateFr(row.planned_payment_date)}</td>
         <td>${escapeHtml(row.priority || 'normale')}</td>
-        <td>${escapeHtml(row.payment_status || '-')}</td>
       </tr>
     `)
   );
@@ -280,21 +290,84 @@ async function simulateDistrimer() {
 }
 
 async function loadBank() {
-  const data = await requestJson('/api/cashflow/bank-transactions');
-  els.bankWarning.textContent = data.warning || '';
+  const [data, accounts] = await Promise.all([
+    requestJson('/api/cashflow/bank-transactions'),
+    requestJson('/api/cashflow/bank-accounts'),
+  ]);
+  els.bankWarning.textContent = data.warning || 'Les mouvements sont issus de Pennylane lorsque le scope transactions:readonly est autorise.';
+  els.bankAccounts.innerHTML = table(
+    [{ label: 'Compte' }, { label: 'Solde', className: 'num' }, { label: 'Devise' }, { label: 'Inclus' }, { label: 'Mise a jour Pennylane' }],
+    (accounts.accounts || []).map((row) => `
+      <tr>
+        <td>${escapeHtml(row.name)}</td>
+        <td class="num">${money(row.balance)}</td>
+        <td>${escapeHtml(row.currency || 'EUR')}</td>
+        <td>${row.include_in_cashflow ? '<span class="cashflow-badge vert">Oui</span>' : '<span class="cashflow-badge">Non</span>'}</td>
+        <td>${row.pennylane_updated_at ? new Date(row.pennylane_updated_at).toLocaleString('fr-FR') : '-'}</td>
+      </tr>
+    `),
+    'Aucun compte bancaire Pennylane synchronise.'
+  );
   els.bankTable.innerHTML = table(
-    [{ label: 'Date' }, { label: 'Libelle' }, { label: 'Montant', className: 'num' }, { label: 'Type' }, { label: 'Rapproche' }, { label: 'Tiers' }, { label: 'Source' }],
+    [{ label: 'Date' }, { label: 'Libelle' }, { label: 'Montant', className: 'num' }, { label: 'Type' }, { label: 'Rapprochement' }, { label: 'Tiers' }, { label: 'Source' }],
     (data.transactions || []).map((row) => `
       <tr>
         <td>${dateFr(row.transaction_date)}</td>
         <td>${escapeHtml(row.label)}</td>
         <td class="num">${money(row.amount)}</td>
         <td>${row.direction === 'out' ? 'Decaissement' : 'Encaissement'}</td>
-        <td>${row.reconciled ? 'Oui' : 'Non'}</td>
+        <td>${escapeHtml(reconciliationLabel(row))}</td>
         <td>${escapeHtml(row.counterparty_name || '-')}</td>
         <td>${escapeHtml(row.source || 'Pennylane')}</td>
       </tr>
     `)
+  );
+}
+
+function reconciliationLabel(row) {
+  const status = String(row.reconciliation_status || '').toLowerCase();
+  if (['matched', 'reconciled'].includes(status) || row.reconciled === true) return 'Rapproche';
+  if (status.includes('partial')) return 'Partiellement rapproche';
+  if (!status && row.reconciled === false) return 'Non rapproche';
+  return status || 'A verifier';
+}
+
+function renderDiagnostic(data = {}) {
+  if (!els.diagnosticTable) return;
+  els.diagnosticTable.innerHTML = table(
+    [{ label: 'Donnee' }, { label: 'Endpoint' }, { label: 'Statut' }, { label: 'Scope requis' }, { label: 'Elements', className: 'num' }, { label: 'Action' }],
+    (data.diagnostics || []).map((row) => `
+      <tr>
+        <td>${escapeHtml(row.label || row.endpoint)}</td>
+        <td>${escapeHtml(row.endpoint)}</td>
+        <td><span class="cashflow-badge ${row.access_status === 'accessible' ? 'vert' : 'rouge'}">${row.access_status === 'accessible' ? 'Accessible' : 'Acces refuse'}</span></td>
+        <td>${escapeHtml(row.required_scope)}</td>
+        <td class="num">${row.item_count || 0}</td>
+        <td>${escapeHtml(row.action_required || row.error_message || '-')}</td>
+      </tr>
+    `),
+    'Aucun diagnostic execute.'
+  );
+}
+
+async function loadCharges() {
+  const [completion, recurring] = await Promise.all([
+    requestJson('/api/cashflow/charges-to-complete'),
+    requestJson('/api/cashflow/recurring-charges'),
+  ]);
+  els.chargesAlerts.innerHTML = table(
+    [{ label: 'Alerte' }, { label: 'Action' }],
+    (completion.alerts || []).map((row) => `
+      <tr><td>${escapeHtml(row.message)}</td><td><button class="btn btn-secondary btn-sm" type="button" data-prefill-charge="${escapeHtml(row.code)}">${escapeHtml(row.action)}</button></td></tr>
+    `),
+    'Aucune charge manquante detectee.'
+  );
+  els.recurringChargesTable.innerHTML = table(
+    [{ label: 'Libelle' }, { label: 'Categorie' }, { label: 'Montant', className: 'num' }, { label: 'Premiere echeance' }, { label: 'Frequence' }],
+    (recurring.charges || []).map((row) => `
+      <tr><td>${escapeHtml(row.label)}</td><td>${escapeHtml(row.category_code)}</td><td class="num">${money(row.cash_amount)}</td><td>${dateFr(row.first_due_date)}</td><td>${escapeHtml(row.frequency)}</td></tr>
+    `),
+    'Aucune charge recurrente configuree.'
   );
 }
 
@@ -343,7 +416,7 @@ async function loadAll() {
   renderReceivables(receivables);
   renderPayables(payables);
   renderDistrimer(distrimer);
-  await Promise.all([loadBank(), loadManualItems(), loadSettings()]);
+  await Promise.all([loadBank(), loadCharges(), loadManualItems(), loadSettings()]);
   els.status.textContent = `Scenario ${els.scenario.options[els.scenario.selectedIndex].textContent.toLowerCase()} sur ${els.horizon.value} jours.`;
 }
 
@@ -404,6 +477,11 @@ function bindEvents() {
   els.exportPdf.addEventListener('click', () => exportForecast('pdf').catch((error) => showFeedback(error.message, 'error')));
   els.exportCsv.addEventListener('click', () => exportForecast('csv').catch((error) => showFeedback(error.message, 'error')));
   els.simulateDistrimer.addEventListener('click', () => simulateDistrimer().catch((error) => showFeedback(error.message, 'error')));
+  els.runDiagnostic.addEventListener('click', async () => {
+    const data = await requestJson('/api/cashflow/diagnostic', { method: 'POST', body: JSON.stringify({}) });
+    renderDiagnostic(data);
+    showFeedback('Diagnostic Pennylane execute.', 'success');
+  });
   els.manualForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     await requestJson('/api/cashflow/manual-items', {
