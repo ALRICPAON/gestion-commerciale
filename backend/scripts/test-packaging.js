@@ -36,11 +36,24 @@ function run() {
 
   assert(packagingHtml.includes('PLU ou designation'));
   assert(packagingHtml.includes('operation-article-f9-btn'));
+  assert(packagingHtml.includes('packaging.js?v=2'));
+  assert(packagingHtml.includes('packaging.css?v=2'));
+  assert(packagingHtml.includes('movement-cancel-modal'));
   assert(!packagingHtml.includes('placeholder="ID article"'));
   assert(packagingJs.includes("item.current_unit_cost_ex_vat"));
   assert(packagingJs.includes("item.deposit_unit_value"));
   assert(packagingJs.includes('/api/articles/search?q='));
   assert(packagingJs.includes('operationArticleId.value'));
+  assert(packagingJs.includes('isUuid(articleId)'));
+  assert(packagingJs.includes('loadProfilesForArticle(els.operationArticleId.value'));
+  assert(!packagingJs.includes('loadProfilesForArticle(els.operationArticle.value'));
+  assert(packagingJs.includes('canOpenArticlePickerFromKeydown'));
+  assert(packagingJs.includes('openOperationArticlePicker'));
+  assert(packagingJs.includes("retryButton('stock-movements')"));
+  assert(packagingJs.includes('Annuler / corriger'));
+  assert(packagingJs.includes('A corriger depuis l operation de conditionnement'));
+  assert(packagingJs.includes('movementCancelReason'));
+  assert(packagingJs.includes('Aucun article trouve pour ce PLU'));
 
   const item = normalizePackagingItemInput({
     code: 'CAISSE30',

@@ -280,6 +280,32 @@ function assertStockMovementCanBeDeleted(movement) {
   throw error;
 }
 
+async function getStockMovementAuditColumns(db) {
+  const result = await db.query(
+    `
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = current_schema()
+      AND table_name = 'packaging_stock_movements'
+      AND column_name IN ('cancelled_at', 'cancelled_by', 'cancellation_reason', 'reversal_movement_id')
+    `
+  );
+
+  return new Set(result.rows.map((row) => row.column_name));
+}
+
+function requireStockMovementAuditColumns(columns) {
+  const missing = ['cancelled_at', 'cancelled_by', 'cancellation_reason', 'reversal_movement_id']
+    .filter((column) => !columns.has(column));
+
+  if (missing.length) {
+    const error = new Error(`Migration 061 non appliquee pour les annulations emballages: ${missing.join(', ')}`);
+    error.status = 409;
+    error.details = { missing_columns: missing };
+    throw error;
+  }
+}
+
 function summarizeReturnableMovements(movements = []) {
   const balances = new Map();
 
@@ -509,6 +535,11 @@ async function recordStockMovement(db, storeId, userId, input) {
 }
 
 async function listStockMovements(db, storeId, filters = {}) {
+  const auditColumns = await getStockMovementAuditColumns(db);
+  const hasCancelledAt = auditColumns.has('cancelled_at');
+  const hasCancelledBy = auditColumns.has('cancelled_by');
+  const hasCancellationReason = auditColumns.has('cancellation_reason');
+  const hasReversalMovementId = auditColumns.has('reversal_movement_id');
   const params = [storeId];
   const where = ['psm.store_id = $1'];
 
@@ -525,17 +556,32 @@ async function listStockMovements(db, storeId, filters = {}) {
   const result = await db.query(
     `
     SELECT
-      psm.*,
+      psm.id,
+      psm.store_id,
+      psm.packaging_item_id,
+      psm.movement_type,
+      psm.quantity,
+      psm.unit_cost_ex_vat,
+      psm.source_table,
+      psm.source_id,
+      psm.movement_date,
+      psm.notes,
+      psm.created_by,
+      psm.created_at,
+      ${hasCancelledAt ? 'psm.cancelled_at' : 'NULL::timestamptz AS cancelled_at'},
+      ${hasCancelledBy ? 'psm.cancelled_by' : 'NULL::uuid AS cancelled_by'},
+      ${hasCancellationReason ? 'psm.cancellation_reason' : 'NULL::text AS cancellation_reason'},
+      ${hasReversalMovementId ? 'psm.reversal_movement_id' : 'NULL::uuid AS reversal_movement_id'},
       pi.code,
       pi.designation,
       pi.management_unit,
-      CASE WHEN psm.cancelled_at IS NULL THEN 'active' ELSE 'cancelled' END AS status,
+      ${hasCancelledAt ? "CASE WHEN psm.cancelled_at IS NULL THEN 'active' ELSE 'cancelled' END" : "'active'"} AS status,
       creator.email AS created_by_email,
-      canceller.email AS cancelled_by_email
+      ${hasCancelledBy ? 'canceller.email' : 'NULL::text'} AS cancelled_by_email
     FROM packaging_stock_movements psm
     JOIN packaging_items pi ON pi.id = psm.packaging_item_id AND pi.store_id = psm.store_id
     LEFT JOIN users creator ON creator.id = psm.created_by
-    LEFT JOIN users canceller ON canceller.id = psm.cancelled_by
+    ${hasCancelledBy ? 'LEFT JOIN users canceller ON canceller.id = psm.cancelled_by' : ''}
     WHERE ${where.join(' AND ')}
     ORDER BY psm.movement_date DESC, psm.created_at DESC
     LIMIT $${params.length + 1}
@@ -550,6 +596,8 @@ async function cancelStockMovement(db, storeId, userId, movementId, input = {}) 
   const reason = assertCancellationReason(input.reason || input.notes);
 
   return withTransaction(db, async (client) => {
+    requireStockMovementAuditColumns(await getStockMovementAuditColumns(client));
+
     const movementResult = await client.query(
       `
       SELECT psm.*, pi.current_stock

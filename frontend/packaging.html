@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/packaging.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/packaging.css?v=2" />
 </head>
 <body class="app-page packaging-page">
   <header class="topbar">
@@ -369,7 +369,26 @@
     </div>
   </div>
 
+  <div id="movement-cancel-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="movement-cancel-title">
+    <div class="modal-content compact-modal">
+      <div class="section-title-row">
+        <h2 id="movement-cancel-title">Annuler / corriger</h2>
+        <button id="close-movement-cancel-btn" class="btn btn-secondary btn-sm" type="button">Fermer</button>
+      </div>
+      <div id="movement-cancel-summary" class="summary-box"></div>
+      <form id="movement-cancel-form" class="compact-form">
+        <div class="form-group">
+          <label for="movement-cancel-reason">Motif obligatoire</label>
+          <textarea id="movement-cancel-reason" required placeholder="Erreur de saisie, correction inventaire..."></textarea>
+        </div>
+        <div class="form-actions">
+          <button id="confirm-movement-cancel-btn" class="btn btn-primary" type="submit">Confirmer le mouvement inverse</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="./js/config.js"></script>
-  <script src="./js/packaging.js?v=1"></script>
+  <script src="./js/packaging.js?v=2"></script>
 </body>
 </html>

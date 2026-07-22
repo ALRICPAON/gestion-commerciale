@@ -17,6 +17,8 @@ const state = {
   returnableMovements: [],
   stockMovements: [],
   selectedOperationArticle: null,
+  articlePickerRows: [],
+  movementToCancel: null,
   preview: null,
 };
 
@@ -55,6 +57,12 @@ const els = {
   closeArticlePickerBtn: document.getElementById('close-article-picker-btn'),
   articlePickerSearch: document.getElementById('article-picker-search'),
   articlePickerResults: document.getElementById('article-picker-results'),
+  movementCancelModal: document.getElementById('movement-cancel-modal'),
+  closeMovementCancelBtn: document.getElementById('close-movement-cancel-btn'),
+  movementCancelSummary: document.getElementById('movement-cancel-summary'),
+  movementCancelForm: document.getElementById('movement-cancel-form'),
+  movementCancelReason: document.getElementById('movement-cancel-reason'),
+  confirmMovementCancelBtn: document.getElementById('confirm-movement-cancel-btn'),
 };
 
 function authHeaders(json = false) {
@@ -77,6 +85,14 @@ function showFeedback(message = '', type = '') {
   els.feedback.className = 'page-feedback';
   if (!message) els.feedback.classList.add('hidden');
   if (type) els.feedback.classList.add(type);
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function retryButton(action) {
+  return `<button class="btn btn-secondary btn-sm" type="button" data-retry="${action}">Reessayer</button>`;
 }
 
 function formatNumber(value, digits = 3) {
@@ -126,7 +142,13 @@ async function api(path, options = {}) {
     },
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Erreur API conditionnement');
+  if (!response.ok) {
+    const error = new Error(data.error || 'Erreur API conditionnement');
+    error.status = response.status;
+    error.path = path;
+    error.details = data.details;
+    throw error;
+  }
   return data;
 }
 
@@ -198,9 +220,9 @@ function renderStockMovements() {
       const isActive = movement.status !== 'cancelled' && !movement.cancelled_at;
       const sourceBlocked = movement.source_table === 'packaging_operations';
       const action = isActive && !sourceBlocked
-        ? `<button class="btn btn-secondary btn-sm" type="button" data-cancel-stock-movement="${movement.id}">Corriger / annuler</button>`
+        ? `<button class="btn btn-secondary btn-sm" type="button" data-cancel-stock-movement="${movement.id}">Annuler / corriger</button>`
         : sourceBlocked
-          ? '<span class="muted-text">Corriger operation source</span>'
+          ? '<span class="muted-text">A corriger depuis l operation de conditionnement</span>'
           : '-';
       return `
         <tr>
@@ -322,16 +344,32 @@ function renderReturnables() {
     .join('');
 }
 
-async function loadItems() {
-  const data = await api('/api/packaging/items');
-  state.items = data.items || [];
-  renderOptions();
-  renderItems();
+function renderStockMovementsError(error) {
+  els.stockMovementsTbody.innerHTML = `
+    <tr>
+      <td colspan="10">
+        Impossible de charger l historique mouvements.
+        ${escapeHtml(error.message || '')}
+        ${retryButton('stock-movements')}
+      </td>
+    </tr>
+  `;
 }
 
-async function loadProfilesForArticle() {
-  const articleId = els.operationArticleId.value.trim();
-  if (!articleId) {
+async function loadItems() {
+  try {
+    const data = await api('/api/packaging/items');
+    state.items = data.items || [];
+    renderOptions();
+    renderItems();
+  } catch (error) {
+    els.itemsTbody.innerHTML = `<tr><td colspan="9">Impossible de charger le catalogue. ${escapeHtml(error.message)} ${retryButton('items')}</td></tr>`;
+    throw error;
+  }
+}
+
+async function loadProfilesForArticle(articleId = els.operationArticleId.value.trim()) {
+  if (!isUuid(articleId)) {
     state.profiles = [];
     renderProfiles();
     return;
@@ -343,39 +381,57 @@ async function loadProfilesForArticle() {
 }
 
 async function loadStockMovements() {
-  const params = new URLSearchParams({ limit: '100' });
-  if (els.movementHistoryItem.value) params.set('packaging_item_id', els.movementHistoryItem.value);
-  const data = await api(`/api/packaging/stock-movements?${params.toString()}`);
-  state.stockMovements = data.movements || [];
-  renderStockMovements();
+  try {
+    const params = new URLSearchParams({ limit: '100' });
+    if (els.movementHistoryItem.value) params.set('packaging_item_id', els.movementHistoryItem.value);
+    const data = await api(`/api/packaging/stock-movements?${params.toString()}`);
+    state.stockMovements = data.movements || [];
+    renderStockMovements();
+  } catch (error) {
+    renderStockMovementsError(error);
+    throw error;
+  }
 }
 
 async function loadOperations() {
-  const data = await api('/api/packaging/operations?limit=50');
-  state.operations = data.operations || [];
-  renderOperations();
+  try {
+    const data = await api('/api/packaging/operations?limit=50');
+    state.operations = data.operations || [];
+    renderOperations();
+  } catch (error) {
+    els.operationsTbody.innerHTML = `<tr><td colspan="8">Impossible de charger les operations. ${escapeHtml(error.message)} ${retryButton('operations')}</td></tr>`;
+    throw error;
+  }
 }
 
 async function loadReturnables() {
-  const [balancesData, movementsData] = await Promise.all([
-    api('/api/packaging/returnables/balances'),
-    api('/api/packaging/returnables/movements?limit=100'),
-  ]);
-  state.balances = balancesData.balances || [];
-  state.returnableMovements = movementsData.movements || [];
-  renderReturnables();
+  try {
+    const [balancesData, movementsData] = await Promise.all([
+      api('/api/packaging/returnables/balances'),
+      api('/api/packaging/returnables/movements?limit=100'),
+    ]);
+    state.balances = balancesData.balances || [];
+    state.returnableMovements = movementsData.movements || [];
+    renderReturnables();
+  } catch (error) {
+    els.returnableBalances.innerHTML = `Impossible de charger les consignes. ${escapeHtml(error.message)} ${retryButton('returnables')}`;
+    els.returnableMovementsTbody.innerHTML = '<tr><td colspan="6">Erreur chargement consignes.</td></tr>';
+    throw error;
+  }
 }
 
 async function refreshAll() {
   showFeedback('');
-  try {
-    await loadItems();
-    await loadStockMovements();
-    await loadOperations();
-    await loadReturnables();
-  } catch (error) {
-    console.error(error);
-    showFeedback(error.message, 'error');
+  const results = await Promise.allSettled([
+    loadItems(),
+    loadStockMovements(),
+    loadOperations(),
+    loadReturnables(),
+  ]);
+  const failed = results.find((result) => result.status === 'rejected');
+  if (failed) {
+    console.error(failed.reason);
+    showFeedback(`Chargement incomplet: ${failed.reason.message}`, 'error');
   }
 }
 
@@ -506,11 +562,11 @@ function applyOperationArticle(article) {
   };
   state.selectedOperationArticle = normalized;
   els.operationArticle.value = articleDisplay(normalized);
-  els.operationArticleId.value = normalized.id || '';
-  els.operationArticleSelected.textContent = normalized.id
+  els.operationArticleId.value = isUuid(normalized.id) ? normalized.id : '';
+  els.operationArticleSelected.textContent = els.operationArticleId.value
     ? `${normalized.plu || '-'} - ${normalized.designation || '-'}`
     : 'Aucun article selectionne.';
-  loadProfilesForArticle().catch(handleActionError);
+  if (els.operationArticleId.value) loadProfilesForArticle(els.operationArticleId.value).catch(handleActionError);
 }
 
 async function searchArticles(term) {
@@ -524,17 +580,66 @@ async function resolveOperationArticleFromInput() {
   const term = els.operationArticle.value.trim();
   if (!term) return;
   const rows = await searchArticles(term);
-  const article = rows.find((row) => String(row.plu) === term) || rows[0];
-  if (!article) throw new Error(`Article introuvable pour ${term}`);
-  applyOperationArticle(article);
+  const exactRows = rows.filter((row) => String(row.plu || '').toLowerCase() === term.toLowerCase());
+
+  if (!rows.length) {
+    els.operationArticleId.value = '';
+    els.operationArticleSelected.textContent = 'Aucun article trouve pour ce PLU';
+    state.profiles = [];
+    renderProfiles();
+    throw new Error('Aucun article trouve pour ce PLU');
+  }
+
+  if (exactRows.length === 1) {
+    applyOperationArticle(exactRows[0]);
+    return;
+  }
+
+  if (rows.length === 1) {
+    applyOperationArticle(rows[0]);
+    return;
+  }
+
+  openArticlePicker(term, rows);
 }
 
-function openArticlePicker(initialSearch = '') {
+function canOpenArticlePickerFromKeydown(event) {
+  return event.key === 'F9' && event.target === els.operationArticle;
+}
+
+function articleSearchTerm() {
+  const value = els.operationArticle.value.trim();
+  if (state.selectedOperationArticle?.plu && value === articleDisplay(state.selectedOperationArticle)) {
+    return state.selectedOperationArticle.plu;
+  }
+  return value.includes(' - ') ? value.split(' - ')[0].trim() : value;
+}
+
+function openOperationArticlePicker(event) {
+  if (event) event.preventDefault();
+  openArticlePicker(articleSearchTerm());
+}
+
+function requireResolvedArticleId() {
+  const articleId = els.operationArticleId.value.trim();
+  if (!isUuid(articleId)) throw new Error('Selectionne un article valide par PLU ou F9 avant de continuer');
+  return articleId;
+}
+
+function showArticleSearchError(error) {
+  els.articlePickerResults.innerHTML = `<tr><td colspan="5">Erreur recherche article: ${escapeHtml(error.message)} ${retryButton('article-picker')}</td></tr>`;
+}
+
+function openArticlePicker(initialSearch = '', initialRows = null) {
   els.articlePickerSearch.value = initialSearch;
   els.articlePickerModal.classList.remove('hidden');
-  renderArticlePickerResults([]);
+  state.articlePickerRows = Array.isArray(initialRows) ? initialRows : [];
+  renderArticlePickerResults(state.articlePickerRows);
   setTimeout(() => els.articlePickerSearch.focus(), 50);
-  if (initialSearch) runArticlePickerSearch().catch(handleActionError);
+  if (!initialRows && initialSearch) runArticlePickerSearch().catch((error) => {
+    showArticleSearchError(error);
+    handleActionError(error);
+  });
 }
 
 function closeArticlePicker() {
@@ -543,7 +648,7 @@ function closeArticlePicker() {
 
 function renderArticlePickerResults(rows) {
   if (!rows.length) {
-    els.articlePickerResults.innerHTML = '<tr><td colspan="5">Lance une recherche.</td></tr>';
+    els.articlePickerResults.innerHTML = '<tr><td colspan="5">Aucun article trouve.</td></tr>';
     return;
   }
 
@@ -561,13 +666,19 @@ function renderArticlePickerResults(rows) {
 }
 
 async function runArticlePickerSearch() {
-  const rows = await searchArticles(els.articlePickerSearch.value);
-  state.articlePickerRows = rows;
-  renderArticlePickerResults(rows);
+  try {
+    const rows = await searchArticles(els.articlePickerSearch.value);
+    state.articlePickerRows = rows;
+    renderArticlePickerResults(rows);
+  } catch (error) {
+    showArticleSearchError(error);
+    throw error;
+  }
 }
 
 async function previewOperation() {
   if (!els.operationArticleId.value.trim()) await resolveOperationArticleFromInput();
+  requireResolvedArticleId();
   state.preview = await api('/api/packaging/operations/preview', {
     method: 'POST',
     body: JSON.stringify(collectOperationPayload()),
@@ -578,6 +689,7 @@ async function previewOperation() {
 async function submitOperation(event) {
   event.preventDefault();
   if (!els.operationArticleId.value.trim()) await resolveOperationArticleFromInput();
+  requireResolvedArticleId();
   const data = await api('/api/packaging/operations', {
     method: 'POST',
     body: JSON.stringify(collectOperationPayload()),
@@ -610,19 +722,57 @@ async function submitReturnable(event) {
   showFeedback('Mouvement consigne enregistre.', 'success');
 }
 
-async function cancelStockMovement(movementId) {
-  const reason = window.prompt('Justification obligatoire pour annuler ce mouvement');
+function openMovementCancelModal(movementId) {
+  const movement = state.stockMovements.find((row) => String(row.id) === String(movementId));
+  if (!movement) return;
+  state.movementToCancel = movement;
+  els.movementCancelSummary.innerHTML = `
+    <div><strong>${escapeHtml(movement.code || '')}</strong> - ${escapeHtml(movement.designation || '')}</div>
+    <div>Date: <strong>${formatDate(movement.movement_date)}</strong></div>
+    <div>Type: <strong>${escapeHtml(movement.movement_type)}</strong></div>
+    <div>Quantite: <strong>${formatNumber(movement.quantity)} ${escapeHtml(movement.management_unit || '')}</strong></div>
+    <div>Cout HT: <strong>${formatMoney(movement.unit_cost_ex_vat)}</strong></div>
+    <div>Un mouvement inverse sera cree pour conserver l historique complet.</div>
+  `;
+  els.movementCancelReason.value = '';
+  els.movementCancelModal.classList.remove('hidden');
+  setTimeout(() => els.movementCancelReason.focus(), 50);
+}
+
+function closeMovementCancelModal() {
+  state.movementToCancel = null;
+  els.movementCancelModal.classList.add('hidden');
+}
+
+async function cancelStockMovement(event) {
+  event.preventDefault();
+  const movement = state.movementToCancel;
+  const reason = els.movementCancelReason.value;
   if (!reason || !reason.trim()) {
-    showFeedback('Annulation abandonnee : justification obligatoire.', 'error');
+    els.movementCancelReason.focus();
+    showFeedback('Justification obligatoire pour annuler ce mouvement.', 'error');
     return;
   }
 
-  await api(`/api/packaging/stock-movements/${encodeURIComponent(movementId)}/cancel`, {
+  els.confirmMovementCancelBtn.disabled = true;
+  await api(`/api/packaging/stock-movements/${encodeURIComponent(movement.id)}/cancel`, {
     method: 'POST',
     body: JSON.stringify({ reason }),
+  }).finally(() => {
+    els.confirmMovementCancelBtn.disabled = false;
   });
-  await Promise.all([loadItems(), loadStockMovements()]);
+  closeMovementCancelModal();
+  await Promise.allSettled([loadItems(), loadStockMovements()]);
   showFeedback('Mouvement annule par mouvement inverse.', 'success');
+}
+
+function retryLoad(action) {
+  if (action === 'items') return loadItems();
+  if (action === 'stock-movements') return loadStockMovements();
+  if (action === 'operations') return loadOperations();
+  if (action === 'returnables') return loadReturnables();
+  if (action === 'article-picker') return runArticlePickerSearch();
+  return refreshAll();
 }
 
 function setupTabs() {
@@ -669,24 +819,31 @@ function setupEvents() {
   });
   els.operationArticle.addEventListener('blur', () => resolveOperationArticleFromInput().catch(handleActionError));
   els.operationArticle.addEventListener('keydown', (event) => {
-    if (event.key === 'F9') {
+    if (canOpenArticlePickerFromKeydown(event)) {
       event.preventDefault();
-      openArticlePicker(els.operationArticle.value.trim());
+      openOperationArticlePicker(event);
     }
   });
-  els.operationArticleF9Btn.addEventListener('click', () => openArticlePicker(els.operationArticle.value.trim()));
+  els.operationArticleF9Btn.addEventListener('mousedown', (event) => event.preventDefault());
+  els.operationArticleF9Btn.addEventListener('click', openOperationArticlePicker);
   els.closeArticlePickerBtn.addEventListener('click', closeArticlePicker);
+  els.closeMovementCancelBtn.addEventListener('click', closeMovementCancelModal);
+  els.movementCancelForm.addEventListener('submit', (event) => cancelStockMovement(event).catch(handleActionError));
   els.articlePickerSearch.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') runArticlePickerSearch().catch(handleActionError);
   });
   els.articlePickerSearch.addEventListener('input', () => runArticlePickerSearch().catch(handleActionError));
+  document.addEventListener('click', (event) => {
+    const retry = event.target.closest('[data-retry]');
+    if (retry) retryLoad(retry.dataset.retry).catch(handleActionError);
+  });
   els.itemsTbody.addEventListener('click', (event) => {
     const button = event.target.closest('[data-edit-item]');
     if (button) editItem(button.dataset.editItem);
   });
   els.stockMovementsTbody.addEventListener('click', (event) => {
     const button = event.target.closest('[data-cancel-stock-movement]');
-    if (button) cancelStockMovement(button.dataset.cancelStockMovement).catch(handleActionError);
+    if (button) openMovementCancelModal(button.dataset.cancelStockMovement);
   });
   els.articlePickerResults.addEventListener('click', (event) => {
     const button = event.target.closest('[data-pick-article]');
