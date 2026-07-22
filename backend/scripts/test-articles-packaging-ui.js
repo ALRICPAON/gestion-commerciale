@@ -7,6 +7,7 @@ function run() {
   const articlesJs = fs.readFileSync(path.join(__dirname, '../../frontend/js/articles.js'), 'utf8');
   const articleDetailHtml = fs.readFileSync(path.join(__dirname, '../../frontend/article-detail.html'), 'utf8');
   const articleDetailJs = fs.readFileSync(path.join(__dirname, '../../frontend/js/article-detail.js'), 'utf8');
+  const packagingHtml = fs.readFileSync(path.join(__dirname, '../../frontend/packaging.html'), 'utf8');
   const packagingJs = fs.readFileSync(path.join(__dirname, '../../frontend/js/packaging.js'), 'utf8');
   const articlesRoutes = fs.readFileSync(path.join(__dirname, '../routes/articles.js'), 'utf8');
   const customerPriceLists = fs.readFileSync(path.join(__dirname, '../routes/customerPriceLists.js'), 'utf8');
@@ -44,7 +45,11 @@ function run() {
   assert(customerPriceLists.includes("COALESCE(a.article_type, 'PRODUCT') = 'PRODUCT'"));
   assert(packagingJs.includes('/api/articles?packaging_only=true'));
   assert(packagingJs.includes("item.category === 'consumable'"));
-  assert(packagingJs.includes("window.location.href = './articles.html?article_type=PACKAGING_CONSUMABLE'"));
+  assert(packagingHtml.includes('Articles emballages ALTA'));
+  assert(!packagingHtml.includes('create-packaging-article-btn'));
+  assert(!packagingHtml.includes('item-form'));
+  assert(packagingJs.includes('openArticleDetail'));
+  assert(!packagingJs.includes("window.location.href = './articles.html?article_type=PACKAGING_CONSUMABLE'"));
   assert(!packagingJs.includes('/api/packaging/items/'));
   assert(articleDetailHtml.includes('article-detail.js?v=16'));
   assert(articleDetailJs.includes('/api/articles/search-packaging?q='));

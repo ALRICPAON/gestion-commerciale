@@ -506,102 +506,6 @@ async function listItems(db, storeId, filters = {}) {
   return mapRows(result);
 }
 
-async function createItem(db, storeId, userId, input) {
-  const item = normalizePackagingItemInput(input);
-  const articleType = articleTypeForPackagingCategory(item.category);
-
-  const result = await db.query(
-    `
-    INSERT INTO articles (
-      store_id, plu, designation, unit, article_type, stock_managed, sellable,
-      visible_in_price_list, contributes_to_product_cost, format_label,
-      primary_supplier_id, deposit_unit_value, alert_threshold, is_active,
-      created_by, updated_by
-    )
-    VALUES ($1, $2, $3, $4, $5, true, false, false, $6, $7, $8, $9, $10, $11, $12, $12)
-    RETURNING id
-    `,
-    [
-      storeId,
-      item.code,
-      item.designation,
-      item.management_unit,
-      articleType,
-      articleType === 'PACKAGING_CONSUMABLE',
-      item.format_label,
-      item.primary_supplier_id,
-      item.deposit_unit_value,
-      item.alert_threshold,
-      item.active,
-      userId,
-    ]
-  );
-
-  return (await listItems(db, storeId, { id: result.rows[0].id })).find((row) => String(row.id) === String(result.rows[0].id))
-    || { id: result.rows[0].id };
-}
-
-async function updateItem(db, storeId, itemId, userId, input) {
-  const item = normalizePackagingItemInput(input);
-  const articleType = articleTypeForPackagingCategory(item.category);
-
-  const result = await db.query(
-    `
-    UPDATE articles
-    SET
-      plu = $3,
-      designation = $4,
-      article_type = $5,
-      unit = $6,
-      stock_managed = true,
-      sellable = false,
-      visible_in_price_list = false,
-      contributes_to_product_cost = $7,
-      format_label = $8,
-      primary_supplier_id = $9,
-      deposit_unit_value = $10,
-      alert_threshold = $11,
-      is_active = $12,
-      updated_by = $13,
-      updated_at = now()
-    WHERE id = $1
-      AND store_id = $2
-      AND article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')
-    RETURNING *
-    `,
-    [
-      itemId,
-      storeId,
-      item.code,
-      item.designation,
-      articleType,
-      item.management_unit,
-      articleType === 'PACKAGING_CONSUMABLE',
-      item.format_label,
-      item.primary_supplier_id,
-      item.deposit_unit_value,
-      item.alert_threshold,
-      item.active,
-      userId,
-    ]
-  );
-
-  if (!result.rows[0]) return null;
-  return (await listItems(db, storeId, { id: itemId })).find((row) => String(row.id) === String(itemId))
-    || result.rows[0];
-}
-
-async function recordStockMovement(db, storeId, userId, input) {
-  const error = new Error('Les stocks emballages sont alimentes par le module Achats ALTA. Utilise une reception achat ou une regularisation stock article.');
-  error.status = 409;
-  error.details = {
-    article_id: clean(input.packaging_item_id),
-    requested_by: userId,
-    store_id: storeId,
-  };
-  throw error;
-}
-
 async function listStockMovements(db, storeId, filters = {}) {
   const params = [storeId];
   const where = ["sm.store_id = $1", "a.article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')"];
@@ -1559,9 +1463,6 @@ module.exports = {
   assertNoDuplicatePackagingComponents,
   estimateProfileCostPerPackage,
   listItems,
-  createItem,
-  updateItem,
-  recordStockMovement,
   listStockMovements,
   cancelStockMovement,
   listProfiles,

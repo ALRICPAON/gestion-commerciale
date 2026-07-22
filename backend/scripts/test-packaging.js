@@ -44,7 +44,7 @@ function run() {
 
   assert(packagingHtml.includes('PLU ou designation'));
   assert(packagingHtml.includes('operation-article-f9-btn'));
-  assert(packagingHtml.includes('packaging.js?v=4'));
+  assert(packagingHtml.includes('packaging.js?v=5'));
   assert(packagingHtml.includes('packaging.css?v=4'));
   assert(packagingHtml.includes('Nouveau modele de conditionnement'));
   assert(packagingHtml.includes('Realiser un conditionnement'));
@@ -70,6 +70,19 @@ function run() {
   assert(packagingJs.includes('/api/articles/search-in-stock'));
   assert(packagingJs.includes('/api/articles?packaging_only=true'));
   assert(!packagingJs.includes('/api/packaging/items/'));
+  assert(!packagingHtml.includes('create-packaging-article-btn'));
+  assert(!packagingHtml.includes('item-form'));
+  assert(!packagingHtml.includes('movement-form'));
+  assert(packagingHtml.includes('Articles emballages ALTA'));
+  assert(packagingJs.includes('openArticleDetail'));
+  assert(!packagingJs.includes('submitItem'));
+  assert(!packagingJs.includes('submitMovement'));
+  assert(!packagingRoutes.includes("router.post(\n  '/items'"));
+  assert(!packagingRoutes.includes("router.patch(\n  '/items/:id'"));
+  assert(!packagingRoutes.includes("'/items/:id/stock-movements'"));
+  assert(!packagingService.includes('async function createItem'));
+  assert(!packagingService.includes('async function updateItem'));
+  assert(!packagingService.includes('async function recordStockMovement'));
   assert(packagingJs.includes('Stock produit <strong>Inchange</strong>'));
   assert(packagingJs.includes('operation-lot'));
   assert(packagingJs.includes('loadLotsForOperationArticle'));

@@ -28,7 +28,7 @@
   <main class="main-content packaging-layout">
     <section class="packaging-toolbar">
       <div class="tabs" role="tablist" aria-label="Sections conditionnement">
-        <button class="tab-btn active" type="button" data-tab="catalog">Catalogue</button>
+        <button class="tab-btn active" type="button" data-tab="catalog">Emballages</button>
         <button class="tab-btn" type="button" data-tab="stock">Stocks et mouvements</button>
         <button class="tab-btn" type="button" data-tab="operations">Conditionnements</button>
         <button class="tab-btn" type="button" data-tab="returnables">Consignes</button>
@@ -41,77 +41,25 @@
     <section id="tab-catalog" class="tab-panel">
       <div class="packaging-grid">
         <section class="card">
-          <h2>Catalogue emballages</h2>
-          <form id="item-form" class="compact-form">
-            <input type="hidden" id="item-id" />
-            <div class="form-grid">
-              <div class="form-group">
-                <label for="item-code">Code</label>
-                <input id="item-code" required placeholder="CAISSE-30L" />
-              </div>
-              <div class="form-group">
-                <label for="item-designation">Designation</label>
-                <input id="item-designation" required placeholder="Caisse polystyrene 30 L" />
-              </div>
-              <div class="form-group">
-                <label for="item-category">Categorie</label>
-                <select id="item-category">
-                  <option value="consumable">Consommable</option>
-                  <option value="returnable">Consigne fournisseur</option>
-                  <option value="reusable_internal">Reutilisable interne</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label for="item-unit">Unite</label>
-                <input id="item-unit" value="unit" />
-              </div>
-              <div class="form-group">
-                <label for="item-cost">Cout HT</label>
-                <input id="item-cost" type="number" min="0" step="0.0001" value="0" />
-              </div>
-              <div class="form-group">
-                <label for="item-deposit">Consigne HT</label>
-                <input id="item-deposit" type="number" min="0" step="0.0001" value="0" />
-              </div>
-              <div class="form-group">
-                <label for="item-threshold">Seuil alerte</label>
-                <input id="item-threshold" type="number" min="0" step="0.001" value="0" />
-              </div>
-              <div class="form-group">
-                <label for="item-format">Format</label>
-                <input id="item-format" placeholder="30 L, 60 x 40..." />
-              </div>
-            </div>
-            <div class="form-actions">
-              <button id="create-packaging-article-btn" class="btn btn-secondary" type="button">Creer un emballage</button>
-              <button class="btn btn-primary" type="submit">Enregistrer</button>
-              <button id="reset-item-btn" class="btn btn-secondary" type="button">Nouveau</button>
-            </div>
-          </form>
-        </section>
-
-        <section class="card">
           <div class="section-title-row">
-            <h2>Catalogue</h2>
+            <h2>Articles emballages ALTA</h2>
             <input id="item-search" class="table-search" placeholder="Filtrer code ou designation" />
           </div>
           <div class="table-wrap">
             <table class="data-table packaging-table">
               <thead>
                 <tr>
-                  <th>Code</th>
+                  <th>PLU</th>
                   <th>Designation</th>
-                  <th>Categorie</th>
+                  <th>Type</th>
                   <th>Stock</th>
-                  <th>Cout HT</th>
-                  <th>Consigne</th>
-                  <th>Seuil</th>
-                  <th>Etat</th>
+                  <th>PMA</th>
+                  <th>Unite</th>
                   <th>Action</th>
                 </tr>
               </thead>
               <tbody id="items-tbody">
-                <tr><td colspan="9">Chargement...</td></tr>
+                <tr><td colspan="7">Chargement...</td></tr>
               </tbody>
             </table>
           </div>
@@ -122,40 +70,11 @@
     <section id="tab-stock" class="tab-panel hidden">
       <div class="packaging-grid two-columns">
         <section class="card">
-          <h2>Mouvement stock emballage</h2>
-          <form id="movement-form" class="compact-form">
-            <div class="form-grid">
-              <div class="form-group">
-                <label for="movement-item">Emballage</label>
-                <select id="movement-item" required></select>
-              </div>
-              <div class="form-group">
-                <label for="movement-type">Type</label>
-                <select id="movement-type">
-                  <option value="purchase_in">Entree achat</option>
-                  <option value="inventory_adjustment">Inventaire</option>
-                  <option value="loss">Perte</option>
-                  <option value="destruction">Destruction</option>
-                  <option value="manual_correction">Correction signee</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label for="movement-quantity">Quantite</label>
-                <input id="movement-quantity" type="number" step="0.001" required />
-              </div>
-              <div class="form-group">
-                <label for="movement-cost">Cout HT</label>
-                <input id="movement-cost" type="number" min="0" step="0.0001" />
-              </div>
-            </div>
-            <div class="form-group">
-              <label for="movement-notes">Note</label>
-              <input id="movement-notes" placeholder="BL fournisseur, inventaire, casse..." />
-            </div>
-            <div class="form-actions">
-              <button class="btn btn-primary" type="submit">Ajouter mouvement</button>
-            </div>
-          </form>
+          <h2>Stock emballage</h2>
+          <div class="form-group">
+            <label for="movement-item">Emballage</label>
+            <select id="movement-item"></select>
+          </div>
         </section>
 
         <section class="card">
@@ -462,6 +381,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/packaging.js?v=4"></script>
+  <script src="./js/packaging.js?v=5"></script>
 </body>
 </html>

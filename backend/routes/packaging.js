@@ -63,47 +63,6 @@ router.get(
   })
 );
 
-router.post(
-  '/items',
-  requirePackagingPermission(PACKAGING_PERMISSIONS.MANAGE_CATALOG),
-  asyncHandler(async (req, res) => {
-    const item = await packagingService.createItem(req.dbPool, req.user.store_id, req.user.id, req.body);
-    res.status(201).json({ item });
-  })
-);
-
-router.patch(
-  '/items/:id',
-  requirePackagingPermission(PACKAGING_PERMISSIONS.MANAGE_CATALOG),
-  asyncHandler(async (req, res) => {
-    const itemId = requireUuid(req.params.id, 'ID emballage');
-    const item = await packagingService.updateItem(
-      req.dbPool,
-      req.user.store_id,
-      itemId,
-      req.user.id,
-      req.body
-    );
-
-    if (!item) return res.status(404).json({ error: 'Emballage introuvable' });
-    res.json({ item });
-  })
-);
-
-router.post(
-  '/items/:id/stock-movements',
-  requirePackagingPermission(PACKAGING_PERMISSIONS.ADJUST_STOCK),
-  asyncHandler(async (req, res) => {
-    const packagingItemId = requireUuid(req.params.id, 'ID emballage');
-    const result = await packagingService.recordStockMovement(req.dbPool, req.user.store_id, req.user.id, {
-      ...req.body,
-      packaging_item_id: packagingItemId,
-    });
-
-    res.status(201).json(result);
-  })
-);
-
 router.get(
   '/stock-movements',
   requirePackagingPermission(PACKAGING_PERMISSIONS.READ),

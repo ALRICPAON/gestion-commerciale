@@ -31,14 +31,9 @@ const els = {
   logoutBtn: document.getElementById('logout-btn'),
   refreshBtn: document.getElementById('refresh-btn'),
   feedback: document.getElementById('packaging-feedback'),
-  itemForm: document.getElementById('item-form'),
-  createPackagingArticleBtn: document.getElementById('create-packaging-article-btn'),
-  movementForm: document.getElementById('movement-form'),
   itemSearch: document.getElementById('item-search'),
   itemsTbody: document.getElementById('items-tbody'),
   movementItem: document.getElementById('movement-item'),
-  movementType: document.getElementById('movement-type'),
-  movementCost: document.getElementById('movement-cost'),
   movementHistoryItem: document.getElementById('movement-history-item'),
   stockMovementsTbody: document.getElementById('stock-movements-tbody'),
   selectedPackagingSummary: document.getElementById('selected-packaging-summary'),
@@ -59,7 +54,6 @@ const els = {
   returnableDeposit: document.getElementById('returnable-deposit'),
   returnableBalances: document.getElementById('returnable-balances'),
   returnableMovementsTbody: document.getElementById('returnable-movements-tbody'),
-  resetItemBtn: document.getElementById('reset-item-btn'),
   newModelBtn: document.getElementById('new-model-btn'),
   modelForm: document.getElementById('model-form'),
   modelId: document.getElementById('model-id'),
@@ -195,7 +189,6 @@ function renderOptions() {
       .map((item) => `<option value="${item.id}">${escapeHtml(item.code)} - ${escapeHtml(item.designation)}</option>`)
       .join('') || '<option value="">Aucune consigne</option>';
   updateSelectedPackagingSummary();
-  prefillMovementCost();
   prefillReturnableDeposit();
 }
 
@@ -207,24 +200,21 @@ function renderItems() {
   });
 
   if (!rows.length) {
-    els.itemsTbody.innerHTML = '<tr><td colspan="9">Aucun emballage.</td></tr>';
+    els.itemsTbody.innerHTML = '<tr><td colspan="7">Aucun emballage.</td></tr>';
     return;
   }
 
   els.itemsTbody.innerHTML = rows
     .map((item) => {
-      const alertClass = Number(item.current_stock) <= Number(item.alert_threshold) ? 'stock-alert' : '';
       return `
         <tr>
           <td>${escapeHtml(item.code)}</td>
           <td>${escapeHtml(item.designation)}</td>
           <td>${categoryLabel(item.category)}</td>
-          <td class="${alertClass}">${formatNumber(item.current_stock)} ${escapeHtml(item.management_unit)}</td>
+          <td>${formatNumber(item.current_stock)}</td>
           <td>${formatMoney(item.current_unit_cost_ex_vat)}</td>
-          <td>${formatMoney(item.deposit_unit_value)}</td>
-          <td>${formatNumber(item.alert_threshold)}</td>
-          <td>${item.active ? 'Actif' : 'Inactif'}</td>
-          <td><button class="btn btn-secondary btn-sm" type="button" data-edit-item="${item.id}">Editer</button></td>
+          <td>${escapeHtml(item.management_unit)}</td>
+          <td><button class="btn btn-secondary btn-sm" type="button" data-open-article="${item.id}">Fiche article</button></td>
         </tr>
       `;
     })
@@ -325,7 +315,7 @@ function renderModelComponents() {
           <select data-component-field="packaging_item_id">
             ${state.items.filter((item) => item.active !== false && item.category === 'consumable').map((itemOption) => `
               <option value="${itemOption.id}" ${String(itemOption.id) === String(component.packaging_item_id) ? 'selected' : ''}>
-                ${escapeHtml(itemOption.code)} - ${escapeHtml(itemOption.designation)}
+                ${escapeHtml(itemOption.code)} - ${escapeHtml(itemOption.designation)} | stock ${formatNumber(itemOption.current_stock)} ${escapeHtml(itemOption.management_unit)} | PMA ${formatMoney(itemOption.current_unit_cost_ex_vat)}
               </option>
             `).join('')}
           </select>
@@ -474,7 +464,7 @@ async function loadItems() {
     renderOptions();
     renderItems();
   } catch (error) {
-    els.itemsTbody.innerHTML = `<tr><td colspan="9">Impossible de charger le catalogue. ${escapeHtml(error.message)} ${retryButton('items')}</td></tr>`;
+    els.itemsTbody.innerHTML = `<tr><td colspan="7">Impossible de charger les articles emballages. ${escapeHtml(error.message)} ${retryButton('items')}</td></tr>`;
     throw error;
   }
 }
@@ -588,65 +578,16 @@ function updateSelectedPackagingSummary() {
   `;
 }
 
-function prefillMovementCost() {
-  const item = selectedPackagingItem();
-  if (!item || !els.movementCost) return;
-  if (els.movementType.value === 'purchase_in') {
-    els.movementCost.value = item.current_unit_cost_ex_vat ?? 0;
-  }
-}
-
 function prefillReturnableDeposit() {
   const item = selectedPackagingItem(els.returnableItem);
   if (!item || !els.returnableDeposit) return;
   els.returnableDeposit.value = item.deposit_unit_value ?? 0;
 }
 
-function collectItemPayload() {
-  return {
-    code: getInput('item-code'),
-    designation: getInput('item-designation'),
-    category: getInput('item-category'),
-    management_unit: getInput('item-unit') || 'unit',
-    format_label: getInput('item-format'),
-    current_unit_cost_ex_vat: getInput('item-cost') || 0,
-    deposit_unit_value: getInput('item-deposit') || 0,
-    alert_threshold: getInput('item-threshold') || 0,
-    active: true,
-  };
-}
-
-function resetItemForm() {
-  els.itemForm.reset();
-  setInput('item-id', '');
-  setInput('item-unit', 'unit');
-  setInput('item-cost', '0');
-  setInput('item-deposit', '0');
-  setInput('item-threshold', '0');
-}
-
-function editItem(itemId) {
+function openArticleDetail(itemId) {
   const item = state.items.find((candidate) => String(candidate.id) === String(itemId));
   if (!item) return;
-  setInput('item-id', item.id);
-  setInput('item-code', item.code);
-  setInput('item-designation', item.designation);
-  setInput('item-category', item.category);
-  setInput('item-unit', item.management_unit);
-  setInput('item-format', item.format_label);
-  setInput('item-cost', item.current_unit_cost_ex_vat);
-  setInput('item-deposit', item.deposit_unit_value);
-  setInput('item-threshold', item.alert_threshold);
-}
-
-async function submitItem(event) {
-  event.preventDefault();
-  window.location.href = './articles.html?article_type=PACKAGING_CONSUMABLE';
-}
-
-async function submitMovement(event) {
-  event.preventDefault();
-  showFeedback('Les stocks emballages se saisissent dans Achats ou Regularisation stock article.', 'error');
+  window.location.href = `./article-detail.html?id=${encodeURIComponent(item.id)}`;
 }
 
 function collectOperationPayload() {
@@ -1038,21 +979,13 @@ function setupEvents() {
     window.location.href = './login.html';
   });
   els.refreshBtn.addEventListener('click', refreshAll);
-  els.createPackagingArticleBtn.addEventListener('click', () => {
-    window.location.href = './articles.html?article_type=PACKAGING_CONSUMABLE';
-  });
-  els.itemForm.addEventListener('submit', (event) => submitItem(event).catch(handleActionError));
-  els.movementForm.addEventListener('submit', (event) => submitMovement(event).catch(handleActionError));
   els.operationForm.addEventListener('submit', (event) => submitOperation(event).catch(handleActionError));
   els.previewOperationBtn.addEventListener('click', () => previewOperation().catch(handleActionError));
   els.returnableForm.addEventListener('submit', (event) => submitReturnable(event).catch(handleActionError));
-  els.resetItemBtn.addEventListener('click', resetItemForm);
   els.itemSearch.addEventListener('input', renderItems);
   els.movementItem.addEventListener('change', () => {
     updateSelectedPackagingSummary();
-    prefillMovementCost();
   });
-  els.movementType.addEventListener('change', prefillMovementCost);
   els.movementHistoryItem.addEventListener('change', () => loadStockMovements().catch(handleActionError));
   els.returnableItem.addEventListener('change', prefillReturnableDeposit);
   els.newModelBtn.addEventListener('click', () => openModelForm());
@@ -1061,7 +994,7 @@ function setupEvents() {
   els.addModelComponentBtn.addEventListener('click', () => {
   const firstItem = state.items.find((item) => item.active !== false && item.category === 'consumable');
     if (!firstItem) {
-      showFeedback('Cree d abord un emballage actif.', 'error');
+      showFeedback('Aucun article emballage consommable actif disponible dans Articles.', 'error');
       return;
     }
     state.modelComponents = [...(state.modelComponents || []), { packaging_item_id: firstItem.id, quantity: 1 }];
@@ -1141,8 +1074,8 @@ function setupEvents() {
     if (retry) retryLoad(retry.dataset.retry).catch(handleActionError);
   });
   els.itemsTbody.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-edit-item]');
-    if (button) editItem(button.dataset.editItem);
+    const button = event.target.closest('[data-open-article]');
+    if (button) openArticleDetail(button.dataset.openArticle);
   });
   els.stockMovementsTbody.addEventListener('click', (event) => {
     const button = event.target.closest('[data-cancel-stock-movement]');
