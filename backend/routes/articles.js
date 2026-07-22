@@ -38,6 +38,60 @@ function toNullableNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+const ARTICLE_TYPES = new Set(['PRODUCT', 'PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE', 'OTHER']);
+
+function normalizeArticleType(value) {
+  const type = String(value || 'PRODUCT').trim().toUpperCase();
+  return ARTICLE_TYPES.has(type) ? type : 'PRODUCT';
+}
+
+function articleFlagsForType(type, body = {}) {
+  const articleType = normalizeArticleType(type);
+  const boolOrDefault = (value, fallback) => {
+    const normalized = normalizeBool(value);
+    return normalized === null ? fallback : normalized;
+  };
+
+  const defaults = {
+    PRODUCT: {
+      stock_managed: true,
+      sellable: true,
+      visible_in_price_list: true,
+      contributes_to_product_cost: true,
+    },
+    PACKAGING_CONSUMABLE: {
+      stock_managed: true,
+      sellable: false,
+      visible_in_price_list: false,
+      contributes_to_product_cost: true,
+    },
+    PACKAGING_RETURNABLE: {
+      stock_managed: true,
+      sellable: false,
+      visible_in_price_list: false,
+      contributes_to_product_cost: false,
+    },
+    OTHER: {
+      stock_managed: true,
+      sellable: false,
+      visible_in_price_list: false,
+      contributes_to_product_cost: false,
+    },
+  }[articleType];
+
+  return {
+    article_type: articleType,
+    stock_managed: boolOrDefault(body.stock_managed, defaults.stock_managed),
+    sellable: boolOrDefault(body.sellable, defaults.sellable),
+    visible_in_price_list: boolOrDefault(body.visible_in_price_list, defaults.visible_in_price_list),
+    contributes_to_product_cost: boolOrDefault(body.contributes_to_product_cost, defaults.contributes_to_product_cost),
+    deposit_unit_value: toNullableNumber(body.deposit_unit_value) ?? 0,
+    alert_threshold: toNullableNumber(body.alert_threshold) ?? 0,
+    format_label: toNullableString(body.format_label),
+    primary_supplier_id: normalizeUuidParam(body.primary_supplier_id),
+  };
+}
+
 async function assertDepartmentBelongsToStore(client, departmentId, storeId) {
   const result = await client.query(
     `
@@ -81,6 +135,8 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
       family = '',
       sector = '',
       active = '',
+      article_type = '',
+      packaging_only = '',
       limit = '200',
       offset = '0',
     } = req.query;
@@ -88,6 +144,8 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
 
     const familyCode = family || sector;
     const activeValue = normalizeBool(active);
+    const packagingOnly = normalizeBool(packaging_only) === true;
+    const requestedArticleType = toNullableString(article_type);
     const safeLimit = Math.min(Number(limit) || 200, 500);
     const safeOffset = Number(offset) || 0;
 
@@ -118,6 +176,13 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
       where += ` AND a.is_active = $${params.length}`;
     }
 
+    if (packagingOnly) {
+      where += " AND a.article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')";
+    } else if (requestedArticleType && ARTICLE_TYPES.has(String(requestedArticleType).toUpperCase())) {
+      params.push(String(requestedArticleType).toUpperCase());
+      where += ` AND a.article_type = $${params.length}`;
+    }
+
     if (search && String(search).trim() !== '') {
       params.push(`%${String(search).trim()}%`);
       const idx = params.length;
@@ -144,6 +209,15 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         a.ean,
         a.unit,
         a.is_active,
+        a.article_type,
+        a.stock_managed,
+        a.sellable,
+        a.visible_in_price_list,
+        a.contributes_to_product_cost,
+        a.deposit_unit_value,
+        a.alert_threshold,
+        a.format_label,
+        a.primary_supplier_id,
         a.source_origin,
         a.source_id,
         a.created_at,
@@ -174,6 +248,8 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.allergens, adm.allergenes) AS allergenes,
         COALESCE(a.allergens, adm.allergenes) AS allergens,
         COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
+        COALESCE(ss.stock_quantity, 0) AS stock_quantity,
+        COALESCE(ss.pma, 0) AS pma,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
       LEFT JOIN article_departments ad
@@ -202,6 +278,7 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
       LEFT JOIN article_department_metadata adm
         ON adm.article_department_id = ad.id
        AND adm.field_key = 'business_metadata'
+      LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       ${where}
       ORDER BY a.designation ASC
       LIMIT $${params.length - 1}
@@ -302,6 +379,11 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
         a.unit,
         a.ean,
         a.is_active,
+        a.article_type,
+        a.stock_managed,
+        a.sellable,
+        a.visible_in_price_list,
+        a.contributes_to_product_cost,
         COALESCE(a.display_name, ad.display_name) AS display_name,
         COALESCE(a.purchase_unit, ad.purchase_unit) AS purchase_unit,
         COALESCE(a.stock_unit, ad.stock_unit) AS stock_unit,
@@ -385,6 +467,11 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
         a.designation,
         a.ean,
         a.unit,
+        a.article_type,
+        a.stock_managed,
+        a.sellable,
+        a.visible_in_price_list,
+        a.contributes_to_product_cost,
         COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
         ad.sale_price_ex_vat,
         ad.sale_price_inc_vat,
@@ -400,6 +487,7 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
       LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.store_id = $1
         AND a.is_active = true
+        AND COALESCE(a.article_type, 'PRODUCT') = 'PRODUCT'
         AND COALESCE(ad.is_active, true) = true
         AND COALESCE(ss.stock_quantity, 0) > 0
         ${departmentFilter}
@@ -422,6 +510,62 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
     res.json(result.rows);
   } catch (err) {
     console.error('Erreur GET /api/articles/search-in-stock :', err);
+    res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET /api/articles/search-packaging
+router.get('/search-packaging', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const { q = '' } = req.query;
+    const searchTerm = String(q).trim();
+
+    const params = [req.user.store_id];
+    let searchFilter = '';
+    if (searchTerm) {
+      params.push(`%${searchTerm}%`);
+      searchFilter = `AND (
+          a.plu ILIKE $${params.length}
+          OR a.designation ILIKE $${params.length}
+          OR COALESCE(a.ean, '') ILIKE $${params.length}
+          OR COALESCE(ad.display_name, '') ILIKE $${params.length}
+        )`;
+    }
+    const result = await req.dbPool.query(
+      `
+      SELECT
+        a.id,
+        a.plu,
+        a.designation,
+        a.ean,
+        a.unit,
+        COALESCE(a.stock_unit, ad.stock_unit, a.unit, 'unit') AS stock_unit,
+        COALESCE(a.stock_unit, ad.stock_unit, a.unit, 'unit') AS management_unit,
+        a.article_type,
+        a.stock_managed,
+        COALESCE(ss.stock_quantity, 0) AS stock_quantity,
+        COALESCE(ss.pma, 0) AS pma,
+        COALESCE(ss.pma, 0) AS current_unit_cost_ex_vat
+      FROM articles a
+      LEFT JOIN article_departments ad ON ad.article_id = a.id
+      LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
+      WHERE a.store_id = $1
+        AND a.is_active = true
+        AND a.article_type = 'PACKAGING_CONSUMABLE'
+        AND a.stock_managed = true
+        AND COALESCE(ad.is_active, true) = true
+        ${searchFilter}
+      ORDER BY
+        CASE WHEN $2::text IS NOT NULL AND a.plu ILIKE $2 THEN 0 ELSE 1 END,
+        a.designation ASC
+      LIMIT 50
+      `,
+      searchTerm ? params : [...params, null]
+    );
+
+    res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur GET /api/articles/search-packaging :', err);
     res.status(500).json({ error: 'Erreur serveur' });
   }
 });
@@ -454,7 +598,9 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
       purchase_price_ex_vat,
       sale_price_ex_vat,
       sale_price_inc_vat,
+      article_type,
     } = req.body;
+    const articleBusiness = articleFlagsForType(article_type, req.body);
 
     if (!toNullableString(plu) || !toNullableString(designation)) {
   return res.status(400).json({
@@ -506,12 +652,21 @@ if (departmentIdFinal) {
         designation,
         ean,
         unit,
+        article_type,
+        stock_managed,
+        sellable,
+        visible_in_price_list,
+        contributes_to_product_cost,
+        deposit_unit_value,
+        alert_threshold,
+        format_label,
+        primary_supplier_id,
         is_active,
         source_origin,
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, 'manual', $7, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'manual', $16, $16)
       RETURNING id
       `,
       [
@@ -520,6 +675,15 @@ if (departmentIdFinal) {
         toNullableString(designation),
         toNullableString(ean),
         toNullableString(unit) || 'kg',
+        articleBusiness.article_type,
+        articleBusiness.stock_managed,
+        articleBusiness.sellable,
+        articleBusiness.visible_in_price_list,
+        articleBusiness.contributes_to_product_cost,
+        articleBusiness.deposit_unit_value,
+        articleBusiness.alert_threshold,
+        articleBusiness.format_label,
+        articleBusiness.primary_supplier_id,
         !!is_active,
         req.user.id,
       ]
@@ -642,6 +806,15 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         a.ean,
         a.unit,
         a.is_active,
+        a.article_type,
+        a.stock_managed,
+        a.sellable,
+        a.visible_in_price_list,
+        a.contributes_to_product_cost,
+        a.deposit_unit_value,
+        a.alert_threshold,
+        a.format_label,
+        a.primary_supplier_id,
         a.source_origin,
         a.source_id,
         a.created_at,
@@ -673,6 +846,8 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.allergens, adm.allergenes) AS allergenes,
         COALESCE(a.allergens, adm.allergenes) AS allergens,
         COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
+        COALESCE(ss.stock_quantity, 0) AS stock_quantity,
+        COALESCE(ss.pma, 0) AS pma,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
       LEFT JOIN article_departments ad
@@ -701,6 +876,7 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
       LEFT JOIN article_department_metadata adm
         ON adm.article_department_id = ad.id
        AND adm.field_key = 'business_metadata'
+      LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.id = $1
         AND a.store_id = $2
       LIMIT 1
@@ -749,7 +925,9 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
       purchase_price_ex_vat,
       sale_price_ex_vat,
       sale_price_inc_vat,
+      article_type,
     } = req.body;
+    const articleBusiness = articleFlagsForType(article_type, req.body);
 
     if (!toNullableString(plu) || !toNullableString(designation)) {
   return res.status(400).json({
@@ -796,6 +974,15 @@ SET
   purchase_unit = $16,
   stock_unit = $17,
   sale_unit = $18,
+  article_type = $19,
+  stock_managed = $20,
+  sellable = $21,
+  visible_in_price_list = $22,
+  contributes_to_product_cost = $23,
+  deposit_unit_value = $24,
+  alert_threshold = $25,
+  format_label = $26,
+  primary_supplier_id = $27,
   updated_at = NOW()
 WHERE id = $7
   AND store_id = $8
@@ -820,6 +1007,15 @@ RETURNING id
   toNullableString(purchase_unit),
   toNullableString(stock_unit),
   toNullableString(sale_unit),
+  articleBusiness.article_type,
+  articleBusiness.stock_managed,
+  articleBusiness.sellable,
+  articleBusiness.visible_in_price_list,
+  articleBusiness.contributes_to_product_cost,
+  articleBusiness.deposit_unit_value,
+  articleBusiness.alert_threshold,
+  articleBusiness.format_label,
+  articleBusiness.primary_supplier_id,
 ]
     );
 

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Articles - Gestion Commerciale</title>
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/articles.css?v=10" />
+  <link rel="stylesheet" href="./css/pages/articles.css?v=11" />
 </head>
 <body class="app-page">
   <header class="topbar">
@@ -66,6 +66,25 @@
           </select>
         </div>
 
+        <div class="form-group">
+          <label for="article-type-filter">Type d'article</label>
+          <select id="article-type-filter">
+            <option value="">Tous</option>
+            <option value="PRODUCT">Produit</option>
+            <option value="PACKAGING_CONSUMABLE">Emballage consommable</option>
+            <option value="PACKAGING_RETURNABLE">Emballage consigne</option>
+            <option value="OTHER">Autre</option>
+          </select>
+        </div>
+
+        <div class="form-group quick-filter">
+          <label for="packaging-only-filter">Emballages</label>
+          <label class="checkbox-line">
+            <input id="packaging-only-filter" type="checkbox" />
+            Afficher uniquement les emballages
+          </label>
+        </div>
+
         <div class="form-group filter-actions">
           <label>&nbsp;</label>
           <button id="refresh-btn" class="btn btn-secondary">Actualiser</button>
@@ -82,6 +101,7 @@
             <tr>
               <th>PLU</th>
               <th>Désignation</th>
+              <th>Type</th>
               <th>Service</th>
               <th>Famille</th>
               <th>Unité</th>
@@ -94,7 +114,7 @@
           </thead>
           <tbody id="articles-tbody">
             <tr>
-              <td colspan="10">Chargement des articles...</td>
+              <td colspan="11">Chargement des articles...</td>
             </tr>
           </tbody>
         </table>
@@ -139,6 +159,16 @@
           <div class="form-group">
             <label for="article-ean">EAN</label>
             <input type="text" id="article-ean" />
+          </div>
+
+          <div class="form-group">
+            <label for="article-type">Type d'article</label>
+            <select id="article-type">
+              <option value="PRODUCT">Produit commercialisable</option>
+              <option value="PACKAGING_CONSUMABLE">Emballage consommable</option>
+              <option value="PACKAGING_RETURNABLE">Emballage consigne</option>
+              <option value="OTHER">Autre article non commercialisable</option>
+            </select>
           </div>
 
           <div class="form-group">
@@ -263,6 +293,46 @@
               <option value="false">Non</option>
             </select>
           </div>
+
+          <section id="packaging-consumable-section" class="form-group-full article-extra-section hidden">
+            <h4>Informations emballage</h4>
+            <div class="form-grid section-grid">
+              <div class="form-group">
+                <label for="article-alert-threshold">Seuil d'alerte</label>
+                <input type="number" step="0.001" min="0" id="article-alert-threshold" />
+              </div>
+              <div class="form-group">
+                <label for="article-format-label">Conditionnement fournisseur</label>
+                <input type="text" id="article-format-label" placeholder="Carton 100, paquet 20 kg..." />
+              </div>
+              <div class="form-group">
+                <label for="article-primary-supplier">Fournisseur principal</label>
+                <select id="article-primary-supplier">
+                  <option value="">-- Aucun --</option>
+                </select>
+              </div>
+            </div>
+          </section>
+
+          <section id="packaging-returnable-section" class="form-group-full article-extra-section hidden">
+            <h4>Informations consigne</h4>
+            <div class="form-grid section-grid">
+              <div class="form-group">
+                <label for="article-deposit-unit-value">Valeur de consigne HT</label>
+                <input type="number" step="0.0001" min="0" id="article-deposit-unit-value" />
+              </div>
+              <div class="form-group">
+                <label for="article-returnable-unit-hint">Unite</label>
+                <input type="text" id="article-returnable-unit-hint" readonly />
+              </div>
+              <div class="form-group">
+                <label for="article-primary-supplier-returnable">Fournisseur principal</label>
+                <select id="article-primary-supplier-returnable">
+                  <option value="">-- Aucun --</option>
+                </select>
+              </div>
+            </div>
+          </section>
         </div>
 
         <div class="modal-actions">
@@ -273,6 +343,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/articles.js?v=16"></script>
+  <script src="./js/articles.js?v=17"></script>
 </body>
 </html>

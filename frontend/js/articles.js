@@ -16,6 +16,8 @@ const logoutBtn = document.getElementById('logout-btn');
 const searchInput = document.getElementById('search-input');
 const familyFilter = document.getElementById('family-filter');
 const statusFilter = document.getElementById('status-filter');
+const articleTypeFilter = document.getElementById('article-type-filter');
+const packagingOnlyFilter = document.getElementById('packaging-only-filter');
 const refreshBtn = document.getElementById('refresh-btn');
 const exportArticlesBtn = document.getElementById('export-articles-btn');
 const importArticlesBtn = document.getElementById('import-articles-btn');
@@ -34,6 +36,7 @@ const articlePluInput = document.getElementById('article-plu');
 const articleDesignationInput = document.getElementById('article-designation');
 const articleUnitInput = document.getElementById('article-unit');
 const articleEanInput = document.getElementById('article-ean');
+const articleTypeInput = document.getElementById('article-type');
 const articleFamilyInput = document.getElementById('article-family');
 const articleCategoryInput = document.getElementById('article-category');
 const articleLatinNameInput = document.getElementById('article-latin-name');
@@ -50,9 +53,52 @@ const articlePurchasePriceExVatInput = document.getElementById('article-purchase
 const articleSalePriceExVatInput = document.getElementById('article-sale-price-ex-vat');
 const articleSalePriceIncVatInput = document.getElementById('article-sale-price-inc-vat');
 const articleActiveInput = document.getElementById('article-active');
+const articleAlertThresholdInput = document.getElementById('article-alert-threshold');
+const articleFormatLabelInput = document.getElementById('article-format-label');
+const articleDepositUnitValueInput = document.getElementById('article-deposit-unit-value');
+const articlePrimarySupplierInput = document.getElementById('article-primary-supplier');
+const articlePrimarySupplierReturnableInput = document.getElementById('article-primary-supplier-returnable');
+const articleReturnableUnitHintInput = document.getElementById('article-returnable-unit-hint');
+const packagingConsumableSection = document.getElementById('packaging-consumable-section');
+const packagingReturnableSection = document.getElementById('packaging-returnable-section');
 
 let articlesCache = [];
 let familiesCache = [];
+let suppliersCache = [];
+
+const ARTICLE_TYPE_LABELS = {
+  PRODUCT: 'Produit',
+  PACKAGING_CONSUMABLE: 'Emballage consommable',
+  PACKAGING_RETURNABLE: 'Emballage consigne',
+  OTHER: 'Autre',
+};
+
+const ARTICLE_TYPE_DEFAULTS = {
+  PRODUCT: {
+    stock_managed: true,
+    sellable: true,
+    visible_in_price_list: true,
+    contributes_to_product_cost: true,
+  },
+  PACKAGING_CONSUMABLE: {
+    stock_managed: true,
+    sellable: false,
+    visible_in_price_list: false,
+    contributes_to_product_cost: true,
+  },
+  PACKAGING_RETURNABLE: {
+    stock_managed: true,
+    sellable: false,
+    visible_in_price_list: false,
+    contributes_to_product_cost: false,
+  },
+  OTHER: {
+    stock_managed: true,
+    sellable: false,
+    visible_in_price_list: false,
+    contributes_to_product_cost: false,
+  },
+};
 
 function isValidId(value) {
   const id = String(value ?? '').trim();
@@ -83,6 +129,34 @@ function formatVat(value) {
   return Number.isFinite(number) ? `${number.toString().replace('.', ',')} %` : '';
 }
 
+function articleTypeLabel(value) {
+  return ARTICLE_TYPE_LABELS[value] || ARTICLE_TYPE_LABELS.PRODUCT;
+}
+
+function updateArticleTypeUi(applyDefaults = false) {
+  const type = articleTypeInput.value || 'PRODUCT';
+  const isConsumable = type === 'PACKAGING_CONSUMABLE';
+  const isReturnable = type === 'PACKAGING_RETURNABLE';
+  packagingConsumableSection.classList.toggle('hidden', !isConsumable);
+  packagingReturnableSection.classList.toggle('hidden', !isReturnable);
+  articleReturnableUnitHintInput.value = articleStockUnitInput.value || articleUnitInput.value || 'unite';
+  const defaults = ARTICLE_TYPE_DEFAULTS[type] || ARTICLE_TYPE_DEFAULTS.PRODUCT;
+  articleTypeInput.dataset.stockManaged = String(defaults.stock_managed);
+  articleTypeInput.dataset.sellable = String(defaults.sellable);
+  articleTypeInput.dataset.visibleInPriceList = String(defaults.visible_in_price_list);
+  articleTypeInput.dataset.contributesToProductCost = String(defaults.contributes_to_product_cost);
+
+  if (!applyDefaults) return;
+  if (isConsumable || isReturnable || type === 'OTHER') {
+    articleSalePriceExVatInput.value = '';
+    articleSalePriceIncVatInput.value = '';
+    articleSaleUnitInput.value = '';
+  }
+  if ((isConsumable || isReturnable) && !articleStockUnitInput.value) {
+    articleStockUnitInput.value = articleUnitInput.value || 'unite';
+  }
+}
+
 function parseNumberInput(input) {
   if (!input || input.value === '') return null;
   const number = Number(String(input.value).replace(',', '.'));
@@ -101,12 +175,29 @@ function fillFamilySelects() {
   articleFamilyInput.innerHTML = `<option value="">-- Choisir --</option>${options}`;
 }
 
+function fillSupplierSelects() {
+  const options = suppliersCache
+    .map((supplier) => `<option value="${supplier.id}">${supplier.code ? `${supplier.code} - ` : ''}${supplier.name || supplier.legal_name || supplier.id}</option>`)
+    .join('');
+  const html = `<option value="">-- Aucun --</option>${options}`;
+  articlePrimarySupplierInput.innerHTML = html;
+  articlePrimarySupplierReturnableInput.innerHTML = html;
+}
+
 async function loadFamilies() {
   const response = await fetch(`${API_BASE_URL}/api/articles/families`, { headers: authHeaders(false) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Erreur chargement familles');
   familiesCache = data;
   fillFamilySelects();
+}
+
+async function loadSuppliers() {
+  const response = await fetch(`${API_BASE_URL}/api/suppliers?status=active`, { headers: authHeaders(false) });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Erreur chargement fournisseurs');
+  suppliersCache = Array.isArray(data) ? data : [];
+  fillSupplierSelects();
 }
 
 function canManageArticle(article) {
@@ -122,6 +213,7 @@ function openModal(editMode = false, article = null) {
   articleDesignationInput.value = article?.designation || '';
   articleUnitInput.value = article?.unit || 'kg';
   articleEanInput.value = article?.ean || '';
+  articleTypeInput.value = article?.article_type || new URLSearchParams(window.location.search).get('article_type') || 'PRODUCT';
   articleFamilyInput.value = article?.family_code || article?.category || '';
   articleCategoryInput.value = article?.category || '';
   articleLatinNameInput.value = article?.latin_name || '';
@@ -138,6 +230,12 @@ function openModal(editMode = false, article = null) {
   articleSalePriceExVatInput.value = article?.sale_price_ex_vat ?? '';
   articleSalePriceIncVatInput.value = article?.sale_price_inc_vat ?? '';
   articleActiveInput.value = String(article?.is_active ?? true);
+  articleAlertThresholdInput.value = article?.alert_threshold ?? '';
+  articleFormatLabelInput.value = article?.format_label ?? '';
+  articleDepositUnitValueInput.value = article?.deposit_unit_value ?? '';
+  articlePrimarySupplierInput.value = article?.primary_supplier_id || '';
+  articlePrimarySupplierReturnableInput.value = article?.primary_supplier_id || '';
+  updateArticleTypeUi(!editMode);
 }
 
 function closeModal() {
@@ -145,13 +243,20 @@ function closeModal() {
   articleForm.reset();
   articleIdInput.value = '';
   articleUnitInput.value = 'kg';
+  articleTypeInput.value = 'PRODUCT';
   articleVatRateInput.value = '5.5';
   articleActiveInput.value = 'true';
+  articleAlertThresholdInput.value = '';
+  articleFormatLabelInput.value = '';
+  articleDepositUnitValueInput.value = '';
+  articlePrimarySupplierInput.value = '';
+  articlePrimarySupplierReturnableInput.value = '';
+  updateArticleTypeUi(false);
 }
 
 function renderArticles(rows) {
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="10">Aucun article trouvé.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11">Aucun article trouvé.</td></tr>';
     return;
   }
 
@@ -159,6 +264,7 @@ function renderArticles(rows) {
     <tr>
       <td>${article.plu || ''}</td>
       <td>${article.designation || ''}</td>
+      <td><span class="article-type-pill ${article.article_type || 'PRODUCT'}">${articleTypeLabel(article.article_type || 'PRODUCT')}</span></td>
       <td>${article.department_name || ''}</td>
       <td>${article.family_name || ''}</td>
       <td>${article.unit || ''}</td>
@@ -184,12 +290,14 @@ function renderArticles(rows) {
 async function loadArticles() {
   try {
     setFeedback('Chargement des articles...', '');
-    tbody.innerHTML = '<tr><td colspan="10">Chargement des articles...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11">Chargement des articles...</td></tr>';
 
     const params = new URLSearchParams();
     if (searchInput.value.trim()) params.set('search', searchInput.value.trim());
     if (familyFilter.value) params.set('family', familyFilter.value);
     if (statusFilter.value) params.set('active', statusFilter.value);
+    if (articleTypeFilter.value) params.set('article_type', articleTypeFilter.value);
+    if (packagingOnlyFilter.checked) params.set('packaging_only', 'true');
 
     const suffix = params.toString() ? `?${params.toString()}` : '';
     const response = await fetch(`${API_BASE_URL}/api/articles${suffix}`, { headers: authHeaders(false) });
@@ -202,7 +310,7 @@ async function loadArticles() {
   } catch (error) {
     console.error(error);
     setFeedback(error.message, 'error');
-    tbody.innerHTML = '<tr><td colspan="10">Erreur de chargement.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11">Erreur de chargement.</td></tr>';
   }
 }
 
@@ -216,6 +324,17 @@ async function saveArticle(event) {
       designation: articleDesignationInput.value.trim(),
       unit: articleUnitInput.value,
       ean: articleEanInput.value.trim(),
+      article_type: articleTypeInput.value || 'PRODUCT',
+      stock_managed: articleTypeInput.dataset.stockManaged === 'true',
+      sellable: articleTypeInput.dataset.sellable === 'true',
+      visible_in_price_list: articleTypeInput.dataset.visibleInPriceList === 'true',
+      contributes_to_product_cost: articleTypeInput.dataset.contributesToProductCost === 'true',
+      alert_threshold: parseNumberInput(articleAlertThresholdInput) ?? 0,
+      format_label: articleFormatLabelInput.value.trim(),
+      deposit_unit_value: parseNumberInput(articleDepositUnitValueInput) ?? 0,
+      primary_supplier_id: articleTypeInput.value === 'PACKAGING_RETURNABLE'
+        ? articlePrimarySupplierReturnableInput.value
+        : articlePrimarySupplierInput.value,
       family_code: articleFamilyInput.value,
       category: articleCategoryInput.value,
       latin_name: articleLatinNameInput.value.trim(),
@@ -435,6 +554,23 @@ searchInput.addEventListener('keydown', (event) => {
 
 familyFilter.addEventListener('change', loadArticles);
 statusFilter.addEventListener('change', loadArticles);
+articleTypeFilter.addEventListener('change', () => {
+  if (articleTypeFilter.value) packagingOnlyFilter.checked = false;
+  loadArticles();
+});
+packagingOnlyFilter.addEventListener('change', () => {
+  if (packagingOnlyFilter.checked) articleTypeFilter.value = '';
+  loadArticles();
+});
+articleTypeInput.addEventListener('change', () => updateArticleTypeUi(true));
+articleUnitInput.addEventListener('change', () => updateArticleTypeUi(false));
+articleStockUnitInput.addEventListener('change', () => updateArticleTypeUi(false));
+articlePrimarySupplierInput.addEventListener('change', () => {
+  articlePrimarySupplierReturnableInput.value = articlePrimarySupplierInput.value;
+});
+articlePrimarySupplierReturnableInput.addEventListener('change', () => {
+  articlePrimarySupplierInput.value = articlePrimarySupplierReturnableInput.value;
+});
 articleSalePriceExVatInput.addEventListener('change', recalculatePriceFromExVat);
 articleSalePriceIncVatInput.addEventListener('change', recalculatePriceFromIncVat);
 articleVatRateInput.addEventListener('change', () => {
@@ -446,6 +582,11 @@ async function init() {
   try {
     fillTopbar();
     await loadFamilies();
+    await loadSuppliers();
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('article_type')) {
+      openModal(false, { article_type: params.get('article_type') });
+    }
     await loadArticles();
   } catch (error) {
     console.error(error);

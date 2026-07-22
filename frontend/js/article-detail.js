@@ -211,20 +211,24 @@ async function loadPackagingProfiles() {
 }
 
 async function loadPackagingItems() {
-  const response = await fetch(`${API_BASE_URL}/api/packaging/items`, {
+  const response = await fetch(`${API_BASE_URL}/api/articles/search-packaging?q=`, {
     headers: authHeaders(false),
   });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || 'Erreur chargement emballages');
-  packagingItems = data.items || [];
+  packagingItems = (Array.isArray(data) ? data : []).map((article) => ({
+    id: article.id,
+    code: article.plu,
+    designation: article.designation,
+  }));
 }
 
 async function createQuickPackagingProfile() {
   try {
     if (!packagingItems.length) await loadPackagingItems();
     if (!packagingItems.length) {
-      alert('Cree d abord un emballage dans le module Conditionnement.');
-      window.location.href = './packaging.html';
+      alert('Cree d abord un emballage dans la fiche article.');
+      window.location.href = './articles.html?article_type=PACKAGING_CONSUMABLE';
       return;
     }
 

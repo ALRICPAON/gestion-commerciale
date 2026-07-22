@@ -32,6 +32,7 @@ const els = {
   refreshBtn: document.getElementById('refresh-btn'),
   feedback: document.getElementById('packaging-feedback'),
   itemForm: document.getElementById('item-form'),
+  createPackagingArticleBtn: document.getElementById('create-packaging-article-btn'),
   movementForm: document.getElementById('movement-form'),
   itemSearch: document.getElementById('item-search'),
   itemsTbody: document.getElementById('items-tbody'),
@@ -151,7 +152,6 @@ function selectedPackagingItem(selectEl = els.movementItem) {
 function sourceDocumentLabel(movement) {
   if (!movement.source_table) return '-';
   if (movement.source_table === 'packaging_operations') return `Conditionnement ${movement.source_id || ''}`.trim();
-  if (movement.source_table === 'packaging_stock_movements') return `Annulation ${movement.source_id || ''}`.trim();
   return `${movement.source_table} ${movement.source_id || ''}`.trim();
 }
 
@@ -323,7 +323,7 @@ function renderModelComponents() {
       return `
         <div class="component-row" data-component-index="${index}">
           <select data-component-field="packaging_item_id">
-            ${state.items.filter((item) => item.active !== false).map((itemOption) => `
+            ${state.items.filter((item) => item.active !== false && item.category === 'consumable').map((itemOption) => `
               <option value="${itemOption.id}" ${String(itemOption.id) === String(component.packaging_item_id) ? 'selected' : ''}>
                 ${escapeHtml(itemOption.code)} - ${escapeHtml(itemOption.designation)}
               </option>
@@ -458,8 +458,19 @@ function renderStockMovementsError(error) {
 
 async function loadItems() {
   try {
-    const data = await api('/api/packaging/items');
-    state.items = data.items || [];
+    const data = await api('/api/articles?packaging_only=true&active=true&limit=200');
+    state.items = (Array.isArray(data) ? data : []).map((article) => ({
+      id: article.id,
+      code: article.plu,
+      designation: article.designation,
+      category: article.article_type === 'PACKAGING_RETURNABLE' ? 'returnable' : 'consumable',
+      management_unit: article.management_unit || article.stock_unit || article.unit || 'unit',
+      current_stock: article.stock_quantity || 0,
+      current_unit_cost_ex_vat: article.current_unit_cost_ex_vat || article.pma || 0,
+      deposit_unit_value: article.deposit_unit_value || 0,
+      alert_threshold: article.alert_threshold || 0,
+      active: true,
+    }));
     renderOptions();
     renderItems();
   } catch (error) {
@@ -630,35 +641,12 @@ function editItem(itemId) {
 
 async function submitItem(event) {
   event.preventDefault();
-  const itemId = getInput('item-id');
-  const method = itemId ? 'PATCH' : 'POST';
-  const path = itemId ? `/api/packaging/items/${encodeURIComponent(itemId)}` : '/api/packaging/items';
-
-  await api(path, {
-    method,
-    body: JSON.stringify(collectItemPayload()),
-  });
-
-  resetItemForm();
-  await loadItems();
-  showFeedback('Emballage enregistre.', 'success');
+  window.location.href = './articles.html?article_type=PACKAGING_CONSUMABLE';
 }
 
 async function submitMovement(event) {
   event.preventDefault();
-  const itemId = els.movementItem.value;
-  await api(`/api/packaging/items/${encodeURIComponent(itemId)}/stock-movements`, {
-    method: 'POST',
-    body: JSON.stringify({
-      movement_type: getInput('movement-type'),
-      quantity: getInput('movement-quantity'),
-      unit_cost_ex_vat: getInput('movement-cost') || 0,
-      notes: getInput('movement-notes'),
-    }),
-  });
-  els.movementForm.reset();
-  await Promise.all([loadItems(), loadStockMovements()]);
-  showFeedback('Mouvement stock enregistre.', 'success');
+  showFeedback('Les stocks emballages se saisissent dans Achats ou Regularisation stock article.', 'error');
 }
 
 function collectOperationPayload() {
@@ -1050,6 +1038,9 @@ function setupEvents() {
     window.location.href = './login.html';
   });
   els.refreshBtn.addEventListener('click', refreshAll);
+  els.createPackagingArticleBtn.addEventListener('click', () => {
+    window.location.href = './articles.html?article_type=PACKAGING_CONSUMABLE';
+  });
   els.itemForm.addEventListener('submit', (event) => submitItem(event).catch(handleActionError));
   els.movementForm.addEventListener('submit', (event) => submitMovement(event).catch(handleActionError));
   els.operationForm.addEventListener('submit', (event) => submitOperation(event).catch(handleActionError));
@@ -1068,7 +1059,7 @@ function setupEvents() {
   els.cancelModelBtn.addEventListener('click', closeModelForm);
   els.modelForm.addEventListener('submit', (event) => submitModel(event).catch(handleActionError));
   els.addModelComponentBtn.addEventListener('click', () => {
-    const firstItem = state.items.find((item) => item.active !== false);
+  const firstItem = state.items.find((item) => item.active !== false && item.category === 'consumable');
     if (!firstItem) {
       showFeedback('Cree d abord un emballage actif.', 'error');
       return;

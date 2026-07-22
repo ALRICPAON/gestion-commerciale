@@ -44,8 +44,8 @@ function run() {
 
   assert(packagingHtml.includes('PLU ou designation'));
   assert(packagingHtml.includes('operation-article-f9-btn'));
-  assert(packagingHtml.includes('packaging.js?v=3'));
-  assert(packagingHtml.includes('packaging.css?v=3'));
+  assert(packagingHtml.includes('packaging.js?v=4'));
+  assert(packagingHtml.includes('packaging.css?v=4'));
   assert(packagingHtml.includes('Nouveau modele de conditionnement'));
   assert(packagingHtml.includes('Realiser un conditionnement'));
   assert(packagingHtml.includes('Quantite de produit concernee en kg'));
@@ -68,6 +68,8 @@ function run() {
   assert(packagingJs.includes('movementCancelReason'));
   assert(packagingJs.includes('Aucun article trouve pour ce PLU'));
   assert(packagingJs.includes('/api/articles/search-in-stock'));
+  assert(packagingJs.includes('/api/articles?packaging_only=true'));
+  assert(!packagingJs.includes('/api/packaging/items/'));
   assert(packagingJs.includes('Stock produit <strong>Inchange</strong>'));
   assert(packagingJs.includes('operation-lot'));
   assert(packagingJs.includes('loadLotsForOperationArticle'));
