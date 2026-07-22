@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Conditionnement - ALTA MAREE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/packaging.css?v=1" />
+</head>
+<body class="app-page packaging-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">Conditionnement</h1>
+      <p class="app-subtitle">Emballages consommables, profils articles, operations et consignes.</p>
+    </div>
+
+    <div class="topbar-right">
+      <div class="user-box">
+        <span id="user-name">Utilisateur</span>
+      </div>
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content packaging-layout">
+    <section class="packaging-toolbar">
+      <div class="tabs" role="tablist" aria-label="Sections conditionnement">
+        <button class="tab-btn active" type="button" data-tab="catalog">Emballages</button>
+        <button class="tab-btn" type="button" data-tab="operations">Operations</button>
+        <button class="tab-btn" type="button" data-tab="returnables">Consignes</button>
+      </div>
+      <button id="refresh-btn" class="btn btn-primary" type="button">Actualiser</button>
+    </section>
+
+    <div id="packaging-feedback" class="page-feedback hidden"></div>
+
+    <section id="tab-catalog" class="tab-panel">
+      <div class="packaging-grid two-columns">
+        <section class="card">
+          <h2>Catalogue emballages</h2>
+          <form id="item-form" class="compact-form">
+            <input type="hidden" id="item-id" />
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="item-code">Code</label>
+                <input id="item-code" required placeholder="CAISSE-30L" />
+              </div>
+              <div class="form-group">
+                <label for="item-designation">Designation</label>
+                <input id="item-designation" required placeholder="Caisse polystyrene 30 L" />
+              </div>
+              <div class="form-group">
+                <label for="item-category">Categorie</label>
+                <select id="item-category">
+                  <option value="consumable">Consommable</option>
+                  <option value="returnable">Consigne fournisseur</option>
+                  <option value="reusable_internal">Reutilisable interne</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="item-unit">Unite</label>
+                <input id="item-unit" value="unit" />
+              </div>
+              <div class="form-group">
+                <label for="item-cost">Cout HT</label>
+                <input id="item-cost" type="number" min="0" step="0.0001" value="0" />
+              </div>
+              <div class="form-group">
+                <label for="item-deposit">Consigne HT</label>
+                <input id="item-deposit" type="number" min="0" step="0.0001" value="0" />
+              </div>
+              <div class="form-group">
+                <label for="item-threshold">Seuil alerte</label>
+                <input id="item-threshold" type="number" min="0" step="0.001" value="0" />
+              </div>
+              <div class="form-group">
+                <label for="item-format">Format</label>
+                <input id="item-format" placeholder="30 L, 60 x 40..." />
+              </div>
+            </div>
+            <div class="form-actions">
+              <button class="btn btn-primary" type="submit">Enregistrer</button>
+              <button id="reset-item-btn" class="btn btn-secondary" type="button">Nouveau</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>Mouvement stock emballage</h2>
+          <form id="movement-form" class="compact-form">
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="movement-item">Emballage</label>
+                <select id="movement-item" required></select>
+              </div>
+              <div class="form-group">
+                <label for="movement-type">Type</label>
+                <select id="movement-type">
+                  <option value="purchase_in">Entree achat</option>
+                  <option value="inventory_adjustment">Inventaire</option>
+                  <option value="loss">Perte</option>
+                  <option value="destruction">Destruction</option>
+                  <option value="manual_correction">Correction signee</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="movement-quantity">Quantite</label>
+                <input id="movement-quantity" type="number" step="0.001" required />
+              </div>
+              <div class="form-group">
+                <label for="movement-cost">Cout HT</label>
+                <input id="movement-cost" type="number" min="0" step="0.0001" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="movement-notes">Note</label>
+              <input id="movement-notes" placeholder="BL fournisseur, inventaire, casse..." />
+            </div>
+            <div class="form-actions">
+              <button class="btn btn-primary" type="submit">Ajouter mouvement</button>
+            </div>
+          </form>
+        </section>
+      </div>
+
+      <section class="card">
+        <div class="section-title-row">
+          <h2>Stocks emballages</h2>
+          <input id="item-search" class="table-search" placeholder="Filtrer code ou designation" />
+        </div>
+        <div class="table-wrap">
+          <table class="data-table packaging-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Designation</th>
+                <th>Categorie</th>
+                <th>Stock</th>
+                <th>Cout HT</th>
+                <th>Consigne</th>
+                <th>Seuil</th>
+                <th>Etat</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="items-tbody">
+              <tr><td colspan="9">Chargement...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-operations" class="tab-panel hidden">
+      <div class="packaging-grid two-columns">
+        <section class="card">
+          <h2>Operation de conditionnement</h2>
+          <form id="operation-form" class="compact-form">
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="operation-article">Article</label>
+                <input id="operation-article" placeholder="ID article" required />
+              </div>
+              <div class="form-group">
+                <label for="operation-profile">Profil</label>
+                <select id="operation-profile" required></select>
+              </div>
+              <div class="form-group">
+                <label for="operation-kg">Kg produit</label>
+                <input id="operation-kg" type="number" min="0.001" step="0.001" required />
+              </div>
+              <div class="form-group">
+                <label for="operation-packages">Colis</label>
+                <input id="operation-packages" type="number" min="0.001" step="0.001" required />
+              </div>
+              <div class="form-group">
+                <label for="operation-product-cost">Cout produit / kg</label>
+                <input id="operation-product-cost" type="number" min="0" step="0.0001" value="0" />
+              </div>
+              <div class="form-group">
+                <label for="operation-date">Date</label>
+                <input id="operation-date" type="date" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="operation-notes">Note</label>
+              <input id="operation-notes" placeholder="Preparation, lot, client..." />
+            </div>
+            <div class="form-actions">
+              <button id="preview-operation-btn" class="btn btn-secondary" type="button">Previsualiser</button>
+              <button class="btn btn-primary" type="submit">Creer brouillon</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>Previsualisation</h2>
+          <div id="operation-preview" class="preview-box">
+            Selectionne un article, un profil, des kg et un nombre de colis.
+          </div>
+        </section>
+      </div>
+
+      <section class="card">
+        <h2>Dernieres operations</h2>
+        <div class="table-wrap">
+          <table class="data-table packaging-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Article</th>
+                <th>Profil</th>
+                <th>Kg</th>
+                <th>Colis</th>
+                <th>Cout emb.</th>
+                <th>Statut</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="operations-tbody">
+              <tr><td colspan="8">Chargement...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="tab-returnables" class="tab-panel hidden">
+      <div class="packaging-grid two-columns">
+        <section class="card">
+          <h2>Mouvement consigne</h2>
+          <form id="returnable-form" class="compact-form">
+            <div class="form-grid">
+              <div class="form-group">
+                <label for="returnable-item">Emballage consigne</label>
+                <select id="returnable-item" required></select>
+              </div>
+              <div class="form-group">
+                <label for="returnable-type">Type</label>
+                <select id="returnable-type">
+                  <option value="deposit_receipt">Reception consignee</option>
+                  <option value="return">Retour fournisseur</option>
+                  <option value="supplier_credit_note">Avoir fournisseur</option>
+                  <option value="loss">Perte</option>
+                  <option value="breakage">Casse</option>
+                  <option value="adjustment">Ajustement signe</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="returnable-quantity">Quantite</label>
+                <input id="returnable-quantity" type="number" step="0.001" required />
+              </div>
+              <div class="form-group">
+                <label for="returnable-deposit">Valeur unitaire</label>
+                <input id="returnable-deposit" type="number" min="0" step="0.0001" value="0" />
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="returnable-notes">Note</label>
+              <input id="returnable-notes" placeholder="BL, retour, avoir..." />
+            </div>
+            <div class="form-actions">
+              <button class="btn btn-primary" type="submit">Enregistrer</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>Soldes consignes</h2>
+          <div id="returnable-balances" class="balance-list">Chargement...</div>
+        </section>
+      </div>
+
+      <section class="card">
+        <h2>Historique consignes</h2>
+        <div class="table-wrap">
+          <table class="data-table packaging-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Emballage</th>
+                <th>Type</th>
+                <th>Quantite</th>
+                <th>Valeur</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody id="returnable-movements-tbody">
+              <tr><td colspan="6">Chargement...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/packaging.js?v=1"></script>
+</body>
+</html>

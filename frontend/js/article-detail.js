@@ -32,8 +32,12 @@ const commercialEl = document.getElementById('commercial');
 const metaEl = document.getElementById('meta');
 const unitsEl = document.getElementById('units');
 const technicalEl = document.getElementById('technical');
+const packagingProfilesEl = document.getElementById('packaging-profiles');
+const addPackagingProfileBtn = document.getElementById('add-packaging-profile-btn');
 
 let currentArticle = null;
+let packagingProfiles = [];
+let packagingItems = [];
 
 function authHeaders(json = true) {
   const headers = {
@@ -50,6 +54,15 @@ function authHeaders(json = true) {
 function valueOrDash(value) {
   if (value === null || value === undefined || value === '') return '-';
   return value;
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 function formatPrice(value) {
@@ -138,6 +151,125 @@ function renderArticle(article) {
   ].join('');
 }
 
+function renderPackagingProfiles() {
+  if (!packagingProfilesEl) return;
+
+  if (!packagingProfiles.length) {
+    packagingProfilesEl.innerHTML = `
+      <div class="empty-state">
+        Aucun profil de conditionnement actif.
+        <a href="./packaging.html">Ouvrir le module emballages</a>
+      </div>
+    `;
+    return;
+  }
+
+  packagingProfilesEl.innerHTML = packagingProfiles
+    .map((profile) => {
+      const components = profile.components || [];
+      return `
+        <article class="packaging-profile-card">
+          <div>
+            <strong>${escapeHtml(profile.name)}${profile.is_default ? ' - defaut' : ''}</strong>
+            <span>${components.length} composant(s)</span>
+          </div>
+          <ul>
+            ${components
+              .map(
+                (component) => `
+                  <li>
+                    ${escapeHtml(component.code || '')} ${escapeHtml(component.designation || '')}
+                    <strong>${valueOrDash(component.quantity)} / ${escapeHtml(component.consumption_rule)}</strong>
+                  </li>
+                `
+              )
+              .join('')}
+          </ul>
+        </article>
+      `;
+    })
+    .join('');
+}
+
+async function loadPackagingProfiles() {
+  if (!packagingProfilesEl) return;
+
+  try {
+    const response = await fetch(
+      `${API_BASE_URL}/api/packaging/articles/${encodeURIComponent(articleId)}/profiles`,
+      { headers: authHeaders(false) }
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Erreur chargement conditionnements');
+
+    packagingProfiles = data.profiles || [];
+    renderPackagingProfiles();
+  } catch (error) {
+    console.error(error);
+    packagingProfilesEl.textContent = error.message;
+  }
+}
+
+async function loadPackagingItems() {
+  const response = await fetch(`${API_BASE_URL}/api/packaging/items`, {
+    headers: authHeaders(false),
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || 'Erreur chargement emballages');
+  packagingItems = data.items || [];
+}
+
+async function createQuickPackagingProfile() {
+  try {
+    if (!packagingItems.length) await loadPackagingItems();
+    if (!packagingItems.length) {
+      alert('Cree d abord un emballage dans le module Conditionnement.');
+      window.location.href = './packaging.html';
+      return;
+    }
+
+    const name = window.prompt('Nom du profil', 'Standard');
+    if (!name) return;
+
+    const itemList = packagingItems
+      .map((item, index) => `${index + 1}. ${item.code} - ${item.designation}`)
+      .join('\n');
+    const itemChoice = Number(window.prompt(`Emballage principal:\n${itemList}`, '1'));
+    const selectedItem = packagingItems[itemChoice - 1];
+    if (!selectedItem) return;
+
+    const quantity = window.prompt('Quantite par colis', '1');
+    if (!quantity) return;
+
+    const response = await fetch(
+      `${API_BASE_URL}/api/packaging/articles/${encodeURIComponent(articleId)}/profiles`,
+      {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify({
+          name,
+          is_default: packagingProfiles.length === 0,
+          components: [
+            {
+              packaging_item_id: selectedItem.id,
+              quantity,
+              consumption_rule: 'per_package',
+              is_primary_packaging: true,
+            },
+          ],
+        }),
+      }
+    );
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Erreur creation profil');
+
+    await loadPackagingProfiles();
+  } catch (error) {
+    console.error(error);
+    alert(error.message);
+  }
+}
+
 async function loadArticle() {
   try {
     const url = `${API_BASE_URL}/api/articles/${encodeURIComponent(articleId)}`;
@@ -153,6 +285,7 @@ async function loadArticle() {
     }
 
     renderArticle(data);
+    await loadPackagingProfiles();
   } catch (error) {
     console.error(error);
     articleTitleEl.textContent = error.message;
@@ -167,6 +300,10 @@ backBtn.addEventListener('click', () => {
 editBtn.addEventListener('click', () => {
   window.location.href = `./articles.html?edit=${articleId}`;
 });
+
+if (addPackagingProfileBtn) {
+  addPackagingProfileBtn.addEventListener('click', createQuickPackagingProfile);
+}
 
 fillTopbar();
 loadArticle();
