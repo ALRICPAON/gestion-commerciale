@@ -45,6 +45,7 @@ const els = {
   operationArticleId: document.getElementById('operation-article-id'),
   operationArticleSelected: document.getElementById('operation-article-selected'),
   operationArticleF9Btn: document.getElementById('operation-article-f9-btn'),
+  operationLot: document.getElementById('operation-lot'),
   operationProfile: document.getElementById('operation-profile'),
   operationModelHint: document.getElementById('operation-model-hint'),
   submitOperationBtn: document.getElementById('submit-operation-btn'),
@@ -274,6 +275,13 @@ function renderProfiles() {
   updateOperationSubmitState();
 }
 
+function renderOperationLots(lots = []) {
+  els.operationLot.innerHTML = lots
+    .map((lot) => `<option value="${lot.id}">${escapeHtml(lot.lot_code || lot.supplier_lot_number || lot.id)} - ${formatNumber(lot.qty_remaining)} ${escapeHtml(lot.unit || 'kg')} - ${formatMoney(lot.unit_cost_ex_vat)}</option>`)
+    .join('') || '<option value="">Aucun lot disponible</option>';
+  updateOperationSubmitState();
+}
+
 function renderModels() {
   if (!state.allProfiles.length) {
     els.modelsTbody.innerHTML = '<tr><td colspan="9">Aucun modele de conditionnement.</td></tr>';
@@ -462,12 +470,23 @@ async function loadProfilesForArticle(articleId = els.operationArticleId.value.t
   if (!isUuid(articleId)) {
     state.profiles = [];
     renderProfiles();
+    renderOperationLots([]);
     return;
   }
 
   const data = await api(`/api/packaging/articles/${encodeURIComponent(articleId)}/profiles`);
   state.profiles = data.profiles || [];
   renderProfiles();
+}
+
+async function loadLotsForOperationArticle(articleId = els.operationArticleId.value.trim()) {
+  if (!isUuid(articleId)) {
+    renderOperationLots([]);
+    return;
+  }
+
+  const lots = await api(`/api/stock/lots?article_id=${encodeURIComponent(articleId)}&available_only=true&limit=200`);
+  renderOperationLots(Array.isArray(lots) ? lots : []);
 }
 
 async function loadModels() {
@@ -643,6 +662,7 @@ async function submitMovement(event) {
 function collectOperationPayload() {
   return {
     article_id: getInput('operation-article-id'),
+    lot_id: els.operationLot.value,
     profile_id: getInput('operation-profile'),
     product_quantity_kg: getInput('operation-kg'),
     package_count: getInput('operation-packages'),
@@ -653,6 +673,7 @@ function collectOperationPayload() {
 
 function updateOperationSubmitState() {
   const ready = isUuid(els.operationArticleId.value)
+    && isUuid(els.operationLot.value)
     && isUuid(els.operationProfile.value)
     && Number(getInput('operation-kg')) > 0
     && Number(getInput('operation-packages')) > 0;
@@ -676,6 +697,7 @@ function applyOperationArticle(article) {
     ? `${normalized.plu || '-'} - ${normalized.designation || '-'}`
     : 'Aucun article selectionne.';
   if (els.operationArticleId.value) loadProfilesForArticle(els.operationArticleId.value).catch(handleActionError);
+  if (els.operationArticleId.value) loadLotsForOperationArticle(els.operationArticleId.value).catch(handleActionError);
 }
 
 function applyModelArticle(article) {
@@ -777,6 +799,7 @@ async function resolveOperationArticleFromInput() {
     els.operationArticleSelected.textContent = 'Aucun article trouve pour ce PLU';
     state.profiles = [];
     renderProfiles();
+    renderOperationLots([]);
     throw new Error('Aucun article trouve pour ce PLU');
   }
 
@@ -1129,7 +1152,7 @@ function setupEvents() {
     if (article && state.articlePickerTarget === 'operation') applyOperationArticle(article);
     closeArticlePicker();
   });
-  ['operation-profile', 'operation-kg', 'operation-packages'].forEach((id) => {
+  ['operation-lot', 'operation-profile', 'operation-kg', 'operation-packages'].forEach((id) => {
     document.getElementById(id).addEventListener('input', updateOperationSubmitState);
     document.getElementById(id).addEventListener('change', updateOperationSubmitState);
   });

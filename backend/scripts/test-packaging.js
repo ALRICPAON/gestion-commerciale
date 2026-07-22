@@ -37,6 +37,7 @@ function run() {
   const packagingHtml = fs.readFileSync(path.join(__dirname, '../../frontend/packaging.html'), 'utf8');
   const packagingService = fs.readFileSync(path.join(__dirname, '../services/packaging/packagingService.js'), 'utf8');
   const costImpactMigration = fs.readFileSync(path.join(__dirname, '../db/gestion-commerciale/062_packaging_cost_impacts.sql'), 'utf8');
+  const articleAlignmentMigration = fs.readFileSync(path.join(__dirname, '../db/gestion-commerciale/063_packaging_articles_alignment.sql'), 'utf8');
 
   assert(packagingHtml.includes('PLU ou designation'));
   assert(packagingHtml.includes('operation-article-f9-btn'));
@@ -65,10 +66,20 @@ function run() {
   assert(packagingJs.includes('Aucun article trouve pour ce PLU'));
   assert(packagingJs.includes('/api/articles/search-in-stock'));
   assert(packagingJs.includes('Stock produit <strong>Inchange</strong>'));
+  assert(packagingJs.includes('operation-lot'));
+  assert(packagingJs.includes('loadLotsForOperationArticle'));
+  assert(packagingJs.includes('/api/stock/lots?article_id='));
   assert(packagingService.includes('packaging_cost_impacts'));
-  assert(!packagingService.includes('UPDATE lots SET'));
-  assert(!packagingService.includes('INSERT INTO stock_movements'));
+  assert(packagingService.includes("a.article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')"));
+  assert(packagingService.includes('consumePackagingArticleStock'));
+  assert(packagingService.includes("'packaging_consumption'"));
+  assert(packagingService.includes('UPDATE lots SET qty_remaining = qty_remaining - $1'));
+  assert(packagingService.includes('INSERT INTO stock_movements'));
+  assert(packagingService.includes('await assertProductLotTraceability(client, storeId, operation.article_id, operation.lot_id)'));
+  assert(!packagingService.includes('UPDATE packaging_items'));
   assert(costImpactMigration.includes('CREATE TABLE IF NOT EXISTS packaging_cost_impacts'));
+  assert(articleAlignmentMigration.includes("PACKAGING_CONSUMABLE"));
+  assert(articleAlignmentMigration.includes("packaging_article_id"));
 
   const item = normalizePackagingItemInput({
     code: 'CAISSE30',

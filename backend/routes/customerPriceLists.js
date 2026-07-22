@@ -481,6 +481,9 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
         LIMIT 1
       ) next_lot ON true
       ${where}
+        AND COALESCE(a.visible_in_price_list, true) = true
+        AND COALESCE(a.sellable, true) = true
+        AND COALESCE(a.article_type, 'PRODUCT') = 'PRODUCT'
       ORDER BY COALESCE(a.family_name, 'Autre') ASC, a.designation ASC
       LIMIT $${params.length}
       `,

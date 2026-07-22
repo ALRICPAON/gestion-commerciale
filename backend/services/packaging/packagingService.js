@@ -1,3 +1,5 @@
+const { recomputeArticleStock } = require('../stockService');
+
 const STOCK_OUT_TYPES = new Set(['conditioning_out', 'loss', 'destruction']);
 const STOCK_IN_TYPES = new Set(['purchase_in']);
 const RETURNABLE_IN_TYPES = new Set(['deposit_receipt']);
@@ -90,6 +92,15 @@ function normalizePackagingItemInput(input = {}) {
   };
 }
 
+function articleTypeForPackagingCategory(category) {
+  if (category === 'returnable') return 'PACKAGING_RETURNABLE';
+  return 'PACKAGING_CONSUMABLE';
+}
+
+function packagingArticleIdOf(line = {}) {
+  return clean(line.packaging_article_id || line.packaging_item_id);
+}
+
 function signedQuantityForStockMovement(type, quantity) {
   const parsed = parseDecimal(quantity);
   assertFinite(parsed, 'Quantite mouvement');
@@ -178,11 +189,13 @@ function assertSufficientStock(lines, stocksByItemId) {
   lines.forEach((line) => {
     const category = line.category;
     if (category === 'returnable') return;
-    const currentStock = Number(stocksByItemId.get(String(line.packaging_item_id)) || 0);
+    const packagingArticleId = packagingArticleIdOf(line);
+    const currentStock = Number(stocksByItemId.get(String(packagingArticleId)) || 0);
     const needed = Number(line.quantity || 0);
     if (currentStock < needed) {
       missing.push({
-        packaging_item_id: line.packaging_item_id,
+        packaging_article_id: packagingArticleId,
+        packaging_item_id: packagingArticleId,
         designation: line.designation,
         current_stock: currentStock,
         required_quantity: needed,
@@ -280,32 +293,6 @@ function assertStockMovementCanBeDeleted(movement) {
   throw error;
 }
 
-async function getStockMovementAuditColumns(db) {
-  const result = await db.query(
-    `
-    SELECT column_name
-    FROM information_schema.columns
-    WHERE table_schema = current_schema()
-      AND table_name = 'packaging_stock_movements'
-      AND column_name IN ('cancelled_at', 'cancelled_by', 'cancellation_reason', 'reversal_movement_id')
-    `
-  );
-
-  return new Set(result.rows.map((row) => row.column_name));
-}
-
-function requireStockMovementAuditColumns(columns) {
-  const missing = ['cancelled_at', 'cancelled_by', 'cancellation_reason', 'reversal_movement_id']
-    .filter((column) => !columns.has(column));
-
-  if (missing.length) {
-    const error = new Error(`Migration 061 non appliquee pour les annulations emballages: ${missing.join(', ')}`);
-    error.status = 409;
-    error.details = { missing_columns: missing };
-    throw error;
-  }
-}
-
 function summarizeReturnableMovements(movements = []) {
   const balances = new Map();
 
@@ -340,18 +327,18 @@ function filterRowsByStore(rows = [], storeId) {
 function assertNoDuplicatePackagingComponents(components = []) {
   const seen = new Set();
   for (const component of components) {
-    const packagingItemId = clean(component.packaging_item_id);
-    if (!packagingItemId) {
+    const packagingArticleId = packagingArticleIdOf(component);
+    if (!packagingArticleId) {
       const error = new Error('Emballage obligatoire sur chaque ligne du modele');
       error.status = 400;
       throw error;
     }
-    if (seen.has(packagingItemId)) {
+    if (seen.has(packagingArticleId)) {
       const error = new Error('Un emballage ne peut pas etre ajoute deux fois au meme modele');
       error.status = 400;
       throw error;
     }
-    seen.add(packagingItemId);
+    seen.add(packagingArticleId);
   }
 }
 
@@ -384,34 +371,134 @@ function mapRows(result) {
   return result.rows || [];
 }
 
+async function consumePackagingArticleStock(client, {
+  storeId,
+  clientKey,
+  packagingArticleId,
+  quantity,
+  unitCostExVat,
+  operationId,
+  userId,
+  notes,
+}) {
+  let remaining = Number(quantity || 0);
+  assertPositive(remaining, 'Quantite emballage consommee');
+
+  const lots = await client.query(
+    `
+    SELECT id, qty_remaining, unit_cost_ex_vat
+    FROM lots
+    WHERE store_id = $1
+      AND article_id = $2
+      AND qty_remaining > 0
+    ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id
+    FOR UPDATE
+    `,
+    [storeId, packagingArticleId]
+  );
+
+  const movements = [];
+  for (const lot of lots.rows) {
+    if (remaining <= 0) break;
+    const consumed = Math.min(remaining, Number(lot.qty_remaining || 0));
+    if (consumed <= 0) continue;
+
+    await client.query(
+      'UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2',
+      [consumed, lot.id]
+    );
+
+    const movement = await client.query(
+      `
+      INSERT INTO stock_movements (
+        id, store_id, client_key, article_id, lot_id, movement_type, quantity,
+        unit_cost_ex_vat, source_table, source_id, notes, created_by
+      )
+      VALUES (gen_random_uuid(), $1, $2, $3, $4, 'packaging_consumption', $5, $6,
+              'packaging_operations', $7, $8, $9)
+      RETURNING id
+      `,
+      [
+        storeId,
+        clientKey || null,
+        packagingArticleId,
+        lot.id,
+        -consumed,
+        unitCostExVat,
+        operationId,
+        notes || 'Validation operation de conditionnement',
+        userId,
+      ]
+    );
+
+    movements.push(movement.rows[0].id);
+    remaining = round(remaining - consumed, 3);
+  }
+
+  if (remaining > 0) {
+    const error = new Error('Stock emballage insuffisant');
+    error.status = 409;
+    error.details = {
+      packaging_article_id: packagingArticleId,
+      missing_quantity: remaining,
+    };
+    throw error;
+  }
+
+  await recomputeArticleStock(client, packagingArticleId, storeId);
+  return movements;
+}
+
 async function listItems(db, storeId, filters = {}) {
   const params = [storeId];
-  const where = ['pi.store_id = $1'];
+  const where = ["a.store_id = $1", "a.article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')"];
 
   if (filters.active !== undefined) {
     params.push(filters.active === true || filters.active === 'true');
-    where.push(`pi.active = $${params.length}`);
+    where.push(`a.is_active = $${params.length}`);
   }
 
   if (filters.category) {
-    params.push(filters.category);
-    where.push(`pi.category = $${params.length}`);
+    params.push(articleTypeForPackagingCategory(filters.category));
+    where.push(`a.article_type = $${params.length}`);
+  }
+
+  if (filters.id) {
+    params.push(filters.id);
+    where.push(`a.id = $${params.length}`);
   }
 
   if (filters.search) {
     params.push(`%${String(filters.search).trim()}%`);
-    where.push(`(pi.code ILIKE $${params.length} OR pi.designation ILIKE $${params.length})`);
+    where.push(`(a.plu ILIKE $${params.length} OR a.designation ILIKE $${params.length})`);
   }
 
   const result = await db.query(
     `
     SELECT
-      pi.*,
+      a.id,
+      a.store_id,
+      a.plu AS code,
+      a.designation,
+      a.article_type,
+      CASE
+        WHEN a.article_type = 'PACKAGING_RETURNABLE' THEN 'returnable'
+        ELSE 'consumable'
+      END AS category,
+      COALESCE(a.stock_unit, a.unit, 'unit') AS management_unit,
+      a.format_label,
+      a.primary_supplier_id,
+      COALESCE(ss.pma, 0) AS current_unit_cost_ex_vat,
+      COALESCE(a.deposit_unit_value, 0) AS deposit_unit_value,
+      COALESCE(a.alert_threshold, 0) AS alert_threshold,
+      COALESCE(ss.stock_quantity, 0) AS current_stock,
+      a.is_active AS active,
       s.name AS supplier_name
-    FROM packaging_items pi
-    LEFT JOIN suppliers s ON s.id = pi.primary_supplier_id AND s.store_id = pi.store_id
+    FROM articles a
+    LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
+    LEFT JOIN suppliers s ON s.id = a.primary_supplier_id AND s.store_id = a.store_id
     WHERE ${where.join(' AND ')}
-    ORDER BY pi.active DESC, pi.category ASC, pi.code ASC
+    ORDER BY a.is_active DESC, a.article_type ASC, a.plu ASC
     `,
     params
   );
@@ -421,26 +508,28 @@ async function listItems(db, storeId, filters = {}) {
 
 async function createItem(db, storeId, userId, input) {
   const item = normalizePackagingItemInput(input);
+  const articleType = articleTypeForPackagingCategory(item.category);
 
   const result = await db.query(
     `
-    INSERT INTO packaging_items (
-      store_id, code, designation, category, management_unit, format_label,
-      primary_supplier_id, current_unit_cost_ex_vat, deposit_unit_value,
-      alert_threshold, active, created_by, updated_by
+    INSERT INTO articles (
+      store_id, plu, designation, unit, article_type, stock_managed, sellable,
+      visible_in_price_list, contributes_to_product_cost, format_label,
+      primary_supplier_id, deposit_unit_value, alert_threshold, is_active,
+      created_by, updated_by
     )
-    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-    RETURNING *
+    VALUES ($1, $2, $3, $4, $5, true, false, false, $6, $7, $8, $9, $10, $11, $12, $12)
+    RETURNING id
     `,
     [
       storeId,
       item.code,
       item.designation,
-      item.category,
       item.management_unit,
+      articleType,
+      articleType === 'PACKAGING_CONSUMABLE',
       item.format_label,
       item.primary_supplier_id,
-      item.current_unit_cost_ex_vat,
       item.deposit_unit_value,
       item.alert_threshold,
       item.active,
@@ -448,30 +537,36 @@ async function createItem(db, storeId, userId, input) {
     ]
   );
 
-  return result.rows[0];
+  return (await listItems(db, storeId, { id: result.rows[0].id })).find((row) => String(row.id) === String(result.rows[0].id))
+    || { id: result.rows[0].id };
 }
 
 async function updateItem(db, storeId, itemId, userId, input) {
   const item = normalizePackagingItemInput(input);
+  const articleType = articleTypeForPackagingCategory(item.category);
 
   const result = await db.query(
     `
-    UPDATE packaging_items
+    UPDATE articles
     SET
-      code = $3,
+      plu = $3,
       designation = $4,
-      category = $5,
-      management_unit = $6,
-      format_label = $7,
-      primary_supplier_id = $8,
-      current_unit_cost_ex_vat = $9,
+      article_type = $5,
+      unit = $6,
+      stock_managed = true,
+      sellable = false,
+      visible_in_price_list = false,
+      contributes_to_product_cost = $7,
+      format_label = $8,
+      primary_supplier_id = $9,
       deposit_unit_value = $10,
       alert_threshold = $11,
-      active = $12,
+      is_active = $12,
       updated_by = $13,
       updated_at = now()
     WHERE id = $1
       AND store_id = $2
+      AND article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')
     RETURNING *
     `,
     [
@@ -479,11 +574,11 @@ async function updateItem(db, storeId, itemId, userId, input) {
       storeId,
       item.code,
       item.designation,
-      item.category,
+      articleType,
       item.management_unit,
+      articleType === 'PACKAGING_CONSUMABLE',
       item.format_label,
       item.primary_supplier_id,
-      item.current_unit_cost_ex_vat,
       item.deposit_unit_value,
       item.alert_threshold,
       item.active,
@@ -491,126 +586,67 @@ async function updateItem(db, storeId, itemId, userId, input) {
     ]
   );
 
-  return result.rows[0] || null;
+  if (!result.rows[0]) return null;
+  return (await listItems(db, storeId, { id: itemId })).find((row) => String(row.id) === String(itemId))
+    || result.rows[0];
 }
 
 async function recordStockMovement(db, storeId, userId, input) {
-  return withTransaction(db, async (client) => {
-    const signedQuantity = signedQuantityForStockMovement(input.movement_type, input.quantity);
-    const itemResult = await client.query(
-      `
-      SELECT *
-      FROM packaging_items
-      WHERE id = $1
-        AND store_id = $2
-      FOR UPDATE
-      `,
-      [input.packaging_item_id, storeId]
-    );
-
-    const item = itemResult.rows[0];
-    if (!item) {
-      const error = new Error('Emballage introuvable');
-      error.status = 404;
-      throw error;
-    }
-
-    if (Number(item.current_stock) + signedQuantity < 0) {
-      const error = new Error('Stock emballage insuffisant');
-      error.status = 409;
-      throw error;
-    }
-
-    const movement = await client.query(
-      `
-      INSERT INTO packaging_stock_movements (
-        store_id, packaging_item_id, movement_type, quantity, unit_cost_ex_vat,
-        source_table, source_id, movement_date, notes, created_by
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::date, CURRENT_DATE), $9, $10)
-      RETURNING *
-      `,
-      [
-        storeId,
-        input.packaging_item_id,
-        input.movement_type,
-        signedQuantity,
-        parseDecimal(input.unit_cost_ex_vat, item.current_unit_cost_ex_vat || 0),
-        clean(input.source_table),
-        clean(input.source_id),
-        clean(input.movement_date),
-        clean(input.notes),
-        userId,
-      ]
-    );
-
-    const updated = await client.query(
-      `
-      UPDATE packaging_items
-      SET current_stock = current_stock + $3,
-          updated_by = $4,
-          updated_at = now()
-      WHERE id = $1
-        AND store_id = $2
-      RETURNING *
-      `,
-      [input.packaging_item_id, storeId, signedQuantity, userId]
-    );
-
-    return { movement: movement.rows[0], item: updated.rows[0] };
-  });
+  const error = new Error('Les stocks emballages sont alimentes par le module Achats ALTA. Utilise une reception achat ou une regularisation stock article.');
+  error.status = 409;
+  error.details = {
+    article_id: clean(input.packaging_item_id),
+    requested_by: userId,
+    store_id: storeId,
+  };
+  throw error;
 }
 
 async function listStockMovements(db, storeId, filters = {}) {
-  const auditColumns = await getStockMovementAuditColumns(db);
-  const hasCancelledAt = auditColumns.has('cancelled_at');
-  const hasCancelledBy = auditColumns.has('cancelled_by');
-  const hasCancellationReason = auditColumns.has('cancellation_reason');
-  const hasReversalMovementId = auditColumns.has('reversal_movement_id');
   const params = [storeId];
-  const where = ['psm.store_id = $1'];
+  const where = ["sm.store_id = $1", "a.article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')"];
 
   if (filters.packaging_item_id) {
     params.push(filters.packaging_item_id);
-    where.push(`psm.packaging_item_id = $${params.length}`);
+    where.push(`sm.article_id = $${params.length}`);
   }
 
   if (filters.id) {
     params.push(filters.id);
-    where.push(`psm.id = $${params.length}`);
+    where.push(`sm.id = $${params.length}`);
   }
 
   const result = await db.query(
     `
     SELECT
-      psm.id,
-      psm.store_id,
-      psm.packaging_item_id,
-      psm.movement_type,
-      psm.quantity,
-      psm.unit_cost_ex_vat,
-      psm.source_table,
-      psm.source_id,
-      psm.movement_date,
-      psm.notes,
-      psm.created_by,
-      psm.created_at,
-      ${hasCancelledAt ? 'psm.cancelled_at' : 'NULL::timestamptz AS cancelled_at'},
-      ${hasCancelledBy ? 'psm.cancelled_by' : 'NULL::uuid AS cancelled_by'},
-      ${hasCancellationReason ? 'psm.cancellation_reason' : 'NULL::text AS cancellation_reason'},
-      ${hasReversalMovementId ? 'psm.reversal_movement_id' : 'NULL::uuid AS reversal_movement_id'},
-      pi.code,
-      pi.designation,
-      pi.management_unit,
-      ${hasCancelledAt ? "CASE WHEN psm.cancelled_at IS NULL THEN 'active' ELSE 'cancelled' END" : "'active'"} AS status,
+      sm.id,
+      sm.store_id,
+      sm.article_id AS packaging_article_id,
+      sm.article_id AS packaging_item_id,
+      sm.movement_type,
+      sm.quantity,
+      sm.unit_cost_ex_vat,
+      sm.source_table,
+      sm.source_id,
+      sm.created_at::date AS movement_date,
+      sm.notes,
+      sm.created_by,
+      sm.created_at,
+      NULL::timestamptz AS cancelled_at,
+      NULL::uuid AS cancelled_by,
+      NULL::text AS cancellation_reason,
+      NULL::uuid AS reversal_movement_id,
+      a.plu AS code,
+      a.designation,
+      COALESCE(a.stock_unit, a.unit, 'unit') AS management_unit,
+      'active' AS status,
       creator.email AS created_by_email,
-      ${hasCancelledBy ? 'canceller.email' : 'NULL::text'} AS cancelled_by_email
-    FROM packaging_stock_movements psm
-    JOIN packaging_items pi ON pi.id = psm.packaging_item_id AND pi.store_id = psm.store_id
-    LEFT JOIN users creator ON creator.id = psm.created_by
-    ${hasCancelledBy ? 'LEFT JOIN users canceller ON canceller.id = psm.cancelled_by' : ''}
+      NULL::text AS cancelled_by_email
+    FROM stock_movements sm
+    JOIN articles a ON a.id = sm.article_id AND a.store_id = sm.store_id
+    LEFT JOIN users creator ON creator.id = sm.created_by
     WHERE ${where.join(' AND ')}
-    ORDER BY psm.movement_date DESC, psm.created_at DESC
+    ORDER BY sm.created_at DESC
     LIMIT $${params.length + 1}
     `,
     [...params, Math.min(Number(filters.limit) || 100, 300)]
@@ -621,85 +657,10 @@ async function listStockMovements(db, storeId, filters = {}) {
 
 async function cancelStockMovement(db, storeId, userId, movementId, input = {}) {
   const reason = assertCancellationReason(input.reason || input.notes);
-
-  return withTransaction(db, async (client) => {
-    requireStockMovementAuditColumns(await getStockMovementAuditColumns(client));
-
-    const movementResult = await client.query(
-      `
-      SELECT psm.*, pi.current_stock
-      FROM packaging_stock_movements psm
-      JOIN packaging_items pi ON pi.id = psm.packaging_item_id AND pi.store_id = psm.store_id
-      WHERE psm.id = $1
-        AND psm.store_id = $2
-      FOR UPDATE OF psm, pi
-      `,
-      [movementId, storeId]
-    );
-    const movement = movementResult.rows[0];
-    assertStockMovementCanBeCancelled(movement);
-
-    const inverseQuantity = -Number(movement.quantity);
-    if (Number(movement.current_stock) + inverseQuantity < 0) {
-      const error = new Error('Annulation impossible : stock emballage insuffisant pour le mouvement inverse');
-      error.status = 409;
-      throw error;
-    }
-
-    const inverseResult = await client.query(
-      `
-      INSERT INTO packaging_stock_movements (
-        store_id, packaging_item_id, movement_type, quantity, unit_cost_ex_vat,
-        source_table, source_id, movement_date, notes, created_by
-      )
-      VALUES ($1, $2, $3, $4, $5, 'packaging_stock_movements', $6, CURRENT_DATE, $7, $8)
-      RETURNING *
-      `,
-      [
-        storeId,
-        movement.packaging_item_id,
-        reverseStockMovementType(movement.movement_type),
-        inverseQuantity,
-        movement.unit_cost_ex_vat,
-        movement.id,
-        `Annulation du mouvement ${movement.id}: ${reason}`,
-        userId,
-      ]
-    );
-
-    const updatedMovement = await client.query(
-      `
-      UPDATE packaging_stock_movements
-      SET cancelled_at = now(),
-          cancelled_by = $3,
-          cancellation_reason = $4,
-          reversal_movement_id = $5
-      WHERE id = $1
-        AND store_id = $2
-      RETURNING *
-      `,
-      [movement.id, storeId, userId, reason, inverseResult.rows[0].id]
-    );
-
-    const updatedItem = await client.query(
-      `
-      UPDATE packaging_items
-      SET current_stock = current_stock + $3,
-          updated_by = $4,
-          updated_at = now()
-      WHERE id = $1
-        AND store_id = $2
-      RETURNING *
-      `,
-      [movement.packaging_item_id, storeId, inverseQuantity, userId]
-    );
-
-    return {
-      movement: updatedMovement.rows[0],
-      reversal_movement: inverseResult.rows[0],
-      item: updatedItem.rows[0],
-    };
-  });
+  const error = new Error('Annulation directe des mouvements stock ALTA non supportee ici. Annule le document source ou cree une regularisation stock article documentee.');
+  error.status = 409;
+  error.details = { movement_id: movementId, store_id: storeId, requested_by: userId, reason };
+  throw error;
 }
 
 async function listArticleProfiles(db, storeId, articleId, includeInactive = false) {
@@ -711,17 +672,19 @@ async function listArticleProfiles(db, storeId, articleId, includeInactive = fal
         json_agg(
           json_build_object(
             'id', c.id,
-            'packaging_item_id', c.packaging_item_id,
-            'code', pi.code,
-            'designation', pi.designation,
-            'category', pi.category,
+            'packaging_article_id', c.packaging_article_id,
+            'packaging_item_id', c.packaging_article_id,
+            'code', pa.plu,
+            'designation', pa.designation,
+            'category', CASE WHEN pa.article_type = 'PACKAGING_RETURNABLE' THEN 'returnable' ELSE 'consumable' END,
             'quantity', c.quantity,
             'consumption_rule', c.consumption_rule,
             'is_primary_packaging', c.is_primary_packaging,
-            'current_unit_cost_ex_vat', pi.current_unit_cost_ex_vat,
-            'current_stock', pi.current_stock
+            'management_unit', COALESCE(pa.stock_unit, pa.unit, 'unit'),
+            'current_unit_cost_ex_vat', COALESCE(ss.pma, 0),
+            'current_stock', COALESCE(ss.stock_quantity, 0)
           )
-          ORDER BY c.is_primary_packaging DESC, pi.code ASC
+          ORDER BY c.is_primary_packaging DESC, pa.plu ASC
         ) FILTER (WHERE c.id IS NOT NULL),
         '[]'::json
       ) AS components
@@ -729,9 +692,12 @@ async function listArticleProfiles(db, storeId, articleId, includeInactive = fal
     LEFT JOIN article_packaging_profile_components c
       ON c.profile_id = p.id
      AND c.store_id = p.store_id
-    LEFT JOIN packaging_items pi
-      ON pi.id = c.packaging_item_id
-     AND pi.store_id = c.store_id
+    LEFT JOIN articles pa
+      ON pa.id = c.packaging_article_id
+     AND pa.store_id = c.store_id
+    LEFT JOIN stock_summary ss
+      ON ss.article_id = pa.id
+     AND ss.store_id = pa.store_id
     WHERE p.store_id = $1
       AND p.article_id = $2
       AND ($3::boolean = true OR p.active = true)
@@ -768,18 +734,19 @@ async function listProfiles(db, storeId, filters = {}) {
         json_agg(
           json_build_object(
             'id', c.id,
-            'packaging_item_id', c.packaging_item_id,
-            'code', pi.code,
-            'designation', pi.designation,
-            'category', pi.category,
+            'packaging_article_id', c.packaging_article_id,
+            'packaging_item_id', c.packaging_article_id,
+            'code', pa.plu,
+            'designation', pa.designation,
+            'category', CASE WHEN pa.article_type = 'PACKAGING_RETURNABLE' THEN 'returnable' ELSE 'consumable' END,
             'quantity', c.quantity,
-            'management_unit', pi.management_unit,
+            'management_unit', COALESCE(pa.stock_unit, pa.unit, 'unit'),
             'consumption_rule', c.consumption_rule,
             'is_primary_packaging', c.is_primary_packaging,
-            'current_unit_cost_ex_vat', pi.current_unit_cost_ex_vat,
-            'current_stock', pi.current_stock
+            'current_unit_cost_ex_vat', COALESCE(ss.pma, 0),
+            'current_stock', COALESCE(ss.stock_quantity, 0)
           )
-          ORDER BY c.is_primary_packaging DESC, pi.code ASC
+          ORDER BY c.is_primary_packaging DESC, pa.plu ASC
         ) FILTER (WHERE c.id IS NOT NULL),
         '[]'::json
       ) AS components
@@ -788,9 +755,12 @@ async function listProfiles(db, storeId, filters = {}) {
     LEFT JOIN article_packaging_profile_components c
       ON c.profile_id = p.id
      AND c.store_id = p.store_id
-    LEFT JOIN packaging_items pi
-      ON pi.id = c.packaging_item_id
-     AND pi.store_id = c.store_id
+    LEFT JOIN articles pa
+      ON pa.id = c.packaging_article_id
+     AND pa.store_id = c.store_id
+    LEFT JOIN stock_summary ss
+      ON ss.article_id = pa.id
+     AND ss.store_id = pa.store_id
     WHERE ${where.join(' AND ')}
     GROUP BY p.id, a.plu, a.designation
     ORDER BY p.active DESC, p.is_default DESC, a.plu ASC, p.name ASC
@@ -827,6 +797,28 @@ async function getArticleStockSummary(db, storeId, articleId) {
   );
 
   return result.rows[0] || null;
+}
+
+async function assertProductLotTraceability(db, storeId, articleId, lotId) {
+  if (!clean(lotId)) return null;
+  const result = await db.query(
+    `
+    SELECT id, lot_code, supplier_lot_number, qty_remaining, unit_cost_ex_vat
+    FROM lots
+    WHERE id = $1
+      AND store_id = $2
+      AND article_id = $3
+      AND qty_remaining > 0
+    LIMIT 1
+    `,
+    [lotId, storeId, articleId]
+  );
+  if (!result.rows[0]) {
+    const error = new Error('Lot produit introuvable ou sans stock disponible pour cet article');
+    error.status = 409;
+    throw error;
+  }
+  return result.rows[0];
 }
 
 async function upsertArticleProfile(db, storeId, userId, input = {}) {
@@ -941,23 +933,25 @@ async function upsertArticleProfile(db, storeId, userId, input = {}) {
     );
 
     for (const component of components) {
-      const packagingItemId = clean(component.packaging_item_id);
+      const packagingArticleId = packagingArticleIdOf(component);
       const quantity = parseDecimal(component.quantity);
       assertPositive(quantity, 'Quantite composant');
 
-      const packagingItem = await client.query(
+      const packagingArticle = await client.query(
         `
-        SELECT id
-        FROM packaging_items
+        SELECT id, article_type
+        FROM articles
         WHERE id = $1
           AND store_id = $2
-          AND active = true
+          AND is_active = true
+          AND article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')
+          AND stock_managed = true
         LIMIT 1
         `,
-        [packagingItemId, storeId]
+        [packagingArticleId, storeId]
       );
-      if (!packagingItem.rows[0]) {
-        const error = new Error('Emballage actif introuvable pour le modele');
+      if (!packagingArticle.rows[0]) {
+        const error = new Error('Article emballage actif introuvable pour le modele');
         error.status = 400;
         throw error;
       }
@@ -965,14 +959,14 @@ async function upsertArticleProfile(db, storeId, userId, input = {}) {
       await client.query(
         `
         INSERT INTO article_packaging_profile_components (
-          store_id, profile_id, packaging_item_id, quantity, consumption_rule, is_primary_packaging
+          store_id, profile_id, packaging_article_id, quantity, consumption_rule, is_primary_packaging
         )
         VALUES ($1, $2, $3, $4, $5, $6)
         `,
         [
           storeId,
           profile.id,
-          packagingItemId,
+          packagingArticleId,
           quantity,
           clean(component.consumption_rule) || 'per_package',
           Boolean(component.is_primary_packaging),
@@ -1029,6 +1023,8 @@ async function buildOperationPreview(db, storeId, input = {}) {
     throw error;
   }
 
+  const selectedLot = await assertProductLotTraceability(db, storeId, input.article_id, input.lot_id);
+
   const consumptionLines = computeProfileConsumption({
     components: profile.components,
     packageCount: input.package_count,
@@ -1041,7 +1037,7 @@ async function buildOperationPreview(db, storeId, input = {}) {
     productCostBeforePackaging: articleStock.pma,
   });
 
-  return { profile, article_stock: articleStock, ...costs };
+  return { profile, article_stock: articleStock, selected_lot: selectedLot, ...costs };
 }
 
 async function listOperations(db, storeId, limit = 50) {
@@ -1056,8 +1052,10 @@ async function listOperations(db, storeId, limit = 50) {
         json_agg(
           json_build_object(
             'id', l.id,
-            'packaging_item_id', l.packaging_item_id,
-            'designation', pi.designation,
+            'packaging_article_id', l.packaging_article_id,
+            'packaging_item_id', l.packaging_article_id,
+            'designation', pa.designation,
+            'code', pa.plu,
             'quantity', l.quantity,
             'unit_cost_ex_vat', l.unit_cost_ex_vat,
             'total_cost_ex_vat', l.total_cost_ex_vat,
@@ -1070,7 +1068,7 @@ async function listOperations(db, storeId, limit = 50) {
     JOIN articles a ON a.id = op.article_id AND a.store_id = op.store_id
     LEFT JOIN article_packaging_profiles p ON p.id = op.profile_id AND p.store_id = op.store_id
     LEFT JOIN packaging_operation_lines l ON l.operation_id = op.id AND l.store_id = op.store_id
-    LEFT JOIN packaging_items pi ON pi.id = l.packaging_item_id AND pi.store_id = l.store_id
+    LEFT JOIN articles pa ON pa.id = l.packaging_article_id AND pa.store_id = l.store_id
     WHERE op.store_id = $1
     GROUP BY op.id, a.plu, a.designation, p.name
     ORDER BY op.operation_date DESC, op.created_at DESC
@@ -1125,7 +1123,7 @@ async function createOperation(db, storeId, userId, input = {}) {
       await client.query(
         `
         INSERT INTO packaging_operation_lines (
-          store_id, operation_id, packaging_item_id, quantity, unit_cost_ex_vat,
+          store_id, operation_id, packaging_article_id, quantity, unit_cost_ex_vat,
           total_cost_ex_vat, consumption_rule
         )
         VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -1133,7 +1131,7 @@ async function createOperation(db, storeId, userId, input = {}) {
         [
           storeId,
           operation.rows[0].id,
-          line.packaging_item_id,
+          packagingArticleIdOf(line),
           line.quantity,
           line.unit_cost_ex_vat,
           line.total_cost_ex_vat,
@@ -1176,20 +1174,28 @@ async function validateOperation(db, storeId, userId, operationId) {
       };
       throw error;
     }
+    await assertProductLotTraceability(client, storeId, operation.article_id, operation.lot_id);
 
     const linesResult = await client.query(
       `
-      SELECT l.*, pi.category, pi.designation, pi.current_stock
+      SELECT
+        l.*,
+        pa.article_type,
+        CASE WHEN pa.article_type = 'PACKAGING_RETURNABLE' THEN 'returnable' ELSE 'consumable' END AS category,
+        pa.designation,
+        COALESCE(ss.stock_quantity, 0) AS current_stock
       FROM packaging_operation_lines l
-      JOIN packaging_items pi ON pi.id = l.packaging_item_id AND pi.store_id = l.store_id
+      JOIN articles pa ON pa.id = l.packaging_article_id AND pa.store_id = l.store_id
+      LEFT JOIN stock_summary ss ON ss.article_id = pa.id AND ss.store_id = pa.store_id
       WHERE l.operation_id = $1
         AND l.store_id = $2
-      FOR UPDATE OF pi
+        AND pa.article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')
+      FOR UPDATE OF pa
       `,
       [operationId, storeId]
     );
     const lines = linesResult.rows;
-    const stocks = new Map(lines.map((line) => [String(line.packaging_item_id), Number(line.current_stock)]));
+    const stocks = new Map(lines.map((line) => [String(line.packaging_article_id), Number(line.current_stock)]));
     assertSufficientStock(lines, stocks);
 
     const packagingCostAddedPerKg = round(
@@ -1201,47 +1207,25 @@ async function validateOperation(db, storeId, userId, operationId) {
 
     for (const line of lines) {
       if (line.category === 'returnable') continue;
-      const movement = await client.query(
-        `
-        INSERT INTO packaging_stock_movements (
-          store_id, packaging_item_id, movement_type, quantity, unit_cost_ex_vat,
-          source_table, source_id, movement_date, notes, created_by
-        )
-        VALUES ($1, $2, 'conditioning_out', $3, $4, 'packaging_operations', $5, $6, $7, $8)
-        RETURNING id
-        `,
-        [
-          storeId,
-          line.packaging_item_id,
-          -Math.abs(Number(line.quantity)),
-          line.unit_cost_ex_vat,
-          operationId,
-          operation.operation_date,
-          'Validation operation de conditionnement',
-          userId,
-        ]
-      );
-
-      await client.query(
-        `
-        UPDATE packaging_items
-        SET current_stock = current_stock - $3,
-            updated_by = $4,
-            updated_at = now()
-        WHERE id = $1
-          AND store_id = $2
-        `,
-        [line.packaging_item_id, storeId, Number(line.quantity), userId]
-      );
+      await consumePackagingArticleStock(client, {
+        storeId,
+        clientKey: operation.client_key,
+        packagingArticleId: line.packaging_article_id,
+        quantity: Number(line.quantity),
+        unitCostExVat: Number(line.unit_cost_ex_vat || 0),
+        operationId,
+        userId,
+        notes: 'Validation operation de conditionnement',
+      });
 
       await client.query(
         `
         UPDATE packaging_operation_lines
-        SET stock_movement_id = $3
+        SET stock_movement_id = NULL
         WHERE id = $1
           AND store_id = $2
         `,
-        [line.id, storeId, movement.rows[0].id]
+        [line.id, storeId]
       );
     }
 
@@ -1250,9 +1234,9 @@ async function validateOperation(db, storeId, userId, operationId) {
       INSERT INTO packaging_cost_impacts (
         store_id, packaging_operation_id, article_id, stock_quantity_at_validation,
         product_cost_before_packaging, packaging_cost_total_ex_vat,
-        packaging_cost_added_per_kg, cost_after_packaging_per_kg, created_by
+        packaging_cost_added_per_kg, cost_after_packaging_per_kg, lot_id, cost_component, created_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PACKAGING', $10)
       ON CONFLICT (store_id, packaging_operation_id)
       DO UPDATE SET
         stock_quantity_at_validation = EXCLUDED.stock_quantity_at_validation,
@@ -1260,6 +1244,8 @@ async function validateOperation(db, storeId, userId, operationId) {
         packaging_cost_total_ex_vat = EXCLUDED.packaging_cost_total_ex_vat,
         packaging_cost_added_per_kg = EXCLUDED.packaging_cost_added_per_kg,
         cost_after_packaging_per_kg = EXCLUDED.cost_after_packaging_per_kg,
+        lot_id = EXCLUDED.lot_id,
+        cost_component = 'PACKAGING',
         status = 'active'
       `,
       [
@@ -1271,6 +1257,7 @@ async function validateOperation(db, storeId, userId, operationId) {
         operation.packaging_cost_total_ex_vat,
         packagingCostAddedPerKg,
         costAfterPackaging,
+        operation.lot_id,
         userId,
       ]
     );
@@ -1299,20 +1286,22 @@ async function listReturnableBalances(db, storeId) {
   const result = await db.query(
     `
     SELECT
-      rpm.packaging_item_id,
-      pi.code,
-      pi.designation,
+      rpm.packaging_article_id,
+      rpm.packaging_article_id AS packaging_item_id,
+      a.plu AS code,
+      a.designation,
       rpm.supplier_id,
       s.name AS supplier_name,
       SUM(rpm.quantity) AS balance_quantity,
-      COALESCE(MAX(NULLIF(rpm.deposit_unit_value, 0)), pi.deposit_unit_value, 0) AS deposit_unit_value,
-      SUM(rpm.quantity) * COALESCE(MAX(NULLIF(rpm.deposit_unit_value, 0)), pi.deposit_unit_value, 0) AS deposit_balance_value
+      COALESCE(MAX(NULLIF(rpm.deposit_unit_value, 0)), a.deposit_unit_value, 0) AS deposit_unit_value,
+      SUM(rpm.quantity) * COALESCE(MAX(NULLIF(rpm.deposit_unit_value, 0)), a.deposit_unit_value, 0) AS deposit_balance_value
     FROM returnable_packaging_movements rpm
-    JOIN packaging_items pi ON pi.id = rpm.packaging_item_id AND pi.store_id = rpm.store_id
+    JOIN articles a ON a.id = rpm.packaging_article_id AND a.store_id = rpm.store_id
     LEFT JOIN suppliers s ON s.id = rpm.supplier_id AND s.store_id = rpm.store_id
     WHERE rpm.store_id = $1
-    GROUP BY rpm.packaging_item_id, pi.code, pi.designation, pi.deposit_unit_value, rpm.supplier_id, s.name
-    ORDER BY pi.code ASC, s.name ASC NULLS LAST
+      AND a.article_type = 'PACKAGING_RETURNABLE'
+    GROUP BY rpm.packaging_article_id, a.plu, a.designation, a.deposit_unit_value, rpm.supplier_id, s.name
+    ORDER BY a.plu ASC, s.name ASC NULLS LAST
     `,
     [storeId]
   );
@@ -1325,13 +1314,15 @@ async function listReturnableMovements(db, storeId, limit = 100) {
     `
     SELECT
       rpm.*,
-      pi.code,
-      pi.designation,
+      rpm.packaging_article_id AS packaging_item_id,
+      a.plu AS code,
+      a.designation,
       s.name AS supplier_name
     FROM returnable_packaging_movements rpm
-    JOIN packaging_items pi ON pi.id = rpm.packaging_item_id AND pi.store_id = rpm.store_id
+    JOIN articles a ON a.id = rpm.packaging_article_id AND a.store_id = rpm.store_id
     LEFT JOIN suppliers s ON s.id = rpm.supplier_id AND s.store_id = rpm.store_id
     WHERE rpm.store_id = $1
+      AND a.article_type = 'PACKAGING_RETURNABLE'
     ORDER BY rpm.movement_date DESC, rpm.created_at DESC
     LIMIT $2
     `,
@@ -1343,11 +1334,30 @@ async function listReturnableMovements(db, storeId, limit = 100) {
 
 async function createReturnableMovement(db, storeId, userId, input = {}) {
   const signedQuantity = signedQuantityForReturnableMovement(input.movement_type, input.quantity);
+  const packagingArticleId = packagingArticleIdOf(input);
+
+  const article = await db.query(
+    `
+    SELECT id
+    FROM articles
+    WHERE id = $1
+      AND store_id = $2
+      AND is_active = true
+      AND article_type = 'PACKAGING_RETURNABLE'
+    LIMIT 1
+    `,
+    [packagingArticleId, storeId]
+  );
+  if (!article.rows[0]) {
+    const error = new Error('Article consigne introuvable ou inactif');
+    error.status = 400;
+    throw error;
+  }
 
   const result = await db.query(
     `
     INSERT INTO returnable_packaging_movements (
-      store_id, packaging_item_id, supplier_id, movement_type, quantity,
+      store_id, packaging_article_id, supplier_id, movement_type, quantity,
       deposit_unit_value, source_table, source_id, movement_date, notes, created_by
     )
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::date, CURRENT_DATE), $10, $11)
@@ -1355,7 +1365,7 @@ async function createReturnableMovement(db, storeId, userId, input = {}) {
     `,
     [
       storeId,
-      clean(input.packaging_item_id),
+      packagingArticleId,
       clean(input.supplier_id),
       clean(input.movement_type),
       signedQuantity,
