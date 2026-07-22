@@ -216,6 +216,18 @@
   color: #23384f;
 }
 
+.component-list {
+  display: grid;
+  gap: 10px;
+}
+
+.component-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) minmax(110px, 0.8fr) minmax(80px, 0.6fr) minmax(120px, 0.8fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
 .modal {
   position: fixed;
   inset: 0;

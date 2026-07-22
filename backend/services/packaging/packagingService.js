@@ -337,6 +337,33 @@ function filterRowsByStore(rows = [], storeId) {
   return rows.filter((row) => String(row.store_id) === String(storeId));
 }
 
+function assertNoDuplicatePackagingComponents(components = []) {
+  const seen = new Set();
+  for (const component of components) {
+    const packagingItemId = clean(component.packaging_item_id);
+    if (!packagingItemId) {
+      const error = new Error('Emballage obligatoire sur chaque ligne du modele');
+      error.status = 400;
+      throw error;
+    }
+    if (seen.has(packagingItemId)) {
+      const error = new Error('Un emballage ne peut pas etre ajoute deux fois au meme modele');
+      error.status = 400;
+      throw error;
+    }
+    seen.add(packagingItemId);
+  }
+}
+
+function estimateProfileCostPerPackage(components = []) {
+  return round(
+    components.reduce((sum, component) => (
+      sum + Number(component.quantity || 0) * Number(component.current_unit_cost_ex_vat || component.unit_cost_ex_vat || 0)
+    ), 0),
+    4
+  );
+}
+
 async function withTransaction(db, callback) {
   const client = await db.connect();
 
@@ -717,6 +744,91 @@ async function listArticleProfiles(db, storeId, articleId, includeInactive = fal
   return mapRows(result);
 }
 
+async function listProfiles(db, storeId, filters = {}) {
+  const params = [storeId];
+  const where = ['p.store_id = $1'];
+
+  if (filters.active !== undefined) {
+    params.push(filters.active === true || filters.active === 'true');
+    where.push(`p.active = $${params.length}`);
+  }
+
+  if (filters.article_id) {
+    params.push(filters.article_id);
+    where.push(`p.article_id = $${params.length}`);
+  }
+
+  const result = await db.query(
+    `
+    SELECT
+      p.*,
+      a.plu,
+      a.designation AS article_designation,
+      COALESCE(
+        json_agg(
+          json_build_object(
+            'id', c.id,
+            'packaging_item_id', c.packaging_item_id,
+            'code', pi.code,
+            'designation', pi.designation,
+            'category', pi.category,
+            'quantity', c.quantity,
+            'management_unit', pi.management_unit,
+            'consumption_rule', c.consumption_rule,
+            'is_primary_packaging', c.is_primary_packaging,
+            'current_unit_cost_ex_vat', pi.current_unit_cost_ex_vat,
+            'current_stock', pi.current_stock
+          )
+          ORDER BY c.is_primary_packaging DESC, pi.code ASC
+        ) FILTER (WHERE c.id IS NOT NULL),
+        '[]'::json
+      ) AS components
+    FROM article_packaging_profiles p
+    JOIN articles a ON a.id = p.article_id AND a.store_id = p.store_id
+    LEFT JOIN article_packaging_profile_components c
+      ON c.profile_id = p.id
+     AND c.store_id = p.store_id
+    LEFT JOIN packaging_items pi
+      ON pi.id = c.packaging_item_id
+     AND pi.store_id = c.store_id
+    WHERE ${where.join(' AND ')}
+    GROUP BY p.id, a.plu, a.designation
+    ORDER BY p.active DESC, p.is_default DESC, a.plu ASC, p.name ASC
+    LIMIT $${params.length + 1}
+    `,
+    [...params, Math.min(Number(filters.limit) || 100, 300)]
+  );
+
+  return mapRows(result).map((profile) => ({
+    ...profile,
+    estimated_cost_per_package: estimateProfileCostPerPackage(profile.components || []),
+  }));
+}
+
+async function getArticleStockSummary(db, storeId, articleId) {
+  const result = await db.query(
+    `
+    SELECT
+      a.id,
+      a.plu,
+      a.designation,
+      COALESCE(a.unit, 'kg') AS unit,
+      COALESCE(ss.stock_quantity, 0) AS stock_quantity,
+      COALESCE(ss.pma, 0) AS pma,
+      COALESCE(ss.stock_value_ex_vat, 0) AS stock_value_ex_vat
+    FROM articles a
+    LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
+    WHERE a.id = $1
+      AND a.store_id = $2
+      AND a.is_active = true
+    LIMIT 1
+    `,
+    [articleId, storeId]
+  );
+
+  return result.rows[0] || null;
+}
+
 async function upsertArticleProfile(db, storeId, userId, input = {}) {
   return withTransaction(db, async (client) => {
     const name = clean(input.name);
@@ -737,10 +849,18 @@ async function upsertArticleProfile(db, storeId, userId, input = {}) {
     }
 
     if (!articleId || !name) {
-      const error = new Error('Article et nom de profil obligatoires');
+      const error = new Error('Article et nom du modele obligatoires');
       error.status = 400;
       throw error;
     }
+
+    const components = input.components || [];
+    if (!components.length) {
+      const error = new Error('Ajoute au moins un emballage au modele de conditionnement');
+      error.status = 400;
+      throw error;
+    }
+    assertNoDuplicatePackagingComponents(components);
 
     if (input.is_default) {
       await client.query(
@@ -810,7 +930,7 @@ async function upsertArticleProfile(db, storeId, userId, input = {}) {
 
     const profile = profileResult.rows[0];
     if (!profile) {
-      const error = new Error('Profil conditionnement introuvable');
+      const error = new Error('Modele de conditionnement introuvable');
       error.status = 404;
       throw error;
     }
@@ -820,10 +940,27 @@ async function upsertArticleProfile(db, storeId, userId, input = {}) {
       [storeId, profile.id]
     );
 
-    for (const component of input.components || []) {
+    for (const component of components) {
       const packagingItemId = clean(component.packaging_item_id);
       const quantity = parseDecimal(component.quantity);
       assertPositive(quantity, 'Quantite composant');
+
+      const packagingItem = await client.query(
+        `
+        SELECT id
+        FROM packaging_items
+        WHERE id = $1
+          AND store_id = $2
+          AND active = true
+        LIMIT 1
+        `,
+        [packagingItemId, storeId]
+      );
+      if (!packagingItem.rows[0]) {
+        const error = new Error('Emballage actif introuvable pour le modele');
+        error.status = 400;
+        throw error;
+      }
 
       await client.query(
         `
@@ -868,27 +1005,43 @@ async function deactivateProfile(db, storeId, profileId, userId) {
 
 async function buildOperationPreview(db, storeId, input = {}) {
   const profileRows = await listArticleProfiles(db, storeId, input.article_id, false);
-  const profile = profileRows.find((row) => String(row.id) === String(input.profile_id)) || profileRows[0];
+  const profile = profileRows.find((row) => String(row.id) === String(input.profile_id));
 
   if (!profile) {
-    const error = new Error('Profil conditionnement introuvable');
+    const error = new Error('Aucun modele de conditionnement actif n existe pour cet article');
     error.status = 404;
+    throw error;
+  }
+
+  const articleStock = await getArticleStockSummary(db, storeId, input.article_id);
+  if (!articleStock || Number(articleStock.stock_quantity) <= 0) {
+    const error = new Error('Article sans stock disponible pour conditionnement');
+    error.status = 409;
+    throw error;
+  }
+
+  const productQuantityKg = parseDecimal(input.product_quantity_kg);
+  assertPositive(productQuantityKg, 'Quantite produit concernee');
+  if (productQuantityKg > Number(articleStock.stock_quantity)) {
+    const error = new Error('Quantite produit concernee superieure au stock disponible');
+    error.status = 409;
+    error.details = { stock_quantity: Number(articleStock.stock_quantity), requested_quantity: productQuantityKg };
     throw error;
   }
 
   const consumptionLines = computeProfileConsumption({
     components: profile.components,
     packageCount: input.package_count,
-    productQuantityKg: input.product_quantity_kg,
+    productQuantityKg,
   });
   const costs = computePackagingCosts({
     lines: consumptionLines,
-    productQuantityKg: input.product_quantity_kg,
+    productQuantityKg,
     packageCount: input.package_count,
-    productCostBeforePackaging: input.product_cost_before_packaging,
+    productCostBeforePackaging: articleStock.pma,
   });
 
-  return { profile, ...costs };
+  return { profile, article_stock: articleStock, ...costs };
 }
 
 async function listOperations(db, storeId, limit = 50) {
@@ -1008,6 +1161,22 @@ async function validateOperation(db, storeId, userId, operationId) {
     const operation = operationResult.rows[0];
     assertOperationCanBeValidated(operation);
 
+    const articleStock = await getArticleStockSummary(client, storeId, operation.article_id);
+    if (!articleStock || Number(articleStock.stock_quantity) <= 0) {
+      const error = new Error('Article sans stock disponible pour conditionnement');
+      error.status = 409;
+      throw error;
+    }
+    if (Number(operation.product_quantity_kg) > Number(articleStock.stock_quantity)) {
+      const error = new Error('Quantite produit concernee superieure au stock disponible');
+      error.status = 409;
+      error.details = {
+        stock_quantity: Number(articleStock.stock_quantity),
+        requested_quantity: Number(operation.product_quantity_kg),
+      };
+      throw error;
+    }
+
     const linesResult = await client.query(
       `
       SELECT l.*, pi.category, pi.designation, pi.current_stock
@@ -1022,6 +1191,13 @@ async function validateOperation(db, storeId, userId, operationId) {
     const lines = linesResult.rows;
     const stocks = new Map(lines.map((line) => [String(line.packaging_item_id), Number(line.current_stock)]));
     assertSufficientStock(lines, stocks);
+
+    const packagingCostAddedPerKg = round(
+      Number(operation.packaging_cost_total_ex_vat || 0) / Number(operation.product_quantity_kg || 1),
+      4
+    );
+    const productCostBefore = Number(articleStock.pma || operation.product_cost_before_packaging || 0);
+    const costAfterPackaging = round(productCostBefore + packagingCostAddedPerKg, 4);
 
     for (const line of lines) {
       if (line.category === 'returnable') continue;
@@ -1069,18 +1245,50 @@ async function validateOperation(db, storeId, userId, operationId) {
       );
     }
 
+    await client.query(
+      `
+      INSERT INTO packaging_cost_impacts (
+        store_id, packaging_operation_id, article_id, stock_quantity_at_validation,
+        product_cost_before_packaging, packaging_cost_total_ex_vat,
+        packaging_cost_added_per_kg, cost_after_packaging_per_kg, created_by
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ON CONFLICT (store_id, packaging_operation_id)
+      DO UPDATE SET
+        stock_quantity_at_validation = EXCLUDED.stock_quantity_at_validation,
+        product_cost_before_packaging = EXCLUDED.product_cost_before_packaging,
+        packaging_cost_total_ex_vat = EXCLUDED.packaging_cost_total_ex_vat,
+        packaging_cost_added_per_kg = EXCLUDED.packaging_cost_added_per_kg,
+        cost_after_packaging_per_kg = EXCLUDED.cost_after_packaging_per_kg,
+        status = 'active'
+      `,
+      [
+        storeId,
+        operationId,
+        operation.article_id,
+        articleStock.stock_quantity,
+        productCostBefore,
+        operation.packaging_cost_total_ex_vat,
+        packagingCostAddedPerKg,
+        costAfterPackaging,
+        userId,
+      ]
+    );
+
     const updated = await client.query(
       `
       UPDATE packaging_operations
       SET status = 'validated',
           validated_at = now(),
+          product_cost_before_packaging = $4,
+          cost_after_packaging_per_kg = $5,
           updated_by = $3,
           updated_at = now()
       WHERE id = $1
         AND store_id = $2
       RETURNING *
       `,
-      [operationId, storeId, userId]
+      [operationId, storeId, userId, productCostBefore, costAfterPackaging]
     );
 
     return updated.rows[0];
@@ -1177,12 +1385,15 @@ module.exports = {
   assertStockMovementCanBeDeleted,
   summarizeReturnableMovements,
   filterRowsByStore,
+  assertNoDuplicatePackagingComponents,
+  estimateProfileCostPerPackage,
   listItems,
   createItem,
   updateItem,
   recordStockMovement,
   listStockMovements,
   cancelStockMovement,
+  listProfiles,
   listArticleProfiles,
   upsertArticleProfile,
   deactivateProfile,

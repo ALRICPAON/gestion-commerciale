@@ -12,11 +12,14 @@ const sessionUser = JSON.parse(sessionUserRaw);
 const state = {
   items: [],
   profiles: [],
+  allProfiles: [],
   operations: [],
   balances: [],
   returnableMovements: [],
   stockMovements: [],
   selectedOperationArticle: null,
+  selectedModelArticle: null,
+  articlePickerTarget: 'operation',
   articlePickerRows: [],
   movementToCancel: null,
   preview: null,
@@ -43,6 +46,8 @@ const els = {
   operationArticleSelected: document.getElementById('operation-article-selected'),
   operationArticleF9Btn: document.getElementById('operation-article-f9-btn'),
   operationProfile: document.getElementById('operation-profile'),
+  operationModelHint: document.getElementById('operation-model-hint'),
+  submitOperationBtn: document.getElementById('submit-operation-btn'),
   operationForm: document.getElementById('operation-form'),
   operationPreview: document.getElementById('operation-preview'),
   previewOperationBtn: document.getElementById('preview-operation-btn'),
@@ -53,6 +58,22 @@ const els = {
   returnableBalances: document.getElementById('returnable-balances'),
   returnableMovementsTbody: document.getElementById('returnable-movements-tbody'),
   resetItemBtn: document.getElementById('reset-item-btn'),
+  newModelBtn: document.getElementById('new-model-btn'),
+  modelForm: document.getElementById('model-form'),
+  modelId: document.getElementById('model-id'),
+  modelArticle: document.getElementById('model-article'),
+  modelArticleId: document.getElementById('model-article-id'),
+  modelArticleSelected: document.getElementById('model-article-selected'),
+  modelArticleF9Btn: document.getElementById('model-article-f9-btn'),
+  modelName: document.getElementById('model-name'),
+  modelTargetWeight: document.getElementById('model-target-weight'),
+  modelDefault: document.getElementById('model-default'),
+  modelNotes: document.getElementById('model-notes'),
+  addModelComponentBtn: document.getElementById('add-model-component-btn'),
+  modelComponents: document.getElementById('model-components'),
+  modelCostSummary: document.getElementById('model-cost-summary'),
+  cancelModelBtn: document.getElementById('cancel-model-btn'),
+  modelsTbody: document.getElementById('models-tbody'),
   articlePickerModal: document.getElementById('article-picker-modal'),
   closeArticlePickerBtn: document.getElementById('close-article-picker-btn'),
   articlePickerSearch: document.getElementById('article-picker-search'),
@@ -246,17 +267,86 @@ function renderProfiles() {
   els.operationProfile.innerHTML =
     state.profiles
       .map((profile) => `<option value="${profile.id}">${profile.is_default ? '* ' : ''}${escapeHtml(profile.name)}</option>`)
-      .join('') || '<option value="">Aucun profil</option>';
+      .join('') || '<option value="">Aucun modele</option>';
+  els.operationModelHint.textContent = state.profiles.length
+    ? `${state.profiles.length} modele(s) disponible(s).`
+    : 'Aucun modele de conditionnement n existe pour cet article.';
+  updateOperationSubmitState();
+}
+
+function renderModels() {
+  if (!state.allProfiles.length) {
+    els.modelsTbody.innerHTML = '<tr><td colspan="9">Aucun modele de conditionnement.</td></tr>';
+    return;
+  }
+
+  els.modelsTbody.innerHTML = state.allProfiles.map((profile) => {
+    const components = (profile.components || [])
+      .map((component) => `${component.code || ''} ${component.designation || ''} (${formatNumber(component.quantity)} ${component.management_unit || ''})`)
+      .join(', ');
+    return `
+      <tr>
+        <td>${escapeHtml(profile.name)}</td>
+        <td>${escapeHtml(profile.article_designation || '')}</td>
+        <td>${escapeHtml(profile.plu || '')}</td>
+        <td>${formatNumber(profile.target_net_weight_kg)} kg</td>
+        <td>${escapeHtml(components || '-')}</td>
+        <td>${formatMoney(profile.estimated_cost_per_package || 0)}</td>
+        <td>${profile.is_default ? 'Oui' : 'Non'}</td>
+        <td>${profile.active ? 'Actif' : 'Inactif'}</td>
+        <td>
+          <button class="btn btn-secondary btn-sm" type="button" data-edit-model="${profile.id}">Modifier</button>
+          ${profile.active ? `<button class="btn btn-secondary btn-sm" type="button" data-disable-model="${profile.id}">Desactiver</button>` : '-'}
+        </td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function renderModelComponents() {
+  const components = state.modelComponents || [];
+  if (!components.length) {
+    els.modelComponents.innerHTML = '<div class="field-hint">Ajoute au moins un emballage.</div>';
+  } else {
+    els.modelComponents.innerHTML = components.map((component, index) => {
+      const item = state.items.find((candidate) => String(candidate.id) === String(component.packaging_item_id));
+      const unitCost = Number(item?.current_unit_cost_ex_vat || component.current_unit_cost_ex_vat || 0);
+      const lineCost = unitCost * Number(component.quantity || 0);
+      return `
+        <div class="component-row" data-component-index="${index}">
+          <select data-component-field="packaging_item_id">
+            ${state.items.filter((item) => item.active !== false).map((itemOption) => `
+              <option value="${itemOption.id}" ${String(itemOption.id) === String(component.packaging_item_id) ? 'selected' : ''}>
+                ${escapeHtml(itemOption.code)} - ${escapeHtml(itemOption.designation)}
+              </option>
+            `).join('')}
+          </select>
+          <input data-component-field="quantity" type="number" min="0.0001" step="0.0001" value="${component.quantity || 1}" />
+          <span>${escapeHtml(item?.management_unit || '')}</span>
+          <strong>${formatMoney(lineCost)}</strong>
+          <button class="btn btn-secondary btn-sm" type="button" data-remove-component="${index}">Supprimer</button>
+        </div>
+      `;
+    }).join('');
+  }
+
+  const total = components.reduce((sum, component) => {
+    const item = state.items.find((candidate) => String(candidate.id) === String(component.packaging_item_id));
+    return sum + Number(component.quantity || 0) * Number(item?.current_unit_cost_ex_vat || 0);
+  }, 0);
+  els.modelCostSummary.textContent = `Cout d'emballage estime par colis : ${formatMoney(total)}`;
 }
 
 function renderPreview(preview) {
   if (!preview) {
-    els.operationPreview.textContent = 'Selectionne un article, un profil, des kg et un nombre de colis.';
+    els.operationPreview.textContent = 'Selectionne un article, un modele, des kg et un nombre de colis.';
     return;
   }
 
   els.operationPreview.innerHTML = `
     <div class="preview-kpis">
+      <span>Stock produit <strong>Inchange</strong></span>
+      <span>Stock disponible <strong>${formatNumber(preview.article_stock?.stock_quantity || 0)} ${escapeHtml(preview.article_stock?.unit || 'kg')}</strong></span>
       <span>Total emballage <strong>${formatMoney(preview.packaging_cost_total_ex_vat)}</strong></span>
       <span>Par colis <strong>${formatMoney(preview.packaging_cost_per_package)}</strong></span>
       <span>Par kg <strong>${formatMoney(preview.packaging_cost_per_kg)}</strong></span>
@@ -380,6 +470,17 @@ async function loadProfilesForArticle(articleId = els.operationArticleId.value.t
   renderProfiles();
 }
 
+async function loadModels() {
+  try {
+    const data = await api('/api/packaging/profiles?limit=200');
+    state.allProfiles = data.profiles || [];
+    renderModels();
+  } catch (error) {
+    els.modelsTbody.innerHTML = `<tr><td colspan="9">Impossible de charger les modeles. ${escapeHtml(error.message)} ${retryButton('models')}</td></tr>`;
+    throw error;
+  }
+}
+
 async function loadStockMovements() {
   try {
     const params = new URLSearchParams({ limit: '100' });
@@ -424,6 +525,7 @@ async function refreshAll() {
   showFeedback('');
   const results = await Promise.allSettled([
     loadItems(),
+    loadModels(),
     loadStockMovements(),
     loadOperations(),
     loadReturnables(),
@@ -544,10 +646,17 @@ function collectOperationPayload() {
     profile_id: getInput('operation-profile'),
     product_quantity_kg: getInput('operation-kg'),
     package_count: getInput('operation-packages'),
-    product_cost_before_packaging: getInput('operation-product-cost') || 0,
     operation_date: getInput('operation-date') || null,
     notes: getInput('operation-notes'),
   };
+}
+
+function updateOperationSubmitState() {
+  const ready = isUuid(els.operationArticleId.value)
+    && isUuid(els.operationProfile.value)
+    && Number(getInput('operation-kg')) > 0
+    && Number(getInput('operation-packages')) > 0;
+  els.submitOperationBtn.disabled = !ready;
 }
 
 function articleDisplay(article) {
@@ -569,14 +678,95 @@ function applyOperationArticle(article) {
   if (els.operationArticleId.value) loadProfilesForArticle(els.operationArticleId.value).catch(handleActionError);
 }
 
+function applyModelArticle(article) {
+  const normalized = {
+    ...article,
+    id: article.article_id || article.id,
+    designation: article.designation || article.display_name || '',
+  };
+  state.selectedModelArticle = normalized;
+  els.modelArticle.value = articleDisplay(normalized);
+  els.modelArticleId.value = isUuid(normalized.id) ? normalized.id : '';
+  els.modelArticleSelected.textContent = els.modelArticleId.value
+    ? `${normalized.plu || '-'} - ${normalized.designation || '-'}`
+    : 'Aucun article selectionne.';
+}
+
+function resetModelForm() {
+  els.modelForm.reset();
+  els.modelId.value = '';
+  els.modelArticleId.value = '';
+  els.modelArticleSelected.textContent = 'Aucun article selectionne.';
+  state.selectedModelArticle = null;
+  state.modelComponents = [];
+  renderModelComponents();
+}
+
+function openModelForm(profile = null) {
+  els.modelForm.classList.remove('hidden');
+  resetModelForm();
+  if (!profile) return;
+  els.modelId.value = profile.id;
+  els.modelArticleId.value = profile.article_id;
+  els.modelArticle.value = `${profile.plu || ''} - ${profile.article_designation || ''}`.trim();
+  els.modelArticleSelected.textContent = els.modelArticle.value;
+  els.modelName.value = profile.name || '';
+  els.modelTargetWeight.value = profile.target_net_weight_kg || '';
+  els.modelDefault.value = profile.is_default ? 'true' : 'false';
+  els.modelNotes.value = profile.notes || '';
+  state.modelComponents = (profile.components || []).map((component) => ({
+    packaging_item_id: component.packaging_item_id,
+    quantity: component.quantity,
+  }));
+  renderModelComponents();
+}
+
+function closeModelForm() {
+  resetModelForm();
+  els.modelForm.classList.add('hidden');
+}
+
+function collectModelPayload() {
+  if (!isUuid(els.modelArticleId.value)) throw new Error('Selectionne un article valide pour le modele');
+  return {
+    name: els.modelName.value.trim(),
+    target_net_weight_kg: els.modelTargetWeight.value,
+    target_package_count: 1,
+    is_default: els.modelDefault.value === 'true',
+    notes: els.modelNotes.value.trim(),
+    components: (state.modelComponents || []).map((component) => ({
+      packaging_item_id: component.packaging_item_id,
+      quantity: component.quantity,
+      consumption_rule: 'per_package',
+      is_primary_packaging: false,
+    })),
+  };
+}
+
+async function submitModel(event) {
+  event.preventDefault();
+  const payload = collectModelPayload();
+  const modelId = els.modelId.value;
+  const articleId = els.modelArticleId.value;
+  const path = modelId
+    ? `/api/packaging/profiles/${encodeURIComponent(modelId)}`
+    : `/api/packaging/articles/${encodeURIComponent(articleId)}/profiles`;
+  await api(path, { method: modelId ? 'PATCH' : 'POST', body: JSON.stringify(payload) });
+  closeModelForm();
+  await Promise.all([loadModels(), loadProfilesForArticle().catch(() => {})]);
+  showFeedback('Modele de conditionnement enregistre.', 'success');
+}
+
 async function searchArticles(term) {
   const search = String(term || '').trim();
   if (!search) return [];
-  const rows = await api(`/api/articles/search?q=${encodeURIComponent(search)}`);
+  const endpoint = state.articlePickerTarget === 'operation' ? '/api/articles/search-in-stock' : '/api/articles/search';
+  const rows = await api(`${endpoint}?q=${encodeURIComponent(search)}`);
   return Array.isArray(rows) ? rows : [];
 }
 
 async function resolveOperationArticleFromInput() {
+  state.articlePickerTarget = 'operation';
   const term = els.operationArticle.value.trim();
   if (!term) return;
   const rows = await searchArticles(term);
@@ -603,6 +793,22 @@ async function resolveOperationArticleFromInput() {
   openArticlePicker(term, rows);
 }
 
+async function resolveModelArticleFromInput() {
+  const term = els.modelArticle.value.trim();
+  if (!term) return;
+  state.articlePickerTarget = 'model';
+  const rows = await searchArticles(term);
+  const exactRows = rows.filter((row) => String(row.plu || '').toLowerCase() === term.toLowerCase());
+  if (!rows.length) {
+    els.modelArticleId.value = '';
+    els.modelArticleSelected.textContent = 'Aucun article trouve';
+    throw new Error('Aucun article trouve');
+  }
+  if (exactRows.length === 1) return applyModelArticle(exactRows[0]);
+  if (rows.length === 1) return applyModelArticle(rows[0]);
+  openArticlePicker(term, rows);
+}
+
 function canOpenArticlePickerFromKeydown(event) {
   return event.key === 'F9' && event.target === els.operationArticle;
 }
@@ -617,7 +823,14 @@ function articleSearchTerm() {
 
 function openOperationArticlePicker(event) {
   if (event) event.preventDefault();
+  state.articlePickerTarget = 'operation';
   openArticlePicker(articleSearchTerm());
+}
+
+function openModelArticlePicker(event) {
+  if (event) event.preventDefault();
+  state.articlePickerTarget = 'model';
+  openArticlePicker(els.modelArticle.value.trim());
 }
 
 function requireResolvedArticleId() {
@@ -694,8 +907,9 @@ async function submitOperation(event) {
     method: 'POST',
     body: JSON.stringify(collectOperationPayload()),
   });
-  await loadOperations();
-  showFeedback(`Operation brouillon creee: ${data.operation.id}`, 'success');
+  await api(`/api/packaging/operations/${encodeURIComponent(data.operation.id)}/validate`, { method: 'POST' });
+  await Promise.all([loadItems(), loadOperations(), loadStockMovements()]);
+  showFeedback('Conditionnement valide : produit inchange, emballages deduits, cout ajoute trace.', 'success');
 }
 
 async function validateOperation(operationId) {
@@ -768,6 +982,7 @@ async function cancelStockMovement(event) {
 
 function retryLoad(action) {
   if (action === 'items') return loadItems();
+  if (action === 'models') return loadModels();
   if (action === 'stock-movements') return loadStockMovements();
   if (action === 'operations') return loadOperations();
   if (action === 'returnables') return loadReturnables();
@@ -813,9 +1028,70 @@ function setupEvents() {
   els.movementType.addEventListener('change', prefillMovementCost);
   els.movementHistoryItem.addEventListener('change', () => loadStockMovements().catch(handleActionError));
   els.returnableItem.addEventListener('change', prefillReturnableDeposit);
+  els.newModelBtn.addEventListener('click', () => openModelForm());
+  els.cancelModelBtn.addEventListener('click', closeModelForm);
+  els.modelForm.addEventListener('submit', (event) => submitModel(event).catch(handleActionError));
+  els.addModelComponentBtn.addEventListener('click', () => {
+    const firstItem = state.items.find((item) => item.active !== false);
+    if (!firstItem) {
+      showFeedback('Cree d abord un emballage actif.', 'error');
+      return;
+    }
+    state.modelComponents = [...(state.modelComponents || []), { packaging_item_id: firstItem.id, quantity: 1 }];
+    renderModelComponents();
+  });
+  els.modelComponents.addEventListener('input', (event) => {
+    const row = event.target.closest('[data-component-index]');
+    if (!row) return;
+    const index = Number(row.dataset.componentIndex);
+    const field = event.target.dataset.componentField;
+    state.modelComponents[index][field] = event.target.value;
+    renderModelComponents();
+  });
+  els.modelComponents.addEventListener('change', (event) => {
+    const row = event.target.closest('[data-component-index]');
+    if (!row) return;
+    const index = Number(row.dataset.componentIndex);
+    const field = event.target.dataset.componentField;
+    state.modelComponents[index][field] = event.target.value;
+    renderModelComponents();
+  });
+  els.modelComponents.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-remove-component]');
+    if (!button) return;
+    state.modelComponents.splice(Number(button.dataset.removeComponent), 1);
+    renderModelComponents();
+  });
+  els.modelsTbody.addEventListener('click', (event) => {
+    const editButton = event.target.closest('[data-edit-model]');
+    const disableButton = event.target.closest('[data-disable-model]');
+    if (editButton) {
+      const profile = state.allProfiles.find((candidate) => String(candidate.id) === String(editButton.dataset.editModel));
+      if (profile) openModelForm(profile);
+    }
+    if (disableButton) {
+      api(`/api/packaging/profiles/${encodeURIComponent(disableButton.dataset.disableModel)}/deactivate`, { method: 'POST' })
+        .then(loadModels)
+        .catch(handleActionError);
+    }
+  });
+  els.modelArticle.addEventListener('input', () => {
+    els.modelArticleId.value = '';
+    els.modelArticleSelected.textContent = 'Aucun article selectionne.';
+  });
+  els.modelArticle.addEventListener('keydown', (event) => {
+    if (event.key === 'F9' && event.target === els.modelArticle) {
+      event.preventDefault();
+      openModelArticlePicker(event);
+    }
+  });
+  els.modelArticle.addEventListener('blur', () => resolveModelArticleFromInput().catch(handleActionError));
+  els.modelArticleF9Btn.addEventListener('mousedown', (event) => event.preventDefault());
+  els.modelArticleF9Btn.addEventListener('click', openModelArticlePicker);
   els.operationArticle.addEventListener('input', () => {
     els.operationArticleId.value = '';
     els.operationArticleSelected.textContent = 'Aucun article selectionne.';
+    updateOperationSubmitState();
   });
   els.operationArticle.addEventListener('blur', () => resolveOperationArticleFromInput().catch(handleActionError));
   els.operationArticle.addEventListener('keydown', (event) => {
@@ -849,8 +1125,13 @@ function setupEvents() {
     const button = event.target.closest('[data-pick-article]');
     if (!button) return;
     const article = (state.articlePickerRows || []).find((row) => String(row.id || row.article_id) === String(button.dataset.pickArticle));
-    if (article) applyOperationArticle(article);
+    if (article && state.articlePickerTarget === 'model') applyModelArticle(article);
+    if (article && state.articlePickerTarget === 'operation') applyOperationArticle(article);
     closeArticlePicker();
+  });
+  ['operation-profile', 'operation-kg', 'operation-packages'].forEach((id) => {
+    document.getElementById(id).addEventListener('input', updateOperationSubmitState);
+    document.getElementById(id).addEventListener('change', updateOperationSubmitState);
   });
   els.operationsTbody.addEventListener('click', (event) => {
     const button = event.target.closest('[data-validate-operation]');

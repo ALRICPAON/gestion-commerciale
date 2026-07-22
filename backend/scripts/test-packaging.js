@@ -14,6 +14,8 @@ const {
   assertCancellationReason,
   assertStockMovementCanBeCancelled,
   assertStockMovementCanBeDeleted,
+  assertNoDuplicatePackagingComponents,
+  estimateProfileCostPerPackage,
   summarizeReturnableMovements,
   filterRowsByStore,
 } = require('../services/packaging/packagingService');
@@ -33,16 +35,23 @@ function expectThrowsStatus(fn, status) {
 function run() {
   const packagingJs = fs.readFileSync(path.join(__dirname, '../../frontend/js/packaging.js'), 'utf8');
   const packagingHtml = fs.readFileSync(path.join(__dirname, '../../frontend/packaging.html'), 'utf8');
+  const packagingService = fs.readFileSync(path.join(__dirname, '../services/packaging/packagingService.js'), 'utf8');
+  const costImpactMigration = fs.readFileSync(path.join(__dirname, '../db/gestion-commerciale/062_packaging_cost_impacts.sql'), 'utf8');
 
   assert(packagingHtml.includes('PLU ou designation'));
   assert(packagingHtml.includes('operation-article-f9-btn'));
-  assert(packagingHtml.includes('packaging.js?v=2'));
-  assert(packagingHtml.includes('packaging.css?v=2'));
+  assert(packagingHtml.includes('packaging.js?v=3'));
+  assert(packagingHtml.includes('packaging.css?v=3'));
+  assert(packagingHtml.includes('Nouveau modele de conditionnement'));
+  assert(packagingHtml.includes('Realiser un conditionnement'));
+  assert(packagingHtml.includes('Quantite de produit concernee en kg'));
   assert(packagingHtml.includes('movement-cancel-modal'));
+  assert(!packagingHtml.includes('>Profil<'));
+  assert(!packagingHtml.includes('>profil<'));
   assert(!packagingHtml.includes('placeholder="ID article"'));
   assert(packagingJs.includes("item.current_unit_cost_ex_vat"));
   assert(packagingJs.includes("item.deposit_unit_value"));
-  assert(packagingJs.includes('/api/articles/search?q='));
+  assert(packagingJs.includes('/api/articles/search'));
   assert(packagingJs.includes('operationArticleId.value'));
   assert(packagingJs.includes('isUuid(articleId)'));
   assert(packagingJs.includes('loadProfilesForArticle(els.operationArticleId.value'));
@@ -54,6 +63,12 @@ function run() {
   assert(packagingJs.includes('A corriger depuis l operation de conditionnement'));
   assert(packagingJs.includes('movementCancelReason'));
   assert(packagingJs.includes('Aucun article trouve pour ce PLU'));
+  assert(packagingJs.includes('/api/articles/search-in-stock'));
+  assert(packagingJs.includes('Stock produit <strong>Inchange</strong>'));
+  assert(packagingService.includes('packaging_cost_impacts'));
+  assert(!packagingService.includes('UPDATE lots SET'));
+  assert(!packagingService.includes('INSERT INTO stock_movements'));
+  assert(costImpactMigration.includes('CREATE TABLE IF NOT EXISTS packaging_cost_impacts'));
 
   const item = normalizePackagingItemInput({
     code: 'CAISSE30',
@@ -70,6 +85,19 @@ function run() {
   assert.strictEqual(signedQuantityForStockMovement('loss', 3), -3);
   assert.strictEqual(signedQuantityForStockMovement('manual_correction', -2), -2);
   assert.strictEqual(reverseStockMovementType('purchase_in'), 'manual_correction');
+  assert.strictEqual(estimateProfileCostPerPackage([
+    { quantity: 1, current_unit_cost_ex_vat: 1 },
+    { quantity: 0.5, current_unit_cost_ex_vat: 0.2 },
+    { quantity: 1, current_unit_cost_ex_vat: 0.1 },
+  ]), 1.2);
+  assert.doesNotThrow(() => assertNoDuplicatePackagingComponents([
+    { packaging_item_id: 'box' },
+    { packaging_item_id: 'ice' },
+  ]));
+  expectThrowsStatus(() => assertNoDuplicatePackagingComponents([
+    { packaging_item_id: 'box' },
+    { packaging_item_id: 'box' },
+  ]), 400);
 
   const components = [
     {

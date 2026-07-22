@@ -7,13 +7,13 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/packaging.css?v=2" />
+  <link rel="stylesheet" href="./css/pages/packaging.css?v=3" />
 </head>
 <body class="app-page packaging-page">
   <header class="topbar">
     <div>
       <h1 class="app-title">Conditionnement</h1>
-      <p class="app-subtitle">Emballages consommables, profils articles, operations et consignes.</p>
+      <p class="app-subtitle">Emballages consommables, modeles, conditionnements et consignes.</p>
     </div>
 
     <div class="topbar-right">
@@ -193,13 +193,83 @@
     </section>
 
     <section id="tab-operations" class="tab-panel hidden">
+      <section class="card">
+        <div class="section-title-row">
+          <h2>Modeles de conditionnement</h2>
+          <button id="new-model-btn" class="btn btn-secondary" type="button">Nouveau modele de conditionnement</button>
+        </div>
+        <form id="model-form" class="compact-form hidden">
+          <input id="model-id" type="hidden" />
+          <input id="model-article-id" type="hidden" />
+          <div class="form-grid">
+            <div class="form-group">
+              <label for="model-article">Article concerne</label>
+              <div class="input-with-action">
+                <input id="model-article" placeholder="PLU ou designation" autocomplete="off" />
+                <button id="model-article-f9-btn" class="btn btn-secondary btn-sm" type="button">F9</button>
+              </div>
+              <small id="model-article-selected" class="field-hint">Aucun article selectionne.</small>
+            </div>
+            <div class="form-group">
+              <label for="model-name">Nom du modele</label>
+              <input id="model-name" placeholder="Caisse 5 kg" />
+            </div>
+            <div class="form-group">
+              <label for="model-target-weight">Poids net cible par colis</label>
+              <input id="model-target-weight" type="number" min="0.001" step="0.001" />
+            </div>
+            <div class="form-group">
+              <label for="model-default">Modele par defaut</label>
+              <select id="model-default">
+                <option value="false">Non</option>
+                <option value="true">Oui</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="model-notes">Observations</label>
+            <input id="model-notes" placeholder="Instructions de conditionnement..." />
+          </div>
+          <div class="section-title-row">
+            <h3>Emballages et consommables utilises</h3>
+            <button id="add-model-component-btn" class="btn btn-secondary btn-sm" type="button">Ajouter un emballage</button>
+          </div>
+          <div id="model-components" class="component-list"></div>
+          <div id="model-cost-summary" class="summary-box">Cout d'emballage estime par colis : 0,00 EUR</div>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit">Enregistrer le modele</button>
+            <button id="cancel-model-btn" class="btn btn-secondary" type="button">Annuler</button>
+          </div>
+        </form>
+        <div class="table-wrap">
+          <table class="data-table packaging-table">
+            <thead>
+              <tr>
+                <th>Modele</th>
+                <th>Article</th>
+                <th>PLU</th>
+                <th>Poids cible</th>
+                <th>Emballages</th>
+                <th>Cout estime / colis</th>
+                <th>Defaut</th>
+                <th>Statut</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="models-tbody">
+              <tr><td colspan="9">Chargement...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       <div class="packaging-grid two-columns">
         <section class="card">
-          <h2>Operation de conditionnement</h2>
+          <h2>Realiser un conditionnement</h2>
           <form id="operation-form" class="compact-form">
             <div class="form-grid">
               <div class="form-group">
-                <label for="operation-article">Article</label>
+                <label for="operation-article">Article disponible en stock</label>
                 <div class="input-with-action">
                   <input id="operation-article" placeholder="PLU ou designation" autocomplete="off" required />
                   <button id="operation-article-f9-btn" class="btn btn-secondary btn-sm" type="button">F9</button>
@@ -208,20 +278,17 @@
                 <small id="operation-article-selected" class="field-hint">Aucun article selectionne.</small>
               </div>
               <div class="form-group">
-                <label for="operation-profile">Profil</label>
+                <label for="operation-profile">Modele de conditionnement</label>
                 <select id="operation-profile" required></select>
+                <small id="operation-model-hint" class="field-hint">Selectionne un article disponible en stock.</small>
               </div>
               <div class="form-group">
-                <label for="operation-kg">Kg produit</label>
+                <label for="operation-kg">Quantite de produit concernee en kg</label>
                 <input id="operation-kg" type="number" min="0.001" step="0.001" required />
               </div>
               <div class="form-group">
-                <label for="operation-packages">Colis</label>
+                <label for="operation-packages">Nombre de colis</label>
                 <input id="operation-packages" type="number" min="0.001" step="0.001" required />
-              </div>
-              <div class="form-group">
-                <label for="operation-product-cost">Cout produit / kg</label>
-                <input id="operation-product-cost" type="number" min="0" step="0.0001" value="0" />
               </div>
               <div class="form-group">
                 <label for="operation-date">Date</label>
@@ -234,7 +301,7 @@
             </div>
             <div class="form-actions">
               <button id="preview-operation-btn" class="btn btn-secondary" type="button">Previsualiser</button>
-              <button class="btn btn-primary" type="submit">Creer brouillon</button>
+              <button id="submit-operation-btn" class="btn btn-primary" type="submit" disabled>Valider le conditionnement</button>
             </div>
           </form>
         </section>
@@ -242,20 +309,20 @@
         <section class="card">
           <h2>Previsualisation</h2>
           <div id="operation-preview" class="preview-box">
-            Selectionne un article, un profil, des kg et un nombre de colis.
+            Selectionne un article en stock, un modele, des kg et un nombre de colis.
           </div>
         </section>
       </div>
 
       <section class="card">
-        <h2>Dernieres operations</h2>
+        <h2>Historique des conditionnements</h2>
         <div class="table-wrap">
           <table class="data-table packaging-table">
             <thead>
               <tr>
                 <th>Date</th>
                 <th>Article</th>
-                <th>Profil</th>
+                <th>Modele</th>
                 <th>Kg</th>
                 <th>Colis</th>
                 <th>Cout emb.</th>
@@ -389,6 +456,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/packaging.js?v=2"></script>
+  <script src="./js/packaging.js?v=3"></script>
 </body>
 </html>

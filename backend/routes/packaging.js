@@ -153,6 +153,21 @@ router.delete(
 );
 
 router.get(
+  '/profiles',
+  requirePackagingPermission(PACKAGING_PERMISSIONS.READ),
+  asyncHandler(async (req, res) => {
+    const articleId = req.query.article_id ? requireUuid(req.query.article_id, 'ID article') : null;
+    const profiles = await packagingService.listProfiles(req.dbPool, req.user.store_id, {
+      active: req.query.active,
+      article_id: articleId,
+      limit: req.query.limit,
+    });
+
+    res.json({ profiles });
+  })
+);
+
+router.get(
   '/articles/:articleId/profiles',
   requirePackagingPermission(PACKAGING_PERMISSIONS.READ),
   asyncHandler(async (req, res) => {
@@ -186,7 +201,7 @@ router.patch(
   '/profiles/:profileId',
   requirePackagingPermission(PACKAGING_PERMISSIONS.MANAGE_PROFILES),
   asyncHandler(async (req, res) => {
-    const profileId = requireUuid(req.params.profileId, 'ID profil');
+    const profileId = requireUuid(req.params.profileId, 'ID modele');
     const profile = await packagingService.upsertArticleProfile(req.dbPool, req.user.store_id, req.user.id, {
       ...req.body,
       id: profileId,
@@ -200,10 +215,10 @@ router.post(
   '/profiles/:profileId/deactivate',
   requirePackagingPermission(PACKAGING_PERMISSIONS.MANAGE_PROFILES),
   asyncHandler(async (req, res) => {
-    const profileId = requireUuid(req.params.profileId, 'ID profil');
+    const profileId = requireUuid(req.params.profileId, 'ID modele');
     const profile = await packagingService.deactivateProfile(req.dbPool, req.user.store_id, profileId, req.user.id);
 
-    if (!profile) return res.status(404).json({ error: 'Profil conditionnement introuvable' });
+    if (!profile) return res.status(404).json({ error: 'Modele de conditionnement introuvable' });
     res.json({ profile });
   })
 );
