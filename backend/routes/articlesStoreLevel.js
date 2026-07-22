@@ -39,6 +39,17 @@ function parseNumber(value, fallback = null) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function articleUniqueViolationMessage(err, fallbackMessage = 'PLU deja existant pour ce client') {
+  const constraint = String(err?.constraint || '').toLowerCase();
+  const detail = String(err?.detail || '').toLowerCase();
+
+  if (constraint.includes('ean') || detail.includes('(ean)')) {
+    return 'EAN deja existant pour ce client';
+  }
+
+  return fallbackMessage;
+}
+
 function articlePayload(body) {
   return {
     plu: clean(body.plu),
@@ -489,7 +500,7 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Erreur POST /api/articles :', err);
-    if (err.code === '23505') return res.status(400).json({ error: 'PLU deja existant pour ce client' });
+    if (err.code === '23505') return res.status(400).json({ error: articleUniqueViolationMessage(err) });
     if (err.status) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: 'Erreur serveur' });
   } finally {
@@ -612,7 +623,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Erreur PATCH /api/articles/:id :', err);
-    if (err.code === '23505') return res.status(400).json({ error: 'PLU deja existant pour ce client' });
+    if (err.code === '23505') return res.status(400).json({ error: articleUniqueViolationMessage(err) });
     if (err.status) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: 'Erreur serveur' });
   } finally {
@@ -754,7 +765,7 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Erreur POST /api/articles/:id/duplicate :', err);
-    if (err.code === '23505') return res.status(400).json({ error: 'Le nouveau PLU existe deja' });
+    if (err.code === '23505') return res.status(400).json({ error: articleUniqueViolationMessage(err, 'Le nouveau PLU existe deja') });
     if (err.status) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: 'Erreur serveur' });
   } finally {

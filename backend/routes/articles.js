@@ -40,6 +40,17 @@ function toNullableNumber(value) {
 
 const ARTICLE_TYPES = new Set(['PRODUCT', 'PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE', 'OTHER']);
 
+function articleUniqueViolationMessage(err, fallbackMessage = 'PLU déjà existant pour ce client') {
+  const constraint = String(err?.constraint || '').toLowerCase();
+  const detail = String(err?.detail || '').toLowerCase();
+
+  if (constraint.includes('ean') || detail.includes('(ean)')) {
+    return 'EAN déjà existant pour ce client';
+  }
+
+  return fallbackMessage;
+}
+
 function normalizeArticleType(value) {
   const type = String(value || 'PRODUCT').trim().toUpperCase();
   return ARTICLE_TYPES.has(type) ? type : 'PRODUCT';
@@ -769,7 +780,7 @@ if (departmentIdFinal) {
     console.error('Erreur POST /api/articles :', err);
 
     if (err.code === '23505') {
-      return res.status(400).json({ error: 'PLU déjà existant pour ce client' });
+      return res.status(400).json({ error: articleUniqueViolationMessage(err) });
     }
 
     res.status(500).json({ error: 'Erreur serveur' });
@@ -1245,7 +1256,7 @@ RETURNING id
     console.error('Erreur PATCH /api/articles/:id :', err);
 
     if (err.code === '23505') {
-      return res.status(400).json({ error: 'PLU déjà existant pour ce client' });
+      return res.status(400).json({ error: articleUniqueViolationMessage(err) });
     }
 
     res.status(500).json({ error: 'Erreur serveur' });
@@ -1469,7 +1480,7 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
     console.error('Erreur POST /api/articles/:id/duplicate :', err);
 
     if (err.code === '23505') {
-      return res.status(400).json({ error: 'Le nouveau PLU existe déjà' });
+      return res.status(400).json({ error: articleUniqueViolationMessage(err, 'Le nouveau PLU existe déjà') });
     }
 
     res.status(500).json({ error: 'Erreur serveur' });

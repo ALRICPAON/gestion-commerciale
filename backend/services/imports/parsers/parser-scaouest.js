@@ -187,10 +187,6 @@ module.exports = {
       if (!uvc || !prixUvc) continue;
 
       const ean = extractEanFromRows(rows, i, COL_EAN_U, COL_EAN_Z);
-      if (!ean) {
-        warnings.push(`EAN introuvable autour de la ligne ${i + 1} (${designation})`);
-        continue;
-      }
 
       let montantHT = parseNumberSafe(r[COL_MONTANT_AT]);
       if ((!montantHT || montantHT === 0) && uvc && prixUvc) {
@@ -198,10 +194,11 @@ module.exports = {
       }
 
       lines.push({
-        supplier_reference: supplierRef || ean,
+        supplier_reference: supplierRef,
         supplier_label: designation || null,
-        article_plu: ean,
+        article_plu: supplierRef,
         designation: designation || null,
+        ean: ean || null,
         latin_name: null,
         fao_zone: null,
         sous_zone: null,
