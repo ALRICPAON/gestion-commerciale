@@ -1262,6 +1262,39 @@ async function validateOperation(db, storeId, userId, operationId) {
       ]
     );
 
+    await client.query(
+      `
+      INSERT INTO stock_cost_components (
+        store_id, article_id, lot_id, source_table, source_id, component_type,
+        quantity_reference, amount_ex_vat, unit_cost_delta_ex_vat, status, notes, created_by
+      )
+      VALUES ($1, $2, $3, 'packaging_operations', $4, 'PACKAGING',
+              $5, $6, $7, 'active', $8, $9)
+      ON CONFLICT (store_id, source_table, source_id, component_type)
+      DO UPDATE SET
+        article_id = EXCLUDED.article_id,
+        lot_id = EXCLUDED.lot_id,
+        quantity_reference = EXCLUDED.quantity_reference,
+        amount_ex_vat = EXCLUDED.amount_ex_vat,
+        unit_cost_delta_ex_vat = EXCLUDED.unit_cost_delta_ex_vat,
+        status = 'active',
+        notes = EXCLUDED.notes,
+        updated_at = now()
+      `,
+      [
+        storeId,
+        operation.article_id,
+        operation.lot_id,
+        operationId,
+        operation.product_quantity_kg,
+        operation.packaging_cost_total_ex_vat,
+        packagingCostAddedPerKg,
+        'Cout conditionnement incorpore au stock produit',
+        userId,
+      ]
+    );
+    await recomputeArticleStock(client, operation.article_id, storeId);
+
     const updated = await client.query(
       `
       UPDATE packaging_operations
@@ -1277,6 +1310,134 @@ async function validateOperation(db, storeId, userId, operationId) {
       `,
       [operationId, storeId, userId, productCostBefore, costAfterPackaging]
     );
+
+    return updated.rows[0];
+  });
+}
+
+async function cancelOperation(db, storeId, userId, operationId, input = {}) {
+  const reason = assertCancellationReason(input.reason || input.notes);
+
+  return withTransaction(db, async (client) => {
+    const operationResult = await client.query(
+      `
+      SELECT *
+      FROM packaging_operations
+      WHERE id = $1
+        AND store_id = $2
+      FOR UPDATE
+      `,
+      [operationId, storeId]
+    );
+    const operation = operationResult.rows[0];
+    if (!operation) {
+      const error = new Error('Operation de conditionnement introuvable');
+      error.status = 404;
+      throw error;
+    }
+    if (operation.status === 'cancelled') {
+      const error = new Error('Operation deja annulee');
+      error.status = 409;
+      throw error;
+    }
+
+    const movements = await client.query(
+      `
+      SELECT sm.*
+      FROM stock_movements sm
+      JOIN articles a ON a.id = sm.article_id AND a.store_id = sm.store_id
+      WHERE sm.store_id = $1
+        AND sm.source_table = 'packaging_operations'
+        AND sm.source_id = $2
+        AND sm.quantity < 0
+        AND a.article_type = 'PACKAGING_CONSUMABLE'
+      ORDER BY sm.created_at ASC, sm.id ASC
+      FOR UPDATE OF sm
+      `,
+      [storeId, operationId]
+    );
+
+    const impactedPackagingArticles = new Set();
+    for (const movement of movements.rows) {
+      const quantity = Math.abs(Number(movement.quantity || 0));
+      if (quantity <= 0) continue;
+      await client.query(
+        'UPDATE lots SET qty_remaining = qty_remaining + $1, updated_at = NOW() WHERE id = $2 AND store_id = $3',
+        [quantity, movement.lot_id, storeId]
+      );
+      await client.query(
+        `
+        INSERT INTO stock_movements (
+          id, store_id, client_key, article_id, lot_id, movement_type, quantity,
+          unit_cost_ex_vat, source_table, source_id, notes, created_by
+        )
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, 'packaging_consumption_reversal',
+                $5, $6, 'packaging_operations', $7, $8, $9)
+        `,
+        [
+          storeId,
+          movement.client_key,
+          movement.article_id,
+          movement.lot_id,
+          quantity,
+          movement.unit_cost_ex_vat,
+          operationId,
+          `Annulation conditionnement: ${reason}`,
+          userId,
+        ]
+      );
+      impactedPackagingArticles.add(String(movement.article_id));
+    }
+
+    await client.query(
+      `
+      UPDATE stock_cost_components
+      SET status = 'cancelled',
+          cancelled_by = $3,
+          cancellation_reason = $4,
+          cancelled_at = now(),
+          updated_at = now()
+      WHERE store_id = $1
+        AND source_table = 'packaging_operations'
+        AND source_id = $2
+        AND component_type = 'PACKAGING'
+        AND status = 'active'
+      `,
+      [storeId, operationId, userId, reason]
+    );
+
+    await client.query(
+      `
+      UPDATE packaging_cost_impacts
+      SET status = 'cancelled',
+          cancelled_by = $3,
+          cancellation_reason = $4,
+          cancelled_at = now()
+      WHERE store_id = $1
+        AND packaging_operation_id = $2
+        AND status = 'active'
+      `,
+      [storeId, operationId, userId, reason]
+    );
+
+    const updated = await client.query(
+      `
+      UPDATE packaging_operations
+      SET status = 'cancelled',
+          notes = CONCAT(COALESCE(notes, ''), CASE WHEN COALESCE(notes, '') = '' THEN '' ELSE E'\n' END, $3),
+          updated_by = $4,
+          updated_at = now()
+      WHERE id = $1
+        AND store_id = $2
+      RETURNING *
+      `,
+      [operationId, storeId, `Annulation: ${reason}`, userId]
+    );
+
+    for (const articleId of impactedPackagingArticles) {
+      await recomputeArticleStock(client, articleId, storeId);
+    }
+    await recomputeArticleStock(client, operation.article_id, storeId);
 
     return updated.rows[0];
   });
@@ -1411,6 +1572,7 @@ module.exports = {
   listOperations,
   createOperation,
   validateOperation,
+  cancelOperation,
   listReturnableBalances,
   listReturnableMovements,
   createReturnableMovement,

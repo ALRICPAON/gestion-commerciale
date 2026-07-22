@@ -36,8 +36,11 @@ function run() {
   const packagingJs = fs.readFileSync(path.join(__dirname, '../../frontend/js/packaging.js'), 'utf8');
   const packagingHtml = fs.readFileSync(path.join(__dirname, '../../frontend/packaging.html'), 'utf8');
   const packagingService = fs.readFileSync(path.join(__dirname, '../services/packaging/packagingService.js'), 'utf8');
+  const packagingRoutes = fs.readFileSync(path.join(__dirname, '../routes/packaging.js'), 'utf8');
+  const stockService = fs.readFileSync(path.join(__dirname, '../services/stockService.js'), 'utf8');
   const costImpactMigration = fs.readFileSync(path.join(__dirname, '../db/gestion-commerciale/062_packaging_cost_impacts.sql'), 'utf8');
   const articleAlignmentMigration = fs.readFileSync(path.join(__dirname, '../db/gestion-commerciale/063_packaging_articles_alignment.sql'), 'utf8');
+  const stockComponentsMigration = fs.readFileSync(path.join(__dirname, '../db/gestion-commerciale/064_stock_cost_components.sql'), 'utf8');
 
   assert(packagingHtml.includes('PLU ou designation'));
   assert(packagingHtml.includes('operation-article-f9-btn'));
@@ -73,13 +76,21 @@ function run() {
   assert(packagingService.includes("a.article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')"));
   assert(packagingService.includes('consumePackagingArticleStock'));
   assert(packagingService.includes("'packaging_consumption'"));
+  assert(packagingService.includes("'packaging_consumption_reversal'"));
+  assert(packagingService.includes('INSERT INTO stock_cost_components'));
+  assert(packagingService.includes('UPDATE stock_cost_components'));
   assert(packagingService.includes('UPDATE lots SET qty_remaining = qty_remaining - $1'));
+  assert(packagingService.includes('UPDATE lots SET qty_remaining = qty_remaining + $1'));
   assert(packagingService.includes('INSERT INTO stock_movements'));
   assert(packagingService.includes('await assertProductLotTraceability(client, storeId, operation.article_id, operation.lot_id)'));
   assert(!packagingService.includes('UPDATE packaging_items'));
+  assert(packagingRoutes.includes("/operations/:id/cancel"));
+  assert(packagingJs.includes('data-cancel-operation'));
+  assert(stockService.includes('FROM stock_cost_components'));
   assert(costImpactMigration.includes('CREATE TABLE IF NOT EXISTS packaging_cost_impacts'));
   assert(articleAlignmentMigration.includes("PACKAGING_CONSUMABLE"));
   assert(articleAlignmentMigration.includes("packaging_article_id"));
+  assert(stockComponentsMigration.includes('CREATE TABLE IF NOT EXISTS stock_cost_components'));
 
   const item = normalizePackagingItemInput({
     code: 'CAISSE30',

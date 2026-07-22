@@ -14,7 +14,30 @@ async function recomputeArticleStock(client, articleId, storeId) {
   );
 
   const qty = Number(result.rows[0]?.qty || 0);
-  const value = Number(result.rows[0]?.value || 0);
+  const baseValue = Number(result.rows[0]?.value || 0);
+  const componentsResult = await client.query(
+    `
+    SELECT COALESCE(SUM(scc.amount_ex_vat), 0) AS value
+    FROM stock_cost_components scc
+    WHERE scc.store_id = $1
+      AND scc.article_id = $2
+      AND scc.status = 'active'
+      AND (
+        scc.lot_id IS NULL
+        OR EXISTS (
+          SELECT 1
+          FROM lots l
+          WHERE l.id = scc.lot_id
+            AND l.store_id = scc.store_id
+            AND l.article_id = scc.article_id
+            AND l.qty_remaining > 0
+        )
+      )
+    `,
+    [storeId, articleId]
+  );
+  const componentValue = Number(componentsResult.rows[0]?.value || 0);
+  const value = baseValue + componentValue;
   const pma = qty > 0 ? Number((value / qty).toFixed(4)) : 0;
   const nextDlc = result.rows[0]?.next_dlc || null;
 

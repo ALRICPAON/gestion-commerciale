@@ -396,7 +396,9 @@ function renderOperations() {
             ${
               operation.status === 'draft'
                 ? `<button class="btn btn-primary btn-sm" type="button" data-validate-operation="${operation.id}">Valider</button>`
-                : '-'
+                : operation.status === 'validated'
+                  ? `<button class="btn btn-secondary btn-sm" type="button" data-cancel-operation="${operation.id}">Annuler</button>`
+                  : '-'
             }
           </td>
         </tr>
@@ -937,8 +939,19 @@ async function submitOperation(event) {
 
 async function validateOperation(operationId) {
   await api(`/api/packaging/operations/${encodeURIComponent(operationId)}/validate`, { method: 'POST' });
-  await Promise.all([loadItems(), loadOperations()]);
-  showFeedback('Operation validee et stock emballage mis a jour.', 'success');
+  await Promise.all([loadItems(), loadOperations(), loadStockMovements()]);
+  showFeedback('Operation validee : emballages deduits et cout incorpore au prix de revient.', 'success');
+}
+
+async function cancelOperation(operationId) {
+  const reason = window.prompt('Motif d annulation du conditionnement');
+  if (!reason || !reason.trim()) return;
+  await api(`/api/packaging/operations/${encodeURIComponent(operationId)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason: reason.trim() }),
+  });
+  await Promise.all([loadItems(), loadOperations(), loadStockMovements()]);
+  showFeedback('Operation annulee : emballages recredites et cout conditionnement annule.', 'success');
 }
 
 async function submitReturnable(event) {
@@ -1157,8 +1170,10 @@ function setupEvents() {
     document.getElementById(id).addEventListener('change', updateOperationSubmitState);
   });
   els.operationsTbody.addEventListener('click', (event) => {
-    const button = event.target.closest('[data-validate-operation]');
-    if (button) validateOperation(button.dataset.validateOperation).catch(handleActionError);
+    const validateButton = event.target.closest('[data-validate-operation]');
+    const cancelButton = event.target.closest('[data-cancel-operation]');
+    if (validateButton) validateOperation(validateButton.dataset.validateOperation).catch(handleActionError);
+    if (cancelButton) cancelOperation(cancelButton.dataset.cancelOperation).catch(handleActionError);
   });
   setupTabs();
 }

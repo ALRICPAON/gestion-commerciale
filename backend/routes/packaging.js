@@ -266,6 +266,23 @@ router.post(
   })
 );
 
+router.post(
+  '/operations/:id/cancel',
+  requirePackagingPermission(PACKAGING_PERMISSIONS.VALIDATE_OPERATION),
+  asyncHandler(async (req, res) => {
+    const operationId = requireUuid(req.params.id, 'ID operation');
+    const operation = await packagingService.cancelOperation(
+      req.dbPool,
+      req.user.store_id,
+      req.user.id,
+      operationId,
+      req.body
+    );
+
+    res.json({ operation });
+  })
+);
+
 router.get(
   '/returnables/balances',
   requirePackagingPermission(PACKAGING_PERMISSIONS.READ),
