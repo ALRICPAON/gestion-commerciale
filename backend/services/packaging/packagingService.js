@@ -2,6 +2,13 @@ const STOCK_OUT_TYPES = new Set(['conditioning_out', 'loss', 'destruction']);
 const STOCK_IN_TYPES = new Set(['purchase_in']);
 const RETURNABLE_IN_TYPES = new Set(['deposit_receipt']);
 const RETURNABLE_OUT_TYPES = new Set(['return', 'supplier_credit_note', 'loss', 'breakage']);
+const MANUAL_STOCK_MOVEMENT_TYPES = new Set([
+  'purchase_in',
+  'inventory_adjustment',
+  'loss',
+  'destruction',
+  'manual_correction',
+]);
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -209,6 +216,67 @@ function signedQuantityForReturnableMovement(type, quantity) {
 
   const error = new Error('Type de mouvement consigne invalide');
   error.status = 400;
+  throw error;
+}
+
+function reverseStockMovementType(type) {
+  if (!MANUAL_STOCK_MOVEMENT_TYPES.has(type) && type !== 'conditioning_out') {
+    const error = new Error('Type de mouvement emballage invalide');
+    error.status = 400;
+    throw error;
+  }
+  return 'manual_correction';
+}
+
+function assertCancellationReason(reason) {
+  const value = clean(reason);
+  if (!value) {
+    const error = new Error('Justification obligatoire pour annuler un mouvement');
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
+function assertStockMovementCanBeCancelled(movement) {
+  if (!movement) {
+    const error = new Error('Mouvement emballage introuvable');
+    error.status = 404;
+    throw error;
+  }
+
+  if (movement.cancelled_at || movement.reversal_movement_id) {
+    const error = new Error('Mouvement emballage deja annule');
+    error.status = 409;
+    throw error;
+  }
+
+  if (movement.source_table === 'packaging_operations') {
+    const error = new Error(
+      'Ce mouvement provient d une operation de conditionnement validee. Corrige ou annule l operation source.'
+    );
+    error.status = 409;
+    throw error;
+  }
+}
+
+function assertStockMovementCanBeDeleted(movement) {
+  if (!movement) {
+    const error = new Error('Mouvement emballage introuvable');
+    error.status = 404;
+    throw error;
+  }
+
+  if (movement?.source_table === 'packaging_operations') {
+    const error = new Error(
+      'Suppression directe bloquee : corrige ou annule l operation de conditionnement source.'
+    );
+    error.status = 409;
+    throw error;
+  }
+
+  const error = new Error('Suppression physique non autorisee. Utilise l annulation par mouvement inverse.');
+  error.status = 409;
   throw error;
 }
 
@@ -437,6 +505,125 @@ async function recordStockMovement(db, storeId, userId, input) {
     );
 
     return { movement: movement.rows[0], item: updated.rows[0] };
+  });
+}
+
+async function listStockMovements(db, storeId, filters = {}) {
+  const params = [storeId];
+  const where = ['psm.store_id = $1'];
+
+  if (filters.packaging_item_id) {
+    params.push(filters.packaging_item_id);
+    where.push(`psm.packaging_item_id = $${params.length}`);
+  }
+
+  if (filters.id) {
+    params.push(filters.id);
+    where.push(`psm.id = $${params.length}`);
+  }
+
+  const result = await db.query(
+    `
+    SELECT
+      psm.*,
+      pi.code,
+      pi.designation,
+      pi.management_unit,
+      CASE WHEN psm.cancelled_at IS NULL THEN 'active' ELSE 'cancelled' END AS status,
+      creator.email AS created_by_email,
+      canceller.email AS cancelled_by_email
+    FROM packaging_stock_movements psm
+    JOIN packaging_items pi ON pi.id = psm.packaging_item_id AND pi.store_id = psm.store_id
+    LEFT JOIN users creator ON creator.id = psm.created_by
+    LEFT JOIN users canceller ON canceller.id = psm.cancelled_by
+    WHERE ${where.join(' AND ')}
+    ORDER BY psm.movement_date DESC, psm.created_at DESC
+    LIMIT $${params.length + 1}
+    `,
+    [...params, Math.min(Number(filters.limit) || 100, 300)]
+  );
+
+  return mapRows(result);
+}
+
+async function cancelStockMovement(db, storeId, userId, movementId, input = {}) {
+  const reason = assertCancellationReason(input.reason || input.notes);
+
+  return withTransaction(db, async (client) => {
+    const movementResult = await client.query(
+      `
+      SELECT psm.*, pi.current_stock
+      FROM packaging_stock_movements psm
+      JOIN packaging_items pi ON pi.id = psm.packaging_item_id AND pi.store_id = psm.store_id
+      WHERE psm.id = $1
+        AND psm.store_id = $2
+      FOR UPDATE OF psm, pi
+      `,
+      [movementId, storeId]
+    );
+    const movement = movementResult.rows[0];
+    assertStockMovementCanBeCancelled(movement);
+
+    const inverseQuantity = -Number(movement.quantity);
+    if (Number(movement.current_stock) + inverseQuantity < 0) {
+      const error = new Error('Annulation impossible : stock emballage insuffisant pour le mouvement inverse');
+      error.status = 409;
+      throw error;
+    }
+
+    const inverseResult = await client.query(
+      `
+      INSERT INTO packaging_stock_movements (
+        store_id, packaging_item_id, movement_type, quantity, unit_cost_ex_vat,
+        source_table, source_id, movement_date, notes, created_by
+      )
+      VALUES ($1, $2, $3, $4, $5, 'packaging_stock_movements', $6, CURRENT_DATE, $7, $8)
+      RETURNING *
+      `,
+      [
+        storeId,
+        movement.packaging_item_id,
+        reverseStockMovementType(movement.movement_type),
+        inverseQuantity,
+        movement.unit_cost_ex_vat,
+        movement.id,
+        `Annulation du mouvement ${movement.id}: ${reason}`,
+        userId,
+      ]
+    );
+
+    const updatedMovement = await client.query(
+      `
+      UPDATE packaging_stock_movements
+      SET cancelled_at = now(),
+          cancelled_by = $3,
+          cancellation_reason = $4,
+          reversal_movement_id = $5
+      WHERE id = $1
+        AND store_id = $2
+      RETURNING *
+      `,
+      [movement.id, storeId, userId, reason, inverseResult.rows[0].id]
+    );
+
+    const updatedItem = await client.query(
+      `
+      UPDATE packaging_items
+      SET current_stock = current_stock + $3,
+          updated_by = $4,
+          updated_at = now()
+      WHERE id = $1
+        AND store_id = $2
+      RETURNING *
+      `,
+      [movement.packaging_item_id, storeId, inverseQuantity, userId]
+    );
+
+    return {
+      movement: updatedMovement.rows[0],
+      reversal_movement: inverseResult.rows[0],
+      item: updatedItem.rows[0],
+    };
   });
 }
 
@@ -936,12 +1123,18 @@ module.exports = {
   assertSufficientStock,
   assertOperationCanBeValidated,
   signedQuantityForReturnableMovement,
+  reverseStockMovementType,
+  assertCancellationReason,
+  assertStockMovementCanBeCancelled,
+  assertStockMovementCanBeDeleted,
   summarizeReturnableMovements,
   filterRowsByStore,
   listItems,
   createItem,
   updateItem,
   recordStockMovement,
+  listStockMovements,
+  cancelStockMovement,
   listArticleProfiles,
   upsertArticleProfile,
   deactivateProfile,

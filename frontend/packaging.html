@@ -28,8 +28,9 @@
   <main class="main-content packaging-layout">
     <section class="packaging-toolbar">
       <div class="tabs" role="tablist" aria-label="Sections conditionnement">
-        <button class="tab-btn active" type="button" data-tab="catalog">Emballages</button>
-        <button class="tab-btn" type="button" data-tab="operations">Operations</button>
+        <button class="tab-btn active" type="button" data-tab="catalog">Catalogue</button>
+        <button class="tab-btn" type="button" data-tab="stock">Stocks et mouvements</button>
+        <button class="tab-btn" type="button" data-tab="operations">Conditionnements</button>
         <button class="tab-btn" type="button" data-tab="returnables">Consignes</button>
       </div>
       <button id="refresh-btn" class="btn btn-primary" type="button">Actualiser</button>
@@ -38,7 +39,7 @@
     <div id="packaging-feedback" class="page-feedback hidden"></div>
 
     <section id="tab-catalog" class="tab-panel">
-      <div class="packaging-grid two-columns">
+      <div class="packaging-grid">
         <section class="card">
           <h2>Catalogue emballages</h2>
           <form id="item-form" class="compact-form">
@@ -89,6 +90,37 @@
         </section>
 
         <section class="card">
+          <div class="section-title-row">
+            <h2>Catalogue</h2>
+            <input id="item-search" class="table-search" placeholder="Filtrer code ou designation" />
+          </div>
+          <div class="table-wrap">
+            <table class="data-table packaging-table">
+              <thead>
+                <tr>
+                  <th>Code</th>
+                  <th>Designation</th>
+                  <th>Categorie</th>
+                  <th>Stock</th>
+                  <th>Cout HT</th>
+                  <th>Consigne</th>
+                  <th>Seuil</th>
+                  <th>Etat</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="items-tbody">
+                <tr><td colspan="9">Chargement...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section id="tab-stock" class="tab-panel hidden">
+      <div class="packaging-grid two-columns">
+        <section class="card">
           <h2>Mouvement stock emballage</h2>
           <form id="movement-form" class="compact-form">
             <div class="form-grid">
@@ -124,30 +156,36 @@
             </div>
           </form>
         </section>
+
+        <section class="card">
+          <h2>Emballage selectionne</h2>
+          <div id="selected-packaging-summary" class="summary-box">Selectionne un emballage.</div>
+        </section>
       </div>
 
       <section class="card">
         <div class="section-title-row">
-          <h2>Stocks emballages</h2>
-          <input id="item-search" class="table-search" placeholder="Filtrer code ou designation" />
+          <h2>Historique mouvements</h2>
+          <select id="movement-history-item" class="table-search"></select>
         </div>
         <div class="table-wrap">
           <table class="data-table packaging-table">
             <thead>
               <tr>
-                <th>Code</th>
-                <th>Designation</th>
-                <th>Categorie</th>
-                <th>Stock</th>
+                <th>Date</th>
+                <th>Emballage</th>
+                <th>Type</th>
+                <th>Quantite</th>
                 <th>Cout HT</th>
-                <th>Consigne</th>
-                <th>Seuil</th>
-                <th>Etat</th>
+                <th>Note</th>
+                <th>Utilisateur</th>
+                <th>Document</th>
+                <th>Statut</th>
                 <th>Action</th>
               </tr>
             </thead>
-            <tbody id="items-tbody">
-              <tr><td colspan="9">Chargement...</td></tr>
+            <tbody id="stock-movements-tbody">
+              <tr><td colspan="10">Chargement...</td></tr>
             </tbody>
           </table>
         </div>
@@ -162,7 +200,12 @@
             <div class="form-grid">
               <div class="form-group">
                 <label for="operation-article">Article</label>
-                <input id="operation-article" placeholder="ID article" required />
+                <div class="input-with-action">
+                  <input id="operation-article" placeholder="PLU ou designation" autocomplete="off" required />
+                  <button id="operation-article-f9-btn" class="btn btn-secondary btn-sm" type="button">F9</button>
+                </div>
+                <input id="operation-article-id" type="hidden" />
+                <small id="operation-article-selected" class="field-hint">Aucun article selectionne.</small>
               </div>
               <div class="form-group">
                 <label for="operation-profile">Profil</label>
@@ -296,6 +339,35 @@
       </section>
     </section>
   </main>
+
+  <div id="article-picker-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="article-picker-title">
+    <div class="modal-content">
+      <div class="section-title-row">
+        <h2 id="article-picker-title">Recherche article</h2>
+        <button id="close-article-picker-btn" class="btn btn-secondary btn-sm" type="button">Fermer</button>
+      </div>
+      <div class="form-group">
+        <label for="article-picker-search">PLU ou designation</label>
+        <input id="article-picker-search" placeholder="Rechercher un article" />
+      </div>
+      <div class="table-wrap">
+        <table class="data-table packaging-table">
+          <thead>
+            <tr>
+              <th>PLU</th>
+              <th>Designation</th>
+              <th>Unite</th>
+              <th>Stock</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="article-picker-results">
+            <tr><td colspan="5">Lance une recherche.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
   <script src="./js/config.js"></script>
   <script src="./js/packaging.js?v=1"></script>

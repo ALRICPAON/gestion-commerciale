@@ -105,6 +105,54 @@ router.post(
 );
 
 router.get(
+  '/stock-movements',
+  requirePackagingPermission(PACKAGING_PERMISSIONS.READ),
+  asyncHandler(async (req, res) => {
+    const packagingItemId = req.query.packaging_item_id
+      ? requireUuid(req.query.packaging_item_id, 'ID emballage')
+      : null;
+    const movements = await packagingService.listStockMovements(req.dbPool, req.user.store_id, {
+      packaging_item_id: packagingItemId,
+      limit: req.query.limit,
+    });
+
+    res.json({ movements });
+  })
+);
+
+router.post(
+  '/stock-movements/:id/cancel',
+  requirePackagingPermission(PACKAGING_PERMISSIONS.ADJUST_STOCK),
+  asyncHandler(async (req, res) => {
+    const movementId = requireUuid(req.params.id, 'ID mouvement');
+    const result = await packagingService.cancelStockMovement(
+      req.dbPool,
+      req.user.store_id,
+      req.user.id,
+      movementId,
+      req.body
+    );
+
+    res.status(201).json(result);
+  })
+);
+
+router.delete(
+  '/stock-movements/:id',
+  requirePackagingPermission(PACKAGING_PERMISSIONS.ADJUST_STOCK),
+  asyncHandler(async (req, res) => {
+    const movementId = requireUuid(req.params.id, 'ID mouvement');
+    const movements = await packagingService.listStockMovements(req.dbPool, req.user.store_id, {
+      id: movementId,
+      limit: 1,
+    });
+    const movement = movements.find((row) => String(row.id) === String(movementId));
+    packagingService.assertStockMovementCanBeDeleted(movement);
+    res.status(204).end();
+  })
+);
+
+router.get(
   '/articles/:articleId/profiles',
   requirePackagingPermission(PACKAGING_PERMISSIONS.READ),
   asyncHandler(async (req, res) => {

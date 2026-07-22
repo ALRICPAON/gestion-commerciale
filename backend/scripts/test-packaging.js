@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const {
   normalizePackagingItemInput,
@@ -8,6 +10,10 @@ const {
   assertSufficientStock,
   assertOperationCanBeValidated,
   signedQuantityForReturnableMovement,
+  reverseStockMovementType,
+  assertCancellationReason,
+  assertStockMovementCanBeCancelled,
+  assertStockMovementCanBeDeleted,
   summarizeReturnableMovements,
   filterRowsByStore,
 } = require('../services/packaging/packagingService');
@@ -25,6 +31,17 @@ function expectThrowsStatus(fn, status) {
 }
 
 function run() {
+  const packagingJs = fs.readFileSync(path.join(__dirname, '../../frontend/js/packaging.js'), 'utf8');
+  const packagingHtml = fs.readFileSync(path.join(__dirname, '../../frontend/packaging.html'), 'utf8');
+
+  assert(packagingHtml.includes('PLU ou designation'));
+  assert(packagingHtml.includes('operation-article-f9-btn'));
+  assert(!packagingHtml.includes('placeholder="ID article"'));
+  assert(packagingJs.includes("item.current_unit_cost_ex_vat"));
+  assert(packagingJs.includes("item.deposit_unit_value"));
+  assert(packagingJs.includes('/api/articles/search?q='));
+  assert(packagingJs.includes('operationArticleId.value'));
+
   const item = normalizePackagingItemInput({
     code: 'CAISSE30',
     designation: 'Caisse polystyrene 30 L',
@@ -39,6 +56,7 @@ function run() {
   assert.strictEqual(signedQuantityForStockMovement('conditioning_out', 20), -20);
   assert.strictEqual(signedQuantityForStockMovement('loss', 3), -3);
   assert.strictEqual(signedQuantityForStockMovement('manual_correction', -2), -2);
+  assert.strictEqual(reverseStockMovementType('purchase_in'), 'manual_correction');
 
   const components = [
     {
@@ -90,6 +108,9 @@ function run() {
   const stockAfterOperation =
     100 + signedQuantityForStockMovement('conditioning_out', consumed[0].quantity);
   assert.strictEqual(stockAfterOperation, 80);
+  const stockAfterCancellation =
+    stockAfterOperation + -signedQuantityForStockMovement('conditioning_out', consumed[0].quantity);
+  assert.strictEqual(stockAfterCancellation, 100);
 
   assert.doesNotThrow(() => {
     assertSufficientStock([{ packaging_item_id: 'box', quantity: 20, category: 'consumable' }], new Map([['box', 80]]));
@@ -100,6 +121,34 @@ function run() {
 
   assert.doesNotThrow(() => assertOperationCanBeValidated({ status: 'draft' }));
   expectThrowsStatus(() => assertOperationCanBeValidated({ status: 'validated' }), 409);
+  assert.strictEqual(assertCancellationReason('Erreur de saisie'), 'Erreur de saisie');
+  expectThrowsStatus(() => assertCancellationReason(''), 400);
+  assert.doesNotThrow(() => assertStockMovementCanBeCancelled({
+    id: 'movement-1',
+    source_table: null,
+    cancelled_at: null,
+    reversal_movement_id: null,
+  }));
+  expectThrowsStatus(() => assertStockMovementCanBeCancelled({
+    id: 'movement-2',
+    source_table: null,
+    cancelled_at: new Date(),
+    reversal_movement_id: 'movement-3',
+  }), 409);
+  expectThrowsStatus(() => assertStockMovementCanBeCancelled({
+    id: 'movement-4',
+    source_table: 'packaging_operations',
+    cancelled_at: null,
+    reversal_movement_id: null,
+  }), 409);
+  expectThrowsStatus(() => assertStockMovementCanBeDeleted({
+    id: 'movement-5',
+    source_table: 'packaging_operations',
+  }), 409);
+  expectThrowsStatus(() => assertStockMovementCanBeDeleted({
+    id: 'movement-6',
+    source_table: null,
+  }), 409);
 
   assert.strictEqual(signedQuantityForReturnableMovement('deposit_receipt', 10), 10);
   assert.strictEqual(signedQuantityForReturnableMovement('return', 6), -6);

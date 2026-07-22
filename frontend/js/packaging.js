@@ -15,6 +15,8 @@ const state = {
   operations: [],
   balances: [],
   returnableMovements: [],
+  stockMovements: [],
+  selectedOperationArticle: null,
   preview: null,
 };
 
@@ -29,7 +31,15 @@ const els = {
   itemSearch: document.getElementById('item-search'),
   itemsTbody: document.getElementById('items-tbody'),
   movementItem: document.getElementById('movement-item'),
+  movementType: document.getElementById('movement-type'),
+  movementCost: document.getElementById('movement-cost'),
+  movementHistoryItem: document.getElementById('movement-history-item'),
+  stockMovementsTbody: document.getElementById('stock-movements-tbody'),
+  selectedPackagingSummary: document.getElementById('selected-packaging-summary'),
   operationArticle: document.getElementById('operation-article'),
+  operationArticleId: document.getElementById('operation-article-id'),
+  operationArticleSelected: document.getElementById('operation-article-selected'),
+  operationArticleF9Btn: document.getElementById('operation-article-f9-btn'),
   operationProfile: document.getElementById('operation-profile'),
   operationForm: document.getElementById('operation-form'),
   operationPreview: document.getElementById('operation-preview'),
@@ -37,9 +47,14 @@ const els = {
   operationsTbody: document.getElementById('operations-tbody'),
   returnableForm: document.getElementById('returnable-form'),
   returnableItem: document.getElementById('returnable-item'),
+  returnableDeposit: document.getElementById('returnable-deposit'),
   returnableBalances: document.getElementById('returnable-balances'),
   returnableMovementsTbody: document.getElementById('returnable-movements-tbody'),
   resetItemBtn: document.getElementById('reset-item-btn'),
+  articlePickerModal: document.getElementById('article-picker-modal'),
+  closeArticlePickerBtn: document.getElementById('close-article-picker-btn'),
+  articlePickerSearch: document.getElementById('article-picker-search'),
+  articlePickerResults: document.getElementById('article-picker-results'),
 };
 
 function authHeaders(json = false) {
@@ -91,6 +106,17 @@ function setInput(id, value) {
   document.getElementById(id).value = value ?? '';
 }
 
+function selectedPackagingItem(selectEl = els.movementItem) {
+  return state.items.find((item) => String(item.id) === String(selectEl.value));
+}
+
+function sourceDocumentLabel(movement) {
+  if (!movement.source_table) return '-';
+  if (movement.source_table === 'packaging_operations') return `Conditionnement ${movement.source_id || ''}`.trim();
+  if (movement.source_table === 'packaging_stock_movements') return `Annulation ${movement.source_id || ''}`.trim();
+  return `${movement.source_table} ${movement.source_id || ''}`.trim();
+}
+
 async function api(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
@@ -118,11 +144,15 @@ function renderOptions() {
     .map((item) => `<option value="${item.id}">${escapeHtml(item.code)} - ${escapeHtml(item.designation)}</option>`)
     .join('');
   els.movementItem.innerHTML = optionHtml || '<option value="">Aucun emballage</option>';
+  els.movementHistoryItem.innerHTML = '<option value="">Tous les emballages</option>' + optionHtml;
   els.returnableItem.innerHTML =
     state.items
       .filter((item) => item.category === 'returnable' && item.active !== false)
       .map((item) => `<option value="${item.id}">${escapeHtml(item.code)} - ${escapeHtml(item.designation)}</option>`)
       .join('') || '<option value="">Aucune consigne</option>';
+  updateSelectedPackagingSummary();
+  prefillMovementCost();
+  prefillReturnableDeposit();
 }
 
 function renderItems() {
@@ -151,6 +181,39 @@ function renderItems() {
           <td>${formatNumber(item.alert_threshold)}</td>
           <td>${item.active ? 'Actif' : 'Inactif'}</td>
           <td><button class="btn btn-secondary btn-sm" type="button" data-edit-item="${item.id}">Editer</button></td>
+        </tr>
+      `;
+    })
+    .join('');
+}
+
+function renderStockMovements() {
+  if (!state.stockMovements.length) {
+    els.stockMovementsTbody.innerHTML = '<tr><td colspan="10">Aucun mouvement.</td></tr>';
+    return;
+  }
+
+  els.stockMovementsTbody.innerHTML = state.stockMovements
+    .map((movement) => {
+      const isActive = movement.status !== 'cancelled' && !movement.cancelled_at;
+      const sourceBlocked = movement.source_table === 'packaging_operations';
+      const action = isActive && !sourceBlocked
+        ? `<button class="btn btn-secondary btn-sm" type="button" data-cancel-stock-movement="${movement.id}">Corriger / annuler</button>`
+        : sourceBlocked
+          ? '<span class="muted-text">Corriger operation source</span>'
+          : '-';
+      return `
+        <tr>
+          <td>${formatDate(movement.movement_date)}</td>
+          <td>${escapeHtml(movement.code || '')} ${escapeHtml(movement.designation || '')}</td>
+          <td>${escapeHtml(movement.movement_type)}</td>
+          <td>${formatNumber(movement.quantity)} ${escapeHtml(movement.management_unit || '')}</td>
+          <td>${formatMoney(movement.unit_cost_ex_vat)}</td>
+          <td>${escapeHtml(movement.notes || movement.cancellation_reason || '')}</td>
+          <td>${escapeHtml(movement.created_by_email || movement.created_by || '-')}</td>
+          <td>${escapeHtml(sourceDocumentLabel(movement))}</td>
+          <td><span class="status-pill ${isActive ? 'active' : 'cancelled'}">${isActive ? 'Actif' : 'Annule'}</span></td>
+          <td>${action}</td>
         </tr>
       `;
     })
@@ -267,7 +330,7 @@ async function loadItems() {
 }
 
 async function loadProfilesForArticle() {
-  const articleId = els.operationArticle.value.trim();
+  const articleId = els.operationArticleId.value.trim();
   if (!articleId) {
     state.profiles = [];
     renderProfiles();
@@ -277,6 +340,14 @@ async function loadProfilesForArticle() {
   const data = await api(`/api/packaging/articles/${encodeURIComponent(articleId)}/profiles`);
   state.profiles = data.profiles || [];
   renderProfiles();
+}
+
+async function loadStockMovements() {
+  const params = new URLSearchParams({ limit: '100' });
+  if (els.movementHistoryItem.value) params.set('packaging_item_id', els.movementHistoryItem.value);
+  const data = await api(`/api/packaging/stock-movements?${params.toString()}`);
+  state.stockMovements = data.movements || [];
+  renderStockMovements();
 }
 
 async function loadOperations() {
@@ -299,12 +370,46 @@ async function refreshAll() {
   showFeedback('');
   try {
     await loadItems();
+    await loadStockMovements();
     await loadOperations();
     await loadReturnables();
   } catch (error) {
     console.error(error);
     showFeedback(error.message, 'error');
   }
+}
+
+function updateSelectedPackagingSummary() {
+  const item = selectedPackagingItem();
+  if (!item) {
+    els.selectedPackagingSummary.textContent = 'Selectionne un emballage.';
+    return;
+  }
+
+  const alert = Number(item.current_stock) <= Number(item.alert_threshold)
+    ? '<span class="stock-alert">Alerte stock</span>'
+    : '<span>Stock OK</span>';
+  els.selectedPackagingSummary.innerHTML = `
+    <div><strong>${escapeHtml(item.code)}</strong> - ${escapeHtml(item.designation)}</div>
+    <div>Stock disponible: <strong>${formatNumber(item.current_stock)} ${escapeHtml(item.management_unit)}</strong></div>
+    <div>Cout courant: <strong>${formatMoney(item.current_unit_cost_ex_vat)}</strong></div>
+    <div>Consigne: <strong>${formatMoney(item.deposit_unit_value)}</strong></div>
+    <div>${alert}</div>
+  `;
+}
+
+function prefillMovementCost() {
+  const item = selectedPackagingItem();
+  if (!item || !els.movementCost) return;
+  if (els.movementType.value === 'purchase_in') {
+    els.movementCost.value = item.current_unit_cost_ex_vat ?? 0;
+  }
+}
+
+function prefillReturnableDeposit() {
+  const item = selectedPackagingItem(els.returnableItem);
+  if (!item || !els.returnableDeposit) return;
+  els.returnableDeposit.value = item.deposit_unit_value ?? 0;
 }
 
 function collectItemPayload() {
@@ -373,13 +478,13 @@ async function submitMovement(event) {
     }),
   });
   els.movementForm.reset();
-  await loadItems();
+  await Promise.all([loadItems(), loadStockMovements()]);
   showFeedback('Mouvement stock enregistre.', 'success');
 }
 
 function collectOperationPayload() {
   return {
-    article_id: getInput('operation-article'),
+    article_id: getInput('operation-article-id'),
     profile_id: getInput('operation-profile'),
     product_quantity_kg: getInput('operation-kg'),
     package_count: getInput('operation-packages'),
@@ -389,7 +494,80 @@ function collectOperationPayload() {
   };
 }
 
+function articleDisplay(article) {
+  return `${article.plu || ''} - ${article.designation || article.display_name || ''}`.trim();
+}
+
+function applyOperationArticle(article) {
+  const normalized = {
+    ...article,
+    id: article.article_id || article.id,
+    designation: article.designation || article.display_name || '',
+  };
+  state.selectedOperationArticle = normalized;
+  els.operationArticle.value = articleDisplay(normalized);
+  els.operationArticleId.value = normalized.id || '';
+  els.operationArticleSelected.textContent = normalized.id
+    ? `${normalized.plu || '-'} - ${normalized.designation || '-'}`
+    : 'Aucun article selectionne.';
+  loadProfilesForArticle().catch(handleActionError);
+}
+
+async function searchArticles(term) {
+  const search = String(term || '').trim();
+  if (!search) return [];
+  const rows = await api(`/api/articles/search?q=${encodeURIComponent(search)}`);
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function resolveOperationArticleFromInput() {
+  const term = els.operationArticle.value.trim();
+  if (!term) return;
+  const rows = await searchArticles(term);
+  const article = rows.find((row) => String(row.plu) === term) || rows[0];
+  if (!article) throw new Error(`Article introuvable pour ${term}`);
+  applyOperationArticle(article);
+}
+
+function openArticlePicker(initialSearch = '') {
+  els.articlePickerSearch.value = initialSearch;
+  els.articlePickerModal.classList.remove('hidden');
+  renderArticlePickerResults([]);
+  setTimeout(() => els.articlePickerSearch.focus(), 50);
+  if (initialSearch) runArticlePickerSearch().catch(handleActionError);
+}
+
+function closeArticlePicker() {
+  els.articlePickerModal.classList.add('hidden');
+}
+
+function renderArticlePickerResults(rows) {
+  if (!rows.length) {
+    els.articlePickerResults.innerHTML = '<tr><td colspan="5">Lance une recherche.</td></tr>';
+    return;
+  }
+
+  els.articlePickerResults.innerHTML = rows
+    .map((article) => `
+      <tr>
+        <td>${escapeHtml(article.plu || '')}</td>
+        <td>${escapeHtml(article.designation || article.display_name || '')}</td>
+        <td>${escapeHtml(article.sale_unit || article.unit || '')}</td>
+        <td>${formatNumber(article.stock_quantity || 0)}</td>
+        <td><button class="btn btn-secondary btn-sm" type="button" data-pick-article="${article.id || article.article_id}">Choisir</button></td>
+      </tr>
+    `)
+    .join('');
+}
+
+async function runArticlePickerSearch() {
+  const rows = await searchArticles(els.articlePickerSearch.value);
+  state.articlePickerRows = rows;
+  renderArticlePickerResults(rows);
+}
+
 async function previewOperation() {
+  if (!els.operationArticleId.value.trim()) await resolveOperationArticleFromInput();
   state.preview = await api('/api/packaging/operations/preview', {
     method: 'POST',
     body: JSON.stringify(collectOperationPayload()),
@@ -399,6 +577,7 @@ async function previewOperation() {
 
 async function submitOperation(event) {
   event.preventDefault();
+  if (!els.operationArticleId.value.trim()) await resolveOperationArticleFromInput();
   const data = await api('/api/packaging/operations', {
     method: 'POST',
     body: JSON.stringify(collectOperationPayload()),
@@ -427,7 +606,23 @@ async function submitReturnable(event) {
   });
   els.returnableForm.reset();
   await loadReturnables();
+  prefillReturnableDeposit();
   showFeedback('Mouvement consigne enregistre.', 'success');
+}
+
+async function cancelStockMovement(movementId) {
+  const reason = window.prompt('Justification obligatoire pour annuler ce mouvement');
+  if (!reason || !reason.trim()) {
+    showFeedback('Annulation abandonnee : justification obligatoire.', 'error');
+    return;
+  }
+
+  await api(`/api/packaging/stock-movements/${encodeURIComponent(movementId)}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  });
+  await Promise.all([loadItems(), loadStockMovements()]);
+  showFeedback('Mouvement annule par mouvement inverse.', 'success');
 }
 
 function setupTabs() {
@@ -461,10 +656,44 @@ function setupEvents() {
   els.returnableForm.addEventListener('submit', (event) => submitReturnable(event).catch(handleActionError));
   els.resetItemBtn.addEventListener('click', resetItemForm);
   els.itemSearch.addEventListener('input', renderItems);
-  els.operationArticle.addEventListener('change', () => loadProfilesForArticle().catch(handleActionError));
+  els.movementItem.addEventListener('change', () => {
+    updateSelectedPackagingSummary();
+    prefillMovementCost();
+  });
+  els.movementType.addEventListener('change', prefillMovementCost);
+  els.movementHistoryItem.addEventListener('change', () => loadStockMovements().catch(handleActionError));
+  els.returnableItem.addEventListener('change', prefillReturnableDeposit);
+  els.operationArticle.addEventListener('input', () => {
+    els.operationArticleId.value = '';
+    els.operationArticleSelected.textContent = 'Aucun article selectionne.';
+  });
+  els.operationArticle.addEventListener('blur', () => resolveOperationArticleFromInput().catch(handleActionError));
+  els.operationArticle.addEventListener('keydown', (event) => {
+    if (event.key === 'F9') {
+      event.preventDefault();
+      openArticlePicker(els.operationArticle.value.trim());
+    }
+  });
+  els.operationArticleF9Btn.addEventListener('click', () => openArticlePicker(els.operationArticle.value.trim()));
+  els.closeArticlePickerBtn.addEventListener('click', closeArticlePicker);
+  els.articlePickerSearch.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') runArticlePickerSearch().catch(handleActionError);
+  });
+  els.articlePickerSearch.addEventListener('input', () => runArticlePickerSearch().catch(handleActionError));
   els.itemsTbody.addEventListener('click', (event) => {
     const button = event.target.closest('[data-edit-item]');
     if (button) editItem(button.dataset.editItem);
+  });
+  els.stockMovementsTbody.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-cancel-stock-movement]');
+    if (button) cancelStockMovement(button.dataset.cancelStockMovement).catch(handleActionError);
+  });
+  els.articlePickerResults.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-pick-article]');
+    if (!button) return;
+    const article = (state.articlePickerRows || []).find((row) => String(row.id || row.article_id) === String(button.dataset.pickArticle));
+    if (article) applyOperationArticle(article);
+    closeArticlePicker();
   });
   els.operationsTbody.addEventListener('click', (event) => {
     const button = event.target.closest('[data-validate-operation]');
