@@ -101,6 +101,10 @@ function packagingArticleIdOf(line = {}) {
   return clean(line.packaging_article_id || line.packaging_item_id);
 }
 
+function componentQuantityOf(component = {}) {
+  return component.quantity_per_package ?? component.quantity;
+}
+
 function signedQuantityForStockMovement(type, quantity) {
   const parsed = parseDecimal(quantity);
   assertFinite(parsed, 'Quantite mouvement');
@@ -488,10 +492,10 @@ async function listItems(db, storeId, filters = {}) {
       COALESCE(a.stock_unit, a.unit, 'unit') AS management_unit,
       a.format_label,
       a.primary_supplier_id,
-      COALESCE(ss.pma, 0) AS current_unit_cost_ex_vat,
-      COALESCE(a.deposit_unit_value, 0) AS deposit_unit_value,
-      COALESCE(a.alert_threshold, 0) AS alert_threshold,
-      COALESCE(ss.stock_quantity, 0) AS current_stock,
+      COALESCE(ss.pma, a.purchase_price_ex_vat, 0)::float8 AS current_unit_cost_ex_vat,
+      COALESCE(a.deposit_unit_value, 0)::float8 AS deposit_unit_value,
+      COALESCE(a.alert_threshold, 0)::float8 AS alert_threshold,
+      COALESCE(ss.stock_quantity, 0)::float8 AS current_stock,
       a.is_active AS active,
       s.name AS supplier_name
     FROM articles a
@@ -585,8 +589,8 @@ async function listArticleProfiles(db, storeId, articleId, includeInactive = fal
             'consumption_rule', c.consumption_rule,
             'is_primary_packaging', c.is_primary_packaging,
             'management_unit', COALESCE(pa.stock_unit, pa.unit, 'unit'),
-            'current_unit_cost_ex_vat', COALESCE(ss.pma, 0),
-            'current_stock', COALESCE(ss.stock_quantity, 0)
+            'current_unit_cost_ex_vat', COALESCE(ss.pma, pa.purchase_price_ex_vat, 0)::float8,
+            'current_stock', COALESCE(ss.stock_quantity, 0)::float8
           )
           ORDER BY c.is_primary_packaging DESC, pa.plu ASC
         ) FILTER (WHERE c.id IS NOT NULL),
@@ -647,8 +651,8 @@ async function listProfiles(db, storeId, filters = {}) {
             'management_unit', COALESCE(pa.stock_unit, pa.unit, 'unit'),
             'consumption_rule', c.consumption_rule,
             'is_primary_packaging', c.is_primary_packaging,
-            'current_unit_cost_ex_vat', COALESCE(ss.pma, 0),
-            'current_stock', COALESCE(ss.stock_quantity, 0)
+            'current_unit_cost_ex_vat', COALESCE(ss.pma, pa.purchase_price_ex_vat, 0)::float8,
+            'current_stock', COALESCE(ss.stock_quantity, 0)::float8
           )
           ORDER BY c.is_primary_packaging DESC, pa.plu ASC
         ) FILTER (WHERE c.id IS NOT NULL),
@@ -687,9 +691,9 @@ async function getArticleStockSummary(db, storeId, articleId) {
       a.plu,
       a.designation,
       COALESCE(a.unit, 'kg') AS unit,
-      COALESCE(ss.stock_quantity, 0) AS stock_quantity,
-      COALESCE(ss.pma, 0) AS pma,
-      COALESCE(ss.stock_value_ex_vat, 0) AS stock_value_ex_vat
+      COALESCE(ss.stock_quantity, 0)::float8 AS stock_quantity,
+      COALESCE(ss.pma, 0)::float8 AS pma,
+      COALESCE(ss.stock_value_ex_vat, 0)::float8 AS stock_value_ex_vat
     FROM articles a
     LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
     WHERE a.id = $1
@@ -838,18 +842,17 @@ async function upsertArticleProfile(db, storeId, userId, input = {}) {
 
     for (const component of components) {
       const packagingArticleId = packagingArticleIdOf(component);
-      const quantity = parseDecimal(component.quantity);
+      const quantity = parseDecimal(componentQuantityOf(component));
       assertPositive(quantity, 'Quantite composant');
 
       const packagingArticle = await client.query(
         `
-        SELECT id, article_type
+        SELECT id, article_type, is_active, stock_managed
         FROM articles
         WHERE id = $1
           AND store_id = $2
           AND is_active = true
-          AND article_type IN ('PACKAGING_CONSUMABLE', 'PACKAGING_RETURNABLE')
-          AND stock_managed = true
+          AND article_type = 'PACKAGING_CONSUMABLE'
         LIMIT 1
         `,
         [packagingArticleId, storeId]

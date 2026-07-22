@@ -668,7 +668,7 @@ function openModelForm(profile = null) {
   els.modelDefault.value = profile.is_default ? 'true' : 'false';
   els.modelNotes.value = profile.notes || '';
   state.modelComponents = (profile.components || []).map((component) => ({
-    packaging_item_id: component.packaging_item_id,
+    packaging_item_id: component.packaging_article_id || component.packaging_item_id,
     quantity: component.quantity,
   }));
   renderModelComponents();
@@ -688,7 +688,8 @@ function collectModelPayload() {
     is_default: els.modelDefault.value === 'true',
     notes: els.modelNotes.value.trim(),
     components: (state.modelComponents || []).map((component) => ({
-      packaging_item_id: component.packaging_item_id,
+      packaging_article_id: component.packaging_item_id,
+      quantity_per_package: component.quantity,
       quantity: component.quantity,
       consumption_rule: 'per_package',
       is_primary_packaging: false,

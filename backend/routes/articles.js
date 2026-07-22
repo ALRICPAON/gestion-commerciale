@@ -51,6 +51,22 @@ function articleUniqueViolationMessage(err, fallbackMessage = 'PLU déjà exista
   return fallbackMessage;
 }
 
+function activeArticleDepartmentJoin(departmentFilter = '') {
+  return `
+      LEFT JOIN LATERAL (
+        SELECT ad_pick.*
+        FROM article_departments ad_pick
+        WHERE ad_pick.article_id = a.id
+          AND ad_pick.is_active = true
+          ${departmentFilter}
+        ORDER BY
+          ad_pick.updated_at DESC NULLS LAST,
+          ad_pick.created_at DESC NULLS LAST
+        LIMIT 1
+      ) ad ON true
+  `;
+}
+
 function normalizeArticleType(value) {
   const type = String(value || 'PRODUCT').trim().toUpperCase();
   return ARTICLE_TYPES.has(type) ? type : 'PRODUCT';
@@ -259,8 +275,9 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.allergens, adm.allergenes) AS allergenes,
         COALESCE(a.allergens, adm.allergenes) AS allergens,
         COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
-        COALESCE(ss.stock_quantity, 0) AS stock_quantity,
-        COALESCE(ss.pma, 0) AS pma,
+        COALESCE(ss.stock_quantity, 0)::float8 AS stock_quantity,
+        COALESCE(ss.pma, a.purchase_price_ex_vat, ad.purchase_price_ex_vat, 0)::float8 AS pma,
+        COALESCE(ss.pma, a.purchase_price_ex_vat, ad.purchase_price_ex_vat, 0)::float8 AS current_unit_cost_ex_vat,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
       LEFT JOIN article_departments ad
@@ -456,18 +473,11 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
     }
 
     const params = [req.user.store_id, `%${searchTerm}%`, `${searchTerm}%`];
-    let departmentFilter = '';
+    let departmentJoinFilter = '';
 
     if (departmentId && isUuid(departmentId)) {
       params.push(departmentId);
-      departmentFilter = `AND (
-        ad.department_id = $${params.length}
-        OR NOT EXISTS (
-          SELECT 1
-          FROM article_departments ad_check
-          WHERE ad_check.article_id = a.id
-        )
-      )`;
+      departmentJoinFilter = `AND ad_pick.department_id = $${params.length}`;
     }
 
     const result = await req.dbPool.query(
@@ -487,11 +497,11 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
         ad.sale_price_ex_vat,
         ad.sale_price_inc_vat,
         ad.sale_price_inc_vat AS pv_ttc_real,
-        COALESCE(ss.pma, 0) AS pma,
-        COALESCE(ss.pma, 0) AS unit_cost_ex_vat,
-        COALESCE(ss.stock_quantity, 0) AS stock_quantity
+        COALESCE(ss.pma, 0)::float8 AS pma,
+        COALESCE(ss.pma, 0)::float8 AS unit_cost_ex_vat,
+        COALESCE(ss.stock_quantity, 0)::float8 AS stock_quantity
       FROM articles a
-      LEFT JOIN article_departments ad ON ad.article_id = a.id
+      ${activeArticleDepartmentJoin(departmentJoinFilter)}
       LEFT JOIN article_department_metadata adm
         ON adm.article_department_id = ad.id
        AND adm.field_key = 'business_metadata'
@@ -499,9 +509,7 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
       WHERE a.store_id = $1
         AND a.is_active = true
         AND COALESCE(a.article_type, 'PRODUCT') = 'PRODUCT'
-        AND COALESCE(ad.is_active, true) = true
         AND COALESCE(ss.stock_quantity, 0) > 0
-        ${departmentFilter}
         AND (
           a.plu ILIKE $2
           OR a.designation ILIKE $2
@@ -554,17 +562,16 @@ router.get('/search-packaging', authenticateToken, attachDbContext, async (req, 
         COALESCE(a.stock_unit, ad.stock_unit, a.unit, 'unit') AS management_unit,
         a.article_type,
         a.stock_managed,
-        COALESCE(ss.stock_quantity, 0) AS stock_quantity,
-        COALESCE(ss.pma, 0) AS pma,
-        COALESCE(ss.pma, 0) AS current_unit_cost_ex_vat
+        COALESCE(ss.stock_quantity, 0)::float8 AS stock_quantity,
+        COALESCE(ss.pma, a.purchase_price_ex_vat, ad.purchase_price_ex_vat, 0)::float8 AS pma,
+        COALESCE(ss.pma, a.purchase_price_ex_vat, ad.purchase_price_ex_vat, 0)::float8 AS current_unit_cost_ex_vat
       FROM articles a
-      LEFT JOIN article_departments ad ON ad.article_id = a.id
+      ${activeArticleDepartmentJoin()}
       LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.store_id = $1
         AND a.is_active = true
         AND a.article_type = 'PACKAGING_CONSUMABLE'
         AND a.stock_managed = true
-        AND COALESCE(ad.is_active, true) = true
         ${searchFilter}
       ORDER BY
         CASE WHEN $2::text IS NOT NULL AND a.plu ILIKE $2 THEN 0 ELSE 1 END,

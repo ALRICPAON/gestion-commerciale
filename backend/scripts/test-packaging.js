@@ -44,7 +44,7 @@ function run() {
 
   assert(packagingHtml.includes('PLU ou designation'));
   assert(packagingHtml.includes('operation-article-f9-btn'));
-  assert(packagingHtml.includes('packaging.js?v=5'));
+  assert(packagingHtml.includes('packaging.js?v=6'));
   assert(packagingHtml.includes('packaging.css?v=4'));
   assert(packagingHtml.includes('Nouveau modele de conditionnement'));
   assert(packagingHtml.includes('Realiser un conditionnement'));
@@ -70,6 +70,9 @@ function run() {
   assert(packagingJs.includes('/api/articles/search-in-stock'));
   assert(packagingJs.includes('/api/articles?packaging_only=true'));
   assert(!packagingJs.includes('/api/packaging/items/'));
+  assert(packagingJs.includes('packaging_article_id: component.packaging_item_id'));
+  assert(packagingJs.includes('quantity_per_package: component.quantity'));
+  assert(packagingService.includes('component.quantity_per_package ?? component.quantity'));
   assert(!packagingHtml.includes('create-packaging-article-btn'));
   assert(!packagingHtml.includes('item-form'));
   assert(!packagingHtml.includes('movement-form'));
