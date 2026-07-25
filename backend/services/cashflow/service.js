@@ -1,5 +1,6 @@
 const { renderHtmlToPdf, sendPdf } = require('../pdf/pdfRenderer');
 const {
+  addDays,
   buildDailyForecast,
   buildWeeklyForecast,
   expandManualItems,
@@ -705,6 +706,242 @@ async function getForecast(db, storeId, query = {}) {
   };
 }
 
+function normalizeRows(rows = [], mapper) {
+  return rows.map(mapper).filter(Boolean);
+}
+
+async function listUnbilledSales(db, storeId, query = {}) {
+  const limit = Math.min(Number(query.limit || 100), 300);
+  const result = await db.query(
+    `
+    SELECT sd.id, sd.reference_number, sd.document_date, sd.document_type, sd.status,
+           COALESCE(sd.total_amount_inc_vat, sd.total_amount_ht, sd.total_amount_ex_vat, 0) AS amount,
+           c.id AS client_id, COALESCE(sd.billed_client_name_snapshot, c.name, 'Client') AS client_name
+    FROM sales_documents sd
+    LEFT JOIN clients c ON c.id = COALESCE(sd.billed_client_id, sd.client_id) AND c.store_id = sd.store_id
+    WHERE sd.store_id = $1
+      AND sd.document_type IN ('DELIVERY_NOTE', 'ORDER')
+      AND COALESCE(sd.status, '') NOT IN ('cancelled', 'deleted', 'invoiced')
+    ORDER BY sd.document_date ASC
+    LIMIT $2
+    `,
+    [storeId, limit]
+  ).catch(() => ({ rows: [] }));
+  return result.rows.map((row) => ({
+    ...row,
+    expected_invoice_or_receipt_date: addDays(row.document_date || new Date(), row.document_type === 'ORDER' ? 14 : 7),
+    source: row.document_type === 'ORDER' ? 'alta_order' : 'alta_delivery_note',
+  }));
+}
+
+async function getCashflowDataSources(db, storeId) {
+  const [syncLog, bankFreshness, supplierFreshness, customerFreshness, counts] = await Promise.all([
+    db.query('SELECT * FROM cashflow_sync_logs WHERE store_id = $1 ORDER BY started_at DESC LIMIT 1', [storeId]).then((r) => r.rows[0] || null).catch(() => null),
+    db.query('SELECT MAX(snapshot_at) AS last_bank_sync_at, COUNT(*)::int AS account_count FROM cashflow_bank_accounts WHERE store_id = $1', [storeId]).then((r) => r.rows[0] || {}).catch(() => ({})),
+    db.query('SELECT MAX(last_synced_at) AS last_pennylane_supplier_sync_at, COUNT(*)::int AS supplier_invoice_count FROM pennylane_supplier_invoices WHERE store_id = $1 AND pennylane_deleted_at IS NULL', [storeId]).then((r) => r.rows[0] || {}).catch(() => ({})),
+    db.query('SELECT MAX(updated_at) AS last_alta_customer_invoice_update_at, COUNT(*)::int AS customer_invoice_count FROM sales_documents WHERE store_id = $1 AND document_type = $2', [storeId, 'INVOICE']).then((r) => r.rows[0] || {}).catch(() => ({})),
+    debugCounts(db, storeId).catch(() => ({})),
+  ]);
+  return {
+    generated_at: new Date().toISOString(),
+    last_alta_update_at: customerFreshness.last_alta_customer_invoice_update_at || null,
+    last_pennylane_sync_at: supplierFreshness.last_pennylane_supplier_sync_at || syncLog?.completed_at || syncLog?.started_at || null,
+    last_bank_sync_at: bankFreshness.last_bank_sync_at || null,
+    sources: [
+      { name: 'sales_documents', source: 'ALTA', available_count: Number(customerFreshness.customer_invoice_count || 0), last_update_at: customerFreshness.last_alta_customer_invoice_update_at || null },
+      { name: 'pennylane_supplier_invoices', source: 'Pennylane', available_count: Number(supplierFreshness.supplier_invoice_count || 0), last_update_at: supplierFreshness.last_pennylane_supplier_sync_at || null },
+      { name: 'cashflow_bank_accounts', source: 'banque', available_count: Number(bankFreshness.account_count || 0), last_update_at: bankFreshness.last_bank_sync_at || null },
+      { name: 'cashflow_recurring_charges', source: 'saisie_manuelle', available_count: Number(counts.recurringCharges || 0), last_update_at: null },
+      { name: 'cashflow_supplier_invoice_payments', source: 'Pennylane', available_count: Number(counts.supplierPayments || 0), last_update_at: null },
+    ],
+    sync_log: syncLog,
+  };
+}
+
+async function identifyCashflowRisks(db, storeId, query = {}) {
+  const [forecast, dashboard, distrimer, completion] = await Promise.all([
+    getForecast(db, storeId, query),
+    getDashboard(db, storeId, query),
+    getDistrimer(db, storeId),
+    chargeCompletionAlerts(db, storeId).catch(() => ({ alerts: [] })),
+  ]);
+  const risks = [];
+  if (forecast.first_negative_date) {
+    risks.push({
+      level: 'high',
+      type: 'negative_balance',
+      date: forecast.first_negative_date,
+      amount: forecast.minimum_balance,
+      message: 'Solde previsionnel negatif sur la periode.',
+      source: 'cashflow_forecast',
+    });
+  }
+  if (dashboard.kpis?.bank_balance_stale) {
+    risks.push({
+      level: 'medium',
+      type: 'stale_bank_balance',
+      message: 'Solde bancaire absent ou ancien.',
+      source: 'cashflow_bank_accounts',
+    });
+  }
+  if (Number(distrimer.exposure || 0) >= Number(distrimer.limit || 10000)) {
+    risks.push({
+      level: 'high',
+      type: 'distrimer_limit',
+      amount: distrimer.exposure,
+      message: 'Encours DISTRIMER au-dessus ou au niveau de la limite assuree.',
+      source: 'pennylane_supplier_invoices',
+    });
+  }
+  for (const alert of completion.alerts || []) {
+    risks.push({ level: 'medium', type: alert.code, message: alert.message, source: 'cashflow_recurring_charges' });
+  }
+  return risks;
+}
+
+async function compareCashflowScenarios(db, storeId, query = {}) {
+  const days = parseHorizon(query.days);
+  const scenarios = await Promise.all(['prudent', 'realiste', 'optimiste'].map(async (scenario) => {
+    const forecast = await getForecast(db, storeId, { ...query, days, scenario });
+    return {
+      scenario,
+      opening_balance: forecast.opening_balance,
+      closing_balance: forecast.closing_balance,
+      lowest_projected_balance: forecast.minimum_balance,
+      lowest_projected_balance_date: forecast.minimum_date,
+      first_negative_date: forecast.first_negative_date,
+      assumptions: forecast.assumptions,
+    };
+  }));
+  return { days, scenarios };
+}
+
+async function buildCashflowProjection(db, storeId, query = {}) {
+  const days = parseHorizon(query.days);
+  const [settings, bankAccounts, transactions, receivables, paidHistory, payables, manualItems, recurringCharges, unbilledSales, forecast, dataSources, distrimer] = await Promise.all([
+    getSettings(db, storeId),
+    listBankAccounts(db, storeId).catch(() => []),
+    listBankTransactions(db, storeId, { limit: 100 }).catch(() => []),
+    listCustomerReceivables(db, storeId),
+    listPaidCustomerHistory(db, storeId),
+    listSupplierPayables(db, storeId),
+    listManualItems(db, storeId).catch(() => []),
+    listRecurringCharges(db, storeId),
+    listUnbilledSales(db, storeId, { limit: 100 }),
+    getForecast(db, storeId, { ...query, days }),
+    getCashflowDataSources(db, storeId),
+    getDistrimer(db, storeId),
+  ]);
+  const snapshot = await latestBankSnapshot(db, storeId).catch(() => null);
+  const warnings = [];
+  const missing = [];
+  if (!snapshot) {
+    warnings.push('Solde bancaire synchronise absent: utilisation du solde manuel des parametres si disponible.');
+    missing.push('Solde bancaire synchronise a confirmer.');
+  }
+  if (!dataSources.last_pennylane_sync_at) warnings.push('Date de derniere synchronisation Pennylane indisponible.');
+  if (!receivables.length) warnings.push('Aucune facture client ouverte exploitable trouvee.');
+  if (!payables.length) warnings.push('Aucune facture fournisseur ouverte exploitable trouvee.');
+
+  const customerReceipts = normalizeRows(receivables, (invoice) => ({
+    id: invoice.id,
+    source: 'ALTA/Pennylane',
+    type: 'customer_invoice',
+    label: invoice.invoice_number || 'Facture client',
+    counterparty_id: invoice.client_id,
+    counterparty_name: invoice.client_name,
+    invoice_date: isoDate(invoice.invoice_date),
+    due_date: invoice.due_date ? isoDate(invoice.due_date) : null,
+    expected_date: invoice.expected_payment_date ? isoDate(invoice.expected_payment_date) : null,
+    amount: money(invoice.remaining_amount),
+    status: invoice.payment_status || null,
+  }));
+  const supplierPayments = normalizeRows(payables, (invoice) => ({
+    id: invoice.id,
+    source: invoice.source || 'Pennylane',
+    type: 'supplier_invoice',
+    label: invoice.invoice_number || 'Facture fournisseur',
+    counterparty_id: invoice.supplier_id || invoice.pennylane_supplier_id || null,
+    counterparty_name: invoice.supplier_name,
+    invoice_date: invoice.invoice_date ? isoDate(invoice.invoice_date) : null,
+    due_date: invoice.due_date ? isoDate(invoice.due_date) : null,
+    expected_date: invoice.planned_payment_date ? isoDate(invoice.planned_payment_date) : null,
+    amount: money(invoice.remaining_amount),
+    status: invoice.payment_status || invoice.cashflow_open_state || null,
+  }));
+  const otherInflows = manualItems.filter((item) => item.direction === 'in').map((item) => ({
+    id: item.id,
+    source: 'saisie_manuelle',
+    label: item.label,
+    expected_date: item.forecast_date,
+    amount: money(item.amount),
+  }));
+  const otherOutflows = [
+    ...manualItems.filter((item) => item.direction === 'out').map((item) => ({
+      id: item.id,
+      source: 'saisie_manuelle',
+      label: item.label,
+      expected_date: item.forecast_date,
+      amount: money(item.amount),
+    })),
+    ...recurringCharges.map((item) => ({
+      id: item.id,
+      source: 'charge_recurrente',
+      label: item.label,
+      expected_date: item.first_due_date,
+      amount: money(item.cash_amount || item.amount),
+      active: item.active,
+    })),
+  ];
+  const risks = await identifyCashflowRisks(db, storeId, { ...query, days }).catch(() => []);
+
+  return {
+    period: {
+      from: forecast.start_date,
+      to: addDays(forecast.start_date, days - 1),
+    },
+    opening_balance: money(forecast.opening_balance),
+    opening_balance_source: snapshot ? 'banque' : 'parametre_tresorerie',
+    bank_accounts: bankAccounts.map((account) => ({
+      id: account.id,
+      source: 'banque',
+      name: account.name,
+      balance: money(account.balance),
+      include_in_cashflow: account.include_in_cashflow,
+      last_sync_at: account.snapshot_at || account.updated_at || null,
+    })),
+    bank_transactions: transactions.slice(0, 100),
+    expected_customer_receipts: customerReceipts,
+    expected_supplier_payments: supplierPayments,
+    other_inflows: otherInflows,
+    other_outflows: otherOutflows,
+    unbilled_sales: unbilledSales,
+    customer_payment_behaviour: calculateCustomerBehaviour(paidHistory),
+    daily_forecast: forecast.rows,
+    weekly_forecast: forecast.weekly_rows || buildWeeklyForecast(forecast.rows),
+    lowest_projected_balance: money(forecast.minimum_balance),
+    lowest_projected_balance_date: forecast.minimum_date,
+    closing_balance: money(forecast.closing_balance),
+    distrimer,
+    assumptions: forecast.assumptions || scenarioAssumptions(forecast.scenario),
+    risks,
+    warnings,
+    missing_information: missing,
+    data_sources: dataSources.sources,
+    source_freshness: {
+      generated_at: new Date().toISOString(),
+      last_alta_update_at: dataSources.last_alta_update_at || null,
+      last_pennylane_sync_at: dataSources.last_pennylane_sync_at || null,
+      last_bank_sync_at: dataSources.last_bank_sync_at || null,
+    },
+    settings: {
+      opening_balance: settings.opening_balance,
+      distrimer_limit: settings.distrimer_limit || 10000,
+      balance_stale_after_hours: settings.balance_stale_after_hours,
+    },
+  };
+}
+
 function scenarioAssumptions(scenario) {
   if (scenario === 'prudent') return ['Encaissements clients decales par marge de securite.', 'Sorties conservees aux dates prevues.'];
   if (scenario === 'optimiste') return ['Clients aux echeances theoriques.', 'Aucune entree retardee.'];
@@ -750,9 +987,13 @@ async function sendForecastExport(res, forecast, format) {
 module.exports = {
   forecastItems,
   getDashboard,
+  getCashflowDataSources,
   getDistrimer,
   getForecast,
+  buildCashflowProjection,
+  compareCashflowScenarios,
   getSettings,
+  identifyCashflowRisks,
   listBankTransactions,
   listBankAccounts,
   listRecurringCharges,
@@ -760,6 +1001,7 @@ module.exports = {
   supplierExposure,
   debugCounts,
   listCustomerReceivables,
+  listUnbilledSales,
   listPaidCustomerHistory,
   listSupplierPayables,
   sendForecastExport,

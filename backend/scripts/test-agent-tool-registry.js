@@ -1,4 +1,5 @@
-const { listAgentTools, RISK_LEVELS } = require('../services/agent/agentToolRegistry');
+const { listAgentTools, listMcpTools, RISK_LEVELS } = require('../services/agent/agentToolRegistry');
+const { authorizeTool } = require('../services/agent/agentAuthorizationService');
 
 function assert(condition, message) {
   if (!condition) {
@@ -8,7 +9,9 @@ function assert(condition, message) {
 
 function main() {
   const tools = listAgentTools();
+  const mcpTools = listMcpTools();
   const names = new Set();
+  const mcpNames = new Set(mcpTools.map((tool) => tool.name));
 
   assert(tools.length >= 60, `Catalogue trop court: ${tools.length}`);
 
@@ -23,10 +26,56 @@ function main() {
     assert(tool.requiredPermission, `Permission manquante: ${tool.name}`);
     assert(tool.inputSchema && tool.inputSchema.type === 'object', `Schema entree invalide: ${tool.name}`);
     assert(tool.outputSchema && tool.outputSchema.type === 'object', `Schema sortie invalide: ${tool.name}`);
+    if (tool.status === 'planned') {
+      assert(tool.enabled === false, `Outil planned executable: ${tool.name}`);
+      assert(!mcpNames.has(tool.name), `Outil planned expose au modele: ${tool.name}`);
+    }
+    if (tool.status !== 'planned') {
+      assert(typeof tool.execute === 'function' || mcpNames.has(tool.name), `Handler manquant: ${tool.name}`);
+    }
     if (tool.riskLevel >= RISK_LEVELS.COMMITTING_ACTION) {
       assert(tool.requiresConfirmation === true, `Confirmation manquante pour outil engageant: ${tool.name}`);
     }
   }
+
+  const readTool = tools.find((tool) => tool.name === 'prepare_cashflow_plan');
+  assert(readTool, 'prepare_cashflow_plan manquant');
+  assert(mcpNames.has('prepare_cashflow_plan'), 'prepare_cashflow_plan non expose au modele');
+  assert(mcpNames.has('draft_quality_section'), 'draft_quality_section non expose au modele');
+  assert(!mcpNames.has('update_article_price'), 'Outil planned expose au modele');
+
+  authorizeTool(readTool, {
+    store_id: '00000000-0000-4000-8000-000000000001',
+    role: 'admin',
+    user_permissions: [],
+    agent_permissions: ['cashflow.read'],
+  });
+
+  let refused = false;
+  try {
+    authorizeTool(readTool, {
+      store_id: '00000000-0000-4000-8000-000000000001',
+      role: 'responsable',
+      user_permissions: [],
+      agent_permissions: ['cashflow.read'],
+    });
+  } catch (error) {
+    refused = error.status === 403;
+  }
+  assert(refused, 'Responsable sans permission ne doit pas contourner les droits');
+
+  refused = false;
+  try {
+    authorizeTool(readTool, {
+      store_id: '00000000-0000-4000-8000-000000000001',
+      role: 'admin',
+      user_permissions: ['cashflow.read'],
+      agent_permissions: ['quality.read'],
+    });
+  } catch (error) {
+    refused = error.status === 403;
+  }
+  assert(refused, 'ALTA_AGENT_PERMISSIONS doit pouvoir restreindre les droits');
 
   assert(!names.has('execute_sql'), 'Outil interdit execute_sql present');
   assert(!names.has('call_any_route'), 'Outil interdit call_any_route present');
@@ -36,6 +85,7 @@ function main() {
   console.log(JSON.stringify({
     ok: true,
     tool_count: tools.length,
+    mcp_tool_count: mcpTools.length,
     risk_counts: tools.reduce((acc, tool) => {
       acc[tool.riskLevel] = (acc[tool.riskLevel] || 0) + 1;
       return acc;

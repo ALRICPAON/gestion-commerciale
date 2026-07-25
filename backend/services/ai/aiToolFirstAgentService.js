@@ -1,6 +1,7 @@
 const { generateToolCall } = require('./aiClient');
 const { normalizeConversation } = require('./aiMemoryService');
 const { confirmAction, cancelAction } = require('./aiActionService');
+const { executeAgentTool } = require('../agent/agentToolExecutor');
 
 const MAX_QUESTION_LENGTH = 2000;
 const MAX_TOOL_STEPS = Math.min(Math.max(Number(process.env.AI_AGENT_MAX_TOOL_STEPS || 20), 1), 40);
@@ -249,6 +250,52 @@ function toolDefinitions() {
     { type: 'function', function: { name: 'get_pending_action', description: 'Charge une action pending.', parameters: { type: 'object', properties: { action_id: { type: 'string' } } } } },
     { type: 'function', function: { name: 'execute_pending_action', description: 'Execute une pending_action apres confirmation humaine.', parameters: idArg('action_id') } },
     { type: 'function', function: { name: 'cancel_pending_action', description: 'Annule une pending_action.', parameters: idArg('action_id') } },
+    {
+      type: 'function',
+      function: {
+        name: 'prepare_cashflow_plan',
+        description: 'Produit une prevision de tresorerie reelle depuis les donnees ALTA: factures clients, fournisseurs, banque, charges, Pennylane, DISTRIMER, sources et avertissements.',
+        parameters: {
+          type: 'object',
+          properties: {
+            days: { type: 'integer', minimum: 1, maximum: 90 },
+            scenario: { type: 'string', enum: ['prudent', 'realiste', 'optimiste'] },
+          },
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_cashflow_data_sources',
+        description: 'Liste les sources et fraicheurs de donnees tresorerie disponibles.',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'get_distrimer_exposure',
+        description: 'Calcule l encours DISTRIMER et la marge restante sous la limite assuree.',
+        parameters: { type: 'object', properties: {} },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'draft_quality_section',
+        description: 'Ouvre un chapitre qualite et propose une redaction depuis les donnees ALTA reelles.',
+        parameters: { type: 'object', properties: { code: { type: 'string' }, query: { type: 'string' }, section_id: { type: 'string' } } },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'preview_quality_section_update',
+        description: 'Produit un apercu avant/apres de modification de chapitre qualite sans enregistrer.',
+        parameters: { type: 'object', properties: { code: { type: 'string' }, query: { type: 'string' }, section_id: { type: 'string' }, content_html: { type: 'string' } } },
+      },
+    },
   ];
 }
 
@@ -606,6 +653,42 @@ async function unavailablePreparation({ name }) {
   return ok({ tool: name, available: false, reason: 'Outil prepare dans le contrat agent, execution non activee dans ce socle.' });
 }
 
+function configuredAgentPermissions() {
+  return String(process.env.ALTA_AGENT_PERMISSIONS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function executeRegisteredAgentTool({ db, user, args, name }) {
+  const configured = configuredAgentPermissions();
+  const permissions = configured.length ? configured : [
+    'agent.use',
+    'cashflow.read',
+    'quality.read',
+    'quality.documentation.read',
+    'clients.read',
+    'suppliers.read',
+    'articles.read',
+    'stock.read',
+    'sales.read',
+  ];
+  return executeAgentTool({
+    db,
+    name,
+    input: args,
+    context: {
+      user,
+      store_id: user.store_id,
+      user_id: user.id,
+      role: user.role,
+      user_permissions: user.permissions || [],
+      agent_permissions: permissions,
+      source: 'ai_agent',
+    },
+  });
+}
+
 const HANDLERS = {
   search_business_data: searchBusinessData,
   get_client_profile: getClientProfile,
@@ -628,6 +711,11 @@ const HANDLERS = {
   get_pending_action: getPendingAction,
   execute_pending_action: executePendingAction,
   cancel_pending_action: cancelPendingAction,
+  prepare_cashflow_plan: executeRegisteredAgentTool,
+  get_cashflow_data_sources: executeRegisteredAgentTool,
+  get_distrimer_exposure: executeRegisteredAgentTool,
+  draft_quality_section: executeRegisteredAgentTool,
+  preview_quality_section_update: executeRegisteredAgentTool,
 };
 
 async function executeTool({ db, user, toolCall }) {

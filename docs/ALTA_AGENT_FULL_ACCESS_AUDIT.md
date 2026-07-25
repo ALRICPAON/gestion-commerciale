@@ -78,3 +78,10 @@ Date: 2026-07-25
 - Raccorder progressivement les handlers `planned` aux services metier existants.
 - Unifier `ai_pending_actions` et `agent_pending_actions` ou documenter clairement leurs usages separes.
 - Ajouter des tests DB d isolation magasin avec fixtures.
+
+## Mise a jour correctif cashflow/qualite
+
+- Tresorerie: lecture complete raccordee pour projection, factures clients ouvertes, factures fournisseurs Pennylane, echeanciers, banque, mouvements bancaires, charges recurrentes, mouvements manuels, DISTRIMER, sources et fraicheur. Les ecritures tresorerie restent non exposees au modele tant que les pending actions par action metier ne sont pas finalisees.
+- Qualite: lecture complete raccordee pour dossier documentaire, chapitre, blocs, tableaux, diagrammes, pieces jointes, zones, equipements, temperatures, nettoyage, taches, documents et photos. La modification de chapitre passe maintenant par confirmation persistante.
+- Catalogue: les outils `planned` ne sont plus envoyes au modele via MCP `tools/list`; ils restent uniquement dans le catalogue administratif et la documentation.
+- Permissions: `manager` et `responsable` ne contournent plus les permissions explicites.
