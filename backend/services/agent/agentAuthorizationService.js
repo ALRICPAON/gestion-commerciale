@@ -30,13 +30,22 @@ function hasPermissionValue(permissions, requiredPermission) {
 function hasPermission(context, requiredPermission) {
   if (!requiredPermission) return true;
   const agentPermissions = permissionList(context.agent_permissions || context.agentPermissions || context.permissions);
-  const userSidePermissions = context.user
-    ? permissionList(context.user.permissions || context.user_permissions || context.userPermissions)
-    : permissionList(context.permissions);
+  const userSidePermissions = permissionList(context.user_permissions || context.userPermissions || context.user?.permissions || context.permissions);
   const role = context.user?.role || context.role;
   const userAllowed = hasPermissionValue(userSidePermissions, requiredPermission) || isPrivilegedRole(role);
   const agentAllowed = hasPermissionValue(agentPermissions, requiredPermission);
   return userAllowed && agentAllowed;
+}
+
+function safePermissionLog(tool, context = {}) {
+  return {
+    tool: tool.name,
+    required_permission: tool.requiredPermission,
+    role: context.user?.role || context.role || null,
+    user_permissions: permissionList(context.user_permissions || context.userPermissions || context.user?.permissions || context.permissions),
+    agent_permissions: permissionList(context.agent_permissions || context.agentPermissions || context.permissions),
+    source: context.source || null,
+  };
 }
 
 function assertAgentContext(context = {}) {
@@ -57,6 +66,7 @@ function authorizeTool(tool, context = {}) {
     throw error;
   }
   if (!hasPermission(context, tool.requiredPermission)) {
+    console.warn('Refus permission outil agent', safePermissionLog(tool, context));
     const error = new Error(`Permission requise : ${tool.requiredPermission}`);
     error.status = 403;
     error.expose = true;

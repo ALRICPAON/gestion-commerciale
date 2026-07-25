@@ -20,3 +20,5 @@ Variables:
 - `ALTA_AGENT_USER_ID=<uuid optionnel>`
 
 Les permissions agent par defaut sont en lecture et `agent.use`. Les ecritures agent doivent etre accordees explicitement. La variable `ALTA_AGENT_PERMISSIONS` ne peut pas donner davantage de droits que l utilisateur authentifie.
+
+Le contexte MCP et le contexte assistant interne conservent separement `user_permissions` et `agent_permissions`. En cas de refus, le log securise contient uniquement l outil, la permission requise, le role, les listes de permissions et la source.

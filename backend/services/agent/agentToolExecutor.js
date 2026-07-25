@@ -20,15 +20,44 @@ function assertInputSize(input) {
   }
 }
 
+function firstPermissionValue(...values) {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length > 0) return value;
+    if (value && typeof value === 'object' && Object.keys(value).length > 0) return value;
+  }
+  return [];
+}
+
+function permissionArray(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  if (value && typeof value === 'object') {
+    return Object.entries(value).filter(([, allowed]) => Boolean(allowed)).map(([name]) => String(name || '').trim()).filter(Boolean);
+  }
+  return [];
+}
+
 function normalizeContext(context = {}) {
   const user = context.user || {};
+  const userPermissions = permissionArray(firstPermissionValue(
+    context.user_permissions,
+    context.userPermissions,
+    user.permissions,
+    context.permissions
+  ));
+  const agentPermissions = permissionArray(firstPermissionValue(
+    context.agent_permissions,
+    context.agentPermissions,
+    context.permissions
+  ));
   return {
     store_id: context.store_id || user.store_id || context.storeId,
     user_id: context.user_id || user.id || null,
     role: context.role || user.role || null,
-    permissions: context.permissions || user.permissions || [],
-    agent_permissions: context.agent_permissions || context.agentPermissions || context.permissions || [],
-    user_permissions: context.user_permissions || context.userPermissions || user.permissions || [],
+    permissions: permissionArray(firstPermissionValue(context.permissions, userPermissions)),
+    user_permissions: userPermissions,
+    userPermissions,
+    agent_permissions: agentPermissions,
+    agentPermissions,
     client_key: context.client_key || user.client_key || null,
     source: context.source || 'agent',
     conversation_id: context.conversation_id || null,
