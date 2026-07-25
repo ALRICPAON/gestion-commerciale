@@ -25,9 +25,12 @@ const {
   getPendingAction,
   executePendingAction,
 } = require('../services/agentCommercialToolsService');
+const { listMcpTools } = require('../services/agent/agentToolRegistry');
+const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
+const MCP_SERVER_VERSION = '1.6.0';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
@@ -366,7 +369,7 @@ function makeTool({ name, title, description, inputSchema, outputSchema, invokin
   };
 }
 
-const tools = [
+const legacyTools = [
   makeTool({
     name: 'search_clients',
     title: 'Rechercher des clients',
@@ -406,7 +409,7 @@ const tools = [
   makeTool({
     name: 'search_stock',
     title: 'Rechercher le stock',
-    description: 'Recherche le stock par article ou lot. Si query est absent, retourne une vue globale du stock.',
+    description: 'Recherche le stock par article ou lot. Si query est absent, retourne une vue globale du stock. Ne pas utiliser pour établir une prévision globale de trésorerie: utiliser prepare_cashflow_plan.',
     inputSchema: stockSearchInputSchema,
     outputSchema: genericOutputSchema,
     invoking: 'Lecture stock ALTA...',
@@ -451,7 +454,7 @@ const tools = [
   makeTool({
     name: 'search_suppliers',
     title: 'Rechercher des fournisseurs',
-    description: 'Recherche des fournisseurs ALTA MAREE par code, nom, contact, email, téléphone ou ville.',
+    description: 'Recherche des fournisseurs ALTA MAREE par code, nom, contact, email, téléphone ou ville. Ne pas utiliser pour établir une prévision globale de trésorerie: utiliser prepare_cashflow_plan.',
     inputSchema: searchInputSchema,
     outputSchema: genericOutputSchema,
     invoking: 'Recherche fournisseurs ALTA...',
@@ -469,7 +472,7 @@ const tools = [
   makeTool({
     name: 'search_sales',
     title: 'Rechercher les ventes',
-    description: 'Recherche des documents de vente, commandes ou lignes de vente.',
+    description: 'Recherche des documents de vente, commandes ou lignes de vente. Ne pas utiliser pour établir une prévision globale de trésorerie: utiliser prepare_cashflow_plan.',
     inputSchema: searchInputSchema,
     outputSchema: genericOutputSchema,
     invoking: 'Recherche ventes ALTA...',
@@ -478,7 +481,7 @@ const tools = [
   makeTool({
     name: 'get_sales_overview',
     title: 'Vue ventes',
-    description: 'Donne une synthèse des ventes/commandes avec filtres date, statut et type document.',
+    description: 'Donne une synthèse des ventes/commandes avec filtres date, statut et type document. Ne pas utiliser pour établir une prévision globale de trésorerie: utiliser prepare_cashflow_plan.',
     inputSchema: salesOverviewInputSchema,
     outputSchema: genericOutputSchema,
     invoking: 'Synthèse ventes ALTA...',
@@ -576,6 +579,58 @@ const toolHandlers = {
   execute_pending_action: executePendingAction,
 };
 
+function mcpAgentContext(req) {
+  const configured = String(process.env.ALTA_AGENT_PERMISSIONS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return {
+    store_id: req.agentStoreId,
+    user_id: process.env.ALTA_AGENT_USER_ID || null,
+    role: 'agent',
+    user_permissions: configured.length ? configured : [
+      'agent.use',
+      'clients.read',
+      'suppliers.read',
+      'articles.read',
+      'stock.read',
+      'sales.read',
+      'cashflow.read',
+      'quality.read',
+      'quality.documentation.read',
+      'statistics.read',
+      'pennylane.read',
+      'employee_planning.read',
+      'transformations.read',
+    ],
+    agent_permissions: configured.length ? configured : [
+      'agent.use',
+      'clients.read',
+      'suppliers.read',
+      'articles.read',
+      'stock.read',
+      'sales.read',
+      'cashflow.read',
+      'quality.read',
+      'quality.documentation.read',
+      'statistics.read',
+      'pennylane.read',
+      'employee_planning.read',
+      'transformations.read',
+    ],
+    source: 'mcp',
+    conversation_id: req.get('x-alta-conversation-id') || null,
+    request_id: req.get('x-request-id') || null,
+  };
+}
+
+const registryTools = listMcpTools();
+const registryToolNames = new Set(registryTools.map((tool) => tool.name));
+const tools = [
+  ...legacyTools.filter((tool) => !registryToolNames.has(tool.name)),
+  ...registryTools,
+];
+
 function jsonRpcResult(id, result) {
   return { jsonrpc: '2.0', id, result };
 }
@@ -669,11 +724,20 @@ async function handleRequest(req, message) {
     return jsonRpcResult(id, {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: {
-        tools: { listChanged: false },
+        tools: { listChanged: true },
         resources: { subscribe: false, listChanged: false },
       },
-      serverInfo: { name: 'alta-maree-mcp', version: '1.5.1' },
-      instructions: 'Utilise les outils ALTA pour lire librement les données commerciales. Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec action_type customer_order_draft puis execute_pending_action après confirmation. Pour passer une commande en BL après confirmation, appelle convert_order_to_delivery_note si disponible; sinon utilise create_pending_action avec action_type customer_delivery_note_draft ou validate_order_to_bl et une référence CMD, puis execute_pending_action. Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
+      serverInfo: { name: 'alta-maree-mcp', version: MCP_SERVER_VERSION },
+      instructions: [
+        'Utilise les outils ALTA pour lire les données métier et préparer les actions contrôlées.',
+        'Pour toute demande de prévision, projection, plan ou analyse globale de trésorerie, appelle d’abord prepare_cashflow_plan.',
+        'N’essaie jamais de reconstruire une prévision de trésorerie en combinant search_sales, search_stock ou search_suppliers.',
+        'prepare_cashflow_plan est l’agrégateur complet qui interroge les factures clients, fournisseurs, comptes bancaires, transactions, charges, éléments manuels, données Pennylane et exposition DISTRIMER.',
+        'L’absence d’un outil nommé Pennylane ne signifie pas que les données Pennylane sont indisponibles : elles sont intégrées dans prepare_cashflow_plan.',
+        'Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec action_type customer_order_draft puis execute_pending_action après confirmation.',
+        'Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
+        'Après modification du catalogue MCP, reconnecter le client si la notification tools/list_changed n’est pas consommée par le client.',
+      ].join('\n'),
       _meta: {
         securitySchemes: SECURITY_SCHEMES,
       },
@@ -683,14 +747,20 @@ async function handleRequest(req, message) {
   if (method === 'ping') return jsonRpcResult(id, {});
 
   if (method === 'tools/list') {
-    console.log('MCP ALTA tools/list', { count: tools.length, names: tools.map(t => t.name) });
+    console.log('MCP ALTA tools/list', {
+      version: MCP_SERVER_VERSION,
+      count: tools.length,
+      has_prepare_cashflow_plan: tools.some((tool) => tool.name === 'prepare_cashflow_plan'),
+      has_cashflow_sources: tools.some((tool) => tool.name === 'get_cashflow_data_sources'),
+      names: tools.map(t => t.name),
+    });
     return jsonRpcResult(id, { tools });
   }
 
   if (method === 'tools/call') {
     const toolName = params.name;
     const handler = toolHandlers[toolName];
-    if (!handler) return jsonRpcError(id, -32602, `Outil inconnu : ${toolName || ''}`);
+    if (!handler && !registryToolNames.has(toolName)) return jsonRpcError(id, -32602, `Outil inconnu : ${toolName || ''}`);
 
     try {
       const args = params.arguments || {};
@@ -699,7 +769,15 @@ async function handleRequest(req, message) {
         store_id: req.agentStoreId,
         has_query: Boolean(args.query),
       });
-      const payload = await handler(req.dbPool, req.agentStoreId, args);
+      const payload = registryToolNames.has(toolName)
+        ? await executeAgentTool({
+          db: req.dbPool,
+          context: mcpAgentContext(req),
+          name: toolName,
+          input: args,
+          confirmed: args.confirmation === 'human_confirmed',
+        })
+        : await handler(req.dbPool, req.agentStoreId, args);
       console.log('MCP ALTA tool success', {
         tool: toolName,
         result_count: Array.isArray(payload?.results) ? payload.results.length : undefined,

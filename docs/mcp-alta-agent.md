@@ -143,3 +143,16 @@ curl -X POST 'https://api.altamaree.fr/mcp?sessionId=<SESSION_ID>' \
 ```
 
 Le POST doit répondre `202 Accepted`, et le premier terminal doit recevoir un événement `message` contenant la réponse JSON-RPC.
+# Evolution registre central
+
+Le serveur MCP ALTA consomme maintenant le registre central `backend/services/agent/agentToolRegistry.js`.
+
+Les nouveaux outils exposes par MCP respectent:
+
+- schema d entree et sortie declare;
+- domaine et niveau de risque;
+- permission requise;
+- confirmation humaine pour risque 2 et 3;
+- audit dans `agent_tool_audit_logs` lorsque la table est disponible.
+
+Configurer les permissions de l identite technique avec `ALTA_AGENT_PERMISSIONS`.

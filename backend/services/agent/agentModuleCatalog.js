@@ -1,0 +1,151 @@
+const modules = [
+  {
+    domain: 'navigation',
+    module: 'Agent ALTA',
+    path: '/assistant-ia.html',
+    title: 'Agent ALTA',
+    description: 'Piloter les ventes, achats, stock, tresorerie et qualite par conversation.',
+    permissions: ['agent.use'],
+    capabilities: ['conversation', 'tools_used', 'confirmations', 'audit_history'],
+  },
+  {
+    domain: 'clients',
+    module: 'Clients',
+    path: '/clients.html',
+    title: 'Clients',
+    description: 'Recherche, fiches, contacts, tarifs, historique et encours client.',
+    permissions: ['clients.read', 'clients.write'],
+    capabilities: ['search', 'profile', 'contacts', 'sales_history', 'price_list_draft'],
+  },
+  {
+    domain: 'suppliers',
+    module: 'Fournisseurs',
+    path: '/suppliers.html',
+    title: 'Fournisseurs',
+    description: 'Fiches fournisseurs, contacts, articles associes, achats et exposition.',
+    permissions: ['suppliers.read', 'suppliers.write'],
+    capabilities: ['search', 'profile', 'contacts', 'purchase_history', 'mappings'],
+  },
+  {
+    domain: 'articles',
+    module: 'Articles et tarifs',
+    path: '/articles.html',
+    title: 'Articles',
+    description: 'Articles, prix, TVA, unites, stock, lots, marges et anomalies.',
+    permissions: ['articles.read', 'articles.write'],
+    capabilities: ['search', 'profile', 'prices', 'stock', 'margins'],
+  },
+  {
+    domain: 'stock',
+    module: 'Stocks, lots et tracabilite',
+    path: '/stock.html',
+    title: 'Stock',
+    description: 'Etat de stock, mouvements, DLC, lots, stocks negatifs et tracabilite.',
+    permissions: ['stock.read', 'stock.write'],
+    capabilities: ['overview', 'lots', 'negative_stock', 'traceability', 'regularization_draft'],
+  },
+  {
+    domain: 'purchases',
+    module: 'Achats et receptions',
+    path: '/purchases.html',
+    title: 'Achats',
+    description: 'Achats, receptions, ecarts, factures fournisseurs et rapprochements.',
+    permissions: ['purchases.read', 'purchases.write'],
+    capabilities: ['search', 'receptions', 'supplier_invoices', 'matching'],
+  },
+  {
+    domain: 'sales',
+    module: 'Ventes',
+    path: '/sales.html',
+    title: 'Ventes',
+    description: 'Commandes, BL, factures, avoirs, marges, paiements, communications et PDF.',
+    permissions: ['sales.read', 'sales.write'],
+    capabilities: ['search', 'orders', 'delivery_notes', 'invoices', 'credit_notes', 'pdf'],
+  },
+  {
+    domain: 'communications',
+    module: 'Communications',
+    path: '/customer-price-list.html',
+    title: 'Communications',
+    description: 'Apercus, brouillons et envois confirmes email, WhatsApp, SMS et mercuriales.',
+    permissions: ['communications.read', 'communications.send'],
+    capabilities: ['draft_email', 'preview', 'send_confirmed'],
+  },
+  {
+    domain: 'statistics',
+    module: 'Tableaux de bord et statistiques',
+    path: '/statistiques.html',
+    title: 'Statistiques',
+    description: 'CA, marges, volumes, tendances, alertes, meilleurs clients et articles.',
+    permissions: ['statistics.read'],
+    capabilities: ['dashboard', 'business_performance', 'anomalies'],
+  },
+  {
+    domain: 'cashflow',
+    module: 'Tresorerie',
+    path: '/cashflow.html',
+    title: 'Tresorerie',
+    description: 'Previsionnel, comptes bancaires, creances, dettes, charges et DISTRIMER.',
+    permissions: ['cashflow.read', 'cashflow.write'],
+    capabilities: ['dashboard', 'forecast', 'receivables', 'payables', 'distrimer', 'scenarios'],
+  },
+  {
+    domain: 'pennylane',
+    module: 'Pennylane',
+    path: '/accounting-settings.html',
+    title: 'Pennylane',
+    description: 'Synchronisation, diagnostics, factures, paiements, erreurs et rapprochements.',
+    permissions: ['pennylane.read', 'pennylane.sync'],
+    capabilities: ['sync_status', 'diagnostics', 'supplier_invoices', 'customer_invoices'],
+  },
+  {
+    domain: 'employee_planning',
+    module: 'Planning salarie',
+    path: '/employee-planning.html',
+    title: 'Planning salarie',
+    description: 'Salaries, plannings, heures, validations, absences et export paie.',
+    permissions: ['employee_planning.read', 'employee_planning.write'],
+    capabilities: ['planning', 'hours', 'absence_draft', 'manager_validation'],
+  },
+  {
+    domain: 'transformations',
+    module: 'Transformations et negoce',
+    path: '/transformations.html',
+    title: 'Transformations',
+    description: 'Transformations, matieres, produits sortants, rendements, pertes et lots.',
+    permissions: ['transformations.read', 'transformations.write'],
+    capabilities: ['list', 'detail', 'draft', 'validate_confirmed', 'stock_impact'],
+  },
+  {
+    domain: 'quality',
+    module: 'Qualite',
+    path: '/quality/pages/dashboard.html',
+    title: 'Qualite',
+    description: 'Zones, equipements, documents, taches, temperatures, nettoyage et alertes.',
+    permissions: ['quality.read', 'quality.write'],
+    capabilities: ['zones', 'equipments', 'tasks', 'temperatures', 'cleaning', 'attachments'],
+  },
+  {
+    domain: 'quality_documentation',
+    module: 'Dossier agrement sanitaire',
+    path: '/quality/pages/documentation.html',
+    title: 'Dossier d agrement',
+    description: 'Chapitres, versions, tableaux, diagrammes, pieces jointes et export PDF.',
+    permissions: ['quality.documentation.read', 'quality.documentation.edit'],
+    capabilities: ['outline', 'section', 'search', 'missing_items', 'versions', 'preview_update', 'versioned_update'],
+  },
+];
+
+function listModules() {
+  return modules.map((item) => ({ ...item }));
+}
+
+function getModule(domainOrModule) {
+  const needle = String(domainOrModule || '').toLowerCase();
+  return modules.find((item) => item.domain === needle || item.module.toLowerCase() === needle) || null;
+}
+
+module.exports = {
+  listModules,
+  getModule,
+};
