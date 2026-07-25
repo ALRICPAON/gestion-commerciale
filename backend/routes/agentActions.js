@@ -12,6 +12,8 @@ const {
   getPendingAction,
   executePendingAction,
 } = require('../services/agentCommercialToolsService');
+const { listAgentTools } = require('../services/agent/agentToolRegistry');
+const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 
 const router = express.Router();
 
@@ -20,7 +22,58 @@ function handleAgentError(res, error, fallbackMessage) {
   return res.status(500).json({ error: fallbackMessage });
 }
 
+function agentContext(req) {
+  const configured = String(process.env.ALTA_AGENT_PERMISSIONS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return {
+    store_id: req.agentStoreId,
+    user_id: process.env.ALTA_AGENT_USER_ID || null,
+    role: 'agent',
+    permissions: configured.length ? configured : [
+      'agent.use',
+      'clients.read',
+      'suppliers.read',
+      'articles.read',
+      'stock.read',
+      'sales.read',
+      'cashflow.read',
+      'quality.read',
+      'quality.documentation.read',
+      'statistics.read',
+      'pennylane.read',
+      'employee_planning.read',
+      'transformations.read',
+    ],
+    client_key: null,
+    source: 'agent_rest',
+    conversation_id: req.get('x-alta-conversation-id') || null,
+    request_id: req.get('x-request-id') || null,
+  };
+}
+
 router.use(requireAgentApiKey, resolveAgentStore);
+
+router.get('/tools', async (req, res) => {
+  res.json({ tools: listAgentTools() });
+});
+
+router.post('/tools/:name/call', async (req, res) => {
+  try {
+    const result = await executeAgentTool({
+      db: req.dbPool,
+      context: agentContext(req),
+      name: req.params.name,
+      input: req.body || {},
+      confirmed: req.body?.confirmation === 'human_confirmed',
+    });
+    res.json(result);
+  } catch (error) {
+    console.error('Erreur agent tool call :', { tool: req.params.name, message: error.message });
+    handleAgentError(res, error, 'Erreur outil agent');
+  }
+});
 
 router.get('/clients/search', async (req, res) => {
   try {

@@ -228,7 +228,7 @@ function logout() {
 
 function init() {
   els.user.textContent = sessionUser.email || 'Utilisateur';
-  renderMessage('assistant', "Bonjour, je suis l'Agent IA commercial ALTA MAREE. Je peux analyser les donnees disponibles en lecture seule et proposer des actions a confirmer manuellement.");
+  renderMessage('assistant', "Bonjour, je suis l'Agent ALTA. Je consulte les donnees metier avec des outils controles, je distingue les hypotheses des donnees reelles et je demande confirmation avant toute action engageante.");
 
   els.home.addEventListener('click', () => {
     window.location.href = './home.html';

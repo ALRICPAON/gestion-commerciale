@@ -25,6 +25,8 @@ const {
   getPendingAction,
   executePendingAction,
 } = require('../services/agentCommercialToolsService');
+const { listMcpTools } = require('../services/agent/agentToolRegistry');
+const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
@@ -366,7 +368,7 @@ function makeTool({ name, title, description, inputSchema, outputSchema, invokin
   };
 }
 
-const tools = [
+const legacyTools = [
   makeTool({
     name: 'search_clients',
     title: 'Rechercher des clients',
@@ -576,6 +578,43 @@ const toolHandlers = {
   execute_pending_action: executePendingAction,
 };
 
+function mcpAgentContext(req) {
+  const configured = String(process.env.ALTA_AGENT_PERMISSIONS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return {
+    store_id: req.agentStoreId,
+    user_id: process.env.ALTA_AGENT_USER_ID || null,
+    role: 'agent',
+    permissions: configured.length ? configured : [
+      'agent.use',
+      'clients.read',
+      'suppliers.read',
+      'articles.read',
+      'stock.read',
+      'sales.read',
+      'cashflow.read',
+      'quality.read',
+      'quality.documentation.read',
+      'statistics.read',
+      'pennylane.read',
+      'employee_planning.read',
+      'transformations.read',
+    ],
+    source: 'mcp',
+    conversation_id: req.get('x-alta-conversation-id') || null,
+    request_id: req.get('x-request-id') || null,
+  };
+}
+
+const registryTools = listMcpTools();
+const registryToolNames = new Set(registryTools.map((tool) => tool.name));
+const tools = [
+  ...legacyTools.filter((tool) => !registryToolNames.has(tool.name)),
+  ...registryTools,
+];
+
 function jsonRpcResult(id, result) {
   return { jsonrpc: '2.0', id, result };
 }
@@ -690,7 +729,7 @@ async function handleRequest(req, message) {
   if (method === 'tools/call') {
     const toolName = params.name;
     const handler = toolHandlers[toolName];
-    if (!handler) return jsonRpcError(id, -32602, `Outil inconnu : ${toolName || ''}`);
+    if (!handler && !registryToolNames.has(toolName)) return jsonRpcError(id, -32602, `Outil inconnu : ${toolName || ''}`);
 
     try {
       const args = params.arguments || {};
@@ -699,7 +738,15 @@ async function handleRequest(req, message) {
         store_id: req.agentStoreId,
         has_query: Boolean(args.query),
       });
-      const payload = await handler(req.dbPool, req.agentStoreId, args);
+      const payload = registryToolNames.has(toolName)
+        ? await executeAgentTool({
+          db: req.dbPool,
+          context: mcpAgentContext(req),
+          name: toolName,
+          input: args,
+          confirmed: args.confirmation === 'human_confirmed',
+        })
+        : await handler(req.dbPool, req.agentStoreId, args);
       console.log('MCP ALTA tool success', {
         tool: toolName,
         result_count: Array.isArray(payload?.results) ? payload.results.length : undefined,
