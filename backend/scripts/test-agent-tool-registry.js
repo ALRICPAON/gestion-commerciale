@@ -41,6 +41,8 @@ function main() {
   const readTool = tools.find((tool) => tool.name === 'prepare_cashflow_plan');
   assert(readTool, 'prepare_cashflow_plan manquant');
   assert(mcpNames.has('prepare_cashflow_plan'), 'prepare_cashflow_plan non expose au modele');
+  assert(mcpNames.has('get_cashflow_data_sources'), 'get_cashflow_data_sources non expose au modele');
+  assert(mcpNames.has('get_distrimer_exposure'), 'get_distrimer_exposure non expose au modele');
   assert(mcpNames.has('draft_quality_section'), 'draft_quality_section non expose au modele');
   assert(!mcpNames.has('update_article_price'), 'Outil planned expose au modele');
 

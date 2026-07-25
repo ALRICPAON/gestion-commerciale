@@ -193,7 +193,7 @@ const tools = [
   tool({
     name: 'search_stock',
     title: 'Rechercher stock',
-    description: 'Recherche le stock et les lots du magasin courant.',
+    description: 'Recherche le stock et les lots du magasin courant. Ne pas utiliser pour établir une prévision globale de trésorerie: utiliser prepare_cashflow_plan.',
     domain: 'stock',
     riskLevel: RISK_LEVELS.READ,
     requiredPermission: 'stock.read',
@@ -204,7 +204,7 @@ const tools = [
   tool({
     name: 'search_suppliers',
     title: 'Rechercher fournisseurs',
-    description: 'Recherche les fournisseurs du magasin courant.',
+    description: 'Recherche les fournisseurs du magasin courant. Ne pas utiliser pour établir une prévision globale de trésorerie: utiliser prepare_cashflow_plan.',
     domain: 'suppliers',
     riskLevel: RISK_LEVELS.READ,
     requiredPermission: 'suppliers.read',
@@ -215,7 +215,7 @@ const tools = [
   tool({
     name: 'search_sales',
     title: 'Rechercher ventes',
-    description: 'Recherche commandes, BL, factures et lignes de vente.',
+    description: 'Recherche commandes, BL, factures et lignes de vente. Ne pas utiliser pour établir une prévision globale de trésorerie: utiliser prepare_cashflow_plan.',
     domain: 'sales',
     riskLevel: RISK_LEVELS.READ,
     requiredPermission: 'sales.read',
@@ -527,7 +527,7 @@ const tools = [
   tool({
     name: 'prepare_cashflow_plan',
     title: 'Plan de tresorerie',
-    description: 'Produit un plan structure avec hypotheses, point bas, dates critiques et recommandations.',
+    description: 'Outil obligatoire et prioritaire pour toute prévision ou analyse globale de trésorerie. Retourne directement la projection ALTA consolidée. Ne pas utiliser les outils génériques de recherche ventes, stock ou fournisseurs pour reconstruire cette projection.',
     domain: 'cashflow',
     riskLevel: RISK_LEVELS.READ,
     requiredPermission: 'cashflow.read',

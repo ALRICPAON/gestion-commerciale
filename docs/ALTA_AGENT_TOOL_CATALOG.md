@@ -56,3 +56,5 @@ Etat actuel:
 | `execute_quality_section_update` | quality_documentation | `qualityDocumentationService.updateSection` | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | pending action persistante |
 
 Les outils encore `planned` correspondent aux domaines ou ecritures dont le service metier explicite reste a raccorder sans dupliquer les regles existantes.
+
+Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
