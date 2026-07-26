@@ -44,6 +44,26 @@ function main() {
   assert(mcpNames.has('list_executable_actions'), 'list_executable_actions non expose au modele');
   assert(mcpNames.has('execute_business_action'), 'execute_business_action non expose au modele');
   assert(mcpNames.has('quality.documentation.apply_section_updates'), 'quality.documentation.apply_section_updates non expose au modele');
+  const blockToolNames = [
+    'quality.documentation.update_text_block',
+    'quality.documentation.add_text_block',
+    'quality.documentation.add_table_block',
+    'quality.documentation.add_diagram_block',
+    'quality.documentation.delete_block',
+    'quality.documentation.move_block',
+  ];
+  for (const name of blockToolNames) {
+    const publicTool = mcpTools.find((tool) => tool.name === name);
+    assert(publicTool, `${name} non expose dans le catalogue MCP public`);
+    assert(publicTool.inputSchema?.type === 'object', `${name} schema public invalide`);
+    assert(publicTool._meta?.requiredPermission === 'quality.documentation.edit', `${name} permission publique invalide`);
+  }
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_text_block').inputSchema.properties.section_code, 'add_text_block doit accepter section_code');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_table_block').inputSchema.properties.columns, 'add_table_block doit exposer columns');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_table_block').inputSchema.properties.rows, 'add_table_block doit exposer rows');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_diagram_block').inputSchema.properties.nodes, 'add_diagram_block doit exposer nodes');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_diagram_block').inputSchema.properties.connections, 'add_diagram_block doit exposer connections');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.move_block').inputSchema.properties.block_ids, 'move_block doit exposer block_ids');
   assert(mcpNames.has('get_cashflow_data_sources'), 'get_cashflow_data_sources non expose au modele');
   assert(mcpNames.has('get_distrimer_exposure'), 'get_distrimer_exposure non expose au modele');
   assert(mcpNames.has('draft_quality_section'), 'draft_quality_section non expose au modele');

@@ -101,4 +101,6 @@ Pour les chapitres ayant des blocs structures, `quality_document_blocks` est la 
 - `quality.documentation.delete_block`;
 - `quality.documentation.move_block`.
 
-Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, et le Trusted Owner Mode est expose en `1.8.0`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
+Ces six operations sont aussi exposees comme outils MCP publics appelables directement par le client connecte, avec schemas d entree dedies. Elles ne sont pas seulement visibles dans `list_executable_actions`.
+
+Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, le Trusted Owner Mode est expose en `1.8.0`, et les outils MCP publics de blocs qualite sont exposes en `1.8.1`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.

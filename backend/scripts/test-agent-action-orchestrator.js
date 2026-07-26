@@ -75,6 +75,9 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
     failedMarked: false,
     statusUpdates: [],
     versions: [],
+    tableId: 1,
+    blockId: 2,
+    tables: new Map(),
     blocks: new Map([
       ['block-1', { id: 'block-1', store_id: 'store-1', collection_id: 'collection-1', chapter_id: 'section-1', block_type: 'rich_text', position: 10, title: 'Texte du chapitre', content: { html: '<p>Ancien bloc</p>', source: 'legacy_content_html' }, is_visible: true }],
     ]),
@@ -107,16 +110,38 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
         state.statusUpdates.push('executing');
         return { rows: [{ ...pending, status: 'executing' }] };
       }
-      if (compact.includes('FROM quality_documentation_sections') && compact.includes('LIMIT 1')) {
+      if (compact.includes('FROM quality_documentation_sections') && compact.includes('id = $1 AND store_id = $2')) {
         const section = state.sections.get(params[0]);
         return { rows: section && section.store_id === params[1] ? [section] : [] };
       }
-      if (compact.includes('FROM quality_document_blocks') && compact.includes('chapter_id = $2')) {
+      if (compact.includes('FROM quality_documentation_sections') && compact.includes('COALESCE(code')) {
+        const exact = String(params[1] || '').toLowerCase();
+        const like = String(params[2] || params[1] || '').replace(/%/g, '').toLowerCase();
+        return { rows: [...state.sections.values()].filter((section) => section.store_id === params[0] && (
+          String(section.id).toLowerCase() === exact ||
+          String(section.code || '').toLowerCase() === exact ||
+          [section.title, section.content_text].join(' ').toLowerCase().includes(like)
+        )).slice(0, 1) };
+      }
+      if (compact.startsWith('SELECT COALESCE(MAX(position)')) {
+        const max = [...state.blocks.values()]
+          .filter((block) => block.store_id === params[0] && block.chapter_id === params[1])
+          .reduce((value, block) => Math.max(value, Number(block.position || 0)), 0);
+        return { rows: [{ next_position: max + 10 }] };
+      }
+      if (compact.startsWith('SELECT') && compact.includes('FROM quality_document_blocks') && compact.includes('chapter_id = $2')) {
         return { rows: [...state.blocks.values()].filter((block) => block.store_id === params[0] && block.chapter_id === params[1]).sort((a, b) => a.position - b.position) };
       }
-      if (compact.includes('FROM quality_document_blocks') && compact.includes('id = $1')) {
+      if (compact.startsWith('SELECT') && compact.includes('FROM quality_document_blocks') && compact.includes('id = $1')) {
         const block = state.blocks.get(params[0]);
         return { rows: block && block.store_id === params[1] ? [block] : [] };
+      }
+      if (compact.startsWith('UPDATE quality_document_blocks SET position')) {
+        const block = state.blocks.get(params[0]);
+        if (block && block.store_id === params[1]) {
+          state.blocks.set(block.id, { ...block, position: params[2] });
+        }
+        return { rows: [] };
       }
       if (compact.startsWith('UPDATE quality_document_blocks')) {
         const block = state.blocks.get(params[0]);
@@ -125,6 +150,27 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
         const updated = { ...block, content, title: compact.includes('title = COALESCE') ? (params[2] || block.title) : block.title };
         state.blocks.set(block.id, updated);
         return { rows: [updated] };
+      }
+      if (compact.startsWith('INSERT INTO quality_document_blocks')) {
+        const id = `block-${state.blockId++}`;
+        const block = {
+          id,
+          store_id: params[0],
+          collection_id: params[1],
+          chapter_id: params[2],
+          block_type: params[3],
+          position: params[4],
+          title: params[5],
+          content: JSON.parse(params[6]),
+          is_visible: params[7],
+        };
+        state.blocks.set(id, block);
+        return { rows: [block] };
+      }
+      if (compact.startsWith('DELETE FROM quality_document_blocks')) {
+        const block = state.blocks.get(params[0]);
+        if (block && block.store_id === params[1]) state.blocks.delete(params[0]);
+        return { rows: [] };
       }
       if (compact.startsWith('UPDATE quality_documentation_sections') && compact.includes('content_html = $3') && compact.includes('content_text = $4')) {
         const before = state.sections.get(params[0]);
@@ -161,9 +207,28 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
       if (compact.includes('FROM quality_documentation_versions')) {
         return { rows: state.versions.filter((version) => version.section_id === params[1]) };
       }
-      if (compact.includes('FROM quality_document_tables') || compact.includes('FROM quality_document_diagrams') || compact.includes('FROM quality_documentation_attachments')) {
+      if (compact.startsWith('INSERT INTO quality_document_tables')) {
+        const table = {
+          id: `table-${state.tableId++}`,
+          store_id: params[0],
+          collection_id: params[1],
+          section_id: params[2],
+          block_id: params[3],
+          title: params[4],
+          table_type: params[5],
+          schema_version: 1,
+          table_data: JSON.parse(params[6]),
+        };
+        state.tables.set(table.id, table);
+        return { rows: [table] };
+      }
+      if (compact.includes('FROM quality_document_tables')) {
+        return { rows: [...state.tables.values()].filter((table) => table.store_id === params[0] && table.section_id === params[1]) };
+      }
+      if (compact.includes('FROM quality_document_diagrams') || compact.includes('FROM quality_documentation_attachments')) {
         return { rows: [] };
       }
+      if (compact.startsWith('INSERT INTO quality_event_logs')) return { rows: [{ id: 'event-1' }] };
       throw new Error(`Requete non simulee: ${compact}`);
     },
     release() {},
@@ -174,7 +239,7 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
     async connect() {
       return client;
     },
-    async query(sql) {
+    async query(sql, params = []) {
       const compact = sql.replace(/\s+/g, ' ').trim();
       if (compact.startsWith('INSERT INTO agent_tool_audit_logs')) {
         state.auditStarted = true;
@@ -191,7 +256,7 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
         state.failedMarked = true;
         return { rows: [] };
       }
-      throw new Error('Pool query inattendue');
+      return client.query(sql, params);
     },
   };
 }
@@ -487,6 +552,68 @@ async function main() {
     attachments: [],
   }, { company_name: 'ALTA MAREE' }, {});
   assert.equal(pdfHtml.includes('commercial@altamaree.fr'), true, 'HTML PDF doit utiliser le bloc a jour');
+
+  const publicBlockPool = makePool();
+  const publicContext = makeContext({
+    trusted_mode: true,
+    user_permissions: ['agent.use', 'mcp.execute', 'quality.documentation.read', 'quality.documentation.edit'],
+    agent_permissions: ['agent.use', 'mcp.execute', 'quality.documentation.read', 'quality.documentation.edit'],
+  });
+  const textToolResult = await executeAgentTool({
+    db: publicBlockPool,
+    context: publicContext,
+    name: 'quality.documentation.add_text_block',
+    input: { section_code: 'T1-C1', html: '<p>Bloc test MCP public</p>', position: 20 },
+    confirmed: true,
+  });
+  const tableToolResult = await executeAgentTool({
+    db: publicBlockPool,
+    context: publicContext,
+    name: 'quality.documentation.add_table_block',
+    input: {
+      chapter_id: 'section-1',
+      title: 'Table test MCP public',
+      position: 30,
+      columns: [{ id: 'point', label: 'Point' }, { id: 'valeur', label: 'Valeur' }],
+      rows: [{ cells: { point: 'Email', valeur: 'test@example.invalid' } }],
+    },
+    confirmed: true,
+  });
+  const textBlockId = textToolResult.data.execution_result.block.id;
+  const tableBlockId = tableToolResult.data.execution_result.block.id;
+  const listedBlocks = await executeAgentTool({
+    db: publicBlockPool,
+    context: publicContext,
+    name: 'get_quality_section_blocks',
+    input: { section_id: 'section-1' },
+  });
+  const blocks = listedBlocks.data.blocks;
+  assert(blocks.some((block) => block.id === textBlockId && block.block_type === 'rich_text'), 'bloc texte public relu attendu');
+  assert(blocks.some((block) => block.id === tableBlockId && block.block_type === 'document_table'), 'bloc tableau public relu attendu');
+  assert.deepEqual(blocks.map((block) => block.id), ['block-1', textBlockId, tableBlockId], 'ordre blocs public attendu');
+  const deleteTableResult = await executeAgentTool({
+    db: publicBlockPool,
+    context: publicContext,
+    name: 'quality.documentation.delete_block',
+    input: { block_id: tableBlockId },
+    confirmed: true,
+  });
+  assert.equal(deleteTableResult.data.mode, 'executed', 'suppression tableau executee attendue');
+  const deleteTextResult = await executeAgentTool({
+    db: publicBlockPool,
+    context: publicContext,
+    name: 'quality.documentation.delete_block',
+    input: { block_id: textBlockId },
+    confirmed: true,
+  });
+  assert.equal(deleteTextResult.data.mode, 'executed', 'suppression texte executee attendue');
+  const afterDelete = await executeAgentTool({
+    db: publicBlockPool,
+    context: publicContext,
+    name: 'get_quality_section_blocks',
+    input: { section_id: 'section-1' },
+  });
+  assert.equal(afterDelete.data.blocks.some((block) => block.id === textBlockId || block.id === tableBlockId), false, 'blocs de test supprimes attendus');
 
   const forbiddenNames = new Set(['execute_sql', 'call_any_route', 'delete_anything', 'update_any_table', 'run_shell_command', 'read_env', 'read_backend_env']);
   const names = new Set(listAgentTools().map((tool) => tool.name));

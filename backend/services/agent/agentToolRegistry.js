@@ -54,6 +54,44 @@ async function findQualitySection(db, storeId, input = {}) {
   return qualityContext.findQualitySection(db, storeId, input);
 }
 
+async function resolveQualitySectionId(db, storeId, input = {}) {
+  if (input.chapter_id) return input.chapter_id;
+  if (input.section_id) return input.section_id;
+  const section = await findQualitySection(db, storeId, {
+    section_id: input.section_id,
+    code: input.section_code || input.code,
+    query: input.query,
+  });
+  if (!section?.id) {
+    const error = new Error('Chapitre qualite introuvable: fournir chapter_id, section_id ou section_code');
+    error.status = 404;
+    error.expose = true;
+    throw error;
+  }
+  return section.id;
+}
+
+function tableDataFromInput(input = {}) {
+  return {
+    title: input.title,
+    columns: input.columns,
+    rows: input.rows,
+    header: input.header,
+  };
+}
+
+function diagramDataFromInput(input = {}) {
+  return {
+    title: input.title,
+    orientation: input.orientation,
+    nodes: input.nodes,
+    edges: input.edges || input.connections,
+    editor_mode: input.editor_mode,
+    source: input.source,
+    rendered_svg: input.rendered_svg,
+  };
+}
+
 async function qualityOutline(db, storeId, input = {}) {
   const docs = await qualityDocumentation.listDocumentation(db, storeId);
   const collectionId = input.collection_id || docs[0]?.id;
@@ -669,6 +707,216 @@ const tools = [
     execute: async ({ db, context, input, tool: currentTool }) => {
       const data = await qualityContext.getQualitySectionContext(db, context.store_id, input);
       return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Blocs chapitre qualite', data: { section: data?.section || null, blocks: data?.blocks || [] } });
+    },
+  }),
+  tool({
+    name: 'quality.documentation.update_text_block',
+    title: 'Modifier bloc texte qualite',
+    description: 'Met a jour un bloc rich_text structure d un chapitre qualite. Utilise le service blocs, synchronise content_html, conserve ordre, historique et audit.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: {
+      type: 'object',
+      required: ['block_id', 'html'],
+      properties: {
+        block_id: { type: 'string', description: 'UUID du bloc rich_text a modifier.' },
+        html: { type: 'string', description: 'HTML du contenu texte structure.' },
+        title: { type: 'string', description: 'Titre optionnel du bloc.' },
+        confirmation: { type: 'string', enum: ['human_confirmed'] },
+      },
+      additionalProperties: false,
+    },
+    execute: async ({ db, context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Bloc texte qualite mis a jour',
+      data: await executeExecutableActionDirect({ dbPool: db, context, actionType: currentTool.name, payload: input }),
+    }),
+  }),
+  tool({
+    name: 'quality.documentation.add_text_block',
+    title: 'Ajouter bloc texte qualite',
+    description: 'Ajoute un bloc rich_text structure a un chapitre qualite. Accepte chapter_id, section_id ou section_code.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: {
+      type: 'object',
+      required: ['html'],
+      properties: {
+        chapter_id: { type: 'string', description: 'UUID du chapitre cible.' },
+        section_id: { type: 'string', description: 'Alias de chapter_id.' },
+        section_code: { type: 'string', description: 'Code du chapitre, par exemple T1-C01.' },
+        html: { type: 'string', description: 'HTML du contenu texte.' },
+        title: { type: 'string' },
+        position: { type: 'number', description: 'Position numerique optionnelle.' },
+        confirmation: { type: 'string', enum: ['human_confirmed'] },
+      },
+      additionalProperties: false,
+    },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const chapterId = await resolveQualitySectionId(db, context.store_id, input);
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Bloc texte qualite ajoute',
+        data: await executeExecutableActionDirect({ dbPool: db, context, actionType: currentTool.name, payload: { ...input, chapter_id: chapterId } }),
+      });
+    },
+  }),
+  tool({
+    name: 'quality.documentation.add_table_block',
+    title: 'Ajouter bloc tableau qualite',
+    description: 'Ajoute un bloc tableau structure a un chapitre qualite. Fournir chapter_id/section_id/section_code, colonnes et lignes.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: {
+      type: 'object',
+      required: ['columns'],
+      properties: {
+        chapter_id: { type: 'string' },
+        section_id: { type: 'string' },
+        section_code: { type: 'string' },
+        title: { type: 'string' },
+        position: { type: 'number' },
+        header: { type: 'boolean' },
+        columns: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['label'],
+            properties: { id: { type: 'string' }, label: { type: 'string' }, alignment: { type: 'string', enum: ['left', 'center', 'right'] }, width: { type: 'number' } },
+            additionalProperties: false,
+          },
+        },
+        rows: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        confirmation: { type: 'string', enum: ['human_confirmed'] },
+      },
+      additionalProperties: false,
+    },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const chapterId = await resolveQualitySectionId(db, context.store_id, input);
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Bloc tableau qualite ajoute',
+        data: await executeExecutableActionDirect({
+          dbPool: db,
+          context,
+          actionType: currentTool.name,
+          payload: { chapter_id: chapterId, title: input.title, position: input.position, content: { table_data: tableDataFromInput(input) } },
+        }),
+      });
+    },
+  }),
+  tool({
+    name: 'quality.documentation.add_diagram_block',
+    title: 'Ajouter bloc diagramme qualite',
+    description: 'Ajoute un bloc diagramme structure a un chapitre qualite. Fournir nodes et connections, ou source Mermaid en editor_mode mermaid.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chapter_id: { type: 'string' },
+        section_id: { type: 'string' },
+        section_code: { type: 'string' },
+        title: { type: 'string' },
+        position: { type: 'number' },
+        orientation: { type: 'string', enum: ['vertical', 'horizontal'] },
+        editor_mode: { type: 'string', enum: ['structured', 'mermaid'] },
+        nodes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: ['label'],
+            properties: { id: { type: 'string' }, label: { type: 'string' }, type: { type: 'string' }, description: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } },
+            additionalProperties: true,
+          },
+        },
+        connections: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, label: { type: 'string' } }, additionalProperties: true } },
+        edges: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        source: { type: 'string', description: 'Source Mermaid si editor_mode vaut mermaid.' },
+        rendered_svg: { type: 'string', description: 'SVG Mermaid prerendu optionnel.' },
+        confirmation: { type: 'string', enum: ['human_confirmed'] },
+      },
+      additionalProperties: false,
+    },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const chapterId = await resolveQualitySectionId(db, context.store_id, input);
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Bloc diagramme qualite ajoute',
+        data: await executeExecutableActionDirect({
+          dbPool: db,
+          context,
+          actionType: currentTool.name,
+          payload: { chapter_id: chapterId, title: input.title, position: input.position, content: { diagram_data: diagramDataFromInput(input), editor_mode: input.editor_mode } },
+        }),
+      });
+    },
+  }),
+  tool({
+    name: 'quality.documentation.delete_block',
+    title: 'Supprimer bloc qualite',
+    description: 'Supprime un bloc structure de documentation qualite via le service blocs, avec historique et audit.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: {
+      type: 'object',
+      required: ['block_id'],
+      properties: {
+        block_id: { type: 'string', description: 'UUID du bloc a supprimer.' },
+        confirmation: { type: 'string', enum: ['human_confirmed'] },
+      },
+      additionalProperties: false,
+    },
+    execute: async ({ db, context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Bloc qualite supprime',
+      data: await executeExecutableActionDirect({ dbPool: db, context, actionType: currentTool.name, payload: input }),
+    }),
+  }),
+  tool({
+    name: 'quality.documentation.move_block',
+    title: 'Reordonner blocs qualite',
+    description: 'Reordonne les blocs structures d un chapitre qualite. block_ids doit contenir l ordre complet.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: {
+      type: 'object',
+      required: ['block_ids'],
+      properties: {
+        chapter_id: { type: 'string' },
+        section_id: { type: 'string' },
+        section_code: { type: 'string' },
+        block_ids: { type: 'array', minItems: 1, items: { type: 'string' }, description: 'Ordre complet des blocs du chapitre.' },
+        confirmation: { type: 'string', enum: ['human_confirmed'] },
+      },
+      additionalProperties: false,
+    },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const chapterId = await resolveQualitySectionId(db, context.store_id, input);
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Blocs qualite reordonnes',
+        data: await executeExecutableActionDirect({ dbPool: db, context, actionType: currentTool.name, payload: { ...input, chapter_id: chapterId } }),
+      });
     },
   }),
   tool({

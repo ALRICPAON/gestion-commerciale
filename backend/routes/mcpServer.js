@@ -31,7 +31,7 @@ const { envTrustedMode } = require('../services/agent/agentTrustedMode');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
-const MCP_SERVER_VERSION = '1.8.0';
+const MCP_SERVER_VERSION = '1.8.1';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
@@ -741,6 +741,7 @@ async function handleRequest(req, message) {
         'Pour executer une action metier, utilise uniquement une action exposee par list_executable_actions, cree une pending action, puis appelle execute_pending_action apres confirmation explicite de l utilisateur.',
         'Une execution exige toujours mcp.execute ET la permission metier de l action; ne simule jamais un clic frontend.',
         'Pour la documentation qualite, le type canonique de pending action est quality.documentation.apply_section_updates.',
+        'Pour modifier des chapitres qualite avec blocs structures, utilise les outils directs quality.documentation.update_text_block, quality.documentation.add_text_block, quality.documentation.add_table_block, quality.documentation.add_diagram_block, quality.documentation.delete_block ou quality.documentation.move_block.',
         'Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec un action_type exact expose par list_executable_actions puis execute_pending_action après confirmation.',
         'Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement et ne doit jamais etre marquee executee sans resultat metier reel.',
         'Après modification du catalogue MCP, reconnecter le client si la notification tools/list_changed n’est pas consommée par le client.',
@@ -759,6 +760,14 @@ async function handleRequest(req, message) {
       count: tools.length,
       has_prepare_cashflow_plan: tools.some((tool) => tool.name === 'prepare_cashflow_plan'),
       has_cashflow_sources: tools.some((tool) => tool.name === 'get_cashflow_data_sources'),
+      has_quality_block_tools: [
+        'quality.documentation.update_text_block',
+        'quality.documentation.add_text_block',
+        'quality.documentation.add_table_block',
+        'quality.documentation.add_diagram_block',
+        'quality.documentation.delete_block',
+        'quality.documentation.move_block',
+      ].every((name) => tools.some((tool) => tool.name === name)),
       names: tools.map(t => t.name),
     });
     return jsonRpcResult(id, { tools });
