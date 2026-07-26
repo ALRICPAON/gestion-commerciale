@@ -1,7 +1,6 @@
 const commercial = require('../agentCommercialToolsService');
 const qualityDocumentation = require('../quality/qualityDocumentationService');
 const qualityVersions = require('../quality/qualityDocumentationVersionService');
-const { stripHtml } = require('../quality/qualityDocumentationTemplateService');
 
 function text(value) {
   return String(value || '').trim();
@@ -104,7 +103,6 @@ async function executeQualityDocumentationBatch({ db, context, payload, pendingA
       context.user_id,
       {
         ...update,
-        content_text: stripHtml(update.content_html || ''),
         change_summary: `${update.change_summary} (${pendingAction.id})`,
       }
     );
@@ -117,11 +115,19 @@ async function executeQualityDocumentationBatch({ db, context, payload, pendingA
       before: {
         content_html: before.content_html || '',
         status: before.status || null,
+        version: before.version || null,
       },
       after: {
         content_html: section.content_html || '',
         status: section.status || null,
+        version: section.version || null,
       },
+      version_before: before.version || null,
+      version_after: section.version || null,
+      status: section.status || null,
+      version_behavior: before.version === section.version
+        ? 'Modification de brouillon: le service conserve la version du chapitre tant qu une nouvelle version metier n est pas fournie ou qu une validation/publication ne la modifie pas.'
+        : 'Version du chapitre modifiee par le service metier.',
     });
   }
 

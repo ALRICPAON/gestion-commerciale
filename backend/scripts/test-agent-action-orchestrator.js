@@ -1,4 +1,5 @@
 const assert = require('assert');
+const qualityDocumentation = require('../services/quality/qualityDocumentationService');
 const { payloadHash } = require('../services/agent/agentPendingActionService');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 const { listAgentTools } = require('../services/agent/agentToolRegistry');
@@ -161,6 +162,16 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
       }
       throw new Error('Pool query inattendue');
     },
+  };
+}
+
+function comparableSection(section) {
+  return {
+    id: section.id,
+    content_html: section.content_html,
+    content_text: section.content_text,
+    status: section.status,
+    version: section.version,
   };
 }
 
@@ -382,6 +393,45 @@ async function main() {
     payload: validPayload,
   });
   assert.equal(direct.execution_result.modified_count, 1, 'execution directe allowlistee attendue');
+  assert.equal(direct.execution_result.modified_sections[0].version_before, '1.0', 'version avant attendue');
+  assert.equal(direct.execution_result.modified_sections[0].version_after, '1.0', 'version apres conservee attendue');
+  assert.equal(direct.execution_result.modified_sections[0].status, 'draft', 'statut brouillon attendu');
+  assert(direct.execution_result.modified_sections[0].version_behavior.includes('Modification de brouillon'), 'note version brouillon attendue');
+
+  const servicePool = makePool();
+  const mcpPool = makePool();
+  const serviceClient = await servicePool.connect();
+  const serviceSection = await qualityDocumentation.updateSection(
+    serviceClient,
+    'store-1',
+    'section-1',
+    'user-1',
+    {
+      content_html: '<p>Comparaison service</p>',
+      change_summary: 'Comparaison service normal',
+    }
+  );
+  const mcpResult = await executeExecutableActionDirect({
+    dbPool: mcpPool,
+    context: makeContext({ trusted_mode: true, user_permissions: [], agent_permissions: [] }),
+    actionType: 'quality.documentation.apply_section_updates',
+    payload: {
+      updates: [{
+        section_id: 'section-1',
+        content_html: '<p>Comparaison service</p>',
+        change_summary: 'Comparaison service normal',
+      }],
+    },
+  });
+  const mcpSection = mcpPool.state.sections.get('section-1');
+  assert.deepEqual(
+    comparableSection(mcpSection),
+    comparableSection(serviceSection),
+    `service normal et action MCP doivent produire la meme section: ${JSON.stringify({ service: comparableSection(serviceSection), mcp: comparableSection(mcpSection) })}`
+  );
+  assert.equal(servicePool.state.versions.length, mcpPool.state.versions.length, 'meme nombre de versions attendu');
+  assert.equal(servicePool.state.versions.length, 1, 'historique version attendu');
+  serviceClient.release();
 
   const forbiddenNames = new Set(['execute_sql', 'call_any_route', 'delete_anything', 'update_any_table', 'run_shell_command', 'read_env', 'read_backend_env']);
   const names = new Set(listAgentTools().map((tool) => tool.name));
