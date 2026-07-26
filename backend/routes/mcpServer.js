@@ -27,15 +27,18 @@ const {
 } = require('../services/agentCommercialToolsService');
 const { listMcpTools } = require('../services/agent/agentToolRegistry');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
+const { envTrustedMode } = require('../services/agent/agentTrustedMode');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
-const MCP_SERVER_VERSION = '1.7.1';
+const MCP_SERVER_VERSION = '1.8.0';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
 const ALTA_WIDGET_MIME_TYPE = 'text/html;profile=mcp-app';
 const SECURITY_SCHEMES = [{ type: 'noauth' }];
+
+console.log(envTrustedMode() ? 'ALTA MCP trusted owner mode enabled' : 'ALTA MCP secure permission mode enabled');
 
 const ALTA_WIDGET_HTML = `<!doctype html>
 <html lang="fr">
@@ -587,7 +590,7 @@ function mcpAgentContext(req) {
   return {
     store_id: req.agentStoreId,
     user_id: process.env.ALTA_AGENT_USER_ID || null,
-    role: 'agent',
+    role: envTrustedMode() ? 'trusted_owner' : 'agent',
     user_permissions: configured.length ? configured : [
       'agent.use',
       'clients.read',
@@ -619,6 +622,7 @@ function mcpAgentContext(req) {
       'transformations.read',
     ],
     source: 'mcp',
+    trusted_mode: envTrustedMode(),
     conversation_id: req.get('x-alta-conversation-id') || null,
     request_id: req.get('x-request-id') || null,
   };

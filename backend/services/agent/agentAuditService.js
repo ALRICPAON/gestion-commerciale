@@ -1,4 +1,5 @@
 const SENSITIVE_KEY_PATTERN = /(secret|token|password|apikey|api_key|authorization|jwt|pennylane_key|openai_key|iban|bic)/i;
+const { isTrustedOwnerMode, trustedModeLabel } = require('./agentTrustedMode');
 
 function maskSensitive(value, depth = 0) {
   if (depth > 8) return '[TRUNCATED]';
@@ -17,7 +18,11 @@ function summarizePayload(value) {
 
 async function startAuditLog({ db, context, tool, input }) {
   if (!db?.query) return null;
-  const masked = maskSensitive(input || {});
+  const masked = maskSensitive({
+    ...(input || {}),
+    _agent_mode: trustedModeLabel(context),
+    trusted_mode: isTrustedOwnerMode(context),
+  });
   try {
     const result = await db.query(
       `INSERT INTO agent_tool_audit_logs

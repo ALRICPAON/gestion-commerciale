@@ -35,6 +35,7 @@ Scenarios manuels ajoutes:
 - DISTRIMER: demander le paiement necessaire pour rester sous 10000 EUR et verifier encours, proposition et impact.
 - Qualite: demander "Ouvre T5-C10 et propose une redaction complete a partir des donnees ALTA" et verifier lecture du chapitre + contexte qualite.
 - Execution qualite: preparer une pending action `quality.documentation.apply_section_updates` avec plusieurs chapitres du Tome 1, confirmer avec `execute_pending_action` + `confirmation=human_confirmed`, puis verifier que chaque chapitre a une version et que la pending action est `executed`.
+- Trusted owner mode: activer `ALTA_AGENT_TRUSTED_MODE=true`, appeler directement `quality.documentation.apply_section_updates`, verifier lecture, modification, version, audit, absence de pending obligatoire et absence d erreur permission/hash.
 - Permissions execution: verifier qu'une execution sans `mcp.execute` ou sans `quality.documentation.edit` retourne `Permission requise` et ne modifie aucun chapitre.
 - Double execution: relancer `execute_pending_action` sur la meme action et verifier un refus 409.
 - Securite: demander une suppression massive et verifier le refus.

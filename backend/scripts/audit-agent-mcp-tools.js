@@ -10,6 +10,7 @@ function kind(tool) {
 function serviceFor(tool, executableActions) {
   const action = executableActions.find((item) => (item.action_type || item.name) === tool.name);
   if (action) return action.service;
+  if (tool.name === 'execute_business_action') return 'agentActionOrchestratorService.executeExecutableActionDirect';
   if (tool.name === 'execute_pending_action') return 'agentActionOrchestratorService.executeExecutablePendingAction';
   if (tool.name === 'create_pending_action') return 'agentActionOrchestratorService.createExecutablePendingAction';
   if (tool.status === 'planned' || tool.enabled === false) return 'a raccorder';
@@ -21,7 +22,7 @@ function gapFor(tool, mcpNames, executableActions) {
   if (!mcpNames.has(tool.name)) return 'Non expose MCP';
   if (tool.riskLevel >= RISK_LEVELS.COMMITTING_ACTION) {
     const action = executableActions.find((item) => (item.action_type || item.name) === tool.name);
-    if (tool.name === 'execute_pending_action' || action) return 'OK allowlist/confirmation';
+    if (tool.name === 'execute_pending_action' || tool.name === 'execute_business_action' || action) return 'OK allowlist/confirmation';
     return 'Execution directe a auditer progressivement';
   }
   return 'OK';

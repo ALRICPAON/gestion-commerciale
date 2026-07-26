@@ -1,13 +1,22 @@
 const crypto = require('crypto');
+const { isTrustedOwnerMode } = require('./agentTrustedMode');
 
 const DEFAULT_TTL_MINUTES = 60;
 
-function stableStringify(value) {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+function canonicalize(value) {
+  if (value === undefined || value === null) return null;
+  if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    return Object.keys(value).sort().reduce((acc, key) => {
+      acc[key] = canonicalize(value[key]);
+      return acc;
+    }, {});
   }
-  return JSON.stringify(value);
+  return value;
+}
+
+function stableStringify(value) {
+  return JSON.stringify(canonicalize(value));
 }
 
 function payloadHash(payload) {
@@ -81,7 +90,7 @@ async function loadPendingActionForExecution({ db, context, id }) {
     throw error;
   }
   const frozenPayload = action.frozen_payload || action.payload || {};
-  if (action.payload_hash && payloadHash(frozenPayload) !== action.payload_hash) {
+  if (!isTrustedOwnerMode(context) && action.payload_hash && payloadHash(frozenPayload) !== action.payload_hash) {
     const error = new Error('Empreinte payload invalide');
     error.status = 409;
     error.expose = true;
@@ -121,6 +130,7 @@ async function markPendingActionError({ db, id, error }) {
 
 module.exports = {
   createAgentPendingAction,
+  canonicalize,
   loadPendingActionForExecution,
   markPendingActionError,
   markPendingActionExecuted,

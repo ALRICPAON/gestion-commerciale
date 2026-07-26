@@ -22,7 +22,7 @@ Outils raccordes dans ce socle:
 
 - navigation: `list_available_modules`, `get_module_capabilities`, `get_module_help`, `find_feature_in_alta`, `get_user_permissions`, `explain_current_screen`;
 - lecture commerciale: `search_clients`, `search_articles`, `search_stock`, `search_suppliers`, `search_sales`;
-- actions differees: `create_pending_action`, `execute_pending_action`;
+- actions differees/directes: `create_pending_action`, `execute_pending_action`, `execute_business_action`;
 - registre execution: `list_executable_actions`;
 - tresorerie: `get_cashflow_dashboard`, `get_cashflow_forecast`, `get_customer_receivables`, `get_supplier_payables`, `get_bank_accounts_summary`, `get_bank_transactions`, `get_recurring_charges`, `get_cashflow_settings`, `simulate_distrimer_payment`, `prepare_cashflow_plan`;
 - dossier qualite: `list_quality_documentation`, `get_quality_documentation_outline`, `get_quality_section`, `search_quality_sections`, `list_quality_missing_items`, `get_quality_section_versions`, `draft_quality_section_content`, `preview_quality_section_update`, `update_quality_section`, `create_quality_section`, `restore_quality_section_version`, `list_quality_section_tables`, `list_quality_section_diagrams`, `export_quality_documentation_preview`;
@@ -30,8 +30,8 @@ Outils raccordes dans ce socle:
 
 Etat actuel:
 
-- 109 outils dans le catalogue administratif.
-- 69 outils operationnels exposes au modele via MCP `tools/list`.
+- 111 outils dans le catalogue administratif.
+- 71 outils operationnels exposes au modele via MCP `tools/list`.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 
 ## Architecture execution MCP
@@ -90,4 +90,6 @@ Les outils encore `planned` correspondent aux domaines ou ecritures dont le serv
 
 Les alias temporaires `quality_section_update`, `update_quality_section` et `versioned_update` sont acceptes uniquement pour compatibilite et sont stockes en base sous le type canonique `quality.documentation.apply_section_updates`.
 
-Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0` et enrichi en `1.7.1`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
+En `ALTA_AGENT_TRUSTED_MODE=true`, `quality.documentation.apply_section_updates` et `execute_business_action` peuvent executer directement les actions allowlistees sans pending action ni confirmation.
+
+Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, et le Trusted Owner Mode est expose en `1.8.0`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.

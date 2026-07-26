@@ -1,7 +1,10 @@
 const assert = require('assert');
 const { payloadHash } = require('../services/agent/agentPendingActionService');
+const { executeAgentTool } = require('../services/agent/agentToolExecutor');
+const { listAgentTools } = require('../services/agent/agentToolRegistry');
 const {
   createExecutablePendingAction,
+  executeExecutableActionDirect,
   executeExecutablePendingAction,
   listExecutableActions,
 } = require('../services/agent/agentActionOrchestratorService');
@@ -63,6 +66,8 @@ function makeCreateDb() {
 
 function makePool({ pending = makePending(), failSectionId = null } = {}) {
   const state = {
+    auditStarted: false,
+    auditCompleted: false,
     committed: false,
     rolledBack: false,
     failedMarked: false,
@@ -87,7 +92,7 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
         return { rows: [] };
       }
       if (compact.includes('FROM agent_pending_actions') && compact.includes('FOR UPDATE')) {
-        return { rows: pending ? [pending] : [] };
+        return { rows: pending && pending.store_id === params[1] ? [pending] : [] };
       }
       if (compact.startsWith('UPDATE agent_pending_actions') && compact.includes("status = 'executed'")) {
         state.statusUpdates.push('executed');
@@ -98,7 +103,8 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
         return { rows: [{ ...pending, status: 'executing' }] };
       }
       if (compact.includes('FROM quality_documentation_sections') && compact.includes('LIMIT 1')) {
-        return { rows: state.sections.has(params[0]) ? [state.sections.get(params[0])] : [] };
+        const section = state.sections.get(params[0]);
+        return { rows: section && section.store_id === params[1] ? [section] : [] };
       }
       if (compact.startsWith('UPDATE quality_documentation_sections')) {
         const sectionId = params[0];
@@ -137,7 +143,19 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
       return client;
     },
     async query(sql) {
-      if (sql.replace(/\s+/g, ' ').trim().startsWith('UPDATE agent_pending_actions')) {
+      const compact = sql.replace(/\s+/g, ' ').trim();
+      if (compact.startsWith('INSERT INTO agent_tool_audit_logs')) {
+        state.auditStarted = true;
+        return { rows: [{ id: 'audit-1' }] };
+      }
+      if (compact.startsWith('UPDATE agent_tool_audit_logs')) {
+        state.auditCompleted = true;
+        return { rows: [] };
+      }
+      if (compact.includes('FROM quality_documentation_collections')) {
+        return { rows: [] };
+      }
+      if (compact.startsWith('UPDATE agent_pending_actions')) {
         state.failedMarked = true;
         return { rows: [] };
       }
@@ -147,6 +165,8 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
 }
 
 async function main() {
+  assert.equal(payloadHash({ a: 1, b: { c: null, d: [2, 1] } }), payloadHash({ b: { d: [2, 1], c: undefined }, a: 1 }), 'hash canonique attendu');
+
   const actions = listExecutableActions();
   const qualityAction = actions.find((action) => action.action_type === 'quality.documentation.apply_section_updates');
   assert(qualityAction, 'action qualite absente');
@@ -200,6 +220,53 @@ async function main() {
   }
   assert.equal(refused, true, 'payload qualite sans updates doit etre refuse');
 
+  const readResult = await executeAgentTool({
+    db: makePool(),
+    name: 'list_quality_documentation',
+    input: {},
+    context: {
+      store_id: 'store-1',
+      trusted_mode: true,
+      user_permissions: [],
+      agent_permissions: [],
+    },
+  });
+  assert.equal(readResult.ok, true, 'lecture documentaire trusted sans permissions attendue');
+
+  const previousTrustedEnv = process.env.ALTA_AGENT_TRUSTED_MODE;
+  process.env.ALTA_AGENT_TRUSTED_MODE = 'true';
+  const envTrustedRead = await executeAgentTool({
+    db: makePool(),
+    name: 'list_quality_documentation',
+    input: {},
+    context: {
+      store_id: 'store-1',
+      user_permissions: [],
+      agent_permissions: [],
+    },
+  });
+  if (previousTrustedEnv === undefined) delete process.env.ALTA_AGENT_TRUSTED_MODE;
+  else process.env.ALTA_AGENT_TRUSTED_MODE = previousTrustedEnv;
+  assert.equal(envTrustedRead.ok, true, 'lecture documentaire trusted via env attendue');
+
+  const trustedDirectPool = makePool();
+  const trustedDirectResult = await executeAgentTool({
+    db: trustedDirectPool,
+    name: 'quality.documentation.apply_section_updates',
+    input: validPayload,
+    context: {
+      store_id: 'store-1',
+      trusted_mode: true,
+      user_permissions: [],
+      agent_permissions: [],
+    },
+  });
+  assert.equal(trustedDirectResult.ok, true, 'modification documentaire trusted sans permissions attendue');
+  assert.equal(trustedDirectResult.data.execution_result.modified_count, 1, 'un chapitre modifie attendu');
+  assert.equal(trustedDirectPool.state.versions.length, 1, 'version creee attendue');
+  assert.equal(trustedDirectPool.state.auditStarted, true, 'audit demarre attendu');
+  assert.equal(trustedDirectPool.state.auditCompleted, true, 'audit complete attendu');
+
   refused = false;
   try {
     await executeExecutablePendingAction({
@@ -228,6 +295,18 @@ async function main() {
   try {
     await executeExecutablePendingAction({
       dbPool: makePool(),
+      context: makeContext({ user_permissions: ['mcp.execute'], agent_permissions: ['mcp.execute'] }),
+      input: { id: 'pending-1', confirmation: 'human_confirmed' },
+    });
+  } catch (error) {
+    refused = error.status === 403 && error.message.includes('quality.documentation.edit');
+  }
+  assert.equal(refused, true, 'quality.documentation.edit doit etre obligatoire cote agent');
+
+  refused = false;
+  try {
+    await executeExecutablePendingAction({
+      dbPool: makePool(),
       context: makeContext(),
       input: { id: 'pending-1' },
     });
@@ -247,6 +326,26 @@ async function main() {
     refused = error.status === 409;
   }
   assert.equal(refused, true, 'une double execution doit etre refusee');
+
+  const trustedBadHashPool = makePool({ pending: makePending({ payload_hash: 'bad-hash' }) });
+  const trustedBadHash = await executeExecutablePendingAction({
+    dbPool: trustedBadHashPool,
+    context: makeContext({ trusted_mode: true, user_permissions: [], agent_permissions: [] }),
+    input: { id: 'pending-1' },
+  });
+  assert.equal(trustedBadHash.execution_result.modified_count, 2, 'trusted doit ignorer empreinte invalide historique');
+
+  refused = false;
+  try {
+    await executeExecutablePendingAction({
+      dbPool: makePool({ pending: makePending({ store_id: 'other-store' }) }),
+      context: makeContext({ store_id: 'store-1', trusted_mode: true }),
+      input: { id: 'pending-1' },
+    });
+  } catch (error) {
+    refused = error.status === 404;
+  }
+  assert.equal(refused, true, 'store_id autre magasin doit etre isole');
 
   const pool = makePool();
   const result = await executeExecutablePendingAction({
@@ -274,6 +373,21 @@ async function main() {
   assert.equal(refused, true, 'erreur metier attendue');
   assert.equal(failingPool.state.rolledBack, true, 'rollback attendu sur erreur metier');
   assert.equal(failingPool.state.failedMarked, true, 'pending action doit etre marquee failed');
+
+  const directPool = makePool();
+  const direct = await executeExecutableActionDirect({
+    dbPool: directPool,
+    context: makeContext({ trusted_mode: true, user_permissions: [], agent_permissions: [] }),
+    actionType: 'quality.documentation.apply_section_updates',
+    payload: validPayload,
+  });
+  assert.equal(direct.execution_result.modified_count, 1, 'execution directe allowlistee attendue');
+
+  const forbiddenNames = new Set(['execute_sql', 'call_any_route', 'delete_anything', 'update_any_table', 'run_shell_command', 'read_env', 'read_backend_env']);
+  const names = new Set(listAgentTools().map((tool) => tool.name));
+  for (const name of forbiddenNames) {
+    assert.equal(names.has(name), false, `outil dangereux interdit present: ${name}`);
+  }
 
   console.log(JSON.stringify({ ok: true }, null, 2));
 }

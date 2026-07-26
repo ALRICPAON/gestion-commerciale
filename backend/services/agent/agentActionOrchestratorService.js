@@ -1,6 +1,7 @@
 const { hasPermission } = require('./agentAuthorizationService');
 const { payloadHash } = require('./agentPendingActionService');
 const { getExecutableAction, listExecutableActions } = require('./agentExecutableActionRegistry');
+const { isTrustedOwnerMode } = require('./agentTrustedMode');
 
 function expose(status, message) {
   const error = new Error(message);
@@ -14,6 +15,7 @@ function clean(value) {
 }
 
 function assertExecutionPermission(action, context) {
+  if (isTrustedOwnerMode(context)) return;
   if (!context.user_id) {
     throw expose(401, 'Utilisateur demandeur requis pour executer une action MCP');
   }
@@ -113,7 +115,7 @@ async function loadActionForExecution(db, context, id) {
     throw expose(410, 'Action en attente expiree');
   }
   const frozenPayload = pendingAction.frozen_payload || pendingAction.payload || {};
-  if (pendingAction.payload_hash && payloadHash(frozenPayload) !== pendingAction.payload_hash) {
+  if (!isTrustedOwnerMode(context) && pendingAction.payload_hash && payloadHash(frozenPayload) !== pendingAction.payload_hash) {
     throw expose(409, 'Empreinte payload invalide');
   }
   return {
@@ -124,7 +126,8 @@ async function loadActionForExecution(db, context, id) {
 
 async function executeExecutablePendingAction({ dbPool, context, input = {} }) {
   const id = clean(input.id || input.pending_action_id);
-  if (!id || clean(input.confirmation) !== 'human_confirmed') {
+  const trustedMode = isTrustedOwnerMode(context);
+  if (!id || (!trustedMode && clean(input.confirmation) !== 'human_confirmed')) {
     throw expose(400, 'id et confirmation=human_confirmed obligatoires');
   }
   const client = await dbPool.connect();
@@ -185,8 +188,51 @@ async function executeExecutablePendingAction({ dbPool, context, input = {} }) {
   }
 }
 
+async function executeExecutableActionDirect({ dbPool, context, actionType, payload = {} }) {
+  const action = getExecutableAction(actionType);
+  if (!action) {
+    throw expose(400, `Type action MCP non executable : ${actionType || 'vide'}`);
+  }
+  assertExecutionPermission(action, context);
+  const validatedPayload = action.validatePayload(payload || {});
+  const client = await dbPool.connect();
+  const syntheticPendingAction = {
+    id: `direct:${action.name}:${Date.now()}`,
+    action_type: action.name,
+    final_tool_name: action.name,
+    status: 'executing',
+    store_id: context.store_id,
+    frozen_payload: validatedPayload,
+  };
+  try {
+    await client.query('BEGIN');
+    const result = await action.execute({
+      db: client,
+      dbPool,
+      context,
+      payload: validatedPayload,
+      pendingAction: syntheticPendingAction,
+    });
+    await client.query('COMMIT');
+    return {
+      ok: true,
+      mode: 'executed',
+      direct: true,
+      trusted_mode: isTrustedOwnerMode(context),
+      action: sanitizeActionForResponse(action),
+      execution_result: result,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   createExecutablePendingAction,
+  executeExecutableActionDirect,
   executeExecutablePendingAction,
   listExecutableActions: () => listExecutableActions().map(sanitizeActionForResponse),
 };

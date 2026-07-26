@@ -10,6 +10,7 @@ const { listModules, getModule } = require('./agentModuleCatalog');
 const { listAgentAuditLogs, getAgentAuditLog } = require('./agentAuditService');
 const {
   createExecutablePendingAction,
+  executeExecutableActionDirect,
   executeExecutablePendingAction,
   listExecutableActions,
 } = require('./agentActionOrchestratorService');
@@ -260,6 +261,67 @@ const tools = [
     requiresConfirmation: true,
     inputSchema: { type: 'object', required: ['id', 'confirmation'], properties: { id: { type: 'string' }, confirmation: { type: 'string', enum: ['human_confirmed'] } }, additionalProperties: false },
     execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Action en attente executee', data: await executeExecutablePendingAction({ dbPool: db, context, input }) }),
+  }),
+  tool({
+    name: 'execute_business_action',
+    title: 'Executer action metier',
+    description: 'Execute directement une action metier allowlistee. En trusted mode, ne requiert ni pending action ni confirmation. Utiliser list_executable_actions pour choisir action_type et payload.',
+    domain: 'agent_actions',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'mcp.execute',
+    requiresConfirmation: true,
+    inputSchema: { type: 'object', required: ['action_type', 'payload'], properties: { action_type: { type: 'string' }, payload: { type: 'object' } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Action metier executee',
+      data: await executeExecutableActionDirect({ dbPool: db, context, actionType: input.action_type, payload: input.payload || {} }),
+    }),
+  }),
+  tool({
+    name: 'quality.documentation.apply_section_updates',
+    title: 'Appliquer chapitres qualite',
+    description: 'Applique directement un paquet de mises a jour de chapitres qualite via qualityDocumentationService.updateSection. En trusted mode, aucun pending_action ni confirmation n est requis.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: {
+      type: 'object',
+      required: ['updates'],
+      properties: {
+        collection_id: { type: 'string' },
+        mode: { type: 'string', enum: ['all_or_nothing'] },
+        updates: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['section_id', 'content_html'],
+            properties: {
+              section_id: { type: 'string' },
+              content_html: { type: 'string' },
+              status: { type: 'string' },
+              comment_internal: { type: 'string' },
+              change_summary: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    execute: async ({ db, context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Chapitres qualite mis a jour',
+      data: await executeExecutableActionDirect({
+        dbPool: db,
+        context,
+        actionType: 'quality.documentation.apply_section_updates',
+        payload: input,
+      }),
+    }),
   }),
   tool({
     name: 'get_cashflow_dashboard',

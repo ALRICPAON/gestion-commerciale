@@ -1,3 +1,5 @@
+const { isTrustedOwnerMode } = require('./agentTrustedMode');
+
 function normalizePermission(permission) {
   return String(permission || '').trim();
 }
@@ -29,6 +31,7 @@ function hasPermissionValue(permissions, requiredPermission) {
 
 function hasPermission(context, requiredPermission) {
   if (!requiredPermission) return true;
+  if (isTrustedOwnerMode(context)) return true;
   const agentPermissions = permissionList(context.agent_permissions || context.agentPermissions || context.permissions);
   const userSidePermissions = permissionList(context.user_permissions || context.userPermissions || context.user?.permissions || context.permissions);
   const role = context.user?.role || context.role;
@@ -45,6 +48,7 @@ function safePermissionLog(tool, context = {}) {
     user_permissions: permissionList(context.user_permissions || context.userPermissions || context.user?.permissions || context.permissions),
     agent_permissions: permissionList(context.agent_permissions || context.agentPermissions || context.permissions),
     source: context.source || null,
+    trusted_mode: isTrustedOwnerMode(context),
   };
 }
 
