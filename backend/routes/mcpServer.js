@@ -31,7 +31,7 @@ const { envTrustedMode } = require('../services/agent/agentTrustedMode');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
-const MCP_SERVER_VERSION = '1.8.1';
+const MCP_SERVER_VERSION = '1.8.2';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
@@ -582,6 +582,15 @@ const toolHandlers = {
   execute_pending_action: executePendingAction,
 };
 
+const PUBLIC_QUALITY_BLOCK_TOOL_ALIASES = {
+  quality_documentation_update_text_block: 'quality.documentation.update_text_block',
+  quality_documentation_add_text_block: 'quality.documentation.add_text_block',
+  quality_documentation_add_table_block: 'quality.documentation.add_table_block',
+  quality_documentation_add_diagram_block: 'quality.documentation.add_diagram_block',
+  quality_documentation_delete_block: 'quality.documentation.delete_block',
+  quality_documentation_move_block: 'quality.documentation.move_block',
+};
+
 function mcpAgentContext(req) {
   const configured = String(process.env.ALTA_AGENT_PERMISSIONS || '')
     .split(',')
@@ -630,10 +639,38 @@ function mcpAgentContext(req) {
 
 const registryTools = listMcpTools();
 const registryToolNames = new Set(registryTools.map((tool) => tool.name));
+function makePublicAliasTool(publicName, internalName) {
+  const internalTool = registryTools.find((tool) => tool.name === internalName);
+  if (!internalTool) return null;
+  return {
+    ...internalTool,
+    name: publicName,
+    description: `${internalTool.description} Outil MCP public compatible ChatGPT; mappe vers l action interne canonique ${internalName}.`,
+    _meta: {
+      ...(internalTool._meta || {}),
+      publicName,
+      internalToolName: internalName,
+      registrySource: 'agentToolRegistry',
+      nameCompatibility: 'underscore_alias_for_mcp_clients',
+    },
+  };
+}
+
+function buildPublicMcpTools() {
+  const aliasTools = Object.entries(PUBLIC_QUALITY_BLOCK_TOOL_ALIASES)
+    .map(([publicName, internalName]) => makePublicAliasTool(publicName, internalName))
+    .filter(Boolean);
+  return [
+    ...legacyTools.filter((tool) => !registryToolNames.has(tool.name)),
+    ...registryTools,
+    ...aliasTools,
+  ];
+}
+
 const tools = [
-  ...legacyTools.filter((tool) => !registryToolNames.has(tool.name)),
-  ...registryTools,
+  ...buildPublicMcpTools(),
 ];
+const publicToolNameMap = new Map(Object.entries(PUBLIC_QUALITY_BLOCK_TOOL_ALIASES));
 
 function jsonRpcResult(id, result) {
   return { jsonrpc: '2.0', id, result };
@@ -741,7 +778,8 @@ async function handleRequest(req, message) {
         'Pour executer une action metier, utilise uniquement une action exposee par list_executable_actions, cree une pending action, puis appelle execute_pending_action apres confirmation explicite de l utilisateur.',
         'Une execution exige toujours mcp.execute ET la permission metier de l action; ne simule jamais un clic frontend.',
         'Pour la documentation qualite, le type canonique de pending action est quality.documentation.apply_section_updates.',
-        'Pour modifier des chapitres qualite avec blocs structures, utilise les outils directs quality.documentation.update_text_block, quality.documentation.add_text_block, quality.documentation.add_table_block, quality.documentation.add_diagram_block, quality.documentation.delete_block ou quality.documentation.move_block.',
+        'Pour modifier des chapitres qualite avec blocs structures depuis ChatGPT, utilise les outils publics compatibles quality_documentation_update_text_block, quality_documentation_add_text_block, quality_documentation_add_table_block, quality_documentation_add_diagram_block, quality_documentation_delete_block et quality_documentation_move_block.',
+        'Ces outils publics mappent vers les actions internes canoniques quality.documentation.update_text_block, quality.documentation.add_text_block, quality.documentation.add_table_block, quality.documentation.add_diagram_block, quality.documentation.delete_block et quality.documentation.move_block.',
         'Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec un action_type exact expose par list_executable_actions puis execute_pending_action après confirmation.',
         'Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement et ne doit jamais etre marquee executee sans resultat metier reel.',
         'Après modification du catalogue MCP, reconnecter le client si la notification tools/list_changed n’est pas consommée par le client.',
@@ -761,13 +799,9 @@ async function handleRequest(req, message) {
       has_prepare_cashflow_plan: tools.some((tool) => tool.name === 'prepare_cashflow_plan'),
       has_cashflow_sources: tools.some((tool) => tool.name === 'get_cashflow_data_sources'),
       has_quality_block_tools: [
-        'quality.documentation.update_text_block',
-        'quality.documentation.add_text_block',
-        'quality.documentation.add_table_block',
-        'quality.documentation.add_diagram_block',
-        'quality.documentation.delete_block',
-        'quality.documentation.move_block',
+        ...Object.keys(PUBLIC_QUALITY_BLOCK_TOOL_ALIASES),
       ].every((name) => tools.some((tool) => tool.name === name)),
+      registry_source: 'legacyTools + agentToolRegistry.listMcpTools + public underscore aliases',
       names: tools.map(t => t.name),
     });
     return jsonRpcResult(id, { tools });
@@ -775,27 +809,30 @@ async function handleRequest(req, message) {
 
   if (method === 'tools/call') {
     const toolName = params.name;
+    const registryToolName = publicToolNameMap.get(toolName) || toolName;
     const handler = toolHandlers[toolName];
-    if (!handler && !registryToolNames.has(toolName)) return jsonRpcError(id, -32602, `Outil inconnu : ${toolName || ''}`);
+    if (!handler && !registryToolNames.has(registryToolName)) return jsonRpcError(id, -32602, `Outil inconnu : ${toolName || ''}`);
 
     try {
       const args = params.arguments || {};
       console.log('MCP ALTA tool call', {
         tool: toolName,
+        internal_tool: registryToolName !== toolName ? registryToolName : undefined,
         store_id: req.agentStoreId,
         has_query: Boolean(args.query),
       });
-      const payload = registryToolNames.has(toolName)
+      const payload = registryToolNames.has(registryToolName)
         ? await executeAgentTool({
           db: req.dbPool,
           context: mcpAgentContext(req),
-          name: toolName,
+          name: registryToolName,
           input: args,
           confirmed: args.confirmation === 'human_confirmed',
         })
         : await handler(req.dbPool, req.agentStoreId, args);
       console.log('MCP ALTA tool success', {
         tool: toolName,
+        internal_tool: registryToolName !== toolName ? registryToolName : undefined,
         result_count: Array.isArray(payload?.results) ? payload.results.length : undefined,
         status: payload?.status,
       });
@@ -908,3 +945,10 @@ router.delete('/', (req, res) => {
 });
 
 module.exports = router;
+module.exports._private = {
+  MCP_SERVER_VERSION,
+  PROTOCOL_VERSION,
+  PUBLIC_QUALITY_BLOCK_TOOL_ALIASES,
+  buildPublicMcpTools,
+  handleRequest,
+};

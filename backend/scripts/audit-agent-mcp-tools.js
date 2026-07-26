@@ -1,13 +1,16 @@
 const { listAgentTools, listMcpTools, RISK_LEVELS } = require('../services/agent/agentToolRegistry');
 const { listExecutableActions } = require('../services/agent/agentActionOrchestratorService');
+const mcpServer = require('../routes/mcpServer');
 
 function kind(tool) {
-  if (tool.riskLevel >= RISK_LEVELS.COMMITTING_ACTION) return 'Execution';
-  if (tool.riskLevel > RISK_LEVELS.READ || /prepare|preview|draft|pending/i.test(tool.name)) return 'Preparation / apercu';
+  const riskLevel = tool.riskLevel ?? tool._meta?.riskLevel ?? RISK_LEVELS.READ;
+  if (riskLevel >= RISK_LEVELS.COMMITTING_ACTION) return 'Execution';
+  if (riskLevel > RISK_LEVELS.READ || /prepare|preview|draft|pending/i.test(tool.name)) return 'Preparation / apercu';
   return 'Lecture';
 }
 
 function serviceFor(tool, executableActions) {
+  if (tool._meta?.internalToolName) return `${tool._meta.internalToolName} via wrapper public MCP`;
   const action = executableActions.find((item) => (item.action_type || item.name) === tool.name);
   if (action) return action.service;
   if (tool.name === 'execute_business_action') return 'agentActionOrchestratorService.executeExecutableActionDirect';
@@ -19,6 +22,7 @@ function serviceFor(tool, executableActions) {
 }
 
 function gapFor(tool, mcpNames, executableActions) {
+  if (tool._meta?.internalToolName) return 'OK wrapper public tools/list';
   if (tool.status === 'planned' || tool.enabled === false) return 'Planifie, non expose MCP';
   if (!mcpNames.has(tool.name)) return 'Non expose MCP';
   if (tool.riskLevel >= RISK_LEVELS.COMMITTING_ACTION) {
@@ -35,14 +39,18 @@ function escapeCell(value) {
 }
 
 function main() {
-  const tools = listAgentTools();
-  const mcpNames = new Set(listMcpTools().map((tool) => tool.name));
+  const agentTools = listAgentTools();
+  const internalMcpTools = listMcpTools();
+  const publicMcpTools = typeof mcpServer._private?.buildPublicMcpTools === 'function'
+    ? mcpServer._private.buildPublicMcpTools()
+    : internalMcpTools;
+  const mcpNames = new Set(publicMcpTools.map((tool) => tool.name));
   const executableActions = listExecutableActions();
-  const rows = tools.map((tool) => [
+  const rows = publicMcpTools.map((tool) => [
     tool.name,
-    tool.domain,
+    tool.domain || tool._meta?.domain || '',
     kind(tool),
-    tool.requiredPermission,
+    tool.requiredPermission || tool._meta?.requiredPermission || '',
     serviceFor(tool, executableActions),
     tool.status === 'planned' || tool.enabled === false ? 'Non' : 'Oui',
     gapFor(tool, mcpNames, executableActions),
@@ -50,8 +58,10 @@ function main() {
 
   console.log('# Audit outils MCP ALTA');
   console.log('');
-  console.log(`- Outils registre agent: ${tools.length}`);
-  console.log(`- Outils exposes MCP: ${mcpNames.size}`);
+  console.log(`- Outils registre agent: ${agentTools.length}`);
+  console.log(`- Outils MCP internes agentToolRegistry: ${internalMcpTools.length}`);
+  console.log(`- Outils publics exposes MCP tools/list: ${mcpNames.size}`);
+  console.log('- Source tools/list publique: legacyTools + agentToolRegistry.listMcpTools + public underscore aliases');
   console.log(`- Actions metier executables allowlistees: ${executableActions.length}`);
   console.log('');
   console.log('## Actions executables allowlistees');

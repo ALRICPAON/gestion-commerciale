@@ -73,6 +73,17 @@ Actions de blocs allowlistees:
 - `quality.documentation.delete_block`;
 - `quality.documentation.move_block`.
 
+Dans la reponse publique MCP `tools/list` destinee au connecteur ChatGPT, ces actions sont aussi publiees avec des noms compatibles sans points:
+
+- `quality_documentation_update_text_block`;
+- `quality_documentation_add_text_block`;
+- `quality_documentation_add_table_block`;
+- `quality_documentation_add_diagram_block`;
+- `quality_documentation_delete_block`;
+- `quality_documentation_move_block`.
+
+Ces noms publics sont de vrais outils MCP appelables; ils mappent vers les actions internes canoniques ci-dessus.
+
 ## Audit
 
 Generer la matrice courante:

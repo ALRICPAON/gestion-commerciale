@@ -31,7 +31,8 @@ Outils raccordes dans ce socle:
 Etat actuel:
 
 - 117 outils dans le catalogue administratif.
-- 77 outils operationnels exposes au modele via MCP `tools/list`.
+- 77 outils operationnels dans `agentToolRegistry.listMcpTools`.
+- 96 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 
 ## Architecture execution MCP
@@ -101,6 +102,15 @@ Pour les chapitres ayant des blocs structures, `quality_document_blocks` est la 
 - `quality.documentation.delete_block`;
 - `quality.documentation.move_block`.
 
-Ces six operations sont aussi exposees comme outils MCP publics appelables directement par le client connecte, avec schemas d entree dedies. Elles ne sont pas seulement visibles dans `list_executable_actions`.
+Ces six operations restent les noms internes canoniques. Pour le connecteur ChatGPT, la route publique MCP expose aussi des noms compatibles sans points, directement appelables et mappes vers les actions internes:
 
-Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, le Trusted Owner Mode est expose en `1.8.0`, et les outils MCP publics de blocs qualite sont exposes en `1.8.1`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
+- `quality_documentation_update_text_block` -> `quality.documentation.update_text_block`;
+- `quality_documentation_add_text_block` -> `quality.documentation.add_text_block`;
+- `quality_documentation_add_table_block` -> `quality.documentation.add_table_block`;
+- `quality_documentation_add_diagram_block` -> `quality.documentation.add_diagram_block`;
+- `quality_documentation_delete_block` -> `quality.documentation.delete_block`;
+- `quality_documentation_move_block` -> `quality.documentation.move_block`.
+
+Ces wrappers sont dans la reponse publique `tools/list`; ils ne sont pas seulement visibles dans `list_executable_actions`, `find_feature_in_alta` ou `get_module_capabilities`.
+
+Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, le Trusted Owner Mode est expose en `1.8.0`, les outils MCP publics de blocs qualite sont exposes en `1.8.1`, et les wrappers publics compatibles ChatGPT sont exposes en `1.8.2`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
