@@ -1,4 +1,5 @@
 const commercial = require('../agentCommercialToolsService');
+const qualityBlocks = require('../quality/qualityDocumentBlockService');
 const qualityDocumentation = require('../quality/qualityDocumentationService');
 const qualityVersions = require('../quality/qualityDocumentationVersionService');
 
@@ -60,6 +61,47 @@ function normalizeQualityDocumentationBatch(payload = {}) {
     collection_id: text(payload.collection_id) || undefined,
     mode: text(payload.mode) || 'all_or_nothing',
     updates,
+  };
+}
+
+function normalizeBlockIdPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  return { block_id: assertUuidLike(payload.block_id, 'block_id') };
+}
+
+function normalizeMoveBlockPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  if (!Array.isArray(payload.block_ids) || payload.block_ids.length === 0) {
+    const error = new Error('block_ids doit contenir l ordre complet des blocs');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+  return {
+    chapter_id: assertUuidLike(payload.chapter_id, 'chapter_id'),
+    block_ids: payload.block_ids.map((id) => assertUuidLike(id, 'block_id')),
+  };
+}
+
+function normalizeTextBlockPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  return {
+    block_id: payload.block_id ? assertUuidLike(payload.block_id, 'block_id') : undefined,
+    chapter_id: payload.chapter_id ? assertUuidLike(payload.chapter_id, 'chapter_id') : undefined,
+    html: String(payload.html || payload.content_html || ''),
+    title: text(payload.title) || undefined,
+    position: Number.isFinite(Number(payload.position)) ? Number(payload.position) : undefined,
+  };
+}
+
+function normalizeCreateBlockPayload(payload = {}, blockType) {
+  assertObject(payload, 'payload');
+  return {
+    chapter_id: assertUuidLike(payload.chapter_id, 'chapter_id'),
+    block_type: blockType,
+    title: text(payload.title) || undefined,
+    position: Number.isFinite(Number(payload.position)) ? Number(payload.position) : undefined,
+    content: payload.content || payload,
   };
 }
 
@@ -203,6 +245,138 @@ const ACTIONS = [
     },
     validatePayload: normalizeQualityDocumentationBatch,
     execute: executeQualityDocumentationBatch,
+  },
+  {
+    name: 'quality.documentation.update_text_block',
+    description: 'Met a jour un bloc rich_text existant via qualityDocumentBlockService.updateDocumentBlock.',
+    aliases: [],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentBlockService.updateDocumentBlock',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: false,
+    batch: false,
+    payloadSchema: { type: 'object', required: ['block_id', 'html'], properties: { block_id: { type: 'string' }, html: { type: 'string' }, title: { type: 'string' } }, additionalProperties: false },
+    example: { action_type: 'quality.documentation.update_text_block', payload: { block_id: 'uuid-block', html: '<p>Texte</p>' } },
+    validatePayload: (payload) => {
+      const normalized = normalizeTextBlockPayload(payload);
+      if (!normalized.block_id) {
+        const error = new Error('block_id requis');
+        error.status = 400;
+        error.expose = true;
+        throw error;
+      }
+      return normalized;
+    },
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'quality.documentation.update_text_block',
+      module: 'quality_documentation',
+      block: await qualityBlocks.updateDocumentBlock(db, context.store_id, payload.block_id, context.user_id, { title: payload.title, content: { html: payload.html } }),
+    }),
+  },
+  {
+    name: 'quality.documentation.add_text_block',
+    description: 'Ajoute un bloc rich_text via qualityDocumentBlockService.createChapterBlock.',
+    aliases: [],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentBlockService.createChapterBlock',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: false,
+    batch: false,
+    payloadSchema: { type: 'object', required: ['chapter_id', 'html'], properties: { chapter_id: { type: 'string' }, html: { type: 'string' }, title: { type: 'string' }, position: { type: 'number' } }, additionalProperties: false },
+    example: { action_type: 'quality.documentation.add_text_block', payload: { chapter_id: 'uuid-chapter', html: '<p>Nouveau texte</p>' } },
+    validatePayload: (payload) => {
+      const normalized = normalizeTextBlockPayload(payload);
+      if (!normalized.chapter_id) {
+        const error = new Error('chapter_id requis');
+        error.status = 400;
+        error.expose = true;
+        throw error;
+      }
+      return normalized;
+    },
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'quality.documentation.add_text_block',
+      module: 'quality_documentation',
+      block: await qualityBlocks.createChapterBlock(db, context.store_id, payload.chapter_id, context.user_id, { block_type: 'rich_text', title: payload.title, position: payload.position, content: { html: payload.html } }),
+    }),
+  },
+  {
+    name: 'quality.documentation.add_table_block',
+    description: 'Ajoute un bloc tableau via qualityDocumentBlockService.createChapterBlock.',
+    aliases: [],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentBlockService.createChapterBlock',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: false,
+    batch: false,
+    payloadSchema: { type: 'object', required: ['chapter_id'], properties: { chapter_id: { type: 'string' }, title: { type: 'string' }, content: { type: 'object' } }, additionalProperties: true },
+    example: { action_type: 'quality.documentation.add_table_block', payload: { chapter_id: 'uuid-chapter', content: { table_template_key: 'default' } } },
+    validatePayload: (payload) => normalizeCreateBlockPayload(payload, 'document_table'),
+    execute: async ({ db, context, payload }) => ({ ok: true, mode: 'executed', action: 'quality.documentation.add_table_block', module: 'quality_documentation', block: await qualityBlocks.createChapterBlock(db, context.store_id, payload.chapter_id, context.user_id, payload) }),
+  },
+  {
+    name: 'quality.documentation.add_diagram_block',
+    description: 'Ajoute un bloc diagramme via qualityDocumentBlockService.createChapterBlock.',
+    aliases: [],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentBlockService.createChapterBlock',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: false,
+    batch: false,
+    payloadSchema: { type: 'object', required: ['chapter_id'], properties: { chapter_id: { type: 'string' }, title: { type: 'string' }, content: { type: 'object' } }, additionalProperties: true },
+    example: { action_type: 'quality.documentation.add_diagram_block', payload: { chapter_id: 'uuid-chapter', content: { diagram_template_key: 'default' } } },
+    validatePayload: (payload) => normalizeCreateBlockPayload(payload, 'mermaid_diagram'),
+    execute: async ({ db, context, payload }) => ({ ok: true, mode: 'executed', action: 'quality.documentation.add_diagram_block', module: 'quality_documentation', block: await qualityBlocks.createChapterBlock(db, context.store_id, payload.chapter_id, context.user_id, payload) }),
+  },
+  {
+    name: 'quality.documentation.delete_block',
+    description: 'Supprime un bloc documentaire via qualityDocumentBlockService.deleteDocumentBlock.',
+    aliases: [],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentBlockService.deleteDocumentBlock',
+    confirmationLevel: 'explicit_human',
+    reversible: false,
+    previewRequired: false,
+    batch: false,
+    payloadSchema: { type: 'object', required: ['block_id'], properties: { block_id: { type: 'string' } }, additionalProperties: false },
+    example: { action_type: 'quality.documentation.delete_block', payload: { block_id: 'uuid-block' } },
+    validatePayload: normalizeBlockIdPayload,
+    execute: async ({ db, context, payload }) => ({ ok: true, mode: 'executed', action: 'quality.documentation.delete_block', module: 'quality_documentation', block: await qualityBlocks.deleteDocumentBlock(db, context.store_id, payload.block_id, context.user_id) }),
+  },
+  {
+    name: 'quality.documentation.move_block',
+    description: 'Reordonne les blocs d un chapitre via qualityDocumentBlockService.reorderChapterBlocks.',
+    aliases: [],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentBlockService.reorderChapterBlocks',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: false,
+    batch: false,
+    payloadSchema: { type: 'object', required: ['chapter_id', 'block_ids'], properties: { chapter_id: { type: 'string' }, block_ids: { type: 'array', items: { type: 'string' } } }, additionalProperties: false },
+    example: { action_type: 'quality.documentation.move_block', payload: { chapter_id: 'uuid-chapter', block_ids: ['uuid-block-1', 'uuid-block-2'] } },
+    validatePayload: normalizeMoveBlockPayload,
+    execute: async ({ db, context, payload }) => ({ ok: true, mode: 'executed', action: 'quality.documentation.move_block', module: 'quality_documentation', blocks: await qualityBlocks.reorderChapterBlocks(db, context.store_id, payload.chapter_id, context.user_id, payload.block_ids) }),
   },
   {
     name: 'sales.create_customer_order',

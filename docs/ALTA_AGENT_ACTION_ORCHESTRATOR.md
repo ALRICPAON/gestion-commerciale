@@ -70,6 +70,17 @@ Payload:
 
 Le mode `all_or_nothing` utilise une transaction: si un chapitre echoue, aucun chapitre du lot n est conserve. Le service appele pour chaque chapitre est `qualityDocumentationService.updateSection`, ce qui conserve les versions et historiques existants.
 
+Pour les chapitres qui possedent des blocs structures, la source de verite est `quality_document_blocks`. Le champ `quality_documentation_sections.content_html` reste un miroir de compatibilite et un fallback legacy. Les modifications de bloc passent par `qualityDocumentBlockService`; ce service resynchronise automatiquement `content_html` pour que la relecture MCP, l editeur graphique et l export PDF utilisent le meme contenu.
+
+Actions de blocs allowlistees:
+
+- `quality.documentation.update_text_block`;
+- `quality.documentation.add_text_block`;
+- `quality.documentation.add_table_block`;
+- `quality.documentation.add_diagram_block`;
+- `quality.documentation.delete_block`;
+- `quality.documentation.move_block`.
+
 ## Audit
 
 Generer la matrice courante:

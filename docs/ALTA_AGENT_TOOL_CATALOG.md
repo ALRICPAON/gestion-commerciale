@@ -92,4 +92,13 @@ Les alias temporaires `quality_section_update`, `update_quality_section` et `ver
 
 En `ALTA_AGENT_TRUSTED_MODE=true`, `quality.documentation.apply_section_updates` et `execute_business_action` peuvent executer directement les actions allowlistees sans pending action ni confirmation.
 
+Pour les chapitres ayant des blocs structures, `quality_document_blocks` est la source officielle. `content_html` est synchronise comme miroir de compatibilite et fallback legacy. Les actions de blocs allowlistees sont:
+
+- `quality.documentation.update_text_block`;
+- `quality.documentation.add_text_block`;
+- `quality.documentation.add_table_block`;
+- `quality.documentation.add_diagram_block`;
+- `quality.documentation.delete_block`;
+- `quality.documentation.move_block`.
+
 Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, et le Trusted Owner Mode est expose en `1.8.0`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.

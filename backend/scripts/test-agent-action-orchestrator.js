@@ -1,5 +1,6 @@
 const assert = require('assert');
 const qualityDocumentation = require('../services/quality/qualityDocumentationService');
+const { buildHtml } = require('../services/quality/qualityDocumentationExportService');
 const { payloadHash } = require('../services/agent/agentPendingActionService');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 const { listAgentTools } = require('../services/agent/agentToolRegistry');
@@ -74,6 +75,9 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
     failedMarked: false,
     statusUpdates: [],
     versions: [],
+    blocks: new Map([
+      ['block-1', { id: 'block-1', store_id: 'store-1', collection_id: 'collection-1', chapter_id: 'section-1', block_type: 'rich_text', position: 10, title: 'Texte du chapitre', content: { html: '<p>Ancien bloc</p>', source: 'legacy_content_html' }, is_visible: true }],
+    ]),
     sections: new Map([
       ['section-1', { id: 'section-1', store_id: 'store-1', collection_id: 'collection-1', code: 'T1-C1', title: 'Chapitre 1', content_html: '<p>Ancien 1</p>', content_text: 'Ancien 1', status: 'draft', version: '1.0', section_type: 'chapter', include_in_export: true }],
       ['section-2', { id: 'section-2', store_id: 'store-1', collection_id: 'collection-1', code: 'T1-C2', title: 'Chapitre 2', content_html: '<p>Ancien 2</p>', content_text: 'Ancien 2', status: 'draft', version: '1.0', section_type: 'chapter', include_in_export: true }],
@@ -107,6 +111,27 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
         const section = state.sections.get(params[0]);
         return { rows: section && section.store_id === params[1] ? [section] : [] };
       }
+      if (compact.includes('FROM quality_document_blocks') && compact.includes('chapter_id = $2')) {
+        return { rows: [...state.blocks.values()].filter((block) => block.store_id === params[0] && block.chapter_id === params[1]).sort((a, b) => a.position - b.position) };
+      }
+      if (compact.includes('FROM quality_document_blocks') && compact.includes('id = $1')) {
+        const block = state.blocks.get(params[0]);
+        return { rows: block && block.store_id === params[1] ? [block] : [] };
+      }
+      if (compact.startsWith('UPDATE quality_document_blocks')) {
+        const block = state.blocks.get(params[0]);
+        const contentParamIndex = compact.includes('title = COALESCE') ? 3 : 2;
+        const content = JSON.parse(params[contentParamIndex]);
+        const updated = { ...block, content, title: compact.includes('title = COALESCE') ? (params[2] || block.title) : block.title };
+        state.blocks.set(block.id, updated);
+        return { rows: [updated] };
+      }
+      if (compact.startsWith('UPDATE quality_documentation_sections') && compact.includes('content_html = $3') && compact.includes('content_text = $4')) {
+        const before = state.sections.get(params[0]);
+        const after = { ...before, content_html: params[2], content_text: params[3] };
+        state.sections.set(params[0], after);
+        return { rows: [after] };
+      }
       if (compact.startsWith('UPDATE quality_documentation_sections')) {
         const sectionId = params[0];
         if (sectionId === failSectionId) throw new Error('Erreur metier chapitre');
@@ -130,8 +155,14 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
         state.versions.unshift(version);
         return { rows: [version] };
       }
+      if (compact.startsWith('UPDATE quality_documentation_versions')) {
+        return { rows: [] };
+      }
       if (compact.includes('FROM quality_documentation_versions')) {
         return { rows: state.versions.filter((version) => version.section_id === params[1]) };
+      }
+      if (compact.includes('FROM quality_document_tables') || compact.includes('FROM quality_document_diagrams') || compact.includes('FROM quality_documentation_attachments')) {
+        return { rows: [] };
       }
       throw new Error(`Requete non simulee: ${compact}`);
     },
@@ -432,6 +463,30 @@ async function main() {
   assert.equal(servicePool.state.versions.length, mcpPool.state.versions.length, 'meme nombre de versions attendu');
   assert.equal(servicePool.state.versions.length, 1, 'historique version attendu');
   serviceClient.release();
+
+  const blockPool = makePool();
+  const blockResult = await executeExecutableActionDirect({
+    dbPool: blockPool,
+    context: makeContext({ trusted_mode: true, user_permissions: [], agent_permissions: [] }),
+    actionType: 'quality.documentation.update_text_block',
+    payload: {
+      block_id: 'block-1',
+      html: '<p>Adresse e-mail : commercial@altamaree.fr</p>',
+    },
+  });
+  const updatedBlock = blockPool.state.blocks.get('block-1');
+  const updatedSection = blockPool.state.sections.get('section-1');
+  assert.equal(blockResult.execution_result.block.content.html.includes('commercial@altamaree.fr'), true, 'bloc retourne mis a jour attendu');
+  assert.equal(updatedBlock.content.html.includes('commercial@altamaree.fr'), true, 'bloc rich_text mis a jour attendu');
+  assert.equal(updatedSection.content_html.includes('commercial@altamaree.fr'), true, 'content_html miroir mis a jour attendu');
+  const pdfHtml = buildHtml({
+    collection: { title: 'Test', version: '1.0' },
+    sections: [updatedSection],
+    blocks: [updatedBlock],
+    missing_items: [],
+    attachments: [],
+  }, { company_name: 'ALTA MAREE' }, {});
+  assert.equal(pdfHtml.includes('commercial@altamaree.fr'), true, 'HTML PDF doit utiliser le bloc a jour');
 
   const forbiddenNames = new Set(['execute_sql', 'call_any_route', 'delete_anything', 'update_any_table', 'run_shell_command', 'read_env', 'read_backend_env']);
   const names = new Set(listAgentTools().map((tool) => tool.name));

@@ -3,7 +3,7 @@ const { initializeDefaultDocumentation, stripHtml } = require('./qualityDocument
 const { recordSectionVersion } = require('./qualityDocumentationVersionService');
 const { ensureDefaultFabricationDiagram } = require('./qualityDocumentationDiagramService');
 const { ensureDefaultProductTables } = require('./qualityDocumentationTableService');
-const { hydrateBlocks } = require('./qualityDocumentBlockService');
+const { hydrateBlocks, syncRichTextBlockFromContentHtml } = require('./qualityDocumentBlockService');
 
 const STATUSES = new Set(['draft', 'to_complete', 'ready_for_review', 'validated', 'archived']);
 
@@ -242,9 +242,13 @@ async function updateSection(db, storeId, sectionId, userId, body) {
      RETURNING *`,
     [sectionId, storeId, payload.parent_id, payload.section_type, payload.code, payload.title, payload.content_html, payload.content_text, payload.display_order, payload.status, payload.version, payload.include_in_export, payload.comment_internal, payload.regulatory_references, validatedAt, userId, payload.applicable_from, payload.revision_due_at]
   );
-  await recordSectionVersion(db, storeId, result.rows[0], userId, body.change_summary || 'Modification du chapitre', 'update', before);
-  await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.section.updated', targetType: 'quality_documentation_section', targetId: sectionId, before, after: result.rows[0] });
-  return result.rows[0];
+  let updated = result.rows[0];
+  if (Object.prototype.hasOwnProperty.call(body, 'content_html')) {
+    updated = await syncRichTextBlockFromContentHtml(db, storeId, updated, userId, payload.content_html);
+  }
+  await recordSectionVersion(db, storeId, updated, userId, body.change_summary || 'Modification du chapitre', 'update', before);
+  await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.section.updated', targetType: 'quality_documentation_section', targetId: sectionId, before, after: updated });
+  return updated;
 }
 
 async function deleteSection(db, storeId, sectionId, userId) {

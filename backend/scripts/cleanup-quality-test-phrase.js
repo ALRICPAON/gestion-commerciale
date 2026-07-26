@@ -9,10 +9,9 @@ const qualityDocumentation = require('../services/quality/qualityDocumentationSe
 
 const DEFAULT_PHRASE = 'Test MCP trusted owner mode du 26 juillet 2026';
 
-function argValue(name) {
+function argValues(name) {
   const prefix = `--${name}=`;
-  const found = process.argv.find((arg) => arg.startsWith(prefix));
-  return found ? found.slice(prefix.length) : null;
+  return process.argv.filter((arg) => arg.startsWith(prefix)).map((arg) => arg.slice(prefix.length)).filter(Boolean);
 }
 
 function removePhrase(html, phrase) {
@@ -24,55 +23,61 @@ function removePhrase(html, phrase) {
 }
 
 async function main() {
-  const phrase = argValue('phrase') || DEFAULT_PHRASE;
+  const phrases = argValues('phrase');
+  if (!phrases.length) phrases.push(DEFAULT_PHRASE);
   const apply = process.argv.includes('--apply');
   const db = getDefaultPool();
 
-  const found = await db.query(
-    `SELECT id, store_id, code, title, content_html, version, status, updated_at
-     FROM quality_documentation_sections
-     WHERE content_html ILIKE $1
-     ORDER BY updated_at DESC
-     LIMIT 50`,
-    [`%${phrase}%`]
-  );
-
+  let matched = 0;
   const cleaned = [];
-  for (const row of found.rows) {
-    const nextHtml = removePhrase(row.content_html, phrase);
-    if (nextHtml === row.content_html) continue;
-    if (!apply) {
+  for (const phrase of phrases) {
+    const found = await db.query(
+      `SELECT id, store_id, code, title, content_html, version, status, updated_at
+       FROM quality_documentation_sections
+       WHERE content_html ILIKE $1
+       ORDER BY updated_at DESC
+       LIMIT 50`,
+      [`%${phrase}%`]
+    );
+    matched += found.rows.length;
+    for (const row of found.rows) {
+      const nextHtml = removePhrase(row.content_html, phrase);
+      if (nextHtml === row.content_html) continue;
+      if (!apply) {
+        cleaned.push({
+          dry_run: true,
+          phrase,
+          id: row.id,
+          store_id: row.store_id,
+          code: row.code,
+          title: row.title,
+          version: row.version,
+          status: row.status,
+        });
+        continue;
+      }
+      const updated = await qualityDocumentation.updateSection(
+        db,
+        row.store_id,
+        row.id,
+        process.env.ALTA_AGENT_USER_ID || null,
+        {
+          content_html: nextHtml,
+          change_summary: 'Retrait phrase de test MCP trusted owner mode',
+        }
+      );
       cleaned.push({
-        dry_run: true,
+        dry_run: false,
+        phrase,
         id: row.id,
         store_id: row.store_id,
         code: row.code,
         title: row.title,
-        version: row.version,
-        status: row.status,
+        version_before: row.version,
+        version_after: updated?.version || null,
+        status: updated?.status || null,
       });
-      continue;
     }
-    const updated = await qualityDocumentation.updateSection(
-      db,
-      row.store_id,
-      row.id,
-      process.env.ALTA_AGENT_USER_ID || null,
-      {
-        content_html: nextHtml,
-        change_summary: 'Retrait phrase de test MCP trusted owner mode',
-      }
-    );
-    cleaned.push({
-      dry_run: false,
-      id: row.id,
-      store_id: row.store_id,
-      code: row.code,
-      title: row.title,
-      version_before: row.version,
-      version_after: updated?.version || null,
-      status: updated?.status || null,
-    });
   }
 
   const audits = await db.query(
@@ -86,8 +91,8 @@ async function main() {
   console.log(JSON.stringify({
     ok: true,
     apply,
-    phrase,
-    matched: found.rows.length,
+    phrases,
+    matched,
     cleaned,
     recent_agent_audit_count: audits.rows.length,
     recent_agent_audits: audits.rows,
