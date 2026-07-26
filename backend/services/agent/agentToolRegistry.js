@@ -712,7 +712,7 @@ const tools = [
   tool({
     name: 'quality.documentation.update_text_block',
     title: 'Modifier bloc texte qualite',
-    description: 'Met a jour un bloc rich_text structure d un chapitre qualite. Utilise le service blocs, synchronise content_html, conserve ordre, historique et audit.',
+    description: 'Met a jour uniquement un bloc rich_text existant. Ne pas utiliser pour ajouter un nouveau texte, tableau ou diagramme; pour ajouter, appeler add_text_block, add_table_block ou add_diagram_block.',
     domain: 'quality_documentation',
     riskLevel: RISK_LEVELS.COMMITTING_ACTION,
     requiredPermission: 'quality.documentation.edit',
@@ -722,7 +722,7 @@ const tools = [
       required: ['block_id', 'html'],
       properties: {
         block_id: { type: 'string', description: 'UUID du bloc rich_text a modifier.' },
-        html: { type: 'string', description: 'HTML du contenu texte structure.' },
+        html: { type: 'string', description: 'HTML texte du bloc existant. Les tableaux et diagrammes structures sont refuses ici.' },
         title: { type: 'string', description: 'Titre optionnel du bloc.' },
         confirmation: { type: 'string', enum: ['human_confirmed'] },
       },
@@ -738,7 +738,7 @@ const tools = [
   tool({
     name: 'quality.documentation.add_text_block',
     title: 'Ajouter bloc texte qualite',
-    description: 'Ajoute un bloc rich_text structure a un chapitre qualite. Accepte chapter_id, section_id ou section_code.',
+    description: 'Cree un nouveau bloc persistant rich_text dans quality_document_blocks avec un nouvel UUID. Accepte chapter_id, section_id ou section_code; ne modifie pas le bloc existant.',
     domain: 'quality_documentation',
     riskLevel: RISK_LEVELS.COMMITTING_ACTION,
     requiredPermission: 'quality.documentation.edit',
@@ -770,7 +770,7 @@ const tools = [
   tool({
     name: 'quality.documentation.add_table_block',
     title: 'Ajouter bloc tableau qualite',
-    description: 'Ajoute un bloc tableau structure a un chapitre qualite. Fournir chapter_id/section_id/section_code, colonnes et lignes.',
+    description: 'Cree un nouveau bloc persistant document_table dans quality_document_blocks avec un nouvel UUID. Fournir chapter_id/section_id/section_code, colonnes et lignes; aucun tableau HTML ne doit etre injecte dans rich_text.',
     domain: 'quality_documentation',
     riskLevel: RISK_LEVELS.COMMITTING_ACTION,
     requiredPermission: 'quality.documentation.edit',
@@ -818,7 +818,7 @@ const tools = [
   tool({
     name: 'quality.documentation.add_diagram_block',
     title: 'Ajouter bloc diagramme qualite',
-    description: 'Ajoute un bloc diagramme structure a un chapitre qualite. Fournir nodes et connections, ou source Mermaid en editor_mode mermaid.',
+    description: 'Cree un nouveau bloc persistant mermaid_diagram dans quality_document_blocks avec un nouvel UUID. Fournir nodes et connections, ou source Mermaid en editor_mode mermaid.',
     domain: 'quality_documentation',
     riskLevel: RISK_LEVELS.COMMITTING_ACTION,
     requiredPermission: 'quality.documentation.edit',

@@ -22,10 +22,21 @@ function removePhrase(html, phrase) {
     .trim();
 }
 
+function removeStructuredBlockTestTable(html) {
+  return String(html || '')
+    .replace(/<figure[^>]*>[\s\S]*?<table[\s\S]*?<t[hd][^>]*>\s*Champ\s*<\/t[hd]>[\s\S]*?<t[hd][^>]*>\s*Valeur\s*<\/t[hd]>[\s\S]*?<td[^>]*>\s*Test\s*<\/td>[\s\S]*?<td[^>]*>\s*OK\s*<\/td>[\s\S]*?<\/table>[\s\S]*?<\/figure>/gi, '')
+    .replace(/<table[\s\S]*?<t[hd][^>]*>\s*Champ\s*<\/t[hd]>[\s\S]*?<t[hd][^>]*>\s*Valeur\s*<\/t[hd]>[\s\S]*?<td[^>]*>\s*Test\s*<\/td>[\s\S]*?<td[^>]*>\s*OK\s*<\/td>[\s\S]*?<\/table>/gi, '')
+    .replace(/<p>\s*<\/p>/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 async function main() {
   const phrases = argValues('phrase');
   if (!phrases.length) phrases.push(DEFAULT_PHRASE);
+  if (!phrases.includes('Test bloc structuré MCP.')) phrases.push('Test bloc structuré MCP.');
   const apply = process.argv.includes('--apply');
+  const removeStructuredTable = process.argv.includes('--remove-structured-test-table');
   const db = getDefaultPool();
 
   let matched = 0;
@@ -41,7 +52,8 @@ async function main() {
     );
     matched += found.rows.length;
     for (const row of found.rows) {
-      const nextHtml = removePhrase(row.content_html, phrase);
+      let nextHtml = removePhrase(row.content_html, phrase);
+      if (removeStructuredTable) nextHtml = removeStructuredBlockTestTable(nextHtml);
       if (nextHtml === row.content_html) continue;
       if (!apply) {
         cleaned.push({
@@ -80,6 +92,58 @@ async function main() {
     }
   }
 
+  if (removeStructuredTable) {
+    const found = await db.query(
+      `SELECT id, store_id, code, title, content_html, version, status, updated_at
+       FROM quality_documentation_sections
+       WHERE content_html ILIKE '%Champ%'
+         AND content_html ILIKE '%Valeur%'
+         AND content_html ILIKE '%Test%'
+         AND content_html ILIKE '%OK%'
+       ORDER BY updated_at DESC
+       LIMIT 50`
+    );
+    matched += found.rows.length;
+    for (const row of found.rows) {
+      const nextHtml = removeStructuredBlockTestTable(row.content_html);
+      if (nextHtml === row.content_html) continue;
+      if (!apply) {
+        cleaned.push({
+          dry_run: true,
+          phrase: 'structured-test-table',
+          id: row.id,
+          store_id: row.store_id,
+          code: row.code,
+          title: row.title,
+          version: row.version,
+          status: row.status,
+        });
+        continue;
+      }
+      const updated = await qualityDocumentation.updateSection(
+        db,
+        row.store_id,
+        row.id,
+        process.env.ALTA_AGENT_USER_ID || null,
+        {
+          content_html: nextHtml,
+          change_summary: 'Retrait tableau de test MCP bloc structure',
+        }
+      );
+      cleaned.push({
+        dry_run: false,
+        phrase: 'structured-test-table',
+        id: row.id,
+        store_id: row.store_id,
+        code: row.code,
+        title: row.title,
+        version_before: row.version,
+        version_after: updated?.version || null,
+        status: updated?.status || null,
+      });
+    }
+  }
+
   const audits = await db.query(
     `SELECT tool_name, status, started_at, completed_at
      FROM agent_tool_audit_logs
@@ -92,6 +156,7 @@ async function main() {
     ok: true,
     apply,
     phrases,
+    remove_structured_test_table: removeStructuredTable,
     matched,
     cleaned,
     recent_agent_audit_count: audits.rows.length,

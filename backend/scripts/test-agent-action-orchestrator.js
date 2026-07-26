@@ -559,6 +559,16 @@ async function main() {
     user_permissions: ['agent.use', 'mcp.execute', 'quality.documentation.read', 'quality.documentation.edit'],
     agent_permissions: ['agent.use', 'mcp.execute', 'quality.documentation.read', 'quality.documentation.edit'],
   });
+  const initialPublicBlocks = await executeAgentTool({
+    db: publicBlockPool,
+    context: publicContext,
+    name: 'get_quality_section_blocks',
+    input: { section_id: 'section-1' },
+  });
+  assert.equal(initialPublicBlocks.data.blocks.length, 1, 'nombre initial de blocs attendu');
+  assert.equal(initialPublicBlocks.data.blocks[0].id, 'block-1', 'bloc initial attendu');
+  assert.equal(initialPublicBlocks.data.blocks[0].content.html, '<p>Ancien bloc</p>', 'contenu initial inchange attendu');
+
   const textToolResult = await executeAgentTool({
     db: publicBlockPool,
     context: publicContext,
@@ -566,6 +576,15 @@ async function main() {
     input: { section_code: 'T1-C1', html: '<p>Bloc test MCP public</p>', position: 20 },
     confirmed: true,
   });
+  const afterTextAdd = await executeAgentTool({
+    db: publicBlockPool,
+    context: publicContext,
+    name: 'get_quality_section_blocks',
+    input: { section_id: 'section-1' },
+  });
+  assert.equal(afterTextAdd.data.blocks.length, 2, 'add_text_block doit creer un deuxieme bloc');
+  assert.equal(afterTextAdd.data.blocks[0].content.html, '<p>Ancien bloc</p>', 'add_text_block ne doit pas modifier le bloc initial');
+
   const tableToolResult = await executeAgentTool({
     db: publicBlockPool,
     context: publicContext,
@@ -588,9 +607,38 @@ async function main() {
     input: { section_id: 'section-1' },
   });
   const blocks = listedBlocks.data.blocks;
+  assert.equal(blocks.length, 3, 'add_table_block doit creer un troisieme bloc');
+  assert.equal(new Set(blocks.map((block) => block.id)).size, 3, 'trois UUID de blocs distincts attendus');
   assert(blocks.some((block) => block.id === textBlockId && block.block_type === 'rich_text'), 'bloc texte public relu attendu');
   assert(blocks.some((block) => block.id === tableBlockId && block.block_type === 'document_table'), 'bloc tableau public relu attendu');
   assert.deepEqual(blocks.map((block) => block.id), ['block-1', textBlockId, tableBlockId], 'ordre blocs public attendu');
+  assert.deepEqual(blocks.map((block) => block.block_type), ['rich_text', 'rich_text', 'document_table'], 'types blocs publics attendus');
+  assert.deepEqual(blocks.map((block) => Number(block.position)), [10, 20, 30], 'positions blocs publiques attendues');
+  assert.equal(blocks[0].content.html, '<p>Ancien bloc</p>', 'le bloc initial reste inchange apres creations');
+  const publicPdfHtml = buildHtml({
+    collection: { title: 'Test', version: '1.0' },
+    sections: [publicBlockPool.state.sections.get('section-1')],
+    blocks,
+    missing_items: [],
+    attachments: [],
+  }, { company_name: 'ALTA MAREE' }, {});
+  assert.equal(publicPdfHtml.includes('Bloc test MCP public'), true, 'PDF public doit contenir le bloc texte ajoute');
+  assert.equal(publicPdfHtml.includes('test@example.invalid'), true, 'PDF public doit contenir le bloc tableau ajoute');
+
+  let structuredTextRefused = false;
+  try {
+    await executeAgentTool({
+      db: publicBlockPool,
+      context: publicContext,
+      name: 'quality.documentation.update_text_block',
+      input: { block_id: 'block-1', html: '<table><tbody><tr><td>Champ</td><td>Valeur</td></tr></tbody></table>' },
+      confirmed: true,
+    });
+  } catch (error) {
+    structuredTextRefused = error.status === 400 && /add_table_block/.test(error.message);
+  }
+  assert.equal(structuredTextRefused, true, 'update_text_block doit refuser un tableau HTML structure');
+
   const deleteTableResult = await executeAgentTool({
     db: publicBlockPool,
     context: publicContext,

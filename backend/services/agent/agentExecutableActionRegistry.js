@@ -85,10 +85,17 @@ function normalizeMoveBlockPayload(payload = {}) {
 
 function normalizeTextBlockPayload(payload = {}) {
   assertObject(payload, 'payload');
+  const html = String(payload.html || payload.content_html || '');
+  if (/<\s*(table|thead|tbody|tr|td|th)\b/i.test(html) || /\bdata-(?:table|diagram)-id\s*=/i.test(html) || /quality-(?:table|diagram)-block/i.test(html)) {
+    const error = new Error('Un bloc rich_text ne doit pas contenir de tableau ou diagramme structure. Utiliser add_table_block ou add_diagram_block.');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
   return {
     block_id: payload.block_id ? assertUuidLike(payload.block_id, 'block_id') : undefined,
     chapter_id: payload.chapter_id ? assertUuidLike(payload.chapter_id, 'chapter_id') : undefined,
-    html: String(payload.html || payload.content_html || ''),
+    html,
     title: text(payload.title) || undefined,
     position: Number.isFinite(Number(payload.position)) ? Number(payload.position) : undefined,
   };
@@ -248,7 +255,7 @@ const ACTIONS = [
   },
   {
     name: 'quality.documentation.update_text_block',
-    description: 'Met a jour un bloc rich_text existant via qualityDocumentBlockService.updateDocumentBlock.',
+    description: 'Met a jour uniquement un bloc rich_text existant via qualityDocumentBlockService.updateDocumentBlock. Ne jamais utiliser pour ajouter un nouveau paragraphe, tableau ou diagramme: utiliser add_text_block, add_table_block ou add_diagram_block.',
     aliases: [],
     module: 'quality_documentation',
     requiredPermission: 'quality.documentation.edit',
@@ -280,7 +287,7 @@ const ACTIONS = [
   },
   {
     name: 'quality.documentation.add_text_block',
-    description: 'Ajoute un bloc rich_text via qualityDocumentBlockService.createChapterBlock.',
+    description: 'Cree une nouvelle ligne quality_document_blocks de type rich_text via qualityDocumentBlockService.createChapterBlock, avec nouvel UUID. Ne modifie pas le bloc rich_text existant.',
     aliases: [],
     module: 'quality_documentation',
     requiredPermission: 'quality.documentation.edit',
@@ -312,7 +319,7 @@ const ACTIONS = [
   },
   {
     name: 'quality.documentation.add_table_block',
-    description: 'Ajoute un bloc tableau via qualityDocumentBlockService.createChapterBlock.',
+    description: 'Cree une nouvelle ligne quality_document_blocks de type document_table via qualityDocumentBlockService.createChapterBlock, avec nouvel UUID et structure table_data. N injecte jamais de tableau HTML dans un rich_text.',
     aliases: [],
     module: 'quality_documentation',
     requiredPermission: 'quality.documentation.edit',
@@ -329,7 +336,7 @@ const ACTIONS = [
   },
   {
     name: 'quality.documentation.add_diagram_block',
-    description: 'Ajoute un bloc diagramme via qualityDocumentBlockService.createChapterBlock.',
+    description: 'Cree une nouvelle ligne quality_document_blocks de type mermaid_diagram via qualityDocumentBlockService.createChapterBlock, avec nouvel UUID. N injecte jamais de diagramme HTML dans un rich_text.',
     aliases: [],
     module: 'quality_documentation',
     requiredPermission: 'quality.documentation.edit',
