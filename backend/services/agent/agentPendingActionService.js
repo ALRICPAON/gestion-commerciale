@@ -1,13 +1,22 @@
 const crypto = require('crypto');
+const { isTrustedOwnerMode } = require('./agentTrustedMode');
 
 const DEFAULT_TTL_MINUTES = 60;
 
-function stableStringify(value) {
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+function canonicalize(value) {
+  if (value === undefined || value === null) return null;
+  if (Array.isArray(value)) return value.map(canonicalize);
   if (value && typeof value === 'object') {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
+    return Object.keys(value).sort().reduce((acc, key) => {
+      acc[key] = canonicalize(value[key]);
+      return acc;
+    }, {});
   }
-  return JSON.stringify(value);
+  return value;
+}
+
+function stableStringify(value) {
+  return JSON.stringify(canonicalize(value));
 }
 
 function payloadHash(payload) {
@@ -22,10 +31,10 @@ async function createAgentPendingAction({ db, context, tool, input, auditId = nu
   const impact = input.impact || tool.description || 'Action metier ALTA a confirmer.';
   const result = await db.query(
     `INSERT INTO agent_pending_actions
-     (store_id, created_by_source, action_type, summary, payload, domain, final_tool_name,
+     (store_id, created_by_source, action_type, summary, payload, status, domain, module, final_tool_name,
       frozen_payload, human_summary, impact_summary, target_objects, expires_at, payload_hash, idempotency_key,
       risk_level, created_by_user_id)
-     VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$5::jsonb,$4,$8,$9::jsonb,$10,$11,$12,$13,$14)
+     VALUES ($1,$2,$3,$4,$5::jsonb,'awaiting_confirmation',$6,$6,$7,$5::jsonb,$4,$8,$9::jsonb,$10,$11,$12,$13,$14)
      ON CONFLICT (store_id, idempotency_key) WHERE idempotency_key IS NOT NULL
      DO UPDATE SET summary = agent_pending_actions.summary
      RETURNING *`,
@@ -67,7 +76,7 @@ async function loadPendingActionForExecution({ db, context, id }) {
     error.expose = true;
     throw error;
   }
-  if (action.status !== 'pending') {
+  if (!['pending', 'prepared', 'awaiting_confirmation'].includes(action.status)) {
     const error = new Error('Action en attente deja traitee');
     error.status = 409;
     error.expose = true;
@@ -81,7 +90,7 @@ async function loadPendingActionForExecution({ db, context, id }) {
     throw error;
   }
   const frozenPayload = action.frozen_payload || action.payload || {};
-  if (action.payload_hash && payloadHash(frozenPayload) !== action.payload_hash) {
+  if (!isTrustedOwnerMode(context) && action.payload_hash && payloadHash(frozenPayload) !== action.payload_hash) {
     const error = new Error('Empreinte payload invalide');
     error.status = 409;
     error.expose = true;
@@ -102,7 +111,7 @@ async function markPendingActionExecuted({ db, id, result, context = {} }) {
          confirmed_by_user_id = $3,
          execution_result = $2::jsonb,
          payload = jsonb_set(payload, '{execution_result}', $2::jsonb, true)
-     WHERE id = $1 AND status = 'pending'
+     WHERE id = $1 AND status IN ('pending','prepared','awaiting_confirmation','executing')
      RETURNING *`,
     [id, JSON.stringify(result || {}), context.user_id || null]
   );
@@ -112,7 +121,8 @@ async function markPendingActionExecuted({ db, id, result, context = {} }) {
 async function markPendingActionError({ db, id, error }) {
   await db.query(
     `UPDATE agent_pending_actions
-     SET error_message = $2
+     SET status = CASE WHEN status = 'executing' THEN 'failed' ELSE status END,
+         error_message = $2
      WHERE id = $1`,
     [id, error.message || 'Erreur execution action']
   ).catch(() => {});
@@ -120,6 +130,7 @@ async function markPendingActionError({ db, id, error }) {
 
 module.exports = {
   createAgentPendingAction,
+  canonicalize,
   loadPendingActionForExecution,
   markPendingActionError,
   markPendingActionExecuted,

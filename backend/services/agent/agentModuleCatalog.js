@@ -132,7 +132,7 @@ const modules = [
     title: 'Dossier d agrement',
     description: 'Chapitres, versions, tableaux, diagrammes, pieces jointes et export PDF.',
     permissions: ['quality.documentation.read', 'quality.documentation.edit'],
-    capabilities: ['outline', 'section', 'search', 'missing_items', 'versions', 'preview_update', 'versioned_update'],
+    capabilities: ['outline', 'section', 'search', 'missing_items', 'versions', 'preview_update', 'structured_blocks'],
   },
 ];
 

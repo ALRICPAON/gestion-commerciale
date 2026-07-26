@@ -7,6 +7,7 @@ const {
   markPendingActionError,
   markPendingActionExecuted,
 } = require('./agentPendingActionService');
+const { isTrustedOwnerMode } = require('./agentTrustedMode');
 
 const MAX_INPUT_BYTES = 100 * 1024;
 
@@ -36,24 +37,31 @@ function permissionArray(value) {
   return [];
 }
 
+function expandPermissionImplications(permissions) {
+  const expanded = new Set(permissionArray(permissions));
+  if (expanded.has('quality.documentation.edit')) expanded.add('quality.documentation.read');
+  return [...expanded];
+}
+
 function normalizeContext(context = {}) {
   const user = context.user || {};
-  const userPermissions = permissionArray(firstPermissionValue(
+  const userPermissions = expandPermissionImplications(firstPermissionValue(
     context.user_permissions,
     context.userPermissions,
     user.permissions,
     context.permissions
   ));
-  const agentPermissions = permissionArray(firstPermissionValue(
+  const agentPermissions = expandPermissionImplications(firstPermissionValue(
     context.agent_permissions,
     context.agentPermissions,
     context.permissions
   ));
-  return {
+  const permissions = expandPermissionImplications(firstPermissionValue(context.permissions, userPermissions));
+  const normalized = {
     store_id: context.store_id || user.store_id || context.storeId,
     user_id: context.user_id || user.id || null,
     role: context.role || user.role || null,
-    permissions: permissionArray(firstPermissionValue(context.permissions, userPermissions)),
+    permissions,
     user_permissions: userPermissions,
     userPermissions,
     agent_permissions: agentPermissions,
@@ -64,6 +72,9 @@ function normalizeContext(context = {}) {
     request_id: context.request_id || null,
     user,
   };
+  if (context.trusted_mode !== undefined) normalized.trusted_mode = context.trusted_mode === true;
+  if (context.trustedMode !== undefined) normalized.trusted_mode = context.trustedMode === true;
+  return normalized;
 }
 
 async function executeAgentTool({ db, context, name, input = {}, confirmed = false }) {
@@ -85,7 +96,9 @@ async function executeAgentTool({ db, context, name, input = {}, confirmed = fal
   assertInputSize(input);
   authorizeTool(tool, normalizedContext);
 
-  if (tool.riskLevel >= RISK_LEVELS.COMMITTING_ACTION && tool.requiresConfirmation && !confirmed && input.confirmation !== 'human_confirmed') {
+  const trustedMode = isTrustedOwnerMode(normalizedContext);
+
+  if (!trustedMode && tool.riskLevel >= RISK_LEVELS.COMMITTING_ACTION && tool.requiresConfirmation && !confirmed && input.confirmation !== 'human_confirmed') {
     const auditId = await startAuditLog({ db, context: normalizedContext, tool, input });
     const pending = await createAgentPendingAction({ db, context: normalizedContext, tool, input, auditId });
     await completeAuditLog({
@@ -113,7 +126,7 @@ async function executeAgentTool({ db, context, name, input = {}, confirmed = fal
   try {
     let executionInput = input;
     let pendingAction = null;
-    if (confirmed && input.pending_action_id) {
+    if ((confirmed || trustedMode) && input.pending_action_id) {
       pendingAction = await loadPendingActionForExecution({ db, context: normalizedContext, id: input.pending_action_id });
       executionInput = pendingAction.frozen_payload;
     }

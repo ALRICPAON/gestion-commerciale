@@ -1,3 +1,5 @@
+const { isTrustedOwnerMode } = require('./agentTrustedMode');
+
 function normalizePermission(permission) {
   return String(permission || '').trim();
 }
@@ -16,11 +18,14 @@ function isPrivilegedRole(role) {
 }
 
 function permissionList(raw) {
-  if (Array.isArray(raw)) return raw.map(normalizePermission).filter(Boolean);
-  if (raw && typeof raw === 'object') {
-    return Object.entries(raw).filter(([, allowed]) => Boolean(allowed)).map(([name]) => normalizePermission(name));
+  let permissions = [];
+  if (Array.isArray(raw)) permissions = raw.map(normalizePermission).filter(Boolean);
+  else if (raw && typeof raw === 'object') {
+    permissions = Object.entries(raw).filter(([, allowed]) => Boolean(allowed)).map(([name]) => normalizePermission(name));
   }
-  return [];
+  const expanded = new Set(permissions);
+  if (expanded.has('quality.documentation.edit')) expanded.add('quality.documentation.read');
+  return [...expanded];
 }
 
 function hasPermissionValue(permissions, requiredPermission) {
@@ -29,6 +34,7 @@ function hasPermissionValue(permissions, requiredPermission) {
 
 function hasPermission(context, requiredPermission) {
   if (!requiredPermission) return true;
+  if (isTrustedOwnerMode(context)) return true;
   const agentPermissions = permissionList(context.agent_permissions || context.agentPermissions || context.permissions);
   const userSidePermissions = permissionList(context.user_permissions || context.userPermissions || context.user?.permissions || context.permissions);
   const role = context.user?.role || context.role;
@@ -45,6 +51,7 @@ function safePermissionLog(tool, context = {}) {
     user_permissions: permissionList(context.user_permissions || context.userPermissions || context.user?.permissions || context.permissions),
     agent_permissions: permissionList(context.agent_permissions || context.agentPermissions || context.permissions),
     source: context.source || null,
+    trusted_mode: isTrustedOwnerMode(context),
   };
 }
 

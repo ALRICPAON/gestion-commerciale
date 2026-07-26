@@ -4,6 +4,7 @@ Le catalogue administratif complet est fourni par:
 
 ```bash
 node backend/scripts/test-agent-tool-registry.js
+node backend/scripts/audit-agent-mcp-tools.js
 ```
 
 Chaque outil declare:
@@ -21,16 +22,47 @@ Outils raccordes dans ce socle:
 
 - navigation: `list_available_modules`, `get_module_capabilities`, `get_module_help`, `find_feature_in_alta`, `get_user_permissions`, `explain_current_screen`;
 - lecture commerciale: `search_clients`, `search_articles`, `search_stock`, `search_suppliers`, `search_sales`;
-- actions differees: `create_pending_action`, `execute_pending_action`;
+- actions differees/directes: `create_pending_action`, `execute_pending_action`, `execute_business_action`;
+- registre execution: `list_executable_actions`;
 - tresorerie: `get_cashflow_dashboard`, `get_cashflow_forecast`, `get_customer_receivables`, `get_supplier_payables`, `get_bank_accounts_summary`, `get_bank_transactions`, `get_recurring_charges`, `get_cashflow_settings`, `simulate_distrimer_payment`, `prepare_cashflow_plan`;
 - dossier qualite: `list_quality_documentation`, `get_quality_documentation_outline`, `get_quality_section`, `search_quality_sections`, `list_quality_missing_items`, `get_quality_section_versions`, `draft_quality_section_content`, `preview_quality_section_update`, `update_quality_section`, `create_quality_section`, `restore_quality_section_version`, `list_quality_section_tables`, `list_quality_section_diagrams`, `export_quality_documentation_preview`;
 - audit admin: `list_agent_audit_logs`, `get_agent_audit_log`.
 
 Etat actuel:
 
-- 108 outils dans le catalogue administratif.
-- 68 outils operationnels exposes au modele via MCP `tools/list`.
+- 117 outils dans le catalogue administratif.
+- 77 outils operationnels dans `agentToolRegistry.listMcpTools`.
+- 96 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
+
+## Architecture execution MCP
+
+Les actions d ecriture suivent trois niveaux:
+
+- lecture: outils `riskLevel=0`;
+- preparation / apercu: `create_pending_action`, previews et brouillons sans effet metier definitif;
+- execution: `execute_pending_action` sur une action allowlistee par `agentExecutableActionRegistry`.
+
+Une execution exige:
+
+- une pending action precise et non expiree;
+- une confirmation explicite `confirmation=human_confirmed`;
+- un payload fige avec empreinte SHA-256;
+- la permission `mcp.execute`;
+- la permission metier de l action, par exemple `quality.documentation.edit`;
+- le service metier backend declare dans la allowlist.
+
+Le registre central des actions executables est visible via `list_executable_actions`.
+
+Actions allowlistees initiales:
+
+| Action | Module | Permission | Service metier | Confirmation | Reversible | Apercu obligatoire | Lot |
+|---|---|---|---|---|---:|---:|---:|
+| `quality.documentation.apply_section_updates` | quality_documentation | `quality.documentation.edit` + `mcp.execute` | `qualityDocumentationService.updateSection` | explicite | oui | oui | oui |
+| `sales.create_customer_order` | sales | `sales.write` + `mcp.execute` | `agentCommercialToolsService.createCustomerOrderConfirmed` | explicite | non | oui | non |
+| `sales.convert_order_to_delivery_note` | sales | `sales.write` + `mcp.execute` | `agentCommercialToolsService.convertOrderToDeliveryNote` | explicite | non | oui | non |
+
+Les actions non presentes dans cette allowlist sont refusees. Aucune fonction backend arbitraire ne peut etre appelee par nom.
 
 ## Outils devenus operationnels dans ce correctif
 
@@ -52,9 +84,33 @@ Etat actuel:
 | `get_quality_section_blocks` | quality_documentation | `agentQualityContextService.getQualitySectionContext` | operational | 0 | `quality.documentation.read` | `quality.documentation.read` | non | `quality_document_blocks` | n/a | lecture uniquement |
 | `get_quality_section_attachments` | quality_documentation | `agentQualityContextService.getQualitySectionContext` | operational | 0 | `quality.documentation.read` | `quality.documentation.read` | non | pieces jointes documentation, documents, photos | n/a | ne renvoie pas de secret |
 | `prepare_quality_section_update` | quality_documentation | `agentQualityContextService.previewQualitySectionUpdate` | operational | 0 | `quality.documentation.read` | `quality.documentation.read` | non | chapitre qualite | n/a | prepare seulement |
-| `update_quality_section` | quality_documentation | `qualityDocumentationService.updateSection` | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | pending action persistante |
-| `execute_quality_section_update` | quality_documentation | `qualityDocumentationService.updateSection` | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | pending action persistante |
+| `update_quality_section` | quality_documentation | `quality.documentation.apply_section_updates` via orchestrateur | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | compatibilite, redirige vers action canonique |
+| `execute_quality_section_update` | quality_documentation | `quality.documentation.apply_section_updates` via orchestrateur | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | compatibilite, redirige vers action canonique |
 
 Les outils encore `planned` correspondent aux domaines ou ecritures dont le service metier explicite reste a raccorder sans dupliquer les regles existantes.
 
-Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
+Les anciens alias d action `quality_section_update`, `update_quality_section`, `versioned_update` et `quality.documentation.create_blocks` sont refuses. Les outils legacy portant un nom proche restent des outils MCP publics distincts quand ils existent, mais les action types executables doivent rester canoniques.
+
+En `ALTA_AGENT_TRUSTED_MODE=true`, `quality.documentation.apply_section_updates` et `execute_business_action` peuvent executer directement les actions allowlistees sans pending action ni confirmation.
+
+Pour les chapitres ayant des blocs structures, `quality_document_blocks` est la source officielle. `content_html` est synchronise comme miroir de compatibilite et fallback legacy. Les actions de blocs allowlistees sont:
+
+- `quality.documentation.update_text_block`;
+- `quality.documentation.add_text_block`;
+- `quality.documentation.add_table_block`;
+- `quality.documentation.add_diagram_block`;
+- `quality.documentation.delete_block`;
+- `quality.documentation.move_block`.
+
+Ces six operations restent les noms internes canoniques. Pour le connecteur ChatGPT, la route publique MCP expose aussi des noms compatibles sans points, directement appelables et mappes vers les actions internes:
+
+- `quality_documentation_update_text_block` -> `quality.documentation.update_text_block`;
+- `quality_documentation_add_text_block` -> `quality.documentation.add_text_block`;
+- `quality_documentation_add_table_block` -> `quality.documentation.add_table_block`;
+- `quality_documentation_add_diagram_block` -> `quality.documentation.add_diagram_block`;
+- `quality_documentation_delete_block` -> `quality.documentation.delete_block`;
+- `quality_documentation_move_block` -> `quality.documentation.move_block`.
+
+Ces wrappers sont dans la reponse publique `tools/list`; ils ne sont pas seulement visibles dans `list_executable_actions`, `find_feature_in_alta` ou `get_module_capabilities`.
+
+Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, le Trusted Owner Mode est expose en `1.8.0`, les outils MCP publics de blocs qualite sont exposes en `1.8.1`, et les wrappers publics compatibles ChatGPT sont exposes en `1.8.2`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.

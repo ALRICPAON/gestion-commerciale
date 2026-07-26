@@ -23,7 +23,7 @@ function limit(value, fallback = 50, max = 200) {
 }
 
 async function findQualitySection(db, storeId, input = {}) {
-  const query = text(input.section_id || input.code || input.query);
+  const query = text(input.section_id || input.section_code || input.code || input.query);
   if (!query) return null;
   const result = await db.query(
     `SELECT *

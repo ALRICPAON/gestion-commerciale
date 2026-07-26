@@ -97,6 +97,84 @@ async function getBlocksSnapshot(db, storeId, chapterId) {
   return result.rows;
 }
 
+async function getHydratedChapterBlocks(db, storeId, chapterId) {
+  const [blocks, tables, diagrams, attachments] = await Promise.all([
+    db.query(
+      `SELECT *
+       FROM quality_document_blocks
+       WHERE store_id = $1 AND chapter_id = $2
+       ORDER BY position ASC, created_at ASC`,
+      [storeId, chapterId]
+    ),
+    db.query('SELECT * FROM quality_document_tables WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
+    db.query('SELECT * FROM quality_document_diagrams WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
+    db.query('SELECT * FROM quality_documentation_attachments WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
+  ]).catch((err) => {
+    if (err.code === '42P01' || err.code === '42703') return [{ rows: [] }, { rows: [] }, { rows: [] }, { rows: [] }];
+    throw err;
+  });
+  return hydrateBlocks(blocks.rows, tables.rows, diagrams.rows, attachments.rows);
+}
+
+async function syncSectionContentHtmlFromBlocks(db, storeId, chapterId, userId) {
+  const blocks = await getHydratedChapterBlocks(db, storeId, chapterId);
+  if (!blocks.length) return null;
+  const html = blocks
+    .filter((block) => block.is_visible !== false)
+    .sort((a, b) => Number(a.position || 0) - Number(b.position || 0))
+    .map((block) => renderDocumentBlock(block))
+    .filter(Boolean)
+    .join('\n');
+  const result = await db.query(
+    `UPDATE quality_documentation_sections
+     SET content_html = $3,
+         content_text = $4,
+         updated_by = $5,
+         updated_at = now()
+     WHERE id = $1 AND store_id = $2
+     RETURNING *`,
+    [chapterId, storeId, html, stripHtml(html), userId]
+  );
+  return result.rows[0] || null;
+}
+
+async function syncRichTextBlockFromContentHtml(db, storeId, section, userId, contentHtml) {
+  const blocksResult = await db.query(
+    `SELECT *
+     FROM quality_document_blocks
+     WHERE store_id = $1 AND chapter_id = $2
+     ORDER BY position ASC, created_at ASC`,
+    [storeId, section.id]
+  ).catch((err) => {
+    if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+    throw err;
+  });
+
+  if (!blocksResult.rows.length) return section;
+
+  const richText = blocksResult.rows.find((block) => block.block_type === 'rich_text');
+  const content = { html: sanitizeHtml(contentHtml || ''), source: richText?.content?.source || 'content_html_sync' };
+  if (richText) {
+    await db.query(
+      `UPDATE quality_document_blocks
+       SET content = $3::jsonb,
+           updated_by = $4,
+           updated_at = now()
+       WHERE id = $1 AND store_id = $2`,
+      [richText.id, storeId, JSON.stringify({ ...(richText.content || {}), ...content }), userId]
+    );
+  } else {
+    const position = Number(blocksResult.rows[0]?.position || 0) - 5 || 10;
+    await db.query(
+      `INSERT INTO quality_document_blocks
+       (store_id, collection_id, chapter_id, block_type, position, title, content, is_visible, created_by, updated_by)
+       VALUES ($1,$2,$3,'rich_text',$4,'Texte du chapitre',$5::jsonb,true,$6,$6)`,
+      [storeId, section.collection_id, section.id, position, JSON.stringify(content), userId]
+    );
+  }
+  return (await syncSectionContentHtmlFromBlocks(db, storeId, section.id, userId)) || section;
+}
+
 async function recordBlockVersion(db, storeId, section, userId, summary, type, beforeSection = null, beforeBlocks = null) {
   const snapshot = await getBlocksSnapshot(db, storeId, section.id);
   const version = await recordSectionVersion(db, storeId, section, userId, summary, type, beforeSection || section);
@@ -243,8 +321,8 @@ async function createChapterBlock(db, storeId, chapterId, userId, body = {}) {
      RETURNING *`,
     [storeId, section.collection_id, chapterId, blockType, position, cleanText(body.title, null), JSON.stringify(content), body.is_visible !== false, userId]
   );
-  await db.query('UPDATE quality_documentation_sections SET updated_by = $3, updated_at = now() WHERE id = $1 AND store_id = $2', [chapterId, storeId, userId]);
-  await recordBlockVersion(db, storeId, section, userId, 'Creation d un bloc documentaire', 'block_create', section, beforeBlocks);
+  const syncedSection = await syncSectionContentHtmlFromBlocks(db, storeId, chapterId, userId) || section;
+  await recordBlockVersion(db, storeId, syncedSection, userId, 'Creation d un bloc documentaire', 'block_create', section, beforeBlocks);
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.block.created', targetType: 'quality_document_block', targetId: result.rows[0].id, after: result.rows[0] });
   return (await listChapterBlocks(db, storeId, chapterId)).find((block) => block.id === result.rows[0].id);
 }
@@ -269,8 +347,8 @@ async function updateDocumentBlock(db, storeId, blockId, userId, body = {}) {
      RETURNING *`,
     [blockId, storeId, cleanText(body.title), JSON.stringify(content), body.is_visible, userId]
   );
-  await db.query('UPDATE quality_documentation_sections SET updated_by = $3, updated_at = now() WHERE id = $1 AND store_id = $2', [section.id, storeId, userId]);
-  await recordBlockVersion(db, storeId, section, userId, 'Modification d un bloc documentaire', 'block_update', section, beforeBlocks);
+  const syncedSection = await syncSectionContentHtmlFromBlocks(db, storeId, section.id, userId) || section;
+  await recordBlockVersion(db, storeId, syncedSection, userId, 'Modification d un bloc documentaire', 'block_update', section, beforeBlocks);
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.block.updated', targetType: 'quality_document_block', targetId: blockId, before, after: result.rows[0] });
   return (await listChapterBlocks(db, storeId, section.id)).find((block) => block.id === blockId);
 }
@@ -284,8 +362,8 @@ async function deleteDocumentBlock(db, storeId, blockId, userId) {
   const beforeBlocks = await getBlocksSnapshot(db, storeId, section.id);
   await db.query('DELETE FROM quality_document_blocks WHERE id = $1 AND store_id = $2', [blockId, storeId]);
   await compactPositions(db, storeId, section.id);
-  await db.query('UPDATE quality_documentation_sections SET updated_by = $3, updated_at = now() WHERE id = $1 AND store_id = $2', [section.id, storeId, userId]);
-  await recordBlockVersion(db, storeId, section, userId, 'Suppression d un bloc documentaire', 'block_delete', section, beforeBlocks);
+  const syncedSection = await syncSectionContentHtmlFromBlocks(db, storeId, section.id, userId) || section;
+  await recordBlockVersion(db, storeId, syncedSection, userId, 'Suppression d un bloc documentaire', 'block_delete', section, beforeBlocks);
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.block.deleted', targetType: 'quality_document_block', targetId: blockId, before });
   return before;
 }
@@ -320,8 +398,8 @@ async function reorderChapterBlocks(db, storeId, chapterId, userId, blockIds = [
       [id, storeId, (index + 1) * 10, userId]
     );
   }
-  await db.query('UPDATE quality_documentation_sections SET updated_by = $3, updated_at = now() WHERE id = $1 AND store_id = $2', [chapterId, storeId, userId]);
-  await recordBlockVersion(db, storeId, section, userId, 'Reorganisation des blocs documentaires', 'block_reorder', section, beforeBlocks);
+  const syncedSection = await syncSectionContentHtmlFromBlocks(db, storeId, chapterId, userId) || section;
+  await recordBlockVersion(db, storeId, syncedSection, userId, 'Reorganisation des blocs documentaires', 'block_reorder', section, beforeBlocks);
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.block.reordered', targetType: 'quality_documentation_section', targetId: chapterId, before: beforeBlocks, after: await getBlocksSnapshot(db, storeId, chapterId) });
   return listChapterBlocks(db, storeId, chapterId);
 }
@@ -375,7 +453,8 @@ async function duplicateDocumentBlock(db, storeId, blockId, userId) {
     [storeId, section.collection_id, section.id, source.block_type, source.position + 10, source.title ? `${source.title} - copie` : null, JSON.stringify(content), source.is_visible, userId]
   );
   await compactPositions(db, storeId, section.id);
-  await recordBlockVersion(db, storeId, section, userId, 'Duplication d un bloc documentaire', 'block_duplicate', section, beforeBlocks);
+  const syncedSection = await syncSectionContentHtmlFromBlocks(db, storeId, section.id, userId) || section;
+  await recordBlockVersion(db, storeId, syncedSection, userId, 'Duplication d un bloc documentaire', 'block_duplicate', section, beforeBlocks);
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.block.duplicated', targetType: 'quality_document_block', targetId: result.rows[0].id, before: source, after: result.rows[0] });
   return (await listChapterBlocks(db, storeId, section.id)).find((block) => block.id === result.rows[0].id);
 }
@@ -439,6 +518,8 @@ module.exports = {
   listChapterBlocks,
   renderDocumentBlock,
   reorderChapterBlocks,
+  syncRichTextBlockFromContentHtml,
+  syncSectionContentHtmlFromBlocks,
   updateDocumentBlock,
   withTransaction,
 };

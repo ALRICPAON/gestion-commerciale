@@ -14,6 +14,7 @@ const {
 } = require('../services/agentCommercialToolsService');
 const { listAgentTools } = require('../services/agent/agentToolRegistry');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
+const { envTrustedMode } = require('../services/agent/agentTrustedMode');
 
 const router = express.Router();
 
@@ -30,7 +31,7 @@ function agentContext(req) {
   return {
     store_id: req.agentStoreId,
     user_id: process.env.ALTA_AGENT_USER_ID || null,
-    role: 'agent',
+    role: envTrustedMode() ? 'trusted_owner' : 'agent',
     permissions: configured.length ? configured : [
       'agent.use',
       'clients.read',
@@ -48,6 +49,7 @@ function agentContext(req) {
     ],
     client_key: null,
     source: 'agent_rest',
+    trusted_mode: envTrustedMode(),
     conversation_id: req.get('x-alta-conversation-id') || null,
     request_id: req.get('x-request-id') || null,
   };
