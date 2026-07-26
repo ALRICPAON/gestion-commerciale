@@ -101,14 +101,100 @@ function normalizeTextBlockPayload(payload = {}) {
   };
 }
 
+function slugId(value, fallback) {
+  const normalized = String(value || fallback)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return normalized || fallback;
+}
+
+function normalizeMcpTableData(input = {}) {
+  assertObject(input, 'table_data');
+  if (!Array.isArray(input.columns) || input.columns.length === 0) {
+    const error = new Error('columns doit contenir au moins une colonne pour add_table_block');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+  const columns = input.columns.map((column, index) => {
+    if (typeof column === 'string') {
+      return { id: slugId(column, `col-${index + 1}`), label: column };
+    }
+    assertObject(column, `columns[${index}]`);
+    return {
+      id: slugId(column.id || column.label, `col-${index + 1}`),
+      label: text(column.label || column.id || `Colonne ${index + 1}`),
+      alignment: text(column.alignment) || undefined,
+      width: Number.isFinite(Number(column.width)) ? Number(column.width) : undefined,
+    };
+  });
+  const ids = new Set();
+  for (const column of columns) {
+    if (ids.has(column.id)) {
+      const error = new Error(`Identifiant de colonne duplique : ${column.id}`);
+      error.status = 400;
+      error.expose = true;
+      throw error;
+    }
+    ids.add(column.id);
+  }
+  const rows = (Array.isArray(input.rows) ? input.rows : []).map((row, rowIndex) => {
+    if (Array.isArray(row)) {
+      if (row.length !== columns.length) {
+        const error = new Error(`rows[${rowIndex}] doit contenir ${columns.length} cellule(s)`);
+        error.status = 400;
+        error.expose = true;
+        throw error;
+      }
+      return {
+        id: `row-${rowIndex + 1}`,
+        cells: Object.fromEntries(columns.map((column, index) => [column.id, row[index]])),
+      };
+    }
+    assertObject(row, `rows[${rowIndex}]`);
+    const rawCells = row.cells && typeof row.cells === 'object' && !Array.isArray(row.cells) ? row.cells : row;
+    return {
+      id: text(row.id) || `row-${rowIndex + 1}`,
+      cells: Object.fromEntries(columns.map((column) => [column.id, rawCells[column.id] ?? rawCells[column.label] ?? ''])),
+    };
+  });
+  return {
+    title: text(input.title) || undefined,
+    header: input.header !== false,
+    columns,
+    rows,
+  };
+}
+
 function normalizeCreateBlockPayload(payload = {}, blockType) {
   assertObject(payload, 'payload');
+  const content = payload.content && typeof payload.content === 'object' && !Array.isArray(payload.content)
+    ? { ...payload.content }
+    : {};
+  if (blockType === 'document_table') {
+    const tableSource = content.table_data && typeof content.table_data === 'object' && !Array.isArray(content.table_data)
+      ? content.table_data
+      : payload;
+    const hasTablePayload = Array.isArray(tableSource.columns) || Array.isArray(tableSource.rows);
+    if (hasTablePayload) {
+      content.table_data = normalizeMcpTableData({
+        title: tableSource.title || payload.title,
+        header: tableSource.header,
+        columns: tableSource.columns,
+        rows: tableSource.rows,
+      });
+      delete content.table_template_key;
+    }
+  }
   return {
     chapter_id: assertUuidLike(payload.chapter_id, 'chapter_id'),
     block_type: blockType,
     title: text(payload.title) || undefined,
     position: Number.isFinite(Number(payload.position)) ? Number(payload.position) : undefined,
-    content: payload.content || payload,
+    content: Object.keys(content).length ? content : payload,
   };
 }
 

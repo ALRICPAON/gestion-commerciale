@@ -76,8 +76,8 @@ async function main() {
   const createdTable = await call(db, context, 'quality.documentation.add_table_block', {
     chapter_id: sectionId,
     title: 'Verification MCP tableau temporaire',
-    columns: [{ id: 'champ', label: 'Champ' }, { id: 'valeur', label: 'Valeur' }],
-    rows: [{ cells: { champ: 'Verification', valeur: 'OK' } }],
+    columns: ['Champ', 'Valeur'],
+    rows: [['Verification', 'OK']],
   });
   const tableBlockId = createdTable.data.execution_result.block.id;
 

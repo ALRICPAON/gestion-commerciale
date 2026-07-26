@@ -789,13 +789,26 @@ const tools = [
           type: 'array',
           minItems: 1,
           items: {
-            type: 'object',
-            required: ['label'],
-            properties: { id: { type: 'string' }, label: { type: 'string' }, alignment: { type: 'string', enum: ['left', 'center', 'right'] }, width: { type: 'number' } },
-            additionalProperties: false,
+            anyOf: [
+              { type: 'string' },
+              {
+                type: 'object',
+                required: ['label'],
+                properties: { id: { type: 'string' }, label: { type: 'string' }, alignment: { type: 'string', enum: ['left', 'center', 'right'] }, width: { type: 'number' } },
+                additionalProperties: false,
+              },
+            ],
           },
         },
-        rows: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        rows: {
+          type: 'array',
+          items: {
+            anyOf: [
+              { type: 'array', items: { type: 'string' } },
+              { type: 'object', additionalProperties: true },
+            ],
+          },
+        },
         confirmation: { type: 'string', enum: ['human_confirmed'] },
       },
       additionalProperties: false,

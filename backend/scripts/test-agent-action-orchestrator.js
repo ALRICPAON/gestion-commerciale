@@ -593,8 +593,8 @@ async function main() {
       chapter_id: 'section-1',
       title: 'Table test MCP public',
       position: 30,
-      columns: [{ id: 'point', label: 'Point' }, { id: 'valeur', label: 'Valeur' }],
-      rows: [{ cells: { point: 'Email', valeur: 'test@example.invalid' } }],
+      columns: ['Champ', 'Valeur'],
+      rows: [['Test', 'OK']],
     },
     confirmed: true,
   });
@@ -615,6 +615,9 @@ async function main() {
   assert.deepEqual(blocks.map((block) => block.block_type), ['rich_text', 'rich_text', 'document_table'], 'types blocs publics attendus');
   assert.deepEqual(blocks.map((block) => Number(block.position)), [10, 20, 30], 'positions blocs publiques attendues');
   assert.equal(blocks[0].content.html, '<p>Ancien bloc</p>', 'le bloc initial reste inchange apres creations');
+  const tableBlock = blocks.find((block) => block.id === tableBlockId);
+  assert.deepEqual(tableBlock.table.table_data.columns.map((column) => column.label), ['Champ', 'Valeur'], 'headers tableau MCP attendus');
+  assert.deepEqual(tableBlock.table.table_data.rows[0].cells, { champ: 'Test', valeur: 'OK' }, 'premiere ligne tableau MCP attendue');
   const publicPdfHtml = buildHtml({
     collection: { title: 'Test', version: '1.0' },
     sections: [publicBlockPool.state.sections.get('section-1')],
@@ -623,7 +626,24 @@ async function main() {
     attachments: [],
   }, { company_name: 'ALTA MAREE' }, {});
   assert.equal(publicPdfHtml.includes('Bloc test MCP public'), true, 'PDF public doit contenir le bloc texte ajoute');
-  assert.equal(publicPdfHtml.includes('test@example.invalid'), true, 'PDF public doit contenir le bloc tableau ajoute');
+  assert.equal(publicPdfHtml.includes('Champ'), true, 'PDF public doit contenir header Champ');
+  assert.equal(publicPdfHtml.includes('Valeur'), true, 'PDF public doit contenir header Valeur');
+  assert.equal(publicPdfHtml.includes('Test'), true, 'PDF public doit contenir cellule Test');
+  assert.equal(publicPdfHtml.includes('OK'), true, 'PDF public doit contenir cellule OK');
+
+  let invalidTableRefused = false;
+  try {
+    await executeAgentTool({
+      db: publicBlockPool,
+      context: publicContext,
+      name: 'quality.documentation.add_table_block',
+      input: { chapter_id: 'section-1', columns: ['Champ', 'Valeur'], rows: [['Test']] },
+      confirmed: true,
+    });
+  } catch (error) {
+    invalidTableRefused = error.status === 400 && /2 cellule/.test(error.message);
+  }
+  assert.equal(invalidTableRefused, true, 'add_table_block doit refuser une ligne au mauvais nombre de cellules');
 
   let structuredTextRefused = false;
   try {
