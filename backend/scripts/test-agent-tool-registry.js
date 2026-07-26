@@ -59,11 +59,16 @@ function main() {
     assert(publicTool._meta?.requiredPermission === 'quality.documentation.edit', `${name} permission publique invalide`);
   }
   assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_text_block').inputSchema.properties.section_code, 'add_text_block doit accepter section_code');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_text_block').inputSchema.properties.section_id, 'add_text_block doit accepter section_id');
   assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_table_block').inputSchema.properties.columns, 'add_table_block doit exposer columns');
   assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_table_block').inputSchema.properties.rows, 'add_table_block doit exposer rows');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_table_block').inputSchema.properties.section_id, 'add_table_block doit accepter section_id');
   assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_diagram_block').inputSchema.properties.nodes, 'add_diagram_block doit exposer nodes');
   assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_diagram_block').inputSchema.properties.connections, 'add_diagram_block doit exposer connections');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.add_diagram_block').inputSchema.properties.section_id, 'add_diagram_block doit accepter section_id');
   assert(mcpTools.find((tool) => tool.name === 'quality.documentation.move_block').inputSchema.properties.block_ids, 'move_block doit exposer block_ids');
+  assert(mcpTools.find((tool) => tool.name === 'quality.documentation.move_block').inputSchema.properties.section_id, 'move_block doit accepter section_id');
+  assert(mcpTools.find((tool) => tool.name === 'get_quality_section_blocks').inputSchema.properties.section_code, 'get_quality_section_blocks doit accepter section_code');
   assert(mcpNames.has('get_cashflow_data_sources'), 'get_cashflow_data_sources non expose au modele');
   assert(mcpNames.has('get_distrimer_exposure'), 'get_distrimer_exposure non expose au modele');
   assert(mcpNames.has('draft_quality_section'), 'draft_quality_section non expose au modele');
@@ -101,6 +106,14 @@ function main() {
     refused = error.status === 403;
   }
   assert(refused, 'ALTA_AGENT_PERMISSIONS doit pouvoir restreindre les droits');
+
+  const qualityReadTool = tools.find((tool) => tool.name === 'get_quality_section_blocks');
+  authorizeTool(qualityReadTool, {
+    store_id: '00000000-0000-4000-8000-000000000001',
+    role: 'responsable',
+    user_permissions: ['quality.documentation.edit'],
+    agent_permissions: ['quality.documentation.edit'],
+  });
 
   assert(!names.has('execute_sql'), 'Outil interdit execute_sql present');
   assert(!names.has('call_any_route'), 'Outil interdit call_any_route present');

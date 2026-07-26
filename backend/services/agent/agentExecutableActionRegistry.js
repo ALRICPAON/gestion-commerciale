@@ -78,7 +78,7 @@ function normalizeMoveBlockPayload(payload = {}) {
     throw error;
   }
   return {
-    chapter_id: assertUuidLike(payload.chapter_id, 'chapter_id'),
+    chapter_id: assertUuidLike(payload.chapter_id || payload.section_id, 'chapter_id'),
     block_ids: payload.block_ids.map((id) => assertUuidLike(id, 'block_id')),
   };
 }
@@ -94,7 +94,7 @@ function normalizeTextBlockPayload(payload = {}) {
   }
   return {
     block_id: payload.block_id ? assertUuidLike(payload.block_id, 'block_id') : undefined,
-    chapter_id: payload.chapter_id ? assertUuidLike(payload.chapter_id, 'chapter_id') : undefined,
+    chapter_id: (payload.chapter_id || payload.section_id) ? assertUuidLike(payload.chapter_id || payload.section_id, 'chapter_id') : undefined,
     html,
     title: text(payload.title) || undefined,
     position: Number.isFinite(Number(payload.position)) ? Number(payload.position) : undefined,
@@ -190,7 +190,7 @@ function normalizeCreateBlockPayload(payload = {}, blockType) {
     }
   }
   return {
-    chapter_id: assertUuidLike(payload.chapter_id, 'chapter_id'),
+    chapter_id: assertUuidLike(payload.chapter_id || payload.section_id, 'chapter_id'),
     block_type: blockType,
     title: text(payload.title) || undefined,
     position: Number.isFinite(Number(payload.position)) ? Number(payload.position) : undefined,
@@ -282,13 +282,7 @@ const ACTIONS = [
   {
     name: 'quality.documentation.apply_section_updates',
     description: 'Applique un paquet de mises a jour de chapitres de documentation qualite via qualityDocumentationService.updateSection.',
-    aliases: [
-      'apply_quality_documentation_updates',
-      'apply_quality_section_updates',
-      'quality_section_update',
-      'update_quality_section',
-      'versioned_update',
-    ],
+    aliases: [],
     module: 'quality_documentation',
     requiredPermission: 'quality.documentation.edit',
     requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
@@ -383,8 +377,8 @@ const ACTIONS = [
     reversible: true,
     previewRequired: false,
     batch: false,
-    payloadSchema: { type: 'object', required: ['chapter_id', 'html'], properties: { chapter_id: { type: 'string' }, html: { type: 'string' }, title: { type: 'string' }, position: { type: 'number' } }, additionalProperties: false },
-    example: { action_type: 'quality.documentation.add_text_block', payload: { chapter_id: 'uuid-chapter', html: '<p>Nouveau texte</p>' } },
+    payloadSchema: { type: 'object', required: ['html'], properties: { chapter_id: { type: 'string' }, section_id: { type: 'string' }, html: { type: 'string' }, title: { type: 'string' }, position: { type: 'number' } }, additionalProperties: false },
+    example: { action_type: 'quality.documentation.add_text_block', payload: { section_id: 'uuid-section', html: '<p>Nouveau texte</p>' } },
     validatePayload: (payload) => {
       const normalized = normalizeTextBlockPayload(payload);
       if (!normalized.chapter_id) {
@@ -415,8 +409,8 @@ const ACTIONS = [
     reversible: true,
     previewRequired: false,
     batch: false,
-    payloadSchema: { type: 'object', required: ['chapter_id'], properties: { chapter_id: { type: 'string' }, title: { type: 'string' }, content: { type: 'object' } }, additionalProperties: true },
-    example: { action_type: 'quality.documentation.add_table_block', payload: { chapter_id: 'uuid-chapter', content: { table_template_key: 'default' } } },
+    payloadSchema: { type: 'object', properties: { chapter_id: { type: 'string' }, section_id: { type: 'string' }, title: { type: 'string' }, content: { type: 'object' } }, additionalProperties: true },
+    example: { action_type: 'quality.documentation.add_table_block', payload: { section_id: 'uuid-section', columns: ['Champ', 'Valeur'], rows: [['Test', 'OK']] } },
     validatePayload: (payload) => normalizeCreateBlockPayload(payload, 'document_table'),
     execute: async ({ db, context, payload }) => ({ ok: true, mode: 'executed', action: 'quality.documentation.add_table_block', module: 'quality_documentation', block: await qualityBlocks.createChapterBlock(db, context.store_id, payload.chapter_id, context.user_id, payload) }),
   },
@@ -432,8 +426,8 @@ const ACTIONS = [
     reversible: true,
     previewRequired: false,
     batch: false,
-    payloadSchema: { type: 'object', required: ['chapter_id'], properties: { chapter_id: { type: 'string' }, title: { type: 'string' }, content: { type: 'object' } }, additionalProperties: true },
-    example: { action_type: 'quality.documentation.add_diagram_block', payload: { chapter_id: 'uuid-chapter', content: { diagram_template_key: 'default' } } },
+    payloadSchema: { type: 'object', properties: { chapter_id: { type: 'string' }, section_id: { type: 'string' }, title: { type: 'string' }, content: { type: 'object' } }, additionalProperties: true },
+    example: { action_type: 'quality.documentation.add_diagram_block', payload: { section_id: 'uuid-section', content: { diagram_template_key: 'default' } } },
     validatePayload: (payload) => normalizeCreateBlockPayload(payload, 'mermaid_diagram'),
     execute: async ({ db, context, payload }) => ({ ok: true, mode: 'executed', action: 'quality.documentation.add_diagram_block', module: 'quality_documentation', block: await qualityBlocks.createChapterBlock(db, context.store_id, payload.chapter_id, context.user_id, payload) }),
   },
@@ -466,8 +460,8 @@ const ACTIONS = [
     reversible: true,
     previewRequired: false,
     batch: false,
-    payloadSchema: { type: 'object', required: ['chapter_id', 'block_ids'], properties: { chapter_id: { type: 'string' }, block_ids: { type: 'array', items: { type: 'string' } } }, additionalProperties: false },
-    example: { action_type: 'quality.documentation.move_block', payload: { chapter_id: 'uuid-chapter', block_ids: ['uuid-block-1', 'uuid-block-2'] } },
+    payloadSchema: { type: 'object', required: ['block_ids'], properties: { chapter_id: { type: 'string' }, section_id: { type: 'string' }, block_ids: { type: 'array', items: { type: 'string' } } }, additionalProperties: false },
+    example: { action_type: 'quality.documentation.move_block', payload: { section_id: 'uuid-section', block_ids: ['uuid-block-1', 'uuid-block-2'] } },
     validatePayload: normalizeMoveBlockPayload,
     execute: async ({ db, context, payload }) => ({ ok: true, mode: 'executed', action: 'quality.documentation.move_block', module: 'quality_documentation', blocks: await qualityBlocks.reorderChapterBlocks(db, context.store_id, payload.chapter_id, context.user_id, payload.block_ids) }),
   },

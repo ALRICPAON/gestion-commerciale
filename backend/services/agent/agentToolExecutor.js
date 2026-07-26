@@ -37,24 +37,31 @@ function permissionArray(value) {
   return [];
 }
 
+function expandPermissionImplications(permissions) {
+  const expanded = new Set(permissionArray(permissions));
+  if (expanded.has('quality.documentation.edit')) expanded.add('quality.documentation.read');
+  return [...expanded];
+}
+
 function normalizeContext(context = {}) {
   const user = context.user || {};
-  const userPermissions = permissionArray(firstPermissionValue(
+  const userPermissions = expandPermissionImplications(firstPermissionValue(
     context.user_permissions,
     context.userPermissions,
     user.permissions,
     context.permissions
   ));
-  const agentPermissions = permissionArray(firstPermissionValue(
+  const agentPermissions = expandPermissionImplications(firstPermissionValue(
     context.agent_permissions,
     context.agentPermissions,
     context.permissions
   ));
+  const permissions = expandPermissionImplications(firstPermissionValue(context.permissions, userPermissions));
   const normalized = {
     store_id: context.store_id || user.store_id || context.storeId,
     user_id: context.user_id || user.id || null,
     role: context.role || user.role || null,
-    permissions: permissionArray(firstPermissionValue(context.permissions, userPermissions)),
+    permissions,
     user_permissions: userPermissions,
     userPermissions,
     agent_permissions: agentPermissions,

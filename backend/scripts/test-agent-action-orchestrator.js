@@ -294,15 +294,6 @@ async function main() {
   assert.equal(canonical.action_type, 'quality.documentation.apply_section_updates', 'type canonique accepte attendu');
   assert.equal(createCanonicalDb.calls[0].params[2], 'quality.documentation.apply_section_updates', 'type canonique conserve en base');
 
-  const createAliasDb = makeCreateDb();
-  const alias = await createExecutablePendingAction({
-    db: createAliasDb,
-    context: makeContext(),
-    input: { action_type: 'versioned_update', summary: 'Test alias', payload: validPayload },
-  });
-  assert.equal(alias.action_type, 'quality.documentation.apply_section_updates', 'alias normalise attendu');
-  assert.equal(createAliasDb.calls[0].params[2], 'quality.documentation.apply_section_updates', 'alias doit etre stocke en type canonique');
-
   let refused = false;
   try {
     await createExecutablePendingAction({
@@ -315,12 +306,26 @@ async function main() {
   }
   assert.equal(refused, true, 'une action inconnue doit etre refusee');
 
+  for (const legacyActionType of ['quality_section_update', 'update_quality_section', 'versioned_update', 'quality.documentation.create_blocks']) {
+    refused = false;
+    try {
+      await createExecutablePendingAction({
+        db: makeCreateDb(),
+        context: makeContext(),
+        input: { action_type: legacyActionType, summary: 'Alias legacy refuse', payload: validPayload },
+      });
+    } catch (error) {
+      refused = error.status === 400 && /non executable/.test(error.message);
+    }
+    assert.equal(refused, true, `${legacyActionType} doit etre refuse comme action legacy`);
+  }
+
   refused = false;
   try {
     await createExecutablePendingAction({
       db: makeCreateDb(),
       context: makeContext(),
-      input: { action_type: 'quality_section_update', summary: 'Payload invalide', payload: { section_id: 'section-1', content_html: '<p>Non lot</p>' } },
+      input: { action_type: 'quality.documentation.apply_section_updates', summary: 'Payload invalide', payload: { section_id: 'section-1', content_html: '<p>Non lot</p>' } },
     });
   } catch (error) {
     refused = error.status === 400 && error.message.includes('updates');
@@ -630,6 +635,48 @@ async function main() {
   assert.equal(publicPdfHtml.includes('Valeur'), true, 'PDF public doit contenir header Valeur');
   assert.equal(publicPdfHtml.includes('Test'), true, 'PDF public doit contenir cellule Test');
   assert.equal(publicPdfHtml.includes('OK'), true, 'PDF public doit contenir cellule OK');
+
+  const impliedReadPool = makePool();
+  const impliedReadContext = makeContext({
+    user_permissions: ['agent.use', 'mcp.execute', 'quality.documentation.edit'],
+    agent_permissions: ['agent.use', 'mcp.execute', 'quality.documentation.edit'],
+  });
+  const capturedLogs = [];
+  const originalWarn = console.warn;
+  const originalError = console.error;
+  console.warn = (...args) => {
+    capturedLogs.push(args);
+    originalWarn(...args);
+  };
+  console.error = (...args) => {
+    capturedLogs.push(args);
+    originalError(...args);
+  };
+  try {
+    await executeAgentTool({
+      db: impliedReadPool,
+      context: impliedReadContext,
+      name: 'execute_business_action',
+      input: {
+        action_type: 'quality.documentation.add_text_block',
+        payload: { section_code: 'T1-C1', html: '<p>Bloc relu sans permission read explicite</p>', position: 20 },
+      },
+      confirmed: true,
+    });
+    const impliedReadResult = await executeAgentTool({
+      db: impliedReadPool,
+      context: impliedReadContext,
+      name: 'get_quality_section_blocks',
+      input: { section_code: 'T1-C1' },
+    });
+    assert.equal(impliedReadResult.data.blocks.length, 2, 'relecture immediate apres creation attendue');
+    assert.equal(impliedReadResult.data.blocks[1].content.html.includes('permission read explicite'), true, 'bloc cree relu attendu');
+  } finally {
+    console.warn = originalWarn;
+    console.error = originalError;
+  }
+  assert.equal(capturedLogs.some((args) => JSON.stringify(args).includes('Permission requise')), false, 'aucun 403 permission ne doit apparaitre dans les logs');
+  assert.equal(capturedLogs.some((args) => JSON.stringify(args).includes('400')), false, 'aucun 400 ne doit apparaitre dans les logs');
 
   let invalidTableRefused = false;
   try {

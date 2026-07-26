@@ -41,15 +41,7 @@ Action:
 quality.documentation.apply_section_updates
 ```
 
-Alias temporaires acceptes et normalises vers le type canonique:
-
-```text
-quality_section_update
-update_quality_section
-versioned_update
-```
-
-Tout autre alias reste refuse.
+Les anciens alias `quality_section_update`, `update_quality_section`, `versioned_update` et `quality.documentation.create_blocks` ne sont plus des action types executables. Utiliser les actions canoniques exposees par `list_executable_actions` et les outils MCP publics de blocs.
 
 Payload:
 

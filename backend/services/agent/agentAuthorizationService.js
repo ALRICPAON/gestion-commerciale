@@ -18,11 +18,14 @@ function isPrivilegedRole(role) {
 }
 
 function permissionList(raw) {
-  if (Array.isArray(raw)) return raw.map(normalizePermission).filter(Boolean);
-  if (raw && typeof raw === 'object') {
-    return Object.entries(raw).filter(([, allowed]) => Boolean(allowed)).map(([name]) => normalizePermission(name));
+  let permissions = [];
+  if (Array.isArray(raw)) permissions = raw.map(normalizePermission).filter(Boolean);
+  else if (raw && typeof raw === 'object') {
+    permissions = Object.entries(raw).filter(([, allowed]) => Boolean(allowed)).map(([name]) => normalizePermission(name));
   }
-  return [];
+  const expanded = new Set(permissions);
+  if (expanded.has('quality.documentation.edit')) expanded.add('quality.documentation.read');
+  return [...expanded];
 }
 
 function hasPermissionValue(permissions, requiredPermission) {

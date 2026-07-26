@@ -71,6 +71,37 @@ async function resolveQualitySectionId(db, storeId, input = {}) {
   return section.id;
 }
 
+async function executeQualitySectionCanonicalUpdate(dbPool, context, input = {}) {
+  const before = await findQualitySection(dbPool, context.store_id, input);
+  const sectionId = before?.id || input.section_id || input.chapter_id;
+  if (!sectionId) {
+    const error = new Error('Chapitre qualite introuvable: fournir section_id ou section_code');
+    error.status = 404;
+    error.expose = true;
+    throw error;
+  }
+  const actionResult = await executeExecutableActionDirect({
+    dbPool,
+    context,
+    actionType: 'quality.documentation.apply_section_updates',
+    payload: {
+      mode: 'all_or_nothing',
+      updates: [
+        {
+          section_id: sectionId,
+          content_html: input.content_html,
+          status: input.status,
+          comment_internal: input.comment_internal,
+          change_summary: input.change_summary,
+        },
+      ],
+    },
+  });
+  const section = await findQualitySection(dbPool, context.store_id, { section_id: sectionId });
+  const versions = section ? await qualityVersions.listSectionVersions(dbPool, context.store_id, section.id) : [];
+  return { before, section, versions, actionResult };
+}
+
 function tableDataFromInput(input = {}) {
   return {
     title: input.title,
@@ -89,6 +120,21 @@ function diagramDataFromInput(input = {}) {
     editor_mode: input.editor_mode,
     source: input.source,
     rendered_svg: input.rendered_svg,
+  };
+}
+
+const QUALITY_BLOCK_ACTIONS_WITH_CHAPTER = new Set([
+  'quality.documentation.add_text_block',
+  'quality.documentation.add_table_block',
+  'quality.documentation.add_diagram_block',
+  'quality.documentation.move_block',
+]);
+
+async function normalizeBusinessActionPayload(db, storeId, actionType, payload = {}) {
+  if (!QUALITY_BLOCK_ACTIONS_WITH_CHAPTER.has(actionType)) return payload;
+  return {
+    ...payload,
+    chapter_id: await resolveQualitySectionId(db, storeId, payload),
   };
 }
 
@@ -313,7 +359,12 @@ const tools = [
       tool: currentTool.name,
       domain: currentTool.domain,
       summary: 'Action metier executee',
-      data: await executeExecutableActionDirect({ dbPool: db, context, actionType: input.action_type, payload: input.payload || {} }),
+      data: await executeExecutableActionDirect({
+        dbPool: db,
+        context,
+        actionType: input.action_type,
+        payload: await normalizeBusinessActionPayload(db, context.store_id, input.action_type, input.payload || {}),
+      }),
     }),
   }),
   tool({
@@ -692,7 +743,7 @@ const tools = [
     riskLevel: RISK_LEVELS.READ,
     requiredPermission: 'quality.documentation.read',
     requiresConfirmation: false,
-    inputSchema: { type: 'object', properties: { section_id: { type: 'string' }, code: { type: 'string' }, query: { type: 'string' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { section_id: { type: 'string' }, section_code: { type: 'string' }, code: { type: 'string' }, query: { type: 'string' } }, additionalProperties: false },
     execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Chapitre qualite', data: { section: await findQualitySection(db, context.store_id, input) } }),
   }),
   tool({
@@ -703,7 +754,7 @@ const tools = [
     riskLevel: RISK_LEVELS.READ,
     requiredPermission: 'quality.documentation.read',
     requiresConfirmation: false,
-    inputSchema: { type: 'object', properties: { section_id: { type: 'string' }, code: { type: 'string' }, query: { type: 'string' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { section_id: { type: 'string' }, section_code: { type: 'string' }, code: { type: 'string' }, query: { type: 'string' } }, additionalProperties: false },
     execute: async ({ db, context, input, tool: currentTool }) => {
       const data = await qualityContext.getQualitySectionContext(db, context.store_id, input);
       return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Blocs chapitre qualite', data: { section: data?.section || null, blocks: data?.blocks || [] } });
@@ -1033,20 +1084,19 @@ const tools = [
   tool({
     name: 'update_quality_section',
     title: 'Modifier chapitre qualite',
-    description: 'Met a jour un chapitre qualite via le service existant avec version et audit.',
+    description: 'Compatibilite historique. Execute l action canonique quality.documentation.apply_section_updates via l orchestrateur MCP.',
     domain: 'quality_documentation',
     riskLevel: RISK_LEVELS.COMMITTING_ACTION,
     requiredPermission: 'quality.documentation.edit',
     requiresConfirmation: true,
-    inputSchema: { type: 'object', required: ['section_id', 'content_html'], properties: { section_id: { type: 'string' }, content_html: { type: 'string' }, status: { type: 'string' }, comment_internal: { type: 'string' }, pending_action_id: { type: 'string' }, confirmation: { type: 'string' } }, additionalProperties: true },
+    inputSchema: { type: 'object', required: ['content_html'], properties: { section_id: { type: 'string' }, chapter_id: { type: 'string' }, section_code: { type: 'string' }, code: { type: 'string' }, query: { type: 'string' }, content_html: { type: 'string' }, status: { type: 'string' }, comment_internal: { type: 'string' }, change_summary: { type: 'string' }, pending_action_id: { type: 'string' }, confirmation: { type: 'string' } }, additionalProperties: true },
     execute: async ({ db, context, input, tool: currentTool }) => {
-      const before = await findQualitySection(db, context.store_id, input);
-      const section = await qualityDocumentation.updateSection(db, context.store_id, input.section_id, context.user_id, input);
-      const versions = section ? await qualityVersions.listSectionVersions(db, context.store_id, section.id) : [];
+      const { before, section, versions, actionResult } = await executeQualitySectionCanonicalUpdate(db, context, input);
       return {
         ok: true,
         mode: 'executed',
         tool: currentTool.name,
+        action_type: 'quality.documentation.apply_section_updates',
         domain: currentTool.domain,
         target_type: 'quality_section',
         target_id: section?.id || null,
@@ -1054,6 +1104,7 @@ const tools = [
         changes: [{ field: 'content_html', before: before?.content_html || '', after: section?.content_html || '' }],
         warnings: [],
         audit_id: null,
+        action_result: actionResult.execution_result || actionResult,
       };
     },
   }),
@@ -1088,27 +1139,27 @@ const tools = [
   tool({
     name: 'execute_quality_section_update',
     title: 'Executer modification chapitre qualite',
-    description: 'Compatibilite historique. Preferer create_pending_action avec action_type quality.documentation.apply_section_updates puis execute_pending_action apres confirmation.',
+    description: 'Compatibilite historique. Execute l action canonique quality.documentation.apply_section_updates; preferer les outils de blocs pour modifier le contenu structure.',
     domain: 'quality_documentation',
     riskLevel: RISK_LEVELS.COMMITTING_ACTION,
     requiredPermission: 'quality.documentation.edit',
     requiresConfirmation: true,
-    inputSchema: { type: 'object', properties: { section_id: { type: 'string' }, content_html: { type: 'string' }, pending_action_id: { type: 'string' }, confirmation: { type: 'string' } }, additionalProperties: true },
+    inputSchema: { type: 'object', required: ['content_html'], properties: { section_id: { type: 'string' }, chapter_id: { type: 'string' }, section_code: { type: 'string' }, code: { type: 'string' }, query: { type: 'string' }, content_html: { type: 'string' }, status: { type: 'string' }, comment_internal: { type: 'string' }, change_summary: { type: 'string' }, pending_action_id: { type: 'string' }, confirmation: { type: 'string' } }, additionalProperties: true },
     execute: async ({ db, context, input, tool: currentTool }) => {
-      const before = await findQualitySection(db, context.store_id, input);
-      const section = await qualityDocumentation.updateSection(db, context.store_id, input.section_id, context.user_id, input);
-      const sectionVersions = section ? await qualityVersions.listSectionVersions(db, context.store_id, section.id) : [];
+      const { before, section, versions, actionResult } = await executeQualitySectionCanonicalUpdate(db, context, input);
       return {
         ok: true,
         mode: 'executed',
         tool: currentTool.name,
+        action_type: 'quality.documentation.apply_section_updates',
         domain: currentTool.domain,
         target_type: 'quality_section',
         target_id: section?.id || null,
-        version_id: sectionVersions[0]?.id || null,
+        version_id: versions[0]?.id || null,
         changes: [{ field: 'content_html', before: before?.content_html || '', after: section?.content_html || '' }],
         warnings: [],
         audit_id: null,
+        action_result: actionResult.execution_result || actionResult,
       };
     },
   }),

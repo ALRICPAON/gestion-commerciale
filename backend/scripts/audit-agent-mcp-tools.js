@@ -13,6 +13,7 @@ function serviceFor(tool, executableActions) {
   if (tool.name === 'execute_business_action') return 'agentActionOrchestratorService.executeExecutableActionDirect';
   if (tool.name === 'execute_pending_action') return 'agentActionOrchestratorService.executeExecutablePendingAction';
   if (tool.name === 'create_pending_action') return 'agentActionOrchestratorService.createExecutablePendingAction';
+  if (tool.name === 'update_quality_section' || tool.name === 'execute_quality_section_update') return 'quality.documentation.apply_section_updates via agentActionOrchestratorService.executeExecutableActionDirect';
   if (tool.status === 'planned' || tool.enabled === false) return 'a raccorder';
   return 'handler registre agent';
 }
@@ -23,6 +24,7 @@ function gapFor(tool, mcpNames, executableActions) {
   if (tool.riskLevel >= RISK_LEVELS.COMMITTING_ACTION) {
     const action = executableActions.find((item) => (item.action_type || item.name) === tool.name);
     if (tool.name === 'execute_pending_action' || tool.name === 'execute_business_action' || action) return 'OK allowlist/confirmation';
+    if (tool.name === 'update_quality_section' || tool.name === 'execute_quality_section_update') return 'OK compatibilite: redirige vers action canonique';
     return 'Execution directe a auditer progressivement';
   }
   return 'OK';

@@ -30,8 +30,8 @@ Outils raccordes dans ce socle:
 
 Etat actuel:
 
-- 111 outils dans le catalogue administratif.
-- 71 outils operationnels exposes au modele via MCP `tools/list`.
+- 117 outils dans le catalogue administratif.
+- 77 outils operationnels exposes au modele via MCP `tools/list`.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 
 ## Architecture execution MCP
@@ -83,12 +83,12 @@ Les actions non presentes dans cette allowlist sont refusees. Aucune fonction ba
 | `get_quality_section_blocks` | quality_documentation | `agentQualityContextService.getQualitySectionContext` | operational | 0 | `quality.documentation.read` | `quality.documentation.read` | non | `quality_document_blocks` | n/a | lecture uniquement |
 | `get_quality_section_attachments` | quality_documentation | `agentQualityContextService.getQualitySectionContext` | operational | 0 | `quality.documentation.read` | `quality.documentation.read` | non | pieces jointes documentation, documents, photos | n/a | ne renvoie pas de secret |
 | `prepare_quality_section_update` | quality_documentation | `agentQualityContextService.previewQualitySectionUpdate` | operational | 0 | `quality.documentation.read` | `quality.documentation.read` | non | chapitre qualite | n/a | prepare seulement |
-| `update_quality_section` | quality_documentation | `qualityDocumentationService.updateSection` | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | pending action persistante |
-| `execute_quality_section_update` | quality_documentation | `qualityDocumentationService.updateSection` | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | pending action persistante |
+| `update_quality_section` | quality_documentation | `quality.documentation.apply_section_updates` via orchestrateur | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | compatibilite, redirige vers action canonique |
+| `execute_quality_section_update` | quality_documentation | `quality.documentation.apply_section_updates` via orchestrateur | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | compatibilite, redirige vers action canonique |
 
 Les outils encore `planned` correspondent aux domaines ou ecritures dont le service metier explicite reste a raccorder sans dupliquer les regles existantes.
 
-Les alias temporaires `quality_section_update`, `update_quality_section` et `versioned_update` sont acceptes uniquement pour compatibilite et sont stockes en base sous le type canonique `quality.documentation.apply_section_updates`.
+Les anciens alias d action `quality_section_update`, `update_quality_section`, `versioned_update` et `quality.documentation.create_blocks` sont refuses. Les outils legacy portant un nom proche restent des outils MCP publics distincts quand ils existent, mais les action types executables doivent rester canoniques.
 
 En `ALTA_AGENT_TRUSTED_MODE=true`, `quality.documentation.apply_section_updates` et `execute_business_action` peuvent executer directement les actions allowlistees sans pending action ni confirmation.
 
