@@ -8,7 +8,7 @@ function kind(tool) {
 }
 
 function serviceFor(tool, executableActions) {
-  const action = executableActions.find((item) => item.name === tool.name || (item.aliases || []).includes(tool.name));
+  const action = executableActions.find((item) => (item.action_type || item.name) === tool.name);
   if (action) return action.service;
   if (tool.name === 'execute_pending_action') return 'agentActionOrchestratorService.executeExecutablePendingAction';
   if (tool.name === 'create_pending_action') return 'agentActionOrchestratorService.createExecutablePendingAction';
@@ -20,7 +20,7 @@ function gapFor(tool, mcpNames, executableActions) {
   if (tool.status === 'planned' || tool.enabled === false) return 'Planifie, non expose MCP';
   if (!mcpNames.has(tool.name)) return 'Non expose MCP';
   if (tool.riskLevel >= RISK_LEVELS.COMMITTING_ACTION) {
-    const action = executableActions.find((item) => item.name === tool.name || (item.aliases || []).includes(tool.name));
+    const action = executableActions.find((item) => (item.action_type || item.name) === tool.name);
     if (tool.name === 'execute_pending_action' || action) return 'OK allowlist/confirmation';
     return 'Execution directe a auditer progressivement';
   }
@@ -50,6 +50,23 @@ function main() {
   console.log(`- Outils registre agent: ${tools.length}`);
   console.log(`- Outils exposes MCP: ${mcpNames.size}`);
   console.log(`- Actions metier executables allowlistees: ${executableActions.length}`);
+  console.log('');
+  console.log('## Actions executables allowlistees');
+  console.log('');
+  console.log('| action_type exact | Description | Permissions requises | Schema payload | Exemple minimal | Alias acceptes |');
+  console.log('|---|---|---|---|---|---|');
+  for (const action of executableActions) {
+    console.log(`| ${[
+      action.action_type || action.name,
+      action.description || '',
+      (action.permissions_required || []).join(', '),
+      JSON.stringify(action.payload_schema || {}),
+      JSON.stringify(action.example || {}),
+      (action.aliases || []).join(', '),
+    ].map(escapeCell).join(' | ')} |`);
+  }
+  console.log('');
+  console.log('## Matrice outils MCP');
   console.log('');
   console.log('| Outil MCP | Module | Lecture / Preparation / Execution | Permission | Service metier appele | Fonctionnel actuellement | Ecart |');
   console.log('|---|---|---|---|---|---|---|');

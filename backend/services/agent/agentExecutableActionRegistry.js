@@ -140,27 +140,78 @@ async function executeQualityDocumentationBatch({ db, context, payload, pendingA
 const ACTIONS = [
   {
     name: 'quality.documentation.apply_section_updates',
-    aliases: ['apply_quality_documentation_updates', 'apply_quality_section_updates'],
+    description: 'Applique un paquet de mises a jour de chapitres de documentation qualite via qualityDocumentationService.updateSection.',
+    aliases: [
+      'apply_quality_documentation_updates',
+      'apply_quality_section_updates',
+      'quality_section_update',
+      'update_quality_section',
+      'versioned_update',
+    ],
     module: 'quality_documentation',
     requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
     service: 'qualityDocumentationService.updateSection',
     confirmationLevel: 'explicit_human',
     reversible: true,
     previewRequired: true,
     batch: true,
+    payloadSchema: {
+      type: 'object',
+      required: ['updates'],
+      properties: {
+        collection_id: { type: 'string', description: 'Collection documentaire attendue, optionnelle.' },
+        mode: { type: 'string', enum: ['all_or_nothing'], description: 'Mode transactionnel par defaut.' },
+        updates: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            required: ['section_id', 'content_html'],
+            properties: {
+              section_id: { type: 'string' },
+              content_html: { type: 'string' },
+              status: { type: 'string' },
+              comment_internal: { type: 'string' },
+              change_summary: { type: 'string' },
+            },
+            additionalProperties: false,
+          },
+        },
+      },
+      additionalProperties: false,
+    },
+    example: {
+      action_type: 'quality.documentation.apply_section_updates',
+      summary: 'Appliquer les modifications du Tome 1',
+      payload: {
+        mode: 'all_or_nothing',
+        updates: [
+          {
+            section_id: 'uuid-section',
+            content_html: '<p>Contenu mis a jour</p>',
+            change_summary: 'Application du paquet Tome 1',
+          },
+        ],
+      },
+    },
     validatePayload: normalizeQualityDocumentationBatch,
     execute: executeQualityDocumentationBatch,
   },
   {
     name: 'sales.create_customer_order',
+    description: 'Cree une commande client brouillon confirmee via le service commercial.',
     aliases: ['customer_order_draft', 'create_customer_order'],
     module: 'sales',
     requiredPermission: 'sales.write',
+    requiredPermissions: ['mcp.execute', 'sales.write'],
     service: 'agentCommercialToolsService.createCustomerOrderConfirmed',
     confirmationLevel: 'explicit_human',
     reversible: false,
     previewRequired: true,
     batch: false,
+    payloadSchema: { type: 'object', additionalProperties: true },
+    example: { action_type: 'sales.create_customer_order', summary: 'Creer la commande client', payload: { client_id: 'uuid-client', lines: [] } },
     validatePayload: (payload) => {
       assertObject(payload, 'payload');
       return payload;
@@ -175,14 +226,18 @@ const ACTIONS = [
   },
   {
     name: 'sales.convert_order_to_delivery_note',
+    description: 'Convertit une commande client en bon de livraison via le service commercial.',
     aliases: ['customer_delivery_note_draft', 'validate_order_to_bl', 'validate_order_to_delivery_note'],
     module: 'sales',
     requiredPermission: 'sales.write',
+    requiredPermissions: ['mcp.execute', 'sales.write'],
     service: 'agentCommercialToolsService.convertOrderToDeliveryNote',
     confirmationLevel: 'explicit_human',
     reversible: false,
     previewRequired: true,
     batch: false,
+    payloadSchema: { type: 'object', required: ['reference_number'], properties: { reference_number: { type: 'string' }, sale_id: { type: 'string' } }, additionalProperties: true },
+    example: { action_type: 'sales.convert_order_to_delivery_note', summary: 'Valider le BL', payload: { reference_number: 'CMD-0001' } },
     validatePayload: (payload) => {
       assertObject(payload, 'payload');
       return payload;

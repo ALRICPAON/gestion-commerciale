@@ -41,6 +41,16 @@ Action:
 quality.documentation.apply_section_updates
 ```
 
+Alias temporaires acceptes et normalises vers le type canonique:
+
+```text
+quality_section_update
+update_quality_section
+versioned_update
+```
+
+Tout autre alias reste refuse.
+
 Payload:
 
 ```json

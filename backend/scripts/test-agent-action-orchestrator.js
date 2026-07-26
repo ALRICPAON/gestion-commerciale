@@ -38,6 +38,29 @@ function makeContext(overrides = {}) {
   };
 }
 
+function makeCreateDb() {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, params = []) {
+      calls.push({ sql, params });
+      return {
+        rows: [{
+          id: 'pending-created',
+          store_id: params[0],
+          action_type: params[2],
+          payload: JSON.parse(params[4]),
+          frozen_payload: JSON.parse(params[4]),
+          domain: params[5],
+          module: params[5],
+          final_tool_name: params[6],
+          payload_hash: params[10],
+        }],
+      };
+    },
+  };
+}
+
 function makePool({ pending = makePending(), failSectionId = null } = {}) {
   const state = {
     committed: false,
@@ -125,7 +148,33 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
 
 async function main() {
   const actions = listExecutableActions();
-  assert(actions.some((action) => action.name === 'quality.documentation.apply_section_updates'), 'action qualite absente');
+  const qualityAction = actions.find((action) => action.action_type === 'quality.documentation.apply_section_updates');
+  assert(qualityAction, 'action qualite absente');
+  assert.equal(qualityAction.permissions_required.includes('mcp.execute'), true, 'mcp.execute doit etre expose');
+  assert.equal(qualityAction.permissions_required.includes('quality.documentation.edit'), true, 'permission qualite doit etre exposee');
+  assert(qualityAction.payload_schema?.properties?.updates, 'schema updates doit etre expose');
+  assert.equal(qualityAction.example?.action_type, 'quality.documentation.apply_section_updates', 'exemple canonique attendu');
+
+  const validPayload = {
+    updates: [{ section_id: 'section-1', content_html: '<p>Nouveau</p>' }],
+  };
+  const createCanonicalDb = makeCreateDb();
+  const canonical = await createExecutablePendingAction({
+    db: createCanonicalDb,
+    context: makeContext(),
+    input: { action_type: 'quality.documentation.apply_section_updates', summary: 'Test canonique', payload: validPayload },
+  });
+  assert.equal(canonical.action_type, 'quality.documentation.apply_section_updates', 'type canonique accepte attendu');
+  assert.equal(createCanonicalDb.calls[0].params[2], 'quality.documentation.apply_section_updates', 'type canonique conserve en base');
+
+  const createAliasDb = makeCreateDb();
+  const alias = await createExecutablePendingAction({
+    db: createAliasDb,
+    context: makeContext(),
+    input: { action_type: 'versioned_update', summary: 'Test alias', payload: validPayload },
+  });
+  assert.equal(alias.action_type, 'quality.documentation.apply_section_updates', 'alias normalise attendu');
+  assert.equal(createAliasDb.calls[0].params[2], 'quality.documentation.apply_section_updates', 'alias doit etre stocke en type canonique');
 
   let refused = false;
   try {
@@ -141,6 +190,18 @@ async function main() {
 
   refused = false;
   try {
+    await createExecutablePendingAction({
+      db: makeCreateDb(),
+      context: makeContext(),
+      input: { action_type: 'quality_section_update', summary: 'Payload invalide', payload: { section_id: 'section-1', content_html: '<p>Non lot</p>' } },
+    });
+  } catch (error) {
+    refused = error.status === 400 && error.message.includes('updates');
+  }
+  assert.equal(refused, true, 'payload qualite sans updates doit etre refuse');
+
+  refused = false;
+  try {
     await executeExecutablePendingAction({
       dbPool: makePool(),
       context: makeContext({ user_permissions: ['quality.documentation.edit'], agent_permissions: ['mcp.execute', 'quality.documentation.edit'] }),
@@ -150,6 +211,18 @@ async function main() {
     refused = error.status === 403 && error.message.includes('mcp.execute');
   }
   assert.equal(refused, true, 'mcp.execute doit etre obligatoire');
+
+  refused = false;
+  try {
+    await executeExecutablePendingAction({
+      dbPool: makePool(),
+      context: makeContext({ user_permissions: ['mcp.execute'], agent_permissions: ['mcp.execute', 'quality.documentation.edit'] }),
+      input: { id: 'pending-1', confirmation: 'human_confirmed' },
+    });
+  } catch (error) {
+    refused = error.status === 403 && error.message.includes('quality.documentation.edit');
+  }
+  assert.equal(refused, true, 'quality.documentation.edit doit etre obligatoire cote utilisateur');
 
   refused = false;
   try {

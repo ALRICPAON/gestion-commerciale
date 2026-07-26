@@ -28,15 +28,20 @@ function assertExecutionPermission(action, context) {
 function sanitizeActionForResponse(action) {
   if (!action) return null;
   return {
+    action_type: action.name,
     name: action.name,
+    description: action.description,
     module: action.module,
     required_permission: action.requiredPermission,
+    permissions_required: action.requiredPermissions || ['mcp.execute', action.requiredPermission],
     service: action.service,
     confirmation_level: action.confirmationLevel,
     reversible: action.reversible,
     preview_required: action.previewRequired,
     batch: action.batch,
     aliases: action.aliases || [],
+    payload_schema: action.payloadSchema || { type: 'object', additionalProperties: true },
+    example: action.example || null,
   };
 }
 

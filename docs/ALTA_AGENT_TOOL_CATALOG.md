@@ -88,4 +88,6 @@ Les actions non presentes dans cette allowlist sont refusees. Aucune fonction ba
 
 Les outils encore `planned` correspondent aux domaines ou ecritures dont le service metier explicite reste a raccorder sans dupliquer les regles existantes.
 
-Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
+Les alias temporaires `quality_section_update`, `update_quality_section` et `versioned_update` sont acceptes uniquement pour compatibilite et sont stockes en base sous le type canonique `quality.documentation.apply_section_updates`.
+
+Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0` et enrichi en `1.7.1`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.

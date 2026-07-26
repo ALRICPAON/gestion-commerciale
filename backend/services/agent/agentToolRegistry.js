@@ -231,7 +231,7 @@ const tools = [
   tool({
     name: 'create_pending_action',
     title: 'Creer une action en attente',
-    description: 'Fige un payload allowliste et demande une confirmation humaine avant execution metier reelle.',
+    description: 'Fige un payload allowliste et demande une confirmation humaine avant execution metier reelle. Utiliser list_executable_actions pour connaitre les action_type exacts. Pour appliquer des modifications de documentation qualite, action_type doit etre quality.documentation.apply_section_updates.',
     domain: 'agent_actions',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'agent.use',
@@ -737,7 +737,7 @@ const tools = [
   tool({
     name: 'prepare_quality_section_update',
     title: 'Preparer modification chapitre qualite',
-    description: 'Produit un apercu avant/apres et le payload a confirmer pour une modification qualite.',
+    description: 'Produit un apercu avant/apres et le payload a confirmer pour une modification qualite. Pour creer la pending action, utiliser action_type quality.documentation.apply_section_updates avec payload.updates[].',
     domain: 'quality_documentation',
     riskLevel: RISK_LEVELS.READ,
     requiredPermission: 'quality.documentation.read',
@@ -745,13 +745,27 @@ const tools = [
     inputSchema: { type: 'object', properties: { section_id: { type: 'string' }, code: { type: 'string' }, query: { type: 'string' }, content_html: { type: 'string' } }, additionalProperties: true },
     execute: async ({ db, context, input, tool: currentTool }) => {
       const preview = await qualityContext.previewQualitySectionUpdate(db, context.store_id, input);
-      return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Modification qualite preparee', data: { preview, confirmation_tool: 'update_quality_section', payload: { section_id: preview.section_id, content_html: preview.after.content_html } }, missing_information: preview.missing_information });
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Modification qualite preparee',
+        data: {
+          preview,
+          confirmation_tool: 'create_pending_action',
+          action_type: 'quality.documentation.apply_section_updates',
+          payload: {
+            mode: 'all_or_nothing',
+            updates: [{ section_id: preview.section_id, content_html: preview.after.content_html }],
+          },
+        },
+        missing_information: preview.missing_information,
+      });
     },
   }),
   tool({
     name: 'execute_quality_section_update',
     title: 'Executer modification chapitre qualite',
-    description: 'Alias confirme de update_quality_section avec payload fige en pending action.',
+    description: 'Compatibilite historique. Preferer create_pending_action avec action_type quality.documentation.apply_section_updates puis execute_pending_action apres confirmation.',
     domain: 'quality_documentation',
     riskLevel: RISK_LEVELS.COMMITTING_ACTION,
     requiredPermission: 'quality.documentation.edit',
