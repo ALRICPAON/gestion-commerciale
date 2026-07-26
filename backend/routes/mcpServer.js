@@ -30,7 +30,7 @@ const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
-const MCP_SERVER_VERSION = '1.6.0';
+const MCP_SERVER_VERSION = '1.7.0';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
@@ -734,8 +734,10 @@ async function handleRequest(req, message) {
         'N’essaie jamais de reconstruire une prévision de trésorerie en combinant search_sales, search_stock ou search_suppliers.',
         'prepare_cashflow_plan est l’agrégateur complet qui interroge les factures clients, fournisseurs, comptes bancaires, transactions, charges, éléments manuels, données Pennylane et exposition DISTRIMER.',
         'L’absence d’un outil nommé Pennylane ne signifie pas que les données Pennylane sont indisponibles : elles sont intégrées dans prepare_cashflow_plan.',
+        'Pour executer une action metier, utilise uniquement une action exposee par list_executable_actions, cree une pending action, puis appelle execute_pending_action apres confirmation explicite de l utilisateur.',
+        'Une execution exige toujours mcp.execute ET la permission metier de l action; ne simule jamais un clic frontend.',
         'Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec action_type customer_order_draft puis execute_pending_action après confirmation.',
-        'Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement.',
+        'Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement et ne doit jamais etre marquee executee sans resultat metier reel.',
         'Après modification du catalogue MCP, reconnecter le client si la notification tools/list_changed n’est pas consommée par le client.',
       ].join('\n'),
       _meta: {

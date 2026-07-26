@@ -9,6 +9,11 @@ const qualityContext = require('../quality/agentQualityContextService');
 const { listModules, getModule } = require('./agentModuleCatalog');
 const { listAgentAuditLogs, getAgentAuditLog } = require('./agentAuditService');
 const {
+  createExecutablePendingAction,
+  executeExecutablePendingAction,
+  listExecutableActions,
+} = require('./agentActionOrchestratorService');
+const {
   RISK_LEVELS,
   structuredToolOutputSchema,
   emptyInputSchema,
@@ -226,24 +231,35 @@ const tools = [
   tool({
     name: 'create_pending_action',
     title: 'Creer une action en attente',
-    description: 'Fige un payload et demande une confirmation humaine avant execution.',
+    description: 'Fige un payload allowliste et demande une confirmation humaine avant execution metier reelle.',
     domain: 'agent_actions',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'agent.use',
     requiresConfirmation: false,
     inputSchema: { type: 'object', required: ['action_type', 'summary', 'payload'], properties: { action_type: { type: 'string' }, summary: { type: 'string' }, payload: { type: 'object' } }, additionalProperties: true },
-    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Action en attente creee', data: await commercial.createPendingAction(db, context.store_id, input) }),
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Action en attente creee', data: await createExecutablePendingAction({ db, context, input }) }),
+  }),
+  tool({
+    name: 'list_executable_actions',
+    title: 'Lister actions executables',
+    description: 'Retourne la allowlist des actions metier que le MCP peut executer apres confirmation.',
+    domain: 'agent_actions',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'agent.use',
+    requiresConfirmation: false,
+    inputSchema: emptyInputSchema,
+    execute: async ({ tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Actions MCP executables', data: { actions: listExecutableActions() } }),
   }),
   tool({
     name: 'execute_pending_action',
     title: 'Executer une action confirmee',
-    description: 'Execute exactement le payload fige d une action en attente deja confirmee.',
+    description: 'Execute exactement le payload fige d une action en attente allowlistee. Exige confirmation humaine, mcp.execute et la permission metier.',
     domain: 'agent_actions',
     riskLevel: RISK_LEVELS.COMMITTING_ACTION,
-    requiredPermission: 'agent.use',
+    requiredPermission: 'mcp.execute',
     requiresConfirmation: true,
     inputSchema: { type: 'object', required: ['id', 'confirmation'], properties: { id: { type: 'string' }, confirmation: { type: 'string', enum: ['human_confirmed'] } }, additionalProperties: false },
-    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Action en attente executee', data: await commercial.executePendingAction(db, context.store_id, input) }),
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Action en attente executee', data: await executeExecutablePendingAction({ dbPool: db, context, input }) }),
   }),
   tool({
     name: 'get_cashflow_dashboard',
