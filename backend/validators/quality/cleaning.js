@@ -1,4 +1,5 @@
 const CLEANING_RECORD_STATUSES = Object.freeze(['done', 'partial', 'not_done', 'issue']);
+const CONFIGURATION_STATUSES = Object.freeze(['draft', 'pending_review', 'active', 'inactive', 'archived']);
 
 function cleanUuid(value) {
   const text = String(value || '').trim();
@@ -16,6 +17,13 @@ function nullableInteger(value) {
   return Number.isInteger(parsed) ? parsed : null;
 }
 
+function nullableBoolean(value) {
+  if (value === null || value === undefined || value === '') return null;
+  if (value === true || value === 'true' || value === '1' || value === 1) return true;
+  if (value === false || value === 'false' || value === '0' || value === 0) return false;
+  return null;
+}
+
 function booleanValue(value, fallback = true) {
   if (value === undefined || value === null || value === '') return fallback;
   return !(value === false || value === 'false' || value === '0' || value === 0);
@@ -28,17 +36,32 @@ function mapPlanPayload(body = {}) {
     zone_id: cleanUuid(body.zone_id),
     equipment_id: cleanUuid(body.equipment_id),
     product_name: nullableText(body.product_name),
+    dosage_concentration: nullableText(body.dosage_concentration || body.dosage),
+    usage_temperature: nullableText(body.usage_temperature || body.temperature),
+    contact_time_minutes: nullableInteger(body.contact_time_minutes || body.contactTimeMinutes),
+    rinse_required: nullableBoolean(body.rinse_required || body.rinseRequired),
+    material_used: nullableText(body.material_used || body.material),
+    post_cleaning_check: nullableText(body.post_cleaning_check || body.control_after_cleaning),
+    expected_proof: nullableText(body.expected_proof || body.proof),
+    corrective_action: nullableText(body.corrective_action || body.correctiveAction),
     method: nullableText(body.method),
     safety_instructions: nullableText(body.safety_instructions),
     expected_duration_minutes: nullableInteger(body.expected_duration_minutes),
     quality_task_id: cleanUuid(body.quality_task_id),
     active: booleanValue(body.active, true),
+    configuration_status: nullableText(body.configuration_status || body.configurationStatus),
+    validation_required: booleanValue(body.validation_required || body.validationRequired, false),
+    created_source: nullableText(body.created_source || body.createdSource),
+    created_by_agent: booleanValue(body.created_by_agent || body.createdByAgent, false),
+    agent_action_id: nullableText(body.agent_action_id || body.agentActionId),
   };
 }
 
 function validatePlanPayload(payload) {
   if (!payload.title) return 'Titre du plan obligatoire';
-  if (payload.expected_duration_minutes !== null && payload.expected_duration_minutes <= 0) return 'Durée prévue invalide';
+  if (payload.expected_duration_minutes !== null && payload.expected_duration_minutes <= 0) return 'Duree prevue invalide';
+  if (payload.contact_time_minutes !== null && payload.contact_time_minutes <= 0) return 'Temps de contact invalide';
+  if (payload.configuration_status && !CONFIGURATION_STATUSES.includes(payload.configuration_status)) return 'Statut de configuration invalide';
   return null;
 }
 
@@ -56,7 +79,7 @@ function mapRecordPayload(body = {}) {
 
 function validateRecordPayload(payload) {
   if (!payload.cleaning_plan_id) return 'Plan de nettoyage obligatoire';
-  if (!payload.performed_at || Number.isNaN(new Date(payload.performed_at).getTime())) return 'Date de réalisation invalide';
+  if (!payload.performed_at || Number.isNaN(new Date(payload.performed_at).getTime())) return 'Date de realisation invalide';
   if (!CLEANING_RECORD_STATUSES.includes(payload.status)) return 'Statut de nettoyage invalide';
   return null;
 }

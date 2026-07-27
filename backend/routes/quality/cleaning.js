@@ -2,7 +2,7 @@ const express = require('express');
 
 const { authenticateToken } = require('../../middleware/auth');
 const { attachDbContext } = require('../../middleware/dbContext');
-const { requireQualityPermission } = require('../../middleware/quality/requireQualityPermission');
+const { requireAnyQualityPermission, requireQualityPermission } = require('../../middleware/quality/requireQualityPermission');
 const { QUALITY_PERMISSIONS } = require('../../services/quality/permissions');
 const {
   changeCleaningPlanStatus,
@@ -59,7 +59,12 @@ router.get('/plans/:id', requireQualityPermission(QUALITY_PERMISSIONS.READ), asy
   }
 });
 
-router.post('/plans', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_MANAGE), async (req, res) => {
+const requireCleaningConfigurationPermission = requireAnyQualityPermission([
+  QUALITY_PERMISSIONS.EQUIPMENT_MANAGE,
+  QUALITY_PERMISSIONS.CONFIGURATION_WRITE,
+]);
+
+router.post('/plans', requireCleaningConfigurationPermission, async (req, res) => {
   try {
     const payload = mapPlanPayload(req.body);
     const error = validatePlanPayload(payload);
@@ -71,7 +76,7 @@ router.post('/plans', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_MAN
   }
 });
 
-router.put('/plans/:id', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_MANAGE), async (req, res) => {
+router.put('/plans/:id', requireCleaningConfigurationPermission, async (req, res) => {
   try {
     const planId = cleanUuid(req.params.id);
     if (!planId) return res.status(400).json({ error: 'Identifiant plan invalide' });
@@ -86,7 +91,7 @@ router.put('/plans/:id', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_
   }
 });
 
-router.patch('/plans/:id/status', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_MANAGE), async (req, res) => {
+router.patch('/plans/:id/status', requireCleaningConfigurationPermission, async (req, res) => {
   try {
     const planId = cleanUuid(req.params.id);
     if (!planId) return res.status(400).json({ error: 'Identifiant plan invalide' });

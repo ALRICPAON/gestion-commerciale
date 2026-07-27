@@ -65,6 +65,7 @@ Q3 ajoute : pages `frontend/quality/pages/temperature-settings.html`, `frontend/
 ## Permissions qualité
 
 - `quality.read`
+- `quality.configuration.write`
 - `quality.record.create`
 - `quality.equipment.manage`
 - `quality.nc.manage`
@@ -192,3 +193,67 @@ Ne pas modifier les calculs commerciaux, achats, ventes, BL, factures, stock/FIF
 PR Q4 recommandée : nettoyage et désinfection rattachés aux zones et équipements.
 
 PR Q5 recommandée : maintenance et étalonnages des équipements.
+## Agent ALTA_MAREE_V3 - configuration Qualite
+
+La permission dediee `quality.configuration.write` permet a l'agent de configurer le module Qualite sans droits de suppression generale.
+
+Elle autorise la creation/modification de taches qualite non executees, la creation/modification de plans de nettoyage, les associations aux zones/equipements du meme magasin, la definition de frequences, responsables, roles, methodes, criticite, preuves attendues, puis l'activation ou desactivation logique.
+
+Elle n'autorise pas la suppression physique de zones, equipements, releves, historiques, audits, non-conformites ou preuves, ni la modification d'une tache deja executee ou d'un enregistrement operationnel valide.
+
+Workflow:
+
+- creations agent marquees `created_source='agent_alta'`, `created_by_agent=true`;
+- creations agent par defaut en `pending_review` et `active=false`;
+- validation, activation, desactivation ou archivage par action explicite;
+- activation refusee pour un plan incomplet sans produit, dosage/concentration, temps de contact ou tache/frequence rattachee.
+
+Tables et migration:
+
+- `quality_tasks` reste le moteur officiel des taches et frequences;
+- `quality_cleaning_plans` reste la table officielle des plans de nettoyage;
+- `quality_zones` et `quality_equipments` restent les sources du jumeau numerique;
+- `063_quality_configuration_agent_write.sql` ajoute uniquement des colonnes optionnelles, contraintes de statut et index.
+
+Outils MCP:
+
+- `quality_create_task`;
+- `quality_update_task`;
+- `quality_create_cleaning_plan`;
+- `quality_update_cleaning_plan`;
+- `quality_assign_task_to_zone`;
+- `quality_assign_task_to_equipment`;
+- `quality_activate_configuration`;
+- `quality_deactivate_configuration`.
+
+Exemple MCP:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 10,
+  "method": "tools/call",
+  "params": {
+    "name": "quality_create_task",
+    "arguments": {
+      "title": "Controle nettoyage vivier",
+      "category": "viviers",
+      "zone_id": "<ZONE_ID>",
+      "frequency_value": 1,
+      "frequency_unit": "days",
+      "responsible_role": "qualite",
+      "criticality": "high"
+    }
+  }
+}
+```
+
+Tests:
+
+```bash
+node backend/scripts/test-agent-tool-registry.js
+node backend/scripts/test-agent-permissions-context.js
+node backend/scripts/test-quality-agent-configuration-tools.js
+node backend/scripts/test-mcp-public-tools-list.js
+node backend/scripts/test-quality-router-startup.js
+```
