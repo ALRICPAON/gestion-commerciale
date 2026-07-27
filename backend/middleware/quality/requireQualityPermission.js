@@ -10,6 +10,17 @@ function requireQualityPermission(permission) {
   };
 }
 
+function requireAnyQualityPermission(permissions = []) {
+  return function qualityAnyPermissionMiddleware(req, res, next) {
+    if (permissions.some((permission) => hasQualityPermission(req.user, permission))) {
+      return next();
+    }
+
+    return res.status(403).json({ error: 'Acces qualite interdit' });
+  };
+}
+
 module.exports = {
+  requireAnyQualityPermission,
   requireQualityPermission,
 };

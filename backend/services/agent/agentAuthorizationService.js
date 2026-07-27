@@ -25,6 +25,7 @@ function permissionList(raw) {
   }
   const expanded = new Set(permissions);
   if (expanded.has('quality.documentation.edit')) expanded.add('quality.documentation.read');
+  if (expanded.has('quality.configuration.write')) expanded.add('quality.read');
   return [...expanded];
 }
 

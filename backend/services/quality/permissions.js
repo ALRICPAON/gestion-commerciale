@@ -1,5 +1,6 @@
 const QUALITY_PERMISSIONS = Object.freeze({
   READ: 'quality.read',
+  CONFIGURATION_WRITE: 'quality.configuration.write',
   RECORD_CREATE: 'quality.record.create',
   EQUIPMENT_MANAGE: 'quality.equipment.manage',
   NC_MANAGE: 'quality.nc.manage',

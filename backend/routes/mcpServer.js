@@ -31,7 +31,7 @@ const { envTrustedMode } = require('../services/agent/agentTrustedMode');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
-const MCP_SERVER_VERSION = '1.8.2';
+const MCP_SERVER_VERSION = '1.8.3';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
@@ -609,6 +609,7 @@ function mcpAgentContext(req) {
       'sales.read',
       'cashflow.read',
       'quality.read',
+      'quality.configuration.write',
       'quality.documentation.read',
       'statistics.read',
       'pennylane.read',
@@ -624,6 +625,7 @@ function mcpAgentContext(req) {
       'sales.read',
       'cashflow.read',
       'quality.read',
+      'quality.configuration.write',
       'quality.documentation.read',
       'statistics.read',
       'pennylane.read',
@@ -780,6 +782,8 @@ async function handleRequest(req, message) {
         'Pour la documentation qualite, le type canonique de pending action est quality.documentation.apply_section_updates.',
         'Pour modifier des chapitres qualite avec blocs structures depuis ChatGPT, utilise les outils publics compatibles quality_documentation_update_text_block, quality_documentation_add_text_block, quality_documentation_add_table_block, quality_documentation_add_diagram_block, quality_documentation_delete_block et quality_documentation_move_block.',
         'Ces outils publics mappent vers les actions internes canoniques quality.documentation.update_text_block, quality.documentation.add_text_block, quality.documentation.add_table_block, quality.documentation.add_diagram_block, quality.documentation.delete_block et quality.documentation.move_block.',
+        'Pour configurer les taches qualite et plans de nettoyage, utilise quality_create_task, quality_update_task, quality_create_cleaning_plan, quality_update_cleaning_plan, quality_assign_task_to_zone, quality_assign_task_to_equipment, quality_activate_configuration et quality_deactivate_configuration avec quality.configuration.write.',
+        'Les configurations creees par l agent restent par defaut en pending_review/inactives; un plan de nettoyage incomplet ne doit jamais etre active.',
         'Pour une commande client confirmée dans la conversation, appelle create_customer_order_confirmed si disponible; sinon utilise create_pending_action avec un action_type exact expose par list_executable_actions puis execute_pending_action après confirmation.',
         'Toute modification, validation, facturation, email ou suppression hors création de brouillon commande doit rester confirmée explicitement et ne doit jamais etre marquee executee sans resultat metier reel.',
         'Après modification du catalogue MCP, reconnecter le client si la notification tools/list_changed n’est pas consommée par le client.',
@@ -800,6 +804,16 @@ async function handleRequest(req, message) {
       has_cashflow_sources: tools.some((tool) => tool.name === 'get_cashflow_data_sources'),
       has_quality_block_tools: [
         ...Object.keys(PUBLIC_QUALITY_BLOCK_TOOL_ALIASES),
+      ].every((name) => tools.some((tool) => tool.name === name)),
+      has_quality_configuration_write_tools: [
+        'quality_create_task',
+        'quality_update_task',
+        'quality_create_cleaning_plan',
+        'quality_update_cleaning_plan',
+        'quality_assign_task_to_zone',
+        'quality_assign_task_to_equipment',
+        'quality_activate_configuration',
+        'quality_deactivate_configuration',
       ].every((name) => tools.some((tool) => tool.name === name)),
       registry_source: 'legacyTools + agentToolRegistry.listMcpTools + public underscore aliases',
       names: tools.map(t => t.name),

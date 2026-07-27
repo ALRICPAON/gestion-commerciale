@@ -41,6 +41,7 @@ function agentContext(req) {
       'sales.read',
       'cashflow.read',
       'quality.read',
+      'quality.configuration.write',
       'quality.documentation.read',
       'statistics.read',
       'pennylane.read',

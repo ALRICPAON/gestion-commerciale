@@ -122,7 +122,7 @@ const modules = [
     path: '/quality/pages/dashboard.html',
     title: 'Qualite',
     description: 'Zones, equipements, documents, taches, temperatures, nettoyage et alertes.',
-    permissions: ['quality.read', 'quality.write'],
+    permissions: ['quality.read', 'quality.configuration.write'],
     capabilities: ['zones', 'equipments', 'tasks', 'temperatures', 'cleaning', 'attachments'],
   },
   {

@@ -110,19 +110,27 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
       `UPDATE quality_cleaning_plans
        SET title=$3, description=$4, zone_id=$5, equipment_id=$6, product_name=$7,
            method=$8, safety_instructions=$9, expected_duration_minutes=$10,
-           quality_task_id=$11, active=$12, updated_by=$13, updated_at=now()
+           quality_task_id=$11, active=$12, updated_by=$13,
+           dosage_concentration=$14, usage_temperature=$15, contact_time_minutes=$16,
+           rinse_required=$17, material_used=$18, post_cleaning_check=$19,
+           expected_proof=$20, corrective_action=$21, configuration_status=$22,
+           validation_required=$23, created_source=$24, created_by_agent=$25,
+           agent_action_id=$26, updated_at=now()
        WHERE id=$1 AND store_id=$2
        RETURNING *`,
-      [planId, storeId, payload.title, payload.description, payload.zone_id, payload.equipment_id, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId]
+      [planId, storeId, payload.title, payload.description, payload.zone_id, payload.equipment_id, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration ?? before.dosage_concentration, payload.usage_temperature ?? before.usage_temperature, payload.contact_time_minutes ?? before.contact_time_minutes, payload.rinse_required ?? before.rinse_required, payload.material_used ?? before.material_used, payload.post_cleaning_check ?? before.post_cleaning_check, payload.expected_proof ?? before.expected_proof, payload.corrective_action ?? before.corrective_action, payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payload.agent_action_id || before.agent_action_id]
     )
     : await db.query(
       `INSERT INTO quality_cleaning_plans (
         store_id, title, description, zone_id, equipment_id, product_name,
         method, safety_instructions, expected_duration_minutes, quality_task_id,
-        active, created_by, updated_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+        active, created_by, updated_by, dosage_concentration, usage_temperature,
+        contact_time_minutes, rinse_required, material_used, post_cleaning_check,
+        expected_proof, corrective_action, configuration_status, validation_required,
+        created_source, created_by_agent, agent_action_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
       RETURNING *`,
-      [storeId, payload.title, payload.description, payload.zone_id, payload.equipment_id, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId]
+      [storeId, payload.title, payload.description, payload.zone_id, payload.equipment_id, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration, payload.usage_temperature, payload.contact_time_minutes, payload.rinse_required, payload.material_used, payload.post_cleaning_check, payload.expected_proof, payload.corrective_action, payload.configuration_status || 'active', payload.validation_required === true, payload.created_source || 'human', payload.created_by_agent === true, payload.agent_action_id]
     );
   const plan = await getCleaningPlan(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, planId ? 'quality.cleaning.plan.updated' : 'quality.cleaning.plan.created', plan.id, before, plan);
@@ -132,12 +140,17 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
 async function changeCleaningPlanStatus(db, storeId, userId, planId, active) {
   const before = await getCleaningPlan(db, storeId, planId);
   if (!before) return null;
+  if (active && (!before.product_name || !before.dosage_concentration || !before.contact_time_minutes || !before.quality_task_id)) {
+    const err = new Error('Activation refusee: produit, dosage/concentration, temps de contact et frequence sont obligatoires');
+    err.status = 400;
+    throw err;
+  }
   const result = await db.query(
     `UPDATE quality_cleaning_plans
-     SET active=$3, updated_by=$4, updated_at=now()
+     SET active=$3, configuration_status=$5, updated_by=$4, updated_at=now()
      WHERE id=$1 AND store_id=$2
      RETURNING *`,
-    [planId, storeId, active, userId]
+    [planId, storeId, active, userId, active ? 'active' : 'inactive']
   );
   const plan = await getCleaningPlan(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, 'quality.cleaning.plan.status_changed', plan.id, before, plan);

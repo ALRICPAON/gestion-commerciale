@@ -156,3 +156,46 @@ Les nouveaux outils exposes par MCP respectent:
 - audit dans `agent_tool_audit_logs` lorsque la table est disponible.
 
 Configurer les permissions de l identite technique avec `ALTA_AGENT_PERMISSIONS`.
+
+## Configuration Qualite par ALTA_MAREE_V3
+
+La configuration des taches qualite et plans de nettoyage passe par la permission dediee `quality.configuration.write`, en plus de `quality.read`. Ne pas utiliser `quality.admin` pour ce perimetre.
+
+Outils MCP d'ecriture controles:
+
+- `quality_create_task`;
+- `quality_update_task`;
+- `quality_create_cleaning_plan`;
+- `quality_update_cleaning_plan`;
+- `quality_assign_task_to_zone`;
+- `quality_assign_task_to_equipment`;
+- `quality_activate_configuration`;
+- `quality_deactivate_configuration`.
+
+Garanties:
+
+- authentification MCP et `store_id` requis;
+- permission utilisateur et permission agent verifiees;
+- zones/equipements verifies dans le meme magasin;
+- creations agent en `pending_review` et inactives par defaut;
+- refus de modification d'une tache deja executee;
+- refus d'activation d'un plan incomplet;
+- aucune suppression physique exposee;
+- audit via `agent_tool_audit_logs`.
+
+Exemple:
+
+```bash
+curl -X POST https://api.altamaree.fr/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -H "x-alta-agent-key: $ALTA_AGENT_KEY" \
+  -d '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"quality_create_cleaning_plan","arguments":{"title":"Plan vivier","zone_id":"<ZONE_ID>","equipment_id":"<EQUIPMENT_ID>","quality_task_id":"<TASK_ID>","method":"A completer"}}}'
+```
+
+Test local:
+
+```bash
+node backend/scripts/test-quality-agent-configuration-tools.js
+node backend/scripts/test-mcp-public-tools-list.js
+```
