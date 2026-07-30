@@ -6,6 +6,7 @@ const qualityTables = require('../quality/qualityDocumentationTableService');
 const qualityDiagrams = require('../quality/qualityDocumentationDiagramService');
 const qualityExport = require('../quality/qualityDocumentationExportService');
 const qualityContext = require('../quality/agentQualityContextService');
+const qualityConfiguration = require('../quality/agentConfiguration');
 const { listModules, getModule } = require('./agentModuleCatalog');
 const { listAgentAuditLogs, getAgentAuditLog } = require('./agentAuditService');
 const {
@@ -129,6 +130,95 @@ const QUALITY_BLOCK_ACTIONS_WITH_CHAPTER = new Set([
   'quality.documentation.add_diagram_block',
   'quality.documentation.move_block',
 ]);
+
+const qualityTaskConfigurationInputSchema = {
+  type: 'object',
+  required: ['title'],
+  properties: {
+    task_id: { type: 'string' },
+    title: { type: 'string' },
+    description: { type: 'string' },
+    category: { type: 'string' },
+    module_key: { type: 'string' },
+    zone_id: { type: 'string' },
+    equipment_id: { type: 'string' },
+    frequency_value: { type: 'integer', minimum: 1 },
+    frequency_unit: { type: 'string', enum: ['hours', 'days', 'weeks', 'months', 'events'] },
+    target_time: { type: 'string' },
+    next_due_at: { type: 'string' },
+    responsible_user_id: { type: 'string' },
+    responsible_role: { type: 'string' },
+    criticality: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+    execution_method: { type: 'string' },
+    verification_method: { type: 'string' },
+    proof_required: { type: 'boolean' },
+    photo_required: { type: 'boolean' },
+    status: { type: 'string', enum: ['draft', 'pending_review', 'planned', 'paused', 'cancelled'] },
+    instructions: { type: 'string' },
+    acceptance_criteria: { type: 'string' },
+    deviation_action: { type: 'string' },
+    configuration_status: { type: 'string', enum: ['draft', 'pending_review', 'active', 'inactive', 'archived'] },
+    active: { type: 'boolean' },
+    agent_action_id: { type: 'string' },
+  },
+  additionalProperties: false,
+};
+
+const qualityCleaningPlanConfigurationInputSchema = {
+  type: 'object',
+  required: ['title'],
+  properties: {
+    cleaning_plan_id: { type: 'string' },
+    plan_id: { type: 'string' },
+    title: { type: 'string' },
+    description: { type: 'string' },
+    zone_id: { type: 'string' },
+    equipment_id: { type: 'string' },
+    quality_task_id: { type: 'string' },
+    product_name: { type: 'string' },
+    dosage_concentration: { type: 'string' },
+    usage_temperature: { type: 'string' },
+    contact_time_minutes: { type: 'integer', minimum: 1 },
+    rinse_required: { type: 'boolean' },
+    material_used: { type: 'string' },
+    method: { type: 'string' },
+    safety_instructions: { type: 'string' },
+    expected_duration_minutes: { type: 'integer', minimum: 1 },
+    post_cleaning_check: { type: 'string' },
+    expected_proof: { type: 'string' },
+    corrective_action: { type: 'string' },
+    configuration_status: { type: 'string', enum: ['draft', 'pending_review', 'active', 'inactive', 'archived'] },
+    active: { type: 'boolean' },
+    agent_action_id: { type: 'string' },
+  },
+  additionalProperties: false,
+};
+
+const qualityTaskAssignmentInputSchema = {
+  type: 'object',
+  required: ['task_id'],
+  properties: {
+    task_id: { type: 'string' },
+    zone_id: { type: 'string' },
+    equipment_id: { type: 'string' },
+    agent_action_id: { type: 'string' },
+  },
+  additionalProperties: false,
+};
+
+const qualityConfigurationStatusInputSchema = {
+  type: 'object',
+  required: ['type'],
+  properties: {
+    type: { type: 'string', enum: ['task', 'quality_task', 'cleaning_plan', 'plan'] },
+    id: { type: 'string' },
+    task_id: { type: 'string' },
+    cleaning_plan_id: { type: 'string' },
+    plan_id: { type: 'string' },
+    agent_action_id: { type: 'string' },
+  },
+  additionalProperties: false,
+};
 
 async function normalizeBusinessActionPayload(db, storeId, actionType, payload = {}) {
   if (!QUALITY_BLOCK_ACTIONS_WITH_CHAPTER.has(actionType)) return payload;
@@ -1258,6 +1348,150 @@ const tools = [
     execute: async ({ db, context, input, tool: currentTool }) => {
       const data = await qualityContext.getQualityContext(db, context.store_id, input);
       return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Contexte qualite ALTA', data, source_freshness: data.source_freshness });
+    },
+  }),
+  tool({
+    name: 'quality_create_task',
+    title: 'Creer tache qualite',
+    description: 'Cree une tache de configuration qualite en brouillon/a valider a partir des zones et equipements existants, sans toucher aux historiques.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: qualityTaskConfigurationInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityConfiguration.createTask(db, context, input);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Tache qualite creee', data: { task: result.task, summary: result.summary } }),
+        target_type: 'quality_task',
+        target_id: result.task.id,
+      };
+    },
+  }),
+  tool({
+    name: 'quality_update_task',
+    title: 'Modifier tache qualite',
+    description: 'Modifie une tache qualite non executee uniquement; refuse les taches completees ou avec historique.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityTaskConfigurationInputSchema, required: ['task_id', 'title'] },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityConfiguration.updateTask(db, context, input);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Tache qualite modifiee', data: { task: result.task, summary: result.summary } }),
+        target_type: 'quality_task',
+        target_id: result.task.id,
+      };
+    },
+  }),
+  tool({
+    name: 'quality_create_cleaning_plan',
+    title: 'Creer plan de nettoyage',
+    description: 'Cree un plan de nettoyage en brouillon/a valider; les champs chimiques peuvent rester a completer et bloquent alors l activation.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: qualityCleaningPlanConfigurationInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityConfiguration.createCleaningPlan(db, context, input);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan de nettoyage cree', data: { plan: result.plan, summary: result.summary } }),
+        target_type: 'quality_cleaning_plan',
+        target_id: result.plan.id,
+      };
+    },
+  }),
+  tool({
+    name: 'quality_update_cleaning_plan',
+    title: 'Modifier plan de nettoyage',
+    description: 'Modifie un plan de nettoyage existant et refuse son activation si les informations operationnelles obligatoires manquent.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityCleaningPlanConfigurationInputSchema, required: ['cleaning_plan_id', 'title'] },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityConfiguration.updateCleaningPlan(db, context, input);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan de nettoyage modifie', data: { plan: result.plan, summary: result.summary } }),
+        target_type: 'quality_cleaning_plan',
+        target_id: result.plan.id,
+      };
+    },
+  }),
+  tool({
+    name: 'quality_assign_task_to_zone',
+    title: 'Associer tache a zone',
+    description: 'Associe une tache qualite non executee a une zone du meme magasin.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityTaskAssignmentInputSchema, required: ['task_id', 'zone_id'] },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityConfiguration.assignTaskToTarget(db, context, input, 'zone');
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Tache associee a la zone', data: { task: result.task, summary: result.summary } }),
+        target_type: 'quality_task',
+        target_id: result.task.id,
+      };
+    },
+  }),
+  tool({
+    name: 'quality_assign_task_to_equipment',
+    title: 'Associer tache a equipement',
+    description: 'Associe une tache qualite non executee a un equipement du meme magasin.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityTaskAssignmentInputSchema, required: ['task_id', 'equipment_id'] },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityConfiguration.assignTaskToTarget(db, context, input, 'equipment');
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Tache associee a l equipement', data: { task: result.task, summary: result.summary } }),
+        target_type: 'quality_task',
+        target_id: result.task.id,
+      };
+    },
+  }),
+  tool({
+    name: 'quality_activate_configuration',
+    title: 'Activer configuration qualite',
+    description: 'Active explicitement une tache ou un plan de nettoyage; refuse les plans incomplets.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: qualityConfigurationStatusInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityConfiguration.changeConfigurationStatus(db, context, input, true);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Configuration qualite activee', data: result }),
+        target_type: input.type,
+        target_id: input.id || input.task_id || input.cleaning_plan_id || input.plan_id || null,
+      };
+    },
+  }),
+  tool({
+    name: 'quality_deactivate_configuration',
+    title: 'Desactiver configuration qualite',
+    description: 'Desactive logiquement une tache ou un plan de nettoyage sans suppression physique.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: qualityConfigurationStatusInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityConfiguration.changeConfigurationStatus(db, context, input, false);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Configuration qualite desactivee', data: result }),
+        target_type: input.type,
+        target_id: input.id || input.task_id || input.cleaning_plan_id || input.plan_id || null,
+      };
     },
   }),
   ...['zones', 'equipments', 'temperature_records', 'cleaning_records', 'tasks'].map((kind) => tool({

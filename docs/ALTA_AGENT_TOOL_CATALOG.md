@@ -26,13 +26,14 @@ Outils raccordes dans ce socle:
 - registre execution: `list_executable_actions`;
 - tresorerie: `get_cashflow_dashboard`, `get_cashflow_forecast`, `get_customer_receivables`, `get_supplier_payables`, `get_bank_accounts_summary`, `get_bank_transactions`, `get_recurring_charges`, `get_cashflow_settings`, `simulate_distrimer_payment`, `prepare_cashflow_plan`;
 - dossier qualite: `list_quality_documentation`, `get_quality_documentation_outline`, `get_quality_section`, `search_quality_sections`, `list_quality_missing_items`, `get_quality_section_versions`, `draft_quality_section_content`, `preview_quality_section_update`, `update_quality_section`, `create_quality_section`, `restore_quality_section_version`, `list_quality_section_tables`, `list_quality_section_diagrams`, `export_quality_documentation_preview`;
+- configuration qualite: `quality_create_task`, `quality_update_task`, `quality_create_cleaning_plan`, `quality_update_cleaning_plan`, `quality_assign_task_to_zone`, `quality_assign_task_to_equipment`, `quality_activate_configuration`, `quality_deactivate_configuration`;
 - audit admin: `list_agent_audit_logs`, `get_agent_audit_log`.
 
 Etat actuel:
 
-- 117 outils dans le catalogue administratif.
-- 77 outils operationnels dans `agentToolRegistry.listMcpTools`.
-- 96 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT.
+- 125 outils dans le catalogue administratif.
+- 85 outils operationnels dans `agentToolRegistry.listMcpTools`.
+- 104 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 
 ## Architecture execution MCP
@@ -86,6 +87,14 @@ Les actions non presentes dans cette allowlist sont refusees. Aucune fonction ba
 | `prepare_quality_section_update` | quality_documentation | `agentQualityContextService.previewQualitySectionUpdate` | operational | 0 | `quality.documentation.read` | `quality.documentation.read` | non | chapitre qualite | n/a | prepare seulement |
 | `update_quality_section` | quality_documentation | `quality.documentation.apply_section_updates` via orchestrateur | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | compatibilite, redirige vers action canonique |
 | `execute_quality_section_update` | quality_documentation | `quality.documentation.apply_section_updates` via orchestrateur | operational | 2 | `quality.documentation.edit` | `quality.documentation.edit` | oui | chapitre qualite, versions | n/a | compatibilite, redirige vers action canonique |
+| `quality_create_task` | quality | `quality/agentConfiguration.createTask` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_zones`, `quality_equipments`, `stores` | n/a | cree en `pending_review`, inactif par defaut |
+| `quality_update_task` | quality | `quality/agentConfiguration.updateTask` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_task_history`, zones/equipements | n/a | refuse tache completee ou avec historique |
+| `quality_create_cleaning_plan` | quality | `quality/agentConfiguration.createCleaningPlan` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans`, `quality_tasks`, zones/equipements | n/a | champs chimiques optionnels tant que non actif |
+| `quality_update_cleaning_plan` | quality | `quality/agentConfiguration.updateCleaningPlan` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans`, `quality_tasks`, zones/equipements | n/a | activation refusee si informations operationnelles manquent |
+| `quality_assign_task_to_zone` | quality | `quality/agentConfiguration.assignTaskToTarget` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_zones` | n/a | refuse association inter-magasins |
+| `quality_assign_task_to_equipment` | quality | `quality/agentConfiguration.assignTaskToTarget` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_equipments` | n/a | refuse equipement inexistant/autre magasin |
+| `quality_activate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_cleaning_plans` | n/a | refuse plan incomplet |
+| `quality_deactivate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_cleaning_plans` | n/a | desactivation logique uniquement |
 
 Les outils encore `planned` correspondent aux domaines ou ecritures dont le service metier explicite reste a raccorder sans dupliquer les regles existantes.
 
@@ -113,4 +122,4 @@ Ces six operations restent les noms internes canoniques. Pour le connecteur Chat
 
 Ces wrappers sont dans la reponse publique `tools/list`; ils ne sont pas seulement visibles dans `list_executable_actions`, `find_feature_in_alta` ou `get_module_capabilities`.
 
-Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, le Trusted Owner Mode est expose en `1.8.0`, les outils MCP publics de blocs qualite sont exposes en `1.8.1`, et les wrappers publics compatibles ChatGPT sont exposes en `1.8.2`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
+Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, le Trusted Owner Mode est expose en `1.8.0`, les outils MCP publics de blocs qualite sont exposes en `1.8.1`, les wrappers publics compatibles ChatGPT sont exposes en `1.8.2`, et les outils de configuration Qualite agent sont exposes en `1.8.3`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.

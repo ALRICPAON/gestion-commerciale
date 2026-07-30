@@ -2,7 +2,7 @@ const express = require('express');
 
 const { authenticateToken } = require('../../middleware/auth');
 const { attachDbContext } = require('../../middleware/dbContext');
-const { requireQualityPermission } = require('../../middleware/quality/requireQualityPermission');
+const { requireAnyQualityPermission, requireQualityPermission } = require('../../middleware/quality/requireQualityPermission');
 const { QUALITY_PERMISSIONS } = require('../../services/quality/permissions');
 const {
   deactivateQualityTask,
@@ -57,7 +57,12 @@ router.get('/:id', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (re
   }
 });
 
-router.post('/', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_MANAGE), async (req, res) => {
+const requireTaskConfigurationPermission = requireAnyQualityPermission([
+  QUALITY_PERMISSIONS.EQUIPMENT_MANAGE,
+  QUALITY_PERMISSIONS.CONFIGURATION_WRITE,
+]);
+
+router.post('/', requireTaskConfigurationPermission, async (req, res) => {
   try {
     const payload = mapTaskPayload(req.body);
     const error = validateTaskPayload(payload);
@@ -69,7 +74,7 @@ router.post('/', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_MANAGE),
   }
 });
 
-router.put('/:id', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_MANAGE), async (req, res) => {
+router.put('/:id', requireTaskConfigurationPermission, async (req, res) => {
   try {
     const taskId = cleanUuid(req.params.id);
     if (!taskId) return res.status(400).json({ error: 'Identifiant tâche invalide' });

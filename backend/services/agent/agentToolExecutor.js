@@ -40,6 +40,7 @@ function permissionArray(value) {
 function expandPermissionImplications(permissions) {
   const expanded = new Set(permissionArray(permissions));
   if (expanded.has('quality.documentation.edit')) expanded.add('quality.documentation.read');
+  if (expanded.has('quality.configuration.write')) expanded.add('quality.read');
   return [...expanded];
 }
 

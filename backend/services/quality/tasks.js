@@ -83,7 +83,12 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
       `UPDATE quality_tasks
        SET title=$3, description=$4, module_key=$5, entity_type=$6, entity_id=$7,
            responsible_user_id=$8, frequency_value=$9, frequency_unit=$10,
-           target_time=$11, next_due_at=$12, status=$13, active=$14, updated_at=now()
+           target_time=$11, next_due_at=$12, status=$13, active=$14,
+           category=$15, responsible_role=$16, criticality=$17,
+           execution_method=$18, verification_method=$19, proof_required=$20,
+           photo_required=$21, instructions=$22, acceptance_criteria=$23,
+           deviation_action=$24, configuration_status=$25, created_source=$26,
+           created_by_agent=$27, agent_action_id=$28, updated_at=now()
        WHERE id=$1 AND store_id=$2
        RETURNING *`,
       [
@@ -101,14 +106,31 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
         nextDueAt,
         payload.status,
         payload.active,
+        payload.category ?? before.category,
+        payload.responsible_role ?? before.responsible_role,
+        payload.criticality ?? before.criticality,
+        payload.execution_method ?? before.execution_method,
+        payload.verification_method ?? before.verification_method,
+        payload.proof_required ?? before.proof_required,
+        payload.photo_required ?? before.photo_required,
+        payload.instructions ?? before.instructions,
+        payload.acceptance_criteria ?? before.acceptance_criteria,
+        payload.deviation_action ?? before.deviation_action,
+        payload.configuration_status || before.configuration_status || 'active',
+        payload.created_source || before.created_source || 'human',
+        payload.created_by_agent === true || before.created_by_agent === true,
+        payload.agent_action_id || before.agent_action_id,
       ]
     )
     : await db.query(
       `INSERT INTO quality_tasks (
         store_id, title, description, module_key, entity_type, entity_id,
         responsible_user_id, frequency_value, frequency_unit, target_time,
-        next_due_at, status, active
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+        next_due_at, status, active, category, responsible_role, criticality,
+        execution_method, verification_method, proof_required, photo_required,
+        instructions, acceptance_criteria, deviation_action, configuration_status,
+        created_source, created_by_agent, agent_action_id
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
       RETURNING *`,
       [
         storeId,
@@ -124,6 +146,20 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
         nextDueAt,
         payload.status,
         payload.active,
+        payload.category,
+        payload.responsible_role,
+        payload.criticality,
+        payload.execution_method,
+        payload.verification_method,
+        payload.proof_required,
+        payload.photo_required,
+        payload.instructions,
+        payload.acceptance_criteria,
+        payload.deviation_action,
+        payload.configuration_status || 'active',
+        payload.created_source || 'human',
+        payload.created_by_agent === true,
+        payload.agent_action_id,
       ]
     );
 
@@ -182,7 +218,7 @@ async function deactivateQualityTask(db, storeId, userId, taskId) {
   if (!before) return null;
   const result = await db.query(
     `UPDATE quality_tasks
-     SET active=false, status='paused', updated_at=now()
+     SET active=false, status='paused', configuration_status='inactive', updated_at=now()
      WHERE id=$1 AND store_id=$2
      RETURNING *`,
     [taskId, storeId]
