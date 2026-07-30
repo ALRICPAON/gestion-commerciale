@@ -178,6 +178,10 @@ Garanties:
 - permission utilisateur et permission agent verifiees;
 - zones/equipements verifies dans le meme magasin;
 - creations agent en `pending_review` et inactives par defaut;
+- refus de modification d'une tache deja executee;
+- refus d'activation d'un plan incomplet;
+- aucune suppression physique exposee;
+- audit via `agent_tool_audit_logs`.
 
 ## Couverture ALTA_MAREE_V3
 
@@ -195,10 +199,6 @@ ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,supplier
 ```
 
 La matrice complete est documentee dans `docs/ALTA_MAREE_V3_MCP_FULL_COVERAGE.md`.
-- refus de modification d'une tache deja executee;
-- refus d'activation d'un plan incomplet;
-- aucune suppression physique exposee;
-- audit via `agent_tool_audit_logs`.
 
 Exemple:
 
