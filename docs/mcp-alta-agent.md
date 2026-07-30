@@ -183,6 +183,23 @@ Garanties:
 - aucune suppression physique exposee;
 - audit via `agent_tool_audit_logs`.
 
+## Couverture ALTA_MAREE_V3
+
+Depuis la version MCP `1.8.4`, `tools/list` expose le catalogue ALTA_MAREE_V3 complet et les metadonnees de verification:
+
+- `coverage_complete`;
+- `missing_tools`;
+- `final_permissions`;
+- `coverage_matrix`.
+
+La configuration recommandee de l'identite technique est:
+
+```text
+ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,suppliers.read,suppliers.write,articles.read,articles.write,stock.read,stock.write,purchases.read,purchases.write,sales.read,sales.write,communications.read,communications.send,statistics.read,cashflow.read,cashflow.write,pennylane.read,pennylane.sync,employee_planning.read,employee_planning.write,transformations.read,transformations.write,quality.read,quality.configuration.write,quality.documentation.read,quality.documentation.edit
+```
+
+La matrice complete est documentee dans `docs/ALTA_MAREE_V3_MCP_FULL_COVERAGE.md`.
+
 Exemple:
 
 ```bash

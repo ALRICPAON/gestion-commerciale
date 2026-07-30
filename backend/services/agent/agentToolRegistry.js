@@ -7,6 +7,7 @@ const qualityDiagrams = require('../quality/qualityDocumentationDiagramService')
 const qualityExport = require('../quality/qualityDocumentationExportService');
 const qualityContext = require('../quality/agentQualityContextService');
 const qualityConfiguration = require('../quality/agentConfiguration');
+const fullCoverage = require('./agentFullCoverageService');
 const { listModules, getModule } = require('./agentModuleCatalog');
 const { listAgentAuditLogs, getAgentAuditLog } = require('./agentAuditService');
 const {
@@ -220,6 +221,71 @@ const qualityConfigurationStatusInputSchema = {
   additionalProperties: false,
 };
 
+const preparationInputSchema = {
+  type: 'object',
+  properties: {
+    action_type: { type: 'string', maxLength: 120 },
+    summary: { type: 'string', maxLength: 500 },
+    impact: { type: 'string', maxLength: 1000 },
+    target_objects: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    payload: { type: 'object', additionalProperties: true },
+  },
+  additionalProperties: true,
+};
+
+function preparationTool({ name, title, domain, permission, actionType = name, requiresConfirmation = true, executableNow = false }) {
+  return tool({
+    name,
+    title,
+    description: executableNow
+      ? `Prepare une action ${domain} executable via confirmation humaine explicite.`
+      : `Prepare une action ${domain} controlee sans effet metier direct; aucun service d execution directe n est raccorde pour cette action.`,
+    domain,
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: permission,
+    requiresConfirmation: false,
+    inputSchema: preparationInputSchema,
+    execute: async ({ context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: `Preparation ${title}`,
+      data: {
+        prepared_action: fullCoverage.prepareBusinessAction(context, input, {
+          action_type: actionType,
+          required_permissions: executableNow ? ['mcp.execute', permission] : [permission],
+          requires_confirmation: requiresConfirmation,
+          executable_now: executableNow,
+          summary: `Preparation ${title}`,
+        }),
+      },
+      warnings: executableNow ? [] : ['Preparation uniquement: aucune ecriture metier directe n est executee par cet outil.'],
+    }),
+  });
+}
+
+function snapshotTool({ name, title, domain, permission, snapshotKey }) {
+  return tool({
+    name,
+    title,
+    description: `Lit un apercu ${domain} via une requete backend allowlistee, sans exposer de secret et sans ecriture.`,
+    domain,
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: permission,
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const snapshot = await fullCoverage.getModuleSnapshot(db, context.store_id, snapshotKey, input);
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: snapshot.unavailable ? `${title}: source indisponible` : `${title}: ${snapshot.count} ligne(s)`,
+        data: { snapshot },
+        warnings: snapshot.unavailable ? [snapshot.error || 'Source indisponible'] : [],
+      });
+    },
+  });
+}
+
 async function normalizeBusinessActionPayload(db, storeId, actionType, payload = {}) {
   if (!QUALITY_BLOCK_ACTIONS_WITH_CHAPTER.has(actionType)) return payload;
   return {
@@ -403,6 +469,102 @@ const tools = [
     inputSchema: searchInputSchema,
     execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Recherche ventes', data: await commercial.searchSales(db, context.store_id, input) }),
   }),
+  tool({
+    name: 'get_client_profile',
+    title: 'Profil client',
+    description: 'Lit une fiche client via la recherche commerciale existante, avec contacts/tarifs/historique disponibles dans la reponse.',
+    domain: 'clients',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'clients.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Profil client', data: await commercial.searchClients(db, context.store_id, { query: input.query || input.id, limit: input.limit || 5 }) }),
+  }),
+  tool({
+    name: 'get_supplier_profile',
+    title: 'Profil fournisseur',
+    description: 'Lit une fiche fournisseur via la recherche fournisseur existante.',
+    domain: 'suppliers',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'suppliers.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Profil fournisseur', data: await commercial.searchSuppliers(db, context.store_id, { query: input.query || input.id, limit: input.limit || 5 }) }),
+  }),
+  tool({
+    name: 'get_article_profile',
+    title: 'Profil article',
+    description: 'Lit une fiche article via la recherche articles existante.',
+    domain: 'articles',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'articles.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Profil article', data: await commercial.searchArticles(db, context.store_id, { query: input.query || input.id, limit: input.limit || 5 }) }),
+  }),
+  tool({
+    name: 'get_sale_profile',
+    title: 'Profil vente',
+    description: 'Lit une vente ou commande via la recherche ventes existante.',
+    domain: 'sales',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'sales.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 20 } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Profil vente', data: await commercial.searchSales(db, context.store_id, { query: input.query || input.id, limit: input.limit || 5 }) }),
+  }),
+  snapshotTool({ name: 'get_purchases_overview', title: 'Apercu achats', domain: 'purchases', permission: 'purchases.read', snapshotKey: 'purchases' }),
+  snapshotTool({ name: 'get_purchase_profile', title: 'Profil achat', domain: 'purchases', permission: 'purchases.read', snapshotKey: 'purchases' }),
+  snapshotTool({ name: 'get_communications_overview', title: 'Apercu communications', domain: 'communications', permission: 'communications.read', snapshotKey: 'communications' }),
+  snapshotTool({ name: 'get_pennylane_sync_status', title: 'Etat synchronisation Pennylane', domain: 'pennylane', permission: 'pennylane.read', snapshotKey: 'pennylane' }),
+  snapshotTool({ name: 'get_pennylane_diagnostics', title: 'Diagnostics Pennylane', domain: 'pennylane', permission: 'pennylane.read', snapshotKey: 'pennylane' }),
+  snapshotTool({ name: 'get_employee_planning', title: 'Planning salarie', domain: 'employee_planning', permission: 'employee_planning.read', snapshotKey: 'employee_planning' }),
+  snapshotTool({ name: 'get_employee_profile', title: 'Profil salarie', domain: 'employee_planning', permission: 'employee_planning.read', snapshotKey: 'employee_planning' }),
+  snapshotTool({ name: 'get_transformations', title: 'Transformations', domain: 'transformations', permission: 'transformations.read', snapshotKey: 'transformations' }),
+  snapshotTool({ name: 'get_transformation_profile', title: 'Profil transformation', domain: 'transformations', permission: 'transformations.read', snapshotKey: 'transformations' }),
+  snapshotTool({ name: 'get_stock_lots', title: 'Lots stock', domain: 'stock', permission: 'stock.read', snapshotKey: 'stock_lots' }),
+  snapshotTool({ name: 'get_stock_movements', title: 'Mouvements stock', domain: 'stock', permission: 'stock.read', snapshotKey: 'stock_movements' }),
+  preparationTool({ name: 'prepare_client_draft', title: 'brouillon client', domain: 'clients', permission: 'clients.write' }),
+  preparationTool({ name: 'prepare_client_update', title: 'modification client', domain: 'clients', permission: 'clients.write' }),
+  preparationTool({ name: 'prepare_customer_price_list', title: 'liste tarifaire client', domain: 'clients', permission: 'clients.write' }),
+  preparationTool({ name: 'prepare_supplier_draft', title: 'brouillon fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
+  preparationTool({ name: 'prepare_supplier_update', title: 'modification fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
+  preparationTool({ name: 'prepare_supplier_article_mapping', title: 'mapping article fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
+  preparationTool({ name: 'prepare_supplier_order', title: 'commande fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
+  preparationTool({ name: 'prepare_article_draft', title: 'brouillon article', domain: 'articles', permission: 'articles.write' }),
+  preparationTool({ name: 'prepare_article_update', title: 'modification article', domain: 'articles', permission: 'articles.write' }),
+  preparationTool({ name: 'prepare_article_price_update', title: 'modification prix article', domain: 'articles', permission: 'articles.write' }),
+  preparationTool({ name: 'prepare_lot_update', title: 'modification lot non historique', domain: 'stock', permission: 'stock.write' }),
+  preparationTool({ name: 'prepare_stock_regularization', title: 'regularisation stock', domain: 'stock', permission: 'stock.write', requiresConfirmation: true }),
+  preparationTool({ name: 'prepare_traceability_action', title: 'action tracabilite', domain: 'stock', permission: 'stock.write' }),
+  preparationTool({ name: 'prepare_purchase', title: 'achat fournisseur', domain: 'purchases', permission: 'purchases.write' }),
+  preparationTool({ name: 'prepare_purchase_update', title: 'modification achat', domain: 'purchases', permission: 'purchases.write' }),
+  preparationTool({ name: 'prepare_purchase_reception', title: 'reception achat', domain: 'purchases', permission: 'purchases.write', requiresConfirmation: true }),
+  preparationTool({ name: 'prepare_supplier_invoice_matching', title: 'rapprochement facture fournisseur', domain: 'purchases', permission: 'purchases.write', requiresConfirmation: true }),
+  preparationTool({ name: 'prepare_customer_order', title: 'commande client', domain: 'sales', permission: 'sales.write', executableNow: true, actionType: 'sales.create_customer_order' }),
+  preparationTool({ name: 'prepare_sales_document_update', title: 'modification document vente', domain: 'sales', permission: 'sales.write' }),
+  preparationTool({ name: 'prepare_delivery_note', title: 'bon de livraison', domain: 'sales', permission: 'sales.write', executableNow: true, actionType: 'sales.convert_order_to_delivery_note' }),
+  preparationTool({ name: 'prepare_customer_invoice', title: 'facture client', domain: 'sales', permission: 'sales.write', requiresConfirmation: true }),
+  preparationTool({ name: 'prepare_customer_credit_note', title: 'avoir client', domain: 'sales', permission: 'sales.write', requiresConfirmation: true }),
+  preparationTool({ name: 'prepare_email_draft', title: 'brouillon email', domain: 'communications', permission: 'communications.read', requiresConfirmation: false }),
+  preparationTool({ name: 'prepare_whatsapp_message', title: 'message WhatsApp', domain: 'communications', permission: 'communications.read', requiresConfirmation: false }),
+  preparationTool({ name: 'prepare_sms_message', title: 'message SMS', domain: 'communications', permission: 'communications.read', requiresConfirmation: false }),
+  preparationTool({ name: 'preview_email', title: 'apercu email', domain: 'communications', permission: 'communications.read', requiresConfirmation: false }),
+  preparationTool({ name: 'preview_customer_price_list', title: 'apercu mercuriale', domain: 'communications', permission: 'communications.read', requiresConfirmation: false }),
+  preparationTool({ name: 'send_email_confirmed', title: 'envoi email confirme', domain: 'communications', permission: 'communications.send', requiresConfirmation: true }),
+  preparationTool({ name: 'send_customer_price_list_confirmed', title: 'envoi mercuriale confirme', domain: 'communications', permission: 'communications.send', requiresConfirmation: true }),
+  preparationTool({ name: 'analyze_business_performance', title: 'analyse performance', domain: 'statistics', permission: 'statistics.read', requiresConfirmation: false }),
+  preparationTool({ name: 'prepare_cashflow_manual_item', title: 'element manuel tresorerie', domain: 'cashflow', permission: 'cashflow.write' }),
+  preparationTool({ name: 'prepare_cashflow_settings_update', title: 'parametres tresorerie', domain: 'cashflow', permission: 'cashflow.write' }),
+  preparationTool({ name: 'prepare_pennylane_sync', title: 'synchronisation Pennylane', domain: 'pennylane', permission: 'pennylane.sync', requiresConfirmation: true }),
+  preparationTool({ name: 'prepare_pennylane_mapping_update', title: 'mapping Pennylane', domain: 'pennylane', permission: 'pennylane.sync' }),
+  preparationTool({ name: 'prepare_employee_draft', title: 'brouillon salarie', domain: 'employee_planning', permission: 'employee_planning.write' }),
+  preparationTool({ name: 'prepare_employee_absence', title: 'absence salarie', domain: 'employee_planning', permission: 'employee_planning.write' }),
+  preparationTool({ name: 'prepare_employee_planning_update', title: 'modification planning', domain: 'employee_planning', permission: 'employee_planning.write' }),
+  preparationTool({ name: 'prepare_employee_manager_validation', title: 'validation responsable planning', domain: 'employee_planning', permission: 'employee_planning.write', requiresConfirmation: true }),
+  preparationTool({ name: 'prepare_transformation', title: 'transformation negoce', domain: 'transformations', permission: 'transformations.write' }),
+  preparationTool({ name: 'prepare_transformation_update', title: 'modification transformation', domain: 'transformations', permission: 'transformations.write' }),
+  preparationTool({ name: 'prepare_transformation_validation', title: 'validation transformation', domain: 'transformations', permission: 'transformations.write', requiresConfirmation: true }),
   tool({
     name: 'create_pending_action',
     title: 'Creer une action en attente',
@@ -1463,9 +1625,9 @@ const tools = [
     title: 'Activer configuration qualite',
     description: 'Active explicitement une tache ou un plan de nettoyage; refuse les plans incomplets.',
     domain: 'quality',
-    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
     requiredPermission: 'quality.configuration.write',
-    requiresConfirmation: false,
+    requiresConfirmation: true,
     inputSchema: qualityConfigurationStatusInputSchema,
     execute: async ({ db, context, input, tool: currentTool }) => {
       const result = await qualityConfiguration.changeConfigurationStatus(db, context, input, true);
