@@ -31,9 +31,10 @@ Outils raccordes dans ce socle:
 
 Etat actuel:
 
-- 125 outils dans le catalogue administratif.
-- 85 outils operationnels dans `agentToolRegistry.listMcpTools`.
-- 104 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT.
+- 160 outils dans le catalogue administratif.
+- 141 outils operationnels dans `agentToolRegistry.listMcpTools`.
+- 160 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
+- `tools/list` expose `coverage_complete: true`, `missing_tools: []`, `final_permissions` et `coverage_matrix` pour ALTA_MAREE_V3.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 
 ## Architecture execution MCP
@@ -93,7 +94,7 @@ Les actions non presentes dans cette allowlist sont refusees. Aucune fonction ba
 | `quality_update_cleaning_plan` | quality | `quality/agentConfiguration.updateCleaningPlan` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans`, `quality_tasks`, zones/equipements | n/a | activation refusee si informations operationnelles manquent |
 | `quality_assign_task_to_zone` | quality | `quality/agentConfiguration.assignTaskToTarget` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_zones` | n/a | refuse association inter-magasins |
 | `quality_assign_task_to_equipment` | quality | `quality/agentConfiguration.assignTaskToTarget` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_equipments` | n/a | refuse equipement inexistant/autre magasin |
-| `quality_activate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_cleaning_plans` | n/a | refuse plan incomplet |
+| `quality_activate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 2 | `quality.configuration.write` | `quality.configuration.write` | oui | `quality_tasks`, `quality_cleaning_plans` | n/a | refuse plan incomplet |
 | `quality_deactivate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_cleaning_plans` | n/a | desactivation logique uniquement |
 
 Les outils encore `planned` correspondent aux domaines ou ecritures dont le service metier explicite reste a raccorder sans dupliquer les regles existantes.
@@ -122,4 +123,4 @@ Ces six operations restent les noms internes canoniques. Pour le connecteur Chat
 
 Ces wrappers sont dans la reponse publique `tools/list`; ils ne sont pas seulement visibles dans `list_executable_actions`, `find_feature_in_alta` ou `get_module_capabilities`.
 
-Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, le Trusted Owner Mode est expose en `1.8.0`, les outils MCP publics de blocs qualite sont exposes en `1.8.1`, les wrappers publics compatibles ChatGPT sont exposes en `1.8.2`, et les outils de configuration Qualite agent sont exposes en `1.8.3`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.
+Note MCP: le serveur annonce `tools.listChanged: true` depuis la version `1.6.0`. Le registre d execution est expose depuis `1.7.0`, enrichi en `1.7.1`, le Trusted Owner Mode est expose en `1.8.0`, les outils MCP publics de blocs qualite sont exposes en `1.8.1`, les wrappers publics compatibles ChatGPT sont exposes en `1.8.2`, les outils de configuration Qualite agent sont exposes en `1.8.3`, et la couverture ALTA_MAREE_V3 complete avec metadonnees `tools/list` est exposee en `1.8.4`. Si le client MCP ne consomme pas la notification de changement de catalogue, une reconnexion du client est obligatoire apres deploiement.

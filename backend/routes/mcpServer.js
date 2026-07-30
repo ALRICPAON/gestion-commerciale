@@ -26,12 +26,17 @@ const {
   executePendingAction,
 } = require('../services/agentCommercialToolsService');
 const { listMcpTools } = require('../services/agent/agentToolRegistry');
+const { listModules } = require('../services/agent/agentModuleCatalog');
+const {
+  FINAL_AGENT_PERMISSIONS,
+  buildCoverageReport,
+} = require('../services/agent/agentFullCoverageService');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 const { envTrustedMode } = require('../services/agent/agentTrustedMode');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
-const MCP_SERVER_VERSION = '1.8.3';
+const MCP_SERVER_VERSION = '1.8.4';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
@@ -600,38 +605,8 @@ function mcpAgentContext(req) {
     store_id: req.agentStoreId,
     user_id: process.env.ALTA_AGENT_USER_ID || null,
     role: envTrustedMode() ? 'trusted_owner' : 'agent',
-    user_permissions: configured.length ? configured : [
-      'agent.use',
-      'clients.read',
-      'suppliers.read',
-      'articles.read',
-      'stock.read',
-      'sales.read',
-      'cashflow.read',
-      'quality.read',
-      'quality.configuration.write',
-      'quality.documentation.read',
-      'statistics.read',
-      'pennylane.read',
-      'employee_planning.read',
-      'transformations.read',
-    ],
-    agent_permissions: configured.length ? configured : [
-      'agent.use',
-      'clients.read',
-      'suppliers.read',
-      'articles.read',
-      'stock.read',
-      'sales.read',
-      'cashflow.read',
-      'quality.read',
-      'quality.configuration.write',
-      'quality.documentation.read',
-      'statistics.read',
-      'pennylane.read',
-      'employee_planning.read',
-      'transformations.read',
-    ],
+    user_permissions: configured.length ? configured : [...FINAL_AGENT_PERMISSIONS],
+    agent_permissions: configured.length ? configured : [...FINAL_AGENT_PERMISSIONS],
     source: 'mcp',
     trusted_mode: envTrustedMode(),
     conversation_id: req.get('x-alta-conversation-id') || null,
@@ -673,6 +648,7 @@ const tools = [
   ...buildPublicMcpTools(),
 ];
 const publicToolNameMap = new Map(Object.entries(PUBLIC_QUALITY_BLOCK_TOOL_ALIASES));
+const coverageReport = buildCoverageReport(tools, listModules());
 
 function jsonRpcResult(id, result) {
   return { jsonrpc: '2.0', id, result };
@@ -815,10 +791,21 @@ async function handleRequest(req, message) {
         'quality_activate_configuration',
         'quality_deactivate_configuration',
       ].every((name) => tools.some((tool) => tool.name === name)),
+      coverage_complete: coverageReport.coverage_complete,
+      missing_tools: coverageReport.missing_tools,
       registry_source: 'legacyTools + agentToolRegistry.listMcpTools + public underscore aliases',
       names: tools.map(t => t.name),
     });
-    return jsonRpcResult(id, { tools });
+    return jsonRpcResult(id, {
+      tools,
+      version: MCP_SERVER_VERSION,
+      tool_count: tools.length,
+      modules_covered: coverageReport.matrix.map((row) => row.module),
+      coverage_complete: coverageReport.coverage_complete,
+      missing_tools: coverageReport.missing_tools,
+      final_permissions: coverageReport.final_permissions,
+      coverage_matrix: coverageReport.matrix,
+    });
   }
 
   if (method === 'tools/call') {

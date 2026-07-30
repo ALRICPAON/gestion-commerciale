@@ -15,6 +15,7 @@ const {
 const { listAgentTools } = require('../services/agent/agentToolRegistry');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 const { envTrustedMode } = require('../services/agent/agentTrustedMode');
+const { FINAL_AGENT_PERMISSIONS } = require('../services/agent/agentFullCoverageService');
 
 const router = express.Router();
 
@@ -32,22 +33,7 @@ function agentContext(req) {
     store_id: req.agentStoreId,
     user_id: process.env.ALTA_AGENT_USER_ID || null,
     role: envTrustedMode() ? 'trusted_owner' : 'agent',
-    permissions: configured.length ? configured : [
-      'agent.use',
-      'clients.read',
-      'suppliers.read',
-      'articles.read',
-      'stock.read',
-      'sales.read',
-      'cashflow.read',
-      'quality.read',
-      'quality.configuration.write',
-      'quality.documentation.read',
-      'statistics.read',
-      'pennylane.read',
-      'employee_planning.read',
-      'transformations.read',
-    ],
+    permissions: configured.length ? configured : [...FINAL_AGENT_PERMISSIONS],
     client_key: null,
     source: 'agent_rest',
     trusted_mode: envTrustedMode(),

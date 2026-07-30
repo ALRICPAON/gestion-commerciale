@@ -186,8 +186,9 @@ async function main() {
   await expectBusinessRefusal(() => executeAgentTool({
     db: makeDb({ incompletePlan: true }),
     name: 'quality_activate_configuration',
-    input: { type: 'cleaning_plan', cleaning_plan_id: PLAN_ID },
+    input: { type: 'cleaning_plan', cleaning_plan_id: PLAN_ID, confirmation: 'human_confirmed' },
     context: makeContext(['quality.read', 'quality.configuration.write']),
+    confirmed: true,
   }), /Activation refusee/, 'activation plan incomplet doit etre refusee');
 
   console.log(JSON.stringify({ ok: true, checked_tools: expectedTools.length }, null, 2));
