@@ -34,13 +34,31 @@ async function main() {
   });
   assert(response?.result?.tools, 'tools/list doit retourner result.tools');
   assert(response.result.coverage_complete === true, 'tools/list doit exposer coverage_complete=true');
+  assert(response.result.frontend_backend_coverage_complete === true, 'tools/list doit exposer frontend_backend_coverage_complete=true');
   assert(Array.isArray(response.result.coverage_matrix), 'tools/list doit exposer coverage_matrix');
+  assert(Array.isArray(response.result.frontend_backend_capabilities), 'tools/list doit exposer frontend_backend_capabilities');
   assert(Array.isArray(response.result.final_permissions), 'tools/list doit exposer final_permissions');
   assert(response.result.final_permissions.includes('mcp.execute'), 'tools/list doit exposer mcp.execute');
   assert(response.result.final_permissions.includes('quality.documentation.edit'), 'tools/list doit exposer quality.documentation.edit');
   assert(JSON.stringify(response.result.missing_tools) === '[]', 'tools/list ne doit pas exposer de missing_tools');
+  assert(JSON.stringify(response.result.missing_frontend_backend_capabilities) === '[]', 'tools/list ne doit pas exposer de capacites front/backend manquantes');
   const publicTools = response.result.tools;
   const publicNames = new Set(publicTools.map((tool) => tool.name));
+
+  for (const name of [
+    'list_quality_temperature_parameters',
+    'get_quality_temperature_parameter',
+    'create_quality_temperature_parameter',
+    'update_quality_temperature_parameter',
+    'archive_or_disable_quality_temperature_parameter',
+    'list_quality_cleaning_plans',
+    'get_quality_cleaning_plan',
+    'create_quality_cleaning_plan',
+    'update_quality_cleaning_plan',
+    'archive_or_disable_quality_cleaning_plan',
+  ]) {
+    assert(publicNames.has(name), `${name} absent de la reponse MCP tools/list`);
+  }
 
   try {
     process.env.ALTA_AGENT_PERMISSIONS = 'agent.use,quality.documentation.read';

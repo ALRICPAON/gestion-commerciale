@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const router = require('../routes/mcpServer');
 const { listModules } = require('../services/agent/agentModuleCatalog');
@@ -6,6 +8,7 @@ const {
   FINAL_AGENT_PERMISSIONS,
   buildCoverageReport,
 } = require('../services/agent/agentFullCoverageService');
+const { FRONTEND_BACKEND_CAPABILITIES } = require('../services/agent/agentFrontendBackendCoverageService');
 const { getAgentTool, listAgentTools, RISK_LEVELS } = require('../services/agent/agentToolRegistry');
 
 const {
@@ -66,6 +69,17 @@ async function main() {
 
   assert.equal(coverage.coverage_complete, true, `Couverture incomplete: ${JSON.stringify(coverage.missing_tools)}`);
   assert.equal(coverage.missing_tools.length, 0, 'Aucun missing_tool ne doit rester');
+  assert.equal(coverage.frontend_backend_coverage_complete, true, `Couverture front/backend incomplete: ${JSON.stringify(coverage.missing_frontend_backend_capabilities)}`);
+  assert.equal(coverage.missing_frontend_backend_capabilities.length, 0, 'Aucune capacite front/backend ne doit manquer');
+  assert.equal(coverage.frontend_backend_capabilities.length, FRONTEND_BACKEND_CAPABILITIES.length, 'Matrice front/backend incomplete');
+  for (const capability of coverage.frontend_backend_capabilities) {
+    assert(capability.frontend, `${capability.capability} doit referencer le front`);
+    assert(fs.existsSync(path.resolve(__dirname, '..', '..', capability.frontend)), `${capability.frontend} introuvable`);
+    assert(capability.route, `${capability.capability} doit referencer une route backend`);
+    assert(capability.service, `${capability.capability} doit referencer un service metier`);
+    assert(publicNames.has(capability.mcp_tool), `${capability.capability} doit pointer vers un outil MCP public`);
+    assert.equal(capability.status, 'covered', `${capability.capability} doit etre couverte`);
+  }
   assert.deepEqual(coverage.final_permissions, EXPECTED_PERMISSIONS, 'Permissions exposees par la couverture invalides');
 
   const expectedModules = [
@@ -103,6 +117,38 @@ async function main() {
   assert.equal(qualityActivation.riskLevel, RISK_LEVELS.COMMITTING_ACTION, 'Activation qualite doit etre engageante');
   assert.equal(qualityActivation.requiresConfirmation, true, 'Activation qualite doit etre confirmee humainement');
 
+  const requiredFrontendBackendTools = [
+    'list_quality_temperature_parameters',
+    'get_quality_temperature_parameter',
+    'create_quality_temperature_parameter',
+    'update_quality_temperature_parameter',
+    'archive_or_disable_quality_temperature_parameter',
+    'list_quality_cleaning_plans',
+    'get_quality_cleaning_plan',
+    'create_quality_cleaning_plan',
+    'update_quality_cleaning_plan',
+    'archive_or_disable_quality_cleaning_plan',
+  ];
+  for (const name of requiredFrontendBackendTools) {
+    assert(publicNames.has(name), `${name} doit etre expose au MCP public`);
+  }
+
+  const cleaningCreate = publicTools.find((tool) => tool.name === 'create_quality_cleaning_plan');
+  assert(cleaningCreate.inputSchema.properties.planning_mode, 'create_quality_cleaning_plan doit exposer planning_mode');
+  assert(cleaningCreate.inputSchema.properties.task_title, 'create_quality_cleaning_plan doit exposer task_title');
+  assert(cleaningCreate.inputSchema.properties.responsible_user_id, 'create_quality_cleaning_plan doit exposer responsible_user_id');
+  assert(cleaningCreate.inputSchema.properties.frequency_value, 'create_quality_cleaning_plan doit exposer frequency_value');
+  assert(cleaningCreate.inputSchema.properties.frequency_unit, 'create_quality_cleaning_plan doit exposer frequency_unit');
+  assert(cleaningCreate.inputSchema.properties.target_time, 'create_quality_cleaning_plan doit exposer target_time');
+
+  const temperatureCreate = publicTools.find((tool) => tool.name === 'create_quality_temperature_parameter');
+  assert(temperatureCreate.inputSchema.properties.planning_mode, 'create_quality_temperature_parameter doit exposer planning_mode');
+  assert(temperatureCreate.inputSchema.properties.task_title, 'create_quality_temperature_parameter doit exposer task_title');
+  assert(temperatureCreate.inputSchema.properties.responsible_user_id, 'create_quality_temperature_parameter doit exposer responsible_user_id');
+  assert(temperatureCreate.inputSchema.properties.frequency_value, 'create_quality_temperature_parameter doit exposer frequency_value');
+  assert(temperatureCreate.inputSchema.properties.frequency_unit, 'create_quality_temperature_parameter doit exposer frequency_unit');
+  assert(temperatureCreate.inputSchema.properties.target_time, 'create_quality_temperature_parameter doit exposer target_time');
+
   const preparedConfirmedNames = [
     'send_email_confirmed',
     'send_customer_price_list_confirmed',
@@ -132,6 +178,9 @@ async function main() {
   assert.equal(response.result.version, '1.8.4', 'tools/list doit exposer la version MCP');
   assert.equal(response.result.coverage_complete, true, 'tools/list doit exposer coverage_complete=true');
   assert.deepEqual(response.result.missing_tools, [], 'tools/list ne doit pas exposer de missing_tools');
+  assert.equal(response.result.frontend_backend_coverage_complete, true, 'tools/list doit exposer frontend_backend_coverage_complete=true');
+  assert.deepEqual(response.result.missing_frontend_backend_capabilities, [], 'tools/list ne doit pas exposer de capacites front/backend manquantes');
+  assert.equal(response.result.frontend_backend_capabilities.length, FRONTEND_BACKEND_CAPABILITIES.length, 'tools/list doit exposer la matrice front/backend');
   assert.deepEqual(response.result.final_permissions, EXPECTED_PERMISSIONS, 'tools/list doit exposer les permissions finales');
   assert.equal(response.result.coverage_matrix.length, expectedModules.length, 'tools/list doit exposer la matrice complete');
   assert.equal(response.result.tool_count, response.result.tools.length, 'tool_count incoherent');
@@ -141,6 +190,7 @@ async function main() {
     mcp_version: MCP_SERVER_VERSION,
     public_tool_count: publicTools.length,
     coverage_complete: coverage.coverage_complete,
+    frontend_backend_coverage_complete: coverage.frontend_backend_coverage_complete,
     modules: expectedModules.length,
   }, null, 2));
 }

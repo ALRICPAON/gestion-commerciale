@@ -420,6 +420,7 @@ async function getTemperatureSummary(db, storeId) {
 module.exports = {
   listTemperatureTypes,
   listTemperatureLimits,
+  getTemperatureLimit,
   listDueTemperatureReadings,
   saveTemperatureLimit,
   deleteTemperatureLimit,
