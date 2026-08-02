@@ -29,7 +29,27 @@ function makeContext(permissions) {
   };
 }
 
-function makeDb() {
+function cloneState(source) {
+  return {
+    plans: source.plans.map((plan) => ({ ...plan, scheduled_days: [...(plan.scheduled_days || [])] })),
+    planZones: new Map([...source.planZones.entries()].map(([key, value]) => [key, new Set([...value])])),
+    planEquipments: new Map([...source.planEquipments.entries()].map(([key, value]) => [key, new Set([...value])])),
+    tasks: source.tasks.map((task) => ({ ...task })),
+  };
+}
+
+function restoreState(target, snapshot) {
+  target.plans.length = 0;
+  target.plans.push(...snapshot.plans);
+  target.planZones.clear();
+  for (const [key, value] of snapshot.planZones.entries()) target.planZones.set(key, value);
+  target.planEquipments.clear();
+  for (const [key, value] of snapshot.planEquipments.entries()) target.planEquipments.set(key, value);
+  target.tasks.length = 0;
+  target.tasks.push(...snapshot.tasks);
+}
+
+function makeDb(options = {}) {
   const state = {
     plans: [],
     planZones: new Map(),
@@ -45,6 +65,7 @@ function makeDb() {
     ],
   };
   const calls = [];
+  let txSnapshot = null;
 
   function planRow(plan) {
     const zones = [...(state.planZones.get(plan.id) || [])].map((id) => state.zones.find((zone) => zone.id === id)).filter(Boolean);
@@ -75,6 +96,20 @@ function makeDb() {
     async query(sql, params = []) {
       const text = String(sql);
       calls.push({ sql: text, params });
+
+      if (text === 'BEGIN') {
+        txSnapshot = cloneState(state);
+        return { rows: [] };
+      }
+      if (text === 'COMMIT') {
+        txSnapshot = null;
+        return { rows: [] };
+      }
+      if (text === 'ROLLBACK') {
+        if (txSnapshot) restoreState(state, txSnapshot);
+        txSnapshot = null;
+        return { rows: [] };
+      }
 
       if (text.includes('agent_tool_audit_logs') && text.includes('INSERT')) return { rows: [{ id: AUDIT_ID }] };
       if (text.includes('agent_tool_audit_logs') && text.includes('UPDATE')) return { rows: [] };
@@ -144,6 +179,11 @@ function makeDb() {
       }
 
       if (text.includes('INSERT INTO quality_cleaning_plans')) {
+        if (options.missingPlanSchedulingColumns && text.includes('responsible_user_id')) {
+          const err = new Error('column "responsible_user_id" of relation "quality_cleaning_plans" does not exist');
+          err.code = '42703';
+          throw err;
+        }
         const plan = {
           id: PLAN_ID,
           store_id: params[0],
@@ -226,17 +266,27 @@ function makeDb() {
 
       return { rows: [] };
     },
+    async connect() {
+      return {
+        query: (sql, params) => this.query(sql, params),
+        release() {},
+      };
+    },
   };
 }
 
 async function main() {
   const migration = fs.readFileSync(path.resolve(__dirname, '..', 'db', 'gestion-commerciale', '064_quality_cleaning_plan_multi_targets.sql'), 'utf8');
+  const guardMigration = fs.readFileSync(path.resolve(__dirname, '..', 'db', 'gestion-commerciale', '065_quality_cleaning_plan_source_of_truth_guard.sql'), 'utf8');
   const frontendPage = fs.readFileSync(path.resolve(__dirname, '..', '..', 'frontend', 'quality', 'pages', 'cleaning-plans.html'), 'utf8');
   const frontendJs = fs.readFileSync(path.resolve(__dirname, '..', '..', 'frontend', 'quality', 'js', 'cleaning-plans.js'), 'utf8');
   assert(migration.includes('CREATE TABLE IF NOT EXISTS quality_cleaning_plan_zones'), 'Migration zones manquante');
   assert(migration.includes('CREATE TABLE IF NOT EXISTS quality_cleaning_plan_equipments'), 'Migration equipements manquante');
   assert(migration.includes('ADD COLUMN IF NOT EXISTS frequency_value'), 'Colonnes planning plan manquantes');
   assert(migration.includes('ADD COLUMN IF NOT EXISTS responsible_user_id'), 'Responsable plan manquant');
+  assert(guardMigration.includes('ADD COLUMN IF NOT EXISTS responsible_user_id'), 'Migration garde responsable plan manquante');
+  assert(guardMigration.includes('CREATE TABLE IF NOT EXISTS quality_cleaning_plan_zones'), 'Migration garde zones manquante');
+  assert(guardMigration.includes('CREATE TABLE IF NOT EXISTS quality_cleaning_plan_equipments'), 'Migration garde equipements manquante');
   assert(migration.includes('REFERENCES quality_cleaning_plans(id)'), 'FK plan manquante');
   assert(migration.includes('INSERT INTO quality_cleaning_plan_zones'), 'Backfill zones manquant');
   assert(migration.includes('INSERT INTO quality_cleaning_plan_equipments'), 'Backfill equipements manquant');
@@ -263,6 +313,16 @@ async function main() {
     assert(tool.inputSchema.properties.equipment_ids, `${name} doit accepter equipment_ids`);
   }
 
+  const missingSchemaDb = makeDb({ missingPlanSchedulingColumns: true });
+  await assert.rejects(
+    () => saveCleaningPlan(missingSchemaDb, STORE_ID, USER_ID, multiPayload),
+    /responsible_user_id/,
+    'Schema prod incomplet doit reproduire l erreur responsable_user_id'
+  );
+  assert.equal(missingSchemaDb.state.plans.length, 0, 'Aucun plan partiel ne doit rester apres echec schema');
+  assert.equal(missingSchemaDb.state.tasks.length, 0, 'Aucune tache ne doit etre creee apres echec schema');
+  assert(missingSchemaDb.calls.some((call) => call.sql === 'ROLLBACK'), 'Echec creation plan doit rollback');
+
   const db = makeDb();
   const created = await saveCleaningPlan(db, STORE_ID, USER_ID, multiPayload);
   assert.equal(created.zone_id, ZONE_1, 'Compatibilite zone_id invalide');
@@ -272,6 +332,8 @@ async function main() {
   assert.equal(created.quality_task_id, TASK_ID, 'Creation plan doit creer et lier automatiquement une tache qualite');
   assert.equal(db.state.tasks.length, 1, 'Une seule tache qualite doit etre creee par plan');
   assert.equal(db.state.tasks[0].frequency_value, 1, 'Frequence tache doit provenir du plan');
+  assert.equal(db.state.tasks[0].responsible_user_id, null, 'Creation sans responsable doit rester valide et nullable');
+  assert(db.calls.some((call) => call.sql === 'COMMIT'), 'Creation plan doit etre transactionnelle');
   assert(db.calls.some((call) => call.sql.includes('INSERT INTO quality_cleaning_plan_zones')), 'Liens zones non ecrits');
   assert(db.calls.some((call) => call.sql.includes('INSERT INTO quality_cleaning_plan_equipments')), 'Liens equipements non ecrits');
 
@@ -280,6 +342,11 @@ async function main() {
   assert.deepEqual(updated.equipments.map((equipment) => equipment.id), [EQUIPMENT_2], 'Retrait equipement non applique');
   assert.equal(db.state.tasks.length, 1, 'Modification plan ne doit pas creer une seconde tache');
   assert.equal(db.state.tasks[0].frequency_value, 2, 'Modification plan doit synchroniser la frequence de la tache');
+
+  const responsibleDb = makeDb();
+  const withResponsible = await saveCleaningPlan(responsibleDb, STORE_ID, USER_ID, mapPlanPayload({ ...multiPayload, responsible_user_id: USER_ID }));
+  assert.equal(withResponsible.responsible_user_id, USER_ID, 'Creation avec responsable doit conserver le responsable sur le plan');
+  assert.equal(responsibleDb.state.tasks[0].responsible_user_id, USER_ID, 'Tache synchronisee doit reprendre le responsable du plan');
 
   const listed = await listCleaningPlans(db, STORE_ID, { zone_id: ZONE_2 });
   assert.equal(listed.length, 1, 'Filtre zone multi-cibles invalide');

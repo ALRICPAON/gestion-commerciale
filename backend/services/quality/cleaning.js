@@ -281,6 +281,22 @@ async function syncCleaningPlanTask(db, storeId, userId, plan) {
   return task?.id || plan.quality_task_id || null;
 }
 
+async function withTransaction(db, work) {
+  if (typeof db.connect !== 'function') return work(db);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function listCleaningPlans(db, storeId, query = {}) {
   const params = [storeId];
   const where = ['p.store_id = $1'];
@@ -307,7 +323,7 @@ async function getCleaningPlan(db, storeId, planId) {
   return attachTask(result.rows[0] || null);
 }
 
-async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
+async function saveCleaningPlanInTransaction(db, storeId, userId, payload, planId = null) {
   const before = planId ? await getCleaningPlan(db, storeId, planId) : null;
   if (planId && !before) return null;
   const zoneIds = legacyAwareIds(payload, 'zone_ids', 'zone_id');
@@ -354,7 +370,11 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
   return plan;
 }
 
-async function changeCleaningPlanStatus(db, storeId, userId, planId, active) {
+async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
+  return withTransaction(db, (client) => saveCleaningPlanInTransaction(client, storeId, userId, payload, planId));
+}
+
+async function changeCleaningPlanStatusInTransaction(db, storeId, userId, planId, active) {
   const before = await getCleaningPlan(db, storeId, planId);
   if (!before) return null;
   if (active && (!before.product_name || !before.dosage_concentration || !before.contact_time_minutes || !before.frequency_value || !before.frequency_unit)) {
@@ -374,6 +394,10 @@ async function changeCleaningPlanStatus(db, storeId, userId, planId, active) {
   const plan = await getCleaningPlan(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, 'quality.cleaning.plan.status_changed', plan.id, before, plan);
   return plan;
+}
+
+async function changeCleaningPlanStatus(db, storeId, userId, planId, active) {
+  return withTransaction(db, (client) => changeCleaningPlanStatusInTransaction(client, storeId, userId, planId, active));
 }
 
 async function listDueCleaningRecords(db, storeId, query = {}) {
