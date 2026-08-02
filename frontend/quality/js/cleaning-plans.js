@@ -113,29 +113,10 @@
     ].filter(Boolean).join(' ');
   }
 
-  async function createTaskIfNeeded() {
+  async function resolvePlanTaskId() {
     if (els.planningMode.value === 'none') return null;
     if (els.planningMode.value === 'existing') return els.taskId.value || null;
-    const zoneIds = selectedZoneIds();
-    const equipmentIds = [...selectedEquipmentIds];
-    const task = await tasksApi.save({
-      title: els.taskTitle.value || `Nettoyage - ${els.title.value}`,
-      module_key: 'cleaning',
-      entity_type: equipmentIds[0] ? 'equipment' : zoneIds[0] ? 'zone' : null,
-      entity_id: equipmentIds[0] || zoneIds[0] || null,
-      zone_id: zoneIds[0] || null,
-      equipment_id: equipmentIds[0] || null,
-      responsible_user_id: els.taskResponsible.value || null,
-      frequency_value: els.frequencyValue.value || null,
-      frequency_unit: els.frequencyUnit.value || null,
-      target_time: els.targetTime.value || null,
-      status: 'planned',
-      active: true,
-      description: taskDescription(),
-    });
-    tasks.push(task);
-    refreshTaskOptions(task.id);
-    return task.id;
+    return null;
   }
 
   function payload(taskId) {
@@ -152,6 +133,11 @@
       method: els.method.value,
       safety_instructions: els.safety.value,
       expected_duration_minutes: els.duration.value || null,
+      responsible_user_id: els.taskResponsible.value || null,
+      frequency_value: els.frequencyValue.value || null,
+      frequency_unit: els.frequencyUnit.value || null,
+      target_time: els.targetTime.value || null,
+      task_description: taskDescription(),
       quality_task_id: taskId,
       active: els.active.checked,
     };
@@ -276,7 +262,7 @@
     event.preventDefault();
     if (!canManage) return;
     try {
-      const taskId = await createTaskIfNeeded();
+      const taskId = await resolvePlanTaskId();
       await api.savePlan(payload(taskId), els.id.value || null);
       els.formCard.classList.add('hidden');
       await load();
