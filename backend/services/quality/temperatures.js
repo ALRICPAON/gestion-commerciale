@@ -66,6 +66,18 @@ async function listTemperatureTypes(db) {
   return result.rows;
 }
 
+async function assertTemperatureType(db, typeCode) {
+  const types = await listTemperatureTypes(db);
+  const type = types.find((item) => item.code === typeCode);
+  if (type) return type;
+  const allowedCodes = types.map((item) => item.code).join(', ') || 'aucun type actif';
+  const err = new Error(`Type de temperature invalide: ${typeCode || '(vide)'}. Codes autorises: ${allowedCodes}`);
+  err.status = 400;
+  err.publicMessage = err.message;
+  err.expose = true;
+  throw err;
+}
+
 async function listTemperatureLimits(db, storeId, query = {}) {
   const params = [storeId];
   const where = ['l.store_id = $1'];
@@ -76,7 +88,9 @@ async function listTemperatureLimits(db, storeId, query = {}) {
   if (query.active_only !== 'false') where.push('l.is_active = true');
 
   const result = await db.query(
-    `SELECT l.*, t.label AS type_label, z.name AS zone_name, e.name AS equipment_name,
+    `SELECT l.*, t.label AS type_label, t.default_unit AS type_default_unit,
+            t.category AS type_category, t.is_active AS type_active,
+            z.name AS zone_name, e.name AS equipment_name,
             lr.id AS last_record_id, lr.recorded_at AS last_recorded_at, lr.value AS last_value,
             lr.unit AS last_unit, lr.alert_status AS last_alert_status,
             qt.next_due_at AS next_expected_at,
@@ -170,8 +184,11 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
 
 async function getTemperatureLimit(db, storeId, limitId) {
   const result = await db.query(
-    `SELECT l.*, ${taskSelectSql()}
+    `SELECT l.*, t.label AS type_label, t.default_unit AS type_default_unit,
+            t.category AS type_category, t.is_active AS type_active,
+            ${taskSelectSql()}
      FROM quality_temperature_limits l
+     INNER JOIN quality_temperature_types t ON t.code = l.type_code
      LEFT JOIN quality_tasks qt ON qt.id = l.quality_task_id AND qt.store_id = l.store_id
      LEFT JOIN users qtu ON qtu.id = qt.responsible_user_id
      WHERE l.id = $1 AND l.store_id = $2 LIMIT 1`,
@@ -197,6 +214,7 @@ async function assertTemperatureTask(db, storeId, taskId) {
 async function saveTemperatureLimit(db, storeId, userId, payload, limitId = null) {
   const before = limitId ? await getTemperatureLimit(db, storeId, limitId) : null;
   if (limitId && !before) return null;
+  await assertTemperatureType(db, payload.type_code);
   const qualityTaskId = await assertTemperatureTask(db, storeId, payload.quality_task_id);
   try {
     const result = limitId
@@ -223,6 +241,7 @@ async function saveTemperatureLimit(db, storeId, userId, payload, limitId = null
     await logEvent(db, storeId, userId, limitId ? 'quality.temperature.limit.updated' : 'quality.temperature.limit.created', 'quality_temperature_limit', limit.id, before, limit);
     return limit;
   } catch (err) {
+    if (err.status) throw err;
     throw dbError(err, 'Référence zone, équipement, type de température ou tâche qualité invalide');
   }
 }
@@ -419,6 +438,7 @@ async function getTemperatureSummary(db, storeId) {
 
 module.exports = {
   listTemperatureTypes,
+  assertTemperatureType,
   listTemperatureLimits,
   getTemperatureLimit,
   listDueTemperatureReadings,

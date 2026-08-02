@@ -217,8 +217,8 @@ const qualityTemperatureParameterInputSchema = {
     temperature_parameter_id: { type: 'string' },
     parameter_id: { type: 'string' },
     limit_id: { type: 'string' },
-    type_code: { type: 'string' },
-    type: { type: 'string' },
+    type_code: { type: 'string', description: 'Code actif retourne par list_quality_temperature_types. Ne pas inventer de code.' },
+    type: { type: 'string', description: 'Alias legacy de type_code. Preferer type_code avec un code retourne par list_quality_temperature_types.' },
     zone_id: { type: 'string' },
     equipment_id: { type: 'string' },
     min_value: { type: 'number' },
@@ -1603,6 +1603,29 @@ const tools = [
     },
   }),
   tool({
+    name: 'list_quality_temperature_types',
+    title: 'Lister types temperature',
+    description: 'Liste les codes actifs de parametrage temperature exposes par le front via /api/quality/temperatures/types. Appeler avant create_quality_temperature_parameter ou update_quality_temperature_parameter.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    execute: async ({ db, tool: currentTool }) => {
+      const rows = await qualityTemperatures.listTemperatureTypes(db);
+      const types = rows.map((row) => ({
+        code: row.code,
+        label: row.label,
+        name: row.label,
+        default_unit: row.default_unit,
+        unit: row.default_unit,
+        category: row.category,
+        active: row.is_active !== false,
+      }));
+      return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Types temperature actifs', data: { types } });
+    },
+  }),
+  tool({
     name: 'list_quality_temperature_parameters',
     title: 'Lister parametres temperature',
     description: 'Liste les parametres temperature exposes par le front via /api/quality/temperatures/limits.',
@@ -1631,7 +1654,7 @@ const tools = [
   tool({
     name: 'create_quality_temperature_parameter',
     title: 'Creer parametre temperature',
-    description: 'Cree un parametrage temperature comme le front, avec lien possible a une tache qualite existante ou nouvelle.',
+    description: 'Cree un parametrage temperature comme le front, avec lien possible a une tache qualite existante ou nouvelle. Appeler list_quality_temperature_types avant pour choisir un type_code valide.',
     domain: 'quality',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'quality.configuration.write',
@@ -1653,7 +1676,7 @@ const tools = [
   tool({
     name: 'update_quality_temperature_parameter',
     title: 'Modifier parametre temperature',
-    description: 'Modifie un parametrage temperature comme le front, sans toucher aux releves historiques.',
+    description: 'Modifie un parametrage temperature comme le front, sans toucher aux releves historiques. Appeler list_quality_temperature_types avant pour choisir un type_code valide.',
     domain: 'quality',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'quality.configuration.write',

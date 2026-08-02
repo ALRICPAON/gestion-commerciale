@@ -31,9 +31,9 @@ Outils raccordes dans ce socle:
 
 Etat actuel:
 
-- 170 outils dans le catalogue administratif.
-- 151 outils operationnels dans `agentToolRegistry.listMcpTools`.
-- 170 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
+- 171 outils dans le catalogue administratif.
+- 152 outils operationnels dans `agentToolRegistry.listMcpTools`.
+- 171 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
 - `tools/list` expose `coverage_complete: true`, `missing_tools: []`, `frontend_backend_coverage_complete: true`, `missing_frontend_backend_capabilities: []`, `final_permissions`, `coverage_matrix` et `frontend_backend_capabilities` pour ALTA_MAREE_V3.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 
@@ -94,6 +94,7 @@ Les actions non presentes dans cette allowlist sont refusees. Aucune fonction ba
 | `quality_update_cleaning_plan` | quality | `quality/agentConfiguration.updateCleaningPlan` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans`, `quality_tasks`, zones/equipements | n/a | activation refusee si informations operationnelles manquent |
 | `quality_assign_task_to_zone` | quality | `quality/agentConfiguration.assignTaskToTarget` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_zones` | n/a | refuse association inter-magasins |
 | `quality_assign_task_to_equipment` | quality | `quality/agentConfiguration.assignTaskToTarget` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_equipments` | n/a | refuse equipement inexistant/autre magasin |
+| `list_quality_temperature_types` | quality | `quality/temperatures.listTemperatureTypes` | operational | 0 | `quality.read` | `quality.read` | non | `quality_temperature_types` | n/a | reference active des `type_code` autorises avant creation/modification |
 | `list_quality_temperature_parameters` | quality | `quality/temperatures.listTemperatureLimits` | operational | 0 | `quality.read` | `quality.read` | non | `quality_temperature_limits`, taches, zones/equipements | filtres front | lecture parametres |
 | `get_quality_temperature_parameter` | quality | `quality/temperatures.getTemperatureLimit` | operational | 0 | `quality.read` | `quality.read` | non | `quality_temperature_limits` | n/a | lecture parametre |
 | `create_quality_temperature_parameter` | quality | `quality/temperatures.saveTemperatureLimit` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_temperature_limits`, `quality_tasks` | n/a | peut creer une tache pending_review si `planning_mode=new` |

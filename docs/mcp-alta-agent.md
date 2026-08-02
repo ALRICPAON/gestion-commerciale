@@ -197,6 +197,7 @@ Depuis la version MCP `1.8.4`, `tools/list` expose le catalogue ALTA_MAREE_V3 co
 
 Les capacites front confirmees exposees dans ce correctif incluent:
 
+- `list_quality_temperature_types`;
 - `list_quality_temperature_parameters`;
 - `get_quality_temperature_parameter`;
 - `create_quality_temperature_parameter`;
@@ -207,6 +208,8 @@ Les capacites front confirmees exposees dans ce correctif incluent:
 - `create_quality_cleaning_plan`;
 - `update_quality_cleaning_plan`;
 - `archive_or_disable_quality_cleaning_plan`.
+
+Pour les parametres temperature, `list_quality_temperature_types` expose le referentiel actif utilise par le front (`GET /api/quality/temperatures/types`) et par le service `quality/temperatures.listTemperatureTypes`. Il doit etre appele avant `create_quality_temperature_parameter` ou `update_quality_temperature_parameter`; les codes seedes sont `COLD_ROOM`, `WORKSHOP`, `RECEPTION_PRODUCTS`, `SHIPPING`, `VEHICLE`, `LIVE_TANK`, `FREEZER` et `PRODUCT_TEMPERATURE`.
 
 Les champs de planification exposes pour les parametres temperature et plans nettoyage sont `planning_mode`, `quality_task_id`, `task_title`, `responsible_user_id`, `frequency_value`, `frequency_unit` et `target_time`.
 
