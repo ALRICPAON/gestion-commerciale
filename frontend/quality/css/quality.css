@@ -104,6 +104,38 @@
   padding: 0 8px;
 }
 
+.quality-target-fieldset {
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  margin: 0;
+  padding: 12px;
+}
+
+.quality-target-fieldset legend {
+  font-size: 13px;
+  font-weight: 800;
+  padding: 0 8px;
+}
+
+.quality-checkbox-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: 10px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.quality-checkbox-option {
+  align-items: center;
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 8px 10px;
+}
+
 .quality-section-header {
   align-items: start;
   display: flex;

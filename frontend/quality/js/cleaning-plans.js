@@ -11,55 +11,77 @@
   const els = {
     feedback: $('cleaning-plans-feedback'), list: $('cleaning-plan-list'), addBtn: $('cleaning-plan-add-btn'),
     formCard: $('cleaning-plan-form-card'), form: $('cleaning-plan-form'), formTitle: $('cleaning-plan-form-title'), id: $('cleaning-plan-id'),
-    title: $('cleaning-plan-title'), entityKind: $('cleaning-plan-entity-kind'), linkedLabel: $('cleaning-plan-linked-label'), linkedObject: $('cleaning-plan-linked-object'),
+    title: $('cleaning-plan-title'), zoneIds: $('cleaning-plan-zone-ids'), equipmentSearch: $('cleaning-plan-equipment-search'),
+    equipmentOptions: $('cleaning-plan-equipment-options'), selectZoneEquipments: $('cleaning-plan-select-zone-equipments'), clearEquipments: $('cleaning-plan-clear-equipments'),
     product: $('cleaning-plan-product'), duration: $('cleaning-plan-duration'), active: $('cleaning-plan-active'), method: $('cleaning-plan-method'),
     safety: $('cleaning-plan-safety'), description: $('cleaning-plan-description'), planningMode: $('cleaning-plan-planning-mode'),
     taskId: $('cleaning-plan-quality-task-id'), taskTitle: $('cleaning-plan-task-title'), taskResponsible: $('cleaning-plan-task-responsible'),
     frequencyValue: $('cleaning-plan-frequency-value'), frequencyUnit: $('cleaning-plan-frequency-unit'), targetTime: $('cleaning-plan-target-time'), cancelBtn: $('cleaning-plan-cancel-btn'),
   };
-  let plans = []; let zones = []; let equipments = []; let tasks = []; let users = [];
+  let plans = []; let zones = []; let equipments = []; let tasks = []; let users = []; let selectedEquipmentIds = new Set();
 
   function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
   function setFeedback(message = '', type = '') { els.feedback.textContent = message; els.feedback.className = message ? `page-feedback ${type}`.trim() : 'page-feedback hidden'; }
   function formatDate(value) { return value ? new Date(value).toLocaleString('fr-FR') : '-'; }
-  function taskFrequency(task) { if (!task?.frequency_value) return '-'; const units = { hours: 'h', days: 'j', weeks: 'sem.', months: 'mois', events: 'événement(s)' }; return `${task.frequency_value} ${units[task.frequency_unit] || task.frequency_unit}`; }
-  function taskStatus(task) { const status = task?.computed_status || task?.status; return { planned: 'Planifiée', due: 'Du jour', overdue: 'En retard', completed: 'Terminée', paused: 'Suspendue', cancelled: 'Annulée' }[status] || 'Non planifié'; }
+  function taskFrequency(task) { if (!task?.frequency_value) return '-'; const units = { hours: 'h', days: 'j', weeks: 'sem.', months: 'mois', events: 'evenement(s)' }; return `${task.frequency_value} ${units[task.frequency_unit] || task.frequency_unit}`; }
+  function taskStatus(task) { const status = task?.computed_status || task?.status; return { planned: 'Planifiee', due: 'Du jour', overdue: 'En retard', completed: 'Terminee', paused: 'Suspendue', cancelled: 'Annulee' }[status] || 'Non planifie'; }
   function objectLabel(item) { if (!item) return ''; return `${item.code ? `${item.code} - ` : ''}${item.name || item.id}${item.zone_name ? ` (${item.zone_name})` : ''}`; }
+  function selectedZoneIds() { return [...els.zoneIds.selectedOptions].map((option) => option.value).filter(Boolean); }
+  function planZones(plan) { return Array.isArray(plan.zones) && plan.zones.length ? plan.zones : plan.zone_id ? [{ id: plan.zone_id, code: plan.zone_code, name: plan.zone_name }] : []; }
+  function planEquipments(plan) { return Array.isArray(plan.equipments) && plan.equipments.length ? plan.equipments : plan.equipment_id ? [{ id: plan.equipment_id, code: plan.equipment_code, name: plan.equipment_name, zone_name: plan.zone_name }] : []; }
+  function names(items) { return items.map((item) => item.name || item.code || item.id).filter(Boolean).join(', ') || '-'; }
 
-  function refreshLinkedObject(selectedId = '') {
-    const kind = els.entityKind.value;
-    const items = kind === 'zone' ? zones : kind === 'equipment' ? equipments : [];
-    els.linkedLabel.firstChild.textContent = kind === 'zone' ? 'Zone' : kind === 'equipment' ? 'Équipement' : 'Zone / Équipement';
-    els.linkedObject.innerHTML = '<option value="">Aucun objet lié</option>';
-    els.linkedObject.disabled = !kind;
-    items.forEach((item) => {
+  function refreshZones(selectedIds = []) {
+    const selected = new Set(selectedIds);
+    els.zoneIds.innerHTML = '';
+    zones.forEach((zone) => {
       const option = document.createElement('option');
-      option.value = item.id;
-      option.textContent = objectLabel(item);
-      els.linkedObject.appendChild(option);
+      option.value = zone.id;
+      option.textContent = objectLabel(zone);
+      option.selected = selected.has(zone.id);
+      els.zoneIds.appendChild(option);
     });
-    els.linkedObject.value = selectedId || '';
+  }
+
+  function refreshEquipments() {
+    const zoneFilter = new Set(selectedZoneIds());
+    const search = String(els.equipmentSearch.value || '').trim().toLowerCase();
+    const visible = equipments.filter((equipment) => {
+      const inZone = !zoneFilter.size || zoneFilter.has(equipment.zone_id);
+      const label = objectLabel(equipment).toLowerCase();
+      return inZone && (!search || label.includes(search));
+    });
+    if (!visible.length) {
+      els.equipmentOptions.innerHTML = '<div class="quality-muted">Aucun equipement.</div>';
+      return;
+    }
+    els.equipmentOptions.innerHTML = visible.map((equipment) => `
+      <label class="quality-checkbox-option">
+        <input type="checkbox" value="${escapeHtml(equipment.id)}" ${selectedEquipmentIds.has(equipment.id) ? 'checked' : ''}>
+        <span>${escapeHtml(objectLabel(equipment))}</span>
+      </label>
+    `).join('');
   }
 
   function refreshTaskOptions(selectedId = '') {
-    els.taskId.innerHTML = '<option value="">Aucune tâche sélectionnée</option>';
+    els.taskId.innerHTML = '<option value="">Aucune tache selectionnee</option>';
     tasks.forEach((task) => {
       const option = document.createElement('option');
       option.value = task.id;
-      option.textContent = `${task.title} · ${taskFrequency(task)} · ${formatDate(task.next_due_at)}`;
+      option.textContent = `${task.title} - ${taskFrequency(task)} - ${formatDate(task.next_due_at)}`;
       els.taskId.appendChild(option);
     });
     if (selectedId && !tasks.some((task) => task.id === selectedId)) {
       const option = document.createElement('option');
       option.value = selectedId;
-      option.textContent = `Tâche liée (${selectedId})`;
+      option.textContent = `Tache liee (${selectedId})`;
       els.taskId.appendChild(option);
     }
     els.taskId.value = selectedId || '';
   }
 
   function refreshUsers() {
-    els.taskResponsible.innerHTML = '<option value="">Non assigné</option>';
+    els.taskResponsible.innerHTML = '<option value="">Non assigne</option>';
     users.forEach((item) => {
       const option = document.createElement('option');
       option.value = item.id;
@@ -81,33 +103,35 @@
     if (create && els.taskTitle.dataset.touched !== 'true') els.taskTitle.value = `Nettoyage - ${els.title.value || 'Plan'}`;
   }
 
-  function entityPayload() {
-    if (els.entityKind.value === 'zone') return { zone_id: els.linkedObject.value || null, equipment_id: null };
-    if (els.entityKind.value === 'equipment') return { zone_id: null, equipment_id: els.linkedObject.value || null };
-    return { zone_id: null, equipment_id: null };
-  }
-
-  function taskEntity() {
-    const entity = entityPayload();
-    if (entity.equipment_id) return { entity_type: 'equipment', entity_id: entity.equipment_id };
-    if (entity.zone_id) return { entity_type: 'zone', entity_id: entity.zone_id };
-    return { entity_type: null, entity_id: null };
+  function taskDescription() {
+    const zoneLabels = zones.filter((zone) => selectedZoneIds().includes(zone.id)).map((zone) => zone.name || zone.code);
+    const equipmentLabels = equipments.filter((equipment) => selectedEquipmentIds.has(equipment.id)).map((equipment) => equipment.name || equipment.code);
+    return [
+      'Tache generee depuis un plan de nettoyage.',
+      zoneLabels.length ? `Zones: ${zoneLabels.join(', ')}` : null,
+      equipmentLabels.length ? `Equipements: ${equipmentLabels.join(', ')}` : null,
+    ].filter(Boolean).join(' ');
   }
 
   async function createTaskIfNeeded() {
     if (els.planningMode.value === 'none') return null;
     if (els.planningMode.value === 'existing') return els.taskId.value || null;
+    const zoneIds = selectedZoneIds();
+    const equipmentIds = [...selectedEquipmentIds];
     const task = await tasksApi.save({
       title: els.taskTitle.value || `Nettoyage - ${els.title.value}`,
       module_key: 'cleaning',
-      ...taskEntity(),
+      entity_type: equipmentIds[0] ? 'equipment' : zoneIds[0] ? 'zone' : null,
+      entity_id: equipmentIds[0] || zoneIds[0] || null,
+      zone_id: zoneIds[0] || null,
+      equipment_id: equipmentIds[0] || null,
       responsible_user_id: els.taskResponsible.value || null,
       frequency_value: els.frequencyValue.value || null,
       frequency_unit: els.frequencyUnit.value || null,
       target_time: els.targetTime.value || null,
       status: 'planned',
       active: true,
-      description: 'Tâche générée depuis un plan de nettoyage.',
+      description: taskDescription(),
     });
     tasks.push(task);
     refreshTaskOptions(task.id);
@@ -115,10 +139,15 @@
   }
 
   function payload(taskId) {
+    const zoneIds = selectedZoneIds();
+    const equipmentIds = [...selectedEquipmentIds];
     return {
       title: els.title.value,
       description: els.description.value,
-      ...entityPayload(),
+      zone_id: zoneIds[0] || null,
+      equipment_id: equipmentIds[0] || null,
+      zone_ids: zoneIds,
+      equipment_ids: equipmentIds,
       product_name: els.product.value,
       method: els.method.value,
       safety_instructions: els.safety.value,
@@ -131,16 +160,20 @@
   function resetForm() {
     els.form.reset();
     els.id.value = '';
+    selectedEquipmentIds = new Set();
     els.active.checked = true;
     els.planningMode.value = 'new';
     els.taskTitle.dataset.touched = 'false';
     els.formTitle.textContent = 'Nouveau plan';
-    refreshLinkedObject();
+    refreshZones();
+    refreshEquipments();
     refreshPlanningMode();
     els.formCard.classList.remove('hidden');
   }
 
   function fillForm(plan) {
+    const zoneIds = planZones(plan).map((zone) => zone.id).filter(Boolean);
+    const equipmentIds = planEquipments(plan).map((equipment) => equipment.id).filter(Boolean);
     els.id.value = plan.id;
     els.title.value = plan.title || '';
     els.product.value = plan.product_name || '';
@@ -149,8 +182,9 @@
     els.safety.value = plan.safety_instructions || '';
     els.description.value = plan.description || '';
     els.active.checked = Boolean(plan.active);
-    els.entityKind.value = plan.equipment_id ? 'equipment' : plan.zone_id ? 'zone' : '';
-    refreshLinkedObject(plan.equipment_id || plan.zone_id || '');
+    selectedEquipmentIds = new Set(equipmentIds);
+    refreshZones(zoneIds);
+    refreshEquipments();
     els.planningMode.value = plan.quality_task_id ? 'existing' : 'none';
     refreshTaskOptions(plan.quality_task_id || '');
     els.taskTitle.value = plan.quality_task?.title || `Nettoyage - ${plan.title}`;
@@ -168,9 +202,10 @@
       return;
     }
     els.list.innerHTML = plans.map((plan) => {
-      const place = plan.equipment_name || plan.zone_name || 'Non rattaché';
-      const task = plan.quality_task ? `${escapeHtml(plan.quality_task.title)} · ${taskFrequency(plan.quality_task)} · ${formatDate(plan.quality_task.next_due_at)} · ${taskStatus(plan.quality_task)}` : 'Non planifié';
-      return `<article class="quality-card"><span class="quality-badge">${plan.active ? 'Actif' : 'Inactif'}</span><h3>${escapeHtml(plan.title)}</h3><p>${escapeHtml(place)} · Produit : ${escapeHtml(plan.product_name || '-')} · Durée : ${plan.expected_duration_minutes || '-'} min</p><p class="quality-muted"><strong>Tâche :</strong> ${task}</p><p class="quality-muted">${escapeHtml(plan.method || '')}</p><div class="quality-actions"><button class="btn btn-secondary" data-action="edit" data-id="${plan.id}">Modifier</button><button class="btn btn-secondary" data-action="toggle" data-id="${plan.id}">${plan.active ? 'Désactiver' : 'Réactiver'}</button></div></article>`;
+      const zoneNames = names(planZones(plan));
+      const equipmentNames = names(planEquipments(plan));
+      const task = plan.quality_task ? `${escapeHtml(plan.quality_task.title)} - ${taskFrequency(plan.quality_task)} - ${formatDate(plan.quality_task.next_due_at)} - ${taskStatus(plan.quality_task)}` : 'Non planifie';
+      return `<article class="quality-card"><span class="quality-badge">${plan.active ? 'Actif' : 'Inactif'}</span><h3>${escapeHtml(plan.title)}</h3><p>Produit : ${escapeHtml(plan.product_name || '-')} - Duree : ${plan.expected_duration_minutes || '-'} min</p><p class="quality-muted"><strong>Zones concernees :</strong> ${escapeHtml(zoneNames)}</p><p class="quality-muted"><strong>Equipements concernes :</strong> ${escapeHtml(equipmentNames)}</p><p class="quality-muted"><strong>Tache :</strong> ${task}</p><p class="quality-muted">${escapeHtml(plan.method || '')}</p><div class="quality-actions"><button class="btn btn-secondary" data-action="edit" data-id="${plan.id}">Modifier</button><button class="btn btn-secondary" data-action="toggle" data-id="${plan.id}">${plan.active ? 'Desactiver' : 'Reactiver'}</button></div></article>`;
     }).join('');
     if (!canManage) els.list.querySelectorAll('button').forEach((button) => { button.disabled = true; });
   }
@@ -207,14 +242,33 @@
       loadUsers(),
     ]).then(([loadedZones, loadedEquipments]) => [loadedZones, loadedEquipments]);
     refreshUsers();
-    refreshLinkedObject();
+    refreshZones();
+    refreshEquipments();
     els.addBtn.disabled = !canManage;
     await load();
   }
 
   els.addBtn.addEventListener('click', resetForm);
   els.cancelBtn.addEventListener('click', () => els.formCard.classList.add('hidden'));
-  els.entityKind.addEventListener('change', () => refreshLinkedObject());
+  els.zoneIds.addEventListener('change', refreshEquipments);
+  els.equipmentSearch.addEventListener('input', refreshEquipments);
+  els.equipmentOptions.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('input[type="checkbox"]');
+    if (!checkbox) return;
+    if (checkbox.checked) selectedEquipmentIds.add(checkbox.value);
+    else selectedEquipmentIds.delete(checkbox.value);
+  });
+  els.selectZoneEquipments.addEventListener('click', () => {
+    const zoneFilter = new Set(selectedZoneIds());
+    equipments.forEach((equipment) => {
+      if (!zoneFilter.size || zoneFilter.has(equipment.zone_id)) selectedEquipmentIds.add(equipment.id);
+    });
+    refreshEquipments();
+  });
+  els.clearEquipments.addEventListener('click', () => {
+    selectedEquipmentIds = new Set();
+    refreshEquipments();
+  });
   els.planningMode.addEventListener('change', refreshPlanningMode);
   els.title.addEventListener('input', refreshPlanningMode);
   els.taskTitle.addEventListener('input', () => { els.taskTitle.dataset.touched = 'true'; });

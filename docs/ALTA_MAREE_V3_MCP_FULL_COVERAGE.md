@@ -48,6 +48,17 @@ Le MCP expose cette meme source via `list_quality_temperature_types`. Les outils
 
 Codes initiaux du referentiel: `COLD_ROOM`, `WORKSHOP`, `RECEPTION_PRODUCTS`, `SHIPPING`, `VEHICLE`, `LIVE_TANK`, `FREEZER`, `PRODUCT_TEMPERATURE`.
 
+### Plans nettoyage multi-cibles
+
+Les plans de nettoyage restent stockes dans `quality_cleaning_plans`. Les colonnes historiques `zone_id` et `equipment_id` sont conservees pour les API et ecrans existants. Les associations multiples sont portees par:
+
+- `quality_cleaning_plan_zones(plan_id, zone_id)`;
+- `quality_cleaning_plan_equipments(plan_id, equipment_id)`.
+
+La migration `064_quality_cleaning_plan_multi_targets.sql` est additive et idempotente. Elle cree les tables de liaison, ajoute les index actifs et backfill les liaisons depuis les colonnes legacy existantes.
+
+Les routes `GET/POST/PUT /api/quality/cleaning/plans` acceptent `zone_ids` et `equipment_ids`, continuent d'accepter `zone_id` et `equipment_id`, et retournent toujours les champs legacy plus `zones: []` et `equipments: []`. Les outils MCP `quality_create_cleaning_plan`, `quality_update_cleaning_plan`, `create_quality_cleaning_plan`, `update_quality_cleaning_plan`, `list_quality_cleaning_plans` et `get_quality_cleaning_plan` utilisent les memes services et exposent ces structures.
+
 ## Matrice fonctionnelle
 
 | Module | Permissions | Lecture MCP | Preparation/ecriture MCP | Execution confirmee | Limites conservees |
@@ -94,4 +105,5 @@ node backend/scripts/test-quality-router-startup.js
 node backend/scripts/test-mcp-public-tools-list.js
 node backend/scripts/test-agent-mcp-coverage-matrix.js
 node backend/scripts/test-quality-temperature-type-mcp-tools.js
+node backend/scripts/test-quality-cleaning-plan-multi-targets.js
 ```

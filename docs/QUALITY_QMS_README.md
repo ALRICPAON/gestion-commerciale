@@ -212,8 +212,17 @@ Tables et migration:
 
 - `quality_tasks` reste le moteur officiel des taches et frequences;
 - `quality_cleaning_plans` reste la table officielle des plans de nettoyage;
+- `quality_cleaning_plan_zones` et `quality_cleaning_plan_equipments` portent les associations multi-zones et multi-equipements des plans;
 - `quality_zones` et `quality_equipments` restent les sources du jumeau numerique;
-- `063_quality_configuration_agent_write.sql` ajoute uniquement des colonnes optionnelles, contraintes de statut et index.
+- `063_quality_configuration_agent_write.sql` ajoute uniquement des colonnes optionnelles, contraintes de statut et index;
+- `064_quality_cleaning_plan_multi_targets.sql` est additive, idempotente et backfill les liaisons depuis `zone_id` et `equipment_id`.
+
+Compatibilite plans de nettoyage:
+
+- `zone_id` et `equipment_id` restent acceptes et retournes;
+- `zone_ids` et `equipment_ids` permettent de couvrir plusieurs zones et equipements dans un seul plan PMS;
+- les lectures retournent `zones: []` et `equipments: []`;
+- les taches generees depuis un plan conservent une cible legacy principale et decrivent le perimetre complet.
 
 Outils MCP:
 

@@ -211,6 +211,8 @@ Les capacites front confirmees exposees dans ce correctif incluent:
 
 Pour les parametres temperature, `list_quality_temperature_types` expose le referentiel actif utilise par le front (`GET /api/quality/temperatures/types`) et par le service `quality/temperatures.listTemperatureTypes`. Il doit etre appele avant `create_quality_temperature_parameter` ou `update_quality_temperature_parameter`; les codes seedes sont `COLD_ROOM`, `WORKSHOP`, `RECEPTION_PRODUCTS`, `SHIPPING`, `VEHICLE`, `LIVE_TANK`, `FREEZER` et `PRODUCT_TEMPERATURE`.
 
+Les plans de nettoyage acceptent maintenant plusieurs zones et plusieurs equipements via `zone_ids` et `equipment_ids`. Les anciens champs `zone_id` et `equipment_id` restent acceptes et restent retournes pour compatibilite; les lectures `list_quality_cleaning_plans` et `get_quality_cleaning_plan` retournent aussi `zones: []` et `equipments: []`.
+
 Les champs de planification exposes pour les parametres temperature et plans nettoyage sont `planning_mode`, `quality_task_id`, `task_title`, `responsible_user_id`, `frequency_value`, `frequency_unit` et `target_time`.
 
 La configuration recommandee de l'identite technique est:
@@ -228,7 +230,7 @@ curl -X POST https://api.altamaree.fr/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H "x-alta-agent-key: $ALTA_AGENT_KEY" \
-  -d '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"quality_create_cleaning_plan","arguments":{"title":"Plan vivier","zone_id":"<ZONE_ID>","equipment_id":"<EQUIPMENT_ID>","quality_task_id":"<TASK_ID>","method":"A completer"}}}'
+  -d '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"quality_create_cleaning_plan","arguments":{"title":"Materiels contact alimentaire","zone_ids":["<ZONE_ID_1>","<ZONE_ID_2>"],"equipment_ids":["<EQUIPMENT_ID_1>","<EQUIPMENT_ID_2>"],"quality_task_id":"<TASK_ID>","method":"A completer"}}}'
 ```
 
 Test local:

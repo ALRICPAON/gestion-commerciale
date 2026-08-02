@@ -29,12 +29,27 @@ function booleanValue(value, fallback = true) {
   return !(value === false || value === 'false' || value === '0' || value === 0);
 }
 
+function cleanUuidArray(value) {
+  const items = Array.isArray(value)
+    ? value
+    : String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+  return [...new Set(items.map((item) => cleanUuid(typeof item === 'object' && item ? item.id : item)).filter(Boolean))];
+}
+
 function mapPlanPayload(body = {}) {
+  const hasZoneIds = body.zone_ids !== undefined || body.zoneIds !== undefined;
+  const hasEquipmentIds = body.equipment_ids !== undefined || body.equipmentIds !== undefined;
+  const zoneIds = cleanUuidArray(hasZoneIds ? (body.zone_ids || body.zoneIds) : (body.zones || body.zone_id));
+  const equipmentIds = cleanUuidArray(hasEquipmentIds ? (body.equipment_ids || body.equipmentIds) : (body.equipments || body.equipment_id));
+  const zoneId = zoneIds[0] || (hasZoneIds ? null : cleanUuid(body.zone_id)) || null;
+  const equipmentId = equipmentIds[0] || (hasEquipmentIds ? null : cleanUuid(body.equipment_id)) || null;
   return {
     title: nullableText(body.title),
     description: nullableText(body.description),
-    zone_id: cleanUuid(body.zone_id),
-    equipment_id: cleanUuid(body.equipment_id),
+    zone_id: zoneId,
+    equipment_id: equipmentId,
+    zone_ids: zoneIds.length ? zoneIds : [zoneId].filter(Boolean),
+    equipment_ids: equipmentIds.length ? equipmentIds : [equipmentId].filter(Boolean),
     product_name: nullableText(body.product_name),
     dosage_concentration: nullableText(body.dosage_concentration || body.dosage),
     usage_temperature: nullableText(body.usage_temperature || body.temperature),
@@ -87,6 +102,7 @@ function validateRecordPayload(payload) {
 module.exports = {
   CLEANING_RECORD_STATUSES,
   cleanUuid,
+  cleanUuidArray,
   mapPlanPayload,
   mapRecordPayload,
   validatePlanPayload,

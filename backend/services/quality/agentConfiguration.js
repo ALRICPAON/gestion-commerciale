@@ -59,6 +59,20 @@ async function assertEquipment(db, storeId, equipmentId, zoneId = null) {
   return equipment;
 }
 
+async function assertZones(db, storeId, zoneIds = []) {
+  for (const zoneId of zoneIds || []) await assertZone(db, storeId, zoneId);
+}
+
+async function assertEquipments(db, storeId, equipmentIds = [], zoneIds = []) {
+  const allowedZones = new Set((zoneIds || []).filter(Boolean).map(String));
+  for (const equipmentId of equipmentIds || []) {
+    const equipment = await assertEquipment(db, storeId, equipmentId);
+    if (allowedZones.size && equipment.zone_id && !allowedZones.has(String(equipment.zone_id))) {
+      throw businessError('Association refusee: un equipement selectionne n appartient pas aux zones selectionnees');
+    }
+  }
+}
+
 function normalizeTaskInput(input = {}, context = {}) {
   const zoneId = input.zone_id || input.zoneId || null;
   const equipmentId = input.equipment_id || input.equipmentId || null;
@@ -140,8 +154,8 @@ async function updateTask(db, context, input = {}) {
 async function createCleaningPlan(db, context, input = {}) {
   await assertStore(db, context.store_id);
   const payload = normalizePlanInput(input, context);
-  await assertZone(db, context.store_id, payload.zone_id);
-  await assertEquipment(db, context.store_id, payload.equipment_id, payload.zone_id);
+  await assertZones(db, context.store_id, payload.zone_ids);
+  await assertEquipments(db, context.store_id, payload.equipment_ids, payload.zone_ids);
   const validationError = validatePlanPayload(payload);
   if (validationError) throw businessError(validationError);
   if (payload.active) assertPlanOperational(payload);
@@ -156,8 +170,8 @@ async function updateCleaningPlan(db, context, input = {}) {
   const before = await getCleaningPlan(db, context.store_id, planId);
   if (!before) throw businessError('Plan de nettoyage introuvable', 404);
   const payload = normalizePlanInput({ ...before, ...input }, context);
-  await assertZone(db, context.store_id, payload.zone_id);
-  await assertEquipment(db, context.store_id, payload.equipment_id, payload.zone_id);
+  await assertZones(db, context.store_id, payload.zone_ids);
+  await assertEquipments(db, context.store_id, payload.equipment_ids, payload.zone_ids);
   const validationError = validatePlanPayload(payload);
   if (validationError) throw businessError(validationError);
   if (payload.active) assertPlanOperational(payload);

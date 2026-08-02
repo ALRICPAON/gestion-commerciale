@@ -18,9 +18,13 @@
   function setFeedback(message = '', type = '') { els.feedback.textContent = message; els.feedback.className = message ? `page-feedback ${type}`.trim() : 'page-feedback hidden'; }
   function formatDate(value) { return value ? new Date(value).toLocaleString('fr-FR') : '-'; }
   function toDatetimeLocal(value) { const date = value ? new Date(value) : new Date(); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
-  function statusLabel(status) { return { done: 'Réalisé', partial: 'Partiel', not_done: 'Non réalisé', issue: 'Incident' }[status] || status; }
-  function dueStatusLabel(status) { return { overdue: 'En retard', due: "À faire aujourd'hui", planned: 'À venir' }[status] || status; }
+  function statusLabel(status) { return { done: 'Realise', partial: 'Partiel', not_done: 'Non realise', issue: 'Incident' }[status] || status; }
+  function dueStatusLabel(status) { return { overdue: 'En retard', due: "A faire aujourd'hui", planned: 'A venir' }[status] || status; }
   function dueClass(status) { if (status === 'overdue') return 'quality-temperature-alert'; if (status === 'due') return 'quality-temperature-warning'; return ''; }
+  function targetNames(items, fallback) {
+    const names = (Array.isArray(items) ? items : []).map((item) => item.name || item.code || item.id).filter(Boolean);
+    return names.join(', ') || fallback || '-';
+  }
 
   function fillPlanSelect() {
     els.planId.innerHTML = '<option value="">Choisir un plan</option>';
@@ -64,17 +68,18 @@
       return;
     }
     els.due.innerHTML = dueRecords.map((item) => {
-      const place = item.equipment_name || item.zone_name || 'Non rattaché';
-      return `<article class="quality-card ${dueClass(item.computed_status)}"><span class="quality-badge">${dueStatusLabel(item.computed_status)}</span><h3>${escapeHtml(item.task_title || item.title)}</h3><p>${escapeHtml(place)} · Produit : ${escapeHtml(item.product_name || '-')} · Durée : ${item.expected_duration_minutes || '-'} min</p><p class="quality-muted">Échéance : ${formatDate(item.next_due_at)} · Dernière réalisation : ${formatDate(item.last_completed_at)}</p><p class="quality-muted">${escapeHtml(item.method || '')}</p><div class="quality-actions"><button class="btn btn-primary" data-action="fill" data-id="${item.cleaning_plan_id}">Réaliser</button></div></article>`;
+      const zones = targetNames(item.zones, item.zone_name);
+      const equipments = targetNames(item.equipments, item.equipment_name);
+      return `<article class="quality-card ${dueClass(item.computed_status)}"><span class="quality-badge">${dueStatusLabel(item.computed_status)}</span><h3>${escapeHtml(item.task_title || item.title)}</h3><p>Produit : ${escapeHtml(item.product_name || '-')} - Duree : ${item.expected_duration_minutes || '-'} min</p><p class="quality-muted"><strong>Zones :</strong> ${escapeHtml(zones)}</p><p class="quality-muted"><strong>Equipements :</strong> ${escapeHtml(equipments)}</p><p class="quality-muted">Echeance : ${formatDate(item.next_due_at)} - Derniere realisation : ${formatDate(item.last_completed_at)}</p><p class="quality-muted">${escapeHtml(item.method || '')}</p><div class="quality-actions"><button class="btn btn-primary" data-action="fill" data-id="${item.cleaning_plan_id}">Realiser</button></div></article>`;
     }).join('');
   }
 
   function renderRecords() {
     if (!records.length) {
-      els.tableBody.innerHTML = '<tr><td colspan="7">Aucun nettoyage enregistré.</td></tr>';
+      els.tableBody.innerHTML = '<tr><td colspan="7">Aucun nettoyage enregistre.</td></tr>';
       return;
     }
-    els.tableBody.innerHTML = records.map((record) => `<tr><td>${formatDate(record.performed_at)}</td><td>${escapeHtml(record.plan_title)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${statusLabel(record.status)}</td><td>${escapeHtml(record.performed_by_email || '-')}</td><td>${escapeHtml(record.comment || '')}</td></tr>`).join('');
+    els.tableBody.innerHTML = records.map((record) => `<tr><td>${formatDate(record.performed_at)}</td><td>${escapeHtml(record.plan_title)}</td><td>${escapeHtml(targetNames(record.zones, record.zone_name))}</td><td>${escapeHtml(targetNames(record.equipments, record.equipment_name))}</td><td>${statusLabel(record.status)}</td><td>${escapeHtml(record.performed_by_email || '-')}</td><td>${escapeHtml(record.comment || '')}</td></tr>`).join('');
   }
 
   async function load() {
