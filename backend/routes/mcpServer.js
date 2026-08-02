@@ -793,6 +793,8 @@ async function handleRequest(req, message) {
       ].every((name) => tools.some((tool) => tool.name === name)),
       coverage_complete: coverageReport.coverage_complete,
       missing_tools: coverageReport.missing_tools,
+      frontend_backend_coverage_complete: coverageReport.frontend_backend_coverage_complete,
+      missing_frontend_backend_capabilities: coverageReport.missing_frontend_backend_capabilities,
       registry_source: 'legacyTools + agentToolRegistry.listMcpTools + public underscore aliases',
       names: tools.map(t => t.name),
     });
@@ -803,8 +805,11 @@ async function handleRequest(req, message) {
       modules_covered: coverageReport.matrix.map((row) => row.module),
       coverage_complete: coverageReport.coverage_complete,
       missing_tools: coverageReport.missing_tools,
+      frontend_backend_coverage_complete: coverageReport.frontend_backend_coverage_complete,
+      missing_frontend_backend_capabilities: coverageReport.missing_frontend_backend_capabilities,
       final_permissions: coverageReport.final_permissions,
       coverage_matrix: coverageReport.matrix,
+      frontend_backend_capabilities: coverageReport.frontend_backend_capabilities,
     });
   }
 

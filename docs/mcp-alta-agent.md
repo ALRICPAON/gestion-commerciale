@@ -189,8 +189,26 @@ Depuis la version MCP `1.8.4`, `tools/list` expose le catalogue ALTA_MAREE_V3 co
 
 - `coverage_complete`;
 - `missing_tools`;
+- `frontend_backend_coverage_complete`;
+- `missing_frontend_backend_capabilities`;
 - `final_permissions`;
-- `coverage_matrix`.
+- `coverage_matrix`;
+- `frontend_backend_capabilities`.
+
+Les capacites front confirmees exposees dans ce correctif incluent:
+
+- `list_quality_temperature_parameters`;
+- `get_quality_temperature_parameter`;
+- `create_quality_temperature_parameter`;
+- `update_quality_temperature_parameter`;
+- `archive_or_disable_quality_temperature_parameter`;
+- `list_quality_cleaning_plans`;
+- `get_quality_cleaning_plan`;
+- `create_quality_cleaning_plan`;
+- `update_quality_cleaning_plan`;
+- `archive_or_disable_quality_cleaning_plan`.
+
+Les champs de planification exposes pour les parametres temperature et plans nettoyage sont `planning_mode`, `quality_task_id`, `task_title`, `responsible_user_id`, `frequency_value`, `frequency_unit` et `target_time`.
 
 La configuration recommandee de l'identite technique est:
 

@@ -1,0 +1,66 @@
+const FRONTEND_BACKEND_CAPABILITIES = Object.freeze([
+  { module: 'clients', capability: 'Lister/rechercher les clients', frontend: 'frontend/js/clients.js', route: 'GET /api/clients', service: 'agentCommercialToolsService.searchClients', mcp_tool: 'search_clients' },
+  { module: 'clients', capability: 'Relire une fiche client', frontend: 'frontend/js/client-detail.js', route: 'GET /api/clients/:id', service: 'agentCommercialToolsService.searchClients', mcp_tool: 'get_client_profile' },
+  { module: 'clients', capability: 'Preparer creation client', frontend: 'frontend/js/clients.js', route: 'POST /api/clients', service: 'routes/clients', mcp_tool: 'prepare_client_draft' },
+  { module: 'clients', capability: 'Preparer modification client', frontend: 'frontend/js/client-detail.js', route: 'PUT /api/clients/:id', service: 'routes/clients', mcp_tool: 'prepare_client_update' },
+  { module: 'suppliers', capability: 'Lister/rechercher les fournisseurs', frontend: 'frontend/js/suppliers.js', route: 'GET /api/suppliers', service: 'agentCommercialToolsService.searchSuppliers', mcp_tool: 'search_suppliers' },
+  { module: 'suppliers', capability: 'Relire une fiche fournisseur', frontend: 'frontend/js/supplier-detail.js', route: 'GET /api/suppliers/:id', service: 'agentCommercialToolsService.searchSuppliers', mcp_tool: 'get_supplier_profile' },
+  { module: 'suppliers', capability: 'Preparer commande fournisseur', frontend: 'frontend/js/purchases.js', route: 'POST /api/purchases', service: 'routes/purchases', mcp_tool: 'prepare_supplier_order' },
+  { module: 'articles', capability: 'Lister/rechercher les articles', frontend: 'frontend/js/articles.js', route: 'GET /api/articles', service: 'agentCommercialToolsService.searchArticles', mcp_tool: 'search_articles' },
+  { module: 'articles', capability: 'Relire une fiche article', frontend: 'frontend/js/article-detail.js', route: 'GET /api/articles/:id', service: 'agentCommercialToolsService.searchArticles', mcp_tool: 'get_article_profile' },
+  { module: 'articles', capability: 'Preparer modification tarif article', frontend: 'frontend/js/article-detail.js', route: 'PATCH /api/articles/:id', service: 'routes/articles', mcp_tool: 'prepare_article_price_update' },
+  { module: 'stock', capability: 'Lister stock et lots', frontend: 'frontend/js/stock.js', route: 'GET /api/stock', service: 'agentCommercialToolsService.searchStock', mcp_tool: 'search_stock' },
+  { module: 'stock', capability: 'Relire mouvements stock', frontend: 'frontend/js/stock.js', route: 'GET /api/stock/movements', service: 'routes/stock', mcp_tool: 'get_stock_movements' },
+  { module: 'stock', capability: 'Preparer regularisation stock', frontend: 'frontend/js/stock-regularization.js', route: 'POST /api/stock/negative-lots/:lotId/regularize', service: 'routes/stockRegularization', mcp_tool: 'prepare_stock_regularization' },
+  { module: 'purchases', capability: 'Lister achats/receptions', frontend: 'frontend/js/purchases.js', route: 'GET /api/purchases', service: 'routes/purchases', mcp_tool: 'get_purchases_overview' },
+  { module: 'purchases', capability: 'Relire achat/reception', frontend: 'frontend/js/purchase-detail.js', route: 'GET /api/purchases/:id', service: 'routes/purchases', mcp_tool: 'get_purchase_profile' },
+  { module: 'purchases', capability: 'Preparer reception achat', frontend: 'frontend/js/purchase-reception-upgrade.js', route: 'POST /api/purchases/:id/validate-reception', service: 'routes/purchaseReceptionUpgrade', mcp_tool: 'prepare_purchase_reception' },
+  { module: 'sales', capability: 'Lister/rechercher ventes', frontend: 'frontend/js/sales.js', route: 'GET /api/sales', service: 'agentCommercialToolsService.searchSales', mcp_tool: 'search_sales' },
+  { module: 'sales', capability: 'Relire vente', frontend: 'frontend/js/sale-detail.js', route: 'GET /api/sales/:id', service: 'agentCommercialToolsService.searchSales', mcp_tool: 'get_sale_profile' },
+  { module: 'sales', capability: 'Creer commande client confirmee', frontend: 'frontend/js/sale-detail.js', route: 'POST /api/sales', service: 'agentCommercialToolsService.createCustomerOrderConfirmed', mcp_tool: 'create_customer_order_confirmed' },
+  { module: 'communications', capability: 'Previsualiser email mercuriale', frontend: 'frontend/js/customer-price-list-email.js', route: 'POST /api/customer-price-lists/email/preview', service: 'customerTariffEmailService', mcp_tool: 'preview_customer_price_list' },
+  { module: 'communications', capability: 'Envoyer mercuriale confirmee', frontend: 'frontend/js/customer-price-list-email.js', route: 'POST /api/customer-price-lists/email/send', service: 'customerTariffEmailService', mcp_tool: 'send_customer_price_list_confirmed' },
+  { module: 'statistics', capability: 'Analyser performance commerciale', frontend: 'frontend/js/statistiques.js', route: 'GET /api/statistics', service: 'routes/statistics', mcp_tool: 'analyze_business_performance' },
+  { module: 'cashflow', capability: 'Lire prevision tresorerie', frontend: 'frontend/js/cashflow.js', route: 'GET /api/cashflow/forecast', service: 'cashflow.buildCashflowProjection', mcp_tool: 'prepare_cashflow_plan' },
+  { module: 'cashflow', capability: 'Lire sources tresorerie', frontend: 'frontend/js/cashflow.js', route: 'GET /api/cashflow/data-sources', service: 'cashflow.getCashflowDataSources', mcp_tool: 'get_cashflow_data_sources' },
+  { module: 'pennylane', capability: 'Diagnostiquer synchronisation Pennylane', frontend: 'frontend/js/accounting-settings.js', route: 'GET /api/pennylane/status', service: 'pennylane services', mcp_tool: 'get_pennylane_sync_status' },
+  { module: 'employee_planning', capability: 'Lire planning salarie', frontend: 'frontend/js/employee-planning.js', route: 'GET /api/employee-planning', service: 'employeePlanningService', mcp_tool: 'get_employee_planning' },
+  { module: 'employee_planning', capability: 'Preparer absence/planning', frontend: 'frontend/js/employee-planning.js', route: 'POST/PATCH /api/employee-planning', service: 'employeePlanningService', mcp_tool: 'prepare_employee_planning_update' },
+  { module: 'transformations', capability: 'Lister transformations', frontend: 'frontend/js/transformations.js', route: 'GET /api/transformations', service: 'routes/transformations', mcp_tool: 'get_transformations' },
+  { module: 'transformations', capability: 'Preparer validation transformation', frontend: 'frontend/transformation-detail.html', route: 'POST /api/transformations/:id/validate', service: 'routes/transformationValidation', mcp_tool: 'prepare_transformation_validation' },
+  { module: 'quality', capability: 'Lister zones qualite', frontend: 'frontend/quality/js/zones.js', route: 'GET /api/quality/zones', service: 'quality/digitalTwin', mcp_tool: 'get_quality_zones' },
+  { module: 'quality', capability: 'Lister equipements qualite', frontend: 'frontend/quality/js/equipments.js', route: 'GET /api/quality/equipments', service: 'quality/digitalTwin', mcp_tool: 'get_quality_equipments' },
+  { module: 'quality', capability: 'Lister taches qualite', frontend: 'frontend/quality/js/tasks-api.js', route: 'GET /api/quality/tasks', service: 'quality/tasks.listQualityTasks', mcp_tool: 'get_quality_tasks' },
+  { module: 'quality', capability: 'Creer tache qualite', frontend: 'frontend/quality/js/tasks-api.js', route: 'POST /api/quality/tasks', service: 'quality/agentConfiguration.createTask', mcp_tool: 'quality_create_task' },
+  { module: 'quality', capability: 'Modifier tache qualite', frontend: 'frontend/quality/js/tasks-api.js', route: 'PUT /api/quality/tasks/:id', service: 'quality/agentConfiguration.updateTask', mcp_tool: 'quality_update_task' },
+  { module: 'quality', capability: 'Lister parametres temperature', frontend: 'frontend/quality/js/temperature-api.js', route: 'GET /api/quality/temperatures/limits', service: 'quality/temperatures.listTemperatureLimits', mcp_tool: 'list_quality_temperature_parameters' },
+  { module: 'quality', capability: 'Relire parametre temperature', frontend: 'frontend/quality/js/temperature-api.js', route: 'GET /api/quality/temperatures/limits', service: 'quality/temperatures.getTemperatureLimit', mcp_tool: 'get_quality_temperature_parameter' },
+  { module: 'quality', capability: 'Creer parametre temperature', frontend: 'frontend/quality/js/temperature-api.js', route: 'POST /api/quality/temperatures/limits', service: 'quality/temperatures.saveTemperatureLimit', mcp_tool: 'create_quality_temperature_parameter' },
+  { module: 'quality', capability: 'Modifier parametre temperature', frontend: 'frontend/quality/js/temperature-api.js', route: 'PUT /api/quality/temperatures/limits/:id', service: 'quality/temperatures.saveTemperatureLimit', mcp_tool: 'update_quality_temperature_parameter' },
+  { module: 'quality', capability: 'Archiver/desactiver parametre temperature', frontend: 'frontend/quality/js/temperature-api.js', route: 'DELETE /api/quality/temperatures/limits/:id', service: 'quality/temperatures.deleteTemperatureLimit', mcp_tool: 'archive_or_disable_quality_temperature_parameter' },
+  { module: 'quality', capability: 'Lister plans nettoyage', frontend: 'frontend/quality/js/cleaning-api.js', route: 'GET /api/quality/cleaning/plans', service: 'quality/cleaning.listCleaningPlans', mcp_tool: 'list_quality_cleaning_plans' },
+  { module: 'quality', capability: 'Relire plan nettoyage', frontend: 'frontend/quality/js/cleaning-api.js', route: 'GET /api/quality/cleaning/plans/:id', service: 'quality/cleaning.getCleaningPlan', mcp_tool: 'get_quality_cleaning_plan' },
+  { module: 'quality', capability: 'Creer plan nettoyage', frontend: 'frontend/quality/js/cleaning-api.js', route: 'POST /api/quality/cleaning/plans', service: 'quality/cleaning.saveCleaningPlan', mcp_tool: 'create_quality_cleaning_plan' },
+  { module: 'quality', capability: 'Modifier plan nettoyage', frontend: 'frontend/quality/js/cleaning-api.js', route: 'PUT /api/quality/cleaning/plans/:id', service: 'quality/cleaning.saveCleaningPlan', mcp_tool: 'update_quality_cleaning_plan' },
+  { module: 'quality', capability: 'Archiver/desactiver plan nettoyage', frontend: 'frontend/quality/js/cleaning-api.js', route: 'PATCH /api/quality/cleaning/plans/:id/status', service: 'quality/cleaning.changeCleaningPlanStatus', mcp_tool: 'archive_or_disable_quality_cleaning_plan' },
+  { module: 'quality_documentation', capability: 'Lire dossier agrement', frontend: 'frontend/quality/js/documentation.js', route: 'GET /api/quality/documentation', service: 'qualityDocumentationService', mcp_tool: 'list_quality_documentation' },
+  { module: 'quality_documentation', capability: 'Modifier blocs dossier agrement', frontend: 'frontend/quality/js/documentation.js', route: 'PATCH/POST/DELETE /api/quality/document-blocks', service: 'qualityDocumentBlockService', mcp_tool: 'quality.documentation.update_text_block' },
+]);
+
+function buildFrontendBackendCoverage(publicTools = []) {
+  const names = new Set(publicTools.map((tool) => tool.name));
+  const rows = FRONTEND_BACKEND_CAPABILITIES.map((item) => ({
+    ...item,
+    status: names.has(item.mcp_tool) ? 'covered' : 'missing',
+  }));
+  return {
+    coverage_complete: rows.every((row) => row.status !== 'missing'),
+    missing_capabilities: rows.filter((row) => row.status === 'missing'),
+    capabilities: rows,
+  };
+}
+
+module.exports = {
+  FRONTEND_BACKEND_CAPABILITIES,
+  buildFrontendBackendCoverage,
+};
