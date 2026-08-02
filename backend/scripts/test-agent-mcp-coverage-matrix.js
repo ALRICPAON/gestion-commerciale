@@ -145,11 +145,17 @@ async function main() {
 
   const cleaningCreate = publicTools.find((tool) => tool.name === 'create_quality_cleaning_plan');
   assert(cleaningCreate.inputSchema.properties.planning_mode, 'create_quality_cleaning_plan doit exposer planning_mode');
+  assert(cleaningCreate.inputSchema.properties.zone_ids, 'create_quality_cleaning_plan doit exposer zone_ids');
+  assert(cleaningCreate.inputSchema.properties.equipment_ids, 'create_quality_cleaning_plan doit exposer equipment_ids');
   assert(cleaningCreate.inputSchema.properties.task_title, 'create_quality_cleaning_plan doit exposer task_title');
   assert(cleaningCreate.inputSchema.properties.responsible_user_id, 'create_quality_cleaning_plan doit exposer responsible_user_id');
   assert(cleaningCreate.inputSchema.properties.frequency_value, 'create_quality_cleaning_plan doit exposer frequency_value');
   assert(cleaningCreate.inputSchema.properties.frequency_unit, 'create_quality_cleaning_plan doit exposer frequency_unit');
   assert(cleaningCreate.inputSchema.properties.target_time, 'create_quality_cleaning_plan doit exposer target_time');
+
+  const cleaningUpdate = publicTools.find((tool) => tool.name === 'update_quality_cleaning_plan');
+  assert(cleaningUpdate.inputSchema.properties.zone_ids, 'update_quality_cleaning_plan doit exposer zone_ids');
+  assert(cleaningUpdate.inputSchema.properties.equipment_ids, 'update_quality_cleaning_plan doit exposer equipment_ids');
 
   const temperatureCreate = publicTools.find((tool) => tool.name === 'create_quality_temperature_parameter');
   assert(temperatureCreate.description.includes('list_quality_temperature_types'), 'create_quality_temperature_parameter doit guider vers list_quality_temperature_types');

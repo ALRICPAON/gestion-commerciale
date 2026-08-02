@@ -189,6 +189,8 @@ const qualityCleaningPlanConfigurationInputSchema = {
     description: { type: 'string' },
     zone_id: { type: 'string' },
     equipment_id: { type: 'string' },
+    zone_ids: { type: 'array', items: { type: 'string' }, description: 'Zones couvertes par le plan. Compatible avec zone_id legacy.' },
+    equipment_ids: { type: 'array', items: { type: 'string' }, description: 'Equipements couverts par le plan. Compatible avec equipment_id legacy.' },
     quality_task_id: { type: 'string' },
     product_name: { type: 'string' },
     dosage_concentration: { type: 'string' },
@@ -346,8 +348,8 @@ function planningTaskInput(input = {}, moduleKey) {
   return {
     title: input.task_title || input.title || `Tache ${moduleKey}`,
     module_key: moduleKey,
-    zone_id: input.zone_id || null,
-    equipment_id: input.equipment_id || null,
+    zone_id: input.zone_id || input.zone_ids?.[0] || null,
+    equipment_id: input.equipment_id || input.equipment_ids?.[0] || null,
     responsible_user_id: input.responsible_user_id || null,
     frequency_value: input.frequency_value || input.expected_frequency_value || null,
     frequency_unit: input.frequency_unit || input.expected_frequency_unit || null,
@@ -356,6 +358,13 @@ function planningTaskInput(input = {}, moduleKey) {
     active: false,
     configuration_status: 'pending_review',
     description: input.task_description || `Tache generee depuis la configuration ${moduleKey}.`,
+    ...(moduleKey === 'cleaning' ? {
+      description: input.task_description || [
+        `Tache generee depuis la configuration ${moduleKey}.`,
+        input.zone_ids?.length ? `Zones: ${input.zone_ids.join(', ')}` : null,
+        input.equipment_ids?.length ? `Equipements: ${input.equipment_ids.join(', ')}` : null,
+      ].filter(Boolean).join(' '),
+    } : {}),
   };
 }
 

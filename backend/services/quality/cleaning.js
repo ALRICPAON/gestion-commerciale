@@ -9,6 +9,44 @@ function addFilter(where, params, value, sql) {
   }
 }
 
+function uniqueIds(values = []) {
+  return [...new Set((Array.isArray(values) ? values : []).filter(Boolean).map(String))];
+}
+
+function legacyAwareIds(payload = {}, key, legacyKey) {
+  return uniqueIds([payload[legacyKey], ...(payload[key] || [])]);
+}
+
+function jsonArray(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function attachTargets(row) {
+  if (!row) return null;
+  const zones = jsonArray(row.zones);
+  const equipments = jsonArray(row.equipments);
+  const zone = zones[0] || null;
+  const equipment = equipments[0] || null;
+  return {
+    ...row,
+    zones,
+    equipments,
+    zone_id: row.zone_id || zone?.id || null,
+    zone_code: row.zone_code || zone?.code || null,
+    zone_name: row.zone_name || zone?.name || null,
+    equipment_id: row.equipment_id || equipment?.id || null,
+    equipment_code: row.equipment_code || equipment?.code || null,
+    equipment_name: row.equipment_name || equipment?.name || null,
+  };
+}
+
 async function logEvent(db, storeId, actorId, eventType, targetId, before, after) {
   await logQualityEvent({
     dbPool: db,
@@ -31,20 +69,21 @@ function taskSelectSql() {
 
 function attachTask(row) {
   if (!row) return null;
-  if (!row.task_id) return { ...row, quality_task: null };
+  const plan = attachTargets(row);
+  if (!plan.task_id) return { ...plan, quality_task: null };
   return {
-    ...row,
+    ...plan,
     quality_task: enrichTask({
-      id: row.task_id,
-      title: row.task_title,
-      frequency_value: row.task_frequency_value,
-      frequency_unit: row.task_frequency_unit,
-      target_time: row.task_target_time,
-      next_due_at: row.task_next_due_at,
-      last_completed_at: row.task_last_completed_at,
-      status: row.task_status,
-      active: row.task_active,
-      responsible_email: row.task_responsible_email,
+      id: plan.task_id,
+      title: plan.task_title,
+      frequency_value: plan.task_frequency_value,
+      frequency_unit: plan.task_frequency_unit,
+      target_time: plan.task_target_time,
+      next_due_at: plan.task_next_due_at,
+      last_completed_at: plan.task_last_completed_at,
+      status: plan.task_status,
+      active: plan.task_active,
+      responsible_email: plan.task_responsible_email,
     }),
   };
 }
@@ -52,10 +91,26 @@ function attachTask(row) {
 function planSelectSql(whereSql) {
   return `SELECT p.*, z.code AS zone_code, z.name AS zone_name,
                  e.code AS equipment_code, e.name AS equipment_name,
+                 COALESCE(z_targets.zones, CASE WHEN p.zone_id IS NOT NULL THEN json_build_array(json_build_object('id', z.id, 'code', z.code, 'name', z.name, 'status', z.status)) ELSE '[]'::json END) AS zones,
+                 COALESCE(e_targets.equipments, CASE WHEN p.equipment_id IS NOT NULL THEN json_build_array(json_build_object('id', e.id, 'code', e.code, 'name', e.name, 'zone_id', e.zone_id, 'zone_name', ez.name, 'status', e.status)) ELSE '[]'::json END) AS equipments,
                  ${taskSelectSql()}
           FROM quality_cleaning_plans p
           LEFT JOIN quality_zones z ON z.id = p.zone_id AND z.store_id = p.store_id
           LEFT JOIN quality_equipments e ON e.id = p.equipment_id AND e.store_id = p.store_id
+          LEFT JOIN quality_zones ez ON ez.id = e.zone_id AND ez.store_id = p.store_id
+          LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object('id', lz.id, 'code', lz.code, 'name', lz.name, 'status', lz.status) ORDER BY lz.name ASC) AS zones
+            FROM quality_cleaning_plan_zones pz
+            INNER JOIN quality_zones lz ON lz.id = pz.zone_id AND lz.store_id = p.store_id
+            WHERE pz.plan_id = p.id AND pz.deleted_at IS NULL
+          ) z_targets ON true
+          LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object('id', le.id, 'code', le.code, 'name', le.name, 'zone_id', le.zone_id, 'zone_name', lez.name, 'status', le.status) ORDER BY lez.name ASC, le.name ASC) AS equipments
+            FROM quality_cleaning_plan_equipments pe
+            INNER JOIN quality_equipments le ON le.id = pe.equipment_id AND le.store_id = p.store_id
+            LEFT JOIN quality_zones lez ON lez.id = le.zone_id AND lez.store_id = p.store_id
+            WHERE pe.plan_id = p.id AND pe.deleted_at IS NULL
+          ) e_targets ON true
           LEFT JOIN quality_tasks qt ON qt.id = p.quality_task_id AND qt.store_id = p.store_id
           LEFT JOIN users qtu ON qtu.id = qt.responsible_user_id
           WHERE ${whereSql}`;
@@ -75,11 +130,89 @@ async function assertCleaningTask(db, storeId, taskId) {
   throw err;
 }
 
+async function assertTargetIds(db, storeId, zoneIds = [], equipmentIds = []) {
+  const zones = uniqueIds(zoneIds);
+  const equipments = uniqueIds(equipmentIds);
+  if (zones.length) {
+    const result = await db.query(
+      `SELECT id FROM quality_zones
+       WHERE store_id = $1 AND deleted_at IS NULL AND id = ANY($2::uuid[])`,
+      [storeId, zones]
+    );
+    const found = new Set(result.rows.map((row) => String(row.id)));
+    const missing = zones.filter((id) => !found.has(String(id)));
+    if (missing.length) {
+      const err = new Error(`Zone qualite introuvable pour ce magasin: ${missing.join(', ')}`);
+      err.status = 400;
+      throw err;
+    }
+  }
+  if (equipments.length) {
+    const result = await db.query(
+      `SELECT id, zone_id FROM quality_equipments
+       WHERE store_id = $1 AND deleted_at IS NULL AND id = ANY($2::uuid[])`,
+      [storeId, equipments]
+    );
+    const found = new Map(result.rows.map((row) => [String(row.id), row]));
+    const missing = equipments.filter((id) => !found.has(String(id)));
+    if (missing.length) {
+      const err = new Error(`Equipement qualite introuvable pour ce magasin: ${missing.join(', ')}`);
+      err.status = 400;
+      throw err;
+    }
+    if (zones.length) {
+      const zoneSet = new Set(zones.map(String));
+      const outside = result.rows.filter((row) => row.zone_id && !zoneSet.has(String(row.zone_id)));
+      if (outside.length) {
+        const err = new Error('Association refusee: un equipement selectionne n appartient pas aux zones selectionnees');
+        err.status = 400;
+        throw err;
+      }
+    }
+  }
+}
+
+async function syncPlanTargets(db, storeId, userId, planId, payload = {}) {
+  const zoneIds = legacyAwareIds(payload, 'zone_ids', 'zone_id');
+  const equipmentIds = legacyAwareIds(payload, 'equipment_ids', 'equipment_id');
+  await assertTargetIds(db, storeId, zoneIds, equipmentIds);
+  await db.query(
+    `UPDATE quality_cleaning_plan_zones
+     SET deleted_at = now(), deleted_by = $4
+     WHERE plan_id = $1 AND deleted_at IS NULL AND NOT (zone_id = ANY($2::uuid[]))`,
+    [planId, zoneIds, storeId, userId]
+  );
+  for (const zoneId of zoneIds) {
+    await db.query(
+      `INSERT INTO quality_cleaning_plan_zones (plan_id, zone_id, created_by, deleted_at, deleted_by)
+       VALUES ($1, $2, $3, NULL, NULL)
+       ON CONFLICT (plan_id, zone_id)
+       DO UPDATE SET deleted_at = NULL, deleted_by = NULL`,
+      [planId, zoneId, userId]
+    );
+  }
+  await db.query(
+    `UPDATE quality_cleaning_plan_equipments
+     SET deleted_at = now(), deleted_by = $4
+     WHERE plan_id = $1 AND deleted_at IS NULL AND NOT (equipment_id = ANY($2::uuid[]))`,
+    [planId, equipmentIds, storeId, userId]
+  );
+  for (const equipmentId of equipmentIds) {
+    await db.query(
+      `INSERT INTO quality_cleaning_plan_equipments (plan_id, equipment_id, created_by, deleted_at, deleted_by)
+       VALUES ($1, $2, $3, NULL, NULL)
+       ON CONFLICT (plan_id, equipment_id)
+       DO UPDATE SET deleted_at = NULL, deleted_by = NULL`,
+      [planId, equipmentId, userId]
+    );
+  }
+}
+
 async function listCleaningPlans(db, storeId, query = {}) {
   const params = [storeId];
   const where = ['p.store_id = $1'];
-  addFilter(where, params, query.zone_id, (i) => `p.zone_id = $${i}`);
-  addFilter(where, params, query.equipment_id, (i) => `p.equipment_id = $${i}`);
+  addFilter(where, params, query.zone_id, (i) => `(p.zone_id = $${i} OR EXISTS (SELECT 1 FROM quality_cleaning_plan_zones pz WHERE pz.plan_id = p.id AND pz.zone_id = $${i} AND pz.deleted_at IS NULL))`);
+  addFilter(where, params, query.equipment_id, (i) => `(p.equipment_id = $${i} OR EXISTS (SELECT 1 FROM quality_cleaning_plan_equipments pe WHERE pe.plan_id = p.id AND pe.equipment_id = $${i} AND pe.deleted_at IS NULL))`);
   addFilter(where, params, query.quality_task_id, (i) => `p.quality_task_id = $${i}`);
   if (query.active !== undefined && query.active !== '') {
     params.push(query.active === 'true' || query.active === true);
@@ -104,6 +237,11 @@ async function getCleaningPlan(db, storeId, planId) {
 async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
   const before = planId ? await getCleaningPlan(db, storeId, planId) : null;
   if (planId && !before) return null;
+  const zoneIds = legacyAwareIds(payload, 'zone_ids', 'zone_id');
+  const equipmentIds = legacyAwareIds(payload, 'equipment_ids', 'equipment_id');
+  await assertTargetIds(db, storeId, zoneIds, equipmentIds);
+  const legacyZoneId = zoneIds[0] || null;
+  const legacyEquipmentId = equipmentIds[0] || null;
   const taskId = await assertCleaningTask(db, storeId, payload.quality_task_id);
   const result = planId
     ? await db.query(
@@ -118,7 +256,7 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
            agent_action_id=$26, updated_at=now()
        WHERE id=$1 AND store_id=$2
        RETURNING *`,
-      [planId, storeId, payload.title, payload.description, payload.zone_id, payload.equipment_id, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration ?? before.dosage_concentration, payload.usage_temperature ?? before.usage_temperature, payload.contact_time_minutes ?? before.contact_time_minutes, payload.rinse_required ?? before.rinse_required, payload.material_used ?? before.material_used, payload.post_cleaning_check ?? before.post_cleaning_check, payload.expected_proof ?? before.expected_proof, payload.corrective_action ?? before.corrective_action, payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payload.agent_action_id || before.agent_action_id]
+      [planId, storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration ?? before.dosage_concentration, payload.usage_temperature ?? before.usage_temperature, payload.contact_time_minutes ?? before.contact_time_minutes, payload.rinse_required ?? before.rinse_required, payload.material_used ?? before.material_used, payload.post_cleaning_check ?? before.post_cleaning_check, payload.expected_proof ?? before.expected_proof, payload.corrective_action ?? before.corrective_action, payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payload.agent_action_id || before.agent_action_id]
     )
     : await db.query(
       `INSERT INTO quality_cleaning_plans (
@@ -130,8 +268,9 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
         created_source, created_by_agent, agent_action_id
       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
       RETURNING *`,
-      [storeId, payload.title, payload.description, payload.zone_id, payload.equipment_id, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration, payload.usage_temperature, payload.contact_time_minutes, payload.rinse_required, payload.material_used, payload.post_cleaning_check, payload.expected_proof, payload.corrective_action, payload.configuration_status || 'active', payload.validation_required === true, payload.created_source || 'human', payload.created_by_agent === true, payload.agent_action_id]
+      [storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration, payload.usage_temperature, payload.contact_time_minutes, payload.rinse_required, payload.material_used, payload.post_cleaning_check, payload.expected_proof, payload.corrective_action, payload.configuration_status || 'active', payload.validation_required === true, payload.created_source || 'human', payload.created_by_agent === true, payload.agent_action_id]
     );
+  await syncPlanTargets(db, storeId, userId, result.rows[0].id, { ...payload, zone_ids: zoneIds, equipment_ids: equipmentIds, zone_id: legacyZoneId, equipment_id: legacyEquipmentId });
   const plan = await getCleaningPlan(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, planId ? 'quality.cleaning.plan.updated' : 'quality.cleaning.plan.created', plan.id, before, plan);
   return plan;
@@ -174,8 +313,10 @@ async function listDueCleaningRecords(db, storeId, query = {}) {
       title: plan.title,
       zone_id: plan.zone_id,
       zone_name: plan.zone_name,
+      zones: plan.zones,
       equipment_id: plan.equipment_id,
       equipment_name: plan.equipment_name,
+      equipments: plan.equipments,
       product_name: plan.product_name,
       method: plan.method,
       safety_instructions: plan.safety_instructions,
@@ -238,18 +379,35 @@ async function listCleaningRecords(db, storeId, query = {}) {
   addFilter(where, params, query.end_date, (i) => `r.performed_at <= $${i}::timestamptz`);
   const result = await db.query(
     `SELECT r.*, p.title AS plan_title, p.product_name, p.method,
-            z.name AS zone_name, e.name AS equipment_name, u.email AS performed_by_email
+            z.name AS zone_name, e.name AS equipment_name,
+            COALESCE(z_targets.zones, CASE WHEN p.zone_id IS NOT NULL THEN json_build_array(json_build_object('id', z.id, 'code', z.code, 'name', z.name, 'status', z.status)) ELSE '[]'::json END) AS zones,
+            COALESCE(e_targets.equipments, CASE WHEN p.equipment_id IS NOT NULL THEN json_build_array(json_build_object('id', e.id, 'code', e.code, 'name', e.name, 'zone_id', e.zone_id, 'zone_name', ez.name, 'status', e.status)) ELSE '[]'::json END) AS equipments,
+            u.email AS performed_by_email
      FROM quality_cleaning_records r
      INNER JOIN quality_cleaning_plans p ON p.id = r.cleaning_plan_id AND p.store_id = r.store_id
      LEFT JOIN quality_zones z ON z.id = p.zone_id AND z.store_id = p.store_id
      LEFT JOIN quality_equipments e ON e.id = p.equipment_id AND e.store_id = p.store_id
+     LEFT JOIN quality_zones ez ON ez.id = e.zone_id AND ez.store_id = p.store_id
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object('id', lz.id, 'code', lz.code, 'name', lz.name, 'status', lz.status) ORDER BY lz.name ASC) AS zones
+       FROM quality_cleaning_plan_zones pz
+       INNER JOIN quality_zones lz ON lz.id = pz.zone_id AND lz.store_id = p.store_id
+       WHERE pz.plan_id = p.id AND pz.deleted_at IS NULL
+     ) z_targets ON true
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object('id', le.id, 'code', le.code, 'name', le.name, 'zone_id', le.zone_id, 'zone_name', lez.name, 'status', le.status) ORDER BY lez.name ASC, le.name ASC) AS equipments
+       FROM quality_cleaning_plan_equipments pe
+       INNER JOIN quality_equipments le ON le.id = pe.equipment_id AND le.store_id = p.store_id
+       LEFT JOIN quality_zones lez ON lez.id = le.zone_id AND lez.store_id = p.store_id
+       WHERE pe.plan_id = p.id AND pe.deleted_at IS NULL
+     ) e_targets ON true
      LEFT JOIN users u ON u.id = r.performed_by
      WHERE ${where.join(' AND ')}
      ORDER BY r.performed_at DESC, r.created_at DESC
      LIMIT 500`,
     params
   );
-  return result.rows;
+  return result.rows.map(attachTargets);
 }
 
 async function getCleaningSummary(db, storeId) {
