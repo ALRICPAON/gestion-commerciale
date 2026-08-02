@@ -96,6 +96,7 @@ function synchronizedTaskPayload(plan) {
     execution_method: plan.method || null,
     verification_method: plan.post_cleaning_check || null,
     proof_required: Boolean(plan.expected_proof),
+    photo_required: false,
     instructions: plan.safety_instructions || plan.method || null,
     acceptance_criteria: plan.expected_proof || null,
     deviation_action: plan.corrective_action || null,
