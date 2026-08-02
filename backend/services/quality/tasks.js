@@ -12,6 +12,46 @@ function addFilter(where, params, value, sql) {
   }
 }
 
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value || {}, key);
+}
+
+function taskPayloadValue(payload, before, key, fallback = null) {
+  if (hasOwn(payload, key)) return payload[key];
+  if (before && hasOwn(before, key)) return before[key];
+  return fallback;
+}
+
+function normalizeQualityTaskPayload(payload = {}, before = null) {
+  return {
+    title: taskPayloadValue(payload, before, 'title'),
+    description: taskPayloadValue(payload, before, 'description'),
+    module_key: taskPayloadValue(payload, before, 'module_key'),
+    entity_type: taskPayloadValue(payload, before, 'entity_type'),
+    entity_id: taskPayloadValue(payload, before, 'entity_id'),
+    responsible_user_id: taskPayloadValue(payload, before, 'responsible_user_id'),
+    frequency_value: taskPayloadValue(payload, before, 'frequency_value'),
+    frequency_unit: taskPayloadValue(payload, before, 'frequency_unit'),
+    target_time: taskPayloadValue(payload, before, 'target_time'),
+    status: taskPayloadValue(payload, before, 'status', 'planned'),
+    active: taskPayloadValue(payload, before, 'active', true),
+    category: taskPayloadValue(payload, before, 'category'),
+    responsible_role: taskPayloadValue(payload, before, 'responsible_role'),
+    criticality: taskPayloadValue(payload, before, 'criticality'),
+    execution_method: taskPayloadValue(payload, before, 'execution_method'),
+    verification_method: taskPayloadValue(payload, before, 'verification_method'),
+    proof_required: taskPayloadValue(payload, before, 'proof_required', false) === true,
+    photo_required: taskPayloadValue(payload, before, 'photo_required', false) === true,
+    instructions: taskPayloadValue(payload, before, 'instructions'),
+    acceptance_criteria: taskPayloadValue(payload, before, 'acceptance_criteria'),
+    deviation_action: taskPayloadValue(payload, before, 'deviation_action'),
+    configuration_status: taskPayloadValue(payload, before, 'configuration_status', 'active'),
+    created_source: taskPayloadValue(payload, before, 'created_source', 'human'),
+    created_by_agent: taskPayloadValue(payload, before, 'created_by_agent', false) === true,
+    agent_action_id: taskPayloadValue(payload, before, 'agent_action_id'),
+  };
+}
+
 async function logEvent(db, storeId, actorId, eventType, targetId, before, after) {
   await logQualityEvent({
     dbPool: db,
@@ -76,7 +116,8 @@ function resolveNextDue(payload) {
 async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
   const before = taskId ? await getQualityTask(db, storeId, taskId) : null;
   if (taskId && !before) return null;
-  const nextDueAt = resolveNextDue(payload);
+  const normalized = normalizeQualityTaskPayload(payload, before);
+  const nextDueAt = resolveNextDue(normalized);
 
   const result = taskId
     ? await db.query(
@@ -94,32 +135,32 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
       [
         taskId,
         storeId,
-        payload.title,
-        payload.description,
-        payload.module_key,
-        payload.entity_type,
-        payload.entity_id,
-        payload.responsible_user_id,
-        payload.frequency_value,
-        payload.frequency_unit,
-        payload.target_time,
+        normalized.title,
+        normalized.description,
+        normalized.module_key,
+        normalized.entity_type,
+        normalized.entity_id,
+        normalized.responsible_user_id,
+        normalized.frequency_value,
+        normalized.frequency_unit,
+        normalized.target_time,
         nextDueAt,
-        payload.status,
-        payload.active,
-        payload.category ?? before.category,
-        payload.responsible_role ?? before.responsible_role,
-        payload.criticality ?? before.criticality,
-        payload.execution_method ?? before.execution_method,
-        payload.verification_method ?? before.verification_method,
-        payload.proof_required ?? before.proof_required,
-        payload.photo_required ?? before.photo_required,
-        payload.instructions ?? before.instructions,
-        payload.acceptance_criteria ?? before.acceptance_criteria,
-        payload.deviation_action ?? before.deviation_action,
-        payload.configuration_status || before.configuration_status || 'active',
-        payload.created_source || before.created_source || 'human',
-        payload.created_by_agent === true || before.created_by_agent === true,
-        payload.agent_action_id || before.agent_action_id,
+        normalized.status,
+        normalized.active,
+        normalized.category,
+        normalized.responsible_role,
+        normalized.criticality,
+        normalized.execution_method,
+        normalized.verification_method,
+        normalized.proof_required,
+        normalized.photo_required,
+        normalized.instructions,
+        normalized.acceptance_criteria,
+        normalized.deviation_action,
+        normalized.configuration_status,
+        normalized.created_source,
+        normalized.created_by_agent,
+        normalized.agent_action_id,
       ]
     )
     : await db.query(
@@ -140,32 +181,32 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
       RETURNING *`,
       [
         storeId,
-        payload.title,
-        payload.description,
-        payload.module_key,
-        payload.entity_type,
-        payload.entity_id,
-        payload.responsible_user_id,
-        payload.frequency_value,
-        payload.frequency_unit,
-        payload.target_time,
+        normalized.title,
+        normalized.description,
+        normalized.module_key,
+        normalized.entity_type,
+        normalized.entity_id,
+        normalized.responsible_user_id,
+        normalized.frequency_value,
+        normalized.frequency_unit,
+        normalized.target_time,
         nextDueAt,
-        payload.status,
-        payload.active,
-        payload.category,
-        payload.responsible_role,
-        payload.criticality,
-        payload.execution_method,
-        payload.verification_method,
-        payload.proof_required,
-        payload.photo_required,
-        payload.instructions,
-        payload.acceptance_criteria,
-        payload.deviation_action,
-        payload.configuration_status || 'active',
-        payload.created_source || 'human',
-        payload.created_by_agent === true,
-        payload.agent_action_id,
+        normalized.status,
+        normalized.active,
+        normalized.category,
+        normalized.responsible_role,
+        normalized.criticality,
+        normalized.execution_method,
+        normalized.verification_method,
+        normalized.proof_required,
+        normalized.photo_required,
+        normalized.instructions,
+        normalized.acceptance_criteria,
+        normalized.deviation_action,
+        normalized.configuration_status,
+        normalized.created_source,
+        normalized.created_by_agent,
+        normalized.agent_action_id,
       ]
     );
 
@@ -266,5 +307,6 @@ module.exports = {
   getQualityTaskSummary,
   listQualityTasks,
   saveQualityTask,
+  normalizeQualityTaskPayload,
   updateQualityTaskStatus,
 };

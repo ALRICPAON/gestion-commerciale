@@ -5,6 +5,7 @@ const path = require('path');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 const { listMcpTools } = require('../services/agent/agentToolRegistry');
 const { saveCleaningPlan, getCleaningPlan, listCleaningPlans } = require('../services/quality/cleaning');
+const { normalizeQualityTaskPayload } = require('../services/quality/tasks');
 const { mapPlanPayload } = require('../validators/quality/cleaning');
 
 const STORE_ID = '00000000-0000-4000-8000-000000000001';
@@ -16,6 +17,18 @@ const EQUIPMENT_2 = '00000000-0000-4000-8000-000000000022';
 const PLAN_ID = '00000000-0000-4000-8000-000000000031';
 const TASK_ID = '00000000-0000-4000-8000-000000000041';
 const AUDIT_ID = '00000000-0000-4000-8000-000000000101';
+const QUALITY_TASK_NOT_NULL_COLUMNS = [
+  'store_id',
+  'title',
+  'module_key',
+  'status',
+  'active',
+  'proof_required',
+  'photo_required',
+  'configuration_status',
+  'created_source',
+  'created_by_agent',
+];
 
 function makeContext(permissions) {
   return {
@@ -62,12 +75,35 @@ function assertContiguousSqlParameters(sql) {
   }
 }
 
+function assertTaskNotNullColumns(task) {
+  for (const column of QUALITY_TASK_NOT_NULL_COLUMNS) {
+    assert.notEqual(task[column], null, `quality_tasks.${column} ne doit pas etre NULL`);
+    assert.notEqual(task[column], undefined, `quality_tasks.${column} ne doit pas etre absent`);
+  }
+}
+
+function makeTemperatureTasks() {
+  return Array.from({ length: 13 }, (_, index) => ({
+    id: `00000000-0000-4000-8000-0000000001${String(index).padStart(2, '0')}`,
+    store_id: STORE_ID,
+    title: `Temperature ${index + 1}`,
+    module_key: 'temperature',
+    status: 'planned',
+    active: true,
+    proof_required: false,
+    photo_required: false,
+    configuration_status: 'active',
+    created_source: 'human',
+    created_by_agent: false,
+  }));
+}
+
 function makeDb(options = {}) {
   const state = {
     plans: [],
     planZones: new Map(),
     planEquipments: new Map(),
-    tasks: [],
+    tasks: options.seedTemperatureTasks ? makeTemperatureTasks() : [],
     zones: [
       { id: ZONE_1, code: 'AT', name: 'Atelier', status: 'active' },
       { id: ZONE_2, code: 'CF', name: 'Chambre froide', status: 'active' },
@@ -166,8 +202,14 @@ function makeDb(options = {}) {
           next_due_at: params[10],
           status: params[11],
           active: params[12],
+          category: params[13],
+          proof_required: params[18],
+          photo_required: params[19],
           configuration_status: params[23],
+          created_source: params[24],
+          created_by_agent: params[25],
         };
+        if (options.enforceTaskNotNull) assertTaskNotNullColumns(task);
         state.tasks.push(task);
         return { rows: [{ id: task.id }] };
       }
@@ -191,9 +233,15 @@ function makeDb(options = {}) {
             next_due_at: params[11],
             status: params[12],
             active: params[13],
+            category: params[14],
+            proof_required: params[19],
+            photo_required: params[20],
             configuration_status: params[24],
+            created_source: params[25],
+            created_by_agent: params[26],
           });
         }
+        if (options.enforceTaskNotNull) assertTaskNotNullColumns(task);
         return { rows: [{ id: task.id }] };
       }
 
@@ -233,6 +281,11 @@ function makeDb(options = {}) {
         if (!plan) return { rows: [] };
         if (text.includes('SET quality_task_id=$3')) {
           plan.quality_task_id = params[2];
+          return { rows: [{ id: plan.id }] };
+        }
+        if (text.includes('SET active=$3::boolean')) {
+          plan.active = params[2];
+          plan.configuration_status = params[4];
           return { rows: [{ id: plan.id }] };
         }
         Object.assign(plan, {
@@ -330,6 +383,18 @@ async function main() {
     configuration_status: 'pending_review',
     active: false,
   });
+  const normalizedMinimalTask = normalizeQualityTaskPayload({
+    title: 'Nettoyage - Plan pilote',
+    module_key: 'cleaning',
+    status: 'paused',
+    active: false,
+    configuration_status: 'inactive',
+    created_source: 'cleaning_plan',
+  });
+  assertTaskNotNullColumns({ store_id: STORE_ID, ...normalizedMinimalTask });
+  assert.equal(normalizedMinimalTask.photo_required, false, 'photo_required doit valoir false par defaut');
+  assert.equal(normalizedMinimalTask.proof_required, false, 'proof_required doit valoir false par defaut');
+
   assert.equal(pilotPayload.responsible_user_id, undefined, 'Payload pilote ne doit pas fournir responsible_user_id');
   assert.equal(pilotPayload.target_time, undefined, 'Payload pilote ne doit pas fournir target_time');
   assert.equal(pilotPayload.quality_task_id, undefined, 'Payload pilote ne doit pas fournir quality_task_id');
@@ -357,15 +422,24 @@ async function main() {
   assert.equal(missingSchemaDb.state.tasks.length, 0, 'Aucune tache ne doit etre creee apres echec schema');
   assert(missingSchemaDb.calls.some((call) => call.sql === 'ROLLBACK'), 'Echec creation plan doit rollback');
 
-  const pilotDb = makeDb({ detectParameterGaps: true });
+  const pilotDb = makeDb({ detectParameterGaps: true, enforceTaskNotNull: true, seedTemperatureTasks: true });
+  const temperatureBefore = pilotDb.state.tasks.filter((task) => task.module_key === 'temperature').length;
   const pilotCreated = await saveCleaningPlan(pilotDb, STORE_ID, USER_ID, pilotPayload);
   assert.equal(pilotCreated.quality_task_id, TASK_ID, 'Payload pilote doit creer et lier automatiquement une tache');
   assert.equal(pilotCreated.responsible_user_id, undefined, 'Plan pilote sans responsable doit rester sans responsable');
-  assert.equal(pilotDb.state.tasks[0].responsible_user_id, null, 'Tache pilote sans responsable doit garder NULL');
-  assert.equal(pilotDb.state.tasks[0].target_time, null, 'Tache pilote sans heure cible doit garder NULL');
-  assert.equal(pilotDb.state.tasks[0].frequency_unit, 'events', 'Frequence pilote events doit etre conservee');
+  const pilotTask = pilotDb.state.tasks.find((task) => task.module_key === 'cleaning');
+  assert(pilotTask, 'Tache nettoyage pilote manquante');
+  assert.equal(pilotTask.responsible_user_id, null, 'Tache pilote sans responsable doit garder NULL');
+  assert.equal(pilotTask.target_time, null, 'Tache pilote sans heure cible doit garder NULL');
+  assert.equal(pilotTask.frequency_unit, 'events', 'Frequence pilote events doit etre conservee');
+  assert.equal(pilotTask.photo_required, false, 'Tache pilote doit fournir photo_required=false');
+  assert.equal(pilotTask.proof_required, false, 'Tache pilote doit fournir proof_required=false');
+  assert.equal(pilotTask.active, false, 'Plan pending_review inactive doit creer une tache non active');
+  assert.equal(pilotTask.status, 'paused', 'Plan pending_review inactive doit creer une tache suspendue');
+  assert.equal(pilotTask.configuration_status, 'inactive', 'Tache pilote doit rester inactive');
   assert.equal(pilotDb.state.plans.length, 1, 'Payload pilote doit creer un seul plan');
-  assert.equal(pilotDb.state.tasks.length, 1, 'Payload pilote doit creer une seule tache');
+  assert.equal(pilotDb.state.tasks.filter((task) => task.module_key === 'cleaning').length, 1, 'Payload pilote doit creer une seule tache nettoyage');
+  assert.equal(pilotDb.state.tasks.filter((task) => task.module_key === 'temperature').length, temperatureBefore, 'Les 13 taches temperature ne doivent pas etre modifiees');
   assert(pilotDb.calls.some((call) => call.sql === 'COMMIT'), 'Payload pilote doit commit sans trou de placeholder');
 
   const db = makeDb();
@@ -378,6 +452,7 @@ async function main() {
   assert.equal(db.state.tasks.length, 1, 'Une seule tache qualite doit etre creee par plan');
   assert.equal(db.state.tasks[0].frequency_value, 1, 'Frequence tache doit provenir du plan');
   assert.equal(db.state.tasks[0].responsible_user_id, null, 'Creation sans responsable doit rester valide et nullable');
+  assert.equal(db.state.tasks[0].photo_required, false, 'Creation sans photo_required explicite doit fournir false');
   assert(db.calls.some((call) => call.sql === 'COMMIT'), 'Creation plan doit etre transactionnelle');
   assert(db.calls.some((call) => call.sql.includes('INSERT INTO quality_cleaning_plan_zones')), 'Liens zones non ecrits');
   assert(db.calls.some((call) => call.sql.includes('INSERT INTO quality_cleaning_plan_equipments')), 'Liens equipements non ecrits');
@@ -407,6 +482,11 @@ async function main() {
   assert.equal(nullableDb.state.tasks.length, 1, 'Update NULL ne doit pas creer de deuxieme tache');
   assert.equal(nullableDb.state.tasks[0].responsible_user_id, null, 'Tache synchronisee doit retirer responsible_user_id');
   assert.equal(nullableDb.state.tasks[0].target_time, null, 'Tache synchronisee doit retirer target_time');
+
+  const disabled = await require('../services/quality/cleaning').changeCleaningPlanStatus(nullableDb, STORE_ID, USER_ID, PLAN_ID, false);
+  assert.equal(disabled.active, false, 'Desactivation plan doit rendre le plan inactif');
+  assert.equal(nullableDb.state.tasks[0].active, false, 'Desactivation plan doit suspendre la tache');
+  assert.equal(nullableDb.state.tasks[0].status, 'paused', 'Desactivation plan doit mettre la tache en pause');
 
   const failedSyncDb = makeDb({ failTaskSync: true });
   await assert.rejects(
