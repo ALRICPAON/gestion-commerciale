@@ -118,6 +118,7 @@ async function main() {
   assert.equal(qualityActivation.requiresConfirmation, true, 'Activation qualite doit etre confirmee humainement');
 
   const requiredFrontendBackendTools = [
+    'list_quality_temperature_types',
     'list_quality_temperature_parameters',
     'get_quality_temperature_parameter',
     'create_quality_temperature_parameter',
@@ -133,6 +134,15 @@ async function main() {
     assert(publicNames.has(name), `${name} doit etre expose au MCP public`);
   }
 
+  const withoutTemperatureTypes = publicTools.filter((tool) => tool.name !== 'list_quality_temperature_types');
+  const missingTemperatureTypes = buildCoverageReport(withoutTemperatureTypes, listModules());
+  assert.equal(missingTemperatureTypes.coverage_complete, false, 'La couverture globale doit echouer si les types temperature front/backend manquent');
+  assert.equal(missingTemperatureTypes.frontend_backend_coverage_complete, false, 'La couverture front/backend doit echouer si GET /api/quality/temperatures/types manque');
+  assert(
+    missingTemperatureTypes.missing_frontend_backend_capabilities.some((item) => item.mcp_tool === 'list_quality_temperature_types'),
+    'La matrice doit signaler list_quality_temperature_types comme manquant'
+  );
+
   const cleaningCreate = publicTools.find((tool) => tool.name === 'create_quality_cleaning_plan');
   assert(cleaningCreate.inputSchema.properties.planning_mode, 'create_quality_cleaning_plan doit exposer planning_mode');
   assert(cleaningCreate.inputSchema.properties.task_title, 'create_quality_cleaning_plan doit exposer task_title');
@@ -142,6 +152,8 @@ async function main() {
   assert(cleaningCreate.inputSchema.properties.target_time, 'create_quality_cleaning_plan doit exposer target_time');
 
   const temperatureCreate = publicTools.find((tool) => tool.name === 'create_quality_temperature_parameter');
+  assert(temperatureCreate.description.includes('list_quality_temperature_types'), 'create_quality_temperature_parameter doit guider vers list_quality_temperature_types');
+  assert(temperatureCreate.inputSchema.properties.type_code.description.includes('list_quality_temperature_types'), 'type_code doit documenter la source des codes autorises');
   assert(temperatureCreate.inputSchema.properties.planning_mode, 'create_quality_temperature_parameter doit exposer planning_mode');
   assert(temperatureCreate.inputSchema.properties.task_title, 'create_quality_temperature_parameter doit exposer task_title');
   assert(temperatureCreate.inputSchema.properties.responsible_user_id, 'create_quality_temperature_parameter doit exposer responsible_user_id');

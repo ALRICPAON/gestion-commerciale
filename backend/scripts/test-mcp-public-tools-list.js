@@ -46,6 +46,7 @@ async function main() {
   const publicNames = new Set(publicTools.map((tool) => tool.name));
 
   for (const name of [
+    'list_quality_temperature_types',
     'list_quality_temperature_parameters',
     'get_quality_temperature_parameter',
     'create_quality_temperature_parameter',

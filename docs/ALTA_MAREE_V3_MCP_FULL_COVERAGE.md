@@ -2,7 +2,7 @@
 
 Version MCP: `1.8.4`
 
-Branche de travail: `feature/alta-v3-full-mcp-coverage`
+Branche de travail: `feature/mcp-quality-temperature-types`
 
 Permissions techniques recommandees:
 
@@ -25,7 +25,7 @@ ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,supplier
 - `coverage_matrix`;
 - `frontend_backend_capabilities`.
 
-`coverage_complete: true` est publie uniquement parce que `backend/scripts/test-agent-mcp-coverage-matrix.js` verifie la matrice MCP, la matrice front/backend, l'absence de `missing_tools` et l'absence de `missing_frontend_backend_capabilities`.
+`coverage_complete: true` est publie uniquement parce que `backend/scripts/test-agent-mcp-coverage-matrix.js` verifie la matrice MCP, la matrice front/backend, l'absence de `missing_tools` et l'absence de `missing_frontend_backend_capabilities`. Le test force aussi l'echec de couverture si `GET /api/quality/temperatures/types` n'est pas expose via `list_quality_temperature_types`.
 
 ## Audit front/backend
 
@@ -38,7 +38,15 @@ La matrice `frontend_backend_capabilities` liste, pour chaque capacite auditee:
 - outil MCP correspondant;
 - statut `covered` ou `missing`.
 
-Cette matrice est definie dans `backend/services/agent/agentFrontendBackendCoverageService.js`. Elle couvre tous les modules ALTA et rend obligatoires les capacites front confirmees pour les parametres temperature et les plans de nettoyage.
+Cette matrice est definie dans `backend/services/agent/agentFrontendBackendCoverageService.js`. Elle couvre tous les modules ALTA et rend obligatoires les capacites front confirmees pour les types temperature, les parametres temperature et les plans de nettoyage.
+
+### Types temperature
+
+Le front charge le referentiel par `QualityTemperatureApi.listTypes()` dans `frontend/quality/js/temperature-api.js`, route `GET /api/quality/temperatures/types`. La route backend appelle `quality/temperatures.listTemperatureTypes`, qui lit `quality_temperature_types` et filtre les lignes actives.
+
+Le MCP expose cette meme source via `list_quality_temperature_types`. Les outils `create_quality_temperature_parameter` et `update_quality_temperature_parameter` valident maintenant `type_code` avec ce service avant toute ecriture dans `quality_temperature_limits`, afin de retourner une erreur metier claire au lieu de laisser echouer la contrainte `quality_temperature_limits.type_code -> quality_temperature_types(code)`.
+
+Codes initiaux du referentiel: `COLD_ROOM`, `WORKSHOP`, `RECEPTION_PRODUCTS`, `SHIPPING`, `VEHICLE`, `LIVE_TANK`, `FREEZER`, `PRODUCT_TEMPERATURE`.
 
 ## Matrice fonctionnelle
 
@@ -56,7 +64,7 @@ Cette matrice est definie dans `backend/services/agent/agentFrontendBackendCover
 | Pennylane | `pennylane.read`, `pennylane.sync` | `get_pennylane_sync_status`, `get_pennylane_diagnostics` | `prepare_pennylane_sync`, `prepare_pennylane_mapping_update` | aucune execution directe | sync preparee et confirmee, pas d'appel arbitraire |
 | Planning salarie | `employee_planning.read`, `employee_planning.write` | `get_employee_planning`, `get_employee_profile` | `prepare_employee_draft`, `prepare_employee_absence`, `prepare_employee_planning_update`, `prepare_employee_manager_validation` | aucune execution directe | validation responsable preparee |
 | Transformations/negoce | `transformations.read`, `transformations.write` | `get_transformations`, `get_transformation_profile` | `prepare_transformation`, `prepare_transformation_update`, `prepare_transformation_validation` | aucune execution directe | impacts stock non appliques sans raccord metier allowliste |
-| Qualite | `quality.read`, `quality.configuration.write` | contexte, zones, equipements, releves temperature, parametres temperature, releves nettoyage, plans nettoyage, taches | taches, plans nettoyage, parametres temperature, affectations zone/equipement | `quality_activate_configuration`, `quality_deactivate_configuration` | activation exige confirmation; plans incomplets refuses |
+| Qualite | `quality.read`, `quality.configuration.write` | contexte, zones, equipements, types temperature, releves temperature, parametres temperature, releves nettoyage, plans nettoyage, taches | taches, plans nettoyage, parametres temperature, affectations zone/equipement | `quality_activate_configuration`, `quality_deactivate_configuration` | activation exige confirmation; plans incomplets refuses |
 | Dossier d'agrement sanitaire | `quality.documentation.read`, `quality.documentation.edit`, `mcp.execute` | liste, plan, section, blocs, recherche | creation/modification sections et blocs structures, preview, restauration | `quality.documentation.apply_section_updates`, `update_quality_section`, `execute_quality_section_update` | action canonique allowlistee et auditee |
 
 ## Garde-fous
@@ -85,4 +93,5 @@ node backend/scripts/test-quality-agent-configuration-tools.js
 node backend/scripts/test-quality-router-startup.js
 node backend/scripts/test-mcp-public-tools-list.js
 node backend/scripts/test-agent-mcp-coverage-matrix.js
+node backend/scripts/test-quality-temperature-type-mcp-tools.js
 ```
