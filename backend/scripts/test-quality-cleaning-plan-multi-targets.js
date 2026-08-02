@@ -49,6 +49,19 @@ function restoreState(target, snapshot) {
   target.tasks.push(...snapshot.tasks);
 }
 
+function assertContiguousSqlParameters(sql) {
+  const matches = [...String(sql).matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
+  if (!matches.length) return;
+  const used = new Set(matches);
+  for (let index = 1; index <= Math.max(...matches); index += 1) {
+    if (!used.has(index)) {
+      const err = new Error(`could not determine data type of parameter $${index}`);
+      err.code = '42P18';
+      throw err;
+    }
+  }
+}
+
 function makeDb(options = {}) {
   const state = {
     plans: [],
@@ -96,6 +109,7 @@ function makeDb(options = {}) {
     async query(sql, params = []) {
       const text = String(sql);
       calls.push({ sql: text, params });
+      if (options.detectParameterGaps) assertContiguousSqlParameters(text);
 
       if (text === 'BEGIN') {
         txSnapshot = cloneState(state);
@@ -132,6 +146,11 @@ function makeDb(options = {}) {
       }
 
       if (text.includes('INSERT INTO quality_tasks')) {
+        if (options.failTaskSync) {
+          const err = new Error('simulated task sync failure');
+          err.code = 'XX999';
+          throw err;
+        }
         const task = {
           id: TASK_ID,
           store_id: params[0],
@@ -301,7 +320,22 @@ async function main() {
   assert.deepEqual(legacyPayload.zone_ids, [ZONE_1], 'zone_id legacy doit alimenter zone_ids');
   assert.deepEqual(legacyPayload.equipment_ids, [EQUIPMENT_1], 'equipment_id legacy doit alimenter equipment_ids');
 
-  const multiPayload = mapPlanPayload({ title: 'Multi', zone_ids: [ZONE_1, ZONE_2], equipment_ids: [EQUIPMENT_1, EQUIPMENT_2], frequency_value: 1, frequency_unit: 'days', target_time: '08:00' });
+  const pilotPayload = mapPlanPayload({
+    title: 'Plan pilote',
+    zone_ids: [ZONE_1, ZONE_2],
+    equipment_ids: [EQUIPMENT_1, EQUIPMENT_2],
+    frequency_value: 1,
+    frequency_unit: 'events',
+    expected_duration_minutes: 20,
+    configuration_status: 'pending_review',
+    active: false,
+  });
+  assert.equal(pilotPayload.responsible_user_id, undefined, 'Payload pilote ne doit pas fournir responsible_user_id');
+  assert.equal(pilotPayload.target_time, undefined, 'Payload pilote ne doit pas fournir target_time');
+  assert.equal(pilotPayload.quality_task_id, undefined, 'Payload pilote ne doit pas fournir quality_task_id');
+  assert.equal(pilotPayload.contact_time_minutes, undefined, 'Payload pilote ne doit pas fournir contact_time_minutes');
+
+  const multiPayload = mapPlanPayload({ ...pilotPayload, title: 'Multi', frequency_unit: 'days', target_time: '08:00' });
   assert.equal(multiPayload.zone_id, ZONE_1, 'zone_id legacy doit rester le premier zone_ids');
   assert.equal(multiPayload.equipment_id, EQUIPMENT_1, 'equipment_id legacy doit rester le premier equipment_ids');
 
@@ -322,6 +356,17 @@ async function main() {
   assert.equal(missingSchemaDb.state.plans.length, 0, 'Aucun plan partiel ne doit rester apres echec schema');
   assert.equal(missingSchemaDb.state.tasks.length, 0, 'Aucune tache ne doit etre creee apres echec schema');
   assert(missingSchemaDb.calls.some((call) => call.sql === 'ROLLBACK'), 'Echec creation plan doit rollback');
+
+  const pilotDb = makeDb({ detectParameterGaps: true });
+  const pilotCreated = await saveCleaningPlan(pilotDb, STORE_ID, USER_ID, pilotPayload);
+  assert.equal(pilotCreated.quality_task_id, TASK_ID, 'Payload pilote doit creer et lier automatiquement une tache');
+  assert.equal(pilotCreated.responsible_user_id, undefined, 'Plan pilote sans responsable doit rester sans responsable');
+  assert.equal(pilotDb.state.tasks[0].responsible_user_id, null, 'Tache pilote sans responsable doit garder NULL');
+  assert.equal(pilotDb.state.tasks[0].target_time, null, 'Tache pilote sans heure cible doit garder NULL');
+  assert.equal(pilotDb.state.tasks[0].frequency_unit, 'events', 'Frequence pilote events doit etre conservee');
+  assert.equal(pilotDb.state.plans.length, 1, 'Payload pilote doit creer un seul plan');
+  assert.equal(pilotDb.state.tasks.length, 1, 'Payload pilote doit creer une seule tache');
+  assert(pilotDb.calls.some((call) => call.sql === 'COMMIT'), 'Payload pilote doit commit sans trou de placeholder');
 
   const db = makeDb();
   const created = await saveCleaningPlan(db, STORE_ID, USER_ID, multiPayload);
@@ -347,6 +392,33 @@ async function main() {
   const withResponsible = await saveCleaningPlan(responsibleDb, STORE_ID, USER_ID, mapPlanPayload({ ...multiPayload, responsible_user_id: USER_ID }));
   assert.equal(withResponsible.responsible_user_id, USER_ID, 'Creation avec responsable doit conserver le responsable sur le plan');
   assert.equal(responsibleDb.state.tasks[0].responsible_user_id, USER_ID, 'Tache synchronisee doit reprendre le responsable du plan');
+
+  const scheduledDb = makeDb();
+  const withSchedule = await saveCleaningPlan(scheduledDb, STORE_ID, USER_ID, mapPlanPayload({ ...multiPayload, target_time: '07:30', scheduled_days: ['monday', 'friday'] }));
+  assert.equal(withSchedule.target_time, '07:30', 'Creation avec heure cible doit conserver target_time');
+  assert.deepEqual(withSchedule.scheduled_days, ['monday', 'friday'], 'Creation avec scheduled_days doit conserver les jours');
+  assert.equal(scheduledDb.state.tasks[0].target_time, '07:30', 'Tache synchronisee doit reprendre target_time');
+
+  const nullableDb = makeDb();
+  const nullableCreated = await saveCleaningPlan(nullableDb, STORE_ID, USER_ID, mapPlanPayload({ ...multiPayload, responsible_user_id: USER_ID, target_time: '06:00' }));
+  const nullableUpdated = await saveCleaningPlan(nullableDb, STORE_ID, USER_ID, mapPlanPayload({ ...nullableCreated, responsible_user_id: null, target_time: null, frequency_value: 3, frequency_unit: 'events' }), PLAN_ID);
+  assert.equal(nullableUpdated.responsible_user_id, null, 'Update doit permettre de retirer responsible_user_id');
+  assert.equal(nullableUpdated.target_time, null, 'Update doit permettre de retirer target_time');
+  assert.equal(nullableDb.state.tasks.length, 1, 'Update NULL ne doit pas creer de deuxieme tache');
+  assert.equal(nullableDb.state.tasks[0].responsible_user_id, null, 'Tache synchronisee doit retirer responsible_user_id');
+  assert.equal(nullableDb.state.tasks[0].target_time, null, 'Tache synchronisee doit retirer target_time');
+
+  const failedSyncDb = makeDb({ failTaskSync: true });
+  await assert.rejects(
+    () => saveCleaningPlan(failedSyncDb, STORE_ID, USER_ID, pilotPayload),
+    /simulated task sync failure/,
+    'Echec synchronisation tache doit remonter'
+  );
+  assert.equal(failedSyncDb.state.plans.length, 0, 'Rollback sync doit supprimer le plan partiel');
+  assert.equal(failedSyncDb.state.planZones.size, 0, 'Rollback sync doit supprimer les liens zones partiels');
+  assert.equal(failedSyncDb.state.planEquipments.size, 0, 'Rollback sync doit supprimer les liens equipements partiels');
+  assert.equal(failedSyncDb.state.tasks.length, 0, 'Rollback sync ne doit laisser aucune tache');
+  assert(!failedSyncDb.calls.some((call) => call.sql.includes('agent_tool_audit_logs') && call.sql.includes('INSERT')), 'Rollback sync ne doit laisser aucun audit persiste');
 
   const listed = await listCleaningPlans(db, STORE_ID, { zone_id: ZONE_2 });
   assert.equal(listed.length, 1, 'Filtre zone multi-cibles invalide');
