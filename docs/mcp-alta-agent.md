@@ -213,6 +213,8 @@ Pour les parametres temperature, `list_quality_temperature_types` expose le refe
 
 Les plans de nettoyage acceptent maintenant plusieurs zones et plusieurs equipements via `zone_ids` et `equipment_ids`. Les anciens champs `zone_id` et `equipment_id` restent acceptes et restent retournes pour compatibilite; les lectures `list_quality_cleaning_plans` et `get_quality_cleaning_plan` retournent aussi `zones: []` et `equipments: []`.
 
+Pour le nettoyage, le plan PMS est la source de verite. Les champs `responsible_user_id`, `frequency_value`, `frequency_unit`, `target_time`, `scheduled_days`, `expected_duration_minutes`, `method`, `expected_proof` et `corrective_action` appartiennent au plan. ALTA cree ou met a jour automatiquement la `quality_task` liee; ne pas creer une tache nettoyage separee pour un plan.
+
 Les champs de planification exposes pour les parametres temperature et plans nettoyage sont `planning_mode`, `quality_task_id`, `task_title`, `responsible_user_id`, `frequency_value`, `frequency_unit` et `target_time`.
 
 La configuration recommandee de l'identite technique est:
@@ -230,7 +232,7 @@ curl -X POST https://api.altamaree.fr/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -H "x-alta-agent-key: $ALTA_AGENT_KEY" \
-  -d '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"quality_create_cleaning_plan","arguments":{"title":"Materiels contact alimentaire","zone_ids":["<ZONE_ID_1>","<ZONE_ID_2>"],"equipment_ids":["<EQUIPMENT_ID_1>","<EQUIPMENT_ID_2>"],"quality_task_id":"<TASK_ID>","method":"A completer"}}}'
+  -d '{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"quality_create_cleaning_plan","arguments":{"title":"Materiels contact alimentaire","zone_ids":["<ZONE_ID_1>","<ZONE_ID_2>"],"equipment_ids":["<EQUIPMENT_ID_1>","<EQUIPMENT_ID_2>"],"frequency_value":1,"frequency_unit":"days","target_time":"17:00","method":"A completer"}}}'
 ```
 
 Test local:

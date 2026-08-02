@@ -1,5 +1,6 @@
 const CLEANING_RECORD_STATUSES = Object.freeze(['done', 'partial', 'not_done', 'issue']);
 const CONFIGURATION_STATUSES = Object.freeze(['draft', 'pending_review', 'active', 'inactive', 'archived']);
+const FREQUENCY_UNITS = Object.freeze(['hours', 'days', 'weeks', 'months', 'events']);
 
 function cleanUuid(value) {
   const text = String(value || '').trim();
@@ -36,6 +37,13 @@ function cleanUuidArray(value) {
   return [...new Set(items.map((item) => cleanUuid(typeof item === 'object' && item ? item.id : item)).filter(Boolean))];
 }
 
+function cleanStringArray(value) {
+  const items = Array.isArray(value)
+    ? value
+    : String(value || '').split(',').map((item) => item.trim()).filter(Boolean);
+  return [...new Set(items.map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
 function mapPlanPayload(body = {}) {
   const hasZoneIds = body.zone_ids !== undefined || body.zoneIds !== undefined;
   const hasEquipmentIds = body.equipment_ids !== undefined || body.equipmentIds !== undefined;
@@ -62,6 +70,11 @@ function mapPlanPayload(body = {}) {
     method: nullableText(body.method),
     safety_instructions: nullableText(body.safety_instructions),
     expected_duration_minutes: nullableInteger(body.expected_duration_minutes),
+    responsible_user_id: cleanUuid(body.responsible_user_id || body.responsibleUserId),
+    frequency_value: nullableInteger(body.frequency_value || body.frequencyValue),
+    frequency_unit: nullableText(body.frequency_unit || body.frequencyUnit),
+    target_time: nullableText(body.target_time || body.targetTime),
+    scheduled_days: cleanStringArray(body.scheduled_days || body.scheduledDays),
     quality_task_id: cleanUuid(body.quality_task_id),
     active: booleanValue(body.active, true),
     configuration_status: nullableText(body.configuration_status || body.configurationStatus),
@@ -76,6 +89,9 @@ function validatePlanPayload(payload) {
   if (!payload.title) return 'Titre du plan obligatoire';
   if (payload.expected_duration_minutes !== null && payload.expected_duration_minutes <= 0) return 'Duree prevue invalide';
   if (payload.contact_time_minutes !== null && payload.contact_time_minutes <= 0) return 'Temps de contact invalide';
+  if (payload.frequency_value !== null && payload.frequency_value <= 0) return 'Frequence invalide';
+  if (payload.frequency_unit && !FREQUENCY_UNITS.includes(payload.frequency_unit)) return 'Unite de frequence invalide';
+  if ((payload.frequency_value && !payload.frequency_unit) || (!payload.frequency_value && payload.frequency_unit)) return 'La frequence doit avoir une valeur et une unite';
   if (payload.configuration_status && !CONFIGURATION_STATUSES.includes(payload.configuration_status)) return 'Statut de configuration invalide';
   return null;
 }
@@ -101,6 +117,7 @@ function validateRecordPayload(payload) {
 
 module.exports = {
   CLEANING_RECORD_STATUSES,
+  FREQUENCY_UNITS,
   cleanUuid,
   cleanUuidArray,
   mapPlanPayload,

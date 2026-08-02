@@ -119,8 +119,8 @@ async function assertTaskHasNoHistory(db, storeId, taskId) {
 }
 
 function assertPlanOperational(plan) {
-  if (!plan.product_name || !plan.dosage_concentration || !plan.contact_time_minutes || !plan.quality_task_id) {
-    throw businessError('Activation refusee: produit, dosage/concentration, temps de contact et frequence sont obligatoires');
+  if (!plan.product_name || !plan.dosage_concentration || !plan.contact_time_minutes || !plan.frequency_value || !plan.frequency_unit) {
+    throw businessError('Activation refusee: produit, dosage/concentration, temps de contact et frequence du plan sont obligatoires');
   }
 }
 

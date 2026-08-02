@@ -147,6 +147,7 @@ async function main() {
   assert(cleaningCreate.inputSchema.properties.planning_mode, 'create_quality_cleaning_plan doit exposer planning_mode');
   assert(cleaningCreate.inputSchema.properties.zone_ids, 'create_quality_cleaning_plan doit exposer zone_ids');
   assert(cleaningCreate.inputSchema.properties.equipment_ids, 'create_quality_cleaning_plan doit exposer equipment_ids');
+  assert(cleaningCreate.inputSchema.properties.scheduled_days, 'create_quality_cleaning_plan doit exposer scheduled_days');
   assert(cleaningCreate.inputSchema.properties.task_title, 'create_quality_cleaning_plan doit exposer task_title');
   assert(cleaningCreate.inputSchema.properties.responsible_user_id, 'create_quality_cleaning_plan doit exposer responsible_user_id');
   assert(cleaningCreate.inputSchema.properties.frequency_value, 'create_quality_cleaning_plan doit exposer frequency_value');

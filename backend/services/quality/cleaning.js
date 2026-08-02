@@ -1,5 +1,5 @@
 const { logQualityEvent } = require('./eventLogger');
-const { completeQualityTask } = require('./tasks');
+const { completeQualityTask, deactivateQualityTask, saveQualityTask } = require('./tasks');
 const { enrichTask } = require('./taskScheduler');
 
 function addFilter(where, params, value, sql) {
@@ -44,6 +44,55 @@ function attachTargets(row) {
     equipment_id: row.equipment_id || equipment?.id || null,
     equipment_code: row.equipment_code || equipment?.code || null,
     equipment_name: row.equipment_name || equipment?.name || null,
+  };
+}
+
+function targetSummary(plan) {
+  const zones = (plan.zones || []).map((zone) => zone.name || zone.code || zone.id);
+  const equipments = (plan.equipments || []).map((equipment) => equipment.name || equipment.code || equipment.id);
+  return [
+    zones.length ? `Zones: ${zones.join(', ')}` : null,
+    equipments.length ? `Equipements: ${equipments.join(', ')}` : null,
+  ].filter(Boolean).join(' | ');
+}
+
+function synchronizedTaskPayload(plan) {
+  const equipmentId = plan.equipment_id || plan.equipments?.[0]?.id || null;
+  const zoneId = plan.zone_id || plan.zones?.[0]?.id || null;
+  const active = plan.active === true && plan.configuration_status !== 'archived';
+  const status = plan.configuration_status === 'archived'
+    ? 'archived'
+    : active
+      ? 'planned'
+      : 'paused';
+  const summary = targetSummary(plan);
+  return {
+    title: `Nettoyage - ${plan.title}`,
+    description: [
+      'Tache synchronisee automatiquement depuis le plan de nettoyage PMS.',
+      summary,
+      plan.expected_duration_minutes ? `Duree estimee: ${plan.expected_duration_minutes} min` : null,
+    ].filter(Boolean).join(' '),
+    module_key: 'cleaning',
+    entity_type: equipmentId ? 'equipment' : zoneId ? 'zone' : null,
+    entity_id: equipmentId || zoneId || null,
+    responsible_user_id: plan.responsible_user_id || null,
+    frequency_value: plan.frequency_value || null,
+    frequency_unit: plan.frequency_unit || null,
+    target_time: plan.target_time || null,
+    status,
+    active,
+    category: 'cleaning_plan',
+    execution_method: plan.method || null,
+    verification_method: plan.post_cleaning_check || null,
+    proof_required: Boolean(plan.expected_proof),
+    instructions: plan.safety_instructions || plan.method || null,
+    acceptance_criteria: plan.expected_proof || null,
+    deviation_action: plan.corrective_action || null,
+    configuration_status: plan.configuration_status === 'archived' ? 'archived' : active ? 'active' : 'inactive',
+    created_source: 'cleaning_plan',
+    created_by_agent: false,
+    agent_action_id: plan.agent_action_id || null,
   };
 }
 
@@ -208,6 +257,30 @@ async function syncPlanTargets(db, storeId, userId, planId, payload = {}) {
   }
 }
 
+async function syncCleaningPlanTask(db, storeId, userId, plan) {
+  if (!plan) return null;
+  if (plan.quality_task_id && plan.configuration_status === 'archived') {
+    await deactivateQualityTask(db, storeId, userId, plan.quality_task_id);
+    return plan.quality_task_id;
+  }
+  const task = await saveQualityTask(
+    db,
+    storeId,
+    userId,
+    synchronizedTaskPayload(plan),
+    plan.quality_task_id || null
+  );
+  if (!plan.quality_task_id && task?.id) {
+    await db.query(
+      `UPDATE quality_cleaning_plans
+       SET quality_task_id=$3, updated_by=$4, updated_at=now()
+       WHERE id=$1 AND store_id=$2`,
+      [plan.id, storeId, task.id, userId]
+    );
+  }
+  return task?.id || plan.quality_task_id || null;
+}
+
 async function listCleaningPlans(db, storeId, query = {}) {
   const params = [storeId];
   const where = ['p.store_id = $1'];
@@ -253,10 +326,12 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
            rinse_required=$17, material_used=$18, post_cleaning_check=$19,
            expected_proof=$20, corrective_action=$21, configuration_status=$22,
            validation_required=$23, created_source=$24, created_by_agent=$25,
-           agent_action_id=$26, updated_at=now()
+           agent_action_id=$26, responsible_user_id=$27, frequency_value=$28,
+           frequency_unit=$29, target_time=$30, scheduled_days=$31::jsonb,
+           updated_at=now()
        WHERE id=$1 AND store_id=$2
        RETURNING *`,
-      [planId, storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration ?? before.dosage_concentration, payload.usage_temperature ?? before.usage_temperature, payload.contact_time_minutes ?? before.contact_time_minutes, payload.rinse_required ?? before.rinse_required, payload.material_used ?? before.material_used, payload.post_cleaning_check ?? before.post_cleaning_check, payload.expected_proof ?? before.expected_proof, payload.corrective_action ?? before.corrective_action, payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payload.agent_action_id || before.agent_action_id]
+      [planId, storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration ?? before.dosage_concentration, payload.usage_temperature ?? before.usage_temperature, payload.contact_time_minutes ?? before.contact_time_minutes, payload.rinse_required ?? before.rinse_required, payload.material_used ?? before.material_used, payload.post_cleaning_check ?? before.post_cleaning_check, payload.expected_proof ?? before.expected_proof, payload.corrective_action ?? before.corrective_action, payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payload.agent_action_id || before.agent_action_id, payload.responsible_user_id ?? before.responsible_user_id, payload.frequency_value ?? before.frequency_value, payload.frequency_unit ?? before.frequency_unit, payload.target_time ?? before.target_time, JSON.stringify(payload.scheduled_days ?? before.scheduled_days ?? [])]
     )
     : await db.query(
       `INSERT INTO quality_cleaning_plans (
@@ -265,12 +340,15 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
         active, created_by, updated_by, dosage_concentration, usage_temperature,
         contact_time_minutes, rinse_required, material_used, post_cleaning_check,
         expected_proof, corrective_action, configuration_status, validation_required,
-        created_source, created_by_agent, agent_action_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+        created_source, created_by_agent, agent_action_id, responsible_user_id,
+        frequency_value, frequency_unit, target_time, scheduled_days
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb)
       RETURNING *`,
-      [storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration, payload.usage_temperature, payload.contact_time_minutes, payload.rinse_required, payload.material_used, payload.post_cleaning_check, payload.expected_proof, payload.corrective_action, payload.configuration_status || 'active', payload.validation_required === true, payload.created_source || 'human', payload.created_by_agent === true, payload.agent_action_id]
+      [storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration, payload.usage_temperature, payload.contact_time_minutes, payload.rinse_required, payload.material_used, payload.post_cleaning_check, payload.expected_proof, payload.corrective_action, payload.configuration_status || 'active', payload.validation_required === true, payload.created_source || 'human', payload.created_by_agent === true, payload.agent_action_id, payload.responsible_user_id, payload.frequency_value, payload.frequency_unit, payload.target_time, JSON.stringify(payload.scheduled_days || [])]
     );
   await syncPlanTargets(db, storeId, userId, result.rows[0].id, { ...payload, zone_ids: zoneIds, equipment_ids: equipmentIds, zone_id: legacyZoneId, equipment_id: legacyEquipmentId });
+  const savedPlan = await getCleaningPlan(db, storeId, result.rows[0].id);
+  await syncCleaningPlanTask(db, storeId, userId, savedPlan);
   const plan = await getCleaningPlan(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, planId ? 'quality.cleaning.plan.updated' : 'quality.cleaning.plan.created', plan.id, before, plan);
   return plan;
@@ -279,8 +357,8 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
 async function changeCleaningPlanStatus(db, storeId, userId, planId, active) {
   const before = await getCleaningPlan(db, storeId, planId);
   if (!before) return null;
-  if (active && (!before.product_name || !before.dosage_concentration || !before.contact_time_minutes || !before.quality_task_id)) {
-    const err = new Error('Activation refusee: produit, dosage/concentration, temps de contact et frequence sont obligatoires');
+  if (active && (!before.product_name || !before.dosage_concentration || !before.contact_time_minutes || !before.frequency_value || !before.frequency_unit)) {
+    const err = new Error('Activation refusee: produit, dosage/concentration, temps de contact et frequence du plan sont obligatoires');
     err.status = 400;
     throw err;
   }
@@ -291,6 +369,8 @@ async function changeCleaningPlanStatus(db, storeId, userId, planId, active) {
      RETURNING *`,
     [planId, storeId, active, userId, active ? 'active' : 'inactive']
   );
+  const changedPlan = await getCleaningPlan(db, storeId, result.rows[0].id);
+  await syncCleaningPlanTask(db, storeId, userId, changedPlan);
   const plan = await getCleaningPlan(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, 'quality.cleaning.plan.status_changed', plan.id, before, plan);
   return plan;

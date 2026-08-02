@@ -14,6 +14,7 @@ const ZONE_2 = '00000000-0000-4000-8000-000000000012';
 const EQUIPMENT_1 = '00000000-0000-4000-8000-000000000021';
 const EQUIPMENT_2 = '00000000-0000-4000-8000-000000000022';
 const PLAN_ID = '00000000-0000-4000-8000-000000000031';
+const TASK_ID = '00000000-0000-4000-8000-000000000041';
 const AUDIT_ID = '00000000-0000-4000-8000-000000000101';
 
 function makeContext(permissions) {
@@ -33,6 +34,7 @@ function makeDb() {
     plans: [],
     planZones: new Map(),
     planEquipments: new Map(),
+    tasks: [],
     zones: [
       { id: ZONE_1, code: 'AT', name: 'Atelier', status: 'active' },
       { id: ZONE_2, code: 'CF', name: 'Chambre froide', status: 'active' },
@@ -57,7 +59,13 @@ function makeDb() {
       equipment_name: equipment?.name || null,
       zones,
       equipments,
-      task_id: null,
+      task_id: plan.quality_task_id || null,
+      task_title: plan.quality_task_id ? state.tasks.find((task) => task.id === plan.quality_task_id)?.title : null,
+      task_frequency_value: plan.quality_task_id ? state.tasks.find((task) => task.id === plan.quality_task_id)?.frequency_value : null,
+      task_frequency_unit: plan.quality_task_id ? state.tasks.find((task) => task.id === plan.quality_task_id)?.frequency_unit : null,
+      task_target_time: plan.quality_task_id ? state.tasks.find((task) => task.id === plan.quality_task_id)?.target_time : null,
+      task_active: plan.quality_task_id ? state.tasks.find((task) => task.id === plan.quality_task_id)?.active : null,
+      task_status: plan.quality_task_id ? state.tasks.find((task) => task.id === plan.quality_task_id)?.status : null,
     };
   }
 
@@ -82,7 +90,58 @@ function makeDb() {
         return { rows: state.equipments.filter((equipment) => equipment.id === params[0]) };
       }
 
-      if (text.includes('FROM quality_tasks')) return { rows: [] };
+      if (text.includes('FROM quality_tasks')) {
+        if (text.includes("module_key = 'cleaning'")) return { rows: state.tasks.filter((task) => task.id === params[0] && task.store_id === params[1] && task.module_key === 'cleaning') };
+        if (text.includes('t.id = $1')) return { rows: state.tasks.filter((task) => task.id === params[0] && task.store_id === params[1]) };
+        return { rows: state.tasks };
+      }
+
+      if (text.includes('INSERT INTO quality_tasks')) {
+        const task = {
+          id: TASK_ID,
+          store_id: params[0],
+          title: params[1],
+          description: params[2],
+          module_key: params[3],
+          entity_type: params[4],
+          entity_id: params[5],
+          responsible_user_id: params[6],
+          frequency_value: params[7],
+          frequency_unit: params[8],
+          target_time: params[9],
+          next_due_at: params[10],
+          status: params[11],
+          active: params[12],
+          configuration_status: params[23],
+        };
+        state.tasks.push(task);
+        return { rows: [{ id: task.id }] };
+      }
+
+      if (text.includes('UPDATE quality_tasks')) {
+        const task = state.tasks.find((item) => item.id === params[0] && item.store_id === params[1]);
+        if (!task) return { rows: [] };
+        if (text.includes("SET active=false")) {
+          Object.assign(task, { active: false, status: 'paused', configuration_status: 'inactive' });
+        } else {
+          Object.assign(task, {
+            title: params[2],
+            description: params[3],
+            module_key: params[4],
+            entity_type: params[5],
+            entity_id: params[6],
+            responsible_user_id: params[7],
+            frequency_value: params[8],
+            frequency_unit: params[9],
+            target_time: params[10],
+            next_due_at: params[11],
+            status: params[12],
+            active: params[13],
+            configuration_status: params[24],
+          });
+        }
+        return { rows: [{ id: task.id }] };
+      }
 
       if (text.includes('INSERT INTO quality_cleaning_plans')) {
         const plan = {
@@ -100,6 +159,11 @@ function makeDb() {
           active: params[10],
           created_by: params[11],
           configuration_status: params[21],
+          responsible_user_id: params[25],
+          frequency_value: params[26],
+          frequency_unit: params[27],
+          target_time: params[28],
+          scheduled_days: JSON.parse(params[29] || '[]'),
         };
         state.plans.push(plan);
         return { rows: [{ id: plan.id }] };
@@ -108,6 +172,10 @@ function makeDb() {
       if (text.includes('UPDATE quality_cleaning_plans')) {
         const plan = state.plans.find((item) => item.id === params[0] && item.store_id === params[1]);
         if (!plan) return { rows: [] };
+        if (text.includes('SET quality_task_id=$3')) {
+          plan.quality_task_id = params[2];
+          return { rows: [{ id: plan.id }] };
+        }
         Object.assign(plan, {
           title: params[2],
           description: params[3],
@@ -119,6 +187,11 @@ function makeDb() {
           expected_duration_minutes: params[9],
           quality_task_id: params[10],
           active: params[11],
+          responsible_user_id: params[26],
+          frequency_value: params[27],
+          frequency_unit: params[28],
+          target_time: params[29],
+          scheduled_days: JSON.parse(params[30] || '[]'),
         });
         return { rows: [{ id: plan.id }] };
       }
@@ -162,6 +235,8 @@ async function main() {
   const frontendJs = fs.readFileSync(path.resolve(__dirname, '..', '..', 'frontend', 'quality', 'js', 'cleaning-plans.js'), 'utf8');
   assert(migration.includes('CREATE TABLE IF NOT EXISTS quality_cleaning_plan_zones'), 'Migration zones manquante');
   assert(migration.includes('CREATE TABLE IF NOT EXISTS quality_cleaning_plan_equipments'), 'Migration equipements manquante');
+  assert(migration.includes('ADD COLUMN IF NOT EXISTS frequency_value'), 'Colonnes planning plan manquantes');
+  assert(migration.includes('ADD COLUMN IF NOT EXISTS responsible_user_id'), 'Responsable plan manquant');
   assert(migration.includes('REFERENCES quality_cleaning_plans(id)'), 'FK plan manquante');
   assert(migration.includes('INSERT INTO quality_cleaning_plan_zones'), 'Backfill zones manquant');
   assert(migration.includes('INSERT INTO quality_cleaning_plan_equipments'), 'Backfill equipements manquant');
@@ -170,12 +245,13 @@ async function main() {
   assert(frontendPage.includes('cleaning-plan-equipment-options'), 'Liste equipements manquante dans le front');
   assert(frontendJs.includes('zone_ids: zoneIds'), 'Payload front zone_ids manquant');
   assert(frontendJs.includes('equipment_ids: equipmentIds'), 'Payload front equipment_ids manquant');
+  assert(!frontendJs.includes('tasksApi.save'), 'Le front plans nettoyage ne doit pas creer manuellement une tache qualite');
 
   const legacyPayload = mapPlanPayload({ title: 'Legacy', zone_id: ZONE_1, equipment_id: EQUIPMENT_1 });
   assert.deepEqual(legacyPayload.zone_ids, [ZONE_1], 'zone_id legacy doit alimenter zone_ids');
   assert.deepEqual(legacyPayload.equipment_ids, [EQUIPMENT_1], 'equipment_id legacy doit alimenter equipment_ids');
 
-  const multiPayload = mapPlanPayload({ title: 'Multi', zone_ids: [ZONE_1, ZONE_2], equipment_ids: [EQUIPMENT_1, EQUIPMENT_2] });
+  const multiPayload = mapPlanPayload({ title: 'Multi', zone_ids: [ZONE_1, ZONE_2], equipment_ids: [EQUIPMENT_1, EQUIPMENT_2], frequency_value: 1, frequency_unit: 'days', target_time: '08:00' });
   assert.equal(multiPayload.zone_id, ZONE_1, 'zone_id legacy doit rester le premier zone_ids');
   assert.equal(multiPayload.equipment_id, EQUIPMENT_1, 'equipment_id legacy doit rester le premier equipment_ids');
 
@@ -193,12 +269,17 @@ async function main() {
   assert.equal(created.equipment_id, EQUIPMENT_1, 'Compatibilite equipment_id invalide');
   assert.deepEqual(created.zones.map((zone) => zone.id), [ZONE_1, ZONE_2], 'Zones multiples non relues');
   assert.deepEqual(created.equipments.map((equipment) => equipment.id), [EQUIPMENT_1, EQUIPMENT_2], 'Equipements multiples non relus');
+  assert.equal(created.quality_task_id, TASK_ID, 'Creation plan doit creer et lier automatiquement une tache qualite');
+  assert.equal(db.state.tasks.length, 1, 'Une seule tache qualite doit etre creee par plan');
+  assert.equal(db.state.tasks[0].frequency_value, 1, 'Frequence tache doit provenir du plan');
   assert(db.calls.some((call) => call.sql.includes('INSERT INTO quality_cleaning_plan_zones')), 'Liens zones non ecrits');
   assert(db.calls.some((call) => call.sql.includes('INSERT INTO quality_cleaning_plan_equipments')), 'Liens equipements non ecrits');
 
-  const updated = await saveCleaningPlan(db, STORE_ID, USER_ID, mapPlanPayload({ ...created, title: 'Multi updated', zone_ids: [ZONE_2], equipment_ids: [EQUIPMENT_2] }), PLAN_ID);
+  const updated = await saveCleaningPlan(db, STORE_ID, USER_ID, mapPlanPayload({ ...created, title: 'Multi updated', zone_ids: [ZONE_2], equipment_ids: [EQUIPMENT_2], frequency_value: 2, frequency_unit: 'days' }), PLAN_ID);
   assert.deepEqual(updated.zones.map((zone) => zone.id), [ZONE_2], 'Retrait zone non applique');
   assert.deepEqual(updated.equipments.map((equipment) => equipment.id), [EQUIPMENT_2], 'Retrait equipement non applique');
+  assert.equal(db.state.tasks.length, 1, 'Modification plan ne doit pas creer une seconde tache');
+  assert.equal(db.state.tasks[0].frequency_value, 2, 'Modification plan doit synchroniser la frequence de la tache');
 
   const listed = await listCleaningPlans(db, STORE_ID, { zone_id: ZONE_2 });
   assert.equal(listed.length, 1, 'Filtre zone multi-cibles invalide');
@@ -209,12 +290,13 @@ async function main() {
   const mcpCreated = await executeAgentTool({
     db: mcpDb,
     name: 'create_quality_cleaning_plan',
-    input: { title: 'MCP multi', zone_ids: [ZONE_1, ZONE_2], equipment_ids: [EQUIPMENT_1, EQUIPMENT_2], planning_mode: 'none' },
+    input: { title: 'MCP multi', zone_ids: [ZONE_1, ZONE_2], equipment_ids: [EQUIPMENT_1, EQUIPMENT_2], frequency_value: 1, frequency_unit: 'days', target_time: '08:00' },
     context: makeContext(['quality.read', 'quality.configuration.write']),
   });
   assert.equal(mcpCreated.ok, true, 'Creation MCP multi-cibles invalide');
   assert.equal(mcpCreated.data.plan.zones.length, 2, 'MCP create doit retourner zones[]');
   assert.equal(mcpCreated.data.plan.equipments.length, 2, 'MCP create doit retourner equipments[]');
+  assert.equal(mcpCreated.data.plan.quality_task_id, TASK_ID, 'MCP create doit retourner la tache synchronisee');
 
   console.log(JSON.stringify({ ok: true, checked: ['migration', 'validator', 'service', 'api_contract', 'frontend', 'mcp'], zones: 2, equipments: 2 }, null, 2));
 }

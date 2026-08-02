@@ -191,6 +191,7 @@ const qualityCleaningPlanConfigurationInputSchema = {
     equipment_id: { type: 'string' },
     zone_ids: { type: 'array', items: { type: 'string' }, description: 'Zones couvertes par le plan. Compatible avec zone_id legacy.' },
     equipment_ids: { type: 'array', items: { type: 'string' }, description: 'Equipements couverts par le plan. Compatible avec equipment_id legacy.' },
+    scheduled_days: { type: 'array', items: { type: 'string' }, description: 'Jours de planification portes par le plan PMS.' },
     quality_task_id: { type: 'string' },
     product_name: { type: 'string' },
     dosage_concentration: { type: 'string' },
@@ -1762,13 +1763,12 @@ const tools = [
     requiresConfirmation: false,
     inputSchema: qualityCleaningPlanConfigurationInputSchema,
     execute: async ({ db, context, input, tool: currentTool }) => {
-      const planning = await resolveQualityPlanningTask(db, context, input, 'cleaning');
-      const payload = cleaningValidators.mapPlanPayload({ ...input, quality_task_id: planning.quality_task_id });
+      const payload = cleaningValidators.mapPlanPayload(input);
       const validationError = cleaningValidators.validatePlanPayload(payload);
       if (validationError) throw Object.assign(new Error(validationError), { status: 400, expose: true });
       const plan = await qualityCleaning.saveCleaningPlan(db, context.store_id, context.user_id, payload);
       return {
-        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan nettoyage cree', data: { plan, planning } }),
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan nettoyage cree', data: { plan, synchronized_task: plan.quality_task || null } }),
         target_type: 'quality_cleaning_plan',
         target_id: plan.id,
       };
@@ -1787,13 +1787,12 @@ const tools = [
       const id = qualityId(input, 'cleaning_plan_id', 'plan_id', 'id');
       const before = await qualityCleaning.getCleaningPlan(db, context.store_id, id);
       if (!before) throw Object.assign(new Error('Plan de nettoyage introuvable'), { status: 404, expose: true });
-      const planning = await resolveQualityPlanningTask(db, context, { ...before, ...input }, 'cleaning');
-      const payload = cleaningValidators.mapPlanPayload({ ...before, ...input, quality_task_id: planning.quality_task_id });
+      const payload = cleaningValidators.mapPlanPayload({ ...before, ...input });
       const validationError = cleaningValidators.validatePlanPayload(payload);
       if (validationError) throw Object.assign(new Error(validationError), { status: 400, expose: true });
       const plan = await qualityCleaning.saveCleaningPlan(db, context.store_id, context.user_id, payload, id);
       return {
-        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan nettoyage modifie', data: { plan, planning } }),
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan nettoyage modifie', data: { plan, synchronized_task: plan.quality_task || null } }),
         target_type: 'quality_cleaning_plan',
         target_id: plan.id,
       };

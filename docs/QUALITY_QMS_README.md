@@ -206,12 +206,12 @@ Workflow:
 - creations agent marquees `created_source='agent_alta'`, `created_by_agent=true`;
 - creations agent par defaut en `pending_review` et `active=false`;
 - validation, activation, desactivation ou archivage par action explicite;
-- activation refusee pour un plan incomplet sans produit, dosage/concentration, temps de contact ou tache/frequence rattachee.
+- activation refusee pour un plan incomplet sans produit, dosage/concentration, temps de contact ou frequence portee par le plan.
 
 Tables et migration:
 
-- `quality_tasks` reste le moteur officiel des taches et frequences;
-- `quality_cleaning_plans` reste la table officielle des plans de nettoyage;
+- `quality_cleaning_plans` est la source de verite PMS des plans de nettoyage, y compris perimetre, responsable, frequence, heure cible, duree, methode, preuves et actions correctives;
+- `quality_tasks` reste le moteur d'execution et d'echeance; pour le nettoyage, il est synchronise depuis `quality_cleaning_plans` et ne porte pas une saisie concurrente;
 - `quality_cleaning_plan_zones` et `quality_cleaning_plan_equipments` portent les associations multi-zones et multi-equipements des plans;
 - `quality_zones` et `quality_equipments` restent les sources du jumeau numerique;
 - `063_quality_configuration_agent_write.sql` ajoute uniquement des colonnes optionnelles, contraintes de statut et index;
@@ -222,7 +222,9 @@ Compatibilite plans de nettoyage:
 - `zone_id` et `equipment_id` restent acceptes et retournes;
 - `zone_ids` et `equipment_ids` permettent de couvrir plusieurs zones et equipements dans un seul plan PMS;
 - les lectures retournent `zones: []` et `equipments: []`;
-- les taches generees depuis un plan conservent une cible legacy principale et decrivent le perimetre complet.
+- toute creation/modification/activation/desactivation de plan synchronise automatiquement la tache qualite liee via `quality_task_id`;
+- les taches generees depuis un plan conservent une cible legacy principale et decrivent le perimetre complet;
+- les parametres temperature et leurs taches restent independants.
 
 Outils MCP:
 

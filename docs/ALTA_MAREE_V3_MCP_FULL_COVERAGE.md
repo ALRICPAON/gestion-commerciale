@@ -59,6 +59,8 @@ La migration `064_quality_cleaning_plan_multi_targets.sql` est additive et idemp
 
 Les routes `GET/POST/PUT /api/quality/cleaning/plans` acceptent `zone_ids` et `equipment_ids`, continuent d'accepter `zone_id` et `equipment_id`, et retournent toujours les champs legacy plus `zones: []` et `equipments: []`. Les outils MCP `quality_create_cleaning_plan`, `quality_update_cleaning_plan`, `create_quality_cleaning_plan`, `update_quality_cleaning_plan`, `list_quality_cleaning_plans` et `get_quality_cleaning_plan` utilisent les memes services et exposent ces structures.
 
+Le plan de nettoyage est la source de verite PMS. Ses champs `responsible_user_id`, `frequency_value`, `frequency_unit`, `target_time`, `scheduled_days`, `expected_duration_minutes`, `method`, `expected_proof` et `corrective_action` alimentent automatiquement la `quality_task` liee. La tache sert a l'execution et a l'echeance; elle est creee, mise a jour ou suspendue par le service `quality/cleaning.saveCleaningPlan` et `quality/cleaning.changeCleaningPlanStatus`, sans double saisie.
+
 ## Matrice fonctionnelle
 
 | Module | Permissions | Lecture MCP | Preparation/ecriture MCP | Execution confirmee | Limites conservees |
