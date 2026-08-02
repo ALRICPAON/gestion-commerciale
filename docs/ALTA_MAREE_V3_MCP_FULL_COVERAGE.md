@@ -19,10 +19,26 @@ ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,supplier
 - `modules_covered`;
 - `coverage_complete`;
 - `missing_tools`;
+- `frontend_backend_coverage_complete`;
+- `missing_frontend_backend_capabilities`;
 - `final_permissions`;
-- `coverage_matrix`.
+- `coverage_matrix`;
+- `frontend_backend_capabilities`.
 
-`coverage_complete: true` est publie uniquement parce que `backend/scripts/test-agent-mcp-coverage-matrix.js` verifie la matrice complete et l'absence de `missing_tools`.
+`coverage_complete: true` est publie uniquement parce que `backend/scripts/test-agent-mcp-coverage-matrix.js` verifie la matrice MCP, la matrice front/backend, l'absence de `missing_tools` et l'absence de `missing_frontend_backend_capabilities`.
+
+## Audit front/backend
+
+La matrice `frontend_backend_capabilities` liste, pour chaque capacite auditee:
+
+- fonction disponible dans le front;
+- fichier front;
+- route backend;
+- service metier;
+- outil MCP correspondant;
+- statut `covered` ou `missing`.
+
+Cette matrice est definie dans `backend/services/agent/agentFrontendBackendCoverageService.js`. Elle couvre tous les modules ALTA et rend obligatoires les capacites front confirmees pour les parametres temperature et les plans de nettoyage.
 
 ## Matrice fonctionnelle
 
@@ -40,7 +56,7 @@ ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,supplier
 | Pennylane | `pennylane.read`, `pennylane.sync` | `get_pennylane_sync_status`, `get_pennylane_diagnostics` | `prepare_pennylane_sync`, `prepare_pennylane_mapping_update` | aucune execution directe | sync preparee et confirmee, pas d'appel arbitraire |
 | Planning salarie | `employee_planning.read`, `employee_planning.write` | `get_employee_planning`, `get_employee_profile` | `prepare_employee_draft`, `prepare_employee_absence`, `prepare_employee_planning_update`, `prepare_employee_manager_validation` | aucune execution directe | validation responsable preparee |
 | Transformations/negoce | `transformations.read`, `transformations.write` | `get_transformations`, `get_transformation_profile` | `prepare_transformation`, `prepare_transformation_update`, `prepare_transformation_validation` | aucune execution directe | impacts stock non appliques sans raccord metier allowliste |
-| Qualite | `quality.read`, `quality.configuration.write` | contexte, zones, equipements, temperatures, nettoyages, taches | `quality_create_task`, `quality_update_task`, `quality_create_cleaning_plan`, `quality_update_cleaning_plan`, affectations zone/equipement | `quality_activate_configuration`, `quality_deactivate_configuration` | activation exige confirmation; plans incomplets refuses |
+| Qualite | `quality.read`, `quality.configuration.write` | contexte, zones, equipements, releves temperature, parametres temperature, releves nettoyage, plans nettoyage, taches | taches, plans nettoyage, parametres temperature, affectations zone/equipement | `quality_activate_configuration`, `quality_deactivate_configuration` | activation exige confirmation; plans incomplets refuses |
 | Dossier d'agrement sanitaire | `quality.documentation.read`, `quality.documentation.edit`, `mcp.execute` | liste, plan, section, blocs, recherche | creation/modification sections et blocs structures, preview, restauration | `quality.documentation.apply_section_updates`, `update_quality_section`, `execute_quality_section_update` | action canonique allowlistee et auditee |
 
 ## Garde-fous
@@ -51,6 +67,8 @@ ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,supplier
 - Les executions metier exigent `mcp.execute` et la permission metier cible.
 - Les actions engageantes non trusted passent par confirmation humaine ou pending action.
 - Les outils de preparation retournent un `prepared_action` sans effet metier direct quand le service d'ecriture canonique n'est pas encore expose.
+- Les outils `archive_or_disable_*` font une desactivation logique; ils ne reactiveront pas une configuration.
+- L'activation reste centralisee dans `quality_activate_configuration`, action engageante avec confirmation humaine.
 
 ## Tests
 

@@ -31,10 +31,10 @@ Outils raccordes dans ce socle:
 
 Etat actuel:
 
-- 160 outils dans le catalogue administratif.
-- 141 outils operationnels dans `agentToolRegistry.listMcpTools`.
-- 160 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
-- `tools/list` expose `coverage_complete: true`, `missing_tools: []`, `final_permissions` et `coverage_matrix` pour ALTA_MAREE_V3.
+- 170 outils dans le catalogue administratif.
+- 151 outils operationnels dans `agentToolRegistry.listMcpTools`.
+- 170 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
+- `tools/list` expose `coverage_complete: true`, `missing_tools: []`, `frontend_backend_coverage_complete: true`, `missing_frontend_backend_capabilities: []`, `final_permissions`, `coverage_matrix` et `frontend_backend_capabilities` pour ALTA_MAREE_V3.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 
 ## Architecture execution MCP
@@ -94,6 +94,16 @@ Les actions non presentes dans cette allowlist sont refusees. Aucune fonction ba
 | `quality_update_cleaning_plan` | quality | `quality/agentConfiguration.updateCleaningPlan` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans`, `quality_tasks`, zones/equipements | n/a | activation refusee si informations operationnelles manquent |
 | `quality_assign_task_to_zone` | quality | `quality/agentConfiguration.assignTaskToTarget` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_zones` | n/a | refuse association inter-magasins |
 | `quality_assign_task_to_equipment` | quality | `quality/agentConfiguration.assignTaskToTarget` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_equipments` | n/a | refuse equipement inexistant/autre magasin |
+| `list_quality_temperature_parameters` | quality | `quality/temperatures.listTemperatureLimits` | operational | 0 | `quality.read` | `quality.read` | non | `quality_temperature_limits`, taches, zones/equipements | filtres front | lecture parametres |
+| `get_quality_temperature_parameter` | quality | `quality/temperatures.getTemperatureLimit` | operational | 0 | `quality.read` | `quality.read` | non | `quality_temperature_limits` | n/a | lecture parametre |
+| `create_quality_temperature_parameter` | quality | `quality/temperatures.saveTemperatureLimit` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_temperature_limits`, `quality_tasks` | n/a | peut creer une tache pending_review si `planning_mode=new` |
+| `update_quality_temperature_parameter` | quality | `quality/temperatures.saveTemperatureLimit` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_temperature_limits`, `quality_tasks` | n/a | ne modifie pas les releves historiques |
+| `archive_or_disable_quality_temperature_parameter` | quality | `quality/temperatures.deleteTemperatureLimit` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_temperature_limits` | n/a | desactivation logique uniquement |
+| `list_quality_cleaning_plans` | quality | `quality/cleaning.listCleaningPlans` | operational | 0 | `quality.read` | `quality.read` | non | `quality_cleaning_plans`, taches, zones/equipements | filtres front | lecture plans |
+| `get_quality_cleaning_plan` | quality | `quality/cleaning.getCleaningPlan` | operational | 0 | `quality.read` | `quality.read` | non | `quality_cleaning_plans` | n/a | lecture plan |
+| `create_quality_cleaning_plan` | quality | `quality/cleaning.saveCleaningPlan` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans`, `quality_tasks` | n/a | expose champs planning front |
+| `update_quality_cleaning_plan` | quality | `quality/cleaning.saveCleaningPlan` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans`, `quality_tasks` | n/a | expose champs planning front |
+| `archive_or_disable_quality_cleaning_plan` | quality | `quality/cleaning.changeCleaningPlanStatus` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans` | n/a | desactivation logique uniquement |
 | `quality_activate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 2 | `quality.configuration.write` | `quality.configuration.write` | oui | `quality_tasks`, `quality_cleaning_plans` | n/a | refuse plan incomplet |
 | `quality_deactivate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_cleaning_plans` | n/a | desactivation logique uniquement |
 

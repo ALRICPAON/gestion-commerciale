@@ -1,3 +1,5 @@
+const { buildFrontendBackendCoverage } = require('./agentFrontendBackendCoverageService');
+
 const FINAL_AGENT_PERMISSIONS = Object.freeze([
   'mcp.execute',
   'agent.use',
@@ -43,7 +45,7 @@ const MODULE_COVERAGE = Object.freeze([
   { domain: 'pennylane', read: ['get_pennylane_sync_status', 'get_pennylane_diagnostics'], create: [], update: ['prepare_pennylane_mapping_update'], prepare: ['prepare_pennylane_sync'], execute: [] },
   { domain: 'employee_planning', read: ['get_employee_planning', 'get_employee_profile'], create: ['prepare_employee_draft', 'prepare_employee_absence'], update: ['prepare_employee_planning_update'], prepare: ['prepare_employee_manager_validation'], execute: [] },
   { domain: 'transformations', read: ['get_transformations', 'get_transformation_profile'], create: ['prepare_transformation'], update: ['prepare_transformation_update'], prepare: ['prepare_transformation_validation'], execute: [] },
-  { domain: 'quality', read: ['get_quality_context', 'get_quality_zones', 'get_quality_equipments', 'get_quality_temperature_records', 'get_quality_cleaning_records', 'get_quality_tasks'], create: ['quality_create_task', 'quality_create_cleaning_plan'], update: ['quality_update_task', 'quality_update_cleaning_plan', 'quality_assign_task_to_zone', 'quality_assign_task_to_equipment'], prepare: [], execute: ['quality_activate_configuration', 'quality_deactivate_configuration'] },
+  { domain: 'quality', read: ['get_quality_context', 'get_quality_zones', 'get_quality_equipments', 'get_quality_temperature_records', 'get_quality_cleaning_records', 'get_quality_tasks', 'list_quality_temperature_parameters', 'get_quality_temperature_parameter', 'list_quality_cleaning_plans', 'get_quality_cleaning_plan'], create: ['quality_create_task', 'quality_create_cleaning_plan', 'create_quality_temperature_parameter', 'create_quality_cleaning_plan'], update: ['quality_update_task', 'quality_update_cleaning_plan', 'quality_assign_task_to_zone', 'quality_assign_task_to_equipment', 'update_quality_temperature_parameter', 'archive_or_disable_quality_temperature_parameter', 'update_quality_cleaning_plan', 'archive_or_disable_quality_cleaning_plan'], prepare: [], execute: ['quality_activate_configuration', 'quality_deactivate_configuration'] },
   { domain: 'quality_documentation', read: ['list_quality_documentation', 'get_quality_documentation_outline', 'get_quality_section', 'get_quality_section_blocks', 'search_quality_sections'], create: ['create_quality_section', 'quality.documentation.add_text_block', 'quality.documentation.add_table_block', 'quality.documentation.add_diagram_block'], update: ['quality.documentation.update_text_block', 'quality.documentation.move_block', 'restore_quality_section_version'], prepare: ['preview_quality_section_update'], execute: ['quality.documentation.apply_section_updates', 'update_quality_section', 'execute_quality_section_update'] },
 ]);
 
@@ -148,6 +150,7 @@ function prepareBusinessAction(context, input = {}, defaults = {}) {
 
 function buildCoverageReport(publicTools = [], modules = []) {
   const publicNames = new Set(publicTools.map((tool) => tool.name));
+  const frontendBackendCoverage = buildFrontendBackendCoverage(publicTools);
   const rows = MODULE_COVERAGE.map((module) => {
     const expected = [
       ...module.read,
@@ -173,9 +176,12 @@ function buildCoverageReport(publicTools = [], modules = []) {
   });
   const missingTools = rows.flatMap((row) => row.missing_tools.map((tool) => ({ module: row.module, tool })));
   return {
-    coverage_complete: missingTools.length === 0,
+    coverage_complete: missingTools.length === 0 && frontendBackendCoverage.coverage_complete,
     module_count: rows.length,
     missing_tools: missingTools,
+    missing_frontend_backend_capabilities: frontendBackendCoverage.missing_capabilities,
+    frontend_backend_coverage_complete: frontendBackendCoverage.coverage_complete,
+    frontend_backend_capabilities: frontendBackendCoverage.capabilities,
     final_permissions: [...FINAL_AGENT_PERMISSIONS],
     matrix: rows,
   };

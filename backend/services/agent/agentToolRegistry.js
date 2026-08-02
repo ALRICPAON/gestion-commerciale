@@ -7,6 +7,10 @@ const qualityDiagrams = require('../quality/qualityDocumentationDiagramService')
 const qualityExport = require('../quality/qualityDocumentationExportService');
 const qualityContext = require('../quality/agentQualityContextService');
 const qualityConfiguration = require('../quality/agentConfiguration');
+const qualityTemperatures = require('../quality/temperatures');
+const qualityCleaning = require('../quality/cleaning');
+const temperatureValidators = require('../../validators/quality/temperatures');
+const cleaningValidators = require('../../validators/quality/cleaning');
 const fullCoverage = require('./agentFullCoverageService');
 const { listModules, getModule } = require('./agentModuleCatalog');
 const { listAgentAuditLogs, getAgentAuditLog } = require('./agentAuditService');
@@ -132,6 +136,16 @@ const QUALITY_BLOCK_ACTIONS_WITH_CHAPTER = new Set([
   'quality.documentation.move_block',
 ]);
 
+const qualityPlanningProperties = {
+  planning_mode: { type: 'string', enum: ['existing', 'new', 'none'] },
+  task_mode: { type: 'string', enum: ['existing', 'new', 'none'] },
+  task_title: { type: 'string' },
+  responsible_user_id: { type: 'string' },
+  frequency_value: { type: 'integer', minimum: 1 },
+  frequency_unit: { type: 'string', enum: ['hours', 'days', 'weeks', 'months', 'events'] },
+  target_time: { type: 'string' },
+};
+
 const qualityTaskConfigurationInputSchema = {
   type: 'object',
   required: ['title'],
@@ -191,6 +205,44 @@ const qualityCleaningPlanConfigurationInputSchema = {
     configuration_status: { type: 'string', enum: ['draft', 'pending_review', 'active', 'inactive', 'archived'] },
     active: { type: 'boolean' },
     agent_action_id: { type: 'string' },
+    ...qualityPlanningProperties,
+  },
+  additionalProperties: false,
+};
+
+const qualityTemperatureParameterInputSchema = {
+  type: 'object',
+  required: ['type_code'],
+  properties: {
+    temperature_parameter_id: { type: 'string' },
+    parameter_id: { type: 'string' },
+    limit_id: { type: 'string' },
+    type_code: { type: 'string' },
+    type: { type: 'string' },
+    zone_id: { type: 'string' },
+    equipment_id: { type: 'string' },
+    min_value: { type: 'number' },
+    max_value: { type: 'number' },
+    unit: { type: 'string' },
+    expected_frequency_value: { type: 'integer', minimum: 1 },
+    expected_frequency_unit: { type: 'string', enum: ['hours', 'days', 'events'] },
+    target_time: { type: 'string' },
+    quality_task_id: { type: 'string' },
+    is_active: { type: 'boolean' },
+    valid_from: { type: 'string' },
+    valid_until: { type: 'string' },
+    ...qualityPlanningProperties,
+  },
+  additionalProperties: false,
+};
+
+const qualityParameterStatusInputSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    temperature_parameter_id: { type: 'string' },
+    parameter_id: { type: 'string' },
+    limit_id: { type: 'string' },
   },
   additionalProperties: false,
 };
@@ -284,6 +336,44 @@ function snapshotTool({ name, title, domain, permission, snapshotKey }) {
       });
     },
   });
+}
+
+function requestedPlanningMode(input = {}) {
+  return input.planning_mode || input.task_mode || (input.quality_task_id ? 'existing' : 'none');
+}
+
+function planningTaskInput(input = {}, moduleKey) {
+  return {
+    title: input.task_title || input.title || `Tache ${moduleKey}`,
+    module_key: moduleKey,
+    zone_id: input.zone_id || null,
+    equipment_id: input.equipment_id || null,
+    responsible_user_id: input.responsible_user_id || null,
+    frequency_value: input.frequency_value || input.expected_frequency_value || null,
+    frequency_unit: input.frequency_unit || input.expected_frequency_unit || null,
+    target_time: input.target_time || null,
+    status: 'pending_review',
+    active: false,
+    configuration_status: 'pending_review',
+    description: input.task_description || `Tache generee depuis la configuration ${moduleKey}.`,
+  };
+}
+
+async function resolveQualityPlanningTask(db, context, input = {}, moduleKey) {
+  const mode = requestedPlanningMode(input);
+  if (mode === 'none') return { quality_task_id: null, created_task: null, planning_mode: mode };
+  if (mode === 'new') {
+    const result = await qualityConfiguration.createTask(db, context, planningTaskInput(input, moduleKey));
+    return { quality_task_id: result.task.id, created_task: result.task, planning_mode: mode };
+  }
+  return { quality_task_id: input.quality_task_id || null, created_task: null, planning_mode: mode };
+}
+
+function qualityId(input = {}, ...names) {
+  for (const name of names) {
+    if (input[name]) return input[name];
+  }
+  return null;
 }
 
 async function normalizeBusinessActionPayload(db, storeId, actionType, payload = {}) {
@@ -1510,6 +1600,191 @@ const tools = [
     execute: async ({ db, context, input, tool: currentTool }) => {
       const data = await qualityContext.getQualityContext(db, context.store_id, input);
       return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Contexte qualite ALTA', data, source_freshness: data.source_freshness });
+    },
+  }),
+  tool({
+    name: 'list_quality_temperature_parameters',
+    title: 'Lister parametres temperature',
+    description: 'Liste les parametres temperature exposes par le front via /api/quality/temperatures/limits.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { type: { type: 'string' }, type_code: { type: 'string' }, zone_id: { type: 'string' }, equipment_id: { type: 'string' }, quality_task_id: { type: 'string' }, active_only: { type: 'string', enum: ['true', 'false'] } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Parametres temperature', data: { parameters: await qualityTemperatures.listTemperatureLimits(db, context.store_id, input) } }),
+  }),
+  tool({
+    name: 'get_quality_temperature_parameter',
+    title: 'Relire parametre temperature',
+    description: 'Relit un parametre temperature par le service quality/temperatures.getTemperatureLimit.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: qualityParameterStatusInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const id = qualityId(input, 'temperature_parameter_id', 'parameter_id', 'limit_id', 'id');
+      const parameter = await qualityTemperatures.getTemperatureLimit(db, context.store_id, id);
+      return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Parametre temperature', data: { parameter } });
+    },
+  }),
+  tool({
+    name: 'create_quality_temperature_parameter',
+    title: 'Creer parametre temperature',
+    description: 'Cree un parametrage temperature comme le front, avec lien possible a une tache qualite existante ou nouvelle.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: qualityTemperatureParameterInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const planning = await resolveQualityPlanningTask(db, context, input, 'temperature');
+      const payload = temperatureValidators.mapLimitPayload({ ...input, quality_task_id: planning.quality_task_id });
+      const validationError = temperatureValidators.validateLimitPayload(payload);
+      if (validationError) throw Object.assign(new Error(validationError), { status: 400, expose: true });
+      const parameter = await qualityTemperatures.saveTemperatureLimit(db, context.store_id, context.user_id, payload);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Parametre temperature cree', data: { parameter, planning } }),
+        target_type: 'quality_temperature_limit',
+        target_id: parameter.id,
+      };
+    },
+  }),
+  tool({
+    name: 'update_quality_temperature_parameter',
+    title: 'Modifier parametre temperature',
+    description: 'Modifie un parametrage temperature comme le front, sans toucher aux releves historiques.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityTemperatureParameterInputSchema, required: ['temperature_parameter_id', 'type_code'] },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const id = qualityId(input, 'temperature_parameter_id', 'parameter_id', 'limit_id', 'id');
+      const planning = await resolveQualityPlanningTask(db, context, input, 'temperature');
+      const payload = temperatureValidators.mapLimitPayload({ ...input, quality_task_id: planning.quality_task_id });
+      const validationError = temperatureValidators.validateLimitPayload(payload);
+      if (validationError) throw Object.assign(new Error(validationError), { status: 400, expose: true });
+      const parameter = await qualityTemperatures.saveTemperatureLimit(db, context.store_id, context.user_id, payload, id);
+      if (!parameter) throw Object.assign(new Error('Parametre temperature introuvable'), { status: 404, expose: true });
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Parametre temperature modifie', data: { parameter, planning } }),
+        target_type: 'quality_temperature_limit',
+        target_id: parameter.id,
+      };
+    },
+  }),
+  tool({
+    name: 'archive_or_disable_quality_temperature_parameter',
+    title: 'Archiver parametre temperature',
+    description: 'Desactive logiquement un parametrage temperature via le meme service que DELETE /api/quality/temperatures/limits/:id.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: qualityParameterStatusInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const id = qualityId(input, 'temperature_parameter_id', 'parameter_id', 'limit_id', 'id');
+      const parameter = await qualityTemperatures.deleteTemperatureLimit(db, context.store_id, context.user_id, id);
+      if (!parameter) throw Object.assign(new Error('Parametre temperature introuvable'), { status: 404, expose: true });
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Parametre temperature desactive', data: { mode: 'archived', parameter } }),
+        target_type: 'quality_temperature_limit',
+        target_id: parameter.id,
+      };
+    },
+  }),
+  tool({
+    name: 'list_quality_cleaning_plans',
+    title: 'Lister plans nettoyage',
+    description: 'Liste les plans de nettoyage exposes par le front via /api/quality/cleaning/plans.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { zone_id: { type: 'string' }, equipment_id: { type: 'string' }, quality_task_id: { type: 'string' }, active: { type: 'string', enum: ['true', 'false'] } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plans nettoyage', data: { plans: await qualityCleaning.listCleaningPlans(db, context.store_id, input) } }),
+  }),
+  tool({
+    name: 'get_quality_cleaning_plan',
+    title: 'Relire plan nettoyage',
+    description: 'Relit un plan de nettoyage via quality/cleaning.getCleaningPlan.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, cleaning_plan_id: { type: 'string' }, plan_id: { type: 'string' } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const id = qualityId(input, 'cleaning_plan_id', 'plan_id', 'id');
+      const plan = await qualityCleaning.getCleaningPlan(db, context.store_id, id);
+      return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan nettoyage', data: { plan } });
+    },
+  }),
+  tool({
+    name: 'create_quality_cleaning_plan',
+    title: 'Creer plan nettoyage',
+    description: 'Cree un plan de nettoyage comme le front, avec les champs de planification qualite visibles dans l interface.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: qualityCleaningPlanConfigurationInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const planning = await resolveQualityPlanningTask(db, context, input, 'cleaning');
+      const payload = cleaningValidators.mapPlanPayload({ ...input, quality_task_id: planning.quality_task_id });
+      const validationError = cleaningValidators.validatePlanPayload(payload);
+      if (validationError) throw Object.assign(new Error(validationError), { status: 400, expose: true });
+      const plan = await qualityCleaning.saveCleaningPlan(db, context.store_id, context.user_id, payload);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan nettoyage cree', data: { plan, planning } }),
+        target_type: 'quality_cleaning_plan',
+        target_id: plan.id,
+      };
+    },
+  }),
+  tool({
+    name: 'update_quality_cleaning_plan',
+    title: 'Modifier plan nettoyage',
+    description: 'Modifie un plan de nettoyage comme le front, en conservant la logique metier du service cleaning.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityCleaningPlanConfigurationInputSchema, required: ['cleaning_plan_id', 'title'] },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const id = qualityId(input, 'cleaning_plan_id', 'plan_id', 'id');
+      const before = await qualityCleaning.getCleaningPlan(db, context.store_id, id);
+      if (!before) throw Object.assign(new Error('Plan de nettoyage introuvable'), { status: 404, expose: true });
+      const planning = await resolveQualityPlanningTask(db, context, { ...before, ...input }, 'cleaning');
+      const payload = cleaningValidators.mapPlanPayload({ ...before, ...input, quality_task_id: planning.quality_task_id });
+      const validationError = cleaningValidators.validatePlanPayload(payload);
+      if (validationError) throw Object.assign(new Error(validationError), { status: 400, expose: true });
+      const plan = await qualityCleaning.saveCleaningPlan(db, context.store_id, context.user_id, payload, id);
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan nettoyage modifie', data: { plan, planning } }),
+        target_type: 'quality_cleaning_plan',
+        target_id: plan.id,
+      };
+    },
+  }),
+  tool({
+    name: 'archive_or_disable_quality_cleaning_plan',
+    title: 'Archiver plan nettoyage',
+    description: 'Desactive logiquement un plan de nettoyage via le meme service que PATCH /api/quality/cleaning/plans/:id/status.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.configuration.write',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, cleaning_plan_id: { type: 'string' }, plan_id: { type: 'string' } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const id = qualityId(input, 'cleaning_plan_id', 'plan_id', 'id');
+      const plan = await qualityCleaning.changeCleaningPlanStatus(db, context.store_id, context.user_id, id, false);
+      if (!plan) throw Object.assign(new Error('Plan de nettoyage introuvable'), { status: 404, expose: true });
+      return {
+        ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Plan nettoyage desactive', data: { mode: 'archived', plan } }),
+        target_type: 'quality_cleaning_plan',
+        target_id: plan.id,
+      };
     },
   }),
   tool({
