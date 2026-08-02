@@ -28,6 +28,16 @@ function jsonArray(value) {
   }
 }
 
+function hasOwn(value, key) {
+  return Object.prototype.hasOwnProperty.call(value || {}, key);
+}
+
+function payloadValue(payload, before, key, fallback = null) {
+  if (hasOwn(payload, key)) return payload[key];
+  if (before && hasOwn(before, key)) return before[key];
+  return fallback;
+}
+
 function attachTargets(row) {
   if (!row) return null;
   const zones = jsonArray(row.zones);
@@ -227,14 +237,14 @@ async function syncPlanTargets(db, storeId, userId, planId, payload = {}) {
   await assertTargetIds(db, storeId, zoneIds, equipmentIds);
   await db.query(
     `UPDATE quality_cleaning_plan_zones
-     SET deleted_at = now(), deleted_by = $4
-     WHERE plan_id = $1 AND deleted_at IS NULL AND NOT (zone_id = ANY($2::uuid[]))`,
-    [planId, zoneIds, storeId, userId]
+     SET deleted_at = now(), deleted_by = $3::uuid
+     WHERE plan_id = $1::uuid AND deleted_at IS NULL AND NOT (zone_id = ANY($2::uuid[]))`,
+    [planId, zoneIds, userId]
   );
   for (const zoneId of zoneIds) {
     await db.query(
       `INSERT INTO quality_cleaning_plan_zones (plan_id, zone_id, created_by, deleted_at, deleted_by)
-       VALUES ($1, $2, $3, NULL, NULL)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, NULL, NULL)
        ON CONFLICT (plan_id, zone_id)
        DO UPDATE SET deleted_at = NULL, deleted_by = NULL`,
       [planId, zoneId, userId]
@@ -242,14 +252,14 @@ async function syncPlanTargets(db, storeId, userId, planId, payload = {}) {
   }
   await db.query(
     `UPDATE quality_cleaning_plan_equipments
-     SET deleted_at = now(), deleted_by = $4
-     WHERE plan_id = $1 AND deleted_at IS NULL AND NOT (equipment_id = ANY($2::uuid[]))`,
-    [planId, equipmentIds, storeId, userId]
+     SET deleted_at = now(), deleted_by = $3::uuid
+     WHERE plan_id = $1::uuid AND deleted_at IS NULL AND NOT (equipment_id = ANY($2::uuid[]))`,
+    [planId, equipmentIds, userId]
   );
   for (const equipmentId of equipmentIds) {
     await db.query(
       `INSERT INTO quality_cleaning_plan_equipments (plan_id, equipment_id, created_by, deleted_at, deleted_by)
-       VALUES ($1, $2, $3, NULL, NULL)
+       VALUES ($1::uuid, $2::uuid, $3::uuid, NULL, NULL)
        ON CONFLICT (plan_id, equipment_id)
        DO UPDATE SET deleted_at = NULL, deleted_by = NULL`,
       [planId, equipmentId, userId]
@@ -273,8 +283,8 @@ async function syncCleaningPlanTask(db, storeId, userId, plan) {
   if (!plan.quality_task_id && task?.id) {
     await db.query(
       `UPDATE quality_cleaning_plans
-       SET quality_task_id=$3, updated_by=$4, updated_at=now()
-       WHERE id=$1 AND store_id=$2`,
+       SET quality_task_id=$3::uuid, updated_by=$4::uuid, updated_at=now()
+       WHERE id=$1::uuid AND store_id=$2::uuid`,
       [plan.id, storeId, task.id, userId]
     );
   }
@@ -291,6 +301,13 @@ async function withTransaction(db, work) {
     return result;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
+    if (error?.code || error?.message) {
+      console.error('Erreur SQL plan nettoyage, transaction annulee', {
+        code: error.code || null,
+        message: error.message,
+        service: 'quality.cleaning',
+      });
+    }
     throw error;
   } finally {
     client.release();
@@ -335,19 +352,19 @@ async function saveCleaningPlanInTransaction(db, storeId, userId, payload, planI
   const result = planId
     ? await db.query(
       `UPDATE quality_cleaning_plans
-       SET title=$3, description=$4, zone_id=$5, equipment_id=$6, product_name=$7,
-           method=$8, safety_instructions=$9, expected_duration_minutes=$10,
-           quality_task_id=$11, active=$12, updated_by=$13,
-           dosage_concentration=$14, usage_temperature=$15, contact_time_minutes=$16,
-           rinse_required=$17, material_used=$18, post_cleaning_check=$19,
-           expected_proof=$20, corrective_action=$21, configuration_status=$22,
-           validation_required=$23, created_source=$24, created_by_agent=$25,
-           agent_action_id=$26, responsible_user_id=$27, frequency_value=$28,
-           frequency_unit=$29, target_time=$30, scheduled_days=$31::jsonb,
+       SET title=$3::text, description=$4::text, zone_id=$5::uuid, equipment_id=$6::uuid, product_name=$7::text,
+           method=$8::text, safety_instructions=$9::text, expected_duration_minutes=$10::integer,
+           quality_task_id=$11::uuid, active=$12::boolean, updated_by=$13::uuid,
+           dosage_concentration=$14::text, usage_temperature=$15::text, contact_time_minutes=$16::integer,
+           rinse_required=$17::boolean, material_used=$18::text, post_cleaning_check=$19::text,
+           expected_proof=$20::text, corrective_action=$21::text, configuration_status=$22::text,
+           validation_required=$23::boolean, created_source=$24::text, created_by_agent=$25::boolean,
+           agent_action_id=$26::text, responsible_user_id=$27::uuid, frequency_value=$28::integer,
+           frequency_unit=$29::text, target_time=$30::time, scheduled_days=$31::jsonb,
            updated_at=now()
-       WHERE id=$1 AND store_id=$2
+       WHERE id=$1::uuid AND store_id=$2::uuid
        RETURNING *`,
-      [planId, storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration ?? before.dosage_concentration, payload.usage_temperature ?? before.usage_temperature, payload.contact_time_minutes ?? before.contact_time_minutes, payload.rinse_required ?? before.rinse_required, payload.material_used ?? before.material_used, payload.post_cleaning_check ?? before.post_cleaning_check, payload.expected_proof ?? before.expected_proof, payload.corrective_action ?? before.corrective_action, payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payload.agent_action_id || before.agent_action_id, payload.responsible_user_id ?? before.responsible_user_id, payload.frequency_value ?? before.frequency_value, payload.frequency_unit ?? before.frequency_unit, payload.target_time ?? before.target_time, JSON.stringify(payload.scheduled_days ?? before.scheduled_days ?? [])]
+      [planId, storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payloadValue(payload, before, 'dosage_concentration'), payloadValue(payload, before, 'usage_temperature'), payloadValue(payload, before, 'contact_time_minutes'), payloadValue(payload, before, 'rinse_required'), payloadValue(payload, before, 'material_used'), payloadValue(payload, before, 'post_cleaning_check'), payloadValue(payload, before, 'expected_proof'), payloadValue(payload, before, 'corrective_action'), payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payloadValue(payload, before, 'agent_action_id'), payloadValue(payload, before, 'responsible_user_id'), payloadValue(payload, before, 'frequency_value'), payloadValue(payload, before, 'frequency_unit'), payloadValue(payload, before, 'target_time'), JSON.stringify(payloadValue(payload, before, 'scheduled_days', []) || [])]
     )
     : await db.query(
       `INSERT INTO quality_cleaning_plans (
@@ -358,7 +375,13 @@ async function saveCleaningPlanInTransaction(db, storeId, userId, payload, planI
         expected_proof, corrective_action, configuration_status, validation_required,
         created_source, created_by_agent, agent_action_id, responsible_user_id,
         frequency_value, frequency_unit, target_time, scheduled_days
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb)
+      ) VALUES (
+        $1::uuid,$2::text,$3::text,$4::uuid,$5::uuid,$6::text,$7::text,$8::text,
+        $9::integer,$10::uuid,$11::boolean,$12::uuid,$12::uuid,$13::text,$14::text,
+        $15::integer,$16::boolean,$17::text,$18::text,$19::text,$20::text,$21::text,
+        $22::boolean,$23::text,$24::boolean,$25::text,$26::uuid,$27::integer,
+        $28::text,$29::time,$30::jsonb
+      )
       RETURNING *`,
       [storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration, payload.usage_temperature, payload.contact_time_minutes, payload.rinse_required, payload.material_used, payload.post_cleaning_check, payload.expected_proof, payload.corrective_action, payload.configuration_status || 'active', payload.validation_required === true, payload.created_source || 'human', payload.created_by_agent === true, payload.agent_action_id, payload.responsible_user_id, payload.frequency_value, payload.frequency_unit, payload.target_time, JSON.stringify(payload.scheduled_days || [])]
     );
@@ -384,8 +407,8 @@ async function changeCleaningPlanStatusInTransaction(db, storeId, userId, planId
   }
   const result = await db.query(
     `UPDATE quality_cleaning_plans
-     SET active=$3, configuration_status=$5, updated_by=$4, updated_at=now()
-     WHERE id=$1 AND store_id=$2
+     SET active=$3::boolean, configuration_status=$5::text, updated_by=$4::uuid, updated_at=now()
+     WHERE id=$1::uuid AND store_id=$2::uuid
      RETURNING *`,
     [planId, storeId, active, userId, active ? 'active' : 'inactive']
   );

@@ -81,15 +81,15 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
   const result = taskId
     ? await db.query(
       `UPDATE quality_tasks
-       SET title=$3, description=$4, module_key=$5, entity_type=$6, entity_id=$7,
-           responsible_user_id=$8, frequency_value=$9, frequency_unit=$10,
-           target_time=$11, next_due_at=$12, status=$13, active=$14,
-           category=$15, responsible_role=$16, criticality=$17,
-           execution_method=$18, verification_method=$19, proof_required=$20,
-           photo_required=$21, instructions=$22, acceptance_criteria=$23,
-           deviation_action=$24, configuration_status=$25, created_source=$26,
-           created_by_agent=$27, agent_action_id=$28, updated_at=now()
-       WHERE id=$1 AND store_id=$2
+       SET title=$3::text, description=$4::text, module_key=$5::text, entity_type=$6::text, entity_id=$7::uuid,
+           responsible_user_id=$8::uuid, frequency_value=$9::integer, frequency_unit=$10::text,
+           target_time=$11::time, next_due_at=$12::timestamptz, status=$13::text, active=$14::boolean,
+           category=$15::text, responsible_role=$16::text, criticality=$17::text,
+           execution_method=$18::text, verification_method=$19::text, proof_required=$20::boolean,
+           photo_required=$21::boolean, instructions=$22::text, acceptance_criteria=$23::text,
+           deviation_action=$24::text, configuration_status=$25::text, created_source=$26::text,
+           created_by_agent=$27::boolean, agent_action_id=$28::text, updated_at=now()
+       WHERE id=$1::uuid AND store_id=$2::uuid
        RETURNING *`,
       [
         taskId,
@@ -130,7 +130,13 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
         execution_method, verification_method, proof_required, photo_required,
         instructions, acceptance_criteria, deviation_action, configuration_status,
         created_source, created_by_agent, agent_action_id
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
+      ) VALUES (
+        $1::uuid,$2::text,$3::text,$4::text,$5::text,$6::uuid,$7::uuid,
+        $8::integer,$9::text,$10::time,$11::timestamptz,$12::text,$13::boolean,
+        $14::text,$15::text,$16::text,$17::text,$18::text,$19::boolean,
+        $20::boolean,$21::text,$22::text,$23::text,$24::text,$25::text,
+        $26::boolean,$27::text
+      )
       RETURNING *`,
       [
         storeId,
