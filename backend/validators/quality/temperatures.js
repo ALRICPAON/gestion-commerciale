@@ -48,7 +48,10 @@ function mapRecordPayload(body = {}) {
     recorded_at: nullableText(body.recorded_at) || new Date().toISOString(),
     source: TEMPERATURE_SOURCES.includes(source) ? source : 'manual',
     operator_user_id: cleanUuid(body.operator_user_id),
+    quality_task_id: cleanUuid(body.quality_task_id),
+    occurrence_id: cleanUuid(body.occurrence_id),
     comment: nullableText(body.comment),
+    method_used: nullableText(body.method_used || body.method),
     evidence_photo_id: cleanUuid(body.evidence_photo_id),
     evidence_document_id: cleanUuid(body.evidence_document_id),
   };

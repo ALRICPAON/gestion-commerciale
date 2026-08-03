@@ -14,6 +14,7 @@ const documentsRoutes = require('./documents');
 const temperaturesRoutes = require('./temperatures');
 const tasksRoutes = require('./tasks');
 const cleaningRoutes = require('./cleaning');
+const operationsRoutes = require('./operations');
 const documentationRoutes = require('./documentation');
 const documentBlockRoutes = require('./documentBlocks');
 
@@ -24,6 +25,7 @@ router.use('/equipments', equipmentsRoutes);
 router.use('/temperatures', temperaturesRoutes);
 router.use('/tasks', tasksRoutes);
 router.use('/cleaning', cleaningRoutes);
+router.use('/operations', operationsRoutes);
 router.use('/', documentBlockRoutes);
 router.use('/documentation', documentationRoutes);
 

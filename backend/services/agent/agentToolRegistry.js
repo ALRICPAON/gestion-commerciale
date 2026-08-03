@@ -9,6 +9,7 @@ const qualityContext = require('../quality/agentQualityContextService');
 const qualityConfiguration = require('../quality/agentConfiguration');
 const qualityTemperatures = require('../quality/temperatures');
 const qualityCleaning = require('../quality/cleaning');
+const qualityOperations = require('../quality/operations');
 const temperatureValidators = require('../../validators/quality/temperatures');
 const cleaningValidators = require('../../validators/quality/cleaning');
 const fullCoverage = require('./agentFullCoverageService');
@@ -248,6 +249,67 @@ const qualityParameterStatusInputSchema = {
     temperature_parameter_id: { type: 'string' },
     parameter_id: { type: 'string' },
     limit_id: { type: 'string' },
+  },
+  additionalProperties: false,
+};
+
+const qualityOccurrenceExecutionInputSchema = {
+  type: 'object',
+  properties: {
+    occurrence_id: { type: 'string' },
+    quality_task_id: { type: 'string' },
+    type_code: { type: 'string' },
+    value: { type: 'number' },
+    unit: { type: 'string' },
+    cleaning_plan_id: { type: 'string' },
+    status: { type: 'string' },
+    recorded_at: { type: 'string' },
+    performed_at: { type: 'string' },
+    completed_at: { type: 'string' },
+    comment: { type: 'string' },
+    corrective_action: { type: 'string' },
+    evidence_photo_id: { type: 'string' },
+    evidence_document_id: { type: 'string' },
+  },
+  additionalProperties: false,
+};
+
+const qualityNonConformityInputSchema = {
+  type: 'object',
+  required: ['description'],
+  properties: {
+    origin_type: { type: 'string' },
+    origin_record_id: { type: 'string' },
+    quality_task_id: { type: 'string' },
+    occurrence_id: { type: 'string' },
+    source_entity_type: { type: 'string' },
+    source_entity_id: { type: 'string' },
+    zone_id: { type: 'string' },
+    equipment_id: { type: 'string' },
+    severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+    title: { type: 'string' },
+    description: { type: 'string' },
+    immediate_action: { type: 'string' },
+    responsible_user_id: { type: 'string' },
+    due_at: { type: 'string' },
+    closure_validation_required: { type: 'boolean' },
+  },
+  additionalProperties: false,
+};
+
+const qualityCorrectiveActionInputSchema = {
+  type: 'object',
+  required: ['action'],
+  properties: {
+    non_conformity_id: { type: 'string' },
+    quality_task_id: { type: 'string' },
+    action: { type: 'string' },
+    responsible_user_id: { type: 'string' },
+    due_at: { type: 'string' },
+    proof_document_id: { type: 'string' },
+    proof_photo_id: { type: 'string' },
+    effectiveness_check: { type: 'string' },
+    validation_comment: { type: 'string' },
   },
   additionalProperties: false,
 };
@@ -1615,6 +1677,42 @@ const tools = [
     },
   }),
   tool({
+    name: 'get_quality_today_work',
+    title: 'Lire qualite du jour',
+    description: 'Retourne le poste de travail operationnel qualite: a faire, retards, a venir, realises aujourd hui et non-conformites ouvertes.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { include_upcoming: { type: 'string', enum: ['true', 'false'] } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Qualite du jour', data: await qualityOperations.listQualityTodayWork(db, context.store_id, input) }),
+  }),
+  tool({
+    name: 'get_quality_overdue_work',
+    title: 'Lire retards qualite',
+    description: 'Retourne les controles qualite en retard depuis le poste operationnel.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    execute: async ({ db, context, tool: currentTool }) => {
+      const work = await qualityOperations.listQualityTodayWork(db, context.store_id, { include_upcoming: 'false' });
+      return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Retards qualite', data: { overdue: work.sections.overdue, summary: { overdue: work.summary.overdue } } });
+    },
+  }),
+  tool({
+    name: 'get_quality_ddpp_dashboard',
+    title: 'Lire tableau DDPP',
+    description: 'Retourne la situation qualite DDPP en lecture seule: controles du jour, temperatures, nettoyages, non-conformites et actions correctives.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', properties: { start_date: { type: 'string' }, end_date: { type: 'string' } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Dashboard DDPP qualite', data: await qualityOperations.getDdppDashboard(db, context.store_id, input) }),
+  }),
+  tool({
     name: 'list_quality_temperature_types',
     title: 'Lister types temperature',
     description: 'Liste les codes actifs de parametrage temperature exposes par le front via /api/quality/temperatures/types. Appeler avant create_quality_temperature_parameter ou update_quality_temperature_parameter.',
@@ -1962,6 +2060,76 @@ const tools = [
         target_type: input.type,
         target_id: input.id || input.task_id || input.cleaning_plan_id || input.plan_id || null,
       };
+    },
+  }),
+  tool({
+    name: 'execute_quality_temperature_occurrence',
+    title: 'Executer occurrence temperature',
+    description: 'Saisit un releve temperature metier et complete l occurrence/tache liee. Une tache temperature SYSTEM ne peut pas etre terminee sans ce releve.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.record.create',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityOccurrenceExecutionInputSchema, required: ['quality_task_id', 'type_code', 'value'] },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Releve temperature enregistre', data: await qualityOperations.executeTemperatureOccurrence(db, context.store_id, context.user_id, input) }),
+  }),
+  tool({
+    name: 'execute_quality_cleaning_occurrence',
+    title: 'Executer occurrence nettoyage',
+    description: 'Cree un enregistrement nettoyage metier et complete l occurrence/tache liee. Une tache nettoyage SYSTEM ne peut pas etre terminee sans cet enregistrement.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.record.create',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityOccurrenceExecutionInputSchema, required: ['cleaning_plan_id'] },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Nettoyage enregistre', data: await qualityOperations.executeCleaningOccurrence(db, context.store_id, context.user_id, input) }),
+  }),
+  tool({
+    name: 'execute_quality_manual_occurrence',
+    title: 'Executer occurrence manuelle',
+    description: 'Complete une tache MANUAL ou un controle non verrouille. Refuse les taches SYSTEM verrouillees qui exigent un formulaire metier.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.record.create',
+    requiresConfirmation: false,
+    inputSchema: { ...qualityOccurrenceExecutionInputSchema, required: ['quality_task_id'] },
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Tache manuelle realisee', data: await qualityOperations.executeManualOccurrence(db, context.store_id, context.user_id, input) }),
+  }),
+  tool({
+    name: 'create_quality_non_conformity',
+    title: 'Creer non-conformite qualite',
+    description: 'Cree une non-conformite liee a un releve, nettoyage, occurrence, tache, zone ou equipement.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.nc.manage',
+    requiresConfirmation: false,
+    inputSchema: qualityNonConformityInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Non-conformite creee', data: { non_conformity: await qualityOperations.createNonConformity(db, context.store_id, context.user_id, input) } }),
+  }),
+  tool({
+    name: 'create_quality_corrective_action',
+    title: 'Creer action corrective qualite',
+    description: 'Cree une action corrective liee a une non-conformite ou a une tache qualite.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'quality.action.manage',
+    requiresConfirmation: false,
+    inputSchema: qualityCorrectiveActionInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Action corrective creee', data: { corrective_action: await qualityOperations.createCorrectiveAction(db, context.store_id, context.user_id, input) } }),
+  }),
+  tool({
+    name: 'close_quality_non_conformity',
+    title: 'Clore non-conformite qualite',
+    description: 'Cloture une non-conformite. Action engageante avec confirmation humaine obligatoire.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.nc.manage',
+    requiresConfirmation: true,
+    inputSchema: { type: 'object', required: ['non_conformity_id'], properties: { non_conformity_id: { type: 'string' }, closure_comment: { type: 'string' } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const result = await qualityOperations.closeNonConformity(db, context.store_id, context.user_id, input.non_conformity_id, input);
+      if (!result) throw Object.assign(new Error('Non-conformite introuvable'), { status: 404, expose: true });
+      return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Non-conformite cloturee', data: { non_conformity: result } });
     },
   }),
   ...['zones', 'equipments', 'temperature_records', 'cleaning_records', 'tasks'].map((kind) => tool({

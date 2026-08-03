@@ -7,7 +7,7 @@ Branche de travail: `feature/mcp-quality-temperature-types`
 Permissions techniques recommandees:
 
 ```text
-ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,suppliers.read,suppliers.write,articles.read,articles.write,stock.read,stock.write,purchases.read,purchases.write,sales.read,sales.write,communications.read,communications.send,statistics.read,cashflow.read,cashflow.write,pennylane.read,pennylane.sync,employee_planning.read,employee_planning.write,transformations.read,transformations.write,quality.read,quality.configuration.write,quality.documentation.read,quality.documentation.edit
+ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,suppliers.read,suppliers.write,articles.read,articles.write,stock.read,stock.write,purchases.read,purchases.write,sales.read,sales.write,communications.read,communications.send,statistics.read,cashflow.read,cashflow.write,pennylane.read,pennylane.sync,employee_planning.read,employee_planning.write,transformations.read,transformations.write,quality.read,quality.record.create,quality.nc.manage,quality.action.manage,quality.configuration.write,quality.documentation.read,quality.documentation.edit
 ```
 
 ## Verification tools/list
@@ -79,7 +79,7 @@ Le plan de nettoyage est la source de verite PMS. Ses champs `responsible_user_i
 | Pennylane | `pennylane.read`, `pennylane.sync` | `get_pennylane_sync_status`, `get_pennylane_diagnostics` | `prepare_pennylane_sync`, `prepare_pennylane_mapping_update` | aucune execution directe | sync preparee et confirmee, pas d'appel arbitraire |
 | Planning salarie | `employee_planning.read`, `employee_planning.write` | `get_employee_planning`, `get_employee_profile` | `prepare_employee_draft`, `prepare_employee_absence`, `prepare_employee_planning_update`, `prepare_employee_manager_validation` | aucune execution directe | validation responsable preparee |
 | Transformations/negoce | `transformations.read`, `transformations.write` | `get_transformations`, `get_transformation_profile` | `prepare_transformation`, `prepare_transformation_update`, `prepare_transformation_validation` | aucune execution directe | impacts stock non appliques sans raccord metier allowliste |
-| Qualite | `quality.read`, `quality.configuration.write` | contexte, zones, equipements, types temperature, releves temperature, parametres temperature, releves nettoyage, plans nettoyage, taches | taches, plans nettoyage, parametres temperature, affectations zone/equipement | `quality_activate_configuration`, `quality_deactivate_configuration` | activation exige confirmation; plans incomplets refuses |
+| Qualite | `quality.read`, `quality.record.create`, `quality.nc.manage`, `quality.action.manage`, `quality.configuration.write` | contexte, qualite du jour, retards, DDPP, zones, equipements, types temperature, releves temperature, parametres temperature, releves nettoyage, plans nettoyage, taches | taches, plans nettoyage, parametres temperature, affectations zone/equipement, non-conformites, actions correctives | `quality_activate_configuration`, `quality_deactivate_configuration`, `execute_quality_temperature_occurrence`, `execute_quality_cleaning_occurrence`, `execute_quality_manual_occurrence`, `close_quality_non_conformity` | activation et cloture NC exigent confirmation; taches SYSTEM verrouillees executees par formulaire metier |
 | Dossier d'agrement sanitaire | `quality.documentation.read`, `quality.documentation.edit`, `mcp.execute` | liste, plan, section, blocs, recherche | creation/modification sections et blocs structures, preview, restauration | `quality.documentation.apply_section_updates`, `update_quality_section`, `execute_quality_section_update` | action canonique allowlistee et auditee |
 
 ## Garde-fous
@@ -110,4 +110,5 @@ node backend/scripts/test-mcp-public-tools-list.js
 node backend/scripts/test-agent-mcp-coverage-matrix.js
 node backend/scripts/test-quality-temperature-type-mcp-tools.js
 node backend/scripts/test-quality-cleaning-plan-multi-targets.js
+node backend/scripts/test-quality-operational-workstation.js
 ```

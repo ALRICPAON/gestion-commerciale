@@ -475,10 +475,36 @@ async function createCleaningRecord(db, storeId, userId, payload) {
     await client.query('BEGIN');
     const result = await client.query(
       `INSERT INTO quality_cleaning_records (
-        store_id, cleaning_plan_id, quality_task_id, performed_at, performed_by, status, comment
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+        store_id, cleaning_plan_id, quality_task_id, occurrence_id, performed_at, performed_by, status,
+        visual_check_status, anomaly_comment, corrective_action, evidence_photo_id, evidence_document_id,
+        execution_snapshot, comment
+      ) VALUES ($1,$2,$3,$4::uuid,$5,$6,$7,$8,$9,$10,$11::uuid,$12::uuid,$13::jsonb,$14)
       RETURNING *`,
-      [storeId, plan.id, taskId, payload.performed_at, payload.performed_by || userId, payload.status, payload.comment]
+      [
+        storeId,
+        plan.id,
+        taskId,
+        payload.occurrence_id || null,
+        payload.performed_at,
+        payload.performed_by || userId,
+        payload.status,
+        payload.visual_check_status || null,
+        payload.anomaly_comment || null,
+        payload.corrective_action || null,
+        payload.evidence_photo_id || null,
+        payload.evidence_document_id || null,
+        JSON.stringify({
+          title: plan.title,
+          zones: plan.zones || [],
+          equipments: plan.equipments || [],
+          method: plan.method,
+          product_name: plan.product_name,
+          dosage_concentration: plan.dosage_concentration,
+          contact_time_minutes: plan.contact_time_minutes,
+          expected_proof: plan.expected_proof,
+        }),
+        payload.comment,
+      ]
     );
     if (taskId) {
       await completeQualityTask(client, storeId, userId, taskId, `Nettoyage ${payload.status}`, payload.performed_at);

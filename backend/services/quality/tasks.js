@@ -259,6 +259,12 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
 async function updateQualityTaskStatus(db, storeId, userId, taskId, payload) {
   const before = await getQualityTask(db, storeId, taskId);
   if (!before) return null;
+  if (payload.status === 'completed' && before.task_origin === 'SYSTEM' && before.source_locked && payload.allow_system_completion !== true) {
+    const err = new Error('Completion directe refusee: cette tache SYSTEM doit etre realisee par son formulaire metier.');
+    err.status = 409;
+    err.publicMessage = err.message;
+    throw err;
+  }
 
   const completedAt = payload.status === 'completed' ? new Date(payload.completed_at || new Date()) : before.last_completed_at;
   const nextDueAt = payload.next_due_at
@@ -298,6 +304,7 @@ async function completeQualityTask(db, storeId, userId, taskId, comment = null, 
     status: 'completed',
     comment,
     completed_at: completedAt,
+    allow_system_completion: true,
   });
 }
 
