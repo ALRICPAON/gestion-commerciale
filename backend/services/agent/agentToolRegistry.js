@@ -288,6 +288,8 @@ const qualityNonConformityInputSchema = {
   properties: {
     origin_type: { type: 'string' },
     origin_record_id: { type: 'string' },
+    source_record_type: { type: 'string' },
+    source_record_id: { type: 'string' },
     quality_task_id: { type: 'string' },
     occurrence_id: { type: 'string' },
     source_entity_type: { type: 'string' },
@@ -1717,8 +1719,36 @@ const tools = [
     riskLevel: RISK_LEVELS.READ,
     requiredPermission: 'quality.read',
     requiresConfirmation: false,
-    inputSchema: { type: 'object', properties: { start_date: { type: 'string' }, end_date: { type: 'string' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: {
+      start_date: { type: 'string' },
+      end_date: { type: 'string' },
+      type: { type: 'string', enum: ['temperature', 'cleaning', 'manual_task', 'manual', 'control'] },
+      zone_id: { type: 'string' },
+      equipment_id: { type: 'string' },
+      operator_user_id: { type: 'string' },
+      conformity_status: { type: 'string', enum: ['conform', 'non_conform', 'not_applicable'] },
+      nc_status: { type: 'string', enum: ['open', 'in_progress', 'closed', 'cancelled'] },
+      severity: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+      action_status: { type: 'string', enum: ['open', 'in_progress', 'completed', 'cancelled'] },
+      alert_status: { type: 'string', enum: ['compliant', 'warning', 'out_of_limits'] },
+      cleaning_status: { type: 'string' },
+    }, additionalProperties: false },
     execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Dashboard DDPP qualite', data: await qualityOperations.getDdppDashboard(db, context.store_id, input) }),
+  }),
+  tool({
+    name: 'get_quality_ddpp_record_detail',
+    title: 'Lire detail DDPP',
+    description: 'Relit le detail DDPP d un releve temperature, nettoyage ou tache manuelle avec occurrence, tache, non-conformites et actions correctives liees.',
+    domain: 'quality',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.read',
+    requiresConfirmation: false,
+    inputSchema: { type: 'object', required: ['type', 'id'], properties: { type: { type: 'string', enum: ['temperature', 'cleaning', 'manual_task', 'manual', 'control'] }, id: { type: 'string' } }, additionalProperties: false },
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const data = await qualityOperations.getDdppRecordDetail(db, context.store_id, input.type, input.id);
+      if (!data) return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Detail DDPP introuvable', data: null });
+      return response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Detail DDPP qualite', data });
+    },
   }),
   tool({
     name: 'list_quality_temperature_types',

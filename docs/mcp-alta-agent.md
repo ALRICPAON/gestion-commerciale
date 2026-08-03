@@ -49,7 +49,7 @@ Le serveur supporte les deux modes utiles pour ChatGPT Business Apps et les outi
 Etat attendu du catalogue public complet ALTA MAREE V3 apres cette evolution:
 
 - version `1.8.4`;
-- `tool_count: 180`;
+- `tool_count: 181`;
 - `coverage_complete: true`;
 - `missing_tools: []`;
 - `frontend_backend_coverage_complete: true`;
@@ -60,6 +60,7 @@ Outils qualite operationnels ajoutes:
 - `get_quality_today_work`
 - `get_quality_overdue_work`
 - `get_quality_ddpp_dashboard`
+- `get_quality_ddpp_record_detail`
 - `execute_quality_temperature_occurrence`
 - `execute_quality_cleaning_occurrence`
 - `execute_quality_manual_occurrence`

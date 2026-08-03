@@ -22,9 +22,14 @@
       <label>Zone<input name="zone_id" class="form-input" type="text" placeholder="ID zone"></label>
       <label>Equipement<input name="equipment_id" class="form-input" type="text" placeholder="ID equipement"></label>
       <label>Conformite<select name="conformity_status" class="form-input"><option value="">Toutes</option><option value="conform">Conforme</option><option value="non_conform">Non conforme</option><option value="not_applicable">Non applicable</option></select></label>
+      <label>Statut NC<select name="nc_status" class="form-input"><option value="">Tous</option><option value="open">Ouverte</option><option value="in_progress">En cours</option><option value="closed">Cloturee</option><option value="cancelled">Annulee</option></select></label>
+      <label>Criticite<select name="severity" class="form-input"><option value="">Toutes</option><option value="critical">Critique</option><option value="high">Elevee</option><option value="medium">Moyenne</option><option value="low">Faible</option></select></label>
+      <label>Statut action<select name="action_status" class="form-input"><option value="">Tous</option><option value="open">Ouverte</option><option value="in_progress">En cours</option><option value="completed">Realisee</option><option value="cancelled">Annulee</option></select></label>
+      <label>Operateur<input name="operator_user_id" class="form-input" type="text" placeholder="ID operateur"></label>
       <div class="quality-actions"><button class="btn btn-primary" type="submit">Filtrer</button></div>
     </form>
     <section id="quality-ddpp-status" class="quality-card"></section>
+    <section id="quality-ddpp-summary" class="quality-grid"></section>
     <section class="quality-card"><h3>Situation du jour</h3><div id="quality-ddpp-today" class="quality-grid"></div></section>
     <section class="quality-card"><h3>Historique du jour</h3><div id="quality-ddpp-completed" class="quality-table-wrapper"></div></section>
     <section class="quality-card"><h3>Temperatures</h3><div id="quality-ddpp-temperatures" class="quality-table-wrapper"></div></section>
@@ -32,6 +37,15 @@
     <section class="quality-card"><h3>Non-conformites</h3><div id="quality-ddpp-nc" class="quality-list-grid"></div></section>
     <section class="quality-card"><h3>Actions correctives</h3><div id="quality-ddpp-actions" class="quality-list-grid"></div></section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/operations-api.js?v=2"></script><script src="../js/quality-ddpp.js?v=2"></script>
+  <div id="quality-ddpp-detail-modal" class="quality-modal hidden" role="dialog" aria-modal="true" aria-labelledby="quality-ddpp-detail-title">
+    <div class="quality-modal-panel quality-ddpp-detail-panel">
+      <div class="quality-section-header">
+        <div><span id="quality-ddpp-detail-type" class="quality-badge">Detail</span><h3 id="quality-ddpp-detail-title">Detail du controle</h3></div>
+        <button id="quality-ddpp-detail-close" class="btn btn-secondary" type="button">Fermer</button>
+      </div>
+      <div id="quality-ddpp-detail-body"></div>
+    </div>
+  </div>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/operations-api.js?v=3"></script><script src="../js/quality-ddpp.js?v=3"></script>
 </body>
 </html>

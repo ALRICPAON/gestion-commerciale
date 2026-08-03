@@ -186,6 +186,7 @@ async function main() {
     'get_quality_today_work',
     'get_quality_overdue_work',
     'get_quality_ddpp_dashboard',
+    'get_quality_ddpp_record_detail',
     'execute_quality_temperature_occurrence',
     'execute_quality_cleaning_occurrence',
     'execute_quality_manual_occurrence',
@@ -323,7 +324,7 @@ async function main() {
 
   console.log(JSON.stringify({
     ok: true,
-    checked_public_tools: 9,
+    checked_public_tools: 10,
     system_direct_completion_blocked: true,
     system_business_completion_allowed: true,
     manual_execution_recorded: true,

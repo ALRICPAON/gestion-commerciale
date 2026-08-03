@@ -32,6 +32,7 @@
     today(filters) { return request(`/today${queryString(filters)}`); },
     overdue(filters) { return request(`/overdue${queryString(filters)}`); },
     ddpp(filters) { return request(`/ddpp${queryString(filters)}`); },
+    ddppRecordDetail(type, id) { return request(`/ddpp/record/${encodeURIComponent(type)}/${encodeURIComponent(id)}`); },
     executeTemperature(payload) { return request('/temperature-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },
     executeCleaning(payload) { return request('/cleaning-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },
     executeManual(payload) { return request('/manual-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },

@@ -540,6 +540,15 @@ async function listCleaningRecords(db, storeId, query = {}) {
   const where = ['r.store_id = $1'];
   addFilter(where, params, query.cleaning_plan_id, (i) => `r.cleaning_plan_id = $${i}`);
   addFilter(where, params, query.status, (i) => `r.status = $${i}`);
+  addFilter(where, params, query.operator_user_id || query.operator, (i) => `r.performed_by = $${i}::uuid`);
+  addFilter(where, params, query.zone_id, (i) => `(p.zone_id = $${i}::uuid OR EXISTS (
+    SELECT 1 FROM quality_cleaning_plan_zones fpz
+    WHERE fpz.plan_id = p.id AND fpz.zone_id = $${i}::uuid AND fpz.deleted_at IS NULL
+  ))`);
+  addFilter(where, params, query.equipment_id, (i) => `(p.equipment_id = $${i}::uuid OR EXISTS (
+    SELECT 1 FROM quality_cleaning_plan_equipments fpe
+    WHERE fpe.plan_id = p.id AND fpe.equipment_id = $${i}::uuid AND fpe.deleted_at IS NULL
+  ))`);
   addFilter(where, params, query.start_date, (i) => `r.performed_at >= $${i}::timestamptz`);
   addFilter(where, params, query.end_date, (i) => `r.performed_at <= $${i}::timestamptz`);
   const result = await db.query(
