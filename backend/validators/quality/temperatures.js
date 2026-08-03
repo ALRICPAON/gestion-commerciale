@@ -1,4 +1,4 @@
-const TEMPERATURE_SOURCES = Object.freeze(['manual', 'iot', 'import', 'api']);
+const TEMPERATURE_SOURCES = Object.freeze(['scheduled', 'exceptional', 'manual', 'automatic', 'iot', 'import', 'api']);
 const TEMPERATURE_ALERT_STATUSES = Object.freeze(['compliant', 'warning', 'out_of_limits']);
 const TEMPERATURE_FREQUENCY_UNITS = Object.freeze(['hours', 'days', 'events']);
 const TEMPERATURE_SCHEDULED_DAYS = Object.freeze(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']);
@@ -47,6 +47,7 @@ function mapRecordPayload(body = {}) {
     unit: nullableText(body.unit) || 'C',
     recorded_at: nullableText(body.recorded_at) || new Date().toISOString(),
     source: TEMPERATURE_SOURCES.includes(source) ? source : 'manual',
+    parameter_id: cleanUuid(body.parameter_id || body.temperature_limit_id),
     operator_user_id: cleanUuid(body.operator_user_id),
     quality_task_id: cleanUuid(body.quality_task_id),
     occurrence_id: cleanUuid(body.occurrence_id),
@@ -54,6 +55,7 @@ function mapRecordPayload(body = {}) {
     method_used: nullableText(body.method_used || body.method),
     evidence_photo_id: cleanUuid(body.evidence_photo_id),
     evidence_document_id: cleanUuid(body.evidence_document_id),
+    exceptional_reason: nullableText(body.exceptional_reason || body.reason),
   };
 }
 

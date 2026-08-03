@@ -470,16 +470,18 @@ async function createCleaningRecord(db, storeId, userId, payload) {
     err.status = 404;
     throw err;
   }
-  const taskId = payload.quality_task_id || plan.quality_task_id || null;
-  const client = await db.connect();
+  const taskId = Object.prototype.hasOwnProperty.call(payload, 'quality_task_id') ? payload.quality_task_id : (plan.quality_task_id || null);
+  const ownsTransaction = typeof db.connect === 'function';
+  const client = ownsTransaction ? await db.connect() : db;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
     const result = await client.query(
       `INSERT INTO quality_cleaning_records (
         store_id, cleaning_plan_id, quality_task_id, occurrence_id, performed_at, performed_by, status,
+        source, exceptional_reason, started_at, ended_at,
         visual_check_status, anomaly_comment, corrective_action, evidence_photo_id, evidence_document_id,
         execution_snapshot, comment
-      ) VALUES ($1,$2,$3,$4::uuid,$5,$6,$7,$8,$9,$10,$11::uuid,$12::uuid,$13::jsonb,$14)
+      ) VALUES ($1,$2,$3,$4::uuid,$5,$6,$7,$8::text,$9::text,$10::timestamptz,$11::timestamptz,$12,$13,$14,$15::uuid,$16::uuid,$17::jsonb,$18)
       RETURNING *`,
       [
         storeId,
@@ -489,6 +491,10 @@ async function createCleaningRecord(db, storeId, userId, payload) {
         payload.performed_at,
         payload.performed_by || userId,
         payload.status,
+        payload.source || 'scheduled',
+        payload.exceptional_reason || null,
+        payload.started_at || null,
+        payload.ended_at || null,
         payload.visual_check_status || null,
         payload.anomaly_comment || null,
         payload.corrective_action || null,
@@ -507,7 +513,7 @@ async function createCleaningRecord(db, storeId, userId, payload) {
         payload.comment,
       ]
     );
-    if (taskId) {
+    if (taskId && payload.skip_task_completion !== true) {
       await completeQualityTask(client, storeId, userId, taskId, `Nettoyage ${payload.status}`, payload.performed_at);
     }
     await logQualityEvent({
