@@ -26,19 +26,43 @@
   function taskFrequency(task) { if (!task?.frequency_value) return '-'; const units = { hours: 'h', days: 'j', weeks: 'sem.', months: 'mois', events: 'evenement(s)' }; return `${task.frequency_value} ${units[task.frequency_unit] || task.frequency_unit}`; }
   function taskStatus(task) { const status = task?.computed_status || task?.status; return { planned: 'Planifiee', due: 'Du jour', overdue: 'En retard', completed: 'Terminee', paused: 'Suspendue', cancelled: 'Annulee' }[status] || 'Non planifie'; }
   function objectLabel(item) { if (!item) return ''; return `${item.code ? `${item.code} - ` : ''}${item.name || item.id}${item.zone_name ? ` (${item.zone_name})` : ''}`; }
-  function selectedZoneIds() { return [...els.zoneIds.selectedOptions].map((option) => option.value).filter(Boolean); }
-  function planZones(plan) { return Array.isArray(plan.zones) && plan.zones.length ? plan.zones : plan.zone_id ? [{ id: plan.zone_id, code: plan.zone_code, name: plan.zone_name }] : []; }
-  function planEquipments(plan) { return Array.isArray(plan.equipments) && plan.equipments.length ? plan.equipments : plan.equipment_id ? [{ id: plan.equipment_id, code: plan.equipment_code, name: plan.equipment_name, zone_name: plan.zone_name }] : []; }
+  function selectedZoneIds() { return [...els.zoneIds.options].filter((option) => option.selected).map((option) => option.value).filter(Boolean); }
+  function normalizeItems(value) { return Array.isArray(value) ? value.filter(Boolean) : []; }
+  function resolveKnownId(item, collection) {
+    if (!item) return null;
+    const raw = typeof item === 'object' ? (item.id || item.zone_id || item.equipment_id || item.code) : item;
+    if (!raw) return null;
+    const value = String(raw);
+    const direct = collection.find((entry) => String(entry.id) === value);
+    if (direct) return direct.id;
+    const byCode = collection.find((entry) => entry.code && String(entry.code) === value);
+    return byCode?.id || null;
+  }
+  function uniqueIds(items, collection) {
+    return [...new Set(normalizeItems(items).map((item) => resolveKnownId(item, collection)).filter(Boolean))];
+  }
+  function planZoneIds(plan) {
+    const fromZones = uniqueIds(plan.zones, zones);
+    if (fromZones.length) return fromZones;
+    return uniqueIds([plan.zone_id || plan.zone_code], zones);
+  }
+  function planEquipmentIds(plan) {
+    const fromEquipments = uniqueIds(plan.equipments, equipments);
+    if (fromEquipments.length) return fromEquipments;
+    return uniqueIds([plan.equipment_id || plan.equipment_code], equipments);
+  }
+  function planZones(plan) { const ids = planZoneIds(plan); return ids.map((id) => zones.find((zone) => zone.id === id)).filter(Boolean); }
+  function planEquipments(plan) { const ids = planEquipmentIds(plan); return ids.map((id) => equipments.find((equipment) => equipment.id === id)).filter(Boolean); }
   function names(items) { return items.map((item) => item.name || item.code || item.id).filter(Boolean).join(', ') || '-'; }
 
   function refreshZones(selectedIds = []) {
-    const selected = new Set(selectedIds);
+    const selected = new Set(selectedIds.map(String));
     els.zoneIds.innerHTML = '';
     zones.forEach((zone) => {
       const option = document.createElement('option');
       option.value = zone.id;
       option.textContent = objectLabel(zone);
-      option.selected = selected.has(zone.id);
+      option.selected = selected.has(String(zone.id));
       els.zoneIds.appendChild(option);
     });
   }
@@ -158,8 +182,8 @@
   }
 
   function fillForm(plan) {
-    const zoneIds = planZones(plan).map((zone) => zone.id).filter(Boolean);
-    const equipmentIds = planEquipments(plan).map((equipment) => equipment.id).filter(Boolean);
+    const zoneIds = planZoneIds(plan);
+    const equipmentIds = planEquipmentIds(plan);
     els.id.value = plan.id;
     els.title.value = plan.title || '';
     els.product.value = plan.product_name || '';
@@ -180,6 +204,13 @@
     els.formTitle.textContent = 'Modifier le plan';
     refreshPlanningMode();
     els.formCard.classList.remove('hidden');
+  }
+
+  async function openEditForm(planId) {
+    setFeedback('Chargement du plan...');
+    const plan = await api.getPlan(planId);
+    fillForm(plan);
+    setFeedback('');
   }
 
   function render() {
@@ -275,7 +306,14 @@
     if (!button || !canManage) return;
     const plan = plans.find((item) => item.id === button.dataset.id);
     if (!plan) return;
-    if (button.dataset.action === 'edit') return fillForm(plan);
+    if (button.dataset.action === 'edit') {
+      try {
+        await openEditForm(plan.id);
+      } catch (error) {
+        setFeedback(error.message, 'error');
+      }
+      return;
+    }
     try {
       await api.updatePlanStatus(plan.id, !plan.active);
       await load();
@@ -284,5 +322,25 @@
     }
   });
 
-  init().catch((error) => setFeedback(error.message, 'error'));
+  if (window.__QUALITY_CLEANING_PLANS_TEST_MODE__) {
+    window.__QualityCleaningPlansTest = {
+      fillForm,
+      openEditForm,
+      planEquipmentIds,
+      planZoneIds,
+      refreshZones,
+      selectedZoneIds,
+      setData: (data = {}) => {
+        zones = data.zones || zones;
+        equipments = data.equipments || equipments;
+        plans = data.plans || plans;
+        tasks = data.tasks || tasks;
+        users = data.users || users;
+        selectedEquipmentIds = new Set(data.selectedEquipmentIds || []);
+      },
+      state: () => ({ selectedEquipmentIds: [...selectedEquipmentIds] }),
+    };
+  } else {
+    init().catch((error) => setFeedback(error.message, 'error'));
+  }
 })();
