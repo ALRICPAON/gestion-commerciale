@@ -212,12 +212,14 @@ Tables et migration:
 
 - `quality_cleaning_plans` est la source de verite PMS des plans de nettoyage, y compris perimetre, responsable, frequence, heure cible, duree, methode, preuves et actions correctives;
 - `quality_tasks` reste le moteur d'execution et d'echeance; pour le nettoyage, il est synchronise depuis `quality_cleaning_plans` et ne porte pas une saisie concurrente;
+- les executions temperature et nettoyage passent par des services canoniques partages par Qualite du jour, les anciennes routes et MCP;
 - `quality_cleaning_plan_zones` et `quality_cleaning_plan_equipments` portent les associations multi-zones et multi-equipements des plans;
 - `quality_zones` et `quality_equipments` restent les sources du jumeau numerique;
 - `063_quality_configuration_agent_write.sql` ajoute uniquement des colonnes optionnelles, contraintes de statut et index;
 - `064_quality_cleaning_plan_multi_targets.sql` est additive, idempotente et backfill les liaisons depuis `zone_id` et `equipment_id`.
 - `068_quality_operational_workstation.sql` ajoute les occurrences operationnelles, non-conformites, actions correctives et liens de preuve sans modifier les donnees existantes.
 - `069_quality_manual_execution_records.sql` ajoute la trace exploitable des executions de taches manuelles.
+- `070_quality_canonical_execution_sources.sql` ajoute les champs de source et de motif exceptionnel necessaires aux executions canoniques.
 
 Compatibilite plans de nettoyage:
 
@@ -235,6 +237,8 @@ Poste operationnel:
 - une tache `SYSTEM` verrouillee ne peut plus etre terminee directement: elle doit produire un releve temperature ou un enregistrement nettoyage;
 - `quality_task_occurrences` garde chaque echeance reelle sans ecraser l'historique.
 - une tache `MANUAL` realisee cree maintenant une ligne `quality_manual_task_records`; elle apparait dans `Realises aujourd'hui` et dans le DDPP.
+- une saisie temperature ou nettoyage sans occurrence est une saisie exceptionnelle et exige un motif.
+- les controles `frequency_unit = events` sont affiches dans une section dediee et ne sont pas consideres comme dus, en retard ou a venir.
 
 Outils MCP:
 

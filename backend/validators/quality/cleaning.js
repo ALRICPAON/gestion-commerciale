@@ -103,6 +103,8 @@ function mapRecordPayload(body = {}) {
     quality_task_id: cleanUuid(body.quality_task_id),
     occurrence_id: cleanUuid(body.occurrence_id),
     performed_at: nullableText(body.performed_at) || new Date().toISOString(),
+    started_at: nullableText(body.started_at || body.startedAt),
+    ended_at: nullableText(body.ended_at || body.endedAt),
     performed_by: cleanUuid(body.performed_by),
     status: CLEANING_RECORD_STATUSES.includes(status) ? status : 'done',
     visual_check_status: nullableText(body.visual_check_status || body.visualCheckStatus),
@@ -110,6 +112,8 @@ function mapRecordPayload(body = {}) {
     corrective_action: nullableText(body.corrective_action || body.correctiveAction),
     evidence_photo_id: cleanUuid(body.evidence_photo_id),
     evidence_document_id: cleanUuid(body.evidence_document_id),
+    source: nullableText(body.source) || 'scheduled',
+    exceptional_reason: nullableText(body.exceptional_reason || body.reason),
     comment: nullableText(body.comment),
   };
 }

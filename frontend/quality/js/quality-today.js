@@ -12,6 +12,7 @@
     today: $('quality-work-today'),
     overdue: $('quality-work-overdue'),
     upcoming: $('quality-work-upcoming'),
+    events: $('quality-work-events'),
     completed: $('quality-work-completed'),
     nc: $('quality-work-nc'),
     panel: $('quality-execution-panel'),
@@ -108,6 +109,7 @@
     els.today.innerHTML = sectionHtml(work.sections.today, 'Aucun controle a faire maintenant.');
     els.overdue.innerHTML = sectionHtml(work.sections.overdue, 'Aucun retard.');
     els.upcoming.innerHTML = sectionHtml(work.sections.upcoming, 'Aucun controle a venir.');
+    els.events.innerHTML = sectionHtml(work.sections.event_controls, 'Aucun controle evenementiel.');
     els.completed.innerHTML = sectionHtml(work.sections.completed_today, 'Aucun controle realise aujourd hui.');
     els.nc.innerHTML = work.sections.non_conformities?.length
       ? work.sections.non_conformities.map((item) => `<article class="quality-card quality-temperature-alert"><span class="quality-badge">${escapeHtml(item.severity)}</span><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description)}</p><p class="quality-muted">${formatDate(item.created_at)}</p></article>`).join('')
@@ -116,7 +118,7 @@
   }
 
   function findItem(id) {
-    return ['today', 'overdue', 'upcoming'].flatMap((key) => work.sections[key] || []).find((item) => String(item.id) === String(id));
+    return ['today', 'overdue', 'upcoming', 'event_controls'].flatMap((key) => work.sections[key] || []).find((item) => String(item.id) === String(id));
   }
 
   function toggleFields(type) {

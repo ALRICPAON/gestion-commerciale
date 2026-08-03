@@ -23,6 +23,7 @@ const {
   saveTemperatureLimit,
   saveTemperatureRecord,
 } = require('../../services/quality/temperatures');
+const { recordTemperatureControl } = require('../../services/quality/operations');
 
 const router = express.Router();
 
@@ -129,8 +130,11 @@ router.post('/', requireQualityPermission(QUALITY_PERMISSIONS.RECORD_CREATE), as
     const payload = mapRecordPayload(req.body);
     const error = validateRecordPayload(payload);
     if (error) return res.status(400).json({ error });
-    const record = await saveTemperatureRecord(req.dbPool, req.user.store_id, req.user.id, payload);
-    res.status(201).json(record);
+    const result = await recordTemperatureControl(req.dbPool, req.user.store_id, req.user.id, {
+      ...payload,
+      source: payload.occurrence_id || payload.quality_task_id ? (payload.source || 'scheduled') : 'exceptional',
+    });
+    res.status(201).json(result.record);
   } catch (err) {
     handleError(res, err, 'Erreur POST /api/quality/temperatures');
   }

@@ -2,7 +2,13 @@ const assert = require('assert');
 
 const { listAgentTools, listMcpTools } = require('../services/agent/agentToolRegistry');
 const { updateQualityTaskStatus, completeQualityTask } = require('../services/quality/tasks');
-const { executeManualOccurrence, listCompletedWorkItems } = require('../services/quality/operations');
+const {
+  executeManualOccurrence,
+  listQualityTodayWork,
+  listCompletedWorkItems,
+  recordCleaningExecution,
+  recordTemperatureControl,
+} = require('../services/quality/operations');
 
 const STORE_ID = '11111111-1111-1111-1111-111111111111';
 const USER_ID = '22222222-2222-2222-2222-222222222222';
@@ -44,6 +50,15 @@ function makeDb(task = makeTask()) {
     conformity_status: 'conform',
   };
   const calls = [];
+  const temperatureRecord = {
+    id: '77777777-7777-7777-7777-777777777777',
+    value: 1.2,
+    alert_status: 'compliant',
+  };
+  const cleaningRecord = {
+    id: '88888888-8888-8888-8888-888888888888',
+    status: 'done',
+  };
   return {
     calls,
     async query(sql, params = []) {
@@ -68,6 +83,10 @@ function makeDb(task = makeTask()) {
           }],
         };
       }
+      if (/FROM quality_temperature_records r/i.test(sql)) return { rows: [] };
+      if (/INSERT INTO quality_temperature_records/i.test(sql)) return { rows: [temperatureRecord] };
+      if (/FROM quality_cleaning_plans/i.test(sql)) return { rows: [{ id: '99999999-9999-9999-9999-999999999999', active: true, quality_task_id: TASK_ID, title: 'Plan test', zones: [], equipments: [] }] };
+      if (/INSERT INTO quality_cleaning_records/i.test(sql)) return { rows: [cleaningRecord] };
       if (/FROM quality_task_occurrences/i.test(sql)) return { rows: [{ ...occurrence, status: 'completed' }] };
       if (/INSERT INTO quality_task_occurrences/i.test(sql)) return { rows: [occurrence] };
       if (/INSERT INTO quality_manual_task_records/i.test(sql)) return { rows: [manualRecord] };
@@ -76,6 +95,55 @@ function makeDb(task = makeTask()) {
       if (/UPDATE quality_tasks/i.test(sql)) return { rows: [{ ...task, status: params[2], last_completed_at: params[3], next_due_at: params[4] }] };
       if (/INSERT INTO quality_task_history/i.test(sql)) return { rows: [] };
       if (/INSERT INTO quality_event_log/i.test(sql)) return { rows: [] };
+      if (/BEGIN|COMMIT|ROLLBACK/i.test(sql)) return { rows: [] };
+      return { rows: [] };
+    },
+  };
+}
+
+function makePoolDb(task = makeTask()) {
+  const client = makeDb(task);
+  client.release = () => {};
+  return {
+    client,
+    calls: client.calls,
+    async connect() {
+      return client;
+    },
+  };
+}
+
+function makeTodayWorkDb() {
+  const eventTask = makeTask({
+    id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+    title: 'Controle reception evenementiel',
+    module_key: 'manual',
+    task_origin: 'MANUAL',
+    source_entity_type: null,
+    source_entity_id: null,
+    source_locked: false,
+    frequency_unit: 'events',
+    next_due_at: null,
+  });
+  const plannedTask = makeTask({
+    id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    title: 'Controle futur',
+    module_key: 'manual',
+    task_origin: 'MANUAL',
+    source_entity_type: null,
+    source_entity_id: null,
+    source_locked: false,
+    frequency_unit: 'days',
+    next_due_at: '2099-01-01T04:00:00.000Z',
+  });
+  return {
+    async query(sql, params = []) {
+      if (/FROM quality_temperature_limits l/i.test(sql)) return { rows: [] };
+      if (/FROM quality_cleaning_plans p/i.test(sql)) return { rows: [] };
+      if (/FROM quality_tasks t/i.test(sql)) return { rows: [eventTask, plannedTask] };
+      if (/FROM quality_task_occurrences o/i.test(sql)) return { rows: [] };
+      if (/FROM quality_non_conformities nc/i.test(sql)) return { rows: [] };
+      if (/INSERT INTO quality_task_occurrences/i.test(sql)) return { rows: [{ id: `occ-${params[1]}`, task_id: params[1], due_at: params[2], status: 'planned' }] };
       return { rows: [] };
     },
   };
@@ -142,12 +210,50 @@ async function main() {
   const completed = await listCompletedWorkItems(manualDb, STORE_ID, {});
   assert.equal(completed[0].type, 'manual', 'Une MANUAL realisee doit revenir dans les realises');
 
+  const temperatureDb = makePoolDb();
+  const temperature = await recordTemperatureControl(temperatureDb, STORE_ID, USER_ID, {
+    quality_task_id: TASK_ID,
+    type_code: 'COLD_ROOM',
+    value: 1.2,
+    recorded_at: '2026-08-03T04:05:00.000Z',
+  });
+  assert(temperature.record, 'La saisie temperature canonique doit creer un record');
+  assert(temperatureDb.calls.some((call) => /UPDATE quality_task_occurrences/i.test(call.sql)), 'La saisie temperature doit completer une occurrence');
+
+  const exceptionalDb = makePoolDb();
+  await assert.rejects(
+    () => recordTemperatureControl(exceptionalDb, STORE_ID, USER_ID, {
+      type_code: 'COLD_ROOM',
+      value: 1.2,
+      source: 'exceptional',
+    }),
+    /Motif obligatoire/
+  );
+
+  const cleaningDb = makePoolDb();
+  const cleaning = await recordCleaningExecution(cleaningDb, STORE_ID, USER_ID, {
+    cleaning_plan_id: '99999999-9999-9999-9999-999999999999',
+    quality_task_id: TASK_ID,
+    status: 'done',
+    performed_at: '2026-08-03T04:10:00.000Z',
+  });
+  assert(cleaning.record, 'La saisie nettoyage canonique doit creer un record');
+  assert(cleaningDb.calls.some((call) => /UPDATE quality_task_occurrences/i.test(call.sql)), 'La saisie nettoyage doit completer une occurrence');
+
+  const todayWork = await listQualityTodayWork(makeTodayWorkDb(), STORE_ID, { include_upcoming: 'true' });
+  assert.equal(todayWork.summary.event_controls, 1, 'Les controles evenementiels doivent avoir leur section dediee');
+  assert.equal(todayWork.sections.event_controls[0].frequency_unit, 'events', 'La frequence events doit etre conservee');
+  assert(!todayWork.sections.upcoming.some((item) => item.frequency_unit === 'events'), 'Un controle events ne doit pas apparaitre dans a venir');
+
   console.log(JSON.stringify({
     ok: true,
     checked_public_tools: 9,
     system_direct_completion_blocked: true,
     system_business_completion_allowed: true,
     manual_execution_recorded: true,
+    canonical_temperature_recorded: true,
+    canonical_cleaning_recorded: true,
+    event_controls_separated: true,
   }, null, 2));
 }
 

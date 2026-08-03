@@ -88,6 +88,7 @@ function normalizeWorkItem(source, item, task = {}) {
     evidence_photo_id: item.evidence_photo_id || item.proof_photo_id || null,
     evidence_document_id: item.evidence_document_id || item.proof_document_id || null,
     target_time: item.target_time || task.target_time || null,
+    frequency_unit: item.frequency_unit || task.frequency_unit || null,
     next_due_at: dueAt,
     status: item.computed_status || dueStatus(dueAt),
     criticality: task.criticality || (type === 'temperature' ? 'high' : 'medium'),
@@ -270,7 +271,8 @@ async function listQualityTodayWork(db, storeId, query = {}) {
     sections: {
       today: work.filter((item) => item.status === 'due'),
       overdue: work.filter((item) => item.status === 'overdue' || item.status === 'late'),
-      upcoming: work.filter((item) => item.status === 'planned'),
+      upcoming: work.filter((item) => item.status === 'planned' && item.frequency_unit !== 'events'),
+      event_controls: work.filter((item) => item.frequency_unit === 'events'),
       completed_today: [
         ...completedItems,
       ],
@@ -279,7 +281,8 @@ async function listQualityTodayWork(db, storeId, query = {}) {
     summary: {
       today: work.filter((item) => item.status === 'due').length,
       overdue: work.filter((item) => item.status === 'overdue' || item.status === 'late').length,
-      upcoming: work.filter((item) => item.status === 'planned').length,
+      upcoming: work.filter((item) => item.status === 'planned' && item.frequency_unit !== 'events').length,
+      event_controls: work.filter((item) => item.frequency_unit === 'events').length,
       completed_today: completedItems.length,
       open_non_conformities: nonConformities.length,
       critical_missing: work.filter((item) => ['high', 'critical'].includes(item.criticality) && ['overdue', 'late'].includes(item.status)).length,
@@ -316,38 +319,99 @@ async function getOccurrence(db, storeId, occurrenceId) {
   return result.rows[0] || null;
 }
 
-async function executeTemperatureOccurrence(db, storeId, userId, payload) {
+async function assertOccurrenceOpen(occurrence) {
+  if (!occurrence) return;
+  if (occurrence.status === 'completed' || occurrence.source_record_id) {
+    throw Object.assign(new Error('Cette occurrence est deja completee'), { status: 409, expose: true });
+  }
+}
+
+async function resolveOpenOccurrenceForTask(db, storeId, taskId, when, source = {}) {
+  if (!taskId) return null;
+  const existing = await db.query(
+    `SELECT *
+     FROM quality_task_occurrences
+     WHERE store_id = $1::uuid AND task_id = $2::uuid
+       AND status IN ('planned', 'due', 'late')
+       AND due_date = ($3::timestamptz)::date
+     ORDER BY ABS(EXTRACT(EPOCH FROM (due_at - $3::timestamptz))) ASC
+     LIMIT 2`,
+    [storeId, taskId, when || new Date().toISOString()]
+  );
+  if (existing.rows.length > 1) {
+    throw Object.assign(new Error('Plusieurs occurrences correspondent: selectionnez le controle attendu'), { status: 409, expose: true });
+  }
+  if (existing.rows[0]) return existing.rows[0];
+  return upsertOccurrence(db, storeId, taskId, when || new Date().toISOString(), source);
+}
+
+async function recordTemperatureControl(db, storeId, userId, payload) {
   if (payload.value === undefined || payload.value === null || payload.value === '') {
     throw Object.assign(new Error('Valeur temperature obligatoire'), { status: 400, expose: true });
   }
   return withTransaction(db, async (client) => {
     const occurrence = await getOccurrence(client, storeId, payload.occurrence_id);
+    await assertOccurrenceOpen(occurrence);
     const taskId = payload.quality_task_id || occurrence?.task_id || null;
-    if (!taskId) throw Object.assign(new Error('Tache temperature obligatoire'), { status: 400, expose: true });
-    const task = await getQualityTask(client, storeId, taskId);
-    if (task?.task_origin === 'SYSTEM' && task.source_entity_type !== 'temperature_parameter') {
+    const task = taskId ? await getQualityTask(client, storeId, taskId) : null;
+    if (taskId && task?.task_origin === 'SYSTEM' && task.source_entity_type !== 'temperature_parameter') {
       throw Object.assign(new Error('Cette tache SYSTEM doit etre executee par son formulaire metier'), { status: 409, expose: true });
     }
-    const effectiveOccurrence = occurrence || await upsertOccurrence(client, storeId, taskId, payload.recorded_at || new Date().toISOString(), { source_entity_type: task?.source_entity_type, source_entity_id: task?.source_entity_id });
-    const record = await saveTemperatureRecord(client, storeId, userId, { ...payload, quality_task_id: taskId, occurrence_id: effectiveOccurrence?.id || null, operator_user_id: payload.operator_user_id || userId, recorded_at: payload.recorded_at || new Date().toISOString() });
+    if (!taskId && payload.source === 'exceptional' && !payload.exceptional_reason && !payload.comment) {
+      throw Object.assign(new Error('Motif obligatoire pour une saisie temperature exceptionnelle'), { status: 400, expose: true });
+    }
+    if (!taskId && payload.source !== 'exceptional') {
+      throw Object.assign(new Error('Tache ou occurrence temperature obligatoire hors saisie exceptionnelle'), { status: 400, expose: true });
+    }
+    const effectiveOccurrence = occurrence || await resolveOpenOccurrenceForTask(client, storeId, taskId, payload.recorded_at || new Date().toISOString(), { source_entity_type: task?.source_entity_type, source_entity_id: task?.source_entity_id });
+    const record = await saveTemperatureRecord(client, storeId, userId, {
+      ...payload,
+      source: payload.source || (effectiveOccurrence ? 'scheduled' : 'exceptional'),
+      quality_task_id: taskId,
+      occurrence_id: effectiveOccurrence?.id || null,
+      operator_user_id: payload.operator_user_id || userId,
+      recorded_at: payload.recorded_at || new Date().toISOString(),
+      exceptional_reason: payload.exceptional_reason || payload.comment || null,
+    });
     if (effectiveOccurrence?.id) await completeOccurrence(client, storeId, userId, effectiveOccurrence.id, 'quality_temperature_record', record.id, record.alert_status, payload.comment);
     return { record, occurrence: effectiveOccurrence?.id ? await getOccurrence(client, storeId, effectiveOccurrence.id) : null };
   });
 }
 
-async function executeCleaningOccurrence(db, storeId, userId, payload) {
+async function recordCleaningExecution(db, storeId, userId, payload) {
   if (!payload.cleaning_plan_id) throw Object.assign(new Error('Plan de nettoyage obligatoire'), { status: 400, expose: true });
   if (['not_done', 'issue'].includes(payload.status) && !payload.comment && !payload.anomaly_comment) {
     throw Object.assign(new Error('Observation obligatoire pour un nettoyage non conforme ou non realise'), { status: 400, expose: true });
   }
   return withTransaction(db, async (client) => {
     const occurrence = await getOccurrence(client, storeId, payload.occurrence_id);
+    await assertOccurrenceOpen(occurrence);
     const taskId = payload.quality_task_id || occurrence?.task_id || null;
-    const effectiveOccurrence = occurrence || (taskId ? await upsertOccurrence(client, storeId, taskId, payload.performed_at || new Date().toISOString(), { source_entity_type: 'cleaning_plan', source_entity_id: payload.cleaning_plan_id }) : null);
-    const record = await createCleaningRecord(client, storeId, userId, { ...payload, quality_task_id: taskId, occurrence_id: effectiveOccurrence?.id || null, performed_by: payload.performed_by || userId, performed_at: payload.performed_at || new Date().toISOString() });
+    if (!taskId && payload.source === 'exceptional' && !payload.exceptional_reason && !payload.comment) {
+      throw Object.assign(new Error('Motif obligatoire pour une saisie nettoyage exceptionnelle'), { status: 400, expose: true });
+    }
+    const effectiveOccurrence = occurrence || (taskId ? await resolveOpenOccurrenceForTask(client, storeId, taskId, payload.performed_at || new Date().toISOString(), { source_entity_type: 'cleaning_plan', source_entity_id: payload.cleaning_plan_id }) : null);
+    const record = await createCleaningRecord(client, storeId, userId, {
+      ...payload,
+      source: payload.source || (effectiveOccurrence ? 'scheduled' : 'exceptional'),
+      skip_task_completion: !effectiveOccurrence,
+      quality_task_id: taskId || null,
+      occurrence_id: effectiveOccurrence?.id || null,
+      performed_by: payload.performed_by || userId,
+      performed_at: payload.performed_at || new Date().toISOString(),
+      exceptional_reason: payload.exceptional_reason || payload.comment || null,
+    });
     if (effectiveOccurrence?.id) await completeOccurrence(client, storeId, userId, effectiveOccurrence.id, 'quality_cleaning_record', record.id, record.status, payload.comment);
     return { record, occurrence: effectiveOccurrence?.id ? await getOccurrence(client, storeId, effectiveOccurrence.id) : null };
   });
+}
+
+async function executeTemperatureOccurrence(db, storeId, userId, payload) {
+  return recordTemperatureControl(db, storeId, userId, payload);
+}
+
+async function executeCleaningOccurrence(db, storeId, userId, payload) {
+  return recordCleaningExecution(db, storeId, userId, payload);
 }
 
 async function executeManualOccurrence(db, storeId, userId, payload) {
@@ -429,5 +493,7 @@ module.exports = {
   listCorrectiveActions,
   listOpenNonConformities,
   listQualityTodayWork,
+  recordCleaningExecution,
+  recordTemperatureControl,
   upsertOccurrence,
 };
