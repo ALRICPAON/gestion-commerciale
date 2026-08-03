@@ -132,7 +132,7 @@ router.post('/', requireQualityPermission(QUALITY_PERMISSIONS.RECORD_CREATE), as
     if (error) return res.status(400).json({ error });
     const result = await recordTemperatureControl(req.dbPool, req.user.store_id, req.user.id, {
       ...payload,
-      source: payload.occurrence_id || payload.quality_task_id ? (payload.source || 'scheduled') : 'exceptional',
+      source: payload.source || (payload.occurrence_id || payload.quality_task_id ? 'api' : 'manual'),
     });
     res.status(201).json(result.record);
   } catch (err) {
