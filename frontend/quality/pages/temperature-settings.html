@@ -36,6 +36,16 @@
           <label id="temperature-setting-task-frequency-value-label">Fréquence<input id="temperature-setting-frequency-value" class="form-input" type="number" min="1"></label>
           <label id="temperature-setting-task-frequency-unit-label">Unité fréquence<select id="temperature-setting-frequency-unit" class="form-input"><option value="">Non définie</option><option value="hours">Heures</option><option value="days">Jours</option><option value="weeks">Semaines</option><option value="months">Mois</option><option value="events">Événements</option></select></label>
           <label id="temperature-setting-task-target-time-label">Heure cible <input id="temperature-setting-target-time" class="form-input" type="time"></label>
+          <label id="temperature-setting-scheduled-days-label" class="quality-form-wide">Jours actifs
+            <span id="temperature-setting-scheduled-days" class="quality-checkbox-grid"></span>
+          </label>
+          <label id="temperature-setting-target-times-label" class="quality-form-wide">Horaires cibles
+            <span class="quality-inline-fieldset">
+              <input id="temperature-setting-target-times-input" class="form-input" type="time">
+              <button id="temperature-setting-add-target-time" class="btn btn-secondary" type="button">Ajouter</button>
+            </span>
+            <span id="temperature-setting-target-times-list" class="quality-actions"></span>
+          </label>
         </fieldset>
 
         <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Enregistrer</button><button id="temperature-setting-cancel-btn" class="btn btn-secondary" type="button">Annuler</button></div>
@@ -43,6 +53,6 @@
     </section>
     <section id="temperature-setting-list" class="quality-list-grid"></section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/digital-twin-api.js"></script><script src="../js/tasks-api.js?v=1"></script><script src="../js/temperature-api.js?v=3"></script><script src="../js/temperature-settings.js?v=2"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/digital-twin-api.js"></script><script src="../js/tasks-api.js?v=1"></script><script src="../js/temperature-api.js?v=3"></script><script src="../js/temperature-settings.js?v=3"></script>
 </body>
 </html>

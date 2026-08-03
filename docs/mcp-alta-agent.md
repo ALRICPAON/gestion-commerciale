@@ -216,6 +216,7 @@ Les plans de nettoyage acceptent maintenant plusieurs zones et plusieurs equipem
 Pour le nettoyage, le plan PMS est la source de verite. Les champs `responsible_user_id`, `frequency_value`, `frequency_unit`, `target_time`, `scheduled_days`, `expected_duration_minutes`, `method`, `expected_proof` et `corrective_action` appartiennent au plan. ALTA cree ou met a jour automatiquement la `quality_task` liee; ne pas creer une tache nettoyage separee pour un plan.
 
 Les champs de planification exposes pour les parametres temperature et plans nettoyage sont `planning_mode`, `quality_task_id`, `task_title`, `responsible_user_id`, `frequency_value`, `frequency_unit` et `target_time`.
+Pour les parametres temperature natifs, le planning supporte aussi `scheduled_days` et `target_times`. ALTA MARÉE ouvre lundi a vendredi de 04:00 a 12:00, samedi de 04:00 a 10:00, et reste ferme dimanche; les jours actifs MCP acceptes sont donc `monday`, `tuesday`, `wednesday`, `thursday`, `friday` et `saturday`. Le champ legacy `target_time` reste compatible et correspond au premier horaire cible lorsque `target_times` est fourni.
 
 ### Architecture Qualite SYSTEM / MANUAL
 
@@ -229,7 +230,7 @@ Les outils MCP `quality_update_task` et les routes front refusent la modificatio
 - plan de nettoyage via `update_quality_cleaning_plan` ou `archive_or_disable_quality_cleaning_plan`;
 - parametre temperature via `update_quality_temperature_parameter` ou `archive_or_disable_quality_temperature_parameter`.
 
-Les parametres temperature sont aussi sources de verite: `create_quality_temperature_parameter` cree ou synchronise automatiquement la tache systeme liee, `update_quality_temperature_parameter` la met a jour, et `archive_or_disable_quality_temperature_parameter` archive logiquement la tache liee. Les anciens champs `quality_task_id`, `zone_id` et `equipment_id` restent compatibles.
+Les parametres temperature sont aussi sources de verite: `create_quality_temperature_parameter` cree ou synchronise automatiquement les taches systeme liees, `update_quality_temperature_parameter` les met a jour, et `archive_or_disable_quality_temperature_parameter` archive logiquement les taches liees. Lorsque plusieurs jours et horaires sont fournis, une tache `SYSTEM` verrouillee est maintenue par creneau via `quality_temperature_limit_tasks`, tandis que `quality_task_id` reste le lien primaire legacy. Les anciens champs `quality_task_id`, `zone_id`, `equipment_id` et `target_time` restent compatibles.
 
 Le diagnostic des anciennes taches QF-01..QF-13 reste lecture seule:
 

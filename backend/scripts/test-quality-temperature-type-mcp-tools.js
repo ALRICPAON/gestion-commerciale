@@ -25,6 +25,7 @@ function makeDb(options = {}) {
   const calls = [];
   const state = {
     nextLimit: 1,
+    nextTask: 4,
     types: [
       { code: 'COLD_ROOM', label: 'Chambre froide', default_unit: 'C', category: 'storage', is_active: true },
       { code: 'WORKSHOP', label: 'Atelier', default_unit: 'C', category: 'zone', is_active: true },
@@ -42,6 +43,8 @@ function makeDb(options = {}) {
       expected_frequency_value: null,
       expected_frequency_unit: null,
       target_time: null,
+      target_times: [],
+      scheduled_days: [],
       responsible_user_id: null,
       quality_task_id: null,
       is_active: true,
@@ -49,6 +52,7 @@ function makeDb(options = {}) {
       valid_until: null,
     }] : [],
     tasks: [],
+    links: [],
   };
 
   function enrichLimit(limit) {
@@ -71,6 +75,13 @@ function makeDb(options = {}) {
       task_source_entity_type: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.source_entity_type : null,
       task_source_entity_id: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.source_entity_id : null,
       task_source_locked: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.source_locked : null,
+      schedule_tasks: state.links
+        .filter((link) => link.limit_id === limit.id && !link.deleted_at)
+        .map((link) => ({
+          task_id: link.task_id,
+          scheduled_day: link.scheduled_day === 'any' ? null : link.scheduled_day,
+          target_time: link.target_time === '00:00:00' ? null : link.target_time,
+        })),
     };
   }
 
@@ -94,8 +105,10 @@ function makeDb(options = {}) {
       }
 
       if (text.includes('INSERT INTO quality_tasks')) {
+        const taskId = `00000000-0000-4000-8000-${String(state.nextTask).padStart(12, '0')}`;
+        state.nextTask += 1;
         const task = {
-          id: TASK_ID,
+          id: taskId,
           store_id: params[0],
           title: params[1],
           module_key: params[3],
@@ -126,6 +139,15 @@ function makeDb(options = {}) {
       if (text.includes('UPDATE quality_tasks')) {
         const task = state.tasks.find((item) => item.id === params[0] && item.store_id === params[1]);
         if (!task) return { rows: [] };
+        if (text.includes("status='archived'")) {
+          Object.assign(task, {
+            active: false,
+            status: 'archived',
+            configuration_status: 'archived',
+            archived_by: params[2],
+          });
+          return { rows: [{ id: task.id }] };
+        }
         Object.assign(task, {
           title: params[2],
           module_key: params[4],
@@ -170,6 +192,8 @@ function makeDb(options = {}) {
           is_active: params[12],
           valid_from: params[13],
           valid_until: params[14],
+          scheduled_days: JSON.parse(params[15] || '[]'),
+          target_times: JSON.parse(params[16] || '[]'),
         };
         state.nextLimit += 1;
         state.limits.push(limit);
@@ -198,8 +222,38 @@ function makeDb(options = {}) {
           is_active: params[13],
           valid_from: params[14],
           valid_until: params[15],
+          scheduled_days: JSON.parse(params[16] || '[]'),
+          target_times: JSON.parse(params[17] || '[]'),
         });
         return { rows: [{ id: limit.id }] };
+      }
+
+      if (text.includes('SELECT limit_id, scheduled_day, target_time, task_id')
+        && text.includes('FROM quality_temperature_limit_tasks')) {
+        return { rows: state.links.filter((link) => link.limit_id === params[0] && !link.deleted_at) };
+      }
+
+      if (text.includes('INSERT INTO quality_temperature_limit_tasks')) {
+        const [limitId, scheduledDay, targetTime, taskId, createdBy] = params;
+        const existing = state.links.find((link) => link.limit_id === limitId && link.scheduled_day === scheduledDay && link.target_time === targetTime);
+        if (existing) {
+          existing.task_id = taskId;
+          existing.deleted_at = null;
+          existing.deleted_by = null;
+        } else {
+          state.links.push({ limit_id: limitId, scheduled_day: scheduledDay, target_time: targetTime, task_id: taskId, created_by: createdBy, deleted_at: null, deleted_by: null });
+        }
+        return { rows: [] };
+      }
+
+      if (text.includes('UPDATE quality_temperature_limit_tasks')) {
+        const [limitId, scheduledDay, targetTime, deletedBy] = params;
+        const link = state.links.find((item) => item.limit_id === limitId && item.scheduled_day === scheduledDay && item.target_time === targetTime && !item.deleted_at);
+        if (link) {
+          link.deleted_at = new Date().toISOString();
+          link.deleted_by = deletedBy;
+        }
+        return { rows: [] };
       }
 
       if (text.includes('FROM quality_temperature_limits l')) {
@@ -287,6 +341,79 @@ async function main() {
   assert.equal(createDb.state.tasks[0].task_origin, 'SYSTEM', 'tache temperature doit etre SYSTEM');
   assert.equal(createDb.state.tasks[0].source_entity_type, 'temperature_parameter', 'tache temperature doit pointer vers le parametre');
   assert.equal(createDb.state.tasks[0].source_locked, true, 'tache temperature doit etre verrouillee par sa source');
+
+  const scheduledDb = makeDb();
+  const scheduled = await executeAgentTool({
+    db: scheduledDb,
+    name: 'create_quality_temperature_parameter',
+    input: {
+      type_code: 'WORKSHOP',
+      min_value: 0,
+      max_value: 8,
+      unit: 'C',
+      expected_frequency_value: 1,
+      expected_frequency_unit: 'events',
+      scheduled_days: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'],
+      target_times: ['04:00', '08:00', '12:00'],
+    },
+    context: makeContext(['quality.read', 'quality.configuration.write']),
+  });
+  assert.equal(scheduled.ok, true);
+  assert.deepEqual(scheduled.data.parameter.scheduled_days, ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']);
+  assert.deepEqual(scheduled.data.parameter.target_times, ['04:00:00', '08:00:00', '12:00:00']);
+  assert.equal(scheduled.data.parameter.target_time, '04:00:00', 'target_time legacy doit rester le premier horaire');
+  assert.equal(scheduledDb.state.tasks.length, 18, 'lundi-samedi x 3 horaires doit generer 18 taches systeme');
+  assert.equal(scheduledDb.state.links.filter((link) => !link.deleted_at).length, 18, 'chaque creneau doit avoir une liaison tache');
+  assert(scheduled.data.parameter.quality_task_id, 'quality_task_id primaire legacy doit rester renseigne');
+  assert(scheduledDb.state.tasks.every((task) => task.task_origin === 'SYSTEM' && task.source_locked === true), 'toutes les taches creneau doivent etre SYSTEM verrouillees');
+
+  const updatedSchedule = await executeAgentTool({
+    db: scheduledDb,
+    name: 'update_quality_temperature_parameter',
+    input: {
+      temperature_parameter_id: scheduled.data.parameter.id,
+      type_code: 'WORKSHOP',
+      min_value: 0,
+      max_value: 8,
+      unit: 'C',
+      expected_frequency_value: 1,
+      expected_frequency_unit: 'events',
+      scheduled_days: ['monday', 'tuesday'],
+      target_times: ['04:00'],
+    },
+    context: makeContext(['quality.read', 'quality.configuration.write']),
+  });
+  assert.equal(updatedSchedule.ok, true);
+  assert.deepEqual(updatedSchedule.data.parameter.scheduled_days, ['monday', 'tuesday']);
+  assert.deepEqual(updatedSchedule.data.parameter.target_times, ['04:00:00']);
+  assert.equal(scheduledDb.state.links.filter((link) => !link.deleted_at).length, 2, 'mise a jour doit retirer les liaisons obsoletes');
+  assert(scheduledDb.state.tasks.some((task) => task.status === 'archived'), 'les taches des creneaux retires doivent etre archivees');
+
+  const movedPrimary = await executeAgentTool({
+    db: scheduledDb,
+    name: 'update_quality_temperature_parameter',
+    input: {
+      temperature_parameter_id: scheduled.data.parameter.id,
+      type_code: 'WORKSHOP',
+      min_value: 0,
+      max_value: 8,
+      unit: 'C',
+      expected_frequency_value: 1,
+      expected_frequency_unit: 'events',
+      scheduled_days: ['tuesday'],
+      target_times: ['04:00'],
+    },
+    context: makeContext(['quality.read', 'quality.configuration.write']),
+  });
+  const activePrimaryLink = scheduledDb.state.links.find((link) => !link.deleted_at && link.scheduled_day === 'tuesday' && link.target_time === '04:00:00');
+  assert.equal(movedPrimary.data.parameter.quality_task_id, activePrimaryLink.task_id, 'quality_task_id legacy doit suivre le premier creneau actif');
+
+  await expectBusinessRefusal(() => executeAgentTool({
+    db: makeDb(),
+    name: 'create_quality_temperature_parameter',
+    input: { type_code: 'WORKSHOP', min_value: 0, max_value: 8, scheduled_days: ['sunday'], target_times: ['04:00'] },
+    context: makeContext(['quality.read', 'quality.configuration.write']),
+  }), /Jour de planification/, 'dimanche doit rester refuse pour le planning temperature ALTA');
 
   const invalidCreateDb = makeDb();
   await expectInvalidType(() => executeAgentTool({

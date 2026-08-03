@@ -10,6 +10,67 @@ function dbError(err, message) {
   return err;
 }
 
+const DAY_ORDER = Object.freeze(['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']);
+const TEMPERATURE_ACTIVE_DAYS = Object.freeze(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']);
+
+function jsonArray(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function normalizeTime(value) {
+  if (!value) return null;
+  const text = String(value).trim();
+  return text.length === 5 ? `${text}:00` : text.slice(0, 8);
+}
+
+function scheduleDayLabel(day) {
+  return {
+    monday: 'lundi',
+    tuesday: 'mardi',
+    wednesday: 'mercredi',
+    thursday: 'jeudi',
+    friday: 'vendredi',
+    saturday: 'samedi',
+    any: 'tous jours',
+  }[day] || day;
+}
+
+function scheduleEntries(limit) {
+  const days = jsonArray(limit.scheduled_days).filter((day) => TEMPERATURE_ACTIVE_DAYS.includes(day));
+  const times = jsonArray(limit.target_times).map(normalizeTime).filter(Boolean);
+  const effectiveDays = days.length ? days : ['any'];
+  const effectiveTimes = times.length ? times : [normalizeTime(limit.target_time) || '00:00:00'];
+  const entries = [];
+  for (const day of effectiveDays) {
+    for (const targetTime of effectiveTimes) {
+      entries.push({ scheduled_day: day, target_time: targetTime });
+    }
+  }
+  return entries;
+}
+
+function nextScheduledDueAt(entry, active) {
+  if (!active || !entry?.target_time || entry.target_time === '00:00:00') return null;
+  const [hours, minutes, seconds] = entry.target_time.split(':').map((part) => Number(part || 0));
+  const now = new Date();
+  const wantedDay = entry.scheduled_day === 'any' ? null : DAY_ORDER.indexOf(entry.scheduled_day);
+  for (let offset = 0; offset <= 14; offset += 1) {
+    const candidate = new Date(now.getTime());
+    candidate.setDate(now.getDate() + offset);
+    if (wantedDay !== null && candidate.getDay() !== wantedDay) continue;
+    candidate.setHours(hours, minutes, seconds || 0, 0);
+    if (candidate.getTime() > now.getTime()) return candidate;
+  }
+  return null;
+}
+
 function addFilter(where, params, value, sql) {
   if (value !== undefined && value !== null && value !== '') {
     params.push(value);
@@ -32,7 +93,13 @@ function taskSelectSql() {
 
 function attachTask(limit) {
   if (!limit) return null;
-  if (!limit.task_id) return { ...limit, quality_task: null };
+  const base = {
+    ...limit,
+    scheduled_days: jsonArray(limit.scheduled_days),
+    target_times: jsonArray(limit.target_times).map(normalizeTime).filter(Boolean),
+    schedule_tasks: jsonArray(limit.schedule_tasks),
+  };
+  if (!limit.task_id) return { ...base, quality_task: null };
   const task = enrichTask({
     id: limit.task_id,
     title: limit.task_title,
@@ -49,17 +116,23 @@ function attachTask(limit) {
     source_locked: limit.task_source_locked,
     responsible_email: limit.task_responsible_email,
   });
-  return { ...limit, quality_task: task };
+  return { ...base, quality_task: task };
 }
 
 function targetLabel(limit) {
   return limit.equipment_name || limit.zone_name || limit.type_label || limit.type_code || 'temperature';
 }
 
-function synchronizedTemperatureTaskPayload(limit) {
+function synchronizedTemperatureTaskPayload(limit, entry = null) {
   const active = limit.is_active === true;
+  const schedule = entry || { scheduled_day: 'any', target_time: normalizeTime(limit.target_time) };
+  const scheduleLabel = [
+    schedule.scheduled_day && schedule.scheduled_day !== 'any' ? scheduleDayLabel(schedule.scheduled_day) : null,
+    schedule.target_time && schedule.target_time !== '00:00:00' ? schedule.target_time.slice(0, 5) : null,
+  ].filter(Boolean).join(' ');
+  const nextDueAt = nextScheduledDueAt(schedule, active);
   return {
-    title: `Releve temperature - ${targetLabel(limit)}`,
+    title: `Releve temperature - ${targetLabel(limit)}${scheduleLabel ? ` - ${scheduleLabel}` : ''}`,
     description: [
       'Tache synchronisee automatiquement depuis le parametre temperature ALTA.',
       limit.type_label ? `Type: ${limit.type_label}` : null,
@@ -71,7 +144,8 @@ function synchronizedTemperatureTaskPayload(limit) {
     responsible_user_id: limit.responsible_user_id || null,
     frequency_value: limit.expected_frequency_value || null,
     frequency_unit: limit.expected_frequency_unit || null,
-    target_time: limit.target_time || null,
+    target_time: schedule.target_time === '00:00:00' ? null : schedule.target_time || null,
+    next_due_at: nextDueAt,
     status: active ? 'planned' : 'paused',
     active,
     category: 'temperature_parameter',
@@ -141,6 +215,7 @@ async function listTemperatureLimits(db, storeId, query = {}) {
             lr.unit AS last_unit, lr.alert_status AS last_alert_status,
             qt.next_due_at AS next_expected_at,
             ${followupSql('qt')} AS followup_status,
+            COALESCE(schedule_targets.schedule_tasks, '[]'::json) AS schedule_tasks,
             ${taskSelectSql()}
      FROM quality_temperature_limits l
      INNER JOIN quality_temperature_types t ON t.code = l.type_code
@@ -148,6 +223,20 @@ async function listTemperatureLimits(db, storeId, query = {}) {
      LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
      LEFT JOIN quality_tasks qt ON qt.id = l.quality_task_id AND qt.store_id = l.store_id
      LEFT JOIN users qtu ON qtu.id = qt.responsible_user_id
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object(
+         'task_id', ltt.task_id,
+         'scheduled_day', NULLIF(ltt.scheduled_day, 'any'),
+         'target_time', NULLIF(ltt.target_time, '00:00'::time),
+         'task_title', st.title,
+         'task_status', st.status,
+         'task_active', st.active,
+         'next_due_at', st.next_due_at
+       ) ORDER BY ltt.scheduled_day ASC, ltt.target_time ASC) AS schedule_tasks
+       FROM quality_temperature_limit_tasks ltt
+       INNER JOIN quality_tasks st ON st.id = ltt.task_id AND st.store_id = l.store_id
+       WHERE ltt.limit_id = l.id AND ltt.deleted_at IS NULL
+     ) schedule_targets ON true
      LEFT JOIN LATERAL (
        SELECT r.*
        FROM quality_temperature_records r
@@ -170,6 +259,7 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
   const includeUpcoming = ['true', '1', 'yes'].includes(String(query.include_upcoming || '').toLowerCase());
   const result = await db.query(
     `SELECT l.id AS limit_id, l.id AS parameter_id, l.quality_task_id,
+            schedule_link.scheduled_day, schedule_link.scheduled_target_time,
             l.type_code, t.label AS type_label,
             l.zone_id, z.code AS zone_code, z.name AS zone_name,
             l.equipment_id, e.code AS equipment_code, e.name AS equipment_name,
@@ -177,7 +267,19 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
             ${taskSelectSql()}
      FROM quality_temperature_limits l
      INNER JOIN quality_temperature_types t ON t.code = l.type_code
-     INNER JOIN quality_tasks qt ON qt.id = l.quality_task_id AND qt.store_id = l.store_id
+     LEFT JOIN LATERAL (
+       SELECT ltt.task_id, NULLIF(ltt.scheduled_day, 'any') AS scheduled_day, NULLIF(ltt.target_time, '00:00'::time) AS scheduled_target_time
+       FROM quality_temperature_limit_tasks ltt
+       WHERE ltt.limit_id = l.id AND ltt.deleted_at IS NULL
+       UNION ALL
+       SELECT l.quality_task_id, NULL::text, NULL::time
+       WHERE l.quality_task_id IS NOT NULL
+         AND NOT EXISTS (
+           SELECT 1 FROM quality_temperature_limit_tasks existing
+           WHERE existing.limit_id = l.id AND existing.deleted_at IS NULL
+         )
+     ) schedule_link ON true
+     INNER JOIN quality_tasks qt ON qt.id = schedule_link.task_id AND qt.store_id = l.store_id
      LEFT JOIN users qtu ON qtu.id = qt.responsible_user_id
      LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
      LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
@@ -209,6 +311,7 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
         parameter_id: row.parameter_id,
         type_code: row.type_code,
         type_label: row.type_label,
+        scheduled_day: row.scheduled_day,
         zone_id: row.zone_id,
         zone_code: row.zone_code,
         zone_name: row.zone_name,
@@ -219,7 +322,7 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
         max_value: row.max_value,
         unit: row.unit,
         task_title: task.title,
-        target_time: task.target_time,
+        target_time: row.scheduled_target_time || task.target_time,
         next_due_at: task.next_due_at,
         computed_status: task.computed_status,
         last_completed_at: task.last_completed_at,
@@ -232,11 +335,26 @@ async function getTemperatureLimit(db, storeId, limitId) {
   const result = await db.query(
     `SELECT l.*, t.label AS type_label, t.default_unit AS type_default_unit,
             t.category AS type_category, t.is_active AS type_active,
+            COALESCE(schedule_targets.schedule_tasks, '[]'::json) AS schedule_tasks,
             ${taskSelectSql()}
      FROM quality_temperature_limits l
      INNER JOIN quality_temperature_types t ON t.code = l.type_code
      LEFT JOIN quality_tasks qt ON qt.id = l.quality_task_id AND qt.store_id = l.store_id
      LEFT JOIN users qtu ON qtu.id = qt.responsible_user_id
+     LEFT JOIN LATERAL (
+       SELECT json_agg(json_build_object(
+         'task_id', ltt.task_id,
+         'scheduled_day', NULLIF(ltt.scheduled_day, 'any'),
+         'target_time', NULLIF(ltt.target_time, '00:00'::time),
+         'task_title', st.title,
+         'task_status', st.status,
+         'task_active', st.active,
+         'next_due_at', st.next_due_at
+       ) ORDER BY ltt.scheduled_day ASC, ltt.target_time ASC) AS schedule_tasks
+       FROM quality_temperature_limit_tasks ltt
+       INNER JOIN quality_tasks st ON st.id = ltt.task_id AND st.store_id = l.store_id
+       WHERE ltt.limit_id = l.id AND ltt.deleted_at IS NULL
+     ) schedule_targets ON true
      WHERE l.id = $1 AND l.store_id = $2 LIMIT 1`,
     [limitId, storeId]
   );
@@ -257,24 +375,85 @@ async function assertTemperatureTask(db, storeId, taskId) {
   throw err;
 }
 
+async function listTemperatureLimitTaskLinks(db, limitId) {
+  const result = await db.query(
+    `SELECT limit_id, scheduled_day, target_time, task_id
+     FROM quality_temperature_limit_tasks
+     WHERE limit_id = $1::uuid AND deleted_at IS NULL`,
+    [limitId]
+  );
+  return result.rows.map((row) => ({
+    ...row,
+    target_time: normalizeTime(row.target_time),
+  }));
+}
+
+async function upsertTemperatureLimitTaskLink(db, userId, limitId, entry, taskId) {
+  await db.query(
+    `INSERT INTO quality_temperature_limit_tasks (limit_id, scheduled_day, target_time, task_id, created_by, deleted_at, deleted_by)
+     VALUES ($1::uuid, $2::text, $3::time, $4::uuid, $5::uuid, NULL, NULL)
+     ON CONFLICT (limit_id, scheduled_day, target_time)
+     DO UPDATE SET task_id = EXCLUDED.task_id, deleted_at = NULL, deleted_by = NULL`,
+    [limitId, entry.scheduled_day || 'any', entry.target_time || '00:00:00', taskId, userId]
+  );
+}
+
+async function archiveRemovedTemperatureScheduleTasks(db, storeId, userId, limitId, activeKeys) {
+  const links = await listTemperatureLimitTaskLinks(db, limitId);
+  for (const link of links) {
+    const key = `${link.scheduled_day}|${normalizeTime(link.target_time) || '00:00:00'}`;
+    if (activeKeys.has(key)) continue;
+    await db.query(
+      `UPDATE quality_temperature_limit_tasks
+       SET deleted_at = now(), deleted_by = $4::uuid
+       WHERE limit_id = $1::uuid AND scheduled_day = $2::text AND target_time = $3::time AND deleted_at IS NULL`,
+      [limitId, link.scheduled_day, normalizeTime(link.target_time) || '00:00:00', userId]
+    );
+    await archiveQualityTask(db, storeId, userId, link.task_id);
+  }
+}
+
 async function syncTemperatureLimitTask(db, storeId, userId, limit) {
   if (!limit) return null;
-  const task = await saveQualityTask(
-    db,
-    storeId,
-    userId,
-    synchronizedTemperatureTaskPayload(limit),
-    limit.quality_task_id || null
-  );
-  if (!limit.quality_task_id && task?.id) {
+  const entries = scheduleEntries(limit);
+  const existingLinks = await listTemperatureLimitTaskLinks(db, limit.id);
+  const linkByKey = new Map(existingLinks.map((link) => [`${link.scheduled_day}|${normalizeTime(link.target_time) || '00:00:00'}`, link]));
+  const activeKeys = new Set();
+  let primaryTaskId = limit.quality_task_id || null;
+  let firstActiveTaskId = null;
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    const key = `${entry.scheduled_day}|${entry.target_time || '00:00:00'}`;
+    activeKeys.add(key);
+    const linked = linkByKey.get(key);
+    const taskId = linked?.task_id || (index === 0 ? primaryTaskId : null);
+    const task = await saveQualityTask(
+      db,
+      storeId,
+      userId,
+      synchronizedTemperatureTaskPayload(limit, entry),
+      taskId
+    );
+    if (!primaryTaskId && index === 0 && task?.id) {
+      primaryTaskId = task.id;
+    }
+    if (index === 0 && task?.id) firstActiveTaskId = task.id;
+    if (task?.id) await upsertTemperatureLimitTaskLink(db, userId, limit.id, entry, task.id);
+  }
+
+  if (firstActiveTaskId && firstActiveTaskId !== limit.quality_task_id) {
+    primaryTaskId = firstActiveTaskId;
     await db.query(
       `UPDATE quality_temperature_limits
        SET quality_task_id=$3::uuid, updated_by=$4::uuid, updated_at=now()
        WHERE id=$1::uuid AND store_id=$2::uuid`,
-      [limit.id, storeId, task.id, userId]
+      [limit.id, storeId, firstActiveTaskId, userId]
     );
   }
-  return task?.id || limit.quality_task_id || null;
+
+  await archiveRemovedTemperatureScheduleTasks(db, storeId, userId, limit.id, activeKeys);
+  return primaryTaskId;
 }
 
 async function withTransaction(db, work) {
@@ -305,19 +484,19 @@ async function saveTemperatureLimitInTransaction(db, storeId, userId, payload, l
          SET type_code=$3, zone_id=$4, equipment_id=$5, min_value=$6, max_value=$7, unit=$8,
              expected_frequency_value=$9, expected_frequency_unit=$10, target_time=$11,
              responsible_user_id=$12, quality_task_id=$13, is_active=$14, valid_from=$15, valid_until=$16,
-             updated_by=$17, updated_at=now()
+             scheduled_days=$17::jsonb, target_times=$18::jsonb, updated_by=$19::uuid, updated_at=now()
          WHERE id=$1 AND store_id=$2
          RETURNING *`,
-        [limitId, storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, payload.responsible_user_id, qualityTaskId, payload.is_active, payload.valid_from, payload.valid_until, userId]
+        [limitId, storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, payload.responsible_user_id, qualityTaskId, payload.is_active, payload.valid_from, payload.valid_until, JSON.stringify(payload.scheduled_days || []), JSON.stringify(payload.target_times || []), userId]
       )
       : await db.query(
         `INSERT INTO quality_temperature_limits (
           store_id, type_code, zone_id, equipment_id, min_value, max_value, unit,
           expected_frequency_value, expected_frequency_unit, target_time, responsible_user_id, quality_task_id,
-          is_active, valid_from, valid_until, created_by, updated_by
-        ) VALUES ($1::uuid,$2::text,$3::uuid,$4::uuid,$5::numeric,$6::numeric,$7::text,$8::integer,$9::text,$10::time,$11::uuid,$12::uuid,$13::boolean,$14::date,$15::date,$16::uuid,$16::uuid)
+          is_active, valid_from, valid_until, scheduled_days, target_times, created_by, updated_by
+        ) VALUES ($1::uuid,$2::text,$3::uuid,$4::uuid,$5::numeric,$6::numeric,$7::text,$8::integer,$9::text,$10::time,$11::uuid,$12::uuid,$13::boolean,$14::date,$15::date,$16::jsonb,$17::jsonb,$18::uuid,$18::uuid)
         RETURNING *`,
-        [storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, payload.responsible_user_id, qualityTaskId, payload.is_active, payload.valid_from, payload.valid_until, userId]
+        [storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, payload.responsible_user_id, qualityTaskId, payload.is_active, payload.valid_from, payload.valid_until, JSON.stringify(payload.scheduled_days || []), JSON.stringify(payload.target_times || []), userId]
       );
     const savedLimit = await getTemperatureLimit(db, storeId, result.rows[0].id);
     await syncTemperatureLimitTask(db, storeId, userId, savedLimit);
@@ -344,7 +523,16 @@ async function deleteTemperatureLimitInTransaction(db, storeId, userId, limitId)
      RETURNING *`,
     [limitId, storeId, userId]
   );
-  if (before.quality_task_id) await archiveQualityTask(db, storeId, userId, before.quality_task_id);
+  const links = await listTemperatureLimitTaskLinks(db, limitId);
+  const archived = new Set();
+  for (const link of links) {
+    if (archived.has(String(link.task_id))) continue;
+    archived.add(String(link.task_id));
+    await archiveQualityTask(db, storeId, userId, link.task_id);
+  }
+  if (before.quality_task_id && !archived.has(String(before.quality_task_id))) {
+    await archiveQualityTask(db, storeId, userId, before.quality_task_id);
+  }
   const limit = await getTemperatureLimit(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, 'quality.temperature.limit.archived', 'quality_temperature_limit', limitId, before, limit);
   return limit;

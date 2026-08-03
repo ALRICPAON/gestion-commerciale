@@ -167,6 +167,12 @@ async function main() {
   assert(temperatureCreate.inputSchema.properties.frequency_value, 'create_quality_temperature_parameter doit exposer frequency_value');
   assert(temperatureCreate.inputSchema.properties.frequency_unit, 'create_quality_temperature_parameter doit exposer frequency_unit');
   assert(temperatureCreate.inputSchema.properties.target_time, 'create_quality_temperature_parameter doit exposer target_time');
+  assert(temperatureCreate.inputSchema.properties.target_times, 'create_quality_temperature_parameter doit exposer target_times');
+  assert(temperatureCreate.inputSchema.properties.scheduled_days, 'create_quality_temperature_parameter doit exposer scheduled_days');
+
+  const temperatureUpdate = publicTools.find((tool) => tool.name === 'update_quality_temperature_parameter');
+  assert(temperatureUpdate.inputSchema.properties.target_times, 'update_quality_temperature_parameter doit exposer target_times');
+  assert(temperatureUpdate.inputSchema.properties.scheduled_days, 'update_quality_temperature_parameter doit exposer scheduled_days');
 
   const preparedConfirmedNames = [
     'send_email_confirmed',
