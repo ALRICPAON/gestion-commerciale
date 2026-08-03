@@ -268,3 +268,16 @@ node backend/scripts/test-quality-agent-configuration-tools.js
 node backend/scripts/test-mcp-public-tools-list.js
 node backend/scripts/test-quality-router-startup.js
 ```
+# Architecture PMS Qualite
+
+Les plans de nettoyage et les parametres temperature sont des sources de verite metier. Une tache qualite liee a l'une de ces sources est generee automatiquement avec `task_origin=SYSTEM`, `source_entity_type`, `source_entity_id` et `source_locked=true`.
+
+Les taches manuelles gardent `task_origin=MANUAL`. Elles restent modifiables directement si elles n'ont pas d'historique et si l'utilisateur possede les permissions de configuration. Une tache systeme verrouillee doit etre modifiee depuis sa source native afin de conserver la synchronisation PMS.
+
+Les anciennes taches temperature QF-01..QF-13 ne sont pas supprimees automatiquement. Le diagnostic lecture seule se lance avec:
+
+```bash
+node backend/scripts/diagnose-quality-legacy-qf-tasks.js <STORE_ID>
+```
+
+Il produit la recommandation attach/keep/archive/logical delete sans modifier la base.

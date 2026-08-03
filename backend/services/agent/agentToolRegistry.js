@@ -1821,7 +1821,7 @@ const tools = [
   tool({
     name: 'quality_create_task',
     title: 'Creer tache qualite',
-    description: 'Cree une tache de configuration qualite en brouillon/a valider a partir des zones et equipements existants, sans toucher aux historiques.',
+    description: 'Cree une tache de configuration qualite MANUAL en brouillon/a valider a partir des zones et equipements existants, sans toucher aux historiques. Les taches SYSTEM sont generees par leur source ALTA native.',
     domain: 'quality',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'quality.configuration.write',
@@ -1839,7 +1839,7 @@ const tools = [
   tool({
     name: 'quality_update_task',
     title: 'Modifier tache qualite',
-    description: 'Modifie une tache qualite non executee uniquement; refuse les taches completees ou avec historique.',
+    description: 'Modifie une tache qualite MANUAL non executee uniquement; refuse les taches completees, avec historique ou SYSTEM verrouillees par une source ALTA native.',
     domain: 'quality',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'quality.configuration.write',

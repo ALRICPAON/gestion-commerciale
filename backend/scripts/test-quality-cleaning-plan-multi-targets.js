@@ -28,6 +28,8 @@ const QUALITY_TASK_NOT_NULL_COLUMNS = [
   'configuration_status',
   'created_source',
   'created_by_agent',
+  'task_origin',
+  'source_locked',
 ];
 
 function makeContext(permissions) {
@@ -92,9 +94,11 @@ function makeTemperatureTasks() {
     active: true,
     proof_required: false,
     photo_required: false,
-    configuration_status: 'active',
-    created_source: 'human',
-    created_by_agent: false,
+          configuration_status: 'active',
+          created_source: 'human',
+          created_by_agent: false,
+          task_origin: 'MANUAL',
+          source_locked: false,
   }));
 }
 
@@ -208,6 +212,13 @@ function makeDb(options = {}) {
           configuration_status: params[23],
           created_source: params[24],
           created_by_agent: params[25],
+          agent_action_id: params[26],
+          task_origin: params[27],
+          source_entity_type: params[28],
+          source_entity_id: params[29],
+          source_locked: params[30],
+          archived_at: params[31],
+          archived_by: params[32],
         };
         if (options.enforceTaskNotNull) assertTaskNotNullColumns(task);
         state.tasks.push(task);
@@ -239,6 +250,13 @@ function makeDb(options = {}) {
             configuration_status: params[24],
             created_source: params[25],
             created_by_agent: params[26],
+            agent_action_id: params[27],
+            task_origin: params[28],
+            source_entity_type: params[29],
+            source_entity_id: params[30],
+            source_locked: params[31],
+            archived_at: params[32],
+            archived_by: params[33],
           });
         }
         if (options.enforceTaskNotNull) assertTaskNotNullColumns(task);
@@ -437,6 +455,10 @@ async function main() {
   assert.equal(pilotTask.active, false, 'Plan pending_review inactive doit creer une tache non active');
   assert.equal(pilotTask.status, 'paused', 'Plan pending_review inactive doit creer une tache suspendue');
   assert.equal(pilotTask.configuration_status, 'inactive', 'Tache pilote doit rester inactive');
+  assert.equal(pilotTask.task_origin, 'SYSTEM', 'Tache pilote doit etre systeme');
+  assert.equal(pilotTask.source_entity_type, 'cleaning_plan', 'Tache pilote doit pointer vers le plan nettoyage');
+  assert.equal(pilotTask.source_entity_id, PLAN_ID, 'Tache pilote doit pointer vers le plan cree');
+  assert.equal(pilotTask.source_locked, true, 'Tache pilote doit etre verrouillee par sa source');
   assert.equal(pilotDb.state.plans.length, 1, 'Payload pilote doit creer un seul plan');
   assert.equal(pilotDb.state.tasks.filter((task) => task.module_key === 'cleaning').length, 1, 'Payload pilote doit creer une seule tache nettoyage');
   assert.equal(pilotDb.state.tasks.filter((task) => task.module_key === 'temperature').length, temperatureBefore, 'Les 13 taches temperature ne doivent pas etre modifiees');

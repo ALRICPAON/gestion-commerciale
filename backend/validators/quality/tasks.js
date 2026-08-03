@@ -4,6 +4,7 @@ const { VALID_FREQUENCY_UNITS } = require('../../services/quality/taskScheduler'
 const VALID_STATUSES = Object.freeze(['draft', 'pending_review', 'planned', 'due', 'overdue', 'completed', 'paused', 'cancelled', 'archived']);
 const VALID_CONFIGURATION_STATUSES = Object.freeze(['draft', 'pending_review', 'active', 'inactive', 'archived']);
 const VALID_CRITICALITIES = Object.freeze(['low', 'medium', 'high', 'critical']);
+const VALID_TASK_ORIGINS = Object.freeze(['SYSTEM', 'MANUAL']);
 const MODULE_KEY_PATTERN = /^[a-z][a-z0-9_-]{1,48}$/;
 const ENTITY_TYPE_PATTERN = /^[a-z][a-z0-9_-]{1,48}$/;
 const TARGET_TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
@@ -60,6 +61,10 @@ function mapTaskPayload(body = {}) {
     created_source: cleanQualityText(body.created_source || body.createdSource),
     created_by_agent: cleanBoolean(body.created_by_agent || body.createdByAgent, false),
     agent_action_id: cleanQualityText(body.agent_action_id || body.agentActionId),
+    task_origin: cleanQualityText(body.task_origin || body.taskOrigin),
+    source_entity_type: cleanQualityText(body.source_entity_type || body.sourceEntityType),
+    source_entity_id: cleanUuid(body.source_entity_id || body.sourceEntityId),
+    source_locked: cleanBoolean(body.source_locked || body.sourceLocked, false),
   };
 }
 
@@ -75,6 +80,7 @@ function validateTaskPayload(payload) {
   if (!VALID_STATUSES.includes(payload.status)) return 'Statut invalide';
   if (payload.criticality && !VALID_CRITICALITIES.includes(payload.criticality)) return 'Criticite invalide';
   if (payload.configuration_status && !VALID_CONFIGURATION_STATUSES.includes(payload.configuration_status)) return 'Statut de configuration invalide';
+  if (payload.task_origin && !VALID_TASK_ORIGINS.includes(String(payload.task_origin).toUpperCase())) return 'Origine de tache invalide';
   return null;
 }
 

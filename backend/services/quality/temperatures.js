@@ -1,5 +1,5 @@
 const { logQualityEvent } = require('./eventLogger');
-const { completeQualityTask } = require('./tasks');
+const { archiveQualityTask, completeQualityTask, saveQualityTask } = require('./tasks');
 const { enrichTask } = require('./taskScheduler');
 
 function dbError(err, message) {
@@ -25,7 +25,9 @@ function taskSelectSql() {
   return `qt.id AS task_id, qt.title AS task_title, qt.frequency_value AS task_frequency_value,
           qt.frequency_unit AS task_frequency_unit, qt.target_time AS task_target_time,
           qt.next_due_at AS task_next_due_at, qt.last_completed_at AS task_last_completed_at,
-          qt.status AS task_status, qt.active AS task_active, qtu.email AS task_responsible_email`;
+          qt.status AS task_status, qt.active AS task_active, qt.task_origin AS task_origin,
+          qt.source_entity_type AS task_source_entity_type, qt.source_entity_id AS task_source_entity_id,
+          qt.source_locked AS task_source_locked, qtu.email AS task_responsible_email`;
 }
 
 function attachTask(limit) {
@@ -41,9 +43,53 @@ function attachTask(limit) {
     last_completed_at: limit.task_last_completed_at,
     status: limit.task_status,
     active: limit.task_active,
+    task_origin: limit.task_origin,
+    source_entity_type: limit.task_source_entity_type,
+    source_entity_id: limit.task_source_entity_id,
+    source_locked: limit.task_source_locked,
     responsible_email: limit.task_responsible_email,
   });
   return { ...limit, quality_task: task };
+}
+
+function targetLabel(limit) {
+  return limit.equipment_name || limit.zone_name || limit.type_label || limit.type_code || 'temperature';
+}
+
+function synchronizedTemperatureTaskPayload(limit) {
+  const active = limit.is_active === true;
+  return {
+    title: `Releve temperature - ${targetLabel(limit)}`,
+    description: [
+      'Tache synchronisee automatiquement depuis le parametre temperature ALTA.',
+      limit.type_label ? `Type: ${limit.type_label}` : null,
+      limit.min_value !== null || limit.max_value !== null ? `Plage: ${limit.min_value ?? '-'} a ${limit.max_value ?? '-'} ${limit.unit || 'C'}` : null,
+    ].filter(Boolean).join(' '),
+    module_key: 'temperature',
+    entity_type: limit.equipment_id ? 'equipment' : limit.zone_id ? 'zone' : null,
+    entity_id: limit.equipment_id || limit.zone_id || null,
+    responsible_user_id: limit.responsible_user_id || null,
+    frequency_value: limit.expected_frequency_value || null,
+    frequency_unit: limit.expected_frequency_unit || null,
+    target_time: limit.target_time || null,
+    status: active ? 'planned' : 'paused',
+    active,
+    category: 'temperature_parameter',
+    execution_method: 'Relever la temperature et enregistrer la valeur dans ALTA.',
+    verification_method: limit.min_value !== null || limit.max_value !== null ? 'Comparer la valeur aux seuils du parametre temperature.' : null,
+    proof_required: false,
+    photo_required: false,
+    instructions: 'Utiliser le parametre temperature comme source de verite.',
+    acceptance_criteria: limit.min_value !== null || limit.max_value !== null ? `Entre ${limit.min_value ?? '-'} et ${limit.max_value ?? '-'} ${limit.unit || 'C'}` : null,
+    deviation_action: 'Declencher une action corrective en cas de temperature hors limites.',
+    configuration_status: active ? 'active' : 'inactive',
+    created_source: 'temperature_parameter',
+    created_by_agent: false,
+    task_origin: 'SYSTEM',
+    source_entity_type: 'temperature_parameter',
+    source_entity_id: limit.id,
+    source_locked: true,
+  };
 }
 
 function followupSql(alias = 'qt') {
@@ -211,7 +257,43 @@ async function assertTemperatureTask(db, storeId, taskId) {
   throw err;
 }
 
-async function saveTemperatureLimit(db, storeId, userId, payload, limitId = null) {
+async function syncTemperatureLimitTask(db, storeId, userId, limit) {
+  if (!limit) return null;
+  const task = await saveQualityTask(
+    db,
+    storeId,
+    userId,
+    synchronizedTemperatureTaskPayload(limit),
+    limit.quality_task_id || null
+  );
+  if (!limit.quality_task_id && task?.id) {
+    await db.query(
+      `UPDATE quality_temperature_limits
+       SET quality_task_id=$3::uuid, updated_by=$4::uuid, updated_at=now()
+       WHERE id=$1::uuid AND store_id=$2::uuid`,
+      [limit.id, storeId, task.id, userId]
+    );
+  }
+  return task?.id || limit.quality_task_id || null;
+}
+
+async function withTransaction(db, work) {
+  if (typeof db.connect !== 'function') return work(db);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function saveTemperatureLimitInTransaction(db, storeId, userId, payload, limitId = null) {
   const before = limitId ? await getTemperatureLimit(db, storeId, limitId) : null;
   if (limitId && !before) return null;
   await assertTemperatureType(db, payload.type_code);
@@ -222,21 +304,23 @@ async function saveTemperatureLimit(db, storeId, userId, payload, limitId = null
         `UPDATE quality_temperature_limits
          SET type_code=$3, zone_id=$4, equipment_id=$5, min_value=$6, max_value=$7, unit=$8,
              expected_frequency_value=$9, expected_frequency_unit=$10, target_time=$11,
-             quality_task_id=$12, is_active=$13, valid_from=$14, valid_until=$15,
-             updated_by=$16, updated_at=now()
+             responsible_user_id=$12, quality_task_id=$13, is_active=$14, valid_from=$15, valid_until=$16,
+             updated_by=$17, updated_at=now()
          WHERE id=$1 AND store_id=$2
          RETURNING *`,
-        [limitId, storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, qualityTaskId, payload.is_active, payload.valid_from, payload.valid_until, userId]
+        [limitId, storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, payload.responsible_user_id, qualityTaskId, payload.is_active, payload.valid_from, payload.valid_until, userId]
       )
       : await db.query(
         `INSERT INTO quality_temperature_limits (
           store_id, type_code, zone_id, equipment_id, min_value, max_value, unit,
-          expected_frequency_value, expected_frequency_unit, target_time, quality_task_id,
+          expected_frequency_value, expected_frequency_unit, target_time, responsible_user_id, quality_task_id,
           is_active, valid_from, valid_until, created_by, updated_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)
+        ) VALUES ($1::uuid,$2::text,$3::uuid,$4::uuid,$5::numeric,$6::numeric,$7::text,$8::integer,$9::text,$10::time,$11::uuid,$12::uuid,$13::boolean,$14::date,$15::date,$16::uuid,$16::uuid)
         RETURNING *`,
-        [storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, qualityTaskId, payload.is_active, payload.valid_from, payload.valid_until, userId]
+        [storeId, payload.type_code, payload.zone_id, payload.equipment_id, payload.min_value, payload.max_value, payload.unit, payload.expected_frequency_value, payload.expected_frequency_unit, payload.target_time, payload.responsible_user_id, qualityTaskId, payload.is_active, payload.valid_from, payload.valid_until, userId]
       );
+    const savedLimit = await getTemperatureLimit(db, storeId, result.rows[0].id);
+    await syncTemperatureLimitTask(db, storeId, userId, savedLimit);
     const limit = await getTemperatureLimit(db, storeId, result.rows[0].id);
     await logEvent(db, storeId, userId, limitId ? 'quality.temperature.limit.updated' : 'quality.temperature.limit.created', 'quality_temperature_limit', limit.id, before, limit);
     return limit;
@@ -246,7 +330,11 @@ async function saveTemperatureLimit(db, storeId, userId, payload, limitId = null
   }
 }
 
-async function deleteTemperatureLimit(db, storeId, userId, limitId) {
+async function saveTemperatureLimit(db, storeId, userId, payload, limitId = null) {
+  return withTransaction(db, (client) => saveTemperatureLimitInTransaction(client, storeId, userId, payload, limitId));
+}
+
+async function deleteTemperatureLimitInTransaction(db, storeId, userId, limitId) {
   const before = await getTemperatureLimit(db, storeId, limitId);
   if (!before) return null;
   const result = await db.query(
@@ -256,9 +344,14 @@ async function deleteTemperatureLimit(db, storeId, userId, limitId) {
      RETURNING *`,
     [limitId, storeId, userId]
   );
+  if (before.quality_task_id) await archiveQualityTask(db, storeId, userId, before.quality_task_id);
   const limit = await getTemperatureLimit(db, storeId, result.rows[0].id);
   await logEvent(db, storeId, userId, 'quality.temperature.limit.archived', 'quality_temperature_limit', limitId, before, limit);
   return limit;
+}
+
+async function deleteTemperatureLimit(db, storeId, userId, limitId) {
+  return withTransaction(db, (client) => deleteTemperatureLimitInTransaction(client, storeId, userId, limitId));
 }
 
 async function findApplicableLimit(db, storeId, payload) {
