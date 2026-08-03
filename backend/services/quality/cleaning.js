@@ -297,13 +297,13 @@ async function syncCleaningPlanTask(db, storeId, userId, plan) {
 }
 
 async function withTransaction(db, work) {
-  if (typeof db.connect !== 'function') return work(db);
-  const ownsTransaction = typeof db.connect === 'function';
+  if (typeof db.connect !== 'function' || typeof db.release === 'function' || db._connected === true) return work(db);
+  const ownsTransaction = true;
   const client = ownsTransaction ? await db.connect() : db;
   try {
     if (ownsTransaction) await client.query('BEGIN');
     const result = await work(client);
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return result;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -316,7 +316,7 @@ async function withTransaction(db, work) {
     }
     throw error;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
@@ -471,7 +471,7 @@ async function createCleaningRecord(db, storeId, userId, payload) {
     throw err;
   }
   const taskId = Object.prototype.hasOwnProperty.call(payload, 'quality_task_id') ? payload.quality_task_id : (plan.quality_task_id || null);
-  const ownsTransaction = typeof db.connect === 'function';
+  const ownsTransaction = typeof db.connect === 'function' && typeof db.release !== 'function' && db._connected !== true;
   const client = ownsTransaction ? await db.connect() : db;
   try {
     if (ownsTransaction) await client.query('BEGIN');

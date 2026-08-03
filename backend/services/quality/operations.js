@@ -22,7 +22,7 @@ function addDays(value, days) {
 }
 
 async function withTransaction(db, work) {
-  if (typeof db.connect !== 'function') return work(db);
+  if (typeof db.connect !== 'function' || typeof db.release === 'function' || db._connected === true) return work(db);
   const client = await db.connect();
   try {
     await client.query('BEGIN');

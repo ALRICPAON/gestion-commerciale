@@ -457,12 +457,13 @@ async function syncTemperatureLimitTask(db, storeId, userId, limit) {
 }
 
 async function withTransaction(db, work) {
-  if (typeof db.connect !== 'function') return work(db);
-  const client = await db.connect();
+  if (typeof db.connect !== 'function' || typeof db.release === 'function' || db._connected === true) return work(db);
+  const ownsTransaction = typeof db.connect === 'function' && typeof db.release !== 'function' && db._connected !== true;
+  const client = ownsTransaction ? await db.connect() : db;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
     const result = await work(client);
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return result;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
@@ -633,10 +634,10 @@ async function saveTemperatureRecord(db, storeId, userId, payload, recordId = nu
   if (recordId && (!before || before.deleted_at)) return null;
   const limit = await findApplicableLimit(db, storeId, payload);
   const alert = evaluateAlert(payload.value, limit);
-  const ownsTransaction = typeof db.connect === 'function';
+  const ownsTransaction = typeof db.connect === 'function' && typeof db.release !== 'function' && db._connected !== true;
   const client = ownsTransaction ? await db.connect() : db;
-  if (ownsTransaction) await client.query('BEGIN');
   try {
+    if (ownsTransaction) await client.query('BEGIN');
     const result = recordId
       ? await client.query(
         `UPDATE quality_temperature_records
@@ -675,9 +676,10 @@ async function saveTemperatureRecordLegacy(db, storeId, userId, payload, recordI
   if (recordId && (!before || before.deleted_at)) return null;
   const limit = await findApplicableLimit(db, storeId, payload);
   const alert = evaluateAlert(payload.value, limit);
-  const client = await db.connect();
+  const ownsTransaction = typeof db.connect === 'function' && typeof db.release !== 'function' && db._connected !== true;
+  const client = ownsTransaction ? await db.connect() : db;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
     const result = recordId
       ? await client.query(
         `UPDATE quality_temperature_records
@@ -701,13 +703,13 @@ async function saveTemperatureRecordLegacy(db, storeId, userId, payload, recordI
       );
     if (!recordId) await completeLinkedTemperatureTask(client, storeId, userId, limit, payload);
     await logEvent(client, storeId, userId, recordId ? 'quality.temperature.record.updated' : 'quality.temperature.record.created', 'quality_temperature_record', result.rows[0].id, before, result.rows[0]);
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return result.rows[0];
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownsTransaction) await client.query('ROLLBACK');
     throw dbError(err, 'Référence zone, équipement, type, photo, document ou tâche qualité invalide');
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 
