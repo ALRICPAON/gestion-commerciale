@@ -230,6 +230,8 @@ const qualityTemperatureParameterInputSchema = {
     expected_frequency_value: { type: 'integer', minimum: 1 },
     expected_frequency_unit: { type: 'string', enum: ['hours', 'days', 'events'] },
     target_time: { type: 'string' },
+    target_times: { type: 'array', items: { type: 'string' }, description: 'Horaires cibles multiples du parametre temperature, format HH:mm.' },
+    scheduled_days: { type: 'array', items: { type: 'string', enum: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'] }, description: 'Jours actifs du parametre temperature ALTA. Dimanche est ferme.' },
     quality_task_id: { type: 'string' },
     is_active: { type: 'boolean' },
     valid_from: { type: 'string' },
@@ -1664,18 +1666,18 @@ const tools = [
   tool({
     name: 'create_quality_temperature_parameter',
     title: 'Creer parametre temperature',
-    description: 'Cree un parametrage temperature comme le front, avec lien possible a une tache qualite existante ou nouvelle. Appeler list_quality_temperature_types avant pour choisir un type_code valide.',
+    description: 'Cree un parametrage temperature natif, avec jours actifs scheduled_days et horaires multiples target_times. ALTA synchronise les taches SYSTEM liees. Appeler list_quality_temperature_types avant pour choisir un type_code valide.',
     domain: 'quality',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'quality.configuration.write',
     requiresConfirmation: false,
     inputSchema: qualityTemperatureParameterInputSchema,
     execute: async ({ db, context, input, tool: currentTool }) => {
-      const planning = await resolveQualityPlanningTask(db, context, input, 'temperature');
-      const payload = temperatureValidators.mapLimitPayload({ ...input, quality_task_id: planning.quality_task_id });
+      const payload = temperatureValidators.mapLimitPayload(input);
       const validationError = temperatureValidators.validateLimitPayload(payload);
       if (validationError) throw Object.assign(new Error(validationError), { status: 400, expose: true });
       const parameter = await qualityTemperatures.saveTemperatureLimit(db, context.store_id, context.user_id, payload);
+      const planning = { planning_mode: 'native_temperature_sync', quality_task_id: parameter.quality_task_id || null, schedule_tasks: parameter.schedule_tasks || [] };
       return {
         ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Parametre temperature cree', data: { parameter, planning } }),
         target_type: 'quality_temperature_limit',
@@ -1686,7 +1688,7 @@ const tools = [
   tool({
     name: 'update_quality_temperature_parameter',
     title: 'Modifier parametre temperature',
-    description: 'Modifie un parametrage temperature comme le front, sans toucher aux releves historiques. Appeler list_quality_temperature_types avant pour choisir un type_code valide.',
+    description: 'Modifie un parametrage temperature natif, ses jours actifs scheduled_days et ses horaires multiples target_times, sans toucher aux releves historiques. ALTA synchronise les taches SYSTEM liees.',
     domain: 'quality',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'quality.configuration.write',
@@ -1694,12 +1696,12 @@ const tools = [
     inputSchema: { ...qualityTemperatureParameterInputSchema, required: ['temperature_parameter_id', 'type_code'] },
     execute: async ({ db, context, input, tool: currentTool }) => {
       const id = qualityId(input, 'temperature_parameter_id', 'parameter_id', 'limit_id', 'id');
-      const planning = await resolveQualityPlanningTask(db, context, input, 'temperature');
-      const payload = temperatureValidators.mapLimitPayload({ ...input, quality_task_id: planning.quality_task_id });
+      const payload = temperatureValidators.mapLimitPayload(input);
       const validationError = temperatureValidators.validateLimitPayload(payload);
       if (validationError) throw Object.assign(new Error(validationError), { status: 400, expose: true });
       const parameter = await qualityTemperatures.saveTemperatureLimit(db, context.store_id, context.user_id, payload, id);
       if (!parameter) throw Object.assign(new Error('Parametre temperature introuvable'), { status: 404, expose: true });
+      const planning = { planning_mode: 'native_temperature_sync', quality_task_id: parameter.quality_task_id || null, schedule_tasks: parameter.schedule_tasks || [] };
       return {
         ...response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Parametre temperature modifie', data: { parameter, planning } }),
         target_type: 'quality_temperature_limit',

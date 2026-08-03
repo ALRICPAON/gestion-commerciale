@@ -46,6 +46,8 @@ Le front charge le referentiel par `QualityTemperatureApi.listTypes()` dans `fro
 
 Le MCP expose cette meme source via `list_quality_temperature_types`. Les outils `create_quality_temperature_parameter` et `update_quality_temperature_parameter` valident maintenant `type_code` avec ce service avant toute ecriture dans `quality_temperature_limits`, afin de retourner une erreur metier claire au lieu de laisser echouer la contrainte `quality_temperature_limits.type_code -> quality_temperature_types(code)`.
 
+Les parametres temperature portent desormais leur planning natif: `scheduled_days` pour les jours actifs lundi-samedi et `target_times` pour plusieurs horaires cibles. Le service `quality/temperatures.saveTemperatureLimit` conserve `target_time` et `quality_task_id` pour retrocompatibilite, mais synchronise les taches `SYSTEM` verrouillees par creneau via `quality_temperature_limit_tasks`. Dimanche n'est pas expose pour ALTA MARÉE car le site est ferme.
+
 Codes initiaux du referentiel: `COLD_ROOM`, `WORKSHOP`, `RECEPTION_PRODUCTS`, `SHIPPING`, `VEHICLE`, `LIVE_TANK`, `FREEZER`, `PRODUCT_TEMPERATURE`.
 
 ### Plans nettoyage multi-cibles

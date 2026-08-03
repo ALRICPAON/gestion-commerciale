@@ -32,8 +32,21 @@
     frequencyValue: $('temperature-setting-frequency-value'),
     frequencyUnit: $('temperature-setting-frequency-unit'),
     targetTime: $('temperature-setting-target-time'),
+    scheduledDays: $('temperature-setting-scheduled-days'),
+    targetTimesInput: $('temperature-setting-target-times-input'),
+    addTargetTime: $('temperature-setting-add-target-time'),
+    targetTimesList: $('temperature-setting-target-times-list'),
     cancelBtn: $('temperature-setting-cancel-btn'),
   };
+
+  const activeDays = [
+    ['monday', 'Lundi'],
+    ['tuesday', 'Mardi'],
+    ['wednesday', 'Mercredi'],
+    ['thursday', 'Jeudi'],
+    ['friday', 'Vendredi'],
+    ['saturday', 'Samedi'],
+  ];
 
   let types = [];
   let zones = [];
@@ -41,6 +54,7 @@
   let settings = [];
   let tasks = [];
   let users = [];
+  let selectedTargetTimes = [];
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({
@@ -59,6 +73,47 @@
 
   function formatDate(value) {
     return value ? new Date(value).toLocaleString('fr-FR') : '-';
+  }
+
+  function normalizeTime(value) {
+    const text = String(value || '').trim();
+    if (!text) return '';
+    return text.length === 5 ? text : text.slice(0, 5);
+  }
+
+  function formatDay(day) {
+    const entry = activeDays.find(([value]) => value === day);
+    return entry ? entry[1] : day;
+  }
+
+  function selectedScheduledDays() {
+    return Array.from(els.scheduledDays.querySelectorAll('input[type="checkbox"]:checked')).map((input) => input.value);
+  }
+
+  function setScheduledDays(days = activeDays.map(([value]) => value)) {
+    const defaultDays = activeDays.map(([value]) => value);
+    const selected = new Set(Array.isArray(days) && days.length ? days : defaultDays);
+    els.scheduledDays.innerHTML = activeDays.map(([value, label]) => `
+      <label><input type="checkbox" value="${escapeHtml(value)}" ${selected.has(value) ? 'checked' : ''}> ${escapeHtml(label)}</label>
+    `).join('');
+  }
+
+  function setTargetTimes(times = []) {
+    selectedTargetTimes = [...new Set((Array.isArray(times) ? times : []).map(normalizeTime).filter(Boolean))].sort();
+    renderTargetTimes();
+  }
+
+  function renderTargetTimes() {
+    els.targetTimesList.innerHTML = selectedTargetTimes.length
+      ? selectedTargetTimes.map((time) => `<button class="btn btn-secondary" type="button" data-remove-target-time="${escapeHtml(time)}">${escapeHtml(time)}</button>`).join('')
+      : '<span class="quality-muted">Aucun horaire multiple</span>';
+  }
+
+  function addTargetTime(value) {
+    const time = normalizeTime(value);
+    if (!time || selectedTargetTimes.includes(time)) return;
+    selectedTargetTimes = [...selectedTargetTimes, time].sort();
+    renderTargetTimes();
   }
 
   function typeOptions() {
@@ -99,13 +154,16 @@
 
   function showSettingDetail(item) {
     const task = item.quality_task;
+    const days = Array.isArray(item.scheduled_days) && item.scheduled_days.length ? item.scheduled_days.map(formatDay).join(', ') : '-';
+    const times = Array.isArray(item.target_times) && item.target_times.length ? item.target_times.map(normalizeTime).join(', ') : (item.target_time || task?.target_time || '-');
     setFeedback([
       `Parametre: ${item.type_label || item.type_code || '-'}`,
       `Zone: ${item.zone_name || item.zone_id || '-'}`,
       `Equipement: ${item.equipment_name || item.equipment_id || '-'}`,
       `Seuils: ${item.min_value ?? '-'} ${item.unit || ''} a ${item.max_value ?? '-'} ${item.unit || ''}`,
       `Frequence: ${item.expected_frequency_value || task?.frequency_value || '-'} ${item.expected_frequency_unit || task?.frequency_unit || ''}`,
-      `Heure cible: ${item.target_time || task?.target_time || '-'}`,
+      `Jours actifs: ${days}`,
+      `Horaires cibles: ${times}`,
       `Statut: ${item.is_active ? 'Actif' : 'Inactif'}`,
       `Tache liee: ${task?.title || item.quality_task_id || '-'}`,
     ].join(' | '));
@@ -187,12 +245,18 @@
   }
 
   function basePayload(qualityTaskId, linkedTask = null) {
+    const targetTimes = selectedTargetTimes.length
+      ? selectedTargetTimes
+      : [normalizeTime(els.targetTime.value || linkedTask?.target_time)].filter(Boolean);
     return {
       type_code: els.type.value,
       min_value: els.min.value,
       max_value: els.max.value,
       unit: els.unit.value || '°C',
       ...legacyFrequencyFromTask(linkedTask),
+      target_time: targetTimes[0] || null,
+      target_times: targetTimes,
+      scheduled_days: selectedScheduledDays(),
       quality_task_id: qualityTaskId,
       responsible_user_id: els.taskResponsible.value || null,
       zone_id: els.zoneId.value,
@@ -228,6 +292,8 @@
     els.planningMode.value = 'new';
     els.taskTitle.dataset.touched = 'false';
     els.title.textContent = 'Nouveau paramétrage';
+    setScheduledDays();
+    setTargetTimes([]);
     refreshPlanningMode();
     refreshTaskTitle();
     els.formCard.classList.remove('hidden');
@@ -250,7 +316,12 @@
     els.taskTitle.value = item.quality_task?.title || `Relevé température - ${objectName()}`;
     els.frequencyValue.value = item.quality_task?.frequency_value || item.expected_frequency_value || '';
     els.frequencyUnit.value = item.quality_task?.frequency_unit || item.expected_frequency_unit || '';
-    els.targetTime.value = item.quality_task?.target_time ? String(item.quality_task.target_time).slice(0, 5) : (item.target_time || '');
+    const targetTimes = Array.isArray(item.target_times) && item.target_times.length
+      ? item.target_times
+      : [item.quality_task?.target_time || item.target_time].filter(Boolean);
+    els.targetTime.value = normalizeTime(targetTimes[0]);
+    setTargetTimes(targetTimes);
+    setScheduledDays(Array.isArray(item.scheduled_days) ? item.scheduled_days : []);
     els.title.textContent = 'Modifier le paramétrage';
     refreshPlanningMode();
     els.formCard.classList.remove('hidden');
@@ -263,11 +334,24 @@
     }
     els.list.innerHTML = settings.map((item) => {
       const task = item.quality_task;
+      const schedule = [
+        Array.isArray(item.scheduled_days) && item.scheduled_days.length ? item.scheduled_days.map(formatDay).join(', ') : null,
+        Array.isArray(item.target_times) && item.target_times.length ? item.target_times.map(normalizeTime).join(', ') : (item.target_time || null),
+      ].filter(Boolean).join(' - ');
       const planning = task
         ? `<p class="quality-muted"><strong>Tâche :</strong> ${escapeHtml(task.title)} · ${taskFrequencyLabel(task)} · prochaine échéance ${formatDate(task.next_due_at)} · ${taskStatusLabel(task)}</p>`
         : '<p class="quality-muted"><strong>Tâche :</strong> Non planifié</p>';
       return `<article class="quality-card ${statusClass(item.followup_status)}"><span class="quality-badge">${statusLabel(item.followup_status)}</span><h3>${escapeHtml(item.equipment_name || item.zone_name || item.type_label)}</h3><p>${escapeHtml(item.type_label)} · ${item.min_value ?? '-'}${escapeHtml(item.unit)} à ${item.max_value ?? '-'}${escapeHtml(item.unit)}</p>${planning}<p class="quality-muted">Dernier relevé : ${formatDate(item.last_recorded_at)}</p><div class="quality-actions"><button class="btn btn-secondary" data-action="edit" data-id="${item.id}">Modifier</button><button class="btn btn-secondary" data-action="toggle" data-id="${item.id}">${item.is_active ? 'Désactiver' : 'Réactiver'}</button><button class="btn btn-secondary" data-action="archive" data-id="${item.id}">Archiver</button></div></article>`;
     }).join('');
+    Array.from(els.list.querySelectorAll('article')).forEach((article, index) => {
+      const item = settings[index];
+      const schedule = [
+        Array.isArray(item?.scheduled_days) && item.scheduled_days.length ? item.scheduled_days.map(formatDay).join(', ') : null,
+        Array.isArray(item?.target_times) && item.target_times.length ? item.target_times.map(normalizeTime).join(', ') : (item?.target_time || null),
+      ].filter(Boolean).join(' - ');
+      const actions = article.querySelector('.quality-actions');
+      actions?.insertAdjacentHTML('beforebegin', `<p class="quality-muted">Planning : ${escapeHtml(schedule || '-')}</p>`);
+    });
     Array.from(els.list.querySelectorAll('.quality-actions')).forEach((actions, index) => {
       const item = settings[index];
       if (!item || actions.querySelector('[data-action="view"]')) return;
@@ -317,6 +401,16 @@
   els.cancelBtn.addEventListener('click', () => els.formCard.classList.add('hidden'));
   els.planningMode.addEventListener('change', refreshPlanningMode);
   els.taskTitle.addEventListener('input', () => { els.taskTitle.dataset.touched = 'true'; });
+  els.addTargetTime.addEventListener('click', () => {
+    addTargetTime(els.targetTimesInput.value);
+    els.targetTimesInput.value = '';
+  });
+  els.targetTimesList.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-remove-target-time]');
+    if (!button) return;
+    selectedTargetTimes = selectedTargetTimes.filter((time) => time !== button.dataset.removeTargetTime);
+    renderTargetTimes();
+  });
   [els.zoneId, els.equipmentId, els.type].forEach((input) => input.addEventListener('change', refreshTaskTitle));
   els.form.addEventListener('submit', async (event) => {
     event.preventDefault();
