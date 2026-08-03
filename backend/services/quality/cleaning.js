@@ -1,5 +1,5 @@
 const { logQualityEvent } = require('./eventLogger');
-const { completeQualityTask, deactivateQualityTask, saveQualityTask } = require('./tasks');
+const { archiveQualityTask, completeQualityTask, deactivateQualityTask, saveQualityTask } = require('./tasks');
 const { enrichTask } = require('./taskScheduler');
 
 function addFilter(where, params, value, sql) {
@@ -104,6 +104,10 @@ function synchronizedTaskPayload(plan) {
     created_source: 'cleaning_plan',
     created_by_agent: false,
     agent_action_id: plan.agent_action_id || null,
+    task_origin: 'SYSTEM',
+    source_entity_type: 'cleaning_plan',
+    source_entity_id: plan.id,
+    source_locked: true,
   };
 }
 
@@ -271,7 +275,7 @@ async function syncPlanTargets(db, storeId, userId, planId, payload = {}) {
 async function syncCleaningPlanTask(db, storeId, userId, plan) {
   if (!plan) return null;
   if (plan.quality_task_id && plan.configuration_status === 'archived') {
-    await deactivateQualityTask(db, storeId, userId, plan.quality_task_id);
+    await archiveQualityTask(db, storeId, userId, plan.quality_task_id);
     return plan.quality_task_id;
   }
   const task = await saveQualityTask(

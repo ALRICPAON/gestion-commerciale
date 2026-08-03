@@ -55,6 +55,24 @@
   function planEquipments(plan) { const ids = planEquipmentIds(plan); return ids.map((id) => equipments.find((equipment) => equipment.id === id)).filter(Boolean); }
   function names(items) { return items.map((item) => item.name || item.code || item.id).filter(Boolean).join(', ') || '-'; }
 
+  function showPlanDetail(plan) {
+    const task = plan.quality_task;
+    setFeedback([
+      `Plan: ${plan.title || '-'}`,
+      `Zones: ${names(planZones(plan))}`,
+      `Equipements: ${names(planEquipments(plan))}`,
+      `Frequence: ${plan.frequency_value || task?.frequency_value || '-'} ${plan.frequency_unit || task?.frequency_unit || ''}`,
+      `Heure cible: ${plan.target_time || task?.target_time || '-'}`,
+      `Duree: ${plan.expected_duration_minutes || '-'} min`,
+      `Produit: ${plan.product_name || '-'}`,
+      `Methode: ${plan.method || '-'}`,
+      `Preuve: ${plan.expected_proof || '-'}`,
+      `Action corrective: ${plan.corrective_action || '-'}`,
+      `Statut: ${plan.active ? 'Actif' : 'Inactif'}`,
+      `Tache liee: ${task?.title || plan.quality_task_id || '-'}`,
+    ].join(' | '));
+  }
+
   function refreshZones(selectedIds = []) {
     const selected = new Set(selectedIds.map(String));
     els.zoneIds.innerHTML = '';
@@ -224,7 +242,12 @@
       const task = plan.quality_task ? `${escapeHtml(plan.quality_task.title)} - ${taskFrequency(plan.quality_task)} - ${formatDate(plan.quality_task.next_due_at)} - ${taskStatus(plan.quality_task)}` : 'Non planifie';
       return `<article class="quality-card"><span class="quality-badge">${plan.active ? 'Actif' : 'Inactif'}</span><h3>${escapeHtml(plan.title)}</h3><p>Produit : ${escapeHtml(plan.product_name || '-')} - Duree : ${plan.expected_duration_minutes || '-'} min</p><p class="quality-muted"><strong>Zones concernees :</strong> ${escapeHtml(zoneNames)}</p><p class="quality-muted"><strong>Equipements concernes :</strong> ${escapeHtml(equipmentNames)}</p><p class="quality-muted"><strong>Tache :</strong> ${task}</p><p class="quality-muted">${escapeHtml(plan.method || '')}</p><div class="quality-actions"><button class="btn btn-secondary" data-action="edit" data-id="${plan.id}">Modifier</button><button class="btn btn-secondary" data-action="toggle" data-id="${plan.id}">${plan.active ? 'Desactiver' : 'Reactiver'}</button></div></article>`;
     }).join('');
-    if (!canManage) els.list.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+    Array.from(els.list.querySelectorAll('.quality-actions')).forEach((actions, index) => {
+      const plan = plans[index];
+      if (!plan || actions.querySelector('[data-action="view"]')) return;
+      actions.insertAdjacentHTML('afterbegin', `<button class="btn btn-secondary" data-action="view" data-id="${escapeHtml(plan.id)}">Voir</button>`);
+    });
+    if (!canManage) els.list.querySelectorAll('button:not([data-action="view"])').forEach((button) => { button.disabled = true; });
   }
 
   async function loadUsers() {
@@ -303,9 +326,11 @@
   });
   els.list.addEventListener('click', async (event) => {
     const button = event.target.closest('button[data-action]');
-    if (!button || !canManage) return;
+    if (!button) return;
     const plan = plans.find((item) => item.id === button.dataset.id);
     if (!plan) return;
+    if (button.dataset.action === 'view') return showPlanDetail(plan);
+    if (!canManage) return;
     if (button.dataset.action === 'edit') {
       try {
         await openEditForm(plan.id);

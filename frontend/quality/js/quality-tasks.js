@@ -42,6 +42,7 @@
   let zones = [];
   let equipments = [];
   let editingTaskId = null;
+  let detailCard = null;
 
   if (els.userName) els.userName.textContent = sessionUser.email || 'Utilisateur';
   els.dashboardBtn?.addEventListener('click', () => { window.location.href = './dashboard.html'; });
@@ -107,6 +108,46 @@
     return { planned: 'Planifiée', due: 'Du jour', overdue: 'En retard', completed: 'Terminée', paused: 'Suspendue', cancelled: 'Annulée' }[status] || status;
   }
 
+  function originLabel(task) {
+    return task.task_origin === 'SYSTEM' ? 'SYSTEM' : 'MANUAL';
+  }
+
+  function sourceLabel(task) {
+    if (!task.source_entity_type) return '-';
+    return `${task.source_entity_type}${task.source_entity_id ? ` : ${task.source_entity_id}` : ''}`;
+  }
+
+  function ensureDetailCard() {
+    if (detailCard) return detailCard;
+    detailCard = document.createElement('section');
+    detailCard.className = 'quality-card hidden';
+    detailCard.id = 'task-detail-card';
+    els.tasksList.closest('table')?.insertAdjacentElement('afterend', detailCard);
+    return detailCard;
+  }
+
+  function showTaskDetail(task, mode = 'view') {
+    if (!task) return;
+    const locked = task.task_origin === 'SYSTEM' && task.source_locked;
+    const card = ensureDetailCard();
+    card.innerHTML = `
+      <h3>${escapeHtml(task.title || '-')}</h3>
+      ${mode === 'locked' ? '<p class="quality-muted">Cette tache est generee depuis sa source ALTA. Modifiez la source liee pour conserver la synchronisation.</p>' : ''}
+      <p><strong>Origine :</strong> ${escapeHtml(originLabel(task))}</p>
+      <p><strong>Source :</strong> ${escapeHtml(sourceLabel(task))}</p>
+      <p><strong>Module :</strong> ${escapeHtml(task.module_key || '-')} - <strong>Statut :</strong> ${escapeHtml(statusLabel(task))}</p>
+      <p><strong>Objet lie :</strong> ${escapeHtml(linkedObjectLabel(task))}</p>
+      <p><strong>Frequence :</strong> ${escapeHtml(frequencyLabel(task))} - <strong>Heure cible :</strong> ${escapeHtml(task.target_time || '-')}</p>
+      <p><strong>Preuve :</strong> ${task.proof_required ? 'Oui' : 'Non'} - <strong>Photo :</strong> ${task.photo_required ? 'Oui' : 'Non'}</p>
+      <p class="quality-muted">${escapeHtml(task.description || '')}</p>
+      <div class="quality-actions">
+        ${locked && task.source_entity_id ? `<button class="btn btn-primary" data-open-source="${escapeHtml(task.id)}">Ouvrir la source</button>` : ''}
+        <button class="btn btn-secondary" data-close-detail="true">Fermer</button>
+      </div>
+    `;
+    card.classList.remove('hidden');
+  }
+
   function ensureOption(select, value, label) {
     if (!select || !value || Array.from(select.options).some((option) => option.value === value)) return;
     const option = document.createElement('option');
@@ -158,7 +199,7 @@
     els.tasksList.innerHTML = tasks.map((task) => `
       <tr>
         <td>${escapeHtml(task.title || '-')}</td>
-        <td>${escapeHtml(task.module_key || '-')}</td>
+        <td>${escapeHtml(task.module_key || '-')}<br><span class="quality-muted">${escapeHtml(originLabel(task))}</span></td>
         <td>${escapeHtml(linkedObjectLabel(task))}</td>
         <td>${escapeHtml(task.responsible_email || '-')}</td>
         <td>${escapeHtml(frequencyLabel(task))}</td>
@@ -168,6 +209,13 @@
         <td><button class="btn btn-secondary" data-edit="${task.id}">Modifier</button> <button class="btn btn-secondary" data-toggle="${task.id}">${task.active ? 'Désactiver' : 'Réactiver'}</button></td>
       </tr>
     `).join('');
+    Array.from(els.tasksList.querySelectorAll('tr')).forEach((row, index) => {
+      const task = tasks[index];
+      const actions = row.querySelector('td:last-child');
+      if (!task || !actions || actions.querySelector('[data-view]')) return;
+      actions.insertAdjacentHTML('afterbegin', `<button class="btn btn-secondary" data-view="${escapeHtml(task.id)}">Voir</button> `);
+      actions.insertAdjacentHTML('beforeend', ` <button class="btn btn-secondary" data-archive="${escapeHtml(task.id)}">Archiver</button>`);
+    });
   }
 
   function currentFilters() {
@@ -259,9 +307,17 @@
   [els.filterModule, els.filterResponsible, els.filterActive].forEach((filter) => filter?.addEventListener('change', loadTasks));
 
   els.tasksList?.addEventListener('click', async (event) => {
+    const viewId = event.target.dataset.view;
     const editId = event.target.dataset.edit;
     const toggleId = event.target.dataset.toggle;
-    if (editId) openForm(tasks.find((task) => task.id === editId));
+    const archiveId = event.target.dataset.archive;
+    if (viewId) showTaskDetail(tasks.find((task) => task.id === viewId));
+    if (editId) {
+      const task = tasks.find((item) => item.id === editId);
+      if (!task) return;
+      if (task.task_origin === 'SYSTEM' && task.source_locked) return showTaskDetail(task, 'locked');
+      openForm(task);
+    }
     if (toggleId) {
       const task = tasks.find((item) => item.id === toggleId);
       if (!task) return;
@@ -269,6 +325,23 @@
       else await window.QualityTasksApi.save({ ...task, active: true, status: 'planned' }, toggleId);
       await loadTasks();
     }
+    if (archiveId) {
+      const task = tasks.find((item) => item.id === archiveId);
+      if (!task) return;
+      if (task.task_origin === 'SYSTEM' && task.source_locked) return showTaskDetail(task, 'locked');
+      if (!window.confirm('Archiver cette tache qualite ?')) return;
+      await window.QualityTasksApi.deactivate(archiveId);
+      await loadTasks();
+    }
+  });
+
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-close-detail]')) ensureDetailCard().classList.add('hidden');
+    const taskId = event.target.closest('[data-open-source]')?.dataset.openSource;
+    if (!taskId) return;
+    const task = tasks.find((item) => item.id === taskId);
+    if (task?.source_entity_type === 'cleaning_plan') window.location.href = `./cleaning-plans.html?plan_id=${encodeURIComponent(task.source_entity_id)}`;
+    if (task?.source_entity_type === 'temperature_parameter') window.location.href = `./temperature-settings.html?parameter_id=${encodeURIComponent(task.source_entity_id)}`;
   });
 
   els.form?.addEventListener('submit', async (event) => {

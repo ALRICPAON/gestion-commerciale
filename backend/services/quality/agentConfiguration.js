@@ -105,6 +105,9 @@ function normalizePlanInput(input = {}, context = {}) {
 
 function assertTaskEditable(task) {
   if (!task) throw businessError('Tache qualite introuvable', 404);
+  if (task.task_origin === 'SYSTEM' && task.source_locked) {
+    throw businessError('Modification directe refusee: cette tache est generee depuis sa source ALTA. Ouvrez la source liee pour la modifier.', 409);
+  }
   if (task.last_completed_at || task.status === 'completed') {
     throw businessError('Modification refusee: une tache deja executee ne peut pas etre modifiee');
   }

@@ -23,6 +23,7 @@ function taskPayloadValue(payload, before, key, fallback = null) {
 }
 
 function normalizeQualityTaskPayload(payload = {}, before = null) {
+  const taskOrigin = String(taskPayloadValue(payload, before, 'task_origin', 'MANUAL') || 'MANUAL').toUpperCase();
   return {
     title: taskPayloadValue(payload, before, 'title'),
     description: taskPayloadValue(payload, before, 'description'),
@@ -49,7 +50,30 @@ function normalizeQualityTaskPayload(payload = {}, before = null) {
     created_source: taskPayloadValue(payload, before, 'created_source', 'human'),
     created_by_agent: taskPayloadValue(payload, before, 'created_by_agent', false) === true,
     agent_action_id: taskPayloadValue(payload, before, 'agent_action_id'),
+    task_origin: taskOrigin === 'SYSTEM' ? 'SYSTEM' : 'MANUAL',
+    source_entity_type: taskPayloadValue(payload, before, 'source_entity_type'),
+    source_entity_id: taskPayloadValue(payload, before, 'source_entity_id'),
+    source_locked: taskPayloadValue(payload, before, 'source_locked', false) === true,
+    archived_at: taskPayloadValue(payload, before, 'archived_at'),
+    archived_by: taskPayloadValue(payload, before, 'archived_by'),
   };
+}
+
+function sameSource(before, normalized) {
+  return before
+    && before.source_entity_type
+    && before.source_entity_id
+    && before.source_entity_type === normalized.source_entity_type
+    && String(before.source_entity_id) === String(normalized.source_entity_id);
+}
+
+function assertTaskWriteAllowed(before, normalized) {
+  if (!before?.source_locked || before.task_origin !== 'SYSTEM') return;
+  if (normalized.task_origin === 'SYSTEM' && normalized.source_locked && sameSource(before, normalized)) return;
+  const err = new Error('Modification directe refusee: cette tache est generee depuis sa source ALTA. Ouvrez la source liee pour la modifier.');
+  err.status = 409;
+  err.publicMessage = err.message;
+  throw err;
 }
 
 async function logEvent(db, storeId, actorId, eventType, targetId, before, after) {
@@ -117,6 +141,7 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
   const before = taskId ? await getQualityTask(db, storeId, taskId) : null;
   if (taskId && !before) return null;
   const normalized = normalizeQualityTaskPayload(payload, before);
+  assertTaskWriteAllowed(before, normalized);
   const nextDueAt = resolveNextDue(normalized);
 
   const result = taskId
@@ -129,7 +154,9 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
            execution_method=$18::text, verification_method=$19::text, proof_required=$20::boolean,
            photo_required=$21::boolean, instructions=$22::text, acceptance_criteria=$23::text,
            deviation_action=$24::text, configuration_status=$25::text, created_source=$26::text,
-           created_by_agent=$27::boolean, agent_action_id=$28::text, updated_at=now()
+           created_by_agent=$27::boolean, agent_action_id=$28::text, task_origin=$29::text,
+           source_entity_type=$30::text, source_entity_id=$31::uuid, source_locked=$32::boolean,
+           archived_at=$33::timestamptz, archived_by=$34::uuid, updated_at=now()
        WHERE id=$1::uuid AND store_id=$2::uuid
        RETURNING *`,
       [
@@ -161,6 +188,12 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
         normalized.created_source,
         normalized.created_by_agent,
         normalized.agent_action_id,
+        normalized.task_origin,
+        normalized.source_entity_type,
+        normalized.source_entity_id,
+        normalized.source_locked,
+        normalized.archived_at,
+        normalized.archived_by,
       ]
     )
     : await db.query(
@@ -170,13 +203,15 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
         next_due_at, status, active, category, responsible_role, criticality,
         execution_method, verification_method, proof_required, photo_required,
         instructions, acceptance_criteria, deviation_action, configuration_status,
-        created_source, created_by_agent, agent_action_id
+        created_source, created_by_agent, agent_action_id, task_origin,
+        source_entity_type, source_entity_id, source_locked, archived_at, archived_by
       ) VALUES (
         $1::uuid,$2::text,$3::text,$4::text,$5::text,$6::uuid,$7::uuid,
         $8::integer,$9::text,$10::time,$11::timestamptz,$12::text,$13::boolean,
         $14::text,$15::text,$16::text,$17::text,$18::text,$19::boolean,
         $20::boolean,$21::text,$22::text,$23::text,$24::text,$25::text,
-        $26::boolean,$27::text
+        $26::boolean,$27::text,$28::text,$29::text,$30::uuid,$31::boolean,
+        $32::timestamptz,$33::uuid
       )
       RETURNING *`,
       [
@@ -207,6 +242,12 @@ async function saveQualityTask(db, storeId, userId, payload, taskId = null) {
         normalized.created_source,
         normalized.created_by_agent,
         normalized.agent_action_id,
+        normalized.task_origin,
+        normalized.source_entity_type,
+        normalized.source_entity_id,
+        normalized.source_locked,
+        normalized.archived_at,
+        normalized.archived_by,
       ]
     );
 
@@ -275,6 +316,23 @@ async function deactivateQualityTask(db, storeId, userId, taskId) {
   return task;
 }
 
+async function archiveQualityTask(db, storeId, userId, taskId) {
+  const before = await getQualityTask(db, storeId, taskId);
+  if (!before) return null;
+  const result = await db.query(
+    `UPDATE quality_tasks
+     SET active=false, status='archived', configuration_status='archived',
+         archived_at=COALESCE(archived_at, now()), archived_by=COALESCE(archived_by, $3::uuid),
+         updated_at=now()
+     WHERE id=$1::uuid AND store_id=$2::uuid
+     RETURNING *`,
+    [taskId, storeId, userId]
+  );
+  const task = await getQualityTask(db, storeId, result.rows[0].id);
+  await logEvent(db, storeId, userId, 'quality.task.archived', task.id, before, task);
+  return task;
+}
+
 async function getQualityTaskSummary(db, storeId) {
   const result = await db.query(
     `SELECT id, active, status, next_due_at
@@ -301,6 +359,7 @@ async function getQualityTaskSummary(db, storeId) {
 }
 
 module.exports = {
+  archiveQualityTask,
   completeQualityTask,
   deactivateQualityTask,
   getQualityTask,

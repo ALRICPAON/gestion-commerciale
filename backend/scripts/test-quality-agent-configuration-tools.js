@@ -54,6 +54,10 @@ function makeDb(options = {}) {
             active: false,
             last_completed_at: options.executedTask ? '2026-07-20T08:00:00.000Z' : null,
             configuration_status: 'pending_review',
+            task_origin: options.systemLockedTask ? 'SYSTEM' : 'MANUAL',
+            source_entity_type: options.systemLockedTask ? 'cleaning_plan' : null,
+            source_entity_id: options.systemLockedTask ? PLAN_ID : null,
+            source_locked: options.systemLockedTask === true,
           }],
         };
       }
@@ -182,6 +186,13 @@ async function main() {
     input: { task_id: TASK_ID, title: 'Modification interdite' },
     context: makeContext(['quality.read', 'quality.configuration.write']),
   }), /deja executee/, 'modification tache executee doit etre refusee');
+
+  await expectBusinessRefusal(() => executeAgentTool({
+    db: makeDb({ systemLockedTask: true }),
+    name: 'quality_update_task',
+    input: { task_id: TASK_ID, title: 'Modification source verrouillee' },
+    context: makeContext(['quality.read', 'quality.configuration.write']),
+  }), /generee depuis sa source ALTA/, 'modification directe tache systeme verrouillee doit etre refusee');
 
   await expectBusinessRefusal(() => executeAgentTool({
     db: makeDb({ incompletePlan: true }),

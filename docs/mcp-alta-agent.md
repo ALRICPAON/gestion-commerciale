@@ -217,6 +217,28 @@ Pour le nettoyage, le plan PMS est la source de verite. Les champs `responsible_
 
 Les champs de planification exposes pour les parametres temperature et plans nettoyage sont `planning_mode`, `quality_task_id`, `task_title`, `responsible_user_id`, `frequency_value`, `frequency_unit` et `target_time`.
 
+### Architecture Qualite SYSTEM / MANUAL
+
+Les taches qualite exposent maintenant une origine metier explicite:
+
+- `task_origin=SYSTEM`: tache generee et synchronisee par une source ALTA native (`cleaning_plan`, `temperature_parameter`, future maintenance/calibration/nuisibles/audit). Elle porte `source_entity_type`, `source_entity_id` et `source_locked=true`.
+- `task_origin=MANUAL`: tache creee directement par un utilisateur ou par l'agent pour un besoin manuel. Elle reste modifiable selon les permissions et l'absence d'historique.
+
+Les outils MCP `quality_update_task` et les routes front refusent la modification directe d'une tache `SYSTEM` verrouillee. Il faut modifier la source native:
+
+- plan de nettoyage via `update_quality_cleaning_plan` ou `archive_or_disable_quality_cleaning_plan`;
+- parametre temperature via `update_quality_temperature_parameter` ou `archive_or_disable_quality_temperature_parameter`.
+
+Les parametres temperature sont aussi sources de verite: `create_quality_temperature_parameter` cree ou synchronise automatiquement la tache systeme liee, `update_quality_temperature_parameter` la met a jour, et `archive_or_disable_quality_temperature_parameter` archive logiquement la tache liee. Les anciens champs `quality_task_id`, `zone_id` et `equipment_id` restent compatibles.
+
+Le diagnostic des anciennes taches QF-01..QF-13 reste lecture seule:
+
+```bash
+node backend/scripts/diagnose-quality-legacy-qf-tasks.js <STORE_ID>
+```
+
+Il retourne pour chaque tache l'historique, les correspondances possibles avec un parametre temperature ou un plan de nettoyage, et une recommandation. Aucun archivage automatique n'est effectue.
+
 La configuration recommandee de l'identite technique est:
 
 ```text

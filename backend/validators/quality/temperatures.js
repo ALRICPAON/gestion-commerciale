@@ -47,6 +47,7 @@ function mapLimitPayload(body = {}) {
     expected_frequency_value: nullableNumber(body.expected_frequency_value),
     expected_frequency_unit: TEMPERATURE_FREQUENCY_UNITS.includes(frequencyUnit) ? frequencyUnit : null,
     target_time: nullableText(body.target_time),
+    responsible_user_id: cleanUuid(body.responsible_user_id || body.responsibleUserId),
     quality_task_id: cleanUuid(body.quality_task_id),
     is_active: body.is_active !== false && body.is_active !== 'false',
     valid_from: nullableText(body.valid_from) || new Date().toISOString().slice(0, 10),

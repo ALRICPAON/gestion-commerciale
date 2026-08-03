@@ -5,7 +5,7 @@ const { attachDbContext } = require('../../middleware/dbContext');
 const { requireAnyQualityPermission, requireQualityPermission } = require('../../middleware/quality/requireQualityPermission');
 const { QUALITY_PERMISSIONS } = require('../../services/quality/permissions');
 const {
-  deactivateQualityTask,
+  archiveQualityTask,
   getQualityTask,
   getQualityTaskSummary,
   listQualityTasks,
@@ -26,7 +26,7 @@ router.use(authenticateToken, attachDbContext);
 
 function handleError(res, err, label) {
   console.error(label, err);
-  res.status(err.status || 500).json({ error: err.publicMessage || err.message || 'Erreur serveur qualité tâches' });
+  res.status(err.status || 500).json({ error: err.publicMessage || err.message || 'Erreur serveur qualite taches' });
 }
 
 router.get('/summary', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, res) => {
@@ -48,9 +48,9 @@ router.get('/', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, 
 router.get('/:id', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, res) => {
   try {
     const taskId = cleanUuid(req.params.id);
-    if (!taskId) return res.status(400).json({ error: 'Identifiant tâche invalide' });
+    if (!taskId) return res.status(400).json({ error: 'Identifiant tache invalide' });
     const task = await getQualityTask(req.dbPool, req.user.store_id, taskId);
-    if (!task) return res.status(404).json({ error: 'Tâche qualité introuvable' });
+    if (!task) return res.status(404).json({ error: 'Tache qualite introuvable' });
     res.json(task);
   } catch (err) {
     handleError(res, err, 'Erreur GET /api/quality/tasks/:id');
@@ -77,12 +77,12 @@ router.post('/', requireTaskConfigurationPermission, async (req, res) => {
 router.put('/:id', requireTaskConfigurationPermission, async (req, res) => {
   try {
     const taskId = cleanUuid(req.params.id);
-    if (!taskId) return res.status(400).json({ error: 'Identifiant tâche invalide' });
+    if (!taskId) return res.status(400).json({ error: 'Identifiant tache invalide' });
     const payload = mapTaskPayload(req.body);
     const error = validateTaskPayload(payload);
     if (error) return res.status(400).json({ error });
     const task = await saveQualityTask(req.dbPool, req.user.store_id, req.user.id, payload, taskId);
-    if (!task) return res.status(404).json({ error: 'Tâche qualité introuvable' });
+    if (!task) return res.status(404).json({ error: 'Tache qualite introuvable' });
     res.json(task);
   } catch (err) {
     handleError(res, err, 'Erreur PUT /api/quality/tasks/:id');
@@ -92,25 +92,33 @@ router.put('/:id', requireTaskConfigurationPermission, async (req, res) => {
 router.patch('/:id/status', requireQualityPermission(QUALITY_PERMISSIONS.RECORD_CREATE), async (req, res) => {
   try {
     const taskId = cleanUuid(req.params.id);
-    if (!taskId) return res.status(400).json({ error: 'Identifiant tâche invalide' });
+    if (!taskId) return res.status(400).json({ error: 'Identifiant tache invalide' });
     const payload = mapStatusPayload(req.body);
     const error = validateStatusPayload(payload);
     if (error) return res.status(400).json({ error });
     const task = await updateQualityTaskStatus(req.dbPool, req.user.store_id, req.user.id, taskId, payload);
-    if (!task) return res.status(404).json({ error: 'Tâche qualité introuvable' });
+    if (!task) return res.status(404).json({ error: 'Tache qualite introuvable' });
     res.json(task);
   } catch (err) {
     handleError(res, err, 'Erreur PATCH /api/quality/tasks/:id/status');
   }
 });
 
-router.delete('/:id', requireQualityPermission(QUALITY_PERMISSIONS.EQUIPMENT_MANAGE), async (req, res) => {
+router.delete('/:id', requireTaskConfigurationPermission, async (req, res) => {
   try {
     const taskId = cleanUuid(req.params.id);
-    if (!taskId) return res.status(400).json({ error: 'Identifiant tâche invalide' });
-    const task = await deactivateQualityTask(req.dbPool, req.user.store_id, req.user.id, taskId);
-    if (!task) return res.status(404).json({ error: 'Tâche qualité introuvable' });
-    res.json({ mode: 'deactivated', message: 'Tâche désactivée', task });
+    if (!taskId) return res.status(400).json({ error: 'Identifiant tache invalide' });
+    const before = await getQualityTask(req.dbPool, req.user.store_id, taskId);
+    if (!before) return res.status(404).json({ error: 'Tache qualite introuvable' });
+    if (before.task_origin === 'SYSTEM' && before.source_locked) {
+      return res.status(409).json({
+        error: 'Archivage direct refuse: cette tache est generee depuis sa source ALTA. Archivez ou desactivez la source liee.',
+        source_entity_type: before.source_entity_type,
+        source_entity_id: before.source_entity_id,
+      });
+    }
+    const task = await archiveQualityTask(req.dbPool, req.user.store_id, req.user.id, taskId);
+    res.json({ mode: 'archived', message: 'Tache archivee', task });
   } catch (err) {
     handleError(res, err, 'Erreur DELETE /api/quality/tasks/:id');
   }

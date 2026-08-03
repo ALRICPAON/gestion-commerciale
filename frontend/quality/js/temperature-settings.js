@@ -97,6 +97,20 @@
     return 'quality-temperature-warning';
   }
 
+  function showSettingDetail(item) {
+    const task = item.quality_task;
+    setFeedback([
+      `Parametre: ${item.type_label || item.type_code || '-'}`,
+      `Zone: ${item.zone_name || item.zone_id || '-'}`,
+      `Equipement: ${item.equipment_name || item.equipment_id || '-'}`,
+      `Seuils: ${item.min_value ?? '-'} ${item.unit || ''} a ${item.max_value ?? '-'} ${item.unit || ''}`,
+      `Frequence: ${item.expected_frequency_value || task?.frequency_value || '-'} ${item.expected_frequency_unit || task?.frequency_unit || ''}`,
+      `Heure cible: ${item.target_time || task?.target_time || '-'}`,
+      `Statut: ${item.is_active ? 'Actif' : 'Inactif'}`,
+      `Tache liee: ${task?.title || item.quality_task_id || '-'}`,
+    ].join(' | '));
+  }
+
   function objectName() {
     const equipment = equipments.find((item) => item.id === els.equipmentId.value);
     if (equipment) return equipment.name || equipment.code;
@@ -180,6 +194,7 @@
       unit: els.unit.value || '°C',
       ...legacyFrequencyFromTask(linkedTask),
       quality_task_id: qualityTaskId,
+      responsible_user_id: els.taskResponsible.value || null,
       zone_id: els.zoneId.value,
       equipment_id: els.equipmentId.value,
       valid_from: els.from.value,
@@ -194,23 +209,14 @@
       const task = tasks.find((item) => item.id === els.taskId.value) || null;
       return { qualityTaskId: els.taskId.value || null, linkedTask: task };
     }
-    const entity = taskEntity();
-    const payload = {
-      title: els.taskTitle.value || `Relevé température - ${objectName()}`,
-      module_key: 'temperature',
-      ...entity,
-      responsible_user_id: els.taskResponsible.value || null,
-      frequency_value: els.frequencyValue.value || null,
-      frequency_unit: els.frequencyUnit.value || null,
-      target_time: els.targetTime.value || null,
-      status: 'planned',
-      active: true,
-      description: 'Tâche générée depuis les paramètres températures.',
+    return {
+      qualityTaskId: null,
+      linkedTask: {
+        frequency_value: els.frequencyValue.value || null,
+        frequency_unit: els.frequencyUnit.value || null,
+        target_time: els.targetTime.value || null,
+      },
     };
-    const task = await tasksApi.save(payload);
-    tasks.push(task);
-    refreshTaskOptions(task.id);
-    return { qualityTaskId: task.id, linkedTask: task };
   }
 
   function resetForm() {
@@ -262,7 +268,12 @@
         : '<p class="quality-muted"><strong>Tâche :</strong> Non planifié</p>';
       return `<article class="quality-card ${statusClass(item.followup_status)}"><span class="quality-badge">${statusLabel(item.followup_status)}</span><h3>${escapeHtml(item.equipment_name || item.zone_name || item.type_label)}</h3><p>${escapeHtml(item.type_label)} · ${item.min_value ?? '-'}${escapeHtml(item.unit)} à ${item.max_value ?? '-'}${escapeHtml(item.unit)}</p>${planning}<p class="quality-muted">Dernier relevé : ${formatDate(item.last_recorded_at)}</p><div class="quality-actions"><button class="btn btn-secondary" data-action="edit" data-id="${item.id}">Modifier</button><button class="btn btn-secondary" data-action="toggle" data-id="${item.id}">${item.is_active ? 'Désactiver' : 'Réactiver'}</button><button class="btn btn-secondary" data-action="archive" data-id="${item.id}">Archiver</button></div></article>`;
     }).join('');
-    if (!canManage) els.list.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+    Array.from(els.list.querySelectorAll('.quality-actions')).forEach((actions, index) => {
+      const item = settings[index];
+      if (!item || actions.querySelector('[data-action="view"]')) return;
+      actions.insertAdjacentHTML('afterbegin', `<button class="btn btn-secondary" data-action="view" data-id="${escapeHtml(item.id)}">Voir</button>`);
+    });
+    if (!canManage) els.list.querySelectorAll('button:not([data-action="view"])').forEach((button) => { button.disabled = true; });
   }
 
   async function loadUsers() {
@@ -321,9 +332,11 @@
   });
   els.list.addEventListener('click', async (event) => {
     const button = event.target.closest('button[data-action]');
-    if (!button || !canManage) return;
+    if (!button) return;
     const item = settings.find((setting) => setting.id === button.dataset.id);
     if (!item) return;
+    if (button.dataset.action === 'view') return showSettingDetail(item);
+    if (!canManage) return;
     if (button.dataset.action === 'edit') return fillForm(item);
     try {
       if (button.dataset.action === 'toggle') await api.saveLimit({ ...item, is_active: !item.is_active }, item.id);

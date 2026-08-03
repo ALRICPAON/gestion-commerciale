@@ -6,6 +6,7 @@ const { listMcpTools } = require('../services/agent/agentToolRegistry');
 const STORE_ID = '00000000-0000-4000-8000-000000000001';
 const USER_ID = '00000000-0000-4000-8000-000000000002';
 const LIMIT_ID = '00000000-0000-4000-8000-000000000003';
+const TASK_ID = '00000000-0000-4000-8000-000000000004';
 const AUDIT_ID = '00000000-0000-4000-8000-000000000101';
 
 function makeContext(permissions) {
@@ -41,11 +42,13 @@ function makeDb(options = {}) {
       expected_frequency_value: null,
       expected_frequency_unit: null,
       target_time: null,
+      responsible_user_id: null,
       quality_task_id: null,
       is_active: true,
       valid_from: '2026-08-02',
       valid_until: null,
     }] : [],
+    tasks: [],
   };
 
   function enrichLimit(limit) {
@@ -57,7 +60,17 @@ function makeDb(options = {}) {
       type_default_unit: type?.default_unit || null,
       type_category: type?.category || null,
       type_active: type?.is_active === true,
-      task_id: null,
+      task_id: limit.quality_task_id || null,
+      task_title: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.title : null,
+      task_frequency_value: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.frequency_value : null,
+      task_frequency_unit: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.frequency_unit : null,
+      task_target_time: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.target_time : null,
+      task_status: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.status : null,
+      task_active: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.active : null,
+      task_origin: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.task_origin : null,
+      task_source_entity_type: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.source_entity_type : null,
+      task_source_entity_id: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.source_entity_id : null,
+      task_source_locked: limit.quality_task_id ? state.tasks.find((task) => task.id === limit.quality_task_id)?.source_locked : null,
     };
   }
 
@@ -75,7 +88,69 @@ function makeDb(options = {}) {
         return { rows: state.types.filter((type) => type.is_active).sort((a, b) => a.label.localeCompare(b.label)) };
       }
 
-      if (text.includes('FROM quality_tasks')) return { rows: [] };
+      if (text.includes('FROM quality_tasks')) {
+        if (text.includes('t.id = $1')) return { rows: state.tasks.filter((task) => task.id === params[0] && task.store_id === params[1]) };
+        return { rows: state.tasks };
+      }
+
+      if (text.includes('INSERT INTO quality_tasks')) {
+        const task = {
+          id: TASK_ID,
+          store_id: params[0],
+          title: params[1],
+          module_key: params[3],
+          entity_type: params[4],
+          entity_id: params[5],
+          responsible_user_id: params[6],
+          frequency_value: params[7],
+          frequency_unit: params[8],
+          target_time: params[9],
+          next_due_at: params[10],
+          status: params[11],
+          active: params[12],
+          category: params[13],
+          proof_required: params[18],
+          photo_required: params[19],
+          configuration_status: params[23],
+          created_source: params[24],
+          created_by_agent: params[25],
+          task_origin: params[27],
+          source_entity_type: params[28],
+          source_entity_id: params[29],
+          source_locked: params[30],
+        };
+        state.tasks.push(task);
+        return { rows: [{ id: task.id }] };
+      }
+
+      if (text.includes('UPDATE quality_tasks')) {
+        const task = state.tasks.find((item) => item.id === params[0] && item.store_id === params[1]);
+        if (!task) return { rows: [] };
+        Object.assign(task, {
+          title: params[2],
+          module_key: params[4],
+          entity_type: params[5],
+          entity_id: params[6],
+          responsible_user_id: params[7],
+          frequency_value: params[8],
+          frequency_unit: params[9],
+          target_time: params[10],
+          next_due_at: params[11],
+          status: params[12],
+          active: params[13],
+          category: params[14],
+          proof_required: params[19],
+          photo_required: params[20],
+          configuration_status: params[24],
+          created_source: params[25],
+          created_by_agent: params[26],
+          task_origin: params[28],
+          source_entity_type: params[29],
+          source_entity_id: params[30],
+          source_locked: params[31],
+        });
+        return { rows: [{ id: task.id }] };
+      }
 
       if (text.includes('INSERT INTO quality_temperature_limits')) {
         const limit = {
@@ -90,10 +165,11 @@ function makeDb(options = {}) {
           expected_frequency_value: params[7],
           expected_frequency_unit: params[8],
           target_time: params[9],
-          quality_task_id: params[10],
-          is_active: params[11],
-          valid_from: params[12],
-          valid_until: params[13],
+          responsible_user_id: params[10],
+          quality_task_id: params[11],
+          is_active: params[12],
+          valid_from: params[13],
+          valid_until: params[14],
         };
         state.nextLimit += 1;
         state.limits.push(limit);
@@ -103,6 +179,10 @@ function makeDb(options = {}) {
       if (text.includes('UPDATE quality_temperature_limits')) {
         const limit = state.limits.find((item) => item.id === params[0] && item.store_id === params[1]);
         if (!limit) return { rows: [] };
+        if (text.includes('SET quality_task_id=$3')) {
+          limit.quality_task_id = params[2];
+          return { rows: [{ id: limit.id }] };
+        }
         Object.assign(limit, {
           type_code: params[2],
           zone_id: params[3],
@@ -113,10 +193,11 @@ function makeDb(options = {}) {
           expected_frequency_value: params[8],
           expected_frequency_unit: params[9],
           target_time: params[10],
-          quality_task_id: params[11],
-          is_active: params[12],
-          valid_from: params[13],
-          valid_until: params[14],
+          responsible_user_id: params[11],
+          quality_task_id: params[12],
+          is_active: params[13],
+          valid_from: params[14],
+          valid_until: params[15],
         });
         return { rows: [{ id: limit.id }] };
       }
@@ -202,6 +283,10 @@ async function main() {
   assert.equal(created.data.parameter.type_code, 'COLD_ROOM');
   assert.equal(created.data.parameter.type_label, 'Chambre froide');
   assert(createDb.calls.some((call) => call.sql.includes('INSERT INTO quality_temperature_limits')), 'creation limite non executee');
+  assert(createDb.calls.some((call) => call.sql.includes('INSERT INTO quality_tasks')), 'creation parametre temperature doit generer une tache systeme');
+  assert.equal(createDb.state.tasks[0].task_origin, 'SYSTEM', 'tache temperature doit etre SYSTEM');
+  assert.equal(createDb.state.tasks[0].source_entity_type, 'temperature_parameter', 'tache temperature doit pointer vers le parametre');
+  assert.equal(createDb.state.tasks[0].source_locked, true, 'tache temperature doit etre verrouillee par sa source');
 
   const invalidCreateDb = makeDb();
   await expectInvalidType(() => executeAgentTool({
