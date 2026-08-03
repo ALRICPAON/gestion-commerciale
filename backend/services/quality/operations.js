@@ -357,16 +357,18 @@ async function recordTemperatureControl(db, storeId, userId, payload) {
     if (taskId && task?.task_origin === 'SYSTEM' && task.source_entity_type !== 'temperature_parameter') {
       throw Object.assign(new Error('Cette tache SYSTEM doit etre executee par son formulaire metier'), { status: 409, expose: true });
     }
-    if (!taskId && payload.source === 'exceptional' && !payload.exceptional_reason && !payload.comment) {
+    const requestedSource = payload.source || (taskId ? 'api' : 'manual');
+    const isDirectManualEntry = !taskId && ['exceptional', 'manual'].includes(requestedSource);
+    if (!taskId && requestedSource === 'exceptional' && !payload.exceptional_reason && !payload.comment) {
       throw Object.assign(new Error('Motif obligatoire pour une saisie temperature exceptionnelle'), { status: 400, expose: true });
     }
-    if (!taskId && payload.source !== 'exceptional') {
+    if (!taskId && !isDirectManualEntry) {
       throw Object.assign(new Error('Tache ou occurrence temperature obligatoire hors saisie exceptionnelle'), { status: 400, expose: true });
     }
     const effectiveOccurrence = occurrence || await resolveOpenOccurrenceForTask(client, storeId, taskId, payload.recorded_at || new Date().toISOString(), { source_entity_type: task?.source_entity_type, source_entity_id: task?.source_entity_id });
     const record = await saveTemperatureRecord(client, storeId, userId, {
       ...payload,
-      source: payload.source || (effectiveOccurrence ? 'scheduled' : 'exceptional'),
+      source: requestedSource,
       quality_task_id: taskId,
       occurrence_id: effectiveOccurrence?.id || null,
       operator_user_id: payload.operator_user_id || userId,

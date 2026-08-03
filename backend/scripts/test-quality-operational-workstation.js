@@ -84,7 +84,7 @@ function makeDb(task = makeTask()) {
         };
       }
       if (/FROM quality_temperature_records r/i.test(sql)) return { rows: [] };
-      if (/INSERT INTO quality_temperature_records/i.test(sql)) return { rows: [temperatureRecord] };
+      if (/INSERT INTO quality_temperature_records/i.test(sql)) return { rows: [{ ...temperatureRecord, source: params[7] }] };
       if (/FROM quality_cleaning_plans/i.test(sql)) return { rows: [{ id: '99999999-9999-9999-9999-999999999999', active: true, quality_task_id: TASK_ID, title: 'Plan test', zones: [], equipments: [] }] };
       if (/INSERT INTO quality_cleaning_records/i.test(sql)) return { rows: [cleaningRecord] };
       if (/FROM quality_task_occurrences/i.test(sql)) return { rows: [{ ...occurrence, status: 'completed' }] };
@@ -257,6 +257,7 @@ async function main() {
     recorded_at: '2026-08-03T04:05:00.000Z',
   });
   assert(temperature.record, 'La saisie temperature canonique doit creer un record');
+  assert.equal(temperature.record.source, 'api', 'La saisie temperature operationnelle doit ecrire source=api');
   assert(temperatureDb.calls.some((call) => /UPDATE quality_task_occurrences/i.test(call.sql)), 'La saisie temperature doit completer une occurrence');
   assert.equal(temperatureDb.stats().connectCount, 1, 'La transaction temperature ne doit acquerir qu un client');
   assert.equal(temperatureDb.stats().releaseCount, 1, 'La transaction temperature doit liberer le client une seule fois');

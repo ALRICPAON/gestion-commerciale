@@ -1,4 +1,5 @@
-const TEMPERATURE_SOURCES = Object.freeze(['scheduled', 'exceptional', 'manual', 'automatic', 'iot', 'import', 'api']);
+const TEMPERATURE_SOURCES = Object.freeze(['manual', 'iot', 'import', 'api']);
+const TEMPERATURE_SOURCE_ALIASES = Object.freeze(['scheduled', 'occurrence', 'task', 'quality_today', 'exceptional', 'manual', 'api', 'import', 'iot', 'automatic']);
 const TEMPERATURE_ALERT_STATUSES = Object.freeze(['compliant', 'warning', 'out_of_limits']);
 const TEMPERATURE_FREQUENCY_UNITS = Object.freeze(['hours', 'days', 'events']);
 const TEMPERATURE_SCHEDULED_DAYS = Object.freeze(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']);
@@ -37,8 +38,22 @@ function cleanTimeArray(value) {
   return cleanStringArray(value).map(normalizeTime).filter(Boolean);
 }
 
+function normalizeTemperatureRecordSource(source = null, context = {}) {
+  const raw = nullableText(source || context.source) || null;
+  const value = raw ? raw.toLowerCase() : null;
+  if (!value) return context.quality_task_id || context.occurrence_id || context.from_operations ? 'api' : 'manual';
+  if (['scheduled', 'occurrence', 'task', 'quality_today'].includes(value)) return 'api';
+  if (value === 'exceptional') return 'manual';
+  if (value === 'automatic') return 'iot';
+  if (TEMPERATURE_SOURCES.includes(value)) return value;
+  const err = new Error(`Source de releve temperature invalide: ${raw}. Valeurs autorisees: manual, iot, import, api.`);
+  err.status = 400;
+  err.publicMessage = err.message;
+  throw err;
+}
+
 function mapRecordPayload(body = {}) {
-  const source = nullableText(body.source) || 'manual';
+  const source = nullableText(body.source);
   return {
     zone_id: cleanUuid(body.zone_id),
     equipment_id: cleanUuid(body.equipment_id),
@@ -46,7 +61,7 @@ function mapRecordPayload(body = {}) {
     value: nullableNumber(body.value),
     unit: nullableText(body.unit) || 'C',
     recorded_at: nullableText(body.recorded_at) || new Date().toISOString(),
-    source: TEMPERATURE_SOURCES.includes(source) ? source : 'manual',
+    source: normalizeTemperatureRecordSource(source, body),
     parameter_id: cleanUuid(body.parameter_id || body.temperature_limit_id),
     operator_user_id: cleanUuid(body.operator_user_id),
     quality_task_id: cleanUuid(body.quality_task_id),
@@ -103,10 +118,12 @@ function validateLimitPayload(payload) {
 
 module.exports = {
   TEMPERATURE_SOURCES,
+  TEMPERATURE_SOURCE_ALIASES,
   TEMPERATURE_ALERT_STATUSES,
   TEMPERATURE_FREQUENCY_UNITS,
   TEMPERATURE_SCHEDULED_DAYS,
   cleanUuid,
+  normalizeTemperatureRecordSource,
   mapRecordPayload,
   mapLimitPayload,
   validateRecordPayload,

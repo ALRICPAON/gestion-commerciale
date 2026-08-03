@@ -1,6 +1,7 @@
 const { logQualityEvent } = require('./eventLogger');
 const { archiveQualityTask, completeQualityTask, saveQualityTask } = require('./tasks');
 const { enrichTask } = require('./taskScheduler');
+const { normalizeTemperatureRecordSource } = require('../../validators/quality/temperatures');
 
 function dbError(err, message) {
   if (err && err.code === '23503') {
@@ -632,6 +633,7 @@ async function completeLinkedTemperatureTask(db, storeId, userId, limit, payload
 async function saveTemperatureRecord(db, storeId, userId, payload, recordId = null) {
   const before = recordId ? await getTemperatureRecord(db, storeId, recordId) : null;
   if (recordId && (!before || before.deleted_at)) return null;
+  const normalizedSource = normalizeTemperatureRecordSource(payload.source, payload);
   const limit = await findApplicableLimit(db, storeId, payload);
   const alert = evaluateAlert(payload.value, limit);
   const ownsTransaction = typeof db.connect === 'function' && typeof db.release !== 'function' && db._connected !== true;
@@ -648,7 +650,7 @@ async function saveTemperatureRecord(db, storeId, userId, payload, recordId = nu
              exceptional_reason=$22::text, updated_by=$23, updated_at=now()
          WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL
          RETURNING *`,
-        [recordId, storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id || null, payload.evidence_document_id || null, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, payload.exceptional_reason || null, userId]
+        [recordId, storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, normalizedSource, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id || null, payload.evidence_document_id || null, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, payload.exceptional_reason || null, userId]
       )
       : await client.query(
         `INSERT INTO quality_temperature_records (
@@ -657,7 +659,7 @@ async function saveTemperatureRecord(db, storeId, userId, payload, recordId = nu
           temperature_limit_id, min_limit, max_limit, alert_status, alert_reason, exceptional_reason, created_by, updated_by
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11::uuid,$12,$13,$14::uuid,$15::uuid,$16::uuid,$17,$18,$19,$20,$21::text,$22,$22)
         RETURNING *`,
-        [storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id || null, payload.evidence_document_id || null, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, payload.exceptional_reason || null, userId]
+        [storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, normalizedSource, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id || null, payload.evidence_document_id || null, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, payload.exceptional_reason || null, userId]
       );
     if (!recordId) await completeLinkedTemperatureTask(client, storeId, userId, limit, payload);
     await logEvent(client, storeId, userId, recordId ? 'quality.temperature.record.updated' : 'quality.temperature.record.created', 'quality_temperature_record', result.rows[0].id, before, result.rows[0]);
@@ -674,6 +676,7 @@ async function saveTemperatureRecord(db, storeId, userId, payload, recordId = nu
 async function saveTemperatureRecordLegacy(db, storeId, userId, payload, recordId = null) {
   const before = recordId ? await getTemperatureRecord(db, storeId, recordId) : null;
   if (recordId && (!before || before.deleted_at)) return null;
+  const normalizedSource = normalizeTemperatureRecordSource(payload.source, payload);
   const limit = await findApplicableLimit(db, storeId, payload);
   const alert = evaluateAlert(payload.value, limit);
   const ownsTransaction = typeof db.connect === 'function' && typeof db.release !== 'function' && db._connected !== true;
@@ -690,7 +693,7 @@ async function saveTemperatureRecordLegacy(db, storeId, userId, payload, recordI
              updated_by=$22, updated_at=now()
          WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL
          RETURNING *`,
-        [recordId, storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id, payload.evidence_document_id, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
+        [recordId, storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, normalizedSource, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id, payload.evidence_document_id, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
       )
       : await client.query(
         `INSERT INTO quality_temperature_records (
@@ -699,7 +702,7 @@ async function saveTemperatureRecordLegacy(db, storeId, userId, payload, recordI
           temperature_limit_id, min_limit, max_limit, alert_status, alert_reason, created_by, updated_by
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11::uuid,$12,$13,$14,$15,$16::uuid,$17,$18,$19,$20,$21,$21)
         RETURNING *`,
-        [storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id, payload.evidence_document_id, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
+        [storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, normalizedSource, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id, payload.evidence_document_id, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
       );
     if (!recordId) await completeLinkedTemperatureTask(client, storeId, userId, limit, payload);
     await logEvent(client, storeId, userId, recordId ? 'quality.temperature.record.updated' : 'quality.temperature.record.created', 'quality_temperature_record', result.rows[0].id, before, result.rows[0]);
