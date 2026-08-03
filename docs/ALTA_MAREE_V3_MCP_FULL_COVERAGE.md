@@ -27,6 +27,8 @@ ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,supplier
 
 `coverage_complete: true` est publie uniquement parce que `backend/scripts/test-agent-mcp-coverage-matrix.js` verifie la matrice MCP, la matrice front/backend, l'absence de `missing_tools` et l'absence de `missing_frontend_backend_capabilities`. Le test force aussi l'echec de couverture si `GET /api/quality/temperatures/types` n'est pas expose via `list_quality_temperature_types`.
 
+Le poste operationnel qualite conserve le meme total public: `tool_count: 180`. Les 9 outils operationnels acceptent maintenant les champs de preuve, operateur, controle visuel, conformite et action corrective necessaires a l'execution reelle.
+
 ## Audit front/backend
 
 La matrice `frontend_backend_capabilities` liste, pour chaque capacite auditee:

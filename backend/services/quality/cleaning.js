@@ -298,9 +298,10 @@ async function syncCleaningPlanTask(db, storeId, userId, plan) {
 
 async function withTransaction(db, work) {
   if (typeof db.connect !== 'function') return work(db);
-  const client = await db.connect();
+  const ownsTransaction = typeof db.connect === 'function';
+  const client = ownsTransaction ? await db.connect() : db;
   try {
-    await client.query('BEGIN');
+    if (ownsTransaction) await client.query('BEGIN');
     const result = await work(client);
     await client.query('COMMIT');
     return result;
@@ -518,13 +519,13 @@ async function createCleaningRecord(db, storeId, userId, payload) {
       targetId: result.rows[0].id,
       after: result.rows[0],
     });
-    await client.query('COMMIT');
+    if (ownsTransaction) await client.query('COMMIT');
     return result.rows[0];
   } catch (err) {
-    await client.query('ROLLBACK');
+    if (ownsTransaction) await client.query('ROLLBACK');
     throw err;
   } finally {
-    client.release();
+    if (ownsTransaction) client.release();
   }
 }
 

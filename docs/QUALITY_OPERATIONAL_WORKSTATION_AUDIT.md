@@ -4,12 +4,15 @@
 
 La PR introduit un poste central `Qualite du jour` et une vue lecture seule `Controle DDPP`.
 
+Correctif final: voir aussi `docs/QUALITY_OPERATIONAL_WORKSTATION_FINAL_AUDIT.md`.
+
 Le principe retenu est de conserver les objets de configuration comme sources metier:
 
 - les parametres temperature configurent les seuils, jours et horaires;
 - les plans de nettoyage configurent les operations PMS;
 - `quality_tasks` reste la definition de travail a executer;
 - `quality_task_occurrences` represente chaque echeance reelle;
+- `quality_manual_task_records` conserve les executions des taches manuelles;
 - les preuves restent dans les enregistrements metier (`quality_temperature_records`, `quality_cleaning_records`);
 - les non-conformites et actions correctives sont rattachees aux enregistrements, taches, occurrences, zones et equipements.
 
@@ -36,6 +39,7 @@ Aucune logique parallele n'est creee: les executions appellent les services exis
 - execution temperature via `saveTemperatureRecord`;
 - execution nettoyage via `createCleaningRecord`;
 - execution tache manuelle via `updateQualityTaskStatus`;
+- trace manuelle via `quality_manual_task_records`;
 - declaration et cloture des non-conformites;
 - creation d'actions correctives.
 

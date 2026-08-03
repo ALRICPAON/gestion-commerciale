@@ -3,25 +3,35 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Contrôle DDPP - ALTA MARÉE</title>
+  <title>Controle DDPP - ALTA MAREE</title>
   <link rel="stylesheet" href="../../css/app.css" />
   <link rel="stylesheet" href="../css/quality.css?v=6" />
 </head>
 <body class="app-page quality-foundation-page">
   <header class="topbar">
-    <div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Contrôle DDPP</p></div>
-    <div class="topbar-right"><button class="btn btn-secondary" onclick="window.print()">Imprimer</button><button class="btn btn-secondary" onclick="window.location.href='./quality-today.html'">Qualité du jour</button><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualité</button></div>
+    <div class="topbar-left"><h1 class="app-title">ALTA MAREE</h1><p class="app-subtitle">Controle DDPP</p></div>
+    <div class="topbar-right"><button class="btn btn-secondary" onclick="window.print()">Imprimer</button><button class="btn btn-secondary" onclick="window.location.href='./quality-today.html'">Qualite du jour</button><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualite</button></div>
   </header>
   <main class="main-content quality-workstation">
-    <section class="welcome-card"><span class="section-kicker">Inspection</span><h2>Contrôle DDPP</h2><p>Situation lisible du jour, sans modification des données.</p></section>
+    <section class="welcome-card"><span class="section-kicker">Inspection</span><h2>Controle DDPP</h2><p>Situation lisible du jour, sans modification des donnees.</p></section>
     <div id="quality-ddpp-feedback" class="page-feedback hidden"></div>
+    <form id="quality-ddpp-filters" class="quality-card quality-form-grid">
+      <label>Date debut<input name="start_date" class="form-input" type="datetime-local"></label>
+      <label>Date fin<input name="end_date" class="form-input" type="datetime-local"></label>
+      <label>Type<select name="type" class="form-input"><option value="">Tous</option><option value="temperature">Temperature</option><option value="cleaning">Nettoyage</option><option value="manual">Manuel</option><option value="control">Controle</option></select></label>
+      <label>Zone<input name="zone_id" class="form-input" type="text" placeholder="ID zone"></label>
+      <label>Equipement<input name="equipment_id" class="form-input" type="text" placeholder="ID equipement"></label>
+      <label>Conformite<select name="conformity_status" class="form-input"><option value="">Toutes</option><option value="conform">Conforme</option><option value="non_conform">Non conforme</option><option value="not_applicable">Non applicable</option></select></label>
+      <div class="quality-actions"><button class="btn btn-primary" type="submit">Filtrer</button></div>
+    </form>
     <section id="quality-ddpp-status" class="quality-card"></section>
     <section class="quality-card"><h3>Situation du jour</h3><div id="quality-ddpp-today" class="quality-grid"></div></section>
-    <section class="quality-card"><h3>Températures</h3><div id="quality-ddpp-temperatures" class="quality-table-wrapper"></div></section>
+    <section class="quality-card"><h3>Historique du jour</h3><div id="quality-ddpp-completed" class="quality-table-wrapper"></div></section>
+    <section class="quality-card"><h3>Temperatures</h3><div id="quality-ddpp-temperatures" class="quality-table-wrapper"></div></section>
     <section class="quality-card"><h3>Nettoyages</h3><div id="quality-ddpp-cleaning" class="quality-table-wrapper"></div></section>
-    <section class="quality-card"><h3>Non-conformités</h3><div id="quality-ddpp-nc" class="quality-list-grid"></div></section>
+    <section class="quality-card"><h3>Non-conformites</h3><div id="quality-ddpp-nc" class="quality-list-grid"></div></section>
     <section class="quality-card"><h3>Actions correctives</h3><div id="quality-ddpp-actions" class="quality-list-grid"></div></section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/operations-api.js?v=1"></script><script src="../js/quality-ddpp.js?v=1"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/operations-api.js?v=2"></script><script src="../js/quality-ddpp.js?v=2"></script>
 </body>
 </html>

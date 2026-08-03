@@ -217,6 +217,7 @@ Tables et migration:
 - `063_quality_configuration_agent_write.sql` ajoute uniquement des colonnes optionnelles, contraintes de statut et index;
 - `064_quality_cleaning_plan_multi_targets.sql` est additive, idempotente et backfill les liaisons depuis `zone_id` et `equipment_id`.
 - `068_quality_operational_workstation.sql` ajoute les occurrences operationnelles, non-conformites, actions correctives et liens de preuve sans modifier les donnees existantes.
+- `069_quality_manual_execution_records.sql` ajoute la trace exploitable des executions de taches manuelles.
 
 Compatibilite plans de nettoyage:
 
@@ -233,6 +234,7 @@ Poste operationnel:
 - `Controle DDPP` fournit une vue lecture seule pour inspection avec statut vert/orange/rouge;
 - une tache `SYSTEM` verrouillee ne peut plus etre terminee directement: elle doit produire un releve temperature ou un enregistrement nettoyage;
 - `quality_task_occurrences` garde chaque echeance reelle sans ecraser l'historique.
+- une tache `MANUAL` realisee cree maintenant une ligne `quality_manual_task_records`; elle apparait dans `Realises aujourd'hui` et dans le DDPP.
 
 Outils MCP:
 
