@@ -253,6 +253,7 @@ Outils MCP:
 - `get_quality_today_work`;
 - `get_quality_overdue_work`;
 - `get_quality_ddpp_dashboard`;
+- `get_quality_ddpp_record_detail`;
 - `execute_quality_temperature_occurrence`;
 - `execute_quality_cleaning_occurrence`;
 - `execute_quality_manual_occurrence`;

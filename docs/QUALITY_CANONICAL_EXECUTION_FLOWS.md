@@ -96,8 +96,9 @@ Les outils publics operationnels continuent d'utiliser les services metier:
 - `get_quality_today_work`;
 - `get_quality_overdue_work`;
 - `get_quality_ddpp_dashboard`.
+- `get_quality_ddpp_record_detail`.
 
-Le total public verifie est `180` outils, avec `coverage_complete: true` et `missing_tools: []`.
+Le total public verifie est `181` outils, avec `coverage_complete: true` et `missing_tools: []`.
 
 ## Verification
 

@@ -183,6 +183,38 @@
   vertical-align: top;
 }
 
+.quality-ddpp-detail-btn {
+  white-space: nowrap;
+}
+
+.quality-ddpp-detail-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin: 0 0 18px;
+}
+
+.quality-ddpp-detail-grid div {
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.quality-ddpp-detail-grid dt {
+  color: var(--alta-muted);
+  font-size: 12px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.quality-ddpp-detail-grid dd {
+  margin: 0;
+}
+
+.quality-ddpp-detail-panel h4 {
+  margin: 18px 0 10px;
+}
+
 .quality-temperature-ok {
   border-color: #9AD5A4;
   background: #F4FBF5;
@@ -201,6 +233,31 @@
 .quality-temperature-missing {
   border-color: #B9A7E8;
   background: #F7F3FF;
+}
+
+@media print {
+  .topbar-right,
+  #quality-ddpp-filters,
+  .quality-actions,
+  .quality-ddpp-detail-btn,
+  .page-feedback,
+  .quality-modal {
+    display: none !important;
+  }
+
+  .topbar,
+  .quality-card,
+  .quality-empty-state {
+    box-shadow: none;
+  }
+
+  .main-content {
+    padding: 0;
+  }
+
+  .quality-table-wrapper {
+    overflow: visible;
+  }
 }
 
 .quality-temperature-chart {

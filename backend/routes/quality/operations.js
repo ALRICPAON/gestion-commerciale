@@ -41,6 +41,18 @@ router.get('/ddpp', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (r
   }
 });
 
+router.get('/ddpp/record/:type/:id', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, res) => {
+  try {
+    const id = cleanUuid(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Identifiant enregistrement invalide' });
+    const detail = await operations.getDdppRecordDetail(req.dbPool, req.user.store_id, req.params.type, id);
+    if (!detail) return res.status(404).json({ error: 'Enregistrement DDPP introuvable' });
+    res.json(detail);
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/operations/ddpp/record/:type/:id');
+  }
+});
+
 router.get('/non-conformities', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, res) => {
   try {
     res.json(await operations.listOpenNonConformities(req.dbPool, req.user.store_id));

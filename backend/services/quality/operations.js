@@ -3,6 +3,14 @@ const { completeQualityTask, getQualityTask, listQualityTasks, updateQualityTask
 const { listDueTemperatureReadings, listTemperatureRecords, saveTemperatureRecord } = require('./temperatures');
 const { logQualityEvent } = require('./eventLogger');
 
+const RECORD_TYPES = Object.freeze({
+  temperature: 'quality_temperature_record',
+  cleaning: 'quality_cleaning_record',
+  manual_task: 'quality_manual_task_record',
+  manual: 'quality_manual_task_record',
+  control: 'quality_manual_task_record',
+});
+
 function startOfDay(value = new Date()) {
   const date = new Date(value);
   date.setHours(0, 0, 0, 0);
@@ -63,6 +71,24 @@ function actionLabel(type) {
   }[type] || 'Effectuer le controle';
 }
 
+function periodFromQuery(query = {}) {
+  return {
+    start: query.start_date || startOfDay().toISOString(),
+    end: query.end_date || endOfDay().toISOString(),
+  };
+}
+
+function recordTypeFromPublicType(type) {
+  return RECORD_TYPES[String(type || '').trim()] || null;
+}
+
+function publicTypeFromRecordType(type) {
+  if (type === 'quality_temperature_record') return 'temperature';
+  if (type === 'quality_cleaning_record') return 'cleaning';
+  if (type === 'quality_manual_task_record') return 'manual_task';
+  return type || null;
+}
+
 function normalizeWorkItem(source, item, task = {}) {
   const type = source || taskType(task);
   const dueAt = item.next_due_at || task.next_due_at || null;
@@ -70,6 +96,8 @@ function normalizeWorkItem(source, item, task = {}) {
     id: item.occurrence_id || item.quality_task_id || item.task_id || item.cleaning_plan_id || item.limit_id || task.id,
     occurrence_id: item.occurrence_id || null,
     quality_task_id: item.quality_task_id || item.task_id || task.id || null,
+    source_record_type: item.record_type || item.source_record_type || null,
+    source_record_id: item.source_record_id || null,
     type,
     title: item.task_title || item.title || task.title || 'Controle qualite',
     source_entity_type: item.source_entity_type || task.source_entity_type || (type === 'temperature' ? 'temperature_parameter' : type === 'cleaning' ? 'cleaning_plan' : null),
@@ -164,6 +192,70 @@ async function listOpenNonConformities(db, storeId) {
   return result.rows;
 }
 
+async function listDdppNonConformities(db, storeId, query = {}) {
+  const period = periodFromQuery(query);
+  const params = [storeId, period.start, period.end];
+  const where = [
+    'nc.store_id = $1::uuid',
+    `(nc.status IN ('open', 'in_progress')
+      OR (nc.closed_at >= $2::timestamptz AND nc.closed_at <= $3::timestamptz)
+      OR (nc.created_at >= $2::timestamptz AND nc.created_at <= $3::timestamptz)
+      OR (o.completed_at >= $2::timestamptz AND o.completed_at <= $3::timestamptz))`,
+  ];
+  const recordType = recordTypeFromPublicType(query.type);
+  if (recordType) {
+    params.push(recordType);
+    where.push(`(nc.origin_type = $${params.length} OR o.source_record_type = $${params.length})`);
+  }
+  if (query.zone_id) {
+    params.push(query.zone_id);
+    where.push(`nc.zone_id = $${params.length}::uuid`);
+  }
+  if (query.equipment_id) {
+    params.push(query.equipment_id);
+    where.push(`nc.equipment_id = $${params.length}::uuid`);
+  }
+  if (query.nc_status) {
+    params.push(query.nc_status);
+    where.push(`nc.status = $${params.length}::text`);
+  }
+  if (query.severity) {
+    params.push(query.severity);
+    where.push(`nc.severity = $${params.length}::text`);
+  }
+  if (query.operator_user_id || query.operator) {
+    params.push(query.operator_user_id || query.operator);
+    where.push(`(nc.created_by = $${params.length}::uuid OR nc.responsible_user_id = $${params.length}::uuid)`);
+  }
+  const result = await db.query(
+    `SELECT nc.*, nc.origin_type AS source_record_type, nc.origin_record_id AS source_record_id,
+            z.name AS zone_name, e.name AS equipment_name,
+            ru.email AS responsible_email, cu.email AS created_by_email, clu.email AS closed_by_email,
+            t.title AS task_title, o.completed_at AS occurrence_completed_at,
+            o.source_record_type AS occurrence_record_type, o.source_record_id AS occurrence_record_id
+     FROM quality_non_conformities nc
+     LEFT JOIN quality_task_occurrences o ON o.id = nc.occurrence_id AND o.store_id = nc.store_id
+     LEFT JOIN quality_tasks t ON t.id = nc.quality_task_id AND t.store_id = nc.store_id
+     LEFT JOIN quality_zones z ON z.id = nc.zone_id AND z.store_id = nc.store_id
+     LEFT JOIN quality_equipments e ON e.id = nc.equipment_id AND e.store_id = nc.store_id
+     LEFT JOIN users ru ON ru.id = nc.responsible_user_id
+     LEFT JOIN users cu ON cu.id = nc.created_by
+     LEFT JOIN users clu ON clu.id = nc.closed_by
+     WHERE ${where.join(' AND ')}
+     ORDER BY CASE nc.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+              CASE nc.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+              nc.created_at DESC
+     LIMIT 500`,
+    params
+  );
+  return result.rows.map((row) => ({
+    ...row,
+    record_type: publicTypeFromRecordType(row.source_record_type || row.occurrence_record_type),
+    source_record_type: row.source_record_type || row.occurrence_record_type || null,
+    source_record_id: row.source_record_id || row.occurrence_record_id || null,
+  }));
+}
+
 async function listCorrectiveActions(db, storeId, query = {}) {
   const params = [storeId];
   const where = ['a.store_id = $1'];
@@ -184,6 +276,72 @@ async function listCorrectiveActions(db, storeId, query = {}) {
   return result.rows;
 }
 
+async function listDdppCorrectiveActions(db, storeId, query = {}) {
+  const period = periodFromQuery(query);
+  const params = [storeId, period.start, period.end];
+  const where = [
+    'a.store_id = $1::uuid',
+    `(a.status IN ('open', 'in_progress')
+      OR (a.completed_at >= $2::timestamptz AND a.completed_at <= $3::timestamptz)
+      OR (a.due_at >= $2::timestamptz AND a.due_at <= $3::timestamptz)
+      OR (nc.created_at >= $2::timestamptz AND nc.created_at <= $3::timestamptz)
+      OR (nc.closed_at >= $2::timestamptz AND nc.closed_at <= $3::timestamptz)
+      OR (o.completed_at >= $2::timestamptz AND o.completed_at <= $3::timestamptz))`,
+  ];
+  const recordType = recordTypeFromPublicType(query.type);
+  if (recordType) {
+    params.push(recordType);
+    where.push(`(nc.origin_type = $${params.length} OR o.source_record_type = $${params.length})`);
+  }
+  if (query.action_status) {
+    params.push(query.action_status);
+    where.push(`a.status = $${params.length}::text`);
+  }
+  if (query.nc_status) {
+    params.push(query.nc_status);
+    where.push(`nc.status = $${params.length}::text`);
+  }
+  if (query.severity) {
+    params.push(query.severity);
+    where.push(`nc.severity = $${params.length}::text`);
+  }
+  if (query.zone_id) {
+    params.push(query.zone_id);
+    where.push(`nc.zone_id = $${params.length}::uuid`);
+  }
+  if (query.equipment_id) {
+    params.push(query.equipment_id);
+    where.push(`nc.equipment_id = $${params.length}::uuid`);
+  }
+  if (query.operator_user_id || query.operator) {
+    params.push(query.operator_user_id || query.operator);
+    where.push(`(a.responsible_user_id = $${params.length}::uuid OR a.completed_by = $${params.length}::uuid)`);
+  }
+  const result = await db.query(
+    `SELECT a.*, nc.title AS non_conformity_title, nc.status AS non_conformity_status,
+            nc.severity AS non_conformity_severity, nc.origin_type AS source_record_type,
+            nc.origin_record_id AS source_record_id, nc.occurrence_id,
+            z.name AS zone_name, e.name AS equipment_name,
+            ru.email AS responsible_email, cu.email AS completed_by_email
+     FROM quality_corrective_actions a
+     LEFT JOIN quality_non_conformities nc ON nc.id = a.non_conformity_id AND nc.store_id = a.store_id
+     LEFT JOIN quality_task_occurrences o ON o.id = nc.occurrence_id AND o.store_id = nc.store_id
+     LEFT JOIN quality_zones z ON z.id = nc.zone_id AND z.store_id = nc.store_id
+     LEFT JOIN quality_equipments e ON e.id = nc.equipment_id AND e.store_id = nc.store_id
+     LEFT JOIN users ru ON ru.id = a.responsible_user_id
+     LEFT JOIN users cu ON cu.id = a.completed_by
+     WHERE ${where.join(' AND ')}
+     ORDER BY CASE a.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+              a.due_at ASC NULLS LAST, a.created_at DESC
+     LIMIT 500`,
+    params
+  );
+  return result.rows.map((row) => ({
+    ...row,
+    record_type: publicTypeFromRecordType(row.source_record_type),
+  }));
+}
+
 async function listCompletedWorkItems(db, storeId, query = {}) {
   const start = query.start_date || startOfDay().toISOString();
   const end = query.end_date || endOfDay().toISOString();
@@ -192,16 +350,17 @@ async function listCompletedWorkItems(db, storeId, query = {}) {
   const zoneFilter = query.zone_id ? String(query.zone_id) : null;
   const equipmentFilter = query.equipment_id ? String(query.equipment_id) : null;
   const conformityFilter = query.conformity_status ? String(query.conformity_status) : null;
+  const operatorFilter = query.operator_user_id || query.operator ? String(query.operator_user_id || query.operator) : null;
   const result = await db.query(
-    `SELECT o.id AS occurrence_id, o.task_id AS quality_task_id, o.completed_at, o.result_status,
+    `SELECT o.id AS occurrence_id, o.task_id AS quality_task_id, o.completed_at, o.completed_by, o.result_status,
             o.source_record_type AS record_type, o.source_record_id, o.comment,
             t.title AS task_title, t.module_key, t.task_origin, t.source_entity_type, t.source_entity_id,
             t.entity_type, t.entity_id, t.target_time, t.criticality, t.source_locked,
             z.name AS zone_name, e.name AS equipment_name, u.email AS completed_by_email,
-            tr.value, tr.unit, tr.alert_status, tr.method_used, tr.type_code, tt.label AS type_label,
-            cr.status AS cleaning_status, cr.visual_check_status, cr.anomaly_comment, cr.corrective_action AS cleaning_corrective_action,
+            tr.value, tr.unit, tr.alert_status, tr.method_used, tr.type_code, tr.operator_user_id, tt.label AS type_label,
+            cr.status AS cleaning_status, cr.visual_check_status, cr.anomaly_comment, cr.corrective_action AS cleaning_corrective_action, cr.performed_by AS cleaning_performed_by,
             mr.result_status AS manual_result_status, mr.conformity_status AS manual_conformity_status,
-            mr.observation AS manual_observation, mr.corrective_action AS manual_corrective_action,
+            mr.observation AS manual_observation, mr.corrective_action AS manual_corrective_action, mr.performed_by AS manual_performed_by,
             COALESCE(tr.evidence_photo_id, cr.evidence_photo_id, mr.evidence_photo_id) AS evidence_photo_id,
             COALESCE(tr.evidence_document_id, cr.evidence_document_id, mr.evidence_document_id) AS evidence_document_id,
             COALESCE(tr.comment, cr.comment, mr.observation, o.comment) AS record_comment,
@@ -234,6 +393,7 @@ async function listCompletedWorkItems(db, storeId, query = {}) {
     .filter((item) => !typeFilter || item.type === typeFilter)
     .filter((item) => !zoneFilter || String(item.zone_id || '') === zoneFilter)
     .filter((item) => !equipmentFilter || String(item.equipment_id || '') === equipmentFilter)
+    .filter((item) => !operatorFilter || String(item.raw?.completed_by || item.raw?.operator_user_id || item.raw?.cleaning_performed_by || item.raw?.manual_performed_by || '') === operatorFilter)
     .filter((item) => !conformityFilter || String(item.conformity_status || '') === conformityFilter);
 }
 
@@ -291,22 +451,232 @@ async function listQualityTodayWork(db, storeId, query = {}) {
 }
 
 async function getDdppDashboard(db, storeId, query = {}) {
-  const [today, temperatureRecords, cleaningRecords, completedItems, correctiveActions] = await Promise.all([
+  const period = periodFromQuery(query);
+  const requestedType = String(query.type || '').trim();
+  const includeTemperatures = !requestedType || requestedType === 'temperature';
+  const includeCleaning = !requestedType || requestedType === 'cleaning';
+  const [today, rawTemperatureRecords, rawCleaningRecords, completedItems, nonConformities, correctiveActions] = await Promise.all([
     listQualityTodayWork(db, storeId, query),
-    listTemperatureRecords(db, storeId, { start_date: query.start_date || startOfDay().toISOString(), end_date: query.end_date || endOfDay().toISOString() }),
-    listCleaningRecords(db, storeId, { start_date: query.start_date || startOfDay().toISOString(), end_date: query.end_date || endOfDay().toISOString() }),
+    includeTemperatures ? listTemperatureRecords(db, storeId, { start_date: period.start, end_date: period.end, zone_id: query.zone_id, equipment_id: query.equipment_id, operator_user_id: query.operator_user_id || query.operator, alert_status: query.alert_status }) : Promise.resolve([]),
+    includeCleaning ? listCleaningRecords(db, storeId, { start_date: period.start, end_date: period.end, zone_id: query.zone_id, equipment_id: query.equipment_id, operator_user_id: query.operator_user_id || query.operator, status: query.cleaning_status }) : Promise.resolve([]),
     listCompletedWorkItems(db, storeId, query),
-    listCorrectiveActions(db, storeId, { status: query.action_status }),
+    listDdppNonConformities(db, storeId, query),
+    listDdppCorrectiveActions(db, storeId, query),
   ]);
-  const red = today.summary.critical_missing > 0 || today.sections.non_conformities.some((item) => ['high', 'critical'].includes(item.severity));
-  const orange = today.summary.overdue > 0 || today.summary.open_non_conformities > 0;
+  const conformityFilter = String(query.conformity_status || '').trim();
+  const temperatureRecords = conformityFilter
+    ? rawTemperatureRecords.filter((record) => (record.alert_status === 'out_of_limits' ? 'non_conform' : 'conform') === conformityFilter)
+    : rawTemperatureRecords;
+  const cleaningRecords = conformityFilter
+    ? rawCleaningRecords.filter((record) => String(record.visual_check_status || (['issue', 'not_done'].includes(record.status) ? 'non_conform' : 'conform')) === conformityFilter)
+    : rawCleaningRecords;
+  const openNc = nonConformities.filter((item) => ['open', 'in_progress'].includes(item.status));
+  const overdueActions = correctiveActions.filter((item) => ['open', 'in_progress'].includes(item.status) && item.due_at && new Date(item.due_at) < new Date());
+  const nonCompliantRecords = [
+    ...temperatureRecords.filter((record) => ['out_of_limits', 'warning'].includes(record.alert_status)),
+    ...cleaningRecords.filter((record) => ['issue', 'not_done', 'non_conform'].includes(record.status) || record.visual_check_status === 'non_conform'),
+    ...completedItems.filter((item) => item.conformity_status === 'non_conform'),
+  ].length;
+  const expectedControls = today.summary.today + today.summary.overdue + today.summary.upcoming + today.summary.event_controls + completedItems.length;
+  const red = today.summary.critical_missing > 0 || openNc.some((item) => ['high', 'critical'].includes(item.severity)) || overdueActions.length > 0;
+  const orange = today.summary.overdue > 0 || openNc.length > 0 || nonCompliantRecords > 0;
   return {
     status: red ? 'red' : orange ? 'orange' : 'green',
+    period,
+    summary: {
+      expected_controls: expectedControls,
+      completed: completedItems.length,
+      overdue: today.summary.overdue,
+      non_compliant: nonCompliantRecords,
+      open_non_conformities: openNc.length,
+      overdue_corrective_actions: overdueActions.length,
+    },
     today,
     completed_items: completedItems,
     temperature_records: temperatureRecords,
     cleaning_records: cleaningRecords,
+    non_conformities: nonConformities,
     corrective_actions: correctiveActions,
+  };
+}
+
+async function getLinkedNonConformities(db, storeId, link = {}) {
+  const result = await db.query(
+    `SELECT nc.*, nc.origin_type AS source_record_type, nc.origin_record_id AS source_record_id,
+            z.name AS zone_name, e.name AS equipment_name, ru.email AS responsible_email,
+            cu.email AS created_by_email, clu.email AS closed_by_email
+     FROM quality_non_conformities nc
+     LEFT JOIN quality_zones z ON z.id = nc.zone_id AND z.store_id = nc.store_id
+     LEFT JOIN quality_equipments e ON e.id = nc.equipment_id AND e.store_id = nc.store_id
+     LEFT JOIN users ru ON ru.id = nc.responsible_user_id
+     LEFT JOIN users cu ON cu.id = nc.created_by
+     LEFT JOIN users clu ON clu.id = nc.closed_by
+     WHERE nc.store_id = $1::uuid
+       AND (
+         ($2::text IS NOT NULL AND $3::uuid IS NOT NULL AND nc.origin_type = $2::text AND nc.origin_record_id = $3::uuid)
+         OR ($4::uuid IS NOT NULL AND nc.occurrence_id = $4::uuid)
+         OR ($5::uuid IS NOT NULL AND nc.quality_task_id = $5::uuid)
+       )
+     ORDER BY nc.created_at DESC
+     LIMIT 100`,
+    [storeId, link.recordType || null, link.recordId || null, link.occurrenceId || null, link.taskId || null]
+  );
+  return result.rows;
+}
+
+async function getLinkedCorrectiveActions(db, storeId, link = {}, nonConformities = []) {
+  const ncIds = nonConformities.map((item) => item.id).filter(Boolean);
+  const result = await db.query(
+    `SELECT a.*, nc.title AS non_conformity_title, nc.origin_type AS source_record_type,
+            nc.origin_record_id AS source_record_id, ru.email AS responsible_email,
+            cu.email AS completed_by_email
+     FROM quality_corrective_actions a
+     LEFT JOIN quality_non_conformities nc ON nc.id = a.non_conformity_id AND nc.store_id = a.store_id
+     LEFT JOIN users ru ON ru.id = a.responsible_user_id
+     LEFT JOIN users cu ON cu.id = a.completed_by
+     WHERE a.store_id = $1::uuid
+       AND (
+         (cardinality($2::uuid[]) > 0 AND a.non_conformity_id = ANY($2::uuid[]))
+         OR ($3::uuid IS NOT NULL AND a.quality_task_id = $3::uuid)
+         OR ($4::text IS NOT NULL AND $5::uuid IS NOT NULL AND nc.origin_type = $4::text AND nc.origin_record_id = $5::uuid)
+       )
+     ORDER BY CASE a.status WHEN 'open' THEN 0 WHEN 'in_progress' THEN 1 ELSE 2 END,
+              a.due_at ASC NULLS LAST, a.created_at DESC
+     LIMIT 100`,
+    [storeId, ncIds, link.taskId || null, link.recordType || null, link.recordId || null]
+  );
+  return result.rows;
+}
+
+async function getDdppRecordBase(db, storeId, type, id) {
+  if (type === 'temperature') {
+    const result = await db.query(
+      `SELECT r.*, tt.label AS type_label, z.name AS zone_name, z.code AS zone_code,
+              e.name AS equipment_name, e.code AS equipment_code, u.email AS operator_email,
+              o.id AS occurrence_id, o.due_at AS occurrence_due_at, o.completed_at AS occurrence_completed_at,
+              o.status AS occurrence_status, o.result_status AS occurrence_result_status,
+              t.id AS task_id, t.title AS task_title, t.status AS task_status, t.task_origin,
+              l.id AS parameter_id
+       FROM quality_temperature_records r
+       INNER JOIN quality_temperature_types tt ON tt.code = r.type_code
+       LEFT JOIN quality_zones z ON z.id = r.zone_id AND z.store_id = r.store_id
+       LEFT JOIN quality_equipments e ON e.id = r.equipment_id AND e.store_id = r.store_id
+       LEFT JOIN users u ON u.id = r.operator_user_id
+       LEFT JOIN quality_task_occurrences o ON o.id = r.occurrence_id AND o.store_id = r.store_id
+       LEFT JOIN quality_tasks t ON t.id = r.quality_task_id AND t.store_id = r.store_id
+       LEFT JOIN quality_temperature_limits l ON l.id = r.temperature_limit_id AND l.store_id = r.store_id
+       WHERE r.id = $1::uuid AND r.store_id = $2::uuid AND r.deleted_at IS NULL
+       LIMIT 1`,
+      [id, storeId]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      record_type: 'quality_temperature_record',
+      public_type: 'temperature',
+      record: row,
+      occurrence: row.occurrence_id ? { id: row.occurrence_id, due_at: row.occurrence_due_at, completed_at: row.occurrence_completed_at, status: row.occurrence_status, result_status: row.occurrence_result_status } : null,
+      task: row.task_id ? { id: row.task_id, title: row.task_title, status: row.task_status, task_origin: row.task_origin } : null,
+      link: { recordType: 'quality_temperature_record', recordId: row.id, occurrenceId: row.occurrence_id, taskId: row.quality_task_id },
+    };
+  }
+  if (type === 'cleaning') {
+    const result = await db.query(
+      `SELECT r.*, p.title AS plan_title, p.method, p.product_name, p.dosage_concentration, p.contact_time_minutes,
+              p.material_used, p.expected_proof, z.name AS zone_name, e.name AS equipment_name,
+              u.email AS performed_by_email, o.id AS occurrence_id, o.due_at AS occurrence_due_at,
+              o.completed_at AS occurrence_completed_at, o.status AS occurrence_status,
+              t.id AS task_id, t.title AS task_title, t.status AS task_status, t.task_origin,
+              COALESCE(z_targets.zones, '[]'::json) AS zones,
+              COALESCE(e_targets.equipments, '[]'::json) AS equipments
+       FROM quality_cleaning_records r
+       INNER JOIN quality_cleaning_plans p ON p.id = r.cleaning_plan_id AND p.store_id = r.store_id
+       LEFT JOIN quality_zones z ON z.id = p.zone_id AND z.store_id = p.store_id
+       LEFT JOIN quality_equipments e ON e.id = p.equipment_id AND e.store_id = p.store_id
+       LEFT JOIN users u ON u.id = r.performed_by
+       LEFT JOIN quality_task_occurrences o ON o.id = r.occurrence_id AND o.store_id = r.store_id
+       LEFT JOIN quality_tasks t ON t.id = r.quality_task_id AND t.store_id = r.store_id
+       LEFT JOIN LATERAL (
+         SELECT json_agg(json_build_object('id', lz.id, 'code', lz.code, 'name', lz.name) ORDER BY lz.name ASC) AS zones
+         FROM quality_cleaning_plan_zones pz
+         INNER JOIN quality_zones lz ON lz.id = pz.zone_id AND lz.store_id = p.store_id
+         WHERE pz.plan_id = p.id AND pz.deleted_at IS NULL
+       ) z_targets ON true
+       LEFT JOIN LATERAL (
+         SELECT json_agg(json_build_object('id', le.id, 'code', le.code, 'name', le.name, 'zone_id', le.zone_id) ORDER BY le.name ASC) AS equipments
+         FROM quality_cleaning_plan_equipments pe
+         INNER JOIN quality_equipments le ON le.id = pe.equipment_id AND le.store_id = p.store_id
+         WHERE pe.plan_id = p.id AND pe.deleted_at IS NULL
+       ) e_targets ON true
+       WHERE r.id = $1::uuid AND r.store_id = $2::uuid
+       LIMIT 1`,
+      [id, storeId]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      record_type: 'quality_cleaning_record',
+      public_type: 'cleaning',
+      record: row,
+      occurrence: row.occurrence_id ? { id: row.occurrence_id, due_at: row.occurrence_due_at, completed_at: row.occurrence_completed_at, status: row.occurrence_status } : null,
+      task: row.task_id ? { id: row.task_id, title: row.task_title, status: row.task_status, task_origin: row.task_origin } : null,
+      link: { recordType: 'quality_cleaning_record', recordId: row.id, occurrenceId: row.occurrence_id, taskId: row.quality_task_id },
+    };
+  }
+  if (type === 'manual_task' || type === 'manual' || type === 'control') {
+    const result = await db.query(
+      `SELECT r.*, u.email AS performed_by_email,
+              o.id AS occurrence_id, o.due_at AS occurrence_due_at, o.completed_at AS occurrence_completed_at,
+              o.status AS occurrence_status, t.id AS task_id, t.title AS task_title, t.status AS task_status,
+              t.task_origin, t.module_key, z.name AS zone_name, e.name AS equipment_name
+       FROM quality_manual_task_records r
+       INNER JOIN quality_tasks t ON t.id = r.quality_task_id AND t.store_id = r.store_id
+       LEFT JOIN quality_task_occurrences o ON o.id = r.occurrence_id AND o.store_id = r.store_id
+       LEFT JOIN users u ON u.id = r.performed_by
+       LEFT JOIN quality_zones z ON z.id = CASE WHEN t.entity_type = 'zone' THEN t.entity_id ELSE NULL END AND z.store_id = r.store_id
+       LEFT JOIN quality_equipments e ON e.id = CASE WHEN t.entity_type = 'equipment' THEN t.entity_id ELSE NULL END AND e.store_id = r.store_id
+       WHERE r.id = $1::uuid AND r.store_id = $2::uuid
+       LIMIT 1`,
+      [id, storeId]
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return {
+      record_type: 'quality_manual_task_record',
+      public_type: 'manual_task',
+      record: row,
+      occurrence: row.occurrence_id ? { id: row.occurrence_id, due_at: row.occurrence_due_at, completed_at: row.occurrence_completed_at, status: row.occurrence_status } : null,
+      task: row.task_id ? { id: row.task_id, title: row.task_title, status: row.task_status, task_origin: row.task_origin, module_key: row.module_key } : null,
+      link: { recordType: 'quality_manual_task_record', recordId: row.id, occurrenceId: row.occurrence_id, taskId: row.quality_task_id },
+    };
+  }
+  return null;
+}
+
+async function getDdppRecordDetail(db, storeId, type, id) {
+  const base = await getDdppRecordBase(db, storeId, type, id);
+  if (!base) return null;
+  const nonConformities = await getLinkedNonConformities(db, storeId, base.link);
+  const correctiveActions = await getLinkedCorrectiveActions(db, storeId, base.link, nonConformities);
+  return {
+    type: base.public_type,
+    record_type: base.record_type,
+    record: base.record,
+    occurrence: base.occurrence,
+    task: base.task,
+    source: {
+      record_type: base.record_type,
+      record_id: base.record.id,
+      occurrence_id: base.occurrence?.id || null,
+      quality_task_id: base.task?.id || null,
+    },
+    non_conformities: nonConformities,
+    corrective_actions: correctiveActions,
+    attachments: {
+      photo_id: base.record.evidence_photo_id || base.record.proof_photo_id || null,
+      document_id: base.record.evidence_document_id || base.record.proof_document_id || null,
+    },
+    operator: base.record.operator_email || base.record.performed_by_email || null,
   };
 }
 
@@ -443,6 +813,8 @@ async function executeManualOccurrence(db, storeId, userId, payload) {
 }
 
 async function createNonConformity(db, storeId, userId, payload = {}) {
+  const originType = payload.origin_type || payload.source_record_type || 'manual';
+  const originRecordId = payload.origin_record_id || payload.source_record_id || null;
   const result = await db.query(
     `INSERT INTO quality_non_conformities (
       store_id, origin_type, origin_record_id, quality_task_id, occurrence_id, source_entity_type, source_entity_id,
@@ -450,7 +822,7 @@ async function createNonConformity(db, storeId, userId, payload = {}) {
       due_at, closure_validation_required, created_by, updated_by
     ) VALUES ($1::uuid,$2::text,$3::uuid,$4::uuid,$5::uuid,$6::text,$7::uuid,$8::uuid,$9::uuid,$10::text,$11::text,$12::text,$13::text,$14::uuid,$15::timestamptz,$16::boolean,$17::uuid,$17::uuid)
     RETURNING *`,
-    [storeId, payload.origin_type || 'manual', payload.origin_record_id || null, payload.quality_task_id || null, payload.occurrence_id || null, payload.source_entity_type || null, payload.source_entity_id || null, payload.zone_id || null, payload.equipment_id || null, payload.severity || 'medium', payload.title || 'Non-conformite qualite', payload.description, payload.immediate_action || null, payload.responsible_user_id || null, payload.due_at || null, payload.closure_validation_required === true, userId]
+    [storeId, originType, originRecordId, payload.quality_task_id || null, payload.occurrence_id || null, payload.source_entity_type || null, payload.source_entity_id || null, payload.zone_id || null, payload.equipment_id || null, payload.severity || 'medium', payload.title || 'Non-conformite qualite', payload.description, payload.immediate_action || null, payload.responsible_user_id || null, payload.due_at || null, payload.closure_validation_required === true, userId]
   );
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.non_conformity.created', targetType: 'quality_non_conformity', targetId: result.rows[0].id, after: result.rows[0] });
   return result.rows[0];
@@ -491,8 +863,11 @@ module.exports = {
   executeManualOccurrence,
   executeTemperatureOccurrence,
   getDdppDashboard,
+  getDdppRecordDetail,
   listCompletedWorkItems,
   listCorrectiveActions,
+  listDdppCorrectiveActions,
+  listDdppNonConformities,
   listOpenNonConformities,
   listQualityTodayWork,
   recordCleaningExecution,
