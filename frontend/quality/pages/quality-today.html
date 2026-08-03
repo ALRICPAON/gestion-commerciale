@@ -24,32 +24,25 @@
     <section class="quality-card"><div class="quality-section-header"><div><h3>Non-conformites ouvertes</h3><p class="quality-muted">Aucune non-conformite n'est masquee.</p></div></div><div id="quality-work-nc" class="quality-list-grid"></div></section>
 
     <section id="quality-execution-panel" class="quality-card hidden">
-      <div class="quality-section-header"><div><h3 id="quality-execution-title">Controle</h3><p id="quality-execution-context" class="quality-muted"></p></div></div>
-      <form id="quality-execution-form" class="quality-form-grid">
-        <input id="quality-execution-occurrence-id" type="hidden">
-        <input id="quality-execution-task-id" type="hidden">
-        <input id="quality-execution-type" type="hidden">
-        <input id="quality-execution-source-id" type="hidden">
-        <input id="quality-execution-type-code" type="hidden">
-        <div id="quality-readonly-details" class="quality-form-wide quality-empty-state"></div>
-        <label id="quality-temperature-value-label">Temperature mesuree *<input id="quality-temperature-value" class="form-input" type="number" step="0.01"></label>
-        <label id="quality-temperature-method-label">Appareil / methode<input id="quality-temperature-method" class="form-input" type="text"></label>
-        <label id="quality-cleaning-status-label">Realisation<select id="quality-cleaning-status" class="form-input"><option value="done">Oui</option><option value="partial">Partiellement</option><option value="not_done">Non</option><option value="issue">Anomalie</option></select></label>
-        <label id="quality-cleaning-visual-label">Controle visuel<select id="quality-cleaning-visual" class="form-input"><option value="conform">Conforme</option><option value="non_conform">Non conforme</option><option value="not_applicable">Non applicable</option></select></label>
-        <label id="quality-cleaning-anomaly-label">Anomalie constatee<textarea id="quality-cleaning-anomaly" class="form-input"></textarea></label>
-        <label id="quality-manual-result-label">Resultat<select id="quality-manual-result" class="form-input"><option value="completed">Realise</option><option value="partial">Partiel</option><option value="not_applicable">Non applicable</option><option value="issue">Anomalie</option></select></label>
-        <label id="quality-manual-conformity-label">Conformite<select id="quality-manual-conformity" class="form-input"><option value="conform">Conforme</option><option value="non_conform">Non conforme</option><option value="not_applicable">Non applicable</option></select></label>
-        <label>Date/heure reelle<input id="quality-execution-at" class="form-input" type="datetime-local" required></label>
-        <label>Operateur<input id="quality-execution-operator" class="form-input" type="text" readonly></label>
-        <label>Observation<textarea id="quality-execution-comment" class="form-input"></textarea></label>
-        <label>Action corrective immediate<textarea id="quality-execution-corrective" class="form-input"></textarea></label>
-        <label>Photo / preuve photo<input id="quality-evidence-photo-id" class="form-input" type="text" placeholder="ID photo qualite existante"></label>
-        <label>Piece jointe / preuve<input id="quality-evidence-document-id" class="form-input" type="text" placeholder="ID document qualite existant"></label>
-        <div id="quality-execution-alert" class="page-feedback hidden quality-form-wide"></div>
-        <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Valider et passer au controle suivant</button><button id="quality-execution-cancel" class="btn btn-secondary" type="button">Annuler</button></div>
+      <div class="quality-section-header"><div><h3 id="quality-execution-title">Controle</h3><p id="quality-execution-context" class="quality-muted"></p></div><button id="quality-execution-panel-cancel" class="btn btn-secondary" type="button">Annuler</button></div>
+      <form id="quality-temperature-execution-form" class="quality-form-grid hidden"></form>
+      <form id="quality-cleaning-execution-form" class="quality-form-grid hidden"></form>
+      <form id="quality-manual-execution-form" class="quality-form-grid hidden">
+        <input id="quality-manual-occurrence-id" type="hidden">
+        <input id="quality-manual-task-id" type="hidden">
+        <label>Resultat<select id="quality-manual-result" class="form-input"><option value="completed">Realise</option><option value="partial">Partiel</option><option value="not_applicable">Non applicable</option><option value="issue">Anomalie</option></select></label>
+        <label>Conformite<select id="quality-manual-conformity" class="form-input"><option value="conform">Conforme</option><option value="non_conform">Non conforme</option><option value="not_applicable">Non applicable</option></select></label>
+        <label>Date/heure reelle<input id="quality-manual-at" class="form-input" type="datetime-local" required></label>
+        <label>Operateur<input id="quality-manual-operator" class="form-input" type="text" readonly></label>
+        <label class="quality-form-wide">Observation<textarea id="quality-manual-comment" class="form-input"></textarea></label>
+        <label class="quality-form-wide">Action corrective immediate<textarea id="quality-manual-corrective" class="form-input"></textarea></label>
+        <label>Photo / preuve photo<input id="quality-manual-evidence-photo-id" class="form-input" type="text" placeholder="ID photo qualite existante"></label>
+        <label>Piece jointe / preuve<input id="quality-manual-evidence-document-id" class="form-input" type="text" placeholder="ID document qualite existant"></label>
+        <div id="quality-manual-alert" class="page-feedback hidden quality-form-wide"></div>
+        <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Valider et passer au controle suivant</button></div>
       </form>
     </section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/quality-execution-forms.js?v=1"></script><script src="../js/operations-api.js?v=2"></script><script src="../js/quality-today.js?v=3"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/temperature-api.js?v=6"></script><script src="../js/cleaning-api.js?v=3"></script><script src="../js/quality-execution-forms.js?v=2"></script><script src="../js/operations-api.js?v=3"></script><script src="../js/quality-today.js?v=4"></script>
 </body>
 </html>

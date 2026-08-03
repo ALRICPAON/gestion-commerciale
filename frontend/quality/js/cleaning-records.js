@@ -4,6 +4,7 @@
   if (!user || !token) { window.location.href = '../../login.html'; return; }
 
   const api = window.QualityCleaningApi;
+  const operationsApi = window.QualityOperationsApi;
   const formHelper = window.QualityExecutionForms;
   const canRecord = window.hasQualityPermission?.(user, 'quality.record.create');
   const $ = (id) => document.getElementById(id);
@@ -13,21 +14,12 @@
     includeUpcoming: $('cleaning-due-include-upcoming'),
     form: $('cleaning-record-form'),
     formTitle: $('cleaning-record-form-title'),
-    submitBtn: $('cleaning-record-submit-btn'),
-    planId: $('cleaning-record-plan-id'),
-    qualityTaskId: $('cleaning-record-quality-task-id'),
-    occurrenceId: $('cleaning-record-occurrence-id'),
-    status: $('cleaning-record-status'),
-    visual: $('cleaning-record-visual'),
-    performedAt: $('cleaning-record-performed-at'),
-    comment: $('cleaning-record-comment'),
-    anomaly: $('cleaning-record-anomaly'),
-    resetBtn: $('cleaning-record-reset-btn'),
     tableBody: $('cleaning-record-table-body'),
   };
   let plans = [];
   let dueRecords = [];
   let records = [];
+  let executionForm = null;
 
   function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
   function setFeedback(message = '', type = '') { els.feedback.textContent = message; els.feedback.className = message ? `page-feedback ${type}`.trim() : 'page-feedback hidden'; }
@@ -38,53 +30,20 @@
   function dueClass(status) { if (status === 'overdue' || status === 'late') return 'quality-temperature-alert'; if (status === 'due') return 'quality-temperature-warning'; return ''; }
   function targetNames(items, fallback) { const names = (Array.isArray(items) ? items : []).map((item) => item.name || item.code || item.id).filter(Boolean); return names.join(', ') || fallback || '-'; }
 
-  function fillPlanSelect() {
-    els.planId.innerHTML = '<option value="">Choisir un plan</option>';
-    plans.forEach((plan) => {
-      const option = document.createElement('option');
-      option.value = plan.id;
-      option.textContent = plan.title;
-      els.planId.appendChild(option);
-    });
-  }
-
   function resetForm() {
-    els.form.reset();
-    els.qualityTaskId.value = '';
-    els.occurrenceId.value = '';
-    els.status.value = 'done';
-    els.visual.value = 'conform';
-    els.performedAt.value = toDatetimeLocal();
-    formHelper.applyExceptionalCopy(els.formTitle, els.submitBtn, false);
+    executionForm.setContext({ ended_at: new Date().toISOString() });
   }
 
   function fillDue(record) {
-    els.planId.value = record.cleaning_plan_id;
-    els.qualityTaskId.value = record.quality_task_id || '';
-    els.occurrenceId.value = record.occurrence_id || '';
-    els.status.value = 'done';
-    els.visual.value = 'conform';
-    els.performedAt.value = toDatetimeLocal();
-    els.comment.value = record.task_title ? `Controle attendu : ${record.task_title}` : '';
-    els.anomaly.value = '';
-    formHelper.applyExceptionalCopy(els.formTitle, els.submitBtn, true);
+    executionForm.setContext({
+      ...record,
+      locked: true,
+      plan: record,
+      cleaning_plan_id: record.cleaning_plan_id,
+      ended_at: new Date().toISOString(),
+      comment: record.task_title ? `Controle attendu : ${record.task_title}` : '',
+    });
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  function payload() {
-    const source = formHelper.executionSource(els.qualityTaskId.value, els.occurrenceId.value);
-    return {
-      cleaning_plan_id: els.planId.value,
-      quality_task_id: els.qualityTaskId.value || null,
-      occurrence_id: els.occurrenceId.value || null,
-      performed_at: els.performedAt.value ? new Date(els.performedAt.value).toISOString() : new Date().toISOString(),
-      status: els.status.value,
-      visual_check_status: els.visual.value,
-      anomaly_comment: els.anomaly.value || null,
-      source,
-      exceptional_reason: source === 'exceptional' ? els.comment.value : null,
-      comment: els.comment.value,
-    };
   }
 
   function renderDue() {
@@ -105,7 +64,18 @@
     setFeedback('Chargement des nettoyages...');
     try {
       [plans, dueRecords, records] = await Promise.all([api.listPlans({ active: 'true' }), api.listDueRecords({ include_upcoming: els.includeUpcoming.checked ? 'true' : '' }), api.listRecords()]);
-      fillPlanSelect();
+      if (!executionForm) {
+        executionForm = formHelper.createCleaningExecutionForm({
+          form: els.form,
+          titleEl: els.formTitle,
+          plans,
+          operationsApi,
+          user,
+          onSubmitted: async () => { resetForm(); await load(); },
+          onError: (message) => setFeedback(message, 'error'),
+        });
+        if (!canRecord) executionForm.field('submit').disabled = true;
+      }
       renderDue();
       renderRecords();
       setFeedback('');
@@ -115,28 +85,11 @@
   }
 
   els.includeUpcoming.addEventListener('change', load);
-  els.resetBtn.addEventListener('click', resetForm);
   els.due.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-action="fill"]');
     if (!button) return;
     const record = dueRecords.find((item) => item.cleaning_plan_id === button.dataset.id);
     if (record) fillDue(record);
   });
-  els.form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!canRecord) return;
-    const data = payload();
-    const reasonError = formHelper.requireExceptionalReason(data);
-    if (reasonError) return setFeedback(reasonError, 'error');
-    try {
-      await api.createRecord(data);
-      resetForm();
-      await load();
-    } catch (error) {
-      setFeedback(error.message, 'error');
-    }
-  });
-
-  resetForm();
   load();
 })();

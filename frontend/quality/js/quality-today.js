@@ -4,6 +4,9 @@
   if (!user || !token) { window.location.href = '../../login.html'; return; }
 
   const api = window.QualityOperationsApi;
+  const temperatureApi = window.QualityTemperatureApi;
+  const cleaningApi = window.QualityCleaningApi;
+  const formHelper = window.QualityExecutionForms;
   const canRecord = window.hasQualityPermission?.(user, 'quality.record.create');
   const $ = (id) => document.getElementById(id);
   const els = {
@@ -16,39 +19,27 @@
     completed: $('quality-work-completed'),
     nc: $('quality-work-nc'),
     panel: $('quality-execution-panel'),
-    form: $('quality-execution-form'),
+    temperatureForm: $('quality-temperature-execution-form'),
+    cleaningForm: $('quality-cleaning-execution-form'),
+    manualForm: $('quality-manual-execution-form'),
     title: $('quality-execution-title'),
     context: $('quality-execution-context'),
-    occurrenceId: $('quality-execution-occurrence-id'),
-    taskId: $('quality-execution-task-id'),
-    type: $('quality-execution-type'),
-    sourceId: $('quality-execution-source-id'),
-    typeCode: $('quality-execution-type-code'),
-    details: $('quality-readonly-details'),
-    tempValue: $('quality-temperature-value'),
-    tempValueLabel: $('quality-temperature-value-label'),
-    tempMethod: $('quality-temperature-method'),
-    tempMethodLabel: $('quality-temperature-method-label'),
-    cleaningStatus: $('quality-cleaning-status'),
-    cleaningStatusLabel: $('quality-cleaning-status-label'),
-    cleaningVisual: $('quality-cleaning-visual'),
-    cleaningVisualLabel: $('quality-cleaning-visual-label'),
-    cleaningAnomaly: $('quality-cleaning-anomaly'),
-    cleaningAnomalyLabel: $('quality-cleaning-anomaly-label'),
+    manualOccurrenceId: $('quality-manual-occurrence-id'),
+    manualTaskId: $('quality-manual-task-id'),
     manualResult: $('quality-manual-result'),
-    manualResultLabel: $('quality-manual-result-label'),
     manualConformity: $('quality-manual-conformity'),
-    manualConformityLabel: $('quality-manual-conformity-label'),
-    at: $('quality-execution-at'),
-    operator: $('quality-execution-operator'),
-    comment: $('quality-execution-comment'),
-    corrective: $('quality-execution-corrective'),
-    evidencePhotoId: $('quality-evidence-photo-id'),
-    evidenceDocumentId: $('quality-evidence-document-id'),
-    executionAlert: $('quality-execution-alert'),
-    cancel: $('quality-execution-cancel'),
+    manualAt: $('quality-manual-at'),
+    manualOperator: $('quality-manual-operator'),
+    manualComment: $('quality-manual-comment'),
+    manualCorrective: $('quality-manual-corrective'),
+    manualEvidencePhotoId: $('quality-manual-evidence-photo-id'),
+    manualEvidenceDocumentId: $('quality-manual-evidence-document-id'),
+    manualAlert: $('quality-manual-alert'),
+    cancel: $('quality-execution-panel-cancel'),
   };
   let work = null;
+  let temperatureForm = null;
+  let cleaningForm = null;
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -121,67 +112,85 @@
     return ['today', 'overdue', 'upcoming', 'event_controls'].flatMap((key) => work.sections[key] || []).find((item) => String(item.id) === String(id));
   }
 
-  function toggleFields(type) {
-    els.tempValueLabel.classList.toggle('hidden', type !== 'temperature');
-    els.tempMethodLabel.classList.toggle('hidden', type !== 'temperature');
-    els.cleaningStatusLabel.classList.toggle('hidden', type !== 'cleaning');
-    els.cleaningVisualLabel.classList.toggle('hidden', type !== 'cleaning');
-    els.cleaningAnomalyLabel.classList.toggle('hidden', type !== 'cleaning');
-    els.manualResultLabel.classList.toggle('hidden', !['manual', 'control'].includes(type));
-    els.manualConformityLabel.classList.toggle('hidden', !['manual', 'control'].includes(type));
+  function toDatetimeLocal(value) {
+    const date = value ? new Date(value) : new Date();
+    return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  }
+
+  function showOnlyForm(type) {
+    els.temperatureForm.classList.toggle('hidden', type !== 'temperature');
+    els.cleaningForm.classList.toggle('hidden', type !== 'cleaning');
+    els.manualForm.classList.toggle('hidden', !['manual', 'control'].includes(type));
   }
 
   function openExecution(item) {
-    els.form.reset();
-    els.occurrenceId.value = item.occurrence_id || '';
-    els.taskId.value = item.quality_task_id || '';
-    els.type.value = item.type;
-    els.sourceId.value = item.source_entity_id || '';
-    els.typeCode.value = item.raw?.type_code || '';
     els.title.textContent = item.primary_action;
     els.context.textContent = `${item.title} - ${item.zone_name || '-'} - ${item.equipment_name || '-'} - ${formatDate(item.next_due_at)}`;
-    els.details.innerHTML = [
-      `Type : ${escapeHtml(typeLabel(item.type))}`,
-      `Zone : ${escapeHtml(item.zone_name || '-')}`,
-      `Equipement : ${escapeHtml(item.equipment_name || '-')}`,
-      `Heure cible : ${escapeHtml(item.target_time || 'Evenement')}`,
-      item.type === 'temperature' ? `Seuils : ${escapeHtml(item.raw?.min_value ?? item.raw?.min_limit ?? '-')} / ${escapeHtml(item.raw?.max_value ?? item.raw?.max_limit ?? '-')} ${escapeHtml(item.raw?.unit || '')}` : '',
-      item.type === 'cleaning' ? `Methode : ${escapeHtml(item.raw?.method || '-')} - Produit : ${escapeHtml(item.raw?.product_name || '-')}` : '',
-    ].filter(Boolean).join('<br>');
-    els.at.value = new Date().toISOString().slice(0, 16);
-    els.operator.value = user.email || user.name || 'Utilisateur connecte';
-    els.executionAlert.className = 'page-feedback hidden quality-form-wide';
-    toggleFields(item.type);
+    showOnlyForm(item.type);
+    if (item.type === 'temperature') {
+      temperatureForm.setContext({
+        ...item.raw,
+        locked: true,
+        quality_task_id: item.quality_task_id,
+        occurrence_id: item.occurrence_id,
+        parameter_id: item.source_entity_id,
+        type_code: item.raw?.type_code,
+        zone_id: item.zone_id || item.raw?.zone_id,
+        equipment_id: item.equipment_id || item.raw?.equipment_id,
+        min_limit: item.raw?.min_value ?? item.raw?.min_limit,
+        max_limit: item.raw?.max_value ?? item.raw?.max_limit,
+        unit: item.raw?.unit || item.unit || 'C',
+        recorded_at: new Date().toISOString(),
+        comment: item.task_title ? `Controle attendu : ${item.task_title}` : '',
+      });
+    } else if (item.type === 'cleaning') {
+      cleaningForm.setContext({
+        ...item.raw,
+        locked: true,
+        plan: item.raw,
+        cleaning_plan_id: item.source_entity_id,
+        quality_task_id: item.quality_task_id,
+        occurrence_id: item.occurrence_id,
+        ended_at: new Date().toISOString(),
+        comment: item.task_title ? `Controle attendu : ${item.task_title}` : '',
+      });
+    } else {
+      els.manualForm.reset();
+      els.manualOccurrenceId.value = item.occurrence_id || '';
+      els.manualTaskId.value = item.quality_task_id || '';
+      els.manualAt.value = toDatetimeLocal();
+      els.manualOperator.value = user.email || user.name || 'Utilisateur connecte';
+      els.manualAlert.className = 'page-feedback hidden quality-form-wide';
+    }
     els.panel.classList.remove('hidden');
     els.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  function showExecutionAlert(message) {
-    els.executionAlert.textContent = message;
-    els.executionAlert.className = 'page-feedback error quality-form-wide';
+  function showManualAlert(message) {
+    els.manualAlert.textContent = message;
+    els.manualAlert.className = message ? 'page-feedback error quality-form-wide' : 'page-feedback hidden quality-form-wide';
   }
 
-  async function submitExecution(event) {
+  async function submitManualExecution(event) {
     event.preventDefault();
     const payload = {
-      occurrence_id: els.occurrenceId.value || null,
-      quality_task_id: els.taskId.value || null,
-      comment: els.comment.value || null,
-      corrective_action: els.corrective.value || null,
-      evidence_photo_id: els.evidencePhotoId.value || null,
-      evidence_document_id: els.evidenceDocumentId.value || null,
+      occurrence_id: els.manualOccurrenceId.value || null,
+      quality_task_id: els.manualTaskId.value || null,
+      completed_at: els.manualAt.value,
+      result_status: els.manualResult.value,
+      conformity_status: els.manualConformity.value,
+      comment: els.manualComment.value || null,
+      corrective_action: els.manualCorrective.value || null,
+      evidence_photo_id: els.manualEvidencePhotoId.value || null,
+      evidence_document_id: els.manualEvidenceDocumentId.value || null,
     };
-    if (els.type.value === 'temperature') {
-      if (!els.tempValue.value) return showExecutionAlert('La temperature mesuree est obligatoire.');
-      await api.executeTemperature({ ...payload, type_code: els.typeCode.value, value: Number(els.tempValue.value), recorded_at: els.at.value, method_used: els.tempMethod.value || null, source: 'manual' });
-    } else if (els.type.value === 'cleaning') {
-      if (['not_done', 'issue'].includes(els.cleaningStatus.value) && !els.comment.value && !els.cleaningAnomaly.value) return showExecutionAlert('Une observation est obligatoire pour un nettoyage non conforme ou non realise.');
-      await api.executeCleaning({ ...payload, cleaning_plan_id: els.sourceId.value, performed_at: els.at.value, status: els.cleaningStatus.value, visual_check_status: els.cleaningVisual.value, anomaly_comment: els.cleaningAnomaly.value || null });
-    } else {
-      await api.executeManual({ ...payload, completed_at: els.at.value, result_status: els.manualResult.value, conformity_status: els.manualConformity.value });
+    try {
+      await api.executeManual(payload);
+      els.panel.classList.add('hidden');
+      await load();
+    } catch (error) {
+      showManualAlert(error.message);
     }
-    els.panel.classList.add('hidden');
-    await load();
   }
 
   async function load() {
@@ -191,6 +200,33 @@
     setFeedback('');
   }
 
+  async function initForms() {
+    const [types, plans] = await Promise.all([
+      temperatureApi.listTypes(),
+      cleaningApi.listPlans({ active: 'true' }),
+    ]);
+    temperatureForm = formHelper.createTemperatureExecutionForm({
+      form: els.temperatureForm,
+      titleEl: els.title,
+      types,
+      zones: [],
+      equipments: [],
+      operationsApi: api,
+      user,
+      onSubmitted: async () => { els.panel.classList.add('hidden'); await load(); },
+      onError: (message) => setFeedback(message, 'error'),
+    });
+    cleaningForm = formHelper.createCleaningExecutionForm({
+      form: els.cleaningForm,
+      titleEl: els.title,
+      plans,
+      operationsApi: api,
+      user,
+      onSubmitted: async () => { els.panel.classList.add('hidden'); await load(); },
+      onError: (message) => setFeedback(message, 'error'),
+    });
+  }
+
   document.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-action="execute"]');
     if (!button) return;
@@ -198,7 +234,7 @@
     if (item) openExecution(item);
   });
   els.cancel.addEventListener('click', () => els.panel.classList.add('hidden'));
-  els.form.addEventListener('submit', submitExecution);
+  els.manualForm.addEventListener('submit', submitManualExecution);
 
-  load().catch((error) => setFeedback(error.message, 'error'));
+  initForms().then(load).catch((error) => setFeedback(error.message, 'error'));
 })();

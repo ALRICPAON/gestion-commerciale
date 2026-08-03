@@ -4,6 +4,7 @@
   if (!user || !token) { window.location.href = '../../login.html'; return; }
 
   const api = window.QualityTemperatureApi;
+  const operationsApi = window.QualityOperationsApi;
   const twin = window.QualityDigitalTwinApi;
   const formHelper = window.QualityExecutionForms;
   const canRecord = window.hasQualityPermission?.(user, 'quality.record.create');
@@ -16,18 +17,6 @@
     includeUpcoming: $('temperature-due-include-upcoming'),
     form: $('temperature-record-form'),
     formTitle: $('temperature-record-form-title'),
-    submitBtn: $('temperature-record-submit-btn'),
-    id: $('temperature-record-id'),
-    qualityTaskId: $('temperature-record-quality-task-id'),
-    occurrenceId: $('temperature-record-occurrence-id'),
-    type: $('temperature-record-type'),
-    value: $('temperature-record-value'),
-    unit: $('temperature-record-unit'),
-    recordedAt: $('temperature-record-recorded-at'),
-    zoneId: $('temperature-record-zone-id'),
-    equipmentId: $('temperature-record-equipment-id'),
-    comment: $('temperature-record-comment'),
-    cancelBtn: $('temperature-record-cancel-btn'),
     search: $('temperature-record-search'),
     filterType: $('temperature-record-filter-type'),
     filterZone: $('temperature-record-filter-zone'),
@@ -44,6 +33,7 @@
   let equipments = [];
   let records = [];
   let dueReadings = [];
+  let executionForm = null;
 
   function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
   function setFeedback(message = '', type = '') { els.feedback.textContent = message; els.feedback.className = message ? `page-feedback ${type}`.trim() : 'page-feedback hidden'; }
@@ -58,11 +48,8 @@
   function equipmentOptions() { return `<option value="">Tous equipements</option>${equipments.map((equipment) => `<option value="${escapeHtml(equipment.id)}">${escapeHtml(equipment.code)} - ${escapeHtml(equipment.name)}</option>`).join('')}`; }
 
   function fillSelects() {
-    els.type.innerHTML = typeOptions();
     els.filterType.innerHTML = typeOptions(true);
-    els.zoneId.innerHTML = zoneOptions();
     els.filterZone.innerHTML = zoneOptions();
-    els.equipmentId.innerHTML = equipmentOptions();
     els.filterEquipment.innerHTML = equipmentOptions();
   }
 
@@ -70,61 +57,20 @@
     return { search: els.search.value, type_code: els.filterType.value, zone_id: els.filterZone.value, equipment_id: els.filterEquipment.value, alert_status: els.filterAlert.value, start_date: els.startDate.value, end_date: els.endDate.value };
   }
 
-  function payload() {
-    const source = formHelper.executionSource(els.qualityTaskId.value, els.occurrenceId.value);
-    return {
-      type_code: els.type.value,
-      value: els.value.value,
-      unit: els.unit.value || 'C',
-      recorded_at: els.recordedAt.value ? new Date(els.recordedAt.value).toISOString() : new Date().toISOString(),
-      source,
-      exceptional_reason: source === 'exceptional' ? els.comment.value : null,
-      occurrence_id: els.occurrenceId.value || null,
-      quality_task_id: els.qualityTaskId.value || null,
-      zone_id: els.zoneId.value,
-      equipment_id: els.equipmentId.value,
-      comment: els.comment.value,
-    };
-  }
-
   function resetForm() {
-    els.form.reset();
-    els.id.value = '';
-    els.qualityTaskId.value = '';
-    els.occurrenceId.value = '';
-    els.unit.value = 'C';
-    els.recordedAt.value = toDatetimeLocal();
-    formHelper.applyExceptionalCopy(els.formTitle, els.submitBtn, false);
-  }
-
-  function fillForm(record) {
-    els.id.value = record.id;
-    els.qualityTaskId.value = record.quality_task_id || '';
-    els.occurrenceId.value = record.occurrence_id || '';
-    els.type.value = record.type_code;
-    els.value.value = record.value;
-    els.unit.value = record.unit || 'C';
-    els.recordedAt.value = toDatetimeLocal(record.recorded_at);
-    els.zoneId.value = record.zone_id || '';
-    els.equipmentId.value = record.equipment_id || '';
-    els.comment.value = record.comment || record.exceptional_reason || '';
-    formHelper.applyExceptionalCopy(els.formTitle, els.submitBtn, Boolean(record.quality_task_id || record.occurrence_id));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    executionForm.setContext({ recorded_at: new Date().toISOString() });
   }
 
   function fillDueReading(reading) {
-    els.id.value = '';
-    els.qualityTaskId.value = reading.quality_task_id || '';
-    els.occurrenceId.value = reading.occurrence_id || '';
-    els.type.value = reading.type_code || '';
-    els.zoneId.value = reading.zone_id || '';
-    els.equipmentId.value = reading.equipment_id || '';
-    els.unit.value = reading.unit || 'C';
-    els.recordedAt.value = toDatetimeLocal();
-    els.value.value = '';
-    els.comment.value = reading.task_title ? `Controle attendu : ${reading.task_title}` : '';
-    formHelper.applyExceptionalCopy(els.formTitle, els.submitBtn, true);
-    els.value.focus();
+    executionForm.setContext({
+      ...reading,
+      locked: true,
+      parameter_id: reading.parameter_id || reading.limit_id,
+      min_limit: reading.min_value,
+      max_limit: reading.max_value,
+      recorded_at: new Date().toISOString(),
+      comment: reading.task_title ? `Controle attendu : ${reading.task_title}` : '',
+    });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -153,7 +99,7 @@
 
   function renderRecords() {
     if (!records.length) { els.tableBody.innerHTML = '<tr><td colspan="10">Aucun releve trouve.</td></tr>'; renderChart(); return; }
-    els.tableBody.innerHTML = records.map((record) => `<tr class="${statusClass(record.alert_status)}"><td>${formatDate(record.recorded_at)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${escapeHtml(record.type_label)}</td><td><strong>${escapeHtml(record.value)}${escapeHtml(record.unit || 'C')}</strong></td><td>${record.min_limit ?? '-'} / ${record.max_limit ?? '-'}</td><td>${statusLabel(record.alert_status)}${record.source === 'exceptional' ? '<br><small>Saisie exceptionnelle</small>' : ''}</td><td>${escapeHtml(record.operator_email || '-')}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '')}</td><td><button class="btn btn-secondary" data-action="edit" data-id="${record.id}">Modifier</button> <button class="btn btn-secondary" data-action="delete" data-id="${record.id}">Archiver</button></td></tr>`).join('');
+    els.tableBody.innerHTML = records.map((record) => `<tr class="${statusClass(record.alert_status)}"><td>${formatDate(record.recorded_at)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${escapeHtml(record.type_label)}</td><td><strong>${escapeHtml(record.value)}${escapeHtml(record.unit || 'C')}</strong></td><td>${record.min_limit ?? '-'} / ${record.max_limit ?? '-'}</td><td>${statusLabel(record.alert_status)}${record.source === 'exceptional' ? '<br><small>Saisie exceptionnelle</small>' : ''}</td><td>${escapeHtml(record.operator_email || '-')}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '')}</td><td><button class="btn btn-secondary" data-action="delete" data-id="${record.id}">Archiver</button></td></tr>`).join('');
     if (!canManage) els.tableBody.querySelectorAll('button').forEach((button) => { button.disabled = true; });
     renderChart();
   }
@@ -190,11 +136,22 @@
     zones = await twin.listZones({ include_archived: 'false' });
     equipments = await twin.listEquipments({ include_archived: 'false' });
     fillSelects();
+    executionForm = formHelper.createTemperatureExecutionForm({
+      form: els.form,
+      titleEl: els.formTitle,
+      types,
+      zones,
+      equipments,
+      operationsApi,
+      user,
+      onSubmitted: async () => { resetForm(); await load(); },
+      onError: (message) => setFeedback(message, 'error'),
+    });
+    if (!canRecord) executionForm.field('submit').disabled = true;
     resetForm();
     await load();
   }
 
-  els.cancelBtn.addEventListener('click', resetForm);
   els.exportCsv.addEventListener('click', exportCsv);
   els.includeUpcoming.addEventListener('change', load);
   [els.search, els.filterType, els.filterZone, els.filterEquipment, els.filterAlert, els.startDate, els.endDate].forEach((el) => { el.addEventListener('input', load); el.addEventListener('change', load); });
@@ -204,27 +161,11 @@
     const reading = dueReadings.find((item) => item.quality_task_id === button.dataset.taskId);
     if (reading) fillDueReading(reading);
   });
-  els.form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (!canRecord && !els.id.value) return;
-    if (!canManage && els.id.value) return;
-    const data = payload();
-    const reasonError = formHelper.requireExceptionalReason(data);
-    if (reasonError) return setFeedback(reasonError, 'error');
-    try {
-      await api.saveRecord(data, els.id.value || null);
-      resetForm();
-      await load();
-    } catch (error) {
-      setFeedback(error.message, 'error');
-    }
-  });
   els.tableBody.addEventListener('click', async (event) => {
     const button = event.target.closest('button[data-action]');
     if (!button || !canManage) return;
     const record = records.find((item) => item.id === button.dataset.id);
     if (!record) return;
-    if (button.dataset.action === 'edit') return fillForm(record);
     if (button.dataset.action === 'delete' && !window.confirm('Archiver ce releve ?')) return;
     try { await api.deleteRecord(record.id); await load(); } catch (error) { setFeedback(error.message, 'error'); }
   });
