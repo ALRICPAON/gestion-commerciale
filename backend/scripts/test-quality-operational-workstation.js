@@ -103,14 +103,41 @@ function makeDb(task = makeTask()) {
 
 function makePoolDb(task = makeTask()) {
   const client = makeDb(task);
-  client.release = () => {};
+  let connectCount = 0;
+  let releaseCount = 0;
+  let endCount = 0;
+  client._connected = true;
+  client.connect = async () => {
+    throw new Error('Client has already been connected. You cannot reuse a client.');
+  };
+  client.end = async () => {
+    endCount += 1;
+    throw new Error('Pool client end must not be called.');
+  };
+  client.release = () => { releaseCount += 1; };
   return {
     client,
     calls: client.calls,
+    stats() {
+      return { connectCount, releaseCount, endCount };
+    },
     async connect() {
+      connectCount += 1;
       return client;
     },
   };
+}
+
+function makeFailingTemperaturePoolDb() {
+  const pool = makePoolDb();
+  const originalQuery = pool.client.query;
+  pool.client.query = async (sql, params = []) => {
+    if (/INSERT INTO quality_temperature_records/i.test(sql)) {
+      throw new Error('simulated temperature insert failure');
+    }
+    return originalQuery.call(pool.client, sql, params);
+  };
+  return pool;
 }
 
 function makeTodayWorkDb() {
@@ -210,6 +237,18 @@ async function main() {
   const completed = await listCompletedWorkItems(manualDb, STORE_ID, {});
   assert.equal(completed[0].type, 'manual', 'Une MANUAL realisee doit revenir dans les realises');
 
+  const manualPoolDb = makePoolDb(makeTask({ task_origin: 'MANUAL', source_locked: false, module_key: 'manual' }));
+  await executeManualOccurrence(manualPoolDb, STORE_ID, USER_ID, {
+    quality_task_id: TASK_ID,
+    completed_at: '2026-08-03T04:05:00.000Z',
+    result_status: 'completed',
+    conformity_status: 'conform',
+    comment: 'Controle realise',
+  });
+  assert.equal(manualPoolDb.stats().connectCount, 1, 'La transaction manuelle ne doit acquerir qu un client');
+  assert.equal(manualPoolDb.stats().releaseCount, 1, 'La transaction manuelle doit liberer le client une seule fois');
+  assert.equal(manualPoolDb.stats().endCount, 0, 'Aucun end() ne doit etre appele sur un client du pool');
+
   const temperatureDb = makePoolDb();
   const temperature = await recordTemperatureControl(temperatureDb, STORE_ID, USER_ID, {
     quality_task_id: TASK_ID,
@@ -219,6 +258,12 @@ async function main() {
   });
   assert(temperature.record, 'La saisie temperature canonique doit creer un record');
   assert(temperatureDb.calls.some((call) => /UPDATE quality_task_occurrences/i.test(call.sql)), 'La saisie temperature doit completer une occurrence');
+  assert.equal(temperatureDb.stats().connectCount, 1, 'La transaction temperature ne doit acquerir qu un client');
+  assert.equal(temperatureDb.stats().releaseCount, 1, 'La transaction temperature doit liberer le client une seule fois');
+  assert.equal(temperatureDb.stats().endCount, 0, 'Aucun end() temperature ne doit etre appele sur un client du pool');
+  assert.equal(temperatureDb.calls.filter((call) => /^BEGIN$/i.test(call.sql)).length, 1, 'BEGIN temperature unique attendu');
+  assert.equal(temperatureDb.calls.filter((call) => /^COMMIT$/i.test(call.sql)).length, 1, 'COMMIT temperature unique attendu');
+  assert.equal(temperatureDb.calls.filter((call) => /^ROLLBACK$/i.test(call.sql)).length, 0, 'ROLLBACK temperature inattendu');
 
   const exceptionalDb = makePoolDb();
   await assert.rejects(
@@ -239,6 +284,36 @@ async function main() {
   });
   assert(cleaning.record, 'La saisie nettoyage canonique doit creer un record');
   assert(cleaningDb.calls.some((call) => /UPDATE quality_task_occurrences/i.test(call.sql)), 'La saisie nettoyage doit completer une occurrence');
+  assert.equal(cleaningDb.stats().connectCount, 1, 'La transaction nettoyage ne doit acquerir qu un client');
+  assert.equal(cleaningDb.stats().releaseCount, 1, 'La transaction nettoyage doit liberer le client une seule fois');
+  assert.equal(cleaningDb.stats().endCount, 0, 'Aucun end() nettoyage ne doit etre appele sur un client du pool');
+
+  const rollbackDb = makeFailingTemperaturePoolDb();
+  await assert.rejects(
+    () => recordTemperatureControl(rollbackDb, STORE_ID, USER_ID, {
+      quality_task_id: TASK_ID,
+      type_code: 'COLD_ROOM',
+      value: 1.2,
+      recorded_at: '2026-08-03T04:05:00.000Z',
+    }),
+    /simulated temperature insert failure/
+  );
+  assert.equal(rollbackDb.stats().connectCount, 1, 'Rollback: acquisition client unique attendue');
+  assert.equal(rollbackDb.stats().releaseCount, 1, 'Rollback: liberation client unique attendue');
+  assert.equal(rollbackDb.calls.filter((call) => /^ROLLBACK$/i.test(call.sql)).length, 1, 'Rollback SQL attendu');
+  assert.equal(rollbackDb.calls.filter((call) => /UPDATE quality_task_occurrences/i.test(call.sql)).length, 0, 'Aucune occurrence ne doit etre completee apres echec record');
+
+  const completedDb = makePoolDb();
+  await assert.rejects(
+    () => recordTemperatureControl(completedDb, STORE_ID, USER_ID, {
+      occurrence_id: '55555555-5555-5555-5555-555555555555',
+      type_code: 'COLD_ROOM',
+      value: 1.2,
+      recorded_at: '2026-08-03T04:05:00.000Z',
+    }),
+    /deja completee/
+  );
+  assert.equal(completedDb.calls.filter((call) => /INSERT INTO quality_temperature_records/i.test(call.sql)).length, 0, 'Double soumission: aucun record duplique attendu');
 
   const todayWork = await listQualityTodayWork(makeTodayWorkDb(), STORE_ID, { include_upcoming: 'true' });
   assert.equal(todayWork.summary.event_controls, 1, 'Les controles evenementiels doivent avoir leur section dediee');
@@ -251,9 +326,13 @@ async function main() {
     system_direct_completion_blocked: true,
     system_business_completion_allowed: true,
     manual_execution_recorded: true,
+    manual_pool_transaction_checked: true,
     canonical_temperature_recorded: true,
     canonical_cleaning_recorded: true,
     event_controls_separated: true,
+    connected_client_not_reused: true,
+    rollback_atomic: true,
+    double_submission_blocked: true,
   }, null, 2));
 }
 
