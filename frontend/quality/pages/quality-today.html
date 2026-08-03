@@ -3,57 +3,52 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Qualité du jour - ALTA MARÉE</title>
+  <title>Qualite du jour - ALTA MAREE</title>
   <link rel="stylesheet" href="../../css/app.css" />
   <link rel="stylesheet" href="../css/quality.css?v=6" />
 </head>
 <body class="app-page quality-foundation-page">
   <header class="topbar">
-    <div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Qualité du jour</p></div>
-    <div class="topbar-right"><button class="btn btn-secondary" onclick="window.location.href='./quality-ddpp.html'">Contrôle DDPP</button><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualité</button><button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button></div>
+    <div class="topbar-left"><h1 class="app-title">ALTA MAREE</h1><p class="app-subtitle">Qualite du jour</p></div>
+    <div class="topbar-right"><button class="btn btn-secondary" onclick="window.location.href='./quality-ddpp.html'">Controle DDPP</button><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualite</button><button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button></div>
   </header>
   <main class="main-content quality-workstation">
-    <section class="welcome-card"><span class="section-kicker">Poste opérationnel</span><h2>Qualité du jour</h2><p>Les contrôles à réaliser, dans l'ordre de priorité.</p></section>
+    <section class="welcome-card"><span class="section-kicker">Execution</span><h2>Qualite du jour</h2><p>Les controles a realiser, priorite aux retards.</p></section>
     <div id="quality-today-feedback" class="page-feedback hidden"></div>
     <section id="quality-today-summary" class="quality-grid"></section>
-    <section class="quality-card">
-      <div class="quality-section-header"><div><h3>À faire aujourd'hui</h3><p class="quality-muted">Contrôles attendus maintenant.</p></div></div>
-      <div id="quality-work-today" class="quality-list-grid"></div>
-    </section>
-    <section class="quality-card">
-      <div class="quality-section-header"><div><h3>En retard</h3><p class="quality-muted">Contrôles à traiter en priorité.</p></div></div>
-      <div id="quality-work-overdue" class="quality-list-grid"></div>
-    </section>
-    <section class="quality-card">
-      <div class="quality-section-header"><div><h3>À venir</h3><p class="quality-muted">Prochains contrôles planifiés.</p></div></div>
-      <div id="quality-work-upcoming" class="quality-list-grid"></div>
-    </section>
-    <section class="quality-card">
-      <div class="quality-section-header"><div><h3>Réalisés aujourd'hui</h3><p class="quality-muted">Historique immédiat du poste.</p></div></div>
-      <div id="quality-work-completed" class="quality-list-grid"></div>
-    </section>
-    <section class="quality-card">
-      <div class="quality-section-header"><div><h3>Non-conformités ouvertes</h3><p class="quality-muted">Aucune non-conformité n'est masquée.</p></div></div>
-      <div id="quality-work-nc" class="quality-list-grid"></div>
-    </section>
+    <section class="quality-card"><div class="quality-section-header"><div><h3>A faire aujourd'hui</h3><p class="quality-muted">Controles attendus maintenant.</p></div></div><div id="quality-work-today" class="quality-list-grid"></div></section>
+    <section class="quality-card"><div class="quality-section-header"><div><h3>En retard</h3><p class="quality-muted">A traiter en priorite.</p></div></div><div id="quality-work-overdue" class="quality-list-grid"></div></section>
+    <section class="quality-card"><div class="quality-section-header"><div><h3>A venir</h3><p class="quality-muted">Prochains controles planifies.</p></div></div><div id="quality-work-upcoming" class="quality-list-grid"></div></section>
+    <section class="quality-card"><div class="quality-section-header"><div><h3>Realises aujourd'hui</h3><p class="quality-muted">Temperatures, nettoyages, controles manuels et generiques.</p></div></div><div id="quality-work-completed" class="quality-list-grid"></div></section>
+    <section class="quality-card"><div class="quality-section-header"><div><h3>Non-conformites ouvertes</h3><p class="quality-muted">Aucune non-conformite n'est masquee.</p></div></div><div id="quality-work-nc" class="quality-list-grid"></div></section>
 
     <section id="quality-execution-panel" class="quality-card hidden">
-      <div class="quality-section-header"><div><h3 id="quality-execution-title">Contrôle</h3><p id="quality-execution-context" class="quality-muted"></p></div></div>
+      <div class="quality-section-header"><div><h3 id="quality-execution-title">Controle</h3><p id="quality-execution-context" class="quality-muted"></p></div></div>
       <form id="quality-execution-form" class="quality-form-grid">
         <input id="quality-execution-occurrence-id" type="hidden">
         <input id="quality-execution-task-id" type="hidden">
         <input id="quality-execution-type" type="hidden">
         <input id="quality-execution-source-id" type="hidden">
         <input id="quality-execution-type-code" type="hidden">
-        <label id="quality-temperature-value-label">Valeur mesurée<input id="quality-temperature-value" class="form-input" type="number" step="0.01"></label>
-        <label id="quality-cleaning-status-label">Résultat<select id="quality-cleaning-status" class="form-input"><option value="done">Réalisé conforme</option><option value="partial">Partiel</option><option value="not_done">Non réalisé</option><option value="issue">Anomalie</option></select></label>
-        <label>Date/heure réelle<input id="quality-execution-at" class="form-input" type="datetime-local" required></label>
+        <div id="quality-readonly-details" class="quality-form-wide quality-empty-state"></div>
+        <label id="quality-temperature-value-label">Temperature mesuree *<input id="quality-temperature-value" class="form-input" type="number" step="0.01"></label>
+        <label id="quality-temperature-method-label">Appareil / methode<input id="quality-temperature-method" class="form-input" type="text"></label>
+        <label id="quality-cleaning-status-label">Realisation<select id="quality-cleaning-status" class="form-input"><option value="done">Oui</option><option value="partial">Partiellement</option><option value="not_done">Non</option><option value="issue">Anomalie</option></select></label>
+        <label id="quality-cleaning-visual-label">Controle visuel<select id="quality-cleaning-visual" class="form-input"><option value="conform">Conforme</option><option value="non_conform">Non conforme</option><option value="not_applicable">Non applicable</option></select></label>
+        <label id="quality-cleaning-anomaly-label">Anomalie constatee<textarea id="quality-cleaning-anomaly" class="form-input"></textarea></label>
+        <label id="quality-manual-result-label">Resultat<select id="quality-manual-result" class="form-input"><option value="completed">Realise</option><option value="partial">Partiel</option><option value="not_applicable">Non applicable</option><option value="issue">Anomalie</option></select></label>
+        <label id="quality-manual-conformity-label">Conformite<select id="quality-manual-conformity" class="form-input"><option value="conform">Conforme</option><option value="non_conform">Non conforme</option><option value="not_applicable">Non applicable</option></select></label>
+        <label>Date/heure reelle<input id="quality-execution-at" class="form-input" type="datetime-local" required></label>
+        <label>Operateur<input id="quality-execution-operator" class="form-input" type="text" readonly></label>
         <label>Observation<textarea id="quality-execution-comment" class="form-input"></textarea></label>
-        <label>Action corrective immédiate<textarea id="quality-execution-corrective" class="form-input"></textarea></label>
-        <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Valider et passer au contrôle suivant</button><button id="quality-execution-cancel" class="btn btn-secondary" type="button">Annuler</button></div>
+        <label>Action corrective immediate<textarea id="quality-execution-corrective" class="form-input"></textarea></label>
+        <label>Photo / preuve photo<input id="quality-evidence-photo-id" class="form-input" type="text" placeholder="ID photo qualite existante"></label>
+        <label>Piece jointe / preuve<input id="quality-evidence-document-id" class="form-input" type="text" placeholder="ID document qualite existant"></label>
+        <div id="quality-execution-alert" class="page-feedback hidden quality-form-wide"></div>
+        <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Valider et passer au controle suivant</button><button id="quality-execution-cancel" class="btn btn-secondary" type="button">Annuler</button></div>
       </form>
     </section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/operations-api.js?v=1"></script><script src="../js/quality-today.js?v=1"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/operations-api.js?v=2"></script><script src="../js/quality-today.js?v=2"></script>
 </body>
 </html>

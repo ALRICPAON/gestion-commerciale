@@ -21,6 +21,22 @@ function addDays(value, days) {
   return date;
 }
 
+async function withTransaction(db, work) {
+  if (typeof db.connect !== 'function') return work(db);
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await work(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 function dueStatus(dueAt, completed = false) {
   if (completed) return 'completed';
   const due = dueAt ? new Date(dueAt) : null;
@@ -62,6 +78,15 @@ function normalizeWorkItem(source, item, task = {}) {
     zone_name: item.zone_name || null,
     equipment_id: item.equipment_id || (task.entity_type === 'equipment' ? task.entity_id : null),
     equipment_name: item.equipment_name || null,
+    operator_email: item.operator_email || item.performed_by_email || item.completed_by_email || null,
+    result_status: item.result_status || item.alert_status || item.status || null,
+    conformity_status: item.conformity_status || (item.alert_status ? (item.alert_status === 'out_of_limits' ? 'non_conform' : 'conform') : null),
+    value: item.value ?? null,
+    unit: item.unit || null,
+    comment: item.comment || item.observation || null,
+    corrective_action: item.corrective_action || null,
+    evidence_photo_id: item.evidence_photo_id || item.proof_photo_id || null,
+    evidence_document_id: item.evidence_document_id || item.proof_document_id || null,
     target_time: item.target_time || task.target_time || null,
     next_due_at: dueAt,
     status: item.computed_status || dueStatus(dueAt),
@@ -72,6 +97,20 @@ function normalizeWorkItem(source, item, task = {}) {
     primary_action: actionLabel(type),
     raw: item,
   };
+}
+
+function completedWorkItem(record, task = {}) {
+  const type = record.record_type === 'quality_temperature_record'
+    ? 'temperature'
+    : record.record_type === 'quality_cleaning_record'
+      ? 'cleaning'
+      : taskType(task);
+  return normalizeWorkItem(type, {
+    ...record,
+    computed_status: 'completed',
+    next_due_at: record.completed_at || record.recorded_at || record.performed_at,
+    title: record.record_title || task.title,
+  }, task);
 }
 
 async function upsertOccurrence(db, storeId, taskId, dueAt, source = {}) {
@@ -144,14 +183,66 @@ async function listCorrectiveActions(db, storeId, query = {}) {
   return result.rows;
 }
 
+async function listCompletedWorkItems(db, storeId, query = {}) {
+  const start = query.start_date || startOfDay().toISOString();
+  const end = query.end_date || endOfDay().toISOString();
+  const params = [storeId, start, end];
+  const typeFilter = query.type ? String(query.type) : null;
+  const zoneFilter = query.zone_id ? String(query.zone_id) : null;
+  const equipmentFilter = query.equipment_id ? String(query.equipment_id) : null;
+  const conformityFilter = query.conformity_status ? String(query.conformity_status) : null;
+  const result = await db.query(
+    `SELECT o.id AS occurrence_id, o.task_id AS quality_task_id, o.completed_at, o.result_status,
+            o.source_record_type AS record_type, o.source_record_id, o.comment,
+            t.title AS task_title, t.module_key, t.task_origin, t.source_entity_type, t.source_entity_id,
+            t.entity_type, t.entity_id, t.target_time, t.criticality, t.source_locked,
+            z.name AS zone_name, e.name AS equipment_name, u.email AS completed_by_email,
+            tr.value, tr.unit, tr.alert_status, tr.method_used, tr.type_code, tt.label AS type_label,
+            cr.status AS cleaning_status, cr.visual_check_status, cr.anomaly_comment, cr.corrective_action AS cleaning_corrective_action,
+            mr.result_status AS manual_result_status, mr.conformity_status AS manual_conformity_status,
+            mr.observation AS manual_observation, mr.corrective_action AS manual_corrective_action,
+            COALESCE(tr.evidence_photo_id, cr.evidence_photo_id, mr.evidence_photo_id) AS evidence_photo_id,
+            COALESCE(tr.evidence_document_id, cr.evidence_document_id, mr.evidence_document_id) AS evidence_document_id,
+            COALESCE(tr.comment, cr.comment, mr.observation, o.comment) AS record_comment,
+            COALESCE(cr.corrective_action, mr.corrective_action) AS record_corrective_action,
+            COALESCE(tt.label, t.title) AS record_title
+     FROM quality_task_occurrences o
+     INNER JOIN quality_tasks t ON t.id = o.task_id AND t.store_id = o.store_id
+     LEFT JOIN quality_zones z ON z.id = CASE WHEN t.entity_type = 'zone' THEN t.entity_id ELSE NULL END AND z.store_id = o.store_id
+     LEFT JOIN quality_equipments e ON e.id = CASE WHEN t.entity_type = 'equipment' THEN t.entity_id ELSE NULL END AND e.store_id = o.store_id
+     LEFT JOIN users u ON u.id = o.completed_by
+     LEFT JOIN quality_temperature_records tr ON tr.id = o.source_record_id AND o.source_record_type = 'quality_temperature_record'
+     LEFT JOIN quality_temperature_types tt ON tt.code = tr.type_code
+     LEFT JOIN quality_cleaning_records cr ON cr.id = o.source_record_id AND o.source_record_type = 'quality_cleaning_record'
+     LEFT JOIN quality_manual_task_records mr ON mr.id = o.source_record_id AND o.source_record_type = 'quality_manual_task_record'
+     WHERE o.store_id = $1::uuid AND o.status = 'completed'
+       AND o.completed_at >= $2::timestamptz AND o.completed_at <= $3::timestamptz
+     ORDER BY o.completed_at DESC
+     LIMIT 500`,
+    params
+  );
+  return result.rows
+    .map((row) => completedWorkItem({
+      ...row,
+      status: row.cleaning_status || row.manual_result_status || row.result_status,
+      conformity_status: row.manual_conformity_status || (row.alert_status ? (row.alert_status === 'out_of_limits' ? 'non_conform' : 'conform') : row.visual_check_status),
+      comment: row.record_comment,
+      corrective_action: row.record_corrective_action,
+      title: row.record_title || row.task_title,
+    }, row))
+    .filter((item) => !typeFilter || item.type === typeFilter)
+    .filter((item) => !zoneFilter || String(item.zone_id || '') === zoneFilter)
+    .filter((item) => !equipmentFilter || String(item.equipment_id || '') === equipmentFilter)
+    .filter((item) => !conformityFilter || String(item.conformity_status || '') === conformityFilter);
+}
+
 async function listQualityTodayWork(db, storeId, query = {}) {
   const includeUpcoming = query.include_upcoming !== 'false';
-  const [temperatureDue, cleaningDue, tasks, temperatureRecords, cleaningRecords, nonConformities] = await Promise.all([
+  const [temperatureDue, cleaningDue, tasks, completedItems, nonConformities] = await Promise.all([
     listDueTemperatureReadings(db, storeId, { include_upcoming: includeUpcoming ? 'true' : 'false' }),
     listDueCleaningRecords(db, storeId, { include_upcoming: includeUpcoming ? 'true' : 'false' }),
     listQualityTasks(db, storeId, { active: 'true' }),
-    listTemperatureRecords(db, storeId, { start_date: startOfDay().toISOString(), end_date: endOfDay().toISOString() }),
-    listCleaningRecords(db, storeId, { start_date: startOfDay().toISOString(), end_date: endOfDay().toISOString() }),
+    listCompletedWorkItems(db, storeId, query),
     listOpenNonConformities(db, storeId),
   ]);
 
@@ -181,8 +272,7 @@ async function listQualityTodayWork(db, storeId, query = {}) {
       overdue: work.filter((item) => item.status === 'overdue' || item.status === 'late'),
       upcoming: work.filter((item) => item.status === 'planned'),
       completed_today: [
-        ...temperatureRecords.map((record) => normalizeWorkItem('temperature', { ...record, title: record.type_label, next_due_at: record.recorded_at, computed_status: 'completed' })),
-        ...cleaningRecords.map((record) => normalizeWorkItem('cleaning', { ...record, title: record.plan_title, next_due_at: record.performed_at, computed_status: 'completed' })),
+        ...completedItems,
       ],
       non_conformities: nonConformities,
     },
@@ -190,7 +280,7 @@ async function listQualityTodayWork(db, storeId, query = {}) {
       today: work.filter((item) => item.status === 'due').length,
       overdue: work.filter((item) => item.status === 'overdue' || item.status === 'late').length,
       upcoming: work.filter((item) => item.status === 'planned').length,
-      completed_today: temperatureRecords.length + cleaningRecords.length,
+      completed_today: completedItems.length,
       open_non_conformities: nonConformities.length,
       critical_missing: work.filter((item) => ['high', 'critical'].includes(item.criticality) && ['overdue', 'late'].includes(item.status)).length,
     },
@@ -198,10 +288,11 @@ async function listQualityTodayWork(db, storeId, query = {}) {
 }
 
 async function getDdppDashboard(db, storeId, query = {}) {
-  const [today, temperatureRecords, cleaningRecords, correctiveActions] = await Promise.all([
+  const [today, temperatureRecords, cleaningRecords, completedItems, correctiveActions] = await Promise.all([
     listQualityTodayWork(db, storeId, query),
     listTemperatureRecords(db, storeId, { start_date: query.start_date || startOfDay().toISOString(), end_date: query.end_date || endOfDay().toISOString() }),
     listCleaningRecords(db, storeId, { start_date: query.start_date || startOfDay().toISOString(), end_date: query.end_date || endOfDay().toISOString() }),
+    listCompletedWorkItems(db, storeId, query),
     listCorrectiveActions(db, storeId, { status: query.action_status }),
   ]);
   const red = today.summary.critical_missing > 0 || today.sections.non_conformities.some((item) => ['high', 'critical'].includes(item.severity));
@@ -209,6 +300,7 @@ async function getDdppDashboard(db, storeId, query = {}) {
   return {
     status: red ? 'red' : orange ? 'orange' : 'green',
     today,
+    completed_items: completedItems,
     temperature_records: temperatureRecords,
     cleaning_records: cleaningRecords,
     corrective_actions: correctiveActions,
@@ -225,37 +317,63 @@ async function getOccurrence(db, storeId, occurrenceId) {
 }
 
 async function executeTemperatureOccurrence(db, storeId, userId, payload) {
-  const occurrence = await getOccurrence(db, storeId, payload.occurrence_id);
-  const taskId = payload.quality_task_id || occurrence?.task_id || null;
-  if (!taskId) throw Object.assign(new Error('Tache temperature obligatoire'), { status: 400, expose: true });
-  const task = await getQualityTask(db, storeId, taskId);
-  if (task?.task_origin === 'SYSTEM' && task.source_entity_type !== 'temperature_parameter') {
-    throw Object.assign(new Error('Cette tache SYSTEM doit etre executee par son formulaire metier'), { status: 409, expose: true });
+  if (payload.value === undefined || payload.value === null || payload.value === '') {
+    throw Object.assign(new Error('Valeur temperature obligatoire'), { status: 400, expose: true });
   }
-  const record = await saveTemperatureRecord(db, storeId, userId, { ...payload, quality_task_id: taskId, occurrence_id: occurrence?.id || payload.occurrence_id || null });
-  if (occurrence?.id) await completeOccurrence(db, storeId, userId, occurrence.id, 'quality_temperature_record', record.id, record.alert_status, payload.comment);
-  return { record, occurrence: occurrence?.id ? await getOccurrence(db, storeId, occurrence.id) : null };
+  return withTransaction(db, async (client) => {
+    const occurrence = await getOccurrence(client, storeId, payload.occurrence_id);
+    const taskId = payload.quality_task_id || occurrence?.task_id || null;
+    if (!taskId) throw Object.assign(new Error('Tache temperature obligatoire'), { status: 400, expose: true });
+    const task = await getQualityTask(client, storeId, taskId);
+    if (task?.task_origin === 'SYSTEM' && task.source_entity_type !== 'temperature_parameter') {
+      throw Object.assign(new Error('Cette tache SYSTEM doit etre executee par son formulaire metier'), { status: 409, expose: true });
+    }
+    const effectiveOccurrence = occurrence || await upsertOccurrence(client, storeId, taskId, payload.recorded_at || new Date().toISOString(), { source_entity_type: task?.source_entity_type, source_entity_id: task?.source_entity_id });
+    const record = await saveTemperatureRecord(client, storeId, userId, { ...payload, quality_task_id: taskId, occurrence_id: effectiveOccurrence?.id || null, operator_user_id: payload.operator_user_id || userId, recorded_at: payload.recorded_at || new Date().toISOString() });
+    if (effectiveOccurrence?.id) await completeOccurrence(client, storeId, userId, effectiveOccurrence.id, 'quality_temperature_record', record.id, record.alert_status, payload.comment);
+    return { record, occurrence: effectiveOccurrence?.id ? await getOccurrence(client, storeId, effectiveOccurrence.id) : null };
+  });
 }
 
 async function executeCleaningOccurrence(db, storeId, userId, payload) {
-  const occurrence = await getOccurrence(db, storeId, payload.occurrence_id);
-  const taskId = payload.quality_task_id || occurrence?.task_id || null;
-  const record = await createCleaningRecord(db, storeId, userId, { ...payload, quality_task_id: taskId, occurrence_id: occurrence?.id || payload.occurrence_id || null });
-  if (occurrence?.id) await completeOccurrence(db, storeId, userId, occurrence.id, 'quality_cleaning_record', record.id, record.status, payload.comment);
-  return { record, occurrence: occurrence?.id ? await getOccurrence(db, storeId, occurrence.id) : null };
+  if (!payload.cleaning_plan_id) throw Object.assign(new Error('Plan de nettoyage obligatoire'), { status: 400, expose: true });
+  if (['not_done', 'issue'].includes(payload.status) && !payload.comment && !payload.anomaly_comment) {
+    throw Object.assign(new Error('Observation obligatoire pour un nettoyage non conforme ou non realise'), { status: 400, expose: true });
+  }
+  return withTransaction(db, async (client) => {
+    const occurrence = await getOccurrence(client, storeId, payload.occurrence_id);
+    const taskId = payload.quality_task_id || occurrence?.task_id || null;
+    const effectiveOccurrence = occurrence || (taskId ? await upsertOccurrence(client, storeId, taskId, payload.performed_at || new Date().toISOString(), { source_entity_type: 'cleaning_plan', source_entity_id: payload.cleaning_plan_id }) : null);
+    const record = await createCleaningRecord(client, storeId, userId, { ...payload, quality_task_id: taskId, occurrence_id: effectiveOccurrence?.id || null, performed_by: payload.performed_by || userId, performed_at: payload.performed_at || new Date().toISOString() });
+    if (effectiveOccurrence?.id) await completeOccurrence(client, storeId, userId, effectiveOccurrence.id, 'quality_cleaning_record', record.id, record.status, payload.comment);
+    return { record, occurrence: effectiveOccurrence?.id ? await getOccurrence(client, storeId, effectiveOccurrence.id) : null };
+  });
 }
 
 async function executeManualOccurrence(db, storeId, userId, payload) {
-  const occurrence = await getOccurrence(db, storeId, payload.occurrence_id);
-  const taskId = payload.quality_task_id || occurrence?.task_id || null;
-  if (!taskId) throw Object.assign(new Error('Tache manuelle obligatoire'), { status: 400, expose: true });
-  const task = await getQualityTask(db, storeId, taskId);
-  if (task?.task_origin === 'SYSTEM' && task.source_locked) {
-    throw Object.assign(new Error('Une tache SYSTEM verrouillee doit utiliser son formulaire metier'), { status: 409, expose: true });
-  }
-  const updated = await updateQualityTaskStatus(db, storeId, userId, taskId, { status: 'completed', comment: payload.comment, completed_at: payload.completed_at || new Date().toISOString() });
-  if (occurrence?.id) await completeOccurrence(db, storeId, userId, occurrence.id, 'quality_task_history', null, payload.result_status || 'completed', payload.comment);
-  return { task: updated, occurrence: occurrence?.id ? await getOccurrence(db, storeId, occurrence.id) : null };
+  return withTransaction(db, async (client) => {
+    const occurrence = await getOccurrence(client, storeId, payload.occurrence_id);
+    const taskId = payload.quality_task_id || occurrence?.task_id || null;
+    if (!taskId) throw Object.assign(new Error('Tache manuelle obligatoire'), { status: 400, expose: true });
+    const task = await getQualityTask(client, storeId, taskId);
+    if (task?.task_origin === 'SYSTEM' && task.source_locked) {
+      throw Object.assign(new Error('Une tache SYSTEM verrouillee doit utiliser son formulaire metier'), { status: 409, expose: true });
+    }
+    const completedAt = payload.completed_at || new Date().toISOString();
+    const effectiveOccurrence = occurrence || await upsertOccurrence(client, storeId, taskId, completedAt, { source_entity_type: task?.source_entity_type, source_entity_id: task?.source_entity_id });
+    const recordResult = await client.query(
+      `INSERT INTO quality_manual_task_records (
+        store_id, quality_task_id, occurrence_id, performed_at, performed_by, result_status,
+        conformity_status, observation, corrective_action, evidence_photo_id, evidence_document_id
+      ) VALUES ($1::uuid,$2::uuid,$3::uuid,$4::timestamptz,$5::uuid,$6::text,$7::text,$8::text,$9::text,$10::uuid,$11::uuid)
+      RETURNING *`,
+      [storeId, taskId, effectiveOccurrence?.id || null, completedAt, payload.performed_by || userId, payload.result_status || 'completed', payload.conformity_status || 'conform', payload.comment || payload.observation || null, payload.corrective_action || null, payload.evidence_photo_id || null, payload.evidence_document_id || null]
+    );
+    const record = recordResult.rows[0];
+    const updated = await updateQualityTaskStatus(client, storeId, userId, taskId, { status: 'completed', comment: payload.comment || payload.observation, completed_at: completedAt });
+    if (effectiveOccurrence?.id) await completeOccurrence(client, storeId, userId, effectiveOccurrence.id, 'quality_manual_task_record', record.id, record.conformity_status, payload.comment || payload.observation);
+    return { task: updated, record, occurrence: effectiveOccurrence?.id ? await getOccurrence(client, storeId, effectiveOccurrence.id) : null };
+  });
 }
 
 async function createNonConformity(db, storeId, userId, payload = {}) {
@@ -307,6 +425,7 @@ module.exports = {
   executeManualOccurrence,
   executeTemperatureOccurrence,
   getDdppDashboard,
+  listCompletedWorkItems,
   listCorrectiveActions,
   listOpenNonConformities,
   listQualityTodayWork,
