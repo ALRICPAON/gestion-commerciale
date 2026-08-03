@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Contrôle DDPP - ALTA MARÉE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=6" />
+</head>
+<body class="app-page quality-foundation-page">
+  <header class="topbar">
+    <div class="topbar-left"><h1 class="app-title">ALTA MARÉE</h1><p class="app-subtitle">Contrôle DDPP</p></div>
+    <div class="topbar-right"><button class="btn btn-secondary" onclick="window.print()">Imprimer</button><button class="btn btn-secondary" onclick="window.location.href='./quality-today.html'">Qualité du jour</button><button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualité</button></div>
+  </header>
+  <main class="main-content quality-workstation">
+    <section class="welcome-card"><span class="section-kicker">Inspection</span><h2>Contrôle DDPP</h2><p>Situation lisible du jour, sans modification des données.</p></section>
+    <div id="quality-ddpp-feedback" class="page-feedback hidden"></div>
+    <section id="quality-ddpp-status" class="quality-card"></section>
+    <section class="quality-card"><h3>Situation du jour</h3><div id="quality-ddpp-today" class="quality-grid"></div></section>
+    <section class="quality-card"><h3>Températures</h3><div id="quality-ddpp-temperatures" class="quality-table-wrapper"></div></section>
+    <section class="quality-card"><h3>Nettoyages</h3><div id="quality-ddpp-cleaning" class="quality-table-wrapper"></div></section>
+    <section class="quality-card"><h3>Non-conformités</h3><div id="quality-ddpp-nc" class="quality-list-grid"></div></section>
+    <section class="quality-card"><h3>Actions correctives</h3><div id="quality-ddpp-actions" class="quality-list-grid"></div></section>
+  </main>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/operations-api.js?v=1"></script><script src="../js/quality-ddpp.js?v=1"></script>
+</body>
+</html>

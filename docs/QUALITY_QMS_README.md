@@ -216,6 +216,7 @@ Tables et migration:
 - `quality_zones` et `quality_equipments` restent les sources du jumeau numerique;
 - `063_quality_configuration_agent_write.sql` ajoute uniquement des colonnes optionnelles, contraintes de statut et index;
 - `064_quality_cleaning_plan_multi_targets.sql` est additive, idempotente et backfill les liaisons depuis `zone_id` et `equipment_id`.
+- `068_quality_operational_workstation.sql` ajoute les occurrences operationnelles, non-conformites, actions correctives et liens de preuve sans modifier les donnees existantes.
 
 Compatibilite plans de nettoyage:
 
@@ -225,6 +226,13 @@ Compatibilite plans de nettoyage:
 - toute creation/modification/activation/desactivation de plan synchronise automatiquement la tache qualite liee via `quality_task_id`;
 - les taches generees depuis un plan conservent une cible legacy principale et decrivent le perimetre complet;
 - les parametres temperature et leurs taches restent independants.
+
+Poste operationnel:
+
+- `Qualite du jour` centralise les controles attendus, retards, prochains controles, realises du jour et non-conformites ouvertes;
+- `Controle DDPP` fournit une vue lecture seule pour inspection avec statut vert/orange/rouge;
+- une tache `SYSTEM` verrouillee ne peut plus etre terminee directement: elle doit produire un releve temperature ou un enregistrement nettoyage;
+- `quality_task_occurrences` garde chaque echeance reelle sans ecraser l'historique.
 
 Outils MCP:
 
@@ -236,6 +244,15 @@ Outils MCP:
 - `quality_assign_task_to_equipment`;
 - `quality_activate_configuration`;
 - `quality_deactivate_configuration`.
+- `get_quality_today_work`;
+- `get_quality_overdue_work`;
+- `get_quality_ddpp_dashboard`;
+- `execute_quality_temperature_occurrence`;
+- `execute_quality_cleaning_occurrence`;
+- `execute_quality_manual_occurrence`;
+- `create_quality_non_conformity`;
+- `create_quality_corrective_action`;
+- `close_quality_non_conformity`.
 
 Exemple MCP:
 

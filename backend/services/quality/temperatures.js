@@ -306,7 +306,7 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
         responsible_email: row.task_responsible_email,
       });
       return {
-        quality_task_id: row.quality_task_id,
+        quality_task_id: row.task_id || row.quality_task_id,
         limit_id: row.limit_id,
         parameter_id: row.parameter_id,
         type_code: row.type_code,
@@ -616,12 +616,13 @@ async function getTemperatureRecord(db, storeId, recordId) {
 }
 
 async function completeLinkedTemperatureTask(db, storeId, userId, limit, payload) {
-  if (!limit || !limit.quality_task_id) return;
+  const taskId = payload.quality_task_id || limit?.quality_task_id || null;
+  if (!taskId) return;
   await completeQualityTask(
     db,
     storeId,
     userId,
-    limit.quality_task_id,
+    taskId,
     `Relevé température ${payload.value}${payload.unit || '°C'}`,
     payload.recorded_at
   );
@@ -639,21 +640,22 @@ async function saveTemperatureRecord(db, storeId, userId, payload, recordId = nu
       ? await client.query(
         `UPDATE quality_temperature_records
          SET zone_id=$3, equipment_id=$4, type_code=$5, value=$6, unit=$7, recorded_at=$8,
-             source=$9, operator_user_id=$10, comment=$11, evidence_photo_id=$12, evidence_document_id=$13,
-             min_limit=$14, max_limit=$15, alert_status=$16, alert_reason=$17,
-             updated_by=$18, updated_at=now()
+             source=$9, operator_user_id=$10, quality_task_id=$11::uuid, occurrence_id=$12::uuid,
+             comment=$13, method_used=$14, evidence_photo_id=$15, evidence_document_id=$16,
+             temperature_limit_id=$17::uuid, min_limit=$18, max_limit=$19, alert_status=$20, alert_reason=$21,
+             updated_by=$22, updated_at=now()
          WHERE id=$1 AND store_id=$2 AND deleted_at IS NULL
          RETURNING *`,
-        [recordId, storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.comment, payload.evidence_photo_id, payload.evidence_document_id, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
+        [recordId, storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id, payload.evidence_document_id, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
       )
       : await client.query(
         `INSERT INTO quality_temperature_records (
           store_id, zone_id, equipment_id, type_code, value, unit, recorded_at, source,
-          operator_user_id, comment, evidence_photo_id, evidence_document_id,
-          min_limit, max_limit, alert_status, alert_reason, created_by, updated_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)
+          operator_user_id, quality_task_id, occurrence_id, comment, method_used, evidence_photo_id, evidence_document_id,
+          temperature_limit_id, min_limit, max_limit, alert_status, alert_reason, created_by, updated_by
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::uuid,$11::uuid,$12,$13,$14,$15,$16::uuid,$17,$18,$19,$20,$21,$21)
         RETURNING *`,
-        [storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.comment, payload.evidence_photo_id, payload.evidence_document_id, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
+        [storeId, payload.zone_id, payload.equipment_id, payload.type_code, payload.value, payload.unit, payload.recorded_at, payload.source, payload.operator_user_id || userId, payload.quality_task_id || null, payload.occurrence_id || null, payload.comment, payload.method_used, payload.evidence_photo_id, payload.evidence_document_id, limit?.id || null, alert.min_limit, alert.max_limit, alert.alert_status, alert.alert_reason, userId]
       );
     if (!recordId) await completeLinkedTemperatureTask(client, storeId, userId, limit, payload);
     await logEvent(client, storeId, userId, recordId ? 'quality.temperature.record.updated' : 'quality.temperature.record.created', 'quality_temperature_record', result.rows[0].id, before, result.rows[0]);

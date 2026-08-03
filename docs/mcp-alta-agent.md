@@ -46,6 +46,27 @@ Le serveur supporte les deux modes utiles pour ChatGPT Business Apps et les outi
 - `get_pending_action`
 - `execute_pending_action`
 
+Etat attendu du catalogue public complet ALTA MAREE V3 apres cette evolution:
+
+- version `1.8.4`;
+- `tool_count: 180`;
+- `coverage_complete: true`;
+- `missing_tools: []`;
+- `frontend_backend_coverage_complete: true`;
+- `missing_frontend_backend_capabilities: []`.
+
+Outils qualite operationnels ajoutes:
+
+- `get_quality_today_work`
+- `get_quality_overdue_work`
+- `get_quality_ddpp_dashboard`
+- `execute_quality_temperature_occurrence`
+- `execute_quality_cleaning_occurrence`
+- `execute_quality_manual_occurrence`
+- `create_quality_non_conformity`
+- `create_quality_corrective_action`
+- `close_quality_non_conformity`
+
 Les outils de recherche sont limités à 25 résultats maximum et utilisent les mêmes règles que `/api/agent/*`.
 
 ## Règles de sécurité

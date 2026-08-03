@@ -44,6 +44,9 @@ const EXPECTED_PERMISSIONS = [
   'transformations.read',
   'transformations.write',
   'quality.read',
+  'quality.record.create',
+  'quality.nc.manage',
+  'quality.action.manage',
   'quality.configuration.write',
   'quality.documentation.read',
   'quality.documentation.edit',
@@ -129,6 +132,15 @@ async function main() {
     'create_quality_cleaning_plan',
     'update_quality_cleaning_plan',
     'archive_or_disable_quality_cleaning_plan',
+    'get_quality_today_work',
+    'get_quality_overdue_work',
+    'get_quality_ddpp_dashboard',
+    'execute_quality_temperature_occurrence',
+    'execute_quality_cleaning_occurrence',
+    'execute_quality_manual_occurrence',
+    'create_quality_non_conformity',
+    'create_quality_corrective_action',
+    'close_quality_non_conformity',
   ];
   for (const name of requiredFrontendBackendTools) {
     assert(publicNames.has(name), `${name} doit etre expose au MCP public`);
@@ -173,6 +185,16 @@ async function main() {
   const temperatureUpdate = publicTools.find((tool) => tool.name === 'update_quality_temperature_parameter');
   assert(temperatureUpdate.inputSchema.properties.target_times, 'update_quality_temperature_parameter doit exposer target_times');
   assert(temperatureUpdate.inputSchema.properties.scheduled_days, 'update_quality_temperature_parameter doit exposer scheduled_days');
+
+  const todayWork = publicTools.find((tool) => tool.name === 'get_quality_today_work');
+  assert(todayWork, 'get_quality_today_work doit etre expose');
+  const temperatureOccurrence = publicTools.find((tool) => tool.name === 'execute_quality_temperature_occurrence');
+  assert(temperatureOccurrence.inputSchema.properties.occurrence_id, 'execute_quality_temperature_occurrence doit accepter occurrence_id');
+  const cleaningOccurrence = publicTools.find((tool) => tool.name === 'execute_quality_cleaning_occurrence');
+  assert(cleaningOccurrence.inputSchema.properties.cleaning_plan_id, 'execute_quality_cleaning_occurrence doit accepter cleaning_plan_id');
+  const closeNc = tools.find((tool) => tool.name === 'close_quality_non_conformity');
+  assert(closeNc, 'close_quality_non_conformity manquant');
+  assert.equal(closeNc.requiresConfirmation, true, 'close_quality_non_conformity doit exiger confirmation humaine');
 
   const preparedConfirmedNames = [
     'send_email_confirmed',

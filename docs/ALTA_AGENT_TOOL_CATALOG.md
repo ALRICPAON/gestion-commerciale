@@ -27,13 +27,14 @@ Outils raccordes dans ce socle:
 - tresorerie: `get_cashflow_dashboard`, `get_cashflow_forecast`, `get_customer_receivables`, `get_supplier_payables`, `get_bank_accounts_summary`, `get_bank_transactions`, `get_recurring_charges`, `get_cashflow_settings`, `simulate_distrimer_payment`, `prepare_cashflow_plan`;
 - dossier qualite: `list_quality_documentation`, `get_quality_documentation_outline`, `get_quality_section`, `search_quality_sections`, `list_quality_missing_items`, `get_quality_section_versions`, `draft_quality_section_content`, `preview_quality_section_update`, `update_quality_section`, `create_quality_section`, `restore_quality_section_version`, `list_quality_section_tables`, `list_quality_section_diagrams`, `export_quality_documentation_preview`;
 - configuration qualite: `quality_create_task`, `quality_update_task`, `quality_create_cleaning_plan`, `quality_update_cleaning_plan`, `quality_assign_task_to_zone`, `quality_assign_task_to_equipment`, `quality_activate_configuration`, `quality_deactivate_configuration`;
+- poste qualite operationnel: `get_quality_today_work`, `get_quality_overdue_work`, `get_quality_ddpp_dashboard`, `execute_quality_temperature_occurrence`, `execute_quality_cleaning_occurrence`, `execute_quality_manual_occurrence`, `create_quality_non_conformity`, `create_quality_corrective_action`, `close_quality_non_conformity`;
 - audit admin: `list_agent_audit_logs`, `get_agent_audit_log`.
 
 Etat actuel:
 
-- 171 outils dans le catalogue administratif.
-- 152 outils operationnels dans `agentToolRegistry.listMcpTools`.
-- 171 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
+- 180 outils dans le catalogue administratif.
+- 161 outils operationnels dans `agentToolRegistry.listMcpTools`.
+- 180 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
 - `tools/list` expose `coverage_complete: true`, `missing_tools: []`, `frontend_backend_coverage_complete: true`, `missing_frontend_backend_capabilities: []`, `final_permissions`, `coverage_matrix` et `frontend_backend_capabilities` pour ALTA_MAREE_V3.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 
@@ -107,6 +108,15 @@ Les actions non presentes dans cette allowlist sont refusees. Aucune fonction ba
 | `archive_or_disable_quality_cleaning_plan` | quality | `quality/cleaning.changeCleaningPlanStatus` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_cleaning_plans` | n/a | desactivation logique uniquement |
 | `quality_activate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 2 | `quality.configuration.write` | `quality.configuration.write` | oui | `quality_tasks`, `quality_cleaning_plans` | n/a | refuse plan incomplet |
 | `quality_deactivate_configuration` | quality | `quality/agentConfiguration.changeConfigurationStatus` | operational | 1 | `quality.configuration.write` | `quality.configuration.write` | non | `quality_tasks`, `quality_cleaning_plans` | n/a | desactivation logique uniquement |
+| `get_quality_today_work` | quality | `quality/operations.listQualityTodayWork` | operational | 0 | `quality.read` | `quality.read` | non | taches, temperatures dues, nettoyages dus, occurrences, non-conformites | sections operationnelles | lecture poste du jour |
+| `get_quality_overdue_work` | quality | `quality/operations.listQualityTodayWork` | operational | 0 | `quality.read` | `quality.read` | non | taches, temperatures dues, nettoyages dus, occurrences | retards uniquement | lecture retards |
+| `get_quality_ddpp_dashboard` | quality | `quality/operations.getDdppDashboard` | operational | 0 | `quality.read` | `quality.read` | non | releves temperature, nettoyages, non-conformites, actions correctives | filtres dates | vue inspection lecture seule |
+| `execute_quality_temperature_occurrence` | quality | `quality/operations.executeTemperatureOccurrence` | operational | 1 | `quality.record.create` | `quality.record.create` | non | `quality_temperature_records`, `quality_tasks`, `quality_task_occurrences` | n/a | cree un releve metier avant de completer la tache |
+| `execute_quality_cleaning_occurrence` | quality | `quality/operations.executeCleaningOccurrence` | operational | 1 | `quality.record.create` | `quality.record.create` | non | `quality_cleaning_records`, `quality_tasks`, `quality_task_occurrences` | n/a | cree un enregistrement nettoyage avant de completer la tache |
+| `execute_quality_manual_occurrence` | quality | `quality/operations.executeManualOccurrence` | operational | 1 | `quality.record.create` | `quality.record.create` | non | `quality_tasks`, `quality_task_occurrences` | n/a | refuse les taches `SYSTEM` verrouillees |
+| `create_quality_non_conformity` | quality | `quality/operations.createNonConformity` | operational | 1 | `quality.nc.manage` | `quality.nc.manage` | non | `quality_non_conformities` | n/a | lie origine, tache, occurrence, zone et equipement |
+| `create_quality_corrective_action` | quality | `quality/operations.createCorrectiveAction` | operational | 1 | `quality.action.manage` | `quality.action.manage` | non | `quality_corrective_actions` | n/a | rattachee a une non-conformite si fournie |
+| `close_quality_non_conformity` | quality | `quality/operations.closeNonConformity` | operational | 2 | `quality.nc.manage` | `quality.nc.manage` | oui | `quality_non_conformities` | n/a | cloture auditee avec confirmation humaine |
 
 Les outils encore `planned` correspondent aux domaines ou ecritures dont le service metier explicite reste a raccorder sans dupliquer les regles existantes.
 

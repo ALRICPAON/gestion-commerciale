@@ -101,9 +101,15 @@ function mapRecordPayload(body = {}) {
   return {
     cleaning_plan_id: cleanUuid(body.cleaning_plan_id),
     quality_task_id: cleanUuid(body.quality_task_id),
+    occurrence_id: cleanUuid(body.occurrence_id),
     performed_at: nullableText(body.performed_at) || new Date().toISOString(),
     performed_by: cleanUuid(body.performed_by),
     status: CLEANING_RECORD_STATUSES.includes(status) ? status : 'done',
+    visual_check_status: nullableText(body.visual_check_status || body.visualCheckStatus),
+    anomaly_comment: nullableText(body.anomaly_comment || body.anomalyComment),
+    corrective_action: nullableText(body.corrective_action || body.correctiveAction),
+    evidence_photo_id: cleanUuid(body.evidence_photo_id),
+    evidence_document_id: cleanUuid(body.evidence_document_id),
     comment: nullableText(body.comment),
   };
 }
