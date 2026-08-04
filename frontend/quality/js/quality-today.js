@@ -34,12 +34,17 @@
     manualCorrective: $('quality-manual-corrective'),
     manualEvidencePhotoId: $('quality-manual-evidence-photo-id'),
     manualEvidenceDocumentId: $('quality-manual-evidence-document-id'),
+    manualEvidencePhotoFile: $('quality-manual-evidence-photo-file'),
+    manualEvidenceDocumentFile: $('quality-manual-evidence-document-file'),
+    manualEvidencePhotoPreview: $('quality-manual-evidence-photo-preview'),
+    manualEvidenceDocumentPreview: $('quality-manual-evidence-document-preview'),
     manualAlert: $('quality-manual-alert'),
     cancel: $('quality-execution-panel-cancel'),
   };
   let work = null;
   let temperatureForm = null;
   let cleaningForm = null;
+  let currentItem = null;
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -124,13 +129,14 @@
   }
 
   function openExecution(item) {
+    currentItem = item;
     els.title.textContent = item.primary_action;
     els.context.textContent = `${item.title} - ${item.zone_name || '-'} - ${item.equipment_name || '-'} - ${formatDate(item.next_due_at)}`;
     showOnlyForm(item.type);
     if (item.type === 'temperature') {
       temperatureForm.setContext({
         ...item.raw,
-        locked: true,
+        locked: Boolean(item.source_entity_id),
         quality_task_id: item.quality_task_id,
         occurrence_id: item.occurrence_id,
         parameter_id: item.source_entity_id,
@@ -160,10 +166,41 @@
       els.manualTaskId.value = item.quality_task_id || '';
       els.manualAt.value = toDatetimeLocal();
       els.manualOperator.value = user.email || user.name || 'Utilisateur connecte';
+      els.manualEvidencePhotoId.value = '';
+      els.manualEvidenceDocumentId.value = '';
+      els.manualEvidencePhotoFile.value = '';
+      els.manualEvidenceDocumentFile.value = '';
+      els.manualEvidencePhotoPreview.textContent = 'Aucune photo selectionnee.';
+      els.manualEvidenceDocumentPreview.textContent = 'Aucun document selectionne.';
       els.manualAlert.className = 'page-feedback hidden quality-form-wide';
     }
     els.panel.classList.remove('hidden');
     els.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function uploadManualEvidence() {
+    const owner = {
+      equipment_id: currentItem?.equipment_id || currentItem?.raw?.equipment_id || '',
+      zone_id: currentItem?.zone_id || currentItem?.raw?.zone_id || '',
+    };
+    if (els.manualEvidencePhotoFile.files?.[0]) {
+      const body = new FormData();
+      body.append('file', els.manualEvidencePhotoFile.files[0]);
+      if (owner.equipment_id) body.append('equipment_id', owner.equipment_id);
+      if (owner.zone_id) body.append('zone_id', owner.zone_id);
+      body.append('caption', `Preuve ${currentItem?.title || 'controle manuel'}`);
+      const uploaded = await api.uploadEvidencePhoto(body);
+      els.manualEvidencePhotoId.value = uploaded.evidence_photo_id || uploaded.photo?.id || '';
+    }
+    if (els.manualEvidenceDocumentFile.files?.[0]) {
+      const body = new FormData();
+      body.append('file', els.manualEvidenceDocumentFile.files[0]);
+      if (owner.equipment_id) body.append('equipment_id', owner.equipment_id);
+      if (owner.zone_id) body.append('zone_id', owner.zone_id);
+      body.append('name', els.manualEvidenceDocumentFile.files[0].name || `Preuve ${currentItem?.title || 'controle manuel'}`);
+      const uploaded = await api.uploadEvidenceDocument(body);
+      els.manualEvidenceDocumentId.value = uploaded.evidence_document_id || uploaded.document?.id || '';
+    }
   }
 
   function showManualAlert(message) {
@@ -185,6 +222,9 @@
       evidence_document_id: els.manualEvidenceDocumentId.value || null,
     };
     try {
+      await uploadManualEvidence();
+      payload.evidence_photo_id = els.manualEvidencePhotoId.value || null;
+      payload.evidence_document_id = els.manualEvidenceDocumentId.value || null;
       await api.executeManual(payload);
       els.panel.classList.add('hidden');
       await load();
@@ -235,6 +275,14 @@
   });
   els.cancel.addEventListener('click', () => els.panel.classList.add('hidden'));
   els.manualForm.addEventListener('submit', submitManualExecution);
+  els.manualEvidencePhotoFile.addEventListener('change', () => {
+    const file = els.manualEvidencePhotoFile.files?.[0];
+    els.manualEvidencePhotoPreview.textContent = file ? `${file.name} - ${Math.round(file.size / 1024)} Ko` : 'Aucune photo selectionnee.';
+  });
+  els.manualEvidenceDocumentFile.addEventListener('change', () => {
+    const file = els.manualEvidenceDocumentFile.files?.[0];
+    els.manualEvidenceDocumentPreview.textContent = file ? `${file.name} - ${Math.round(file.size / 1024)} Ko` : 'Aucun document selectionne.';
+  });
 
   initForms().then(load).catch((error) => setFeedback(error.message, 'error'));
 })();

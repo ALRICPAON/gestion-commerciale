@@ -1,13 +1,35 @@
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
+const multer = require('multer');
 
 const { authenticateToken } = require('../../middleware/auth');
 const { attachDbContext } = require('../../middleware/dbContext');
 const { requireQualityPermission } = require('../../middleware/quality/requireQualityPermission');
 const { QUALITY_PERMISSIONS } = require('../../services/quality/permissions');
+const { createDocument, createPhoto } = require('../../services/quality/documents');
 const operations = require('../../services/quality/operations');
 const { cleanUuid } = require('../../validators/quality/tasks');
 
 const router = express.Router();
+const UPLOAD_DIR = path.resolve(__dirname, '..', '..', 'uploads', 'quality-documents');
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination(req, file, cb) {
+      cb(null, UPLOAD_DIR);
+    },
+    filename(req, file, cb) {
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const safeStore = String(req.user.store_id || 'store').replace(/[^a-zA-Z0-9-]/g, '');
+      cb(null, `${safeStore}-evidence-${Date.now()}-${Math.random().toString(16).slice(2)}${ext}`);
+    },
+  }),
+  limits: { fileSize: MAX_FILE_SIZE },
+});
 
 router.use(authenticateToken, attachDbContext);
 
@@ -58,6 +80,59 @@ router.get('/non-conformities', requireQualityPermission(QUALITY_PERMISSIONS.REA
     res.json(await operations.listOpenNonConformities(req.dbPool, req.user.store_id));
   } catch (err) {
     handleError(res, err, 'Erreur GET /api/quality/operations/non-conformities');
+  }
+});
+
+function evidenceOwner(body = {}) {
+  const equipmentId = cleanUuid(body.equipment_id);
+  if (equipmentId) return { owner_type: 'equipment', owner_id: equipmentId };
+  const zoneId = cleanUuid(body.zone_id);
+  if (zoneId) return { owner_type: 'zone', owner_id: zoneId };
+  return null;
+}
+
+router.post('/evidence/photos', requireQualityPermission(QUALITY_PERMISSIONS.RECORD_CREATE), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Photo obligatoire' });
+    if (!String(req.file.mimetype || '').startsWith('image/')) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Le fichier doit etre une image' });
+    }
+    const owner = evidenceOwner(req.body);
+    if (!owner) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Zone ou equipement obligatoire pour relier la preuve' });
+    }
+    const photo = await createPhoto(req.dbPool, req.user.store_id, req.user.id, {
+      ...owner,
+      caption: req.body.caption || 'Preuve operationnelle qualite',
+      author: req.user.email || req.user.name || null,
+      is_primary: false,
+    }, req.file);
+    res.status(201).json({ photo, evidence_photo_id: photo.id });
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/operations/evidence/photos');
+  }
+});
+
+router.post('/evidence/documents', requireQualityPermission(QUALITY_PERMISSIONS.RECORD_CREATE), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Fichier obligatoire' });
+    const owner = evidenceOwner(req.body);
+    if (!owner) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Zone ou equipement obligatoire pour relier la preuve' });
+    }
+    const document = await createDocument(req.dbPool, req.user.store_id, req.user.id, {
+      ...owner,
+      type_code: 'AUTRE',
+      name: req.body.name || req.file.originalname || 'Preuve operationnelle qualite',
+      description: req.body.description || 'Preuve jointe depuis une execution qualite',
+      author: req.user.email || req.user.name || null,
+    }, req.file);
+    res.status(201).json({ document, evidence_document_id: document.id });
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/operations/evidence/documents');
   }
 });
 
