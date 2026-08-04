@@ -61,6 +61,8 @@ async function main() {
 
   assert.equal(mapRecordPayload({ source: 'scheduled', type_code: 'COLD_ROOM', value: 1 }).source, 'api');
   assert.equal(mapRecordPayload({ source: 'exceptional', type_code: 'COLD_ROOM', value: 1 }).source, 'manual');
+  assert.equal(mapRecordPayload({ type_code: 'COLD_ROOM', value: '7,5' }).value, 7.5, 'La virgule decimale doit etre acceptee');
+  assert.equal(mapRecordPayload({ type_code: 'COLD_ROOM', value: '7.5' }).value, 7.5, 'Le point decimal doit etre accepte');
   assert.throws(() => mapRecordPayload({ source: 'bad', type_code: 'COLD_ROOM', value: 1 }), /Source de releve temperature invalide/);
 
   assert.equal((await saveWithSource('scheduled', { quality_task_id: TASK_ID, occurrence_id: OCCURRENCE_ID })).record.source, 'api', 'Qualite du jour doit ecrire api');
@@ -79,6 +81,8 @@ async function main() {
     occurrence_to_api: true,
     exceptional_to_manual: true,
     automatic_to_iot: true,
+    comma_temperature_parsed: true,
+    dot_temperature_parsed: true,
     invalid_source_rejected: true,
   }, null, 2));
 }

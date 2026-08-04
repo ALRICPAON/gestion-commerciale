@@ -148,6 +148,22 @@
     card.classList.remove('hidden');
   }
 
+  function openTaskSource(task) {
+    if (!task?.source_entity_type || !task.source_entity_id) {
+      showTaskDetail(task, 'locked');
+      return;
+    }
+    if (task.source_entity_type === 'cleaning_plan') {
+      window.location.href = `./cleaning-plans.html?plan_id=${encodeURIComponent(task.source_entity_id)}`;
+      return;
+    }
+    if (task.source_entity_type === 'temperature_parameter') {
+      window.location.href = `./temperature-settings.html?parameter_id=${encodeURIComponent(task.source_entity_id)}`;
+      return;
+    }
+    showTaskDetail(task, 'locked');
+  }
+
   function ensureOption(select, value, label) {
     if (!select || !value || Array.from(select.options).some((option) => option.value === value)) return;
     const option = document.createElement('option');
@@ -315,12 +331,13 @@
     if (editId) {
       const task = tasks.find((item) => item.id === editId);
       if (!task) return;
-      if (task.task_origin === 'SYSTEM' && task.source_locked) return showTaskDetail(task, 'locked');
+      if (task.task_origin === 'SYSTEM' && task.source_locked) return openTaskSource(task);
       openForm(task);
     }
     if (toggleId) {
       const task = tasks.find((item) => item.id === toggleId);
       if (!task) return;
+      if (task.task_origin === 'SYSTEM' && task.source_locked) return openTaskSource(task);
       if (task.active) await window.QualityTasksApi.deactivate(toggleId);
       else await window.QualityTasksApi.save({ ...task, active: true, status: 'planned' }, toggleId);
       await loadTasks();
@@ -328,7 +345,7 @@
     if (archiveId) {
       const task = tasks.find((item) => item.id === archiveId);
       if (!task) return;
-      if (task.task_origin === 'SYSTEM' && task.source_locked) return showTaskDetail(task, 'locked');
+      if (task.task_origin === 'SYSTEM' && task.source_locked) return openTaskSource(task);
       if (!window.confirm('Archiver cette tache qualite ?')) return;
       await window.QualityTasksApi.deactivate(archiveId);
       await loadTasks();
@@ -340,8 +357,7 @@
     const taskId = event.target.closest('[data-open-source]')?.dataset.openSource;
     if (!taskId) return;
     const task = tasks.find((item) => item.id === taskId);
-    if (task?.source_entity_type === 'cleaning_plan') window.location.href = `./cleaning-plans.html?plan_id=${encodeURIComponent(task.source_entity_id)}`;
-    if (task?.source_entity_type === 'temperature_parameter') window.location.href = `./temperature-settings.html?parameter_id=${encodeURIComponent(task.source_entity_id)}`;
+    openTaskSource(task);
   });
 
   els.form?.addEventListener('submit', async (event) => {

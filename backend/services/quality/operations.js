@@ -500,9 +500,21 @@ async function getDdppDashboard(db, storeId, query = {}) {
   const temperatureRecords = conformityFilter
     ? rawTemperatureRecords.filter((record) => (record.alert_status === 'out_of_limits' ? 'non_conform' : 'conform') === conformityFilter)
     : rawTemperatureRecords;
+  const nativeTemperatureRecords = temperatureRecords.map((record) => ({
+    ...record,
+    record_id: record.id,
+    detail_type: 'temperature',
+    record_type: 'temperature',
+  }));
   const cleaningRecords = conformityFilter
     ? rawCleaningRecords.filter((record) => String(record.visual_check_status || (['issue', 'not_done'].includes(record.status) ? 'non_conform' : 'conform')) === conformityFilter)
     : rawCleaningRecords;
+  const ddppCleaningRecords = cleaningRecords.map((record) => ({
+    ...record,
+    record_id: record.id,
+    detail_type: 'cleaning',
+    record_type: 'cleaning',
+  }));
   const legacyManualTemperatureRecords = completedItems
     .filter((item) => item.type === 'temperature' && item.source_record_type === 'quality_manual_task_record' && item.record_id)
     .map((item) => ({
@@ -526,7 +538,7 @@ async function getDdppDashboard(db, storeId, query = {}) {
       operator_email: item.operator_email,
       legacy_manual_task: true,
     }));
-  const ddppTemperatureRecords = [...temperatureRecords, ...legacyManualTemperatureRecords];
+  const ddppTemperatureRecords = [...nativeTemperatureRecords, ...legacyManualTemperatureRecords];
   const immediateCorrectiveActions = completedItems
     .filter((item) => item.corrective_action && item.record_id)
     .map((item) => ({
@@ -554,7 +566,7 @@ async function getDdppDashboard(db, storeId, query = {}) {
   const overdueActions = ddppCorrectiveActions.filter((item) => ['open', 'in_progress'].includes(item.status) && item.due_at && new Date(item.due_at) < new Date());
   const nonCompliantRecords = [
     ...ddppTemperatureRecords.filter((record) => ['out_of_limits', 'warning'].includes(record.alert_status)),
-    ...cleaningRecords.filter((record) => ['issue', 'not_done', 'non_conform'].includes(record.status) || record.visual_check_status === 'non_conform'),
+    ...ddppCleaningRecords.filter((record) => ['issue', 'not_done', 'non_conform'].includes(record.status) || record.visual_check_status === 'non_conform'),
     ...completedItems.filter((item) => item.conformity_status === 'non_conform'),
   ].length;
   const expectedControls = today.summary.today + today.summary.overdue + today.summary.upcoming + today.summary.event_controls + completedItems.length;
@@ -574,7 +586,7 @@ async function getDdppDashboard(db, storeId, query = {}) {
     today,
     completed_items: completedItems,
     temperature_records: ddppTemperatureRecords,
-    cleaning_records: cleaningRecords,
+    cleaning_records: ddppCleaningRecords,
     non_conformities: nonConformities,
     corrective_actions: ddppCorrectiveActions,
   };

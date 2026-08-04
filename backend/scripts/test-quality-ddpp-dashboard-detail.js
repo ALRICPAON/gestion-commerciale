@@ -178,8 +178,9 @@ async function main() {
   const ddppHtml = fs.readFileSync(path.resolve(__dirname, '..', '..', 'frontend/quality/pages/quality-ddpp.html'), 'utf8');
   assert(ddppFrontend.includes('function recordContract'), 'Le front DDPP doit centraliser le contrat record_type/record_id');
   assert(ddppFrontend.includes('Temperature relevee'), 'Historique DDPP doit afficher une colonne temperature relevee');
-  assert(ddppFrontend.includes("detailButton(record.detail_type || 'temperature', record.record_id || record.id"), 'Detail temperature doit utiliser le type/id du vrai record');
-  assert(ddppHtml.includes('quality-ddpp.js?v=4'), 'Cache DDPP doit etre incremente');
+  assert(ddppFrontend.includes("detailButton(record.detail_type || 'temperature', record.record_id"), 'Detail temperature doit utiliser uniquement record_id');
+  assert(ddppFrontend.includes('toFixed(2)'), 'DDPP doit afficher les temperatures avec deux decimales');
+  assert(ddppHtml.includes('quality-ddpp.js?v=5'), 'Cache DDPP doit etre incremente');
 
   const tools = listMcpTools();
   assert(tools.some((tool) => tool.name === 'get_quality_ddpp_dashboard'), 'Dashboard DDPP doit rester expose MCP');
@@ -202,6 +203,7 @@ async function main() {
   });
   assert.equal(dashboard.non_conformities.length, 1, 'NC liee a un releve de la periode doit remonter dans DDPP');
   assert.equal(dashboard.corrective_actions.length, 2, 'Action corrective liee ou immediate doit remonter dans DDPP');
+  assert.equal(dashboard.temperature_records[0].record_id, RECORD_ID, 'Les releves temperature DDPP doivent exposer record_id');
   assert.equal(dashboard.summary.open_non_conformities, 0, 'NC cloturee ne doit pas gonfler les ouvertes');
   assert.equal(dashboard.summary.overdue_corrective_actions, 1, 'Action ouverte en retard doit etre comptee');
   const legacyTemperature = dashboard.temperature_records.find((record) => record.id === MANUAL_TEMP_RECORD_ID);

@@ -75,6 +75,10 @@
     return item.conformity_status || item.result_status || item.status || '-';
   }
 
+  function detailType(item) {
+    return item.detail_type || item.record_type || (item.type === 'manual' ? 'manual_task' : item.type);
+  }
+
   function sectionHtml(items, emptyText) {
     if (!items?.length) return `<div class="quality-empty-state">${escapeHtml(emptyText)}</div>`;
     return items.map((item) => `
@@ -83,7 +87,9 @@
         <h3>${escapeHtml(item.title)}</h3>
         <p>${escapeHtml(item.zone_name || '-')} - ${escapeHtml(item.equipment_name || '-')} - ${escapeHtml(item.target_time || 'Evenement')}</p>
         <p class="quality-muted">${item.status === 'completed' ? `Resultat : ${escapeHtml(resultLabel(item))} - Operateur : ${escapeHtml(item.operator_email || '-')}` : `Echeance : ${formatDate(item.next_due_at)} - Criticite : ${escapeHtml(item.criticality || '-')}`}</p>
-        <div class="quality-actions">${item.status === 'completed' ? '<button class="btn btn-secondary" type="button" disabled>Voir</button>' : `<button class="btn btn-primary" data-action="execute" data-id="${escapeHtml(item.id)}">${escapeHtml(item.primary_action)}</button>`}</div>
+        <div class="quality-actions">${item.status === 'completed'
+          ? (item.record_id ? `<button class="btn btn-secondary" type="button" data-action="view-record" data-record-type="${escapeHtml(detailType(item))}" data-record-id="${escapeHtml(item.record_id)}">Voir</button>` : '<button class="btn btn-secondary" type="button" disabled>Voir</button>')
+          : `<button class="btn btn-primary" data-action="execute" data-id="${escapeHtml(item.id)}">${escapeHtml(item.primary_action)}</button>`}</div>
       </article>
     `).join('');
   }
@@ -179,28 +185,24 @@
   }
 
   async function uploadManualEvidence() {
-    const owner = {
+    const owner = window.QualityProofUploader.ownerFromContext({
       equipment_id: currentItem?.equipment_id || currentItem?.raw?.equipment_id || '',
       zone_id: currentItem?.zone_id || currentItem?.raw?.zone_id || '',
-    };
-    if (els.manualEvidencePhotoFile.files?.[0]) {
-      const body = new FormData();
-      body.append('file', els.manualEvidencePhotoFile.files[0]);
-      if (owner.equipment_id) body.append('equipment_id', owner.equipment_id);
-      if (owner.zone_id) body.append('zone_id', owner.zone_id);
-      body.append('caption', `Preuve ${currentItem?.title || 'controle manuel'}`);
-      const uploaded = await api.uploadEvidencePhoto(body);
-      els.manualEvidencePhotoId.value = uploaded.evidence_photo_id || uploaded.photo?.id || '';
-    }
-    if (els.manualEvidenceDocumentFile.files?.[0]) {
-      const body = new FormData();
-      body.append('file', els.manualEvidenceDocumentFile.files[0]);
-      if (owner.equipment_id) body.append('equipment_id', owner.equipment_id);
-      if (owner.zone_id) body.append('zone_id', owner.zone_id);
-      body.append('name', els.manualEvidenceDocumentFile.files[0].name || `Preuve ${currentItem?.title || 'controle manuel'}`);
-      const uploaded = await api.uploadEvidenceDocument(body);
-      els.manualEvidenceDocumentId.value = uploaded.evidence_document_id || uploaded.document?.id || '';
-    }
+      quality_task_id: currentItem?.quality_task_id || '',
+      occurrence_id: currentItem?.occurrence_id || '',
+      source_entity_type: currentItem?.source_entity_type || '',
+      source_entity_id: currentItem?.source_entity_id || '',
+    });
+    const result = await window.QualityProofUploader.uploadAll({
+      operationsApi: api,
+      photoInput: els.manualEvidencePhotoFile,
+      documentInput: els.manualEvidenceDocumentFile,
+      owner,
+      caption: `Preuve ${currentItem?.title || 'controle manuel'}`,
+    });
+    els.manualEvidencePhotoId.value = result.evidence_photo_id || '';
+    els.manualEvidenceDocumentId.value = result.evidence_document_id || '';
+    return result.uploaded;
   }
 
   function showManualAlert(message) {
@@ -221,16 +223,32 @@
       evidence_photo_id: els.manualEvidencePhotoId.value || null,
       evidence_document_id: els.manualEvidenceDocumentId.value || null,
     };
+    let uploaded = null;
     try {
-      await uploadManualEvidence();
+      uploaded = await uploadManualEvidence();
       payload.evidence_photo_id = els.manualEvidencePhotoId.value || null;
       payload.evidence_document_id = els.manualEvidenceDocumentId.value || null;
       await api.executeManual(payload);
       els.panel.classList.add('hidden');
       await load();
     } catch (error) {
+      if (uploaded) await window.QualityProofUploader.cleanupUploaded({ operationsApi: api, uploaded });
       showManualAlert(error.message);
     }
+  }
+
+  async function showRecordDetail(type, id) {
+    const detail = await api.ddppRecordDetail(type, id);
+    showOnlyForm('none');
+    els.title.textContent = 'Detail du controle';
+    els.context.innerHTML = [
+      `Type : ${escapeHtml(detail.type || type)}`,
+      `Record : ${escapeHtml(detail.source?.record_id || id)}`,
+      detail.task?.title ? `Tache : ${escapeHtml(detail.task.title)}` : null,
+      detail.operator ? `Operateur : ${escapeHtml(detail.operator)}` : null,
+    ].filter(Boolean).join('<br>');
+    els.panel.classList.remove('hidden');
+    els.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function load() {
@@ -269,19 +287,20 @@
 
   document.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-action="execute"]');
-    if (!button) return;
-    const item = findItem(button.dataset.id);
-    if (item) openExecution(item);
+    const viewButton = event.target.closest('button[data-action="view-record"]');
+    if (button) {
+      const item = findItem(button.dataset.id);
+      if (item) openExecution(item);
+    }
+    if (viewButton) showRecordDetail(viewButton.dataset.recordType, viewButton.dataset.recordId).catch((error) => setFeedback(error.message, 'error'));
   });
   els.cancel.addEventListener('click', () => els.panel.classList.add('hidden'));
   els.manualForm.addEventListener('submit', submitManualExecution);
-  els.manualEvidencePhotoFile.addEventListener('change', () => {
-    const file = els.manualEvidencePhotoFile.files?.[0];
-    els.manualEvidencePhotoPreview.textContent = file ? `${file.name} - ${Math.round(file.size / 1024)} Ko` : 'Aucune photo selectionnee.';
-  });
-  els.manualEvidenceDocumentFile.addEventListener('change', () => {
-    const file = els.manualEvidenceDocumentFile.files?.[0];
-    els.manualEvidenceDocumentPreview.textContent = file ? `${file.name} - ${Math.round(file.size / 1024)} Ko` : 'Aucun document selectionne.';
+  window.QualityProofUploader.bindPreview({
+    photoInput: els.manualEvidencePhotoFile,
+    photoPreview: els.manualEvidencePhotoPreview,
+    documentInput: els.manualEvidenceDocumentFile,
+    documentPreview: els.manualEvidenceDocumentPreview,
   });
 
   initForms().then(load).catch((error) => setFeedback(error.message, 'error'));
