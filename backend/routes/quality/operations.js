@@ -7,7 +7,7 @@ const { authenticateToken } = require('../../middleware/auth');
 const { attachDbContext } = require('../../middleware/dbContext');
 const { requireQualityPermission } = require('../../middleware/quality/requireQualityPermission');
 const { QUALITY_PERMISSIONS } = require('../../services/quality/permissions');
-const { createDocument, createPhoto } = require('../../services/quality/documents');
+const { archiveDocument, archivePhoto, createDocument, createPhoto } = require('../../services/quality/documents');
 const operations = require('../../services/quality/operations');
 const { cleanUuid } = require('../../validators/quality/tasks');
 
@@ -91,6 +91,15 @@ function evidenceOwner(body = {}) {
   return null;
 }
 
+function evidenceContext(body = {}) {
+  return {
+    quality_task_id: cleanUuid(body.task_id || body.quality_task_id),
+    occurrence_id: cleanUuid(body.occurrence_id),
+    source_entity_type: body.source_entity_type || null,
+    source_entity_id: cleanUuid(body.source_entity_id),
+  };
+}
+
 router.post('/evidence/photos', requireQualityPermission(QUALITY_PERMISSIONS.RECORD_CREATE), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Photo obligatoire' });
@@ -105,6 +114,7 @@ router.post('/evidence/photos', requireQualityPermission(QUALITY_PERMISSIONS.REC
     }
     const photo = await createPhoto(req.dbPool, req.user.store_id, req.user.id, {
       ...owner,
+      ...evidenceContext(req.body),
       caption: req.body.caption || 'Preuve operationnelle qualite',
       author: req.user.email || req.user.name || null,
       is_primary: false,
@@ -125,6 +135,7 @@ router.post('/evidence/documents', requireQualityPermission(QUALITY_PERMISSIONS.
     }
     const document = await createDocument(req.dbPool, req.user.store_id, req.user.id, {
       ...owner,
+      ...evidenceContext(req.body),
       type_code: 'AUTRE',
       name: req.body.name || req.file.originalname || 'Preuve operationnelle qualite',
       description: req.body.description || 'Preuve jointe depuis une execution qualite',
@@ -133,6 +144,30 @@ router.post('/evidence/documents', requireQualityPermission(QUALITY_PERMISSIONS.
     res.status(201).json({ document, evidence_document_id: document.id });
   } catch (err) {
     handleError(res, err, 'Erreur POST /api/quality/operations/evidence/documents');
+  }
+});
+
+router.delete('/evidence/photos/:id', requireQualityPermission(QUALITY_PERMISSIONS.RECORD_CREATE), async (req, res) => {
+  try {
+    const id = cleanUuid(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Identifiant photo invalide' });
+    const photo = await archivePhoto(req.dbPool, req.user.store_id, req.user.id, id);
+    if (!photo) return res.status(404).json({ error: 'Photo introuvable' });
+    res.json({ mode: 'archived', photo });
+  } catch (err) {
+    handleError(res, err, 'Erreur DELETE /api/quality/operations/evidence/photos/:id');
+  }
+});
+
+router.delete('/evidence/documents/:id', requireQualityPermission(QUALITY_PERMISSIONS.RECORD_CREATE), async (req, res) => {
+  try {
+    const id = cleanUuid(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Identifiant document invalide' });
+    const document = await archiveDocument(req.dbPool, req.user.store_id, req.user.id, id);
+    if (!document) return res.status(404).json({ error: 'Document introuvable' });
+    res.json({ mode: 'archived', document });
+  } catch (err) {
+    handleError(res, err, 'Erreur DELETE /api/quality/operations/evidence/documents/:id');
   }
 });
 

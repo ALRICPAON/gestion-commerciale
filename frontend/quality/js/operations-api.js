@@ -46,6 +46,8 @@
     ddppRecordDetail(type, id) { return request(`/ddpp/record/${encodeURIComponent(type)}/${encodeURIComponent(id)}`); },
     uploadEvidencePhoto(formData) { return upload('/evidence/photos', formData); },
     uploadEvidenceDocument(formData) { return upload('/evidence/documents', formData); },
+    deleteEvidencePhoto(id) { return request(`/evidence/photos/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
+    deleteEvidenceDocument(id) { return request(`/evidence/documents/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
     executeTemperature(payload) { return request('/temperature-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },
     executeCleaning(payload) { return request('/cleaning-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },
     executeManual(payload) { return request('/manual-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },

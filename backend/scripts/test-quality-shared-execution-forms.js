@@ -15,9 +15,12 @@ function assertNotContains(source, pattern, message) {
 
 function main() {
   const helper = read('frontend/quality/js/quality-execution-forms.js');
+  const proofUploader = read('frontend/quality/js/quality-proof-uploader.js');
   const todayJs = read('frontend/quality/js/quality-today.js');
   const tempJs = read('frontend/quality/js/temperature-records.js');
   const cleaningJs = read('frontend/quality/js/cleaning-records.js');
+  const operationsApi = read('frontend/quality/js/operations-api.js');
+  const operationsRoute = read('backend/routes/quality/operations.js');
   const todayHtml = read('frontend/quality/pages/quality-today.html');
   const tempHtml = read('frontend/quality/pages/temperature-records.html');
   const cleaningHtml = read('frontend/quality/pages/cleaning-records.html');
@@ -59,21 +62,35 @@ function main() {
   assertNotContains(tempJs, 'api.saveRecord(data', 'La creation temperature ne doit plus contourner la route operationnelle');
   assertNotContains(cleaningJs, 'api.createRecord(data', 'La creation nettoyage ne doit plus contourner la route operationnelle');
 
-  assertContains(helper, 'type="file" accept="image/*" capture="environment"', 'Le composant partage doit permettre photo/camera');
-  assertContains(helper, 'uploadEvidencePhoto', 'Le composant partage doit uploader les preuves photo');
-  assertContains(helper, 'uploadEvidenceDocument', 'Le composant partage doit uploader les preuves document');
+  assertContains(helper, 'type="text" inputmode="decimal"', 'Le composant temperature doit accepter 7,5 et 7.5');
+  assertContains(helper, "String(value).replace(',', '.')", 'Le parsing temperature doit accepter la virgule');
+  assertContains(proofUploader, 'ownerFromContext', 'Uploader preuve doit conserver les UUID du contexte');
+  assertContains(proofUploader, "'zone_id'", 'Uploader preuve doit transmettre zone_id');
+  assertContains(proofUploader, "'equipment_id'", 'Uploader preuve doit transmettre equipment_id');
+  assertContains(proofUploader, "'task_id'", 'Uploader preuve doit transmettre task_id');
+  assertContains(proofUploader, "'occurrence_id'", 'Uploader preuve doit transmettre occurrence_id');
+  assertContains(proofUploader, "'source_entity_type'", 'Uploader preuve doit transmettre source_entity_type');
+  assertContains(proofUploader, "'source_entity_id'", 'Uploader preuve doit transmettre source_entity_id');
+  assertContains(proofUploader, 'cleanupUploaded', 'Uploader preuve doit nettoyer les preuves si le controle echoue');
+  assertContains(operationsApi, 'deleteEvidencePhoto', 'API operationnelle doit permettre le rollback photo');
+  assertContains(operationsApi, 'deleteEvidenceDocument', 'API operationnelle doit permettre le rollback document');
+  assertContains(operationsRoute, "router.delete('/evidence/photos/:id'", 'Route rollback photo manquante');
+  assertContains(operationsRoute, "router.delete('/evidence/documents/:id'", 'Route rollback document manquante');
   assertContains(todayJs, 'manualEvidencePhotoFile', 'La saisie manuelle doit accepter une photo');
   assertContains(todayJs, 'uploadManualEvidence', 'La saisie manuelle doit uploader les preuves');
 
-  assertContains(todayHtml, 'quality-execution-forms.js?v=3', 'Cache helper partage non incremente dans Qualite du jour');
-  assertContains(todayHtml, 'operations-api.js?v=4', 'Cache API operationnelle non incremente dans Qualite du jour');
-  assertContains(todayHtml, 'quality-today.js?v=5', 'Cache Qualite du jour non incremente');
-  assertContains(tempHtml, 'quality-execution-forms.js?v=3', 'Cache helper partage non incremente dans Releves temperatures');
-  assertContains(tempHtml, 'operations-api.js?v=4', 'Cache API operationnelle non incremente dans Releves temperatures');
-  assertContains(tempHtml, 'temperature-records.js?v=5', 'Cache temperatures non incremente');
-  assertContains(cleaningHtml, 'quality-execution-forms.js?v=3', 'Cache helper partage non incremente dans Nettoyages');
-  assertContains(cleaningHtml, 'operations-api.js?v=4', 'Cache API operationnelle non incremente dans Nettoyages');
-  assertContains(cleaningHtml, 'cleaning-records.js?v=4', 'Cache nettoyages non incremente');
+  assertContains(todayHtml, 'quality-proof-uploader.js?v=1', 'Cache uploader preuves manquant dans Qualite du jour');
+  assertContains(todayHtml, 'quality-execution-forms.js?v=4', 'Cache helper partage non incremente dans Qualite du jour');
+  assertContains(todayHtml, 'operations-api.js?v=5', 'Cache API operationnelle non incremente dans Qualite du jour');
+  assertContains(todayHtml, 'quality-today.js?v=6', 'Cache Qualite du jour non incremente');
+  assertContains(tempHtml, 'quality-proof-uploader.js?v=1', 'Cache uploader preuves manquant dans Releves temperatures');
+  assertContains(tempHtml, 'quality-execution-forms.js?v=4', 'Cache helper partage non incremente dans Releves temperatures');
+  assertContains(tempHtml, 'operations-api.js?v=5', 'Cache API operationnelle non incremente dans Releves temperatures');
+  assertContains(tempHtml, 'temperature-records.js?v=6', 'Cache temperatures non incremente');
+  assertContains(cleaningHtml, 'quality-proof-uploader.js?v=1', 'Cache uploader preuves manquant dans Nettoyages');
+  assertContains(cleaningHtml, 'quality-execution-forms.js?v=4', 'Cache helper partage non incremente dans Nettoyages');
+  assertContains(cleaningHtml, 'operations-api.js?v=5', 'Cache API operationnelle non incremente dans Nettoyages');
+  assertContains(cleaningHtml, 'cleaning-records.js?v=5', 'Cache nettoyages non incremente');
 
   assertContains(todayHtml, 'id="quality-temperature-execution-form"', 'Qualite du jour doit exposer le conteneur temperature partage');
   assertContains(todayHtml, 'id="quality-cleaning-execution-form"', 'Qualite du jour doit exposer le conteneur nettoyage partage');

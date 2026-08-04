@@ -17,7 +17,7 @@ function nullableText(value) {
 
 function nullableNumber(value) {
   if (value === null || value === undefined || value === '') return null;
-  const number = Number(value);
+  const number = Number(String(value).replace(',', '.'));
   return Number.isFinite(number) ? number : null;
 }
 

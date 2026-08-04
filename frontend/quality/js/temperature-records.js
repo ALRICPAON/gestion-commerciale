@@ -40,6 +40,10 @@
   function formatDate(value) { return value ? new Date(value).toLocaleString('fr-FR') : '-'; }
   function toDatetimeLocal(value) { const date = value ? new Date(value) : new Date(); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
   function statusLabel(status) { return status === 'compliant' ? 'Conforme' : status === 'out_of_limits' ? 'Hors limite' : 'Surveillance'; }
+  function formatTemperature(value, unit = 'C') {
+    const number = Number(String(value ?? '').replace(',', '.'));
+    return Number.isFinite(number) ? `${number.toFixed(2)} ${unit || 'C'}` : `- ${unit || 'C'}`;
+  }
   function dueStatusLabel(status) { return { overdue: 'En retard', due: 'A faire aujourd hui', planned: 'A venir' }[status] || status; }
   function statusClass(status) { if (status === 'compliant') return 'quality-temperature-ok'; if (status === 'out_of_limits') return 'quality-temperature-alert'; return 'quality-temperature-warning'; }
   function dueStatusClass(status) { if (status === 'overdue' || status === 'late') return 'quality-temperature-alert'; if (status === 'due') return 'quality-temperature-warning'; return ''; }
@@ -94,12 +98,12 @@
     const min = Math.min(...values);
     const max = Math.max(...values);
     const range = Math.max(max - min, 1);
-    els.chart.innerHTML = recent.map((record) => `<div class="quality-temperature-bar ${statusClass(record.alert_status)}" style="height:${20 + ((Number(record.value) - min) / range) * 120}px" title="${escapeHtml(record.type_label)} - ${escapeHtml(record.value)}${escapeHtml(record.unit)} - ${formatDate(record.recorded_at)}"></div>`).join('');
+    els.chart.innerHTML = recent.map((record) => `<div class="quality-temperature-bar ${statusClass(record.alert_status)}" style="height:${20 + ((Number(record.value) - min) / range) * 120}px" title="${escapeHtml(record.type_label)} - ${escapeHtml(formatTemperature(record.value, record.unit))} - ${formatDate(record.recorded_at)}"></div>`).join('');
   }
 
   function renderRecords() {
     if (!records.length) { els.tableBody.innerHTML = '<tr><td colspan="10">Aucun releve trouve.</td></tr>'; renderChart(); return; }
-    els.tableBody.innerHTML = records.map((record) => `<tr class="${statusClass(record.alert_status)}"><td>${formatDate(record.recorded_at)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${escapeHtml(record.type_label)}</td><td><strong>${escapeHtml(record.value)}${escapeHtml(record.unit || 'C')}</strong></td><td>${record.min_limit ?? '-'} / ${record.max_limit ?? '-'}</td><td>${statusLabel(record.alert_status)}${record.exceptional_reason ? '<br><small>Saisie exceptionnelle</small>' : ''}</td><td>${escapeHtml(record.operator_email || '-')}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '')}</td><td><button class="btn btn-secondary" data-action="delete" data-id="${record.id}">Archiver</button></td></tr>`).join('');
+    els.tableBody.innerHTML = records.map((record) => `<tr class="${statusClass(record.alert_status)}"><td>${formatDate(record.recorded_at)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${escapeHtml(record.type_label)}</td><td><strong>${escapeHtml(formatTemperature(record.value, record.unit))}</strong></td><td>${record.min_limit ?? '-'} / ${record.max_limit ?? '-'}</td><td>${statusLabel(record.alert_status)}${record.exceptional_reason ? '<br><small>Saisie exceptionnelle</small>' : ''}</td><td>${escapeHtml(record.operator_email || '-')}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '')}</td><td><button class="btn btn-secondary" data-action="delete" data-id="${record.id}">Archiver</button></td></tr>`).join('');
     if (!canManage) els.tableBody.querySelectorAll('button').forEach((button) => { button.disabled = true; });
     renderChart();
   }

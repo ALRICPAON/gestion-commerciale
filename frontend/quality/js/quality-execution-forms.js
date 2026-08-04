@@ -56,7 +56,7 @@
 
   function numberOrNull(value) {
     if (value === '' || value === null || value === undefined) return null;
-    const parsed = Number(value);
+    const parsed = Number(String(value).replace(',', '.'));
     return Number.isNaN(parsed) ? null : parsed;
   }
 
@@ -76,48 +76,26 @@
     `;
   }
 
-  function evidenceOwner(fields) {
-    const equipmentId = fields.equipment_id?.value || '';
-    const zoneId = fields.zone_id?.value || '';
-    return { equipment_id: equipmentId, zone_id: zoneId };
-  }
-
   function bindEvidencePreview(field) {
-    const photoInput = field('evidence_photo_file');
-    const photoPreview = field('evidence_photo_preview');
-    const documentInput = field('evidence_document_file');
-    const documentPreview = field('evidence_document_preview');
-    photoInput?.addEventListener('change', () => {
-      const file = photoInput.files?.[0];
-      photoPreview.textContent = file ? `${file.name} - ${Math.round(file.size / 1024)} Ko` : 'Aucune photo selectionnee.';
-    });
-    documentInput?.addEventListener('change', () => {
-      const file = documentInput.files?.[0];
-      documentPreview.textContent = file ? `${file.name} - ${Math.round(file.size / 1024)} Ko` : 'Aucun document selectionne.';
+    window.QualityProofUploader?.bindPreview({
+      photoInput: field('evidence_photo_file'),
+      photoPreview: field('evidence_photo_preview'),
+      documentInput: field('evidence_document_file'),
+      documentPreview: field('evidence_document_preview'),
     });
   }
 
   async function uploadEvidenceFiles({ operationsApi, field, owner, caption }) {
-    const photo = field('evidence_photo_file')?.files?.[0] || null;
-    const document = field('evidence_document_file')?.files?.[0] || null;
-    if (photo) {
-      const body = new FormData();
-      body.append('file', photo);
-      if (owner.equipment_id) body.append('equipment_id', owner.equipment_id);
-      if (owner.zone_id) body.append('zone_id', owner.zone_id);
-      body.append('caption', caption || 'Preuve operationnelle qualite');
-      const uploaded = await operationsApi.uploadEvidencePhoto(body);
-      field('evidence_photo_id').value = uploaded.evidence_photo_id || uploaded.photo?.id || '';
-    }
-    if (document) {
-      const body = new FormData();
-      body.append('file', document);
-      if (owner.equipment_id) body.append('equipment_id', owner.equipment_id);
-      if (owner.zone_id) body.append('zone_id', owner.zone_id);
-      body.append('name', document.name || 'Preuve operationnelle qualite');
-      const uploaded = await operationsApi.uploadEvidenceDocument(body);
-      field('evidence_document_id').value = uploaded.evidence_document_id || uploaded.document?.id || '';
-    }
+    const result = await window.QualityProofUploader.uploadAll({
+      operationsApi,
+      photoInput: field('evidence_photo_file'),
+      documentInput: field('evidence_document_file'),
+      owner,
+      caption,
+    });
+    field('evidence_photo_id').value = result.evidence_photo_id || '';
+    field('evidence_document_id').value = result.evidence_document_id || '';
+    return result.uploaded;
   }
 
   function createTemperatureExecutionForm({ form, titleEl = null, submitEl = null, types = [], zones = [], equipments = [], operationsApi, user = {}, onSubmitted = null, onError = null } = {}) {
@@ -134,7 +112,7 @@
       <label>Seuil mini<input data-field="min_limit" class="form-input" type="number" step="0.01" readonly data-quality-field="min_limit"></label>
       <label>Seuil maxi<input data-field="max_limit" class="form-input" type="number" step="0.01" readonly data-quality-field="max_limit"></label>
       <label>Unite<input data-field="unit" class="form-input" value="C" data-quality-field="unit"></label>
-      <label>Valeur mesuree *<input data-field="value" class="form-input" type="number" step="0.01" required data-quality-field="value"></label>
+      <label>Valeur mesuree *<input data-field="value" class="form-input" type="text" inputmode="decimal" required data-quality-field="value"></label>
       <label>Date/heure *<input data-field="recorded_at" class="form-input" type="datetime-local" required data-quality-field="recorded_at"></label>
       <label>Origine<input data-field="source_label" class="form-input" readonly data-quality-field="source"></label>
       <label>Operateur<input data-field="operator" class="form-input" readonly data-quality-field="operator"></label>
@@ -239,14 +217,25 @@
       const payload = getPayload();
       const error = validate(payload);
       if (error) return showAlert(error);
+      let uploaded = null;
       try {
-        await uploadEvidenceFiles({ operationsApi, field, owner: evidenceOwner({ zone_id: field('zone_id'), equipment_id: field('equipment_id') }), caption: `Preuve temperature ${payload.type_code}` });
+        const owner = window.QualityProofUploader.ownerFromContext({
+          ...context,
+          zone_id: field('zone_id').value || context.zone_id,
+          equipment_id: field('equipment_id').value || context.equipment_id,
+          quality_task_id: payload.quality_task_id,
+          occurrence_id: payload.occurrence_id,
+          source_entity_type: context.source_entity_type || 'temperature_parameter',
+          source_entity_id: payload.parameter_id,
+        });
+        uploaded = await uploadEvidenceFiles({ operationsApi, field, owner, caption: `Preuve temperature ${payload.type_code}` });
         payload.evidence_photo_id = field('evidence_photo_id').value || null;
         payload.evidence_document_id = field('evidence_document_id').value || null;
         const result = await submitTemperatureExecution({ operationsApi, payload });
         if (onSubmitted) await onSubmitted(result, payload);
         return result;
       } catch (error) {
+        if (uploaded) await window.QualityProofUploader.cleanupUploaded({ operationsApi, uploaded });
         showAlert(error.message || 'Erreur enregistrement temperature');
         return null;
       }
@@ -301,7 +290,10 @@
     }
 
     function selectedPlan() {
-      return plans.find((plan) => String(plan.id) === String(field('cleaning_plan_id').value)) || {};
+      return plans.find((plan) => String(plan.id) === String(field('cleaning_plan_id').value))
+        || context.plan
+        || context
+        || {};
     }
 
     function fillPlanDetails(plan = selectedPlan()) {
@@ -377,16 +369,26 @@
       const payload = getPayload();
       const error = validate(payload);
       if (error) return showAlert(error);
+      let uploaded = null;
       try {
         const plan = selectedPlan();
-        const owner = { equipment_id: plan.equipment_id || plan.equipments?.[0]?.id || '', zone_id: plan.zone_id || plan.zones?.[0]?.id || '' };
-        await uploadEvidenceFiles({ operationsApi, field, owner, caption: `Preuve nettoyage ${plan.title || payload.cleaning_plan_id}` });
+        const owner = window.QualityProofUploader.ownerFromContext({
+          ...context,
+          equipment_id: plan.equipment_id || plan.equipments?.[0]?.id || context.equipment_id || context.equipments?.[0]?.id,
+          zone_id: plan.zone_id || plan.zones?.[0]?.id || context.zone_id || context.zones?.[0]?.id,
+          quality_task_id: payload.quality_task_id,
+          occurrence_id: payload.occurrence_id,
+          source_entity_type: 'cleaning_plan',
+          source_entity_id: payload.cleaning_plan_id,
+        });
+        uploaded = await uploadEvidenceFiles({ operationsApi, field, owner, caption: `Preuve nettoyage ${plan.title || payload.cleaning_plan_id}` });
         payload.evidence_photo_id = field('evidence_photo_id').value || null;
         payload.evidence_document_id = field('evidence_document_id').value || null;
         const result = await submitCleaningExecution({ operationsApi, payload });
         if (onSubmitted) await onSubmitted(result, payload);
         return result;
       } catch (error) {
+        if (uploaded) await window.QualityProofUploader.cleanupUploaded({ operationsApi, uploaded });
         showAlert(error.message || 'Erreur enregistrement nettoyage');
         return null;
       }
