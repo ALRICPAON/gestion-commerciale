@@ -65,8 +65,22 @@ router.get('/ddpp', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (r
 
 router.get('/ddpp/record/:type/:id', requireQualityPermission(QUALITY_PERMISSIONS.READ), async (req, res) => {
   try {
+    console.info('[DDPP route] GET detail record', {
+      record_type: req.params.type,
+      record_id: req.params.id,
+      occurrence_id: null,
+      task_id: null,
+      source_entity_id: null,
+      source_record_id: null,
+    });
     const id = cleanUuid(req.params.id);
-    if (!id) return res.status(400).json({ error: 'Identifiant enregistrement invalide' });
+    if (!id) {
+      console.warn('[DDPP route] identifiant record invalide', {
+        record_type: req.params.type,
+        record_id: req.params.id,
+      });
+      return res.status(400).json({ error: 'Identifiant enregistrement invalide' });
+    }
     const detail = await operations.getDdppRecordDetail(req.dbPool, req.user.store_id, req.params.type, id);
     if (!detail) return res.status(404).json({ error: 'Enregistrement DDPP introuvable' });
     res.json(detail);

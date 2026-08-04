@@ -281,6 +281,7 @@ async function listDdppNonConformities(db, storeId, query = {}) {
   return result.rows.map((row) => ({
     ...row,
     record_type: publicTypeFromRecordType(row.source_record_type || row.occurrence_record_type),
+    record_id: row.source_record_id || row.occurrence_record_id || null,
     source_record_type: row.source_record_type || row.occurrence_record_type || null,
     source_record_id: row.source_record_id || row.occurrence_record_id || null,
   }));
@@ -369,6 +370,7 @@ async function listDdppCorrectiveActions(db, storeId, query = {}) {
   return result.rows.map((row) => ({
     ...row,
     record_type: publicTypeFromRecordType(row.source_record_type),
+    record_id: row.source_record_id || null,
   }));
 }
 
@@ -553,6 +555,7 @@ async function getDdppDashboard(db, storeId, query = {}) {
       non_conformity_title: item.title,
       source_record_type: item.source_record_type,
       source_record_id: item.source_record_id,
+      record_id: item.record_id,
       record_type: item.detail_type || item.type,
       responsible_email: item.operator_email,
       effectiveness_check: null,
@@ -641,6 +644,14 @@ async function getLinkedCorrectiveActions(db, storeId, link = {}, nonConformitie
 }
 
 async function getDdppRecordBase(db, storeId, type, id) {
+  console.info('[DDPP service] lecture record metier', {
+    record_type: type,
+    record_id: id,
+    occurrence_id: null,
+    task_id: null,
+    source_entity_id: null,
+    source_record_id: null,
+  });
   if (type === 'temperature') {
     const result = await db.query(
       `SELECT r.*, tt.label AS type_label, z.name AS zone_name, z.code AS zone_code,

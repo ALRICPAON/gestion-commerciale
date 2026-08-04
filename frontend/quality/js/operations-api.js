@@ -9,6 +9,8 @@
     return { Authorization: `Bearer ${authToken()}`, 'Content-Type': 'application/json' };
   }
 
+  const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
   function queryString(filters = {}) {
     const params = new URLSearchParams();
     Object.entries(filters || {}).forEach(([key, value]) => {
@@ -43,7 +45,11 @@
     today(filters) { return request(`/today${queryString(filters)}`); },
     overdue(filters) { return request(`/overdue${queryString(filters)}`); },
     ddpp(filters) { return request(`/ddpp${queryString(filters)}`); },
-    ddppRecordDetail(type, id) { return request(`/ddpp/record/${encodeURIComponent(type)}/${encodeURIComponent(id)}`); },
+    ddppRecordDetail(type, id) {
+      console.debug('[DDPP api] GET detail', { record_type: type, record_id: id });
+      if (!UUID_PATTERN.test(String(id || ''))) throw new Error('Identifiant enregistrement invalide cote interface');
+      return request(`/ddpp/record/${encodeURIComponent(type)}/${encodeURIComponent(id)}`);
+    },
     uploadEvidencePhoto(formData) { return upload('/evidence/photos', formData); },
     uploadEvidenceDocument(formData) { return upload('/evidence/documents', formData); },
     deleteEvidencePhoto(id) { return request(`/evidence/photos/${encodeURIComponent(id)}`, { method: 'DELETE' }); },
