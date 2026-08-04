@@ -56,10 +56,21 @@ function dueStatus(dueAt, completed = false) {
 }
 
 function taskType(task = {}) {
+  if (isTemperatureLikeTask(task)) return 'temperature';
   if (task.module_key === 'temperature' || task.source_entity_type === 'temperature_parameter') return 'temperature';
   if (task.module_key === 'cleaning' || task.source_entity_type === 'cleaning_plan') return 'cleaning';
   if (task.task_origin === 'MANUAL') return 'manual';
   return 'control';
+}
+
+function isTemperatureLikeTask(task = {}) {
+  if (task.module_key === 'temperature' || task.source_entity_type === 'temperature_parameter') return true;
+  const text = `${task.title || ''} ${task.task_title || ''} ${task.record_title || ''} ${task.description || ''} ${task.category || ''}`
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return /\b(temp|temperature|releve temperature|chambre froide|frigo|froid)\b/.test(text)
+    && !/\b(nettoyage|cleaning|lavage|desinfection)\b/.test(text);
 }
 
 function actionLabel(type) {
@@ -89,15 +100,34 @@ function publicTypeFromRecordType(type) {
   return type || null;
 }
 
+function publicDetailTypeFromRecordType(type, fallback) {
+  if (type === 'quality_temperature_record') return 'temperature';
+  if (type === 'quality_cleaning_record') return 'cleaning';
+  if (type === 'quality_manual_task_record') return 'manual_task';
+  return fallback || null;
+}
+
+function parseTemperatureValue(value) {
+  const match = String(value || '').replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const parsed = Number(match[0]);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function normalizeWorkItem(source, item, task = {}) {
   const type = source || taskType(task);
+  const recordType = item.record_type || item.source_record_type || null;
+  const recordId = item.source_record_id || item.record_id || null;
   const dueAt = item.next_due_at || task.next_due_at || null;
   return {
     id: item.occurrence_id || item.quality_task_id || item.task_id || item.cleaning_plan_id || item.limit_id || task.id,
     occurrence_id: item.occurrence_id || null,
     quality_task_id: item.quality_task_id || item.task_id || task.id || null,
-    source_record_type: item.record_type || item.source_record_type || null,
-    source_record_id: item.source_record_id || null,
+    record_type: type === 'manual' ? 'manual' : type,
+    record_id: recordId,
+    detail_type: publicDetailTypeFromRecordType(recordType, type === 'manual' ? 'manual_task' : type),
+    source_record_type: recordType,
+    source_record_id: recordId,
     type,
     title: item.task_title || item.title || task.title || 'Controle qualite',
     source_entity_type: item.source_entity_type || task.source_entity_type || (type === 'temperature' ? 'temperature_parameter' : type === 'cleaning' ? 'cleaning_plan' : null),
@@ -384,6 +414,8 @@ async function listCompletedWorkItems(db, storeId, query = {}) {
   return result.rows
     .map((row) => completedWorkItem({
       ...row,
+      value: isTemperatureLikeTask(row) && row.record_type === 'quality_manual_task_record' ? parseTemperatureValue(row.manual_observation || row.record_comment) : row.value,
+      unit: isTemperatureLikeTask(row) && row.record_type === 'quality_manual_task_record' ? (row.unit || 'C') : row.unit,
       status: row.cleaning_status || row.manual_result_status || row.result_status,
       conformity_status: row.manual_conformity_status || (row.alert_status ? (row.alert_status === 'out_of_limits' ? 'non_conform' : 'conform') : row.visual_check_status),
       comment: row.record_comment,
@@ -420,10 +452,11 @@ async function listQualityTodayWork(db, storeId, query = {}) {
     work.push(normalizeWorkItem('cleaning', { ...item, occurrence_id: occurrence?.id || null }, task));
   }
   for (const task of tasks) {
-    if (['temperature', 'cleaning'].includes(taskType(task))) continue;
+    const type = taskType(task);
+    if (task.source_entity_type === 'temperature_parameter' || task.source_entity_type === 'cleaning_plan') continue;
     if (!includeUpcoming && !['due', 'overdue'].includes(task.computed_status)) continue;
     const occurrence = await upsertOccurrence(db, storeId, task.id, task.next_due_at, { source_entity_type: task.source_entity_type, source_entity_id: task.source_entity_id });
-    work.push(normalizeWorkItem(taskType(task), { occurrence_id: occurrence?.id || null }, task));
+    work.push(normalizeWorkItem(type, { occurrence_id: occurrence?.id || null }, task));
   }
 
   return {
@@ -470,10 +503,57 @@ async function getDdppDashboard(db, storeId, query = {}) {
   const cleaningRecords = conformityFilter
     ? rawCleaningRecords.filter((record) => String(record.visual_check_status || (['issue', 'not_done'].includes(record.status) ? 'non_conform' : 'conform')) === conformityFilter)
     : rawCleaningRecords;
+  const legacyManualTemperatureRecords = completedItems
+    .filter((item) => item.type === 'temperature' && item.source_record_type === 'quality_manual_task_record' && item.record_id)
+    .map((item) => ({
+      id: item.record_id,
+      record_id: item.record_id,
+      detail_type: item.detail_type || 'manual_task',
+      record_type: item.record_type,
+      source_record_type: item.source_record_type,
+      source_record_id: item.source_record_id,
+      occurrence_id: item.occurrence_id,
+      quality_task_id: item.quality_task_id,
+      recorded_at: item.next_due_at,
+      type_label: item.title,
+      type_code: 'LEGACY_QF',
+      zone_name: item.zone_name,
+      equipment_name: item.equipment_name,
+      value: item.value,
+      unit: item.unit || 'C',
+      alert_status: item.conformity_status === 'non_conform' ? 'out_of_limits' : 'compliant',
+      comment: item.comment,
+      operator_email: item.operator_email,
+      legacy_manual_task: true,
+    }));
+  const ddppTemperatureRecords = [...temperatureRecords, ...legacyManualTemperatureRecords];
+  const immediateCorrectiveActions = completedItems
+    .filter((item) => item.corrective_action && item.record_id)
+    .map((item) => ({
+      id: `immediate-${item.record_id}`,
+      synthetic: true,
+      action: item.corrective_action,
+      status: 'completed',
+      completed_at: item.next_due_at,
+      completed_by_email: item.operator_email,
+      quality_task_id: item.quality_task_id,
+      occurrence_id: item.occurrence_id,
+      non_conformity_title: item.title,
+      source_record_type: item.source_record_type,
+      source_record_id: item.source_record_id,
+      record_type: item.detail_type || item.type,
+      responsible_email: item.operator_email,
+      effectiveness_check: null,
+      due_at: null,
+      proof_document_id: item.evidence_document_id,
+      proof_photo_id: item.evidence_photo_id,
+      created_at: item.next_due_at,
+    }));
+  const ddppCorrectiveActions = [...correctiveActions, ...immediateCorrectiveActions];
   const openNc = nonConformities.filter((item) => ['open', 'in_progress'].includes(item.status));
-  const overdueActions = correctiveActions.filter((item) => ['open', 'in_progress'].includes(item.status) && item.due_at && new Date(item.due_at) < new Date());
+  const overdueActions = ddppCorrectiveActions.filter((item) => ['open', 'in_progress'].includes(item.status) && item.due_at && new Date(item.due_at) < new Date());
   const nonCompliantRecords = [
-    ...temperatureRecords.filter((record) => ['out_of_limits', 'warning'].includes(record.alert_status)),
+    ...ddppTemperatureRecords.filter((record) => ['out_of_limits', 'warning'].includes(record.alert_status)),
     ...cleaningRecords.filter((record) => ['issue', 'not_done', 'non_conform'].includes(record.status) || record.visual_check_status === 'non_conform'),
     ...completedItems.filter((item) => item.conformity_status === 'non_conform'),
   ].length;
@@ -493,10 +573,10 @@ async function getDdppDashboard(db, storeId, query = {}) {
     },
     today,
     completed_items: completedItems,
-    temperature_records: temperatureRecords,
+    temperature_records: ddppTemperatureRecords,
     cleaning_records: cleaningRecords,
     non_conformities: nonConformities,
-    corrective_actions: correctiveActions,
+    corrective_actions: ddppCorrectiveActions,
   };
 }
 
@@ -658,6 +738,21 @@ async function getDdppRecordDetail(db, storeId, type, id) {
   if (!base) return null;
   const nonConformities = await getLinkedNonConformities(db, storeId, base.link);
   const correctiveActions = await getLinkedCorrectiveActions(db, storeId, base.link, nonConformities);
+  if (base.record.corrective_action && !correctiveActions.some((item) => String(item.action || '') === String(base.record.corrective_action))) {
+    correctiveActions.push({
+      id: `immediate-${base.record.id}`,
+      synthetic: true,
+      action: base.record.corrective_action,
+      status: 'completed',
+      completed_at: base.record.performed_at || base.record.recorded_at || base.occurrence?.completed_at || null,
+      completed_by_email: base.record.performed_by_email || base.record.operator_email || null,
+      quality_task_id: base.task?.id || null,
+      occurrence_id: base.occurrence?.id || null,
+      proof_document_id: base.record.evidence_document_id || base.record.proof_document_id || null,
+      proof_photo_id: base.record.evidence_photo_id || base.record.proof_photo_id || null,
+      non_conformity_title: base.task?.title || null,
+    });
+  }
   return {
     type: base.public_type,
     record_type: base.record_type,

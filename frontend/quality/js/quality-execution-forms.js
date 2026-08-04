@@ -66,6 +66,60 @@
     else control.readOnly = locked;
   }
 
+  function evidenceHtml(kind) {
+    return `
+      <input data-field="evidence_photo_id" type="hidden" data-quality-field="evidence_photo_id">
+      <input data-field="evidence_document_id" type="hidden" data-quality-field="evidence_document_id">
+      <label>Photo / preuve photo<input data-field="evidence_photo_file" class="form-input" type="file" accept="image/*" capture="environment"><small data-field="evidence_photo_preview" class="quality-muted">Aucune photo selectionnee.</small></label>
+      <label>Piece jointe / preuve<input data-field="evidence_document_file" class="form-input" type="file"><small data-field="evidence_document_preview" class="quality-muted">Aucun document selectionne.</small></label>
+      <input data-field="evidence_kind" type="hidden" value="${escapeHtml(kind)}">
+    `;
+  }
+
+  function evidenceOwner(fields) {
+    const equipmentId = fields.equipment_id?.value || '';
+    const zoneId = fields.zone_id?.value || '';
+    return { equipment_id: equipmentId, zone_id: zoneId };
+  }
+
+  function bindEvidencePreview(field) {
+    const photoInput = field('evidence_photo_file');
+    const photoPreview = field('evidence_photo_preview');
+    const documentInput = field('evidence_document_file');
+    const documentPreview = field('evidence_document_preview');
+    photoInput?.addEventListener('change', () => {
+      const file = photoInput.files?.[0];
+      photoPreview.textContent = file ? `${file.name} - ${Math.round(file.size / 1024)} Ko` : 'Aucune photo selectionnee.';
+    });
+    documentInput?.addEventListener('change', () => {
+      const file = documentInput.files?.[0];
+      documentPreview.textContent = file ? `${file.name} - ${Math.round(file.size / 1024)} Ko` : 'Aucun document selectionne.';
+    });
+  }
+
+  async function uploadEvidenceFiles({ operationsApi, field, owner, caption }) {
+    const photo = field('evidence_photo_file')?.files?.[0] || null;
+    const document = field('evidence_document_file')?.files?.[0] || null;
+    if (photo) {
+      const body = new FormData();
+      body.append('file', photo);
+      if (owner.equipment_id) body.append('equipment_id', owner.equipment_id);
+      if (owner.zone_id) body.append('zone_id', owner.zone_id);
+      body.append('caption', caption || 'Preuve operationnelle qualite');
+      const uploaded = await operationsApi.uploadEvidencePhoto(body);
+      field('evidence_photo_id').value = uploaded.evidence_photo_id || uploaded.photo?.id || '';
+    }
+    if (document) {
+      const body = new FormData();
+      body.append('file', document);
+      if (owner.equipment_id) body.append('equipment_id', owner.equipment_id);
+      if (owner.zone_id) body.append('zone_id', owner.zone_id);
+      body.append('name', document.name || 'Preuve operationnelle qualite');
+      const uploaded = await operationsApi.uploadEvidenceDocument(body);
+      field('evidence_document_id').value = uploaded.evidence_document_id || uploaded.document?.id || '';
+    }
+  }
+
   function createTemperatureExecutionForm({ form, titleEl = null, submitEl = null, types = [], zones = [], equipments = [], operationsApi, user = {}, onSubmitted = null, onError = null } = {}) {
     let context = {};
     form.dataset.qualitySharedForm = 'temperature';
@@ -87,14 +141,14 @@
       <label>Conformite calculee<input data-field="conformity" class="form-input" readonly data-quality-field="conformity"></label>
       <label class="quality-form-wide">Commentaire<textarea data-field="comment" class="form-input" data-quality-field="comment"></textarea></label>
       <label class="quality-form-wide">Action corrective<textarea data-field="corrective_action" class="form-input" data-quality-field="corrective_action"></textarea></label>
-      <label>Photo / preuve photo<input data-field="evidence_photo_id" class="form-input" type="text" data-quality-field="evidence_photo_id" placeholder="ID photo qualite existante"></label>
-      <label>Piece jointe / preuve<input data-field="evidence_document_id" class="form-input" type="text" data-quality-field="evidence_document_id" placeholder="ID document qualite existant"></label>
+      ${evidenceHtml('temperature')}
       <label class="quality-form-wide">Motif exceptionnel<textarea data-field="exceptional_reason" class="form-input" data-quality-field="exceptional_reason"></textarea></label>
       <div data-field="alert" class="page-feedback hidden quality-form-wide"></div>
       <div class="quality-actions quality-form-wide"><button data-field="submit" class="btn btn-primary" type="submit">Enregistrer</button><button data-field="reset" class="btn btn-secondary" type="button">Reinitialiser</button></div>
     `;
 
     const field = (name) => form.querySelector(`[data-field="${name}"]`);
+    bindEvidencePreview(field);
     field('type_code').innerHTML = optionHtml(types, 'code', (type) => type.label || type.code, 'Choisir un type');
     field('zone_id').innerHTML = optionHtml(zones, 'id', (zone) => `${zone.code || ''} ${zone.name || zone.id}`.trim(), 'Toutes zones');
     field('equipment_id').innerHTML = optionHtml(equipments, 'id', (equipment) => `${equipment.code || ''} ${equipment.name || equipment.id}`.trim(), 'Tous equipements');
@@ -140,6 +194,10 @@
       field('corrective_action').value = context.corrective_action || '';
       field('evidence_photo_id').value = '';
       field('evidence_document_id').value = '';
+      field('evidence_photo_file').value = '';
+      field('evidence_document_file').value = '';
+      field('evidence_photo_preview').textContent = 'Aucune photo selectionnee.';
+      field('evidence_document_preview').textContent = 'Aucun document selectionne.';
       field('exceptional_reason').value = context.exceptional_reason || '';
       field('exceptional_reason').closest('label').classList.toggle('hidden', hasScheduledLink);
       ['type_code', 'zone_id', 'equipment_id', 'min_limit', 'max_limit', 'unit'].forEach((name) => setReadonly(field(name), Boolean(context.locked)));
@@ -182,6 +240,9 @@
       const error = validate(payload);
       if (error) return showAlert(error);
       try {
+        await uploadEvidenceFiles({ operationsApi, field, owner: evidenceOwner({ zone_id: field('zone_id'), equipment_id: field('equipment_id') }), caption: `Preuve temperature ${payload.type_code}` });
+        payload.evidence_photo_id = field('evidence_photo_id').value || null;
+        payload.evidence_document_id = field('evidence_document_id').value || null;
         const result = await submitTemperatureExecution({ operationsApi, payload });
         if (onSubmitted) await onSubmitted(result, payload);
         return result;
@@ -222,14 +283,14 @@
       <label class="quality-form-wide">Commentaire<textarea data-field="comment" class="form-input" data-quality-field="comment"></textarea></label>
       <label class="quality-form-wide">Anomalie<textarea data-field="anomaly_comment" class="form-input" data-quality-field="anomaly_comment"></textarea></label>
       <label class="quality-form-wide">Action corrective<textarea data-field="corrective_action" class="form-input" data-quality-field="corrective_action"></textarea></label>
-      <label>Photo / preuve photo<input data-field="evidence_photo_id" class="form-input" type="text" data-quality-field="evidence_photo_id" placeholder="ID photo qualite existante"></label>
-      <label>Piece jointe / preuve<input data-field="evidence_document_id" class="form-input" type="text" data-quality-field="evidence_document_id" placeholder="ID document qualite existant"></label>
+      ${evidenceHtml('cleaning')}
       <label class="quality-form-wide">Motif exceptionnel<textarea data-field="exceptional_reason" class="form-input" data-quality-field="exceptional_reason"></textarea></label>
       <div data-field="alert" class="page-feedback hidden quality-form-wide"></div>
       <div class="quality-actions quality-form-wide"><button data-field="submit" class="btn btn-primary" type="submit">Enregistrer</button><button data-field="reset" class="btn btn-secondary" type="button">Reinitialiser</button></div>
     `;
 
     const field = (name) => form.querySelector(`[data-field="${name}"]`);
+    bindEvidencePreview(field);
     field('cleaning_plan_id').innerHTML = optionHtml(plans, 'id', (plan) => plan.title || plan.id, 'Choisir un plan');
 
     function showAlert(message = '') {
@@ -272,6 +333,10 @@
       field('corrective_action').value = context.corrective_action || '';
       field('evidence_photo_id').value = '';
       field('evidence_document_id').value = '';
+      field('evidence_photo_file').value = '';
+      field('evidence_document_file').value = '';
+      field('evidence_photo_preview').textContent = 'Aucune photo selectionnee.';
+      field('evidence_document_preview').textContent = 'Aucun document selectionne.';
       field('exceptional_reason').value = context.exceptional_reason || '';
       field('exceptional_reason').closest('label').classList.toggle('hidden', hasScheduledLink);
       setReadonly(field('cleaning_plan_id'), Boolean(context.locked));
@@ -313,6 +378,11 @@
       const error = validate(payload);
       if (error) return showAlert(error);
       try {
+        const plan = selectedPlan();
+        const owner = { equipment_id: plan.equipment_id || plan.equipments?.[0]?.id || '', zone_id: plan.zone_id || plan.zones?.[0]?.id || '' };
+        await uploadEvidenceFiles({ operationsApi, field, owner, caption: `Preuve nettoyage ${plan.title || payload.cleaning_plan_id}` });
+        payload.evidence_photo_id = field('evidence_photo_id').value || null;
+        payload.evidence_document_id = field('evidence_document_id').value || null;
         const result = await submitCleaningExecution({ operationsApi, payload });
         if (onSubmitted) await onSubmitted(result, payload);
         return result;
@@ -350,5 +420,6 @@
     requireExceptionalReason,
     submitCleaningExecution,
     submitTemperatureExecution,
+    uploadEvidenceFiles,
   };
 })();

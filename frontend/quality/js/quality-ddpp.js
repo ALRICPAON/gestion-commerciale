@@ -114,13 +114,27 @@
   }
 
   function resultLabel(item) {
-    if (item.type === 'temperature' && item.value !== null && item.value !== undefined) return `${item.value} ${item.unit || ''}`;
     return translate(item.conformity_status || item.result_status || item.status);
   }
 
+  function temperatureValue(item) {
+    if (item.type !== 'temperature' || item.value === null || item.value === undefined) return '-';
+    return `${item.value} ${item.unit || 'C'}`.trim();
+  }
+
+  function recordContract(item = {}) {
+    const recordType = item.detail_type || item.record_type || (item.type === 'manual' ? 'manual_task' : item.type);
+    return {
+      record_type: recordType,
+      record_id: item.record_id || item.source_record_id || null,
+      occurrence_id: item.occurrence_id || null,
+      task_id: item.quality_task_id || item.task_id || null,
+    };
+  }
+
   function linkedRecordButton(item) {
-    const publicType = item.type === 'manual' ? 'manual_task' : item.type;
-    return detailButton(publicType, item.source_record_id, 'record');
+    const contract = recordContract(item);
+    return detailButton(contract.record_type, contract.record_id, 'record');
   }
 
   function renderSummary(data) {
@@ -143,9 +157,9 @@
     const summaryText = renderSummary(data);
     els.status.innerHTML = `<span class="quality-badge">${escapeHtml(statusLabel)}</span><h3>Controle DDPP</h3><p>${escapeHtml(summaryText)}</p><p class="quality-muted">Periode : ${formatDate(data.period?.start)} - ${formatDate(data.period?.end)}. Edition : ${formatDate(data.today.generated_at)}</p>`;
     els.today.innerHTML = Object.entries(data.today.summary).map(([key, value]) => `<article class="quality-card"><span class="quality-badge">${escapeHtml(translate(key))}</span><h3>${value || 0}</h3></article>`).join('');
-    els.completed.innerHTML = table(['Heure', 'Type', 'Titre', 'Zone', 'Operateur', 'Resultat', 'Observation', 'Detail'], (data.completed_items || []).map((item) => `<tr><td>${formatDate(item.next_due_at)}</td><td>${escapeHtml(translate(item.type))}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.zone_name || '-')}</td><td>${escapeHtml(item.operator_email || '-')}</td><td>${escapeHtml(resultLabel(item))}</td><td>${escapeHtml(item.comment || item.corrective_action || '-')}</td><td>${linkedRecordButton(item)}</td></tr>`));
-    els.temperatures.innerHTML = table(['Date', 'Type', 'Zone', 'Equipement', 'Valeur', 'Statut', 'Observation', 'Detail'], (data.temperature_records || []).map((record) => `<tr class="${statusClass(record.alert_status)}"><td>${formatDate(record.recorded_at)}</td><td>${escapeHtml(record.type_label || record.type_code)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${escapeHtml(record.value)} ${escapeHtml(record.unit || '')}</td><td>${escapeHtml(translate(record.alert_status))}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '-')}</td><td>${detailButton('temperature', record.id, 'record')}</td></tr>`));
-    els.cleaning.innerHTML = table(['Date', 'Plan', 'Zones', 'Equipements', 'Resultat', 'Operateur', 'Observation', 'Detail'], (data.cleaning_records || []).map((record) => `<tr class="${statusClass(record.status)}"><td>${formatDate(record.performed_at)}</td><td>${escapeHtml(record.plan_title || '-')}</td><td>${escapeHtml(formatList(record.zones))}</td><td>${escapeHtml(formatList(record.equipments))}</td><td>${escapeHtml(translate(record.status || record.visual_check_status))}</td><td>${escapeHtml(record.performed_by_email || '-')}</td><td>${escapeHtml(record.comment || record.anomaly_comment || record.corrective_action || '-')}</td><td>${detailButton('cleaning', record.id, 'record')}</td></tr>`));
+    els.completed.innerHTML = table(['Heure', 'Type', 'Titre', 'Zone', 'Operateur', 'Resultat', 'Temperature relevee', 'Observation', 'Detail'], (data.completed_items || []).map((item) => `<tr><td>${formatDate(item.next_due_at)}</td><td>${escapeHtml(translate(item.type))}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.zone_name || '-')}</td><td>${escapeHtml(item.operator_email || '-')}</td><td>${escapeHtml(resultLabel(item))}</td><td>${escapeHtml(temperatureValue(item))}</td><td>${escapeHtml(item.comment || item.corrective_action || '-')}</td><td>${linkedRecordButton(item)}</td></tr>`));
+    els.temperatures.innerHTML = table(['Date', 'Type', 'Zone', 'Equipement', 'Valeur', 'Statut', 'Observation', 'Detail'], (data.temperature_records || []).map((record) => `<tr class="${statusClass(record.alert_status)}"><td>${formatDate(record.recorded_at)}</td><td>${escapeHtml(record.type_label || record.type_code)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${escapeHtml(record.value)} ${escapeHtml(record.unit || '')}</td><td>${escapeHtml(translate(record.alert_status))}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '-')}</td><td>${detailButton(record.detail_type || 'temperature', record.record_id || record.id, 'record')}</td></tr>`));
+    els.cleaning.innerHTML = table(['Date', 'Plan', 'Zones', 'Equipements', 'Resultat', 'Operateur', 'Observation', 'Detail'], (data.cleaning_records || []).map((record) => `<tr class="${statusClass(record.status)}"><td>${formatDate(record.performed_at)}</td><td>${escapeHtml(record.plan_title || '-')}</td><td>${escapeHtml(formatList(record.zones))}</td><td>${escapeHtml(formatList(record.equipments))}</td><td>${escapeHtml(translate(record.status || record.visual_check_status))}</td><td>${escapeHtml(record.performed_by_email || '-')}</td><td>${escapeHtml(record.comment || record.anomaly_comment || record.corrective_action || '-')}</td><td>${detailButton(record.detail_type || 'cleaning', record.record_id || record.id, 'record')}</td></tr>`));
     els.nc.innerHTML = (data.non_conformities || []).length ? data.non_conformities.map((item) => `<article class="quality-card ${statusClass(item.severity)}"><span class="quality-badge">${escapeHtml(translate(item.severity))}</span><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(item.description)}</p><p class="quality-muted">Statut : ${escapeHtml(translate(item.status))} - Origine : ${escapeHtml(translate(item.record_type || item.source_record_type || item.origin_type))} - Zone : ${escapeHtml(item.zone_name || '-')}</p><p class="quality-muted">Action immediate : ${escapeHtml(item.immediate_action || '-')}</p><div class="quality-actions">${detailButton('non_conformity', item.id, 'non_conformity')}${detailButton(item.record_type, item.source_record_id, 'record')}</div></article>`).join('') : '<div class="quality-empty-state">Aucune non-conformite sur la periode.</div>';
     els.actions.innerHTML = (data.corrective_actions || []).length ? data.corrective_actions.map((item) => `<article class="quality-card ${statusClass(item.status)}"><span class="quality-badge">${escapeHtml(translate(item.status))}</span><h3>${escapeHtml(item.action)}</h3><p class="quality-muted">NC : ${escapeHtml(item.non_conformity_title || '-')} - Echeance : ${formatDate(item.due_at)} - Responsable : ${escapeHtml(item.responsible_email || '-')}</p><p class="quality-muted">Controle efficacite : ${escapeHtml(item.effectiveness_check || '-')}</p><div class="quality-actions">${detailButton('corrective_action', item.id, 'corrective_action')}${detailButton(item.record_type, item.source_record_id, 'record')}</div></article>`).join('') : '<div class="quality-empty-state">Aucune action corrective sur la periode.</div>';
   }

@@ -36,13 +36,15 @@
         <label>Operateur<input id="quality-manual-operator" class="form-input" type="text" readonly></label>
         <label class="quality-form-wide">Observation<textarea id="quality-manual-comment" class="form-input"></textarea></label>
         <label class="quality-form-wide">Action corrective immediate<textarea id="quality-manual-corrective" class="form-input"></textarea></label>
-        <label>Photo / preuve photo<input id="quality-manual-evidence-photo-id" class="form-input" type="text" placeholder="ID photo qualite existante"></label>
-        <label>Piece jointe / preuve<input id="quality-manual-evidence-document-id" class="form-input" type="text" placeholder="ID document qualite existant"></label>
+        <input id="quality-manual-evidence-photo-id" type="hidden">
+        <input id="quality-manual-evidence-document-id" type="hidden">
+        <label>Photo / preuve photo<input id="quality-manual-evidence-photo-file" class="form-input" type="file" accept="image/*" capture="environment"><small id="quality-manual-evidence-photo-preview" class="quality-muted">Aucune photo selectionnee.</small></label>
+        <label>Piece jointe / preuve<input id="quality-manual-evidence-document-file" class="form-input" type="file"><small id="quality-manual-evidence-document-preview" class="quality-muted">Aucun document selectionne.</small></label>
         <div id="quality-manual-alert" class="page-feedback hidden quality-form-wide"></div>
         <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Valider et passer au controle suivant</button></div>
       </form>
     </section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/temperature-api.js?v=6"></script><script src="../js/cleaning-api.js?v=3"></script><script src="../js/quality-execution-forms.js?v=2"></script><script src="../js/operations-api.js?v=3"></script><script src="../js/quality-today.js?v=4"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/temperature-api.js?v=6"></script><script src="../js/cleaning-api.js?v=3"></script><script src="../js/quality-execution-forms.js?v=3"></script><script src="../js/operations-api.js?v=4"></script><script src="../js/quality-today.js?v=5"></script>
 </body>
 </html>

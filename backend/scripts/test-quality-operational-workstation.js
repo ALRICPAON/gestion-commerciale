@@ -224,7 +224,7 @@ async function main() {
   assert(serviceDb.calls.some((call) => /UPDATE quality_tasks/i.test(call.sql)), 'La completion service doit rester autorisee apres enregistrement metier');
   assert(serviceDb.calls.some((call) => /INSERT INTO quality_task_history/i.test(call.sql)), 'La completion service doit historiser la tache');
 
-  const manualDb = makeDb(makeTask({ task_origin: 'MANUAL', source_locked: false, module_key: 'manual' }));
+  const manualDb = makeDb(makeTask({ title: 'Controle visuel reception', task_origin: 'MANUAL', source_locked: false, module_key: 'manual' }));
   const manualExecution = await executeManualOccurrence(manualDb, STORE_ID, USER_ID, {
     quality_task_id: TASK_ID,
     completed_at: '2026-08-03T04:05:00.000Z',
@@ -238,7 +238,7 @@ async function main() {
   const completed = await listCompletedWorkItems(manualDb, STORE_ID, {});
   assert.equal(completed[0].type, 'manual', 'Une MANUAL realisee doit revenir dans les realises');
 
-  const manualPoolDb = makePoolDb(makeTask({ task_origin: 'MANUAL', source_locked: false, module_key: 'manual' }));
+  const manualPoolDb = makePoolDb(makeTask({ title: 'Controle visuel reception', task_origin: 'MANUAL', source_locked: false, module_key: 'manual' }));
   await executeManualOccurrence(manualPoolDb, STORE_ID, USER_ID, {
     quality_task_id: TASK_ID,
     completed_at: '2026-08-03T04:05:00.000Z',

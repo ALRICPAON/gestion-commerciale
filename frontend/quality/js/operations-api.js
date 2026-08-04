@@ -28,11 +28,24 @@
     return data;
   }
 
+  async function upload(path, formData) {
+    const response = await fetch(`${API_BASE_URL}/api/quality/operations${path}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken()}` },
+      body: formData,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Erreur upload preuve qualite');
+    return data;
+  }
+
   window.QualityOperationsApi = {
     today(filters) { return request(`/today${queryString(filters)}`); },
     overdue(filters) { return request(`/overdue${queryString(filters)}`); },
     ddpp(filters) { return request(`/ddpp${queryString(filters)}`); },
     ddppRecordDetail(type, id) { return request(`/ddpp/record/${encodeURIComponent(type)}/${encodeURIComponent(id)}`); },
+    uploadEvidencePhoto(formData) { return upload('/evidence/photos', formData); },
+    uploadEvidenceDocument(formData) { return upload('/evidence/documents', formData); },
     executeTemperature(payload) { return request('/temperature-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },
     executeCleaning(payload) { return request('/cleaning-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },
     executeManual(payload) { return request('/manual-occurrences/execute', { method: 'POST', body: JSON.stringify(payload) }); },
