@@ -17,6 +17,7 @@ const cleaningRoutes = require('./cleaning');
 const operationsRoutes = require('./operations');
 const documentationRoutes = require('./documentation');
 const documentBlockRoutes = require('./documentBlocks');
+const masterDocumentRoutes = require('./masterDocuments');
 
 const router = express.Router();
 
@@ -26,6 +27,7 @@ router.use('/temperatures', temperaturesRoutes);
 router.use('/tasks', tasksRoutes);
 router.use('/cleaning', cleaningRoutes);
 router.use('/operations', operationsRoutes);
+router.use('/master-documents', masterDocumentRoutes);
 router.use('/', documentBlockRoutes);
 router.use('/documentation', documentationRoutes);
 

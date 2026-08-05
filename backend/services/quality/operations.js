@@ -2,6 +2,7 @@ const { createCleaningRecord, listDueCleaningRecords, listCleaningRecords } = re
 const { completeQualityTask, getQualityTask, listQualityTasks, updateQualityTaskStatus } = require('./tasks');
 const { listDueTemperatureReadings, listTemperatureRecords, saveTemperatureRecord } = require('./temperatures');
 const { logQualityEvent } = require('./eventLogger');
+const { getDocumentsForTarget } = require('./masterDocuments');
 
 const RECORD_TYPES = Object.freeze({
   temperature: 'quality_temperature_record',
@@ -759,7 +760,17 @@ async function getDdppRecordBase(db, storeId, type, id) {
 async function getDdppRecordDetail(db, storeId, type, id) {
   const base = await getDdppRecordBase(db, storeId, type, id);
   if (!base) return null;
-  const nonConformities = await getLinkedNonConformities(db, storeId, base.link);
+  const [nonConformities, recordMasterDocuments, ddppMasterDocuments] = await Promise.all([
+    getLinkedNonConformities(db, storeId, base.link),
+    getDocumentsForTarget(db, storeId, base.public_type, base.record.id).catch((err) => {
+      if (err.code === '42P01' || err.code === '42703') return [];
+      throw err;
+    }),
+    getDocumentsForTarget(db, storeId, 'ddpp_view', null).catch((err) => {
+      if (err.code === '42P01' || err.code === '42703') return [];
+      throw err;
+    }),
+  ]);
   const correctiveActions = await getLinkedCorrectiveActions(db, storeId, base.link, nonConformities);
   if (base.record.corrective_action && !correctiveActions.some((item) => String(item.action || '') === String(base.record.corrective_action))) {
     correctiveActions.push({
@@ -790,6 +801,7 @@ async function getDdppRecordDetail(db, storeId, type, id) {
     },
     non_conformities: nonConformities,
     corrective_actions: correctiveActions,
+    master_documents: [...recordMasterDocuments, ...ddppMasterDocuments],
     attachments: {
       photo_id: base.record.evidence_photo_id || base.record.proof_photo_id || null,
       document_id: base.record.evidence_document_id || base.record.proof_document_id || null,

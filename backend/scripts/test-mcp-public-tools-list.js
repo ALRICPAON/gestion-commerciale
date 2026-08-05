@@ -24,6 +24,20 @@ function fakeReq() {
 async function main() {
   const previousPermissions = process.env.ALTA_AGENT_PERMISSIONS;
   const expectedNames = Object.keys(PUBLIC_QUALITY_BLOCK_TOOL_ALIASES);
+  const expectedMasterDocumentTools = [
+    'list_quality_master_documents',
+    'get_quality_master_document',
+    'create_quality_master_document',
+    'update_quality_master_document',
+    'archive_quality_master_document',
+    'link_existing_attachment_to_master_document',
+    'add_quality_document_reference',
+    'archive_quality_document_reference',
+    'list_quality_document_references',
+    'list_quality_document_incoming_references',
+    'compare_quality_documents',
+    'diagnose_quality_document_duplicates',
+  ];
   const generatedTools = buildPublicMcpTools();
   const generatedNames = new Set(generatedTools.map((tool) => tool.name));
 
@@ -57,8 +71,12 @@ async function main() {
     'create_quality_cleaning_plan',
     'update_quality_cleaning_plan',
     'archive_or_disable_quality_cleaning_plan',
+    ...expectedMasterDocumentTools,
   ]) {
     assert(publicNames.has(name), `${name} absent de la reponse MCP tools/list`);
+    const tool = publicTools.find((item) => item.name === name);
+    assert(tool.description, `${name} description manquante`);
+    assert(tool.inputSchema?.type === 'object', `${name} inputSchema invalide`);
   }
 
   try {
@@ -91,7 +109,7 @@ async function main() {
     mcp_version: MCP_SERVER_VERSION,
     public_tool_count: publicTools.length,
     registry_source: 'legacyTools + agentToolRegistry.listMcpTools + public underscore aliases',
-    expected_tools: expectedNames.map((name) => ({
+    expected_tools: [...expectedNames, ...expectedMasterDocumentTools].map((name) => ({
       name,
       present: publicNames.has(name),
       internal_tool: PUBLIC_QUALITY_BLOCK_TOOL_ALIASES[name],
