@@ -49,7 +49,7 @@ Le serveur supporte les deux modes utiles pour ChatGPT Business Apps et les outi
 Etat attendu du catalogue public complet ALTA MAREE V3 apres cette evolution:
 
 - version `1.8.4`;
-- `tool_count: 181`;
+- `tool_count: 193`;
 - `coverage_complete: true`;
 - `missing_tools: []`;
 - `frontend_backend_coverage_complete: true`;
@@ -67,6 +67,21 @@ Outils qualite operationnels ajoutes:
 - `create_quality_non_conformity`
 - `create_quality_corrective_action`
 - `close_quality_non_conformity`
+
+Outils referentiel documentaire maitre ajoutes:
+
+- `list_quality_master_documents`
+- `get_quality_master_document`
+- `create_quality_master_document`
+- `update_quality_master_document`
+- `archive_quality_master_document`
+- `link_existing_attachment_to_master_document`
+- `add_quality_document_reference`
+- `archive_quality_document_reference`
+- `list_quality_document_references`
+- `list_quality_document_incoming_references`
+- `compare_quality_documents`
+- `diagnose_quality_document_duplicates`
 
 Les outils de recherche sont limités à 25 résultats maximum et utilisent les mêmes règles que `/api/agent/*`.
 

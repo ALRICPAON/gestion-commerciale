@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Referentiel documentaire - ALTA MAREE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=5" />
+</head>
+<body class="app-page quality-documentation-page">
+  <header class="topbar">
+    <div class="topbar-left"><h1 class="app-title">ALTA MAREE</h1><p class="app-subtitle">Referentiel documentaire</p></div>
+    <div class="topbar-right">
+      <button class="btn btn-secondary" onclick="window.location.href='./documentation.html'">Dossier d'agrement</button>
+      <button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualite</button>
+      <button class="btn btn-secondary" onclick="window.location.href='../../home.html'">Accueil</button>
+    </div>
+  </header>
+
+  <main class="main-content quality-doc-layout">
+    <section class="welcome-card quality-doc-hero">
+      <div>
+        <span class="section-kicker">Source documentaire unique</span>
+        <h2>Documents maitres</h2>
+        <p>Fiches documentaires centralisees, rattachements multiples et conservation des fichiers existants.</p>
+      </div>
+    </section>
+
+    <div id="master-documents-feedback" class="page-feedback hidden"></div>
+
+    <section class="quality-doc-workbench">
+      <aside class="quality-card quality-doc-tree">
+        <div class="quality-section-header">
+          <div><h3>Documents</h3><p class="quality-muted">Fiches actives et archivees.</p></div>
+          <button id="master-document-refresh" class="btn btn-secondary" type="button">Actualiser</button>
+        </div>
+        <input id="master-document-search" class="form-input" placeholder="Rechercher titre, emetteur, reference">
+        <div id="master-document-list" class="quality-doc-section-list"></div>
+      </aside>
+
+      <section class="quality-card quality-doc-editor">
+        <div class="quality-section-header">
+          <div><span id="master-document-status" class="quality-badge">-</span><h3 id="master-document-heading">Nouveau document maitre</h3></div>
+        </div>
+        <form id="master-document-form" class="quality-form-grid">
+          <input id="master-document-id" type="hidden">
+          <label>Titre <input id="master-document-title" class="form-input" required></label>
+          <label>Type documentaire <input id="master-document-type" class="form-input" value="external_evidence" required></label>
+          <label>Categorie <input id="master-document-category" class="form-input"></label>
+          <label>Source
+            <select id="master-document-source" class="form-input">
+              <option value="interne">Interne</option>
+              <option value="CCI">CCI</option>
+              <option value="laboratoire">Laboratoire</option>
+              <option value="prestataire">Prestataire</option>
+              <option value="administration">Administration</option>
+              <option value="fournisseur">Fournisseur</option>
+            </select>
+          </label>
+          <label>Emetteur <input id="master-document-issuer" class="form-input"></label>
+          <label>Reference <input id="master-document-reference" class="form-input"></label>
+          <label>Date emission <input id="master-document-issue-date" class="form-input" type="date"></label>
+          <label>Valide depuis <input id="master-document-valid-from" class="form-input" type="date"></label>
+          <label>Valide jusqu'au <input id="master-document-valid-until" class="form-input" type="date"></label>
+          <label>Version <input id="master-document-version" class="form-input" value="1.0"></label>
+          <label>Statut
+            <select id="master-document-status-input" class="form-input">
+              <option value="draft">Brouillon</option>
+              <option value="valid">Valide</option>
+              <option value="expired">Expire</option>
+              <option value="replaced">Remplace</option>
+              <option value="archived">Archive</option>
+            </select>
+          </label>
+          <label>Fichier original <input id="master-document-filename" class="form-input"></label>
+          <label>Chemin/reference fichier <input id="master-document-storage" class="form-input"></label>
+          <label>MIME <input id="master-document-mime" class="form-input"></label>
+          <label>Taille <input id="master-document-size" class="form-input" type="number"></label>
+          <label>Checksum SHA-256 <input id="master-document-checksum" class="form-input"></label>
+          <label>Description <textarea id="master-document-description" class="form-input"></textarea></label>
+          <div class="quality-actions">
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+            <button id="master-document-new" class="btn btn-secondary" type="button">Nouveau</button>
+            <button id="master-document-archive" class="btn btn-secondary" type="button">Archiver</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="quality-card quality-doc-meta">
+        <h3>References entrantes</h3>
+        <div id="master-document-references" class="quality-list-grid"></div>
+        <h3>Ajouter une reference</h3>
+        <form id="master-reference-form" class="quality-form-grid">
+          <label>Cible
+            <select id="master-reference-target-type" class="form-input">
+              <option value="documentation_section">Chapitre dossier</option>
+              <option value="document_block">Bloc documentaire</option>
+              <option value="quality_object">Objet qualite</option>
+              <option value="temperature">Releve temperature</option>
+              <option value="cleaning">Nettoyage realise</option>
+              <option value="cleaning_plan">Plan de nettoyage</option>
+              <option value="temperature_parameter">Parametre temperature</option>
+              <option value="non_conformity">Non-conformite</option>
+              <option value="corrective_action">Action corrective</option>
+              <option value="ddpp_view">Vue DDPP</option>
+              <option value="procedure">Procedure future</option>
+            </select>
+          </label>
+          <label>ID cible <input id="master-reference-target-id" class="form-input"></label>
+          <label>Relation <input id="master-reference-relation" class="form-input" value="reference"></label>
+          <label>Libelle <input id="master-reference-label" class="form-input"></label>
+          <button class="btn btn-primary" type="submit">Ajouter</button>
+        </form>
+      </aside>
+    </section>
+  </main>
+
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/master-documents.js?v=1"></script>
+</body>
+</html>

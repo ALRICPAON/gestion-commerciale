@@ -56,6 +56,10 @@ const FRONTEND_BACKEND_CAPABILITIES = Object.freeze([
   { module: 'quality', capability: 'Clore non-conformite', frontend: 'frontend/quality/js/operations-api.js', route: 'POST /api/quality/operations/non-conformities/:id/close', service: 'quality/operations.closeNonConformity', mcp_tool: 'close_quality_non_conformity' },
   { module: 'quality_documentation', capability: 'Lire dossier agrement', frontend: 'frontend/quality/js/documentation.js', route: 'GET /api/quality/documentation', service: 'qualityDocumentationService', mcp_tool: 'list_quality_documentation' },
   { module: 'quality_documentation', capability: 'Modifier blocs dossier agrement', frontend: 'frontend/quality/js/documentation.js', route: 'PATCH/POST/DELETE /api/quality/document-blocks', service: 'qualityDocumentBlockService', mcp_tool: 'quality.documentation.update_text_block' },
+  { module: 'quality_documentation', capability: 'Lister referentiel documentaire maitre', frontend: 'frontend/quality/js/master-documents.js', route: 'GET /api/quality/master-documents', service: 'quality/masterDocuments.listMasterDocuments', mcp_tool: 'list_quality_master_documents' },
+  { module: 'quality_documentation', capability: 'Creer document maitre', frontend: 'frontend/quality/js/master-documents.js', route: 'POST /api/quality/master-documents', service: 'quality/masterDocuments.createMasterDocument', mcp_tool: 'create_quality_master_document' },
+  { module: 'quality_documentation', capability: 'Referencer document maitre', frontend: 'frontend/quality/js/master-documents.js', route: 'POST /api/quality/master-documents/references', service: 'quality/masterDocuments.addDocumentReference', mcp_tool: 'add_quality_document_reference' },
+  { module: 'quality_documentation', capability: 'Archiver reference documentaire', frontend: 'frontend/quality/js/master-documents.js', route: 'DELETE /api/quality/master-documents/references/:id', service: 'quality/masterDocuments.archiveDocumentReference', mcp_tool: 'archive_quality_document_reference' },
 ]);
 
 function buildFrontendBackendCoverage(publicTools = []) {
