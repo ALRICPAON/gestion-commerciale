@@ -68,6 +68,15 @@ router.get('/target/:targetType/:targetId', requireQualityPermission(QUALITY_PER
   }
 });
 
+router.get('/applicable/:targetType/:targetId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    const references = await masterDocuments.getApplicableDocumentsForTarget(req.dbPool, req.user.store_id, req.params.targetType, req.params.targetId);
+    res.json({ references });
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/master-documents/applicable/:targetType/:targetId');
+  }
+});
+
 router.get('/diagnostics/duplicates', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
   try {
     res.json(await masterDocuments.diagnoseDuplicates(req.dbPool, req.user.store_id));

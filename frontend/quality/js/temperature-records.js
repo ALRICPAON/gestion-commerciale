@@ -27,6 +27,7 @@
     exportCsv: $('temperature-record-export-csv'),
     chart: $('temperature-record-chart'),
     tableBody: $('temperature-record-table-body'),
+    documentLinks: $('temperature-record-document-links'),
   };
   let types = [];
   let zones = [];
@@ -75,6 +76,7 @@
       recorded_at: new Date().toISOString(),
       comment: reading.task_title ? `Controle attendu : ${reading.task_title}` : '',
     });
+    window.QualityDocumentLinks?.render('temperature_parameter', reading.parameter_id || reading.limit_id, els.documentLinks, { title: 'Procedures et documents applicables' }).catch(() => {});
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -103,8 +105,8 @@
 
   function renderRecords() {
     if (!records.length) { els.tableBody.innerHTML = '<tr><td colspan="10">Aucun releve trouve.</td></tr>'; renderChart(); return; }
-    els.tableBody.innerHTML = records.map((record) => `<tr class="${statusClass(record.alert_status)}"><td>${formatDate(record.recorded_at)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${escapeHtml(record.type_label)}</td><td><strong>${escapeHtml(formatTemperature(record.value, record.unit))}</strong></td><td>${record.min_limit ?? '-'} / ${record.max_limit ?? '-'}</td><td>${statusLabel(record.alert_status)}${record.exceptional_reason ? '<br><small>Saisie exceptionnelle</small>' : ''}</td><td>${escapeHtml(record.operator_email || '-')}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '')}</td><td><button class="btn btn-secondary" data-action="delete" data-id="${record.id}">Archiver</button></td></tr>`).join('');
-    if (!canManage) els.tableBody.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+    els.tableBody.innerHTML = records.map((record) => `<tr class="${statusClass(record.alert_status)}"><td>${formatDate(record.recorded_at)}</td><td>${escapeHtml(record.zone_name || '-')}</td><td>${escapeHtml(record.equipment_name || '-')}</td><td>${escapeHtml(record.type_label)}</td><td><strong>${escapeHtml(formatTemperature(record.value, record.unit))}</strong></td><td>${record.min_limit ?? '-'} / ${record.max_limit ?? '-'}</td><td>${statusLabel(record.alert_status)}${record.exceptional_reason ? '<br><small>Saisie exceptionnelle</small>' : ''}</td><td>${escapeHtml(record.operator_email || '-')}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '')}</td><td><button class="btn btn-secondary" data-action="documents" data-id="${record.id}">Documents</button><button class="btn btn-secondary" data-action="delete" data-id="${record.id}">Archiver</button></td></tr>`).join('');
+    if (!canManage) els.tableBody.querySelectorAll('button[data-action="delete"]').forEach((button) => { button.disabled = true; });
     renderChart();
   }
 
@@ -170,6 +172,10 @@
     if (!button || !canManage) return;
     const record = records.find((item) => item.id === button.dataset.id);
     if (!record) return;
+    if (button.dataset.action === 'documents') {
+      window.QualityDocumentLinks?.render('temperature_record', record.id, els.documentLinks, { title: 'Procedures et documents applicables' }).catch(() => {});
+      return;
+    }
     if (button.dataset.action === 'delete' && !window.confirm('Archiver ce releve ?')) return;
     try { await api.deleteRecord(record.id); await load(); } catch (error) { setFeedback(error.message, 'error'); }
   });

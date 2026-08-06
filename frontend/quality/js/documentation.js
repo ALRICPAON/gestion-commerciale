@@ -310,6 +310,21 @@
     return `${section.code} - ${section.title}`;
   }
 
+  function requestedSectionTarget() {
+    const params = new URLSearchParams(window.location.search || '');
+    return params.get('sectionId') || params.get('section_id') || params.get('section') || '';
+  }
+
+  function resolveRequestedSection(target) {
+    const wanted = String(target || '').trim();
+    if (!wanted) return { id: null, missing: false };
+    const byId = state.sections.find((section) => String(section.id) === wanted);
+    if (byId) return { id: byId.id, missing: false };
+    const byCode = state.sections.find((section) => String(section.code || '').toLowerCase() === wanted.toLowerCase());
+    if (byCode) return { id: byCode.id, missing: false };
+    return { id: null, missing: true };
+  }
+
   function escapeHtml(value = '') {
     return String(value).replace(/[&<>'"]/g, (char) => ({
       '&': '&amp;',
@@ -1441,12 +1456,15 @@
     state.diagrams = data.diagrams || [];
     state.tables = data.tables || [];
     state.blocks = data.blocks || [];
-    state.currentId = selectId || state.currentId || state.sections.find((section) => section.section_type !== 'tome')?.id || state.sections[0]?.id || null;
+    const requested = resolveRequestedSection(selectId);
+    if (requested.missing) setFeedback('Chapitre demande introuvable dans le dossier.', 'error');
+    const selectedFromRequest = requested.missing ? null : (requested.id || selectId);
+    state.currentId = selectedFromRequest || state.currentId || state.sections.find((section) => section.section_type !== 'tome')?.id || state.sections[0]?.id || null;
     els.title.textContent = state.collection.title;
     renderMetrics(data.dashboard);
     renderTree();
     renderEditor();
-    setFeedback('');
+    if (!requested.missing) setFeedback('');
   }
 
   function payload(extra = {}) {
@@ -2183,5 +2201,5 @@
     event.returnValue = '';
   });
 
-  load().catch((error) => setFeedback(error.message, 'error'));
+  load(requestedSectionTarget()).catch((error) => setFeedback(error.message, 'error'));
 })();

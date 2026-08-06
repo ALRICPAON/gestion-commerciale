@@ -16,6 +16,11 @@ const DOC_ID_2 = '44444444-4444-4444-8444-444444444444';
 const REF_ID = '55555555-5555-4555-8555-555555555555';
 const ATTACHMENT_ID = '66666666-6666-4666-8666-666666666666';
 const SECTION_ID = '77777777-7777-4777-8777-777777777777';
+const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+const PLAN_IDS = Array.from({ length: 12 }, (_, index) => `aaaaaaaa-aaaa-4aaa-8aaa-${String(index + 1).padStart(12, '0')}`);
+const TEMP_PARAM_ID = '99999999-9999-4999-8999-999999999999';
+const TEMP_TASK_ID = 'abababab-abab-4bab-8bab-abababababab';
+const CLEANING_TASK_ID = 'bcbcbcbc-bcbc-4cbc-8cbc-bcbcbcbcbcbc';
 
 function makeDb(filePath) {
   const state = {
@@ -34,6 +39,24 @@ function makeDb(filePath) {
       { id: SECTION_ID, store_id: STORE_ID, code: 'PMS-01', title: 'Plan de maitrise sanitaire' },
       { id: '88888888-8888-4888-8888-888888888888', store_id: STORE_ID, code: 'PMS-02', title: 'Nettoyage' },
     ],
+    cleaningPlans: PLAN_IDS.map((id, index) => ({
+      id,
+      store_id: STORE_ID,
+      title: [
+        'Chambre froide',
+        "Sols, acces et materiels mobiles de l'atelier",
+        'Circulation et acces du personnel',
+      ][index] || `Plan nettoyage ${index + 1}`,
+      configuration_status: 'active',
+      quality_task_id: index === 0 ? CLEANING_TASK_ID : null,
+    })),
+    temperatureParameters: [{ id: TEMP_PARAM_ID, store_id: STORE_ID, type_code: 'FROID_POSITIF', zone_code: 'CF01', equipment_code: 'THERMO-01' }],
+    tasks: [
+      { id: TEMP_TASK_ID, store_id: STORE_ID, title: 'Controle temperature chambre froide', status: 'planned', active: true, source_entity_type: 'temperature_parameter', source_entity_id: TEMP_PARAM_ID },
+      { id: CLEANING_TASK_ID, store_id: STORE_ID, title: 'Nettoyage Chambre froide', status: 'planned', active: true, source_entity_type: 'cleaning_plan', source_entity_id: PLAN_IDS[0] },
+    ],
+    occurrenceCounts: { [TEMP_PARAM_ID]: 2, [PLAN_IDS[0]]: 3 },
+    recordCounts: { [TEMP_PARAM_ID]: 1, [PLAN_IDS[0]]: 4 },
     calls: [],
   };
   return {
@@ -45,6 +68,27 @@ function makeDb(filePath) {
       }
       if (/FROM quality_documentation_sections/i.test(sql)) {
         return { rows: state.sections.filter((item) => item.id === params[0] && item.store_id === params[1]) };
+      }
+      if (/FROM quality_cleaning_plans/i.test(sql) && /ANY\(\$2::uuid\[\]\)/i.test(sql)) {
+        return { rows: state.cleaningPlans.filter((item) => params[1].includes(item.id)).map((item) => ({ id: item.id, label: item.title, status: item.configuration_status })) };
+      }
+      if (/FROM quality_cleaning_plans WHERE id = \$1::uuid/i.test(sql)) {
+        return { rows: state.cleaningPlans.filter((item) => item.id === params[0] && item.store_id === params[1]) };
+      }
+      if (/FROM quality_temperature_limits l/i.test(sql) && /ANY\(\$2::uuid\[\]\)/i.test(sql)) {
+        return { rows: state.temperatureParameters.filter((item) => params[1].includes(item.id)).map((item) => ({ id: item.id, label: `${item.type_code} - ${item.zone_code} - ${item.equipment_code}`, status: 'actif' })) };
+      }
+      if (/FROM quality_temperature_limits l/i.test(sql) && /WHERE l.id = \$1::uuid/i.test(sql)) {
+        return { rows: state.temperatureParameters.filter((item) => item.id === params[0] && item.store_id === params[1]).map((item) => ({ id: item.id, type_code: item.type_code, zone_code: item.zone_code, equipment_code: item.equipment_code })) };
+      }
+      if (/FROM quality_tasks/i.test(sql) && /ANY\(\$2::uuid\[\]\)/i.test(sql)) {
+        return { rows: state.tasks.filter((item) => params[1].includes(item.id)).map((item) => ({ id: item.id, label: item.title, status: item.status })) };
+      }
+      if (/WITH task_ids AS/i.test(sql)) {
+        return { rows: state.tasks.filter((item) => item.source_entity_type === 'temperature_parameter' && item.source_entity_id === params[1]).map((item) => ({ ...item, occurrence_count: state.occurrenceCounts[params[1]] || 0, record_count: state.recordCounts[params[1]] || 0 })) };
+      }
+      if (/WITH plan AS/i.test(sql)) {
+        return { rows: state.tasks.filter((item) => item.source_entity_type === 'cleaning_plan' && item.source_entity_id === params[1]).map((item) => ({ ...item, occurrence_count: state.occurrenceCounts[params[1]] || 0, record_count: state.recordCounts[params[1]] || 0 })) };
       }
       if (/FROM quality_documents WHERE store_id/i.test(sql) || /FROM quality_photos WHERE store_id/i.test(sql)) return { rows: [] };
       if (/SELECT d\.\*/i.test(sql) && /FROM quality_master_documents d/i.test(sql)) {
@@ -60,8 +104,9 @@ function makeDb(filePath) {
         return { rows: state.documents.filter((item) => item.store_id === params[0] && item.checksum_sha256 === params[1] && !item.archived_at).slice(0, 1) };
       }
       if (/INSERT INTO quality_master_documents/i.test(sql)) {
+        const generatedIds = [DOC_ID, DOC_ID_2, '12121212-1212-4212-8212-121212121212', '13131313-1313-4313-8313-131313131313'];
         const row = {
-          id: state.documents.length ? DOC_ID_2 : DOC_ID,
+          id: generatedIds[state.documents.length] || `14141414-1414-4414-8414-${String(state.documents.length).padStart(12, '0')}`,
           store_id: params[0],
           title: params[1],
           document_type: params[2],
@@ -238,6 +283,27 @@ async function main() {
   assert.equal(annexes.length, 1, 'procedure rattachee a plusieurs chapitres doit etre dedupliquee en annexe');
   assert.equal(annexes[0].references.length, 1, 'seules les references actives doivent alimenter la table des annexes');
 
+  const enr = await masterDocuments.createMasterDocument(db, STORE_ID, USER_ID, {
+    title: 'ENR-010 Plans de nettoyage',
+    document_type: 'record_form',
+    source_type: 'interne',
+    status: 'valid',
+    reference_number: 'ENR-010',
+    description: JSON.stringify({ scope: `Plans ${PLAN_IDS.join(', ')}`, method: `Parametre ${TEMP_PARAM_ID}` }),
+  });
+  await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: enr.id, target_type: 'cleaning_plan', target_id: PLAN_IDS[0], relation_type: 'applicable_document', label: 'Plan source' });
+  await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: enr.id, target_type: 'temperature_parameter', target_id: TEMP_PARAM_ID, relation_type: 'applicable_document', label: 'Parametre source' });
+  const enrDetail = await masterDocuments.getMasterDocument(db, STORE_ID, enr.id);
+  const renderedText = JSON.stringify(enrDetail.structured_content);
+  assert(!UUID_RE.test(renderedText), 'aucun UUID ne doit apparaitre dans le rendu HTML ENR-010');
+  assert(renderedText.includes('Chambre froide'), 'les plans doivent etre resolus par titre metier');
+  assert(renderedText.includes("Sols, acces et materiels mobiles de l'atelier"), 'les douze plans doivent afficher leurs titres');
+  assert(enrDetail.reference_groups.some((group) => group.title === 'Taches et occurrences associees'), 'regroupement taches attendu');
+  assert(enrDetail.derived_relations.tasks.some((item) => item.target_label === 'Controle temperature chambre froide' && item.occurrence_count === 2 && item.record_count === 1), 'tache/occurrence/releve temperature derive attendu');
+  assert(enrDetail.derived_relations.tasks.some((item) => item.target_label === 'Nettoyage Chambre froide' && item.occurrence_count === 3 && item.record_count === 4), 'tache/occurrence/enregistrement nettoyage derive attendu');
+  const pdfHtml = masterDocuments.buildMasterDocumentHtml(enrDetail, { company_name: 'ALTA MAREE' });
+  assert(!UUID_RE.test(pdfHtml), 'aucun UUID ne doit apparaitre dans le HTML PDF ENR-010');
+
   const comparison = await masterDocuments.compareDocuments(db, STORE_ID, DOC_ID, DOC_ID);
   assert.equal(comparison.same_checksum, true);
   assert.equal(comparison.merge_allowed_automatically, false);
@@ -283,6 +349,10 @@ async function main() {
     structured_content: true,
     readable_references: true,
     annex_deduplication: true,
+    no_uuid_in_document_view: true,
+    no_uuid_in_pdf_html: true,
+    derived_temperature_links: true,
+    derived_cleaning_links: true,
     original_file_preserved: true,
     store_isolation: true,
     mcp_tools: expectedTools.length,
