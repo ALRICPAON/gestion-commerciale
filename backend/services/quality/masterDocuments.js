@@ -8,6 +8,7 @@ const { logQualityEvent } = require('./eventLogger');
 
 const STATUSES = new Set(['draft', 'valid', 'expired', 'replaced', 'archived']);
 const SOURCE_TYPES = new Set(['CCI', 'laboratoire', 'prestataire', 'administration', 'fournisseur', 'interne']);
+const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const STRUCTURED_SECTIONS = Object.freeze([
   ['object', 'Objet'],
   ['scope', "Champ d'application"],
@@ -85,6 +86,111 @@ function normalizeStructuredContent(description) {
   };
 }
 
+function uniqueUuidList(value) {
+  return [...new Set(String(value || '').match(UUID_PATTERN) || [])];
+}
+
+function hasUuid(value) {
+  return UUID_PATTERN.test(String(value || ''));
+}
+
+function resetUuidPattern() {
+  UUID_PATTERN.lastIndex = 0;
+}
+
+function businessUrl(targetType, row) {
+  if (!row?.id) return null;
+  return {
+    documentation_section: `documentation.html?sectionId=${encodeURIComponent(row.id)}`,
+    temperature_parameter: `temperature-settings.html?parameter_id=${encodeURIComponent(row.id)}`,
+    cleaning_plan: `cleaning-plans.html?plan_id=${encodeURIComponent(row.id)}`,
+    quality_task: `quality-tasks.html?task_id=${encodeURIComponent(row.id)}`,
+    non_conformity: `non-conformities.html?id=${encodeURIComponent(row.id)}`,
+    corrective_action: `corrective-actions.html?id=${encodeURIComponent(row.id)}`,
+  }[targetType] || null;
+}
+
+const UUID_LABEL_QUERIES = Object.freeze({
+  cleaning_plan: {
+    sql: `SELECT id, title AS label, configuration_status AS status FROM quality_cleaning_plans WHERE store_id=$1::uuid AND id = ANY($2::uuid[])`,
+    type_label: 'Plan de nettoyage',
+  },
+  temperature_parameter: {
+    sql: `SELECT l.id,
+                 CONCAT_WS(' - ', l.type_code, z.code, e.code) AS label,
+                 CASE WHEN l.is_active THEN 'actif' ELSE 'inactif' END AS status
+          FROM quality_temperature_limits l
+          LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
+          LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
+          WHERE l.store_id=$1::uuid AND l.id = ANY($2::uuid[])`,
+    type_label: 'Parametre temperature',
+  },
+  quality_task: {
+    sql: `SELECT id, title AS label, status FROM quality_tasks WHERE store_id=$1::uuid AND id = ANY($2::uuid[])`,
+    type_label: 'Tache qualite',
+  },
+  documentation_section: {
+    sql: `SELECT id, CONCAT_WS(' - ', code, title) AS label, status FROM quality_documentation_sections WHERE store_id=$1::uuid AND id = ANY($2::uuid[])`,
+    type_label: 'Chapitre documentaire',
+  },
+  equipment: {
+    sql: `SELECT id, CONCAT_WS(' - ', code, name) AS label, status FROM quality_equipments WHERE store_id=$1::uuid AND id = ANY($2::uuid[])`,
+    type_label: 'Equipement',
+  },
+  zone: {
+    sql: `SELECT id, CONCAT_WS(' - ', code, name) AS label, status FROM quality_zones WHERE store_id=$1::uuid AND id = ANY($2::uuid[])`,
+    type_label: 'Zone',
+  },
+});
+
+async function resolveUuidDictionary(db, storeId, ids = []) {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  const labels = new Map();
+  if (!uniqueIds.length) return labels;
+  for (const [targetType, config] of Object.entries(UUID_LABEL_QUERIES)) {
+    try {
+      const result = await db.query(config.sql, [storeId, uniqueIds]);
+      result.rows.forEach((row) => {
+        if (!row.id || labels.has(String(row.id))) return;
+        labels.set(String(row.id), {
+          id: row.id,
+          target_type: targetType,
+          type_label: config.type_label,
+          label: row.label || config.type_label,
+          status: row.status || null,
+          url: businessUrl(targetType, row),
+        });
+      });
+    } catch (err) {
+      // Some installations may not have every optional table yet; unresolved ids are hidden later.
+    }
+  }
+  return labels;
+}
+
+function resolveTextWithLabels(value, labels) {
+  resetUuidPattern();
+  const text = String(value || '');
+  const ids = uniqueUuidList(text);
+  if (!ids.length) return text;
+  const resolved = ids.map((id) => labels.get(id)).filter(Boolean);
+  if (resolved.length === ids.length && text.replace(UUID_PATTERN, '').replace(/[,\s;:\-–—|/()[\]]/g, '').length < 18) {
+    return resolved.map((item) => `- ${item.label}`).join('\n');
+  }
+  return text.replace(UUID_PATTERN, (id) => labels.get(id)?.label || '[identifiant masque]');
+}
+
+async function resolveStructuredContent(db, storeId, structuredContent = {}) {
+  const ids = [];
+  Object.values(structuredContent).forEach((value) => ids.push(...uniqueUuidList(value)));
+  const labels = await resolveUuidDictionary(db, storeId, ids);
+  const resolved = {};
+  Object.entries(structuredContent).forEach(([key, value]) => {
+    resolved[key] = typeof value === 'string' ? resolveTextWithLabels(value, labels) : value;
+  });
+  return resolved;
+}
+
 function enrichDocument(document) {
   if (!document) return document;
   return {
@@ -94,6 +200,37 @@ function enrichDocument(document) {
       ? 'archived'
       : (document.status === 'valid' && document.valid_until && new Date(document.valid_until) < new Date() ? 'expired' : document.status),
   };
+}
+
+function groupReferences(references = [], derived = {}) {
+  const groups = [
+    ['documentation_section', "Chapitres du dossier d'agrement"],
+    ['temperature_parameter', 'Parametres de temperature'],
+    ['cleaning_plan', 'Plans de nettoyage'],
+    ['quality_task', 'Taches et occurrences associees'],
+    ['records', 'Enregistrements realises'],
+    ['quality_issues', 'Non-conformites et actions correctives'],
+    ['document', 'Documents et formulaires associes'],
+  ];
+  const byKey = new Map(groups.map(([key, title]) => [key, { key, title, items: [] }]));
+  references.filter((reference) => !reference.archived_at).forEach((reference) => {
+    const key = ['non_conformity', 'corrective_action'].includes(reference.target_type)
+      ? 'quality_issues'
+      : byKey.has(reference.target_type) ? reference.target_type : 'document';
+    byKey.get(key).items.push(reference);
+  });
+  (derived.tasks || []).forEach((item) => byKey.get('quality_task').items.push(item));
+  (derived.records || []).forEach((item) => byKey.get('records').items.push(item));
+  return [...byKey.values()].filter((group) => group.items.length);
+}
+
+async function enrichDocumentForPresentation(db, storeId, document) {
+  const enriched = enrichDocument(document);
+  if (!enriched) return enriched;
+  enriched.structured_content = await resolveStructuredContent(db, storeId, enriched.structured_content || {});
+  enriched.derived_relations = await deriveDocumentRelations(db, storeId, enriched.references || []);
+  enriched.reference_groups = groupReferences(enriched.references || [], enriched.derived_relations);
+  return enriched;
 }
 
 function typedLabel(targetType) {
@@ -116,7 +253,7 @@ const TARGET_LABEL_QUERIES = Object.freeze({
   documentation_section: {
     sql: `SELECT id, code, title FROM quality_documentation_sections WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
     label: (row) => [row.code, row.title].filter(Boolean).join(' - '),
-    url: (row) => `documentation.html?section_id=${encodeURIComponent(row.id)}`,
+    url: (row) => `documentation.html?sectionId=${encodeURIComponent(row.id)}`,
   },
   temperature_parameter: {
     sql: `SELECT l.id, l.type_code, z.code AS zone_code, e.code AS equipment_code
@@ -125,7 +262,7 @@ const TARGET_LABEL_QUERIES = Object.freeze({
           LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
           WHERE l.id = $1::uuid AND l.store_id = $2::uuid LIMIT 1`,
     label: (row) => [row.type_code, row.zone_code, row.equipment_code].filter(Boolean).join(' - '),
-    url: (row) => `temperature-parameters.html?id=${encodeURIComponent(row.id)}`,
+    url: (row) => `temperature-settings.html?parameter_id=${encodeURIComponent(row.id)}`,
   },
   cleaning_plan: {
     sql: `SELECT id, title FROM quality_cleaning_plans WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
@@ -286,6 +423,128 @@ async function listMasterDocuments(db, storeId, query = {}) {
   return result.rows.map(enrichDocument);
 }
 
+async function deriveTemperatureRelations(db, storeId, parameterId) {
+  try {
+    const result = await db.query(
+      `WITH task_ids AS (
+         SELECT quality_task_id AS id
+         FROM quality_temperature_limits
+         WHERE id=$2::uuid AND store_id=$1::uuid AND quality_task_id IS NOT NULL
+         UNION
+         SELECT task_id AS id
+         FROM quality_temperature_limit_tasks
+         WHERE limit_id=$2::uuid AND deleted_at IS NULL AND task_id IS NOT NULL
+       ),
+       occurrence_stats AS (
+         SELECT COUNT(*)::int AS count
+         FROM quality_task_occurrences o
+         WHERE o.store_id=$1::uuid
+           AND (o.source_entity_type='temperature_parameter' AND o.source_entity_id=$2::uuid
+             OR o.task_id IN (SELECT id FROM task_ids))
+       ),
+       record_stats AS (
+         SELECT COUNT(*)::int AS count
+         FROM quality_temperature_records r
+         WHERE r.store_id=$1::uuid AND r.temperature_limit_id=$2::uuid
+       )
+       SELECT t.id, t.title, t.status, t.active, os.count AS occurrence_count, rs.count AS record_count
+       FROM task_ids ti
+       INNER JOIN quality_tasks t ON t.id = ti.id AND t.store_id=$1::uuid
+       CROSS JOIN occurrence_stats os
+       CROSS JOIN record_stats rs
+       ORDER BY t.title`,
+      [storeId, parameterId]
+    );
+    return result.rows.map((row) => ({
+      target_type: 'quality_task',
+      target_type_label: 'Tache qualite',
+      target_label: row.title,
+      status: row.status,
+      active: row.active,
+      target_url: businessUrl('quality_task', row),
+      relation_type: 'derivee_parametre_temperature',
+      occurrence_count: row.occurrence_count || 0,
+      record_count: row.record_count || 0,
+    }));
+  } catch (err) {
+    return [];
+  }
+}
+
+async function deriveCleaningRelations(db, storeId, planId) {
+  try {
+    const result = await db.query(
+      `WITH plan AS (
+         SELECT id, quality_task_id FROM quality_cleaning_plans WHERE id=$2::uuid AND store_id=$1::uuid
+       ),
+       occurrence_stats AS (
+         SELECT COUNT(*)::int AS count
+         FROM quality_task_occurrences o
+         WHERE o.store_id=$1::uuid
+           AND (o.source_entity_type='cleaning_plan' AND o.source_entity_id=$2::uuid
+             OR o.task_id IN (SELECT quality_task_id FROM plan WHERE quality_task_id IS NOT NULL))
+       ),
+       record_stats AS (
+         SELECT COUNT(*)::int AS count
+         FROM quality_cleaning_records r
+         WHERE r.store_id=$1::uuid AND r.cleaning_plan_id=$2::uuid
+       )
+       SELECT t.id, t.title, t.status, t.active, os.count AS occurrence_count, rs.count AS record_count
+       FROM plan p
+       INNER JOIN quality_tasks t ON t.id = p.quality_task_id AND t.store_id=$1::uuid
+       CROSS JOIN occurrence_stats os
+       CROSS JOIN record_stats rs`,
+      [storeId, planId]
+    );
+    return result.rows.map((row) => ({
+      target_type: 'quality_task',
+      target_type_label: 'Tache qualite',
+      target_label: row.title,
+      status: row.status,
+      active: row.active,
+      target_url: businessUrl('quality_task', row),
+      relation_type: 'derivee_plan_nettoyage',
+      occurrence_count: row.occurrence_count || 0,
+      record_count: row.record_count || 0,
+    }));
+  } catch (err) {
+    return [];
+  }
+}
+
+async function deriveDocumentRelations(db, storeId, references = []) {
+  const tasks = [];
+  const records = [];
+  const activeRefs = references.filter((reference) => !reference.archived_at);
+  for (const reference of activeRefs) {
+    if (reference.target_type === 'temperature_parameter' && reference.target_id) {
+      const derivedTasks = await deriveTemperatureRelations(db, storeId, reference.target_id);
+      tasks.push(...derivedTasks);
+      derivedTasks.forEach((task) => records.push({
+        target_type: 'records',
+        target_type_label: 'Enregistrements temperature',
+        target_label: `${task.record_count || 0} releve(s) lie(s)`,
+        relation_type: task.relation_type,
+        occurrence_count: task.occurrence_count || 0,
+        record_count: task.record_count || 0,
+      }));
+    }
+    if (reference.target_type === 'cleaning_plan' && reference.target_id) {
+      const derivedTasks = await deriveCleaningRelations(db, storeId, reference.target_id);
+      tasks.push(...derivedTasks);
+      derivedTasks.forEach((task) => records.push({
+        target_type: 'records',
+        target_type_label: 'Enregistrements nettoyage',
+        target_label: `${task.record_count || 0} nettoyage(s) realise(s)`,
+        relation_type: task.relation_type,
+        occurrence_count: task.occurrence_count || 0,
+        record_count: task.record_count || 0,
+      }));
+    }
+  }
+  return { tasks, records };
+}
+
 async function getMasterDocument(db, storeId, id) {
   const result = await db.query(
     'SELECT * FROM quality_master_documents WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1',
@@ -294,7 +553,7 @@ async function getMasterDocument(db, storeId, id) {
   const document = result.rows[0] || null;
   if (!document) return null;
   const references = await listDocumentReferences(db, storeId, { document_id: id, include_archived: true });
-  return enrichDocument({ ...document, references });
+  return enrichDocumentForPresentation(db, storeId, { ...document, references });
 }
 
 async function createMasterDocument(db, storeId, userId, body = {}) {
@@ -514,6 +773,76 @@ async function getDocumentsForTarget(db, storeId, targetType, targetId = null) {
   return listDocumentReferences(db, storeId, { target_type: targetType, target_id: targetId });
 }
 
+async function resolveNativeDocumentTarget(db, storeId, targetType, targetId) {
+  if (!targetId) return null;
+  if (['temperature_parameter', 'cleaning_plan', 'documentation_section'].includes(targetType)) {
+    return { target_type: targetType, target_id: targetId };
+  }
+  try {
+    if (targetType === 'quality_task' || targetType === 'task') {
+      const result = await db.query(
+        `SELECT source_entity_type, source_entity_id FROM quality_tasks WHERE id=$1::uuid AND store_id=$2::uuid LIMIT 1`,
+        [targetId, storeId]
+      );
+      const row = result.rows[0];
+      return row?.source_entity_type && row?.source_entity_id ? { target_type: row.source_entity_type, target_id: row.source_entity_id } : { target_type: 'quality_task', target_id: targetId };
+    }
+    if (targetType === 'quality_task_occurrence' || targetType === 'occurrence') {
+      const result = await db.query(
+        `SELECT o.source_entity_type, o.source_entity_id, t.source_entity_type AS task_source_entity_type, t.source_entity_id AS task_source_entity_id
+         FROM quality_task_occurrences o
+         LEFT JOIN quality_tasks t ON t.id=o.task_id AND t.store_id=o.store_id
+         WHERE o.id=$1::uuid AND o.store_id=$2::uuid LIMIT 1`,
+        [targetId, storeId]
+      );
+      const row = result.rows[0];
+      const type = row?.source_entity_type || row?.task_source_entity_type;
+      const id = row?.source_entity_id || row?.task_source_entity_id;
+      return type && id ? { target_type: type, target_id: id } : null;
+    }
+    if (targetType === 'temperature_record' || targetType === 'quality_temperature_record') {
+      const result = await db.query(
+        `SELECT r.temperature_limit_id, t.source_entity_type, t.source_entity_id
+         FROM quality_temperature_records r
+         LEFT JOIN quality_tasks t ON t.id=r.quality_task_id AND t.store_id=r.store_id
+         WHERE r.id=$1::uuid AND r.store_id=$2::uuid LIMIT 1`,
+        [targetId, storeId]
+      );
+      const row = result.rows[0];
+      if (row?.temperature_limit_id) return { target_type: 'temperature_parameter', target_id: row.temperature_limit_id };
+      return row?.source_entity_type && row?.source_entity_id ? { target_type: row.source_entity_type, target_id: row.source_entity_id } : null;
+    }
+    if (targetType === 'cleaning_record' || targetType === 'quality_cleaning_record') {
+      const result = await db.query(
+        `SELECT cleaning_plan_id FROM quality_cleaning_records WHERE id=$1::uuid AND store_id=$2::uuid LIMIT 1`,
+        [targetId, storeId]
+      );
+      const row = result.rows[0];
+      return row?.cleaning_plan_id ? { target_type: 'cleaning_plan', target_id: row.cleaning_plan_id } : null;
+    }
+  } catch (err) {
+    return null;
+  }
+  return { target_type: targetType, target_id: targetId };
+}
+
+async function getApplicableDocumentsForTarget(db, storeId, targetType, targetId = null) {
+  const native = await resolveNativeDocumentTarget(db, storeId, targetType, targetId);
+  if (!native) return [];
+  const references = await listDocumentReferences(db, storeId, { target_type: native.target_type, target_id: native.target_id });
+  const byDocument = new Map();
+  references.forEach((reference) => {
+    if (!byDocument.has(reference.document_id)) {
+      byDocument.set(reference.document_id, {
+        ...reference,
+        resolved_from: native,
+        pdf_url: `master-documents/${reference.document_id}/export-pdf`,
+      });
+    }
+  });
+  return [...byDocument.values()];
+}
+
 async function compareDocuments(db, storeId, firstId, secondId) {
   const [first, second] = await Promise.all([
     getMasterDocument(db, storeId, firstId),
@@ -702,8 +1031,10 @@ module.exports = {
   listDocumentReferences,
   listIncomingReferences,
   getDocumentsForTarget,
+  getApplicableDocumentsForTarget,
   compareDocuments,
   diagnoseDuplicates,
   normalizeStructuredContent,
+  buildMasterDocumentHtml,
   renderMasterDocumentPdf,
 };

@@ -126,6 +126,23 @@
     return data;
   }
 
+  async function requestPdf(path) {
+    const response = await fetch(`${API_BASE_URL}/api/quality/master-documents${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      let message = 'Erreur generation PDF';
+      if (response.status === 401) message = 'Session expiree ou token invalide. Reconnectez-vous.';
+      else if (response.status === 403) message = 'Permission insuffisante pour exporter ce PDF.';
+      else {
+        const data = await response.json().catch(() => ({}));
+        message = data.error || message;
+      }
+      throw new Error(message);
+    }
+    return response.blob();
+  }
+
   function formPayload() {
     return {
       title: els.title.value,
@@ -191,6 +208,22 @@
     els.detail.classList.toggle('hidden', editing);
     els.editButton.disabled = !canEdit || !state.current;
     els.pdfButton.disabled = !state.current;
+    renderReferences(state.current?.references || []);
+  }
+
+  function renderGroupItem(item) {
+    const counts = [
+      Number.isFinite(Number(item.occurrence_count)) ? `${Number(item.occurrence_count)} occurrence(s)` : null,
+      Number.isFinite(Number(item.record_count)) ? `${Number(item.record_count)} record(s)` : null,
+    ].filter(Boolean).join(' - ');
+    return `
+      <article class="quality-card">
+        <span class="quality-badge">${escapeHtml(item.status || item.document_status || item.relation_type || '-')}</span>
+        <h4>${escapeHtml(item.target_label || item.document_title || item.label || 'Document qualite')}</h4>
+        <p class="quality-muted">${escapeHtml(item.target_type_label || typeLabel(item.document_type) || '-')} ${counts ? `- ${escapeHtml(counts)}` : ''}</p>
+        ${item.target_url ? `<button class="btn btn-secondary" type="button" data-open-reference="${escapeHtml(item.target_url)}">Ouvrir</button>` : ''}
+      </article>
+    `;
   }
 
   function renderDetail(document) {
@@ -219,6 +252,12 @@
       </article>
       ${sections.map(([label, value]) => `<article class="quality-card"><h3>${escapeHtml(label)}</h3><p>${escapeHtml(value).replace(/\n/g, '<br>')}</p></article>`).join('')}
       ${sections.length ? '' : `<article class="quality-card"><h3>Contenu</h3><p>${escapeHtml(document.description || 'Aucun contenu renseigne.').replace(/\n/g, '<br>')}</p></article>`}
+      ${(document.reference_groups || []).map((group) => `
+        <section class="quality-card">
+          <h3>${escapeHtml(group.title)}</h3>
+          <div class="quality-list-grid">${group.items.map(renderGroupItem).join('')}</div>
+        </section>
+      `).join('')}
     `;
   }
 
@@ -240,7 +279,7 @@
         <h3>${escapeHtml(reference.label || reference.target_type)}</h3>
         <p class="quality-muted">${escapeHtml(reference.target_type_label || reference.target_type)} - ${escapeHtml(reference.target_label || '-')}</p>
         ${reference.target_url ? `<button class="btn btn-secondary" type="button" data-open-reference="${escapeHtml(reference.target_url)}">Ouvrir</button>` : ''}
-        <button class="btn btn-secondary" type="button" data-archive-reference="${escapeHtml(reference.id)}">Archiver</button>
+        ${state.editMode && canEdit ? `<button class="btn btn-secondary" type="button" data-archive-reference="${escapeHtml(reference.id)}">Archiver</button>` : ''}
       </article>
     `).join('') : '<div class="quality-empty-state">Aucune reference entrante.</div>';
   }
@@ -319,11 +358,27 @@
     await load(state.current?.id);
     setFeedback('Reference archivee.', 'success');
   });
+  els.detail.addEventListener('click', (event) => {
+    const openButton = event.target.closest('[data-open-reference]');
+    if (openButton) window.location.href = openButton.dataset.openReference;
+  });
   els.newButton.addEventListener('click', () => { state.editMode = true; fillForm(null); renderList(); });
   els.editButton.addEventListener('click', () => { state.editMode = true; refreshMode(); });
-  els.pdfButton.addEventListener('click', () => {
+  els.pdfButton.addEventListener('click', async () => {
     if (!state.current?.id) return;
-    window.open(`${API_BASE_URL}/api/quality/master-documents/${encodeURIComponent(state.current.id)}/export-pdf`, '_blank', 'noopener');
+    try {
+      const blob = await requestPdf(`/${encodeURIComponent(state.current.id)}/export-pdf`);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30000);
+    } catch (error) {
+      setFeedback(error.message, 'error');
+    }
   });
   els.archiveButton.addEventListener('click', async () => {
     if (!canEdit || !state.current?.id || !window.confirm('Archiver cette fiche maitre ? Le fichier physique ne sera pas supprime.')) return;

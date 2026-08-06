@@ -21,6 +21,7 @@
     panel: $('quality-execution-panel'),
     temperatureForm: $('quality-temperature-execution-form'),
     cleaningForm: $('quality-cleaning-execution-form'),
+    documentLinks: $('quality-today-document-links'),
     manualForm: $('quality-manual-execution-form'),
     title: $('quality-execution-title'),
     context: $('quality-execution-context'),
@@ -181,6 +182,12 @@
       els.manualAlert.className = 'page-feedback hidden quality-form-wide';
     }
     els.panel.classList.remove('hidden');
+    const recordType = detail.type === 'cleaning' ? 'cleaning_record' : detail.type === 'temperature' ? 'temperature_record' : null;
+    if (recordType) {
+      window.QualityDocumentLinks?.render(recordType, detail.source?.record_id || id, els.documentLinks, { title: 'Procedures et documents applicables' }).catch(() => {});
+    } else {
+      els.documentLinks.innerHTML = '';
+    }
     els.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 

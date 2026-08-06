@@ -82,15 +82,15 @@ function main() {
   assertContains(todayHtml, 'quality-proof-uploader.js?v=1', 'Cache uploader preuves manquant dans Qualite du jour');
   assertContains(todayHtml, 'quality-execution-forms.js?v=4', 'Cache helper partage non incremente dans Qualite du jour');
   assertContains(todayHtml, 'operations-api.js?v=5', 'Cache API operationnelle non incremente dans Qualite du jour');
-  assertContains(todayHtml, 'quality-today.js?v=6', 'Cache Qualite du jour non incremente');
+  assertContains(todayHtml, 'quality-today.js?v=7', 'Cache Qualite du jour non incremente');
   assertContains(tempHtml, 'quality-proof-uploader.js?v=1', 'Cache uploader preuves manquant dans Releves temperatures');
   assertContains(tempHtml, 'quality-execution-forms.js?v=4', 'Cache helper partage non incremente dans Releves temperatures');
   assertContains(tempHtml, 'operations-api.js?v=5', 'Cache API operationnelle non incremente dans Releves temperatures');
-  assertContains(tempHtml, 'temperature-records.js?v=6', 'Cache temperatures non incremente');
+  assertContains(tempHtml, 'temperature-records.js?v=7', 'Cache temperatures non incremente');
   assertContains(cleaningHtml, 'quality-proof-uploader.js?v=1', 'Cache uploader preuves manquant dans Nettoyages');
   assertContains(cleaningHtml, 'quality-execution-forms.js?v=4', 'Cache helper partage non incremente dans Nettoyages');
   assertContains(cleaningHtml, 'operations-api.js?v=5', 'Cache API operationnelle non incremente dans Nettoyages');
-  assertContains(cleaningHtml, 'cleaning-records.js?v=5', 'Cache nettoyages non incremente');
+  assertContains(cleaningHtml, 'cleaning-records.js?v=6', 'Cache nettoyages non incremente');
 
   assertContains(todayHtml, 'id="quality-temperature-execution-form"', 'Qualite du jour doit exposer le conteneur temperature partage');
   assertContains(todayHtml, 'id="quality-cleaning-execution-form"', 'Qualite du jour doit exposer le conteneur nettoyage partage');

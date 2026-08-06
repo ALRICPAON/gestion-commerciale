@@ -15,6 +15,7 @@
     form: $('cleaning-record-form'),
     formTitle: $('cleaning-record-form-title'),
     tableBody: $('cleaning-record-table-body'),
+    documentLinks: $('cleaning-record-document-links'),
   };
   let plans = [];
   let dueRecords = [];
@@ -43,6 +44,7 @@
       ended_at: new Date().toISOString(),
       comment: record.task_title ? `Controle attendu : ${record.task_title}` : '',
     });
+    window.QualityDocumentLinks?.render('cleaning_plan', record.cleaning_plan_id, els.documentLinks, { title: 'Procedures et documents applicables' }).catch(() => {});
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
@@ -56,8 +58,8 @@
   }
 
   function renderRecords() {
-    if (!records.length) { els.tableBody.innerHTML = '<tr><td colspan="7">Aucun nettoyage enregistre.</td></tr>'; return; }
-    els.tableBody.innerHTML = records.map((record) => `<tr><td>${formatDate(record.performed_at)}</td><td>${escapeHtml(record.plan_title)}</td><td>${escapeHtml(targetNames(record.zones, record.zone_name))}</td><td>${escapeHtml(targetNames(record.equipments, record.equipment_name))}</td><td>${statusLabel(record.status)}${record.source === 'exceptional' ? '<br><small>Saisie exceptionnelle</small>' : ''}</td><td>${escapeHtml(record.performed_by_email || '-')}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '')}</td></tr>`).join('');
+    if (!records.length) { els.tableBody.innerHTML = '<tr><td colspan="8">Aucun nettoyage enregistre.</td></tr>'; return; }
+    els.tableBody.innerHTML = records.map((record) => `<tr><td>${formatDate(record.performed_at)}</td><td>${escapeHtml(record.plan_title)}</td><td>${escapeHtml(targetNames(record.zones, record.zone_name))}</td><td>${escapeHtml(targetNames(record.equipments, record.equipment_name))}</td><td>${statusLabel(record.status)}${record.source === 'exceptional' ? '<br><small>Saisie exceptionnelle</small>' : ''}</td><td>${escapeHtml(record.performed_by_email || '-')}</td><td>${escapeHtml(record.comment || record.exceptional_reason || '')}</td><td><button class="btn btn-secondary" data-action="documents" data-id="${escapeHtml(record.id)}">Documents</button></td></tr>`).join('');
   }
 
   async function load() {
@@ -90,6 +92,12 @@
     if (!button) return;
     const record = dueRecords.find((item) => item.cleaning_plan_id === button.dataset.id);
     if (record) fillDue(record);
+  });
+  els.tableBody.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action="documents"]');
+    if (!button) return;
+    const record = records.find((item) => item.id === button.dataset.id);
+    if (record) window.QualityDocumentLinks?.render('cleaning_record', record.id, els.documentLinks, { title: 'Procedures et documents applicables' }).catch(() => {});
   });
   load();
 })();
