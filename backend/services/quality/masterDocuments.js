@@ -1,10 +1,26 @@
 const fs = require('fs');
 const crypto = require('crypto');
 
+const { renderHtmlToPdf } = require('../pdf/pdfRenderer');
+const { escapeHtml, fileSafe, formatDate, htmlDocument } = require('../pdf/pdfLayout');
+const { getCompanyIdentity } = require('./companyIdentityService');
 const { logQualityEvent } = require('./eventLogger');
 
 const STATUSES = new Set(['draft', 'valid', 'expired', 'replaced', 'archived']);
 const SOURCE_TYPES = new Set(['CCI', 'laboratoire', 'prestataire', 'administration', 'fournisseur', 'interne']);
+const STRUCTURED_SECTIONS = Object.freeze([
+  ['object', 'Objet'],
+  ['scope', "Champ d'application"],
+  ['responsibilities', 'Responsabilites'],
+  ['method', 'Methode'],
+  ['frequency', 'Frequence'],
+  ['limits_objectives', 'Limites et objectifs'],
+  ['deviation_handling', 'Gestion des ecarts'],
+  ['associated_records', 'Enregistrements associes'],
+  ['associated_documents', 'Documents associes'],
+  ['associated_chapters', 'Chapitres associes'],
+  ['quality_links', 'Objets qualite associes'],
+]);
 const ATTACHMENT_SOURCES = Object.freeze({
   quality_documentation_attachment: {
     table: 'quality_documentation_attachments',
@@ -43,6 +59,90 @@ function cleanText(value, fallback = null) {
   const text = String(value).trim();
   return text || fallback;
 }
+
+function parseMaybeJson(value) {
+  if (!value || typeof value !== 'string') return null;
+  const text = value.trim();
+  if (!text.startsWith('{') && !text.startsWith('[')) return null;
+  try {
+    return JSON.parse(text);
+  } catch (err) {
+    return null;
+  }
+}
+
+function normalizeStructuredContent(description) {
+  const parsed = parseMaybeJson(description);
+  const content = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  const sections = {};
+  STRUCTURED_SECTIONS.forEach(([key]) => { sections[key] = cleanText(content[key], ''); });
+  if (!Object.values(sections).some(Boolean) && description) {
+    sections.object = cleanText(description, '');
+  }
+  return {
+    ...sections,
+    raw_description: cleanText(content.raw_description, parsed ? '' : cleanText(description, '')),
+  };
+}
+
+function enrichDocument(document) {
+  if (!document) return document;
+  return {
+    ...document,
+    structured_content: normalizeStructuredContent(document.description),
+    validity_status: document.archived_at
+      ? 'archived'
+      : (document.status === 'valid' && document.valid_until && new Date(document.valid_until) < new Date() ? 'expired' : document.status),
+  };
+}
+
+function typedLabel(targetType) {
+  return {
+    documentation_section: 'Chapitre documentaire',
+    document_block: 'Bloc documentaire',
+    quality_object: 'Objet qualite',
+    temperature: 'Releve temperature',
+    cleaning: 'Nettoyage realise',
+    cleaning_plan: 'Plan de nettoyage',
+    temperature_parameter: 'Parametre temperature',
+    non_conformity: 'Non-conformite',
+    corrective_action: 'Action corrective',
+    ddpp_view: 'Vue DDPP',
+    procedure: 'Procedure',
+  }[targetType] || targetType || 'Reference';
+}
+
+const TARGET_LABEL_QUERIES = Object.freeze({
+  documentation_section: {
+    sql: `SELECT id, code, title FROM quality_documentation_sections WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    label: (row) => [row.code, row.title].filter(Boolean).join(' - '),
+    url: (row) => `documentation.html?section_id=${encodeURIComponent(row.id)}`,
+  },
+  temperature_parameter: {
+    sql: `SELECT l.id, l.type_code, z.code AS zone_code, e.code AS equipment_code
+          FROM quality_temperature_limits l
+          LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
+          LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
+          WHERE l.id = $1::uuid AND l.store_id = $2::uuid LIMIT 1`,
+    label: (row) => [row.type_code, row.zone_code, row.equipment_code].filter(Boolean).join(' - '),
+    url: (row) => `temperature-parameters.html?id=${encodeURIComponent(row.id)}`,
+  },
+  cleaning_plan: {
+    sql: `SELECT id, title FROM quality_cleaning_plans WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    label: (row) => row.title,
+    url: (row) => `cleaning-plans.html?id=${encodeURIComponent(row.id)}`,
+  },
+  non_conformity: {
+    sql: `SELECT id, title, description FROM quality_non_conformities WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    label: (row) => row.title || row.description,
+    url: (row) => `non-conformities.html?id=${encodeURIComponent(row.id)}`,
+  },
+  corrective_action: {
+    sql: `SELECT id, action FROM quality_corrective_actions WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    label: (row) => row.action,
+    url: (row) => `corrective-actions.html?id=${encodeURIComponent(row.id)}`,
+  },
+});
 
 function cleanDate(value) {
   const text = cleanText(value);
@@ -156,6 +256,16 @@ async function listMasterDocuments(db, storeId, query = {}) {
     params.push(query.category);
     where.push(`d.category = $${params.length}::text`);
   }
+  if (query.source_type) {
+    params.push(query.source_type);
+    where.push(`d.source_type = $${params.length}::text`);
+  }
+  if (query.validity === 'current') {
+    where.push("(d.valid_until IS NULL OR d.valid_until >= CURRENT_DATE)");
+    where.push("d.status = 'valid'");
+  } else if (query.validity === 'expired') {
+    where.push("(d.status = 'expired' OR d.valid_until < CURRENT_DATE)");
+  }
   if (query.query) {
     params.push(`%${String(query.query).trim()}%`);
     where.push(`(d.title ILIKE $${params.length} OR d.reference_number ILIKE $${params.length} OR d.issuer_name ILIKE $${params.length})`);
@@ -173,7 +283,7 @@ async function listMasterDocuments(db, storeId, query = {}) {
      LIMIT $${params.length}::int`,
     params
   );
-  return result.rows;
+  return result.rows.map(enrichDocument);
 }
 
 async function getMasterDocument(db, storeId, id) {
@@ -184,7 +294,7 @@ async function getMasterDocument(db, storeId, id) {
   const document = result.rows[0] || null;
   if (!document) return null;
   const references = await listDocumentReferences(db, storeId, { document_id: id, include_archived: true });
-  return { ...document, references };
+  return enrichDocument({ ...document, references });
 }
 
 async function createMasterDocument(db, storeId, userId, body = {}) {
@@ -364,7 +474,36 @@ async function listDocumentReferences(db, storeId, query = {}) {
      ORDER BY r.archived_at NULLS FIRST, r.sort_order ASC, r.created_at DESC`,
     params
   );
-  return result.rows;
+  return hydrateReferences(db, storeId, result.rows);
+}
+
+async function hydrateReferences(db, storeId, references = []) {
+  const hydrated = [];
+  for (const reference of references) {
+    const resolver = TARGET_LABEL_QUERIES[reference.target_type];
+    let target = null;
+    if (resolver && reference.target_id) {
+      try {
+        const result = await db.query(resolver.sql, [reference.target_id, storeId]);
+        if (result.rows[0]) {
+          target = {
+            ...result.rows[0],
+            label: resolver.label(result.rows[0]) || typedLabel(reference.target_type),
+            url: resolver.url(result.rows[0]),
+          };
+        }
+      } catch (err) {
+        target = null;
+      }
+    }
+    hydrated.push({
+      ...reference,
+      target_type_label: typedLabel(reference.target_type),
+      target_label: target?.label || reference.label || typedLabel(reference.target_type),
+      target_url: target?.url || null,
+    });
+  }
+  return hydrated;
 }
 
 async function listIncomingReferences(db, storeId, documentId) {
@@ -417,6 +556,104 @@ async function diagnoseDuplicates(db, storeId) {
   };
 }
 
+function renderStructuredRows(document) {
+  const content = document.structured_content || normalizeStructuredContent(document.description);
+  return STRUCTURED_SECTIONS
+    .map(([key, label]) => {
+      const value = cleanText(content[key]);
+      if (!value) return '';
+      return `<section class="procedure-section"><h2>${escapeHtml(label)}</h2><p>${escapeHtml(value).replace(/\n/g, '<br>')}</p></section>`;
+    })
+    .filter(Boolean)
+    .join('');
+}
+
+function renderReferenceRows(references = []) {
+  return references
+    .filter((reference) => !reference.archived_at)
+    .map((reference) => `
+      <tr>
+        <td>${escapeHtml(reference.target_type_label || typedLabel(reference.target_type))}</td>
+        <td>${escapeHtml(reference.target_label || reference.label || '-')}</td>
+        <td>${escapeHtml(reference.relation_type || '-')}</td>
+      </tr>
+    `)
+    .join('');
+}
+
+function buildMasterDocumentHtml(document, identity) {
+  const referenceRows = renderReferenceRows(document.references || []);
+  const title = `${document.reference_number || document.title} - ${document.title}`;
+  const logo = identity.logo_url ? `<img class="doc-logo" src="${escapeHtml(identity.logo_url)}" alt="Logo">` : '';
+  const content = `
+    <main class="master-document-pdf">
+      <header class="doc-header">
+        <div>${logo}<strong>${escapeHtml(identity.company_name)}</strong></div>
+        <div class="doc-meta">
+          <span>${escapeHtml(document.document_type || 'Document qualite')}</span>
+          <span>Version ${escapeHtml(document.version || '-')}</span>
+          <span>${escapeHtml(document.status || '-')}</span>
+        </div>
+      </header>
+      <section class="cover">
+        <p class="kicker">Document maitrise PMS</p>
+        <h1>${escapeHtml(document.title)}</h1>
+        <table>
+          <tbody>
+            <tr><th>Code / reference</th><td>${escapeHtml(document.reference_number || '-')}</td></tr>
+            <tr><th>Categorie</th><td>${escapeHtml(document.category || '-')}</td></tr>
+            <tr><th>Emetteur</th><td>${escapeHtml(document.issuer_name || identity.company_name || '-')}</td></tr>
+            <tr><th>Date emission</th><td>${escapeHtml(formatDate(document.issue_date))}</td></tr>
+            <tr><th>Date application</th><td>${escapeHtml(formatDate(document.valid_from))}</td></tr>
+          </tbody>
+        </table>
+      </section>
+      ${renderStructuredRows(document) || `<section class="procedure-section"><h2>Contenu</h2><p>${escapeHtml(document.description || 'Aucun contenu renseigne.')}</p></section>`}
+      <section class="procedure-section">
+        <h2>Documents et objets associes</h2>
+        <table><thead><tr><th>Type</th><th>Element</th><th>Relation</th></tr></thead><tbody>${referenceRows || '<tr><td colspan="3">Aucun rattachement.</td></tr>'}</tbody></table>
+      </section>
+    </main>
+  `;
+  const styles = `
+    @page {
+      size: A4;
+      margin: 18mm 12mm 18mm 12mm;
+      @top-left { content: "${escapeHtml(identity.company_name)}"; }
+      @top-center { content: "${escapeHtml(document.reference_number || 'Document PMS')}"; }
+      @top-right { content: "V${escapeHtml(document.version || '-')}"; }
+      @bottom-left { content: "Document maitrise"; }
+      @bottom-center { content: "${escapeHtml(formatDate(new Date()))}"; }
+      @bottom-right { content: "Page " counter(page) " / " counter(pages); }
+    }
+    body { color: #263746; font-size: 12px; }
+    .doc-header { align-items: center; border-bottom: 1px solid #94a3b8; display: flex; justify-content: space-between; margin-bottom: 12mm; padding-bottom: 5mm; }
+    .doc-logo { max-height: 18mm; max-width: 42mm; object-fit: contain; vertical-align: middle; margin-right: 8mm; }
+    .doc-meta { color: #52616f; display: flex; gap: 8mm; font-size: 10px; }
+    .cover { page-break-after: always; }
+    .kicker { color: #0f5f73; font-weight: 700; text-transform: uppercase; }
+    h1 { font-size: 24px; margin: 0 0 10mm; }
+    h2 { color: #0f5f73; font-size: 16px; margin-top: 10mm; page-break-after: avoid; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #94a3b8; padding: 6px 8px; text-align: left; vertical-align: top; }
+    th { background: #eef2f7; width: 34%; }
+    .procedure-section { break-inside: avoid-page; margin-bottom: 8mm; }
+  `;
+  return htmlDocument(title, content, styles);
+}
+
+async function renderMasterDocumentPdf(db, storeId, documentId) {
+  const document = await getMasterDocument(db, storeId, documentId);
+  if (!document) return null;
+  const identity = await getCompanyIdentity(db, storeId);
+  const html = buildMasterDocumentHtml(document, identity);
+  const pdf = await renderHtmlToPdf(html, {
+    margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
+  });
+  const filename = `${fileSafe(`${document.reference_number || document.title}_V${document.version || '1'}`, 'document-maitre')}.pdf`;
+  return { document, identity, html, pdf, filename };
+}
+
 async function inventoryExistingAttachments(db, storeId) {
   const queries = [
     db.query(
@@ -467,4 +704,6 @@ module.exports = {
   getDocumentsForTarget,
   compareDocuments,
   diagnoseDuplicates,
+  normalizeStructuredContent,
+  renderMasterDocumentPdf,
 };

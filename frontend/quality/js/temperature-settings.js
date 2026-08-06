@@ -10,6 +10,7 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     feedback: $('temperature-settings-feedback'),
+    documentLinks: $('temperature-setting-document-links'),
     list: $('temperature-setting-list'),
     addBtn: $('temperature-setting-add-btn'),
     formCard: $('temperature-setting-form-card'),
@@ -167,6 +168,7 @@
       `Statut: ${item.is_active ? 'Actif' : 'Inactif'}`,
       `Tache liee: ${task?.title || item.quality_task_id || '-'}`,
     ].join(' | '));
+    window.QualityDocumentLinks?.render('temperature_parameter', item.id, els.documentLinks).catch(() => {});
   }
 
   function objectName() {

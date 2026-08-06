@@ -10,6 +10,7 @@
   const $ = (id) => document.getElementById(id);
   const els = {
     feedback: $('cleaning-plans-feedback'), list: $('cleaning-plan-list'), addBtn: $('cleaning-plan-add-btn'),
+    documentLinks: $('cleaning-plan-document-links'),
     formCard: $('cleaning-plan-form-card'), form: $('cleaning-plan-form'), formTitle: $('cleaning-plan-form-title'), id: $('cleaning-plan-id'),
     title: $('cleaning-plan-title'), zoneIds: $('cleaning-plan-zone-ids'), equipmentSearch: $('cleaning-plan-equipment-search'),
     equipmentOptions: $('cleaning-plan-equipment-options'), selectZoneEquipments: $('cleaning-plan-select-zone-equipments'), clearEquipments: $('cleaning-plan-clear-equipments'),
@@ -17,6 +18,7 @@
     safety: $('cleaning-plan-safety'), description: $('cleaning-plan-description'), planningMode: $('cleaning-plan-planning-mode'),
     taskId: $('cleaning-plan-quality-task-id'), taskTitle: $('cleaning-plan-task-title'), taskResponsible: $('cleaning-plan-task-responsible'),
     frequencyValue: $('cleaning-plan-frequency-value'), frequencyUnit: $('cleaning-plan-frequency-unit'), targetTime: $('cleaning-plan-target-time'), cancelBtn: $('cleaning-plan-cancel-btn'),
+    scheduledDays: $('cleaning-plan-scheduled-days-label'),
   };
   let plans = []; let zones = []; let equipments = []; let tasks = []; let users = []; let selectedEquipmentIds = new Set();
 
@@ -27,6 +29,17 @@
   function taskStatus(task) { const status = task?.computed_status || task?.status; return { planned: 'Planifiee', due: 'Du jour', overdue: 'En retard', completed: 'Terminee', paused: 'Suspendue', cancelled: 'Annulee' }[status] || 'Non planifie'; }
   function objectLabel(item) { if (!item) return ''; return `${item.code ? `${item.code} - ` : ''}${item.name || item.id}${item.zone_name ? ` (${item.zone_name})` : ''}`; }
   function selectedZoneIds() { return [...els.zoneIds.options].filter((option) => option.selected).map((option) => option.value).filter(Boolean); }
+  function selectedScheduledDays() {
+    return [...els.scheduledDays.querySelectorAll('input[name="cleaning-plan-scheduled-day"]')]
+      .filter((input) => input.checked && !input.disabled)
+      .map((input) => input.value);
+  }
+  function setScheduledDays(days = []) {
+    const selected = new Set(normalizeItems(days).map(String));
+    els.scheduledDays.querySelectorAll('input[name="cleaning-plan-scheduled-day"]').forEach((input) => {
+      input.checked = selected.has(input.value);
+    });
+  }
   function normalizeItems(value) { return Array.isArray(value) ? value.filter(Boolean) : []; }
   function resolveKnownId(item, collection) {
     if (!item) return null;
@@ -71,6 +84,7 @@
       `Statut: ${plan.active ? 'Actif' : 'Inactif'}`,
       `Tache liee: ${task?.title || plan.quality_task_id || '-'}`,
     ].join(' | '));
+    window.QualityDocumentLinks?.render('cleaning_plan', plan.id, els.documentLinks).catch(() => {});
   }
 
   function refreshZones(selectedIds = []) {
@@ -142,6 +156,12 @@
     $('cleaning-plan-frequency-value-label').classList.toggle('hidden', !create);
     $('cleaning-plan-frequency-unit-label').classList.toggle('hidden', !create);
     $('cleaning-plan-target-time-label').classList.toggle('hidden', !create);
+    els.scheduledDays.classList.toggle('hidden', false);
+    const eventBased = els.frequencyUnit.value === 'events';
+    els.scheduledDays.querySelectorAll('input[name="cleaning-plan-scheduled-day"]').forEach((input) => {
+      input.disabled = eventBased;
+      if (eventBased) input.checked = false;
+    });
     if (create && els.taskTitle.dataset.touched !== 'true') els.taskTitle.value = `Nettoyage - ${els.title.value || 'Plan'}`;
   }
 
@@ -179,6 +199,7 @@
       frequency_value: els.frequencyValue.value || null,
       frequency_unit: els.frequencyUnit.value || null,
       target_time: els.targetTime.value || null,
+      scheduled_days: els.frequencyUnit.value === 'events' ? [] : selectedScheduledDays(),
       task_description: taskDescription(),
       quality_task_id: taskId,
       active: els.active.checked,
@@ -219,6 +240,7 @@
     els.frequencyValue.value = plan.quality_task?.frequency_value || '';
     els.frequencyUnit.value = plan.quality_task?.frequency_unit || '';
     els.targetTime.value = plan.quality_task?.target_time ? String(plan.quality_task.target_time).slice(0, 5) : '';
+    setScheduledDays(plan.scheduled_days || plan.quality_task?.scheduled_days || []);
     els.formTitle.textContent = 'Modifier le plan';
     refreshPlanningMode();
     els.formCard.classList.remove('hidden');
@@ -310,6 +332,7 @@
     refreshEquipments();
   });
   els.planningMode.addEventListener('change', refreshPlanningMode);
+  els.frequencyUnit.addEventListener('change', refreshPlanningMode);
   els.title.addEventListener('input', refreshPlanningMode);
   els.taskTitle.addEventListener('input', () => { els.taskTitle.dataset.touched = 'true'; });
   els.form.addEventListener('submit', async (event) => {
@@ -355,6 +378,7 @@
       planZoneIds,
       refreshZones,
       selectedZoneIds,
+      selectedScheduledDays,
       setData: (data = {}) => {
         zones = data.zones || zones;
         equipments = data.equipments || equipments;

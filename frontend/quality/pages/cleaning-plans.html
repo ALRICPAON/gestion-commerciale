@@ -40,12 +40,23 @@
           <label id="cleaning-plan-frequency-value-label">Frequence<input id="cleaning-plan-frequency-value" class="form-input" type="number" min="1"></label>
           <label id="cleaning-plan-frequency-unit-label">Unite<select id="cleaning-plan-frequency-unit" class="form-input"><option value="">Non definie</option><option value="hours">Heures</option><option value="days">Jours</option><option value="weeks">Semaines</option><option value="months">Mois</option><option value="events">Evenements</option></select></label>
           <label id="cleaning-plan-target-time-label">Heure cible<input id="cleaning-plan-target-time" class="form-input" type="time"></label>
+          <fieldset id="cleaning-plan-scheduled-days-label" class="quality-form-wide quality-inline-fieldset">
+            <legend>Jours actifs</legend>
+            <label><input type="checkbox" name="cleaning-plan-scheduled-day" value="monday"> Lundi</label>
+            <label><input type="checkbox" name="cleaning-plan-scheduled-day" value="tuesday"> Mardi</label>
+            <label><input type="checkbox" name="cleaning-plan-scheduled-day" value="wednesday"> Mercredi</label>
+            <label><input type="checkbox" name="cleaning-plan-scheduled-day" value="thursday"> Jeudi</label>
+            <label><input type="checkbox" name="cleaning-plan-scheduled-day" value="friday"> Vendredi</label>
+            <label><input type="checkbox" name="cleaning-plan-scheduled-day" value="saturday"> Samedi</label>
+            <label><input type="checkbox" name="cleaning-plan-scheduled-day" value="sunday"> Dimanche</label>
+          </fieldset>
         </fieldset>
         <div class="quality-actions quality-form-wide"><button class="btn btn-primary" type="submit">Enregistrer</button><button id="cleaning-plan-cancel-btn" class="btn btn-secondary" type="button">Annuler</button></div>
       </form>
     </section>
+    <section id="cleaning-plan-document-links" class="quality-list-grid"></section>
     <section id="cleaning-plan-list" class="quality-list-grid"></section>
   </main>
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/digital-twin-api.js"></script><script src="../js/tasks-api.js?v=2"></script><script src="../js/cleaning-api.js?v=1"></script><script src="../js/cleaning-plans.js?v=2"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/quality-document-links.js?v=1"></script><script src="../js/digital-twin-api.js"></script><script src="../js/tasks-api.js?v=2"></script><script src="../js/cleaning-api.js?v=1"></script><script src="../js/cleaning-plans.js?v=4"></script>
 </body>
 </html>

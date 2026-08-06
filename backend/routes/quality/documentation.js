@@ -97,6 +97,7 @@ function exportOptions(body = {}) {
     only_validated: body.only_validated === true,
     include_missing: body.include_missing !== false,
     include_attachments: body.include_attachments !== false,
+    include_master_annexes: body.include_master_annexes === true,
   };
 }
 

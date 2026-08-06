@@ -35,18 +35,85 @@
           <button id="master-document-refresh" class="btn btn-secondary" type="button">Actualiser</button>
         </div>
         <input id="master-document-search" class="form-input" placeholder="Rechercher titre, emetteur, reference">
+        <div class="quality-form-grid">
+          <label>Type
+            <select id="master-document-filter-type" class="form-input">
+              <option value="">Tous</option>
+              <option value="procedure">Procedure</option>
+              <option value="record_form">Formulaire</option>
+              <option value="external_evidence">Preuve externe</option>
+              <option value="technical_sheet">Fiche technique</option>
+            </select>
+          </label>
+          <label>Statut
+            <select id="master-document-filter-status" class="form-input">
+              <option value="">Tous</option>
+              <option value="valid">Valide</option>
+              <option value="draft">Brouillon</option>
+              <option value="expired">Expire</option>
+              <option value="replaced">Remplace</option>
+              <option value="archived">Archive</option>
+            </select>
+          </label>
+          <label>Validite
+            <select id="master-document-filter-validity" class="form-input">
+              <option value="">Toutes</option>
+              <option value="current">En cours</option>
+              <option value="expired">Expiree</option>
+            </select>
+          </label>
+          <label>Source
+            <select id="master-document-filter-source" class="form-input">
+              <option value="">Toutes</option>
+              <option value="interne">Interne</option>
+              <option value="CCI">CCI</option>
+              <option value="laboratoire">Laboratoire</option>
+              <option value="prestataire">Prestataire</option>
+              <option value="administration">Administration</option>
+              <option value="fournisseur">Fournisseur</option>
+            </select>
+          </label>
+        </div>
         <div id="master-document-list" class="quality-doc-section-list"></div>
       </aside>
 
       <section class="quality-card quality-doc-editor">
         <div class="quality-section-header">
           <div><span id="master-document-status" class="quality-badge">-</span><h3 id="master-document-heading">Nouveau document maitre</h3></div>
+          <div class="quality-actions">
+            <button id="master-document-edit" class="btn btn-secondary" type="button">Modifier</button>
+            <button id="master-document-pdf" class="btn btn-secondary" type="button">PDF</button>
+          </div>
         </div>
+        <article id="master-document-detail" class="quality-list-grid"></article>
         <form id="master-document-form" class="quality-form-grid">
           <input id="master-document-id" type="hidden">
-          <label>Titre <input id="master-document-title" class="form-input" required></label>
-          <label>Type documentaire <input id="master-document-type" class="form-input" value="external_evidence" required></label>
-          <label>Categorie <input id="master-document-category" class="form-input"></label>
+          <fieldset class="quality-form-wide quality-inline-fieldset">
+            <legend>Identite documentaire</legend>
+            <label>Titre <input id="master-document-title" class="form-input" required></label>
+            <label>Type documentaire
+              <select id="master-document-type" class="form-input" required>
+                <option value="procedure">Procedure</option>
+                <option value="record_form">Formulaire d'enregistrement</option>
+                <option value="external_evidence">Preuve externe</option>
+                <option value="technical_sheet">Fiche technique</option>
+              </select>
+            </label>
+            <label>Categorie <input id="master-document-category" class="form-input"></label>
+            <label>Reference <input id="master-document-reference" class="form-input"></label>
+            <label>Version <input id="master-document-version" class="form-input" value="1.0"></label>
+            <label>Statut
+              <select id="master-document-status-input" class="form-input">
+                <option value="draft">Brouillon</option>
+                <option value="valid">Valide</option>
+                <option value="expired">Expire</option>
+                <option value="replaced">Remplace</option>
+                <option value="archived">Archive</option>
+              </select>
+            </label>
+          </fieldset>
+          <fieldset class="quality-form-wide quality-inline-fieldset">
+            <legend>Maitrise documentaire</legend>
           <label>Source
             <select id="master-document-source" class="form-input">
               <option value="interne">Interne</option>
@@ -58,26 +125,33 @@
             </select>
           </label>
           <label>Emetteur <input id="master-document-issuer" class="form-input"></label>
-          <label>Reference <input id="master-document-reference" class="form-input"></label>
           <label>Date emission <input id="master-document-issue-date" class="form-input" type="date"></label>
           <label>Valide depuis <input id="master-document-valid-from" class="form-input" type="date"></label>
           <label>Valide jusqu'au <input id="master-document-valid-until" class="form-input" type="date"></label>
-          <label>Version <input id="master-document-version" class="form-input" value="1.0"></label>
-          <label>Statut
-            <select id="master-document-status-input" class="form-input">
-              <option value="draft">Brouillon</option>
-              <option value="valid">Valide</option>
-              <option value="expired">Expire</option>
-              <option value="replaced">Remplace</option>
-              <option value="archived">Archive</option>
-            </select>
-          </label>
-          <label>Fichier original <input id="master-document-filename" class="form-input"></label>
-          <label>Chemin/reference fichier <input id="master-document-storage" class="form-input"></label>
-          <label>MIME <input id="master-document-mime" class="form-input"></label>
-          <label>Taille <input id="master-document-size" class="form-input" type="number"></label>
-          <label>Checksum SHA-256 <input id="master-document-checksum" class="form-input"></label>
-          <label>Description <textarea id="master-document-description" class="form-input"></textarea></label>
+          </fieldset>
+          <fieldset class="quality-form-wide quality-inline-fieldset">
+            <legend>Contenu procedure / formulaire</legend>
+            <label>Objet<textarea id="master-document-object" class="form-input" rows="2"></textarea></label>
+            <label>Champ d'application<textarea id="master-document-scope" class="form-input" rows="2"></textarea></label>
+            <label>Responsabilites<textarea id="master-document-responsibilities" class="form-input" rows="2"></textarea></label>
+            <label>Methode<textarea id="master-document-method" class="form-input" rows="3"></textarea></label>
+            <label>Frequence<textarea id="master-document-frequency" class="form-input" rows="2"></textarea></label>
+            <label>Limites / objectifs<textarea id="master-document-limits" class="form-input" rows="2"></textarea></label>
+            <label>Gestion des ecarts<textarea id="master-document-deviation" class="form-input" rows="2"></textarea></label>
+            <label>Enregistrements associes<textarea id="master-document-records" class="form-input" rows="2"></textarea></label>
+            <label>Documents associes<textarea id="master-document-documents" class="form-input" rows="2"></textarea></label>
+          </fieldset>
+          <label class="quality-form-wide">Description historique<textarea id="master-document-description" class="form-input"></textarea></label>
+          <details class="quality-form-wide">
+            <summary>Champs techniques avances</summary>
+            <div class="quality-form-grid">
+              <label>Fichier original <input id="master-document-filename" class="form-input"></label>
+              <label>Chemin/reference fichier <input id="master-document-storage" class="form-input"></label>
+              <label>MIME <input id="master-document-mime" class="form-input"></label>
+              <label>Taille <input id="master-document-size" class="form-input" type="number"></label>
+              <label>Checksum SHA-256 <input id="master-document-checksum" class="form-input"></label>
+            </div>
+          </details>
           <div class="quality-actions">
             <button class="btn btn-primary" type="submit">Enregistrer</button>
             <button id="master-document-new" class="btn btn-secondary" type="button">Nouveau</button>
@@ -115,6 +189,6 @@
     </section>
   </main>
 
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/master-documents.js?v=1"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/master-documents.js?v=2"></script>
 </body>
 </html>
