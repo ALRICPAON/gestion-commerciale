@@ -12,7 +12,12 @@
     feedback: $('master-documents-feedback'),
     refresh: $('master-document-refresh'),
     search: $('master-document-search'),
+    filterType: $('master-document-filter-type'),
+    filterStatus: $('master-document-filter-status'),
+    filterValidity: $('master-document-filter-validity'),
+    filterSource: $('master-document-filter-source'),
     list: $('master-document-list'),
+    detail: $('master-document-detail'),
     form: $('master-document-form'),
     id: $('master-document-id'),
     heading: $('master-document-heading'),
@@ -34,6 +39,17 @@
     size: $('master-document-size'),
     checksum: $('master-document-checksum'),
     description: $('master-document-description'),
+    object: $('master-document-object'),
+    scope: $('master-document-scope'),
+    responsibilities: $('master-document-responsibilities'),
+    method: $('master-document-method'),
+    frequency: $('master-document-frequency'),
+    limits: $('master-document-limits'),
+    deviation: $('master-document-deviation'),
+    records: $('master-document-records'),
+    documents: $('master-document-documents'),
+    editButton: $('master-document-edit'),
+    pdfButton: $('master-document-pdf'),
     newButton: $('master-document-new'),
     archiveButton: $('master-document-archive'),
     references: $('master-document-references'),
@@ -44,7 +60,7 @@
     referenceLabel: $('master-reference-label'),
   };
 
-  let state = { documents: [], current: null };
+  let state = { documents: [], current: null, editMode: false };
 
   function setFeedback(message = '', type = '') {
     els.feedback.textContent = message;
@@ -57,6 +73,47 @@
 
   function headers() {
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
+  }
+
+  function typeLabel(value) {
+    return {
+      procedure: 'Procedure',
+      record_form: 'Formulaire',
+      external_evidence: 'Preuve externe',
+      technical_sheet: 'Fiche technique',
+    }[value] || value || '-';
+  }
+
+  function statusLabel(value) {
+    return {
+      draft: 'Brouillon',
+      valid: 'Valide',
+      expired: 'Expire',
+      replaced: 'Remplace',
+      archived: 'Archive',
+    }[value] || value || '-';
+  }
+
+  function formatDate(value) {
+    return value ? new Date(value).toLocaleDateString('fr-FR') : '-';
+  }
+
+  function structuredDescription() {
+    const content = {
+      object: els.object.value,
+      scope: els.scope.value,
+      responsibilities: els.responsibilities.value,
+      method: els.method.value,
+      frequency: els.frequency.value,
+      limits_objectives: els.limits.value,
+      deviation_handling: els.deviation.value,
+      associated_records: els.records.value,
+      associated_documents: els.documents.value,
+      raw_description: els.description.value,
+    };
+    return Object.values(content).some((value) => String(value || '').trim())
+      ? JSON.stringify(content)
+      : '';
   }
 
   async function request(path, options = {}) {
@@ -87,7 +144,7 @@
       mime_type: els.mime.value,
       file_size: els.size.value ? Number(els.size.value) : null,
       checksum_sha256: els.checksum.value,
-      description: els.description.value,
+      description: structuredDescription() || els.description.value,
     };
   }
 
@@ -112,8 +169,57 @@
     els.mime.value = document?.mime_type || '';
     els.size.value = document?.file_size || '';
     els.checksum.value = document?.checksum_sha256 || '';
-    els.description.value = document?.description || '';
+    const structured = document?.structured_content || {};
+    els.object.value = structured.object || '';
+    els.scope.value = structured.scope || '';
+    els.responsibilities.value = structured.responsibilities || '';
+    els.method.value = structured.method || '';
+    els.frequency.value = structured.frequency || '';
+    els.limits.value = structured.limits_objectives || '';
+    els.deviation.value = structured.deviation_handling || '';
+    els.records.value = structured.associated_records || '';
+    els.documents.value = structured.associated_documents || '';
+    els.description.value = structured.raw_description && !String(structured.raw_description).trim().startsWith('{') ? structured.raw_description : '';
     renderReferences(document?.references || []);
+    renderDetail(document);
+    refreshMode();
+  }
+
+  function refreshMode() {
+    const editing = state.editMode || !state.current;
+    els.form.classList.toggle('hidden', !editing);
+    els.detail.classList.toggle('hidden', editing);
+    els.editButton.disabled = !canEdit || !state.current;
+    els.pdfButton.disabled = !state.current;
+  }
+
+  function renderDetail(document) {
+    if (!document) {
+      els.detail.innerHTML = '<div class="quality-empty-state">Selectionnez un document ou creez une nouvelle fiche.</div>';
+      return;
+    }
+    const content = document.structured_content || {};
+    const sections = [
+      ['Objet', content.object],
+      ["Champ d'application", content.scope],
+      ['Responsabilites', content.responsibilities],
+      ['Methode', content.method],
+      ['Frequence', content.frequency],
+      ['Limites et objectifs', content.limits_objectives],
+      ['Gestion des ecarts', content.deviation_handling],
+      ['Enregistrements associes', content.associated_records],
+      ['Documents associes', content.associated_documents],
+    ].filter(([, value]) => String(value || '').trim());
+    els.detail.innerHTML = `
+      <article class="quality-card">
+        <span class="quality-badge">${escapeHtml(statusLabel(document.status))}</span>
+        <h3>${escapeHtml(document.reference_number || document.title)} - ${escapeHtml(document.title)}</h3>
+        <p class="quality-muted">${escapeHtml(typeLabel(document.document_type))} | Version ${escapeHtml(document.version || '-')} | Application ${escapeHtml(formatDate(document.valid_from))}</p>
+        <p><strong>Emetteur :</strong> ${escapeHtml(document.issuer_name || document.source_type || '-')}</p>
+      </article>
+      ${sections.map(([label, value]) => `<article class="quality-card"><h3>${escapeHtml(label)}</h3><p>${escapeHtml(value).replace(/\n/g, '<br>')}</p></article>`).join('')}
+      ${sections.length ? '' : `<article class="quality-card"><h3>Contenu</h3><p>${escapeHtml(document.description || 'Aucun contenu renseigne.').replace(/\n/g, '<br>')}</p></article>`}
+    `;
   }
 
   function renderList() {
@@ -122,7 +228,7 @@
     els.list.innerHTML = rows.length ? rows.map((document) => `
       <button class="quality-doc-tree-item ${state.current?.id === document.id ? 'active' : ''}" type="button" data-document-id="${escapeHtml(document.id)}">
         <strong>${escapeHtml(document.title)}</strong>
-        <span>${escapeHtml(document.document_type)} - ${escapeHtml(document.status)} - ${document.active_reference_count || 0} ref.</span>
+        <span>${escapeHtml(typeLabel(document.document_type))} - ${escapeHtml(statusLabel(document.status))} - ${document.active_reference_count || 0} ref.</span>
       </button>
     `).join('') : '<div class="quality-empty-state">Aucun document maitre.</div>';
   }
@@ -132,7 +238,8 @@
       <article class="quality-card">
         <span class="quality-badge">${escapeHtml(reference.relation_type)}</span>
         <h3>${escapeHtml(reference.label || reference.target_type)}</h3>
-        <p class="quality-muted">${escapeHtml(reference.target_type)} ${escapeHtml(reference.target_id || '')}</p>
+        <p class="quality-muted">${escapeHtml(reference.target_type_label || reference.target_type)} - ${escapeHtml(reference.target_label || '-')}</p>
+        ${reference.target_url ? `<button class="btn btn-secondary" type="button" data-open-reference="${escapeHtml(reference.target_url)}">Ouvrir</button>` : ''}
         <button class="btn btn-secondary" type="button" data-archive-reference="${escapeHtml(reference.id)}">Archiver</button>
       </article>
     `).join('') : '<div class="quality-empty-state">Aucune reference entrante.</div>';
@@ -140,13 +247,20 @@
 
   async function load(selectedId = null) {
     setFeedback('Chargement...');
-    const data = await request('/?include_archived=true&limit=200');
+    const params = new URLSearchParams({ include_archived: 'true', limit: '200' });
+    if (els.filterType.value) params.set('document_type', els.filterType.value);
+    if (els.filterStatus.value) params.set('status', els.filterStatus.value);
+    if (els.filterValidity.value) params.set('validity', els.filterValidity.value);
+    if (els.filterSource.value) params.set('source_type', els.filterSource.value);
+    if (els.search.value.trim()) params.set('query', els.search.value.trim());
+    const data = await request(`/?${params.toString()}`);
     state.documents = data.documents || [];
     const id = selectedId || state.current?.id || state.documents[0]?.id;
     if (id) {
       const detail = await request(`/${encodeURIComponent(id)}`);
       fillForm(detail.document);
     } else {
+      state.editMode = true;
       fillForm(null);
     }
     renderList();
@@ -161,6 +275,7 @@
       method: id ? 'PATCH' : 'POST',
       body: JSON.stringify(formPayload()),
     });
+    state.editMode = false;
     await load(saved.document.id);
     setFeedback('Document maitre enregistre.', 'success');
   });
@@ -188,17 +303,28 @@
     const item = event.target.closest('[data-document-id]');
     if (!item) return;
     const detail = await request(`/${encodeURIComponent(item.dataset.documentId)}`);
+    state.editMode = false;
     fillForm(detail.document);
     renderList();
   });
   els.references.addEventListener('click', async (event) => {
+    const openButton = event.target.closest('[data-open-reference]');
+    if (openButton) {
+      window.location.href = openButton.dataset.openReference;
+      return;
+    }
     const button = event.target.closest('[data-archive-reference]');
     if (!button || !canEdit) return;
     await request(`/references/${encodeURIComponent(button.dataset.archiveReference)}`, { method: 'DELETE' });
     await load(state.current?.id);
     setFeedback('Reference archivee.', 'success');
   });
-  els.newButton.addEventListener('click', () => { fillForm(null); renderList(); });
+  els.newButton.addEventListener('click', () => { state.editMode = true; fillForm(null); renderList(); });
+  els.editButton.addEventListener('click', () => { state.editMode = true; refreshMode(); });
+  els.pdfButton.addEventListener('click', () => {
+    if (!state.current?.id) return;
+    window.open(`${API_BASE_URL}/api/quality/master-documents/${encodeURIComponent(state.current.id)}/export-pdf`, '_blank', 'noopener');
+  });
   els.archiveButton.addEventListener('click', async () => {
     if (!canEdit || !state.current?.id || !window.confirm('Archiver cette fiche maitre ? Le fichier physique ne sera pas supprime.')) return;
     const archived = await request(`/${encodeURIComponent(state.current.id)}`, { method: 'DELETE' });
@@ -206,11 +332,15 @@
     setFeedback('Document maitre archive.', 'success');
   });
   els.refresh.addEventListener('click', () => load().catch((error) => setFeedback(error.message, 'error')));
-  els.search.addEventListener('input', renderList);
+  [els.search, els.filterType, els.filterStatus, els.filterValidity, els.filterSource].forEach((element) => {
+    element.addEventListener('input', () => load().catch((error) => setFeedback(error.message, 'error')));
+    element.addEventListener('change', () => load().catch((error) => setFeedback(error.message, 'error')));
+  });
 
   Array.from(els.form.elements).forEach((element) => { element.disabled = element.disabled || !canEdit; });
   Array.from(els.referenceForm.elements).forEach((element) => { element.disabled = element.disabled || !canEdit; });
   els.archiveButton.disabled = !canEdit;
   els.newButton.disabled = !canEdit;
-  load().catch((error) => setFeedback(error.message, 'error'));
+  const initialDocumentId = new URLSearchParams(window.location.search).get('document_id');
+  load(initialDocumentId).catch((error) => setFeedback(error.message, 'error'));
 })();

@@ -6,6 +6,7 @@ const { escapeHtml, fileSafe, formatDate, htmlDocument } = require('../pdf/pdfLa
 const { getCompanyIdentity } = require('./companyIdentityService');
 const { getDocumentation } = require('./qualityDocumentationService');
 const { renderDocumentBlock } = require('./qualityDocumentBlockService');
+const { getMasterDocument, listDocumentReferences } = require('./masterDocuments');
 
 const EXPORT_DIR = path.resolve(__dirname, '..', '..', 'uploads', 'quality-documentation-exports');
 
@@ -96,8 +97,53 @@ function renderPdfBlock(block, options = {}) {
   return `<div class="${pdfBlockClasses(block)}" data-quality-block-type="${escapeHtml(block.block_type)}">${html}</div>`;
 }
 
+async function collectMasterAnnexes(db, storeId, sections = []) {
+  const chapterIds = new Set(sections.filter((section) => section.section_type !== 'tome').map((section) => String(section.id)));
+  if (!chapterIds.size) return [];
+  const references = await listDocumentReferences(db, storeId, { target_type: 'documentation_section', include_archived: false });
+  const byDocumentId = new Map();
+  for (const reference of references) {
+    if (!chapterIds.has(String(reference.target_id))) continue;
+    if (!['procedure', 'record_form'].includes(reference.document_type)) continue;
+    if (reference.document_status !== 'valid') continue;
+    if (reference.valid_until && new Date(reference.valid_until) < new Date()) continue;
+    if (!byDocumentId.has(reference.document_id)) {
+      const document = await getMasterDocument(db, storeId, reference.document_id);
+      if (document && !document.archived_at) byDocumentId.set(reference.document_id, { document, references: [] });
+    }
+    byDocumentId.get(reference.document_id)?.references.push(reference);
+  }
+  return [...byDocumentId.values()].sort((a, b) => String(a.document.reference_number || a.document.title).localeCompare(String(b.document.reference_number || b.document.title)));
+}
+
+function renderMasterAnnexes(masterAnnexes = []) {
+  const rows = masterAnnexes.map(({ document, references }) => {
+    const chapters = [...new Set(references.map((reference) => reference.target_label).filter(Boolean))].join(', ');
+    return `<tr><td>${escapeHtml(document.reference_number || '-')}</td><td>${escapeHtml(document.title)}</td><td>${escapeHtml(document.version || '-')}</td><td>${escapeHtml(chapters || '-')}</td></tr>`;
+  }).join('');
+  const contents = masterAnnexes.map(({ document }) => {
+    const structured = document.structured_content || {};
+    const summary = structured.object || structured.scope || document.description || '';
+    return `
+      <section class="pdf-section">
+        <h2>${escapeHtml(document.reference_number || '')} - ${escapeHtml(document.title)}</h2>
+        <div class="section-meta">Version ${escapeHtml(document.version || '-')} - Statut ${escapeHtml(document.status || '-')} - Application ${escapeHtml(formatDate(document.valid_from))}</div>
+        <p>${escapeHtml(summary || 'Procedure applicable rattachee au dossier PMS.').replace(/\n/g, '<br>')}</p>
+      </section>
+    `;
+  }).join('');
+  return `
+    <section class="pdf-page">
+      <h1>Table des annexes PMS</h1>
+      <table><thead><tr><th>Code</th><th>Document</th><th>Version</th><th>Chapitres rattaches</th></tr></thead><tbody>${rows || '<tr><td colspan="4">Aucune procedure ou formulaire valide rattache.</td></tr>'}</tbody></table>
+    </section>
+    ${contents}
+  `;
+}
+
 function buildHtml(documentation, identity, options = {}) {
   const { collection, missing_items: missingItems, attachments } = documentation;
+  const masterAnnexes = documentation.master_annexes || [];
   const sections = filteredSections(documentation.sections, options);
   const chapters = sections.filter((section) => section.section_type !== 'tome');
   const revisionRows = chapters.slice(0, 20).map((section) => `
@@ -156,6 +202,7 @@ function buildHtml(documentation, identity, options = {}) {
       ${options.include_missing === false ? '' : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Priorite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`}
       ${body}
       ${options.include_attachments === false ? '' : `<section class="pdf-page"><h1>Annexes</h1><table><thead><tr><th>Chapitre</th><th>Fichier</th><th>Type</th></tr></thead><tbody>${attachmentRows || '<tr><td colspan="3">Aucune annexe incluse.</td></tr>'}</tbody></table></section>`}
+      ${options.include_master_annexes ? renderMasterAnnexes(masterAnnexes) : ''}
     </main>
   `;
 
@@ -225,6 +272,9 @@ function buildHtml(documentation, identity, options = {}) {
 async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
   const documentation = await getDocumentation(db, storeId, collectionId);
   if (!documentation) return null;
+  if (options.include_master_annexes) {
+    documentation.master_annexes = await collectMasterAnnexes(db, storeId, filteredSections(documentation.sections, options));
+  }
   const identity = await getCompanyIdentity(db, storeId);
   const html = buildHtml(documentation, identity, options);
   const pdf = await renderHtmlToPdf(html, {
@@ -252,6 +302,7 @@ async function exportDocumentationPdf(db, storeId, collectionId, userId, options
 
 module.exports = {
   buildHtml,
+  collectMasterAnnexes,
   exportDocumentationPdf,
   paginationPreparationScript,
   renderDocumentationPdf,

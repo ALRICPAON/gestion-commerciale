@@ -102,6 +102,18 @@ router.get('/:id', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_RE
   }
 });
 
+router.get('/:id/export-pdf', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EXPORT), async (req, res) => {
+  try {
+    const rendered = await masterDocuments.renderMasterDocumentPdf(req.dbPool, req.user.store_id, req.params.id);
+    if (!rendered) return res.status(404).json({ error: 'Document maitre introuvable' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${rendered.filename}"`);
+    res.send(rendered.pdf);
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/master-documents/:id/export-pdf');
+  }
+});
+
 router.patch('/:id', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
   try {
     const document = await masterDocuments.updateMasterDocument(req.dbPool, req.user.store_id, req.params.id, req.user.id, req.body);

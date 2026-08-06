@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 
 const masterDocuments = require('../services/quality/masterDocuments');
+const { collectMasterAnnexes } = require('../services/quality/qualityDocumentationExportService');
 const { getAgentTool, listMcpTools } = require('../services/agent/agentToolRegistry');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 
@@ -29,6 +30,10 @@ function makeDb(filePath) {
       file_size: fs.statSync(filePath).size,
       section_id: SECTION_ID,
     }],
+    sections: [
+      { id: SECTION_ID, store_id: STORE_ID, code: 'PMS-01', title: 'Plan de maitrise sanitaire' },
+      { id: '88888888-8888-4888-8888-888888888888', store_id: STORE_ID, code: 'PMS-02', title: 'Nettoyage' },
+    ],
     calls: [],
   };
   return {
@@ -37,6 +42,9 @@ function makeDb(filePath) {
       state.calls.push({ sql, params });
       if (/FROM quality_documentation_attachments/i.test(sql)) {
         return { rows: state.attachments.filter((item) => item.id === params[0] || params[0] === STORE_ID).map((item) => ({ ...item, source_type: 'quality_documentation_attachment', target_id: item.section_id, target_type: 'documentation_section', name: item.title, file_path: item.storage_path })) };
+      }
+      if (/FROM quality_documentation_sections/i.test(sql)) {
+        return { rows: state.sections.filter((item) => item.id === params[0] && item.store_id === params[1]) };
       }
       if (/FROM quality_documents WHERE store_id/i.test(sql) || /FROM quality_photos WHERE store_id/i.test(sql)) return { rows: [] };
       if (/SELECT d\.\*/i.test(sql) && /FROM quality_master_documents d/i.test(sql)) {
@@ -141,7 +149,18 @@ function makeDb(filePath) {
         let rows = state.references.filter((item) => item.store_id === params[0]);
         if (/r\.document_id =/i.test(sql)) rows = rows.filter((item) => item.document_id === params[1]);
         if (!/include_archived/i.test(sql)) rows = rows.filter((item) => !item.archived_at);
-        return { rows: rows.map((ref) => ({ ...ref, document_title: state.documents.find((doc) => doc.id === ref.document_id)?.title || null })) };
+        return {
+          rows: rows.map((ref) => {
+            const document = state.documents.find((doc) => doc.id === ref.document_id) || {};
+            return {
+              ...ref,
+              document_title: document.title || null,
+              document_status: document.status || null,
+              document_type: document.document_type || null,
+              valid_until: document.valid_until || null,
+            };
+          }),
+        };
       }
       if (/UPDATE quality_document_references/i.test(sql)) {
         const ref = state.references.find((item) => item.id === params[0] && item.store_id === params[1]);
@@ -170,11 +189,14 @@ async function main() {
 
   const created = await masterDocuments.createMasterDocument(db, STORE_ID, USER_ID, {
     title: 'Attestation CCI',
-    document_type: 'external_evidence',
+    document_type: 'procedure',
     source_type: 'CCI',
     storage_path: filePath,
     original_filename: 'attestation.pdf',
     status: 'valid',
+    reference_number: 'PROC-006',
+    valid_from: '2026-01-01',
+    description: JSON.stringify({ object: 'Maitriser les documents PMS', method: 'Consulter la procedure applicable.', associated_chapters: 'PMS-01' }),
   });
   assert.equal(created.checksum_sha256, checksum);
 
@@ -202,12 +224,19 @@ async function main() {
   assert.notEqual(second.checksum_sha256, checksum, 'meme nom mais contenu different ne doit pas etre un doublon exact');
 
   const firstRef = await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: DOC_ID, target_type: 'documentation_section', target_id: SECTION_ID, relation_type: 'proof', label: 'Chapitre PMS' });
+  await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: DOC_ID, target_type: 'documentation_section', target_id: '88888888-8888-4888-8888-888888888888', relation_type: 'applicable_document', label: 'Chapitre nettoyage' });
   const secondRef = await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: DOC_ID, target_type: 'ddpp_view', relation_type: 'inspection', label: 'DDPP' });
   assert(firstRef.id && secondRef.id, 'plusieurs references doivent etre possibles');
   const archivedRef = await masterDocuments.archiveDocumentReference(db, STORE_ID, USER_ID, firstRef.id);
   assert(archivedRef.archived_at, 'archivage logique reference attendu');
   assert(fs.existsSync(filePath), 'le fichier original doit etre conserve');
   assert.equal((await masterDocuments.listMasterDocuments(db, OTHER_STORE_ID)).length, 0, 'isolation store_id attendue');
+  const detail = await masterDocuments.getMasterDocument(db, STORE_ID, DOC_ID);
+  assert.equal(detail.structured_content.object, 'Maitriser les documents PMS', 'contenu structure derive de description attendu');
+  assert(detail.references.some((ref) => ref.target_label === 'PMS-02 - Nettoyage'), 'reference lisible sans UUID brut attendue');
+  const annexes = await collectMasterAnnexes(db, STORE_ID, db.state.sections);
+  assert.equal(annexes.length, 1, 'procedure rattachee a plusieurs chapitres doit etre dedupliquee en annexe');
+  assert.equal(annexes[0].references.length, 1, 'seules les references actives doivent alimenter la table des annexes');
 
   const comparison = await masterDocuments.compareDocuments(db, STORE_ID, DOC_ID, DOC_ID);
   assert.equal(comparison.same_checksum, true);
@@ -251,6 +280,9 @@ async function main() {
     same_name_different_file_not_merged: true,
     multiple_references: true,
     reference_archive_logical: true,
+    structured_content: true,
+    readable_references: true,
+    annex_deduplication: true,
     original_file_preserved: true,
     store_isolation: true,
     mcp_tools: expectedTools.length,

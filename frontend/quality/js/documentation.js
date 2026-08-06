@@ -52,6 +52,7 @@
     textColor: $('text-color-select'),
     preview: $('preview-pdf-btn'),
     exportPdf: $('export-pdf-btn'),
+    includeMasterAnnexes: $('include-master-annexes'),
     missing: $('missing-list'),
     attachmentForm: $('attachment-form'),
     attachmentFile: $('attachment-file'),
@@ -1504,7 +1505,7 @@
   async function openPdf(path, download = false) {
     const blob = await requestPdf(path, {
       method: 'POST',
-      body: JSON.stringify({ export_type: 'full', include_missing: true, include_attachments: true }),
+      body: JSON.stringify({ export_type: 'full', include_missing: true, include_attachments: true, include_master_annexes: els.includeMasterAnnexes?.checked === true }),
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

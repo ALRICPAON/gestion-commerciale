@@ -140,12 +140,19 @@
       <p><strong>Frequence :</strong> ${escapeHtml(frequencyLabel(task))} - <strong>Heure cible :</strong> ${escapeHtml(task.target_time || '-')}</p>
       <p><strong>Preuve :</strong> ${task.proof_required ? 'Oui' : 'Non'} - <strong>Photo :</strong> ${task.photo_required ? 'Oui' : 'Non'}</p>
       <p class="quality-muted">${escapeHtml(task.description || '')}</p>
+      <section id="task-document-links" class="quality-list-grid"></section>
       <div class="quality-actions">
         ${locked && task.source_entity_id ? `<button class="btn btn-primary" data-open-source="${escapeHtml(task.id)}">Ouvrir la source</button>` : ''}
         <button class="btn btn-secondary" data-close-detail="true">Fermer</button>
       </div>
     `;
     card.classList.remove('hidden');
+    const documentTarget = task.source_entity_type === 'cleaning_plan'
+      ? 'cleaning_plan'
+      : task.source_entity_type === 'temperature_parameter' ? 'temperature_parameter' : null;
+    if (documentTarget && task.source_entity_id) {
+      window.QualityDocumentLinks?.render(documentTarget, task.source_entity_id, document.getElementById('task-document-links')).catch(() => {});
+    }
   }
 
   function openTaskSource(task) {

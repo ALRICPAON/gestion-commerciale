@@ -65,8 +65,16 @@ function makeDocument() {
     'cleaning-plan-frequency-value', 'cleaning-plan-frequency-unit', 'cleaning-plan-target-time', 'cleaning-plan-cancel-btn',
     'cleaning-plan-existing-task-label', 'cleaning-plan-task-title-label', 'cleaning-plan-task-responsible-label',
     'cleaning-plan-frequency-value-label', 'cleaning-plan-frequency-unit-label', 'cleaning-plan-target-time-label',
+    'cleaning-plan-scheduled-days-label',
   ];
   const elements = new Map(ids.map((id) => [id, new Element(id.includes('zone-ids') || id.includes('task-id') || id.includes('mode') || id.includes('unit') || id.includes('responsible') ? 'select' : 'div', id)]));
+  const scheduledInputs = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'].map((value) => {
+    const input = new Element('input');
+    input.name = 'cleaning-plan-scheduled-day';
+    input.value = value;
+    return input;
+  });
+  elements.get('cleaning-plan-scheduled-days-label').querySelectorAll = (selector) => selector === 'input[name="cleaning-plan-scheduled-day"]' ? scheduledInputs : [];
   elements.get('cleaning-plan-form').reset = () => {};
   return {
     elements,
@@ -139,6 +147,7 @@ async function main() {
     title: 'Reception des produits',
     zones: [{ id: ZONE_RECEPTION, code: 'RDC-RECEPTION-CRIEE', name: 'Reception criee' }],
     equipments: [{ id: EQUIPMENT_DOOR, code: 'PORTE-REC01', name: 'Porte reception', zone_id: ZONE_RECEPTION }],
+    scheduled_days: ['monday', 'tuesday'],
   };
   const multi = {
     id: 'plan-multi',
@@ -164,6 +173,7 @@ async function main() {
   await app.helpers.openEditForm('plan-single');
   assert.deepEqual(selectedValues(app.document), [ZONE_RECEPTION], 'Un seul plan ne doit selectionner que sa zone');
   assert.deepEqual(app.helpers.state().selectedEquipmentIds, [EQUIPMENT_DOOR], 'Un seul plan ne doit cocher que son equipement');
+  assert.deepEqual(app.helpers.selectedScheduledDays(), ['monday', 'tuesday'], 'Les jours planifies du plan doivent etre charges');
   assert(!selectedValues(app.document).includes(ZONE_PREP), 'Aucune selection parasite zone preparation');
   assert(!selectedValues(app.document).includes(ZONE_SOCIAL), 'Aucune selection parasite zone sociaux');
 
@@ -176,6 +186,9 @@ async function main() {
   await app.helpers.openEditForm('plan-multi');
   assert.deepEqual(selectedValues(app.document).sort(), [ZONE_PREP, ZONE_RECEPTION].sort(), 'Multi-zones invalide');
   assert.deepEqual(app.helpers.state().selectedEquipmentIds.sort(), [EQUIPMENT_DOOR, EQUIPMENT_TABLE].sort(), 'Multi-equipements invalide');
+  app.document.getElementById('cleaning-plan-frequency-unit').value = 'events';
+  app.document.getElementById('cleaning-plan-frequency-unit').listeners.change?.();
+  assert.deepEqual(app.helpers.selectedScheduledDays(), [], 'Frequence evenementielle ne doit pas envoyer de jours planifies');
 
   await app.helpers.openEditForm('plan-legacy');
   assert.deepEqual(selectedValues(app.document), [ZONE_SOCIAL], 'Champs legacy zone_id non respectes');
@@ -185,7 +198,7 @@ async function main() {
   assert.deepEqual(selectedValues(app.document), [ZONE_RECEPTION], 'Tableaux objets par code non normalises');
   assert.deepEqual(app.helpers.state().selectedEquipmentIds, [EQUIPMENT_DOOR], 'Equipements objets par code non normalises');
 
-  console.log(JSON.stringify({ ok: true, checked: ['single', 'multi', 'legacy', 'arrays', 'no_stray_selection', 'cancel_without_save', 'reopen'] }, null, 2));
+  console.log(JSON.stringify({ ok: true, checked: ['single', 'multi', 'legacy', 'arrays', 'scheduled_days', 'events_without_days', 'no_stray_selection', 'cancel_without_save', 'reopen'] }, null, 2));
 }
 
 main().catch((error) => {
