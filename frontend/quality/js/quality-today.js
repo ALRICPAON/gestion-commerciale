@@ -80,6 +80,39 @@
     return item.detail_type || item.record_type || (item.type === 'manual' ? 'manual_task' : item.type);
   }
 
+  function applicableDocumentTarget(item) {
+    if (item?.type === 'temperature') {
+      const targetId = item.parameter_id || item.limit_id || item.source_entity_id || item.raw?.parameter_id || item.raw?.id;
+      return targetId ? { type: 'temperature_parameter', id: targetId } : null;
+    }
+    if (item?.type === 'cleaning') {
+      const targetId = item.cleaning_plan_id || item.plan_id || item.source_entity_id || item.raw?.cleaning_plan_id || item.raw?.id;
+      return targetId ? { type: 'cleaning_plan', id: targetId } : null;
+    }
+    return null;
+  }
+
+  function documentsButton(item) {
+    const target = applicableDocumentTarget(item);
+    if (!target) return '';
+    return `<button class="btn btn-secondary" type="button" data-action="documents" data-id="${escapeHtml(item.id)}">Documents applicables</button>`;
+  }
+
+  async function renderApplicableDocuments(item) {
+    if (!els.documentLinks) return [];
+    const target = applicableDocumentTarget(item);
+    if (!target) {
+      els.documentLinks.innerHTML = '';
+      return [];
+    }
+    return window.QualityDocumentLinks?.render(
+      target.type,
+      target.id,
+      els.documentLinks,
+      { title: 'Procedures et documents applicables' }
+    ) || [];
+  }
+
   function sectionHtml(items, emptyText) {
     if (!items?.length) return `<div class="quality-empty-state">${escapeHtml(emptyText)}</div>`;
     return items.map((item) => `
@@ -90,7 +123,7 @@
         <p class="quality-muted">${item.status === 'completed' ? `Resultat : ${escapeHtml(resultLabel(item))} - Operateur : ${escapeHtml(item.operator_email || '-')}` : `Echeance : ${formatDate(item.next_due_at)} - Criticite : ${escapeHtml(item.criticality || '-')}`}</p>
         <div class="quality-actions">${item.status === 'completed'
           ? (item.record_id ? `<button class="btn btn-secondary" type="button" data-action="view-record" data-record-type="${escapeHtml(detailType(item))}" data-record-id="${escapeHtml(item.record_id)}">Voir</button>` : '<button class="btn btn-secondary" type="button" disabled>Voir</button>')
-          : `<button class="btn btn-primary" data-action="execute" data-id="${escapeHtml(item.id)}">${escapeHtml(item.primary_action)}</button>`}</div>
+          : `<button class="btn btn-primary" data-action="execute" data-id="${escapeHtml(item.id)}">${escapeHtml(item.primary_action)}</button>`}${documentsButton(item)}</div>
       </article>
     `).join('');
   }
@@ -121,7 +154,7 @@
   }
 
   function findItem(id) {
-    return ['today', 'overdue', 'upcoming', 'event_controls'].flatMap((key) => work.sections[key] || []).find((item) => String(item.id) === String(id));
+    return ['today', 'overdue', 'upcoming', 'event_controls', 'completed_today'].flatMap((key) => work.sections[key] || []).find((item) => String(item.id) === String(id));
   }
 
   function toDatetimeLocal(value) {
@@ -182,12 +215,7 @@
       els.manualAlert.className = 'page-feedback hidden quality-form-wide';
     }
     els.panel.classList.remove('hidden');
-    const recordType = detail.type === 'cleaning' ? 'cleaning_record' : detail.type === 'temperature' ? 'temperature_record' : null;
-    if (recordType) {
-      window.QualityDocumentLinks?.render(recordType, detail.source?.record_id || id, els.documentLinks, { title: 'Procedures et documents applicables' }).catch(() => {});
-    } else {
-      els.documentLinks.innerHTML = '';
-    }
+    renderApplicableDocuments(item).catch(() => {});
     els.panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -295,9 +323,14 @@
   document.addEventListener('click', (event) => {
     const button = event.target.closest('button[data-action="execute"]');
     const viewButton = event.target.closest('button[data-action="view-record"]');
+    const documentsButton = event.target.closest('button[data-action="documents"]');
     if (button) {
       const item = findItem(button.dataset.id);
       if (item) openExecution(item);
+    }
+    if (documentsButton) {
+      const item = findItem(documentsButton.dataset.id);
+      if (item) renderApplicableDocuments(item).catch((error) => setFeedback(error.message, 'error'));
     }
     if (viewButton) showRecordDetail(viewButton.dataset.recordType, viewButton.dataset.recordId).catch((error) => setFeedback(error.message, 'error'));
   });

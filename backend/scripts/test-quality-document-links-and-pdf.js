@@ -20,6 +20,7 @@ function main() {
   const master = read('frontend/quality/js/master-documents.js');
   const docs = read('frontend/quality/js/documentation.js');
   const links = read('frontend/quality/js/quality-document-links.js');
+  const today = read('frontend/quality/js/quality-today.js');
   const service = read('backend/services/quality/masterDocuments.js');
 
   assertIncludes(master, /fetch\(`\$\{API_BASE_URL\}\/api\/quality\/master-documents\$\{path\}`[\s\S]*Authorization: `Bearer \$\{token\}`/, 'PDF document maitre doit utiliser fetch authentifie');
@@ -35,6 +36,12 @@ function main() {
   assertIncludes(links, /data-master-document-pdf/, 'encart documents doit proposer le PDF authentifie');
   assertNotIncludes(links, /token=|access_token=|jwt=/i, 'Aucun token ne doit etre place dans les liens applicables');
 
+  assertIncludes(today, /applicableDocumentTarget/, 'Qualite du jour doit calculer une cible documentaire metier');
+  assertIncludes(today, /temperature_parameter/, 'Qualite du jour doit rattacher les temperatures au parametre temperature');
+  assertIncludes(today, /cleaning_plan/, 'Qualite du jour doit rattacher les nettoyages au plan de nettoyage');
+  assertIncludes(today, /Documents applicables/, 'Qualite du jour doit proposer les documents applicables depuis les cartes');
+  assertNotIncludes(today, /detail\.type === 'cleaning'[\s\S]*detail\.source/, 'openExecution ne doit pas referencer detail/id hors portee');
+
   assertIncludes(service, /resolveStructuredContent/, 'service doit resoudre les UUID du contenu structure');
   assertIncludes(service, /deriveTemperatureRelations/, 'service doit deriver les relations temperature');
   assertIncludes(service, /deriveCleaningRelations/, 'service doit deriver les relations nettoyage');
@@ -47,6 +54,7 @@ function main() {
     section_id_navigation: true,
     missing_section_message: true,
     applicable_documents_endpoint: true,
+    quality_today_applicable_documents: true,
     derived_temperature_relations: true,
     derived_cleaning_relations: true,
   }, null, 2));

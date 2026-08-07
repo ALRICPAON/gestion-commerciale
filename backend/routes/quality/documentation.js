@@ -98,6 +98,7 @@ function exportOptions(body = {}) {
     include_missing: body.include_missing !== false,
     include_attachments: body.include_attachments !== false,
     include_master_annexes: body.include_master_annexes === true,
+    include_external_master_documents: body.include_external_master_documents === true,
   };
 }
 

@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
 
 const { renderHtmlToPdf } = require('../pdf/pdfRenderer');
 const { escapeHtml, fileSafe, formatDate, htmlDocument } = require('../pdf/pdfLayout');
@@ -116,19 +118,80 @@ async function collectMasterAnnexes(db, storeId, sections = []) {
   return [...byDocumentId.values()].sort((a, b) => String(a.document.reference_number || a.document.title).localeCompare(String(b.document.reference_number || b.document.title)));
 }
 
+async function collectExternalMasterAttachments(db, storeId, sections = []) {
+  const chapterIds = new Set(sections.filter((section) => section.section_type !== 'tome').map((section) => String(section.id)));
+  if (!chapterIds.size) return [];
+  const references = await listDocumentReferences(db, storeId, { target_type: 'documentation_section', include_archived: false });
+  const byDocumentId = new Map();
+  for (const reference of references) {
+    if (!chapterIds.has(String(reference.target_id))) continue;
+    if (['procedure', 'record_form'].includes(reference.document_type)) continue;
+    if (reference.document_status === 'archived') continue;
+    if (reference.valid_until && new Date(reference.valid_until) < new Date()) continue;
+    if (!byDocumentId.has(reference.document_id)) {
+      const document = await getMasterDocument(db, storeId, reference.document_id);
+      if (document && !document.archived_at && document.storage_path) byDocumentId.set(reference.document_id, { document, references: [] });
+    }
+    byDocumentId.get(reference.document_id)?.references.push(reference);
+  }
+  return [...byDocumentId.values()].sort((a, b) => String(a.document.reference_number || a.document.title).localeCompare(String(b.document.reference_number || b.document.title)));
+}
+
+function renderStructuredMasterContent(document) {
+  const sections = [
+    ['object', 'Objet'],
+    ['scope', "Champ d'application"],
+    ['responsibilities', 'Responsabilites'],
+    ['method', 'Methode'],
+    ['frequency', 'Frequence'],
+    ['limits_objectives', 'Limites et objectifs'],
+    ['deviation_handling', 'Gestion des ecarts'],
+    ['associated_records', 'Enregistrements associes'],
+    ['associated_documents', 'Documents associes'],
+    ['associated_chapters', 'Chapitres associes'],
+    ['quality_links', 'Objets qualite associes'],
+  ];
+  const structured = document.structured_content || {};
+  const rows = sections.map(([key, label]) => {
+    const value = structured[key] || '';
+    if (!String(value).trim()) return '';
+    return `<section class="procedure-section"><h3>${escapeHtml(label)}</h3><p>${escapeHtml(value).replace(/\n/g, '<br>')}</p></section>`;
+  }).filter(Boolean).join('');
+  return rows || `<section class="procedure-section"><h3>Contenu</h3><p>${escapeHtml(document.description || 'Aucun contenu renseigne.')}</p></section>`;
+}
+
+function renderMasterReferenceRows(references = []) {
+  return references
+    .filter((reference) => !reference.archived_at)
+    .map((reference) => `<tr><td>${escapeHtml(reference.target_type_label || reference.target_type || '-')}</td><td>${escapeHtml(reference.target_label || reference.label || '-')}</td><td>${escapeHtml(reference.relation_type || '-')}</td></tr>`)
+    .join('');
+}
+
 function renderMasterAnnexes(masterAnnexes = []) {
   const rows = masterAnnexes.map(({ document, references }) => {
     const chapters = [...new Set(references.map((reference) => reference.target_label).filter(Boolean))].join(', ');
     return `<tr><td>${escapeHtml(document.reference_number || '-')}</td><td>${escapeHtml(document.title)}</td><td>${escapeHtml(document.version || '-')}</td><td>${escapeHtml(chapters || '-')}</td></tr>`;
   }).join('');
   const contents = masterAnnexes.map(({ document }) => {
-    const structured = document.structured_content || {};
-    const summary = structured.object || structured.scope || document.description || '';
+    const referenceRows = renderMasterReferenceRows(document.references || []);
     return `
       <section class="pdf-section">
         <h2>${escapeHtml(document.reference_number || '')} - ${escapeHtml(document.title)}</h2>
         <div class="section-meta">Version ${escapeHtml(document.version || '-')} - Statut ${escapeHtml(document.status || '-')} - Application ${escapeHtml(formatDate(document.valid_from))}</div>
-        <p>${escapeHtml(summary || 'Procedure applicable rattachee au dossier PMS.').replace(/\n/g, '<br>')}</p>
+        <table>
+          <tbody>
+            <tr><th>Code / reference</th><td>${escapeHtml(document.reference_number || '-')}</td></tr>
+            <tr><th>Categorie</th><td>${escapeHtml(document.category || '-')}</td></tr>
+            <tr><th>Emetteur</th><td>${escapeHtml(document.issuer_name || '-')}</td></tr>
+            <tr><th>Date emission</th><td>${escapeHtml(formatDate(document.issue_date))}</td></tr>
+            <tr><th>Date application</th><td>${escapeHtml(formatDate(document.valid_from))}</td></tr>
+          </tbody>
+        </table>
+        ${renderStructuredMasterContent(document)}
+        <section class="procedure-section">
+          <h3>Documents et objets associes</h3>
+          <table><thead><tr><th>Type</th><th>Element</th><th>Relation</th></tr></thead><tbody>${referenceRows || '<tr><td colspan="3">Aucun rattachement.</td></tr>'}</tbody></table>
+        </section>
       </section>
     `;
   }).join('');
@@ -141,11 +204,168 @@ function renderMasterAnnexes(masterAnnexes = []) {
   `;
 }
 
+function sha256Buffer(buffer) {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+function isPdf(item) {
+  return String(item.mime_type || '').toLowerCase().includes('pdf') || /\.pdf$/i.test(item.filename || item.original_filename || '');
+}
+
+function isImage(item) {
+  const mime = String(item.mime_type || '').toLowerCase();
+  return mime.startsWith('image/png') || mime.startsWith('image/jpeg') || /\.(png|jpe?g)$/i.test(item.filename || item.original_filename || '');
+}
+
+function attachmentLabel(item) {
+  return item.original_filename || item.filename || item.title || 'Piece jointe';
+}
+
+function collectAttachmentAppendixItems(documentation, options = {}) {
+  if (options.include_attachments === false) return [];
+  return (documentation.attachments || [])
+    .filter((item) => !item.archived_at && item.include_in_export !== false)
+    .map((item) => ({
+      source: 'chapter_attachment',
+      id: item.id,
+      title: attachmentLabel(item),
+      section_title: item.section_title,
+      file_path: item.file_path,
+      mime_type: item.mime_type,
+      size: item.file_size,
+      checksum_sha256: item.checksum_sha256,
+    }));
+}
+
+function collectExternalAppendixItems(externalMasterAttachments = []) {
+  return externalMasterAttachments.map(({ document, references }) => ({
+    source: 'external_master_document',
+    id: document.id,
+    title: attachmentLabel(document),
+    section_title: [...new Set(references.map((reference) => reference.target_label).filter(Boolean))].join(', '),
+    file_path: document.storage_path,
+    mime_type: document.mime_type,
+    size: document.file_size,
+    checksum_sha256: document.checksum_sha256,
+  }));
+}
+
+function dedupeAppendixItems(items = []) {
+  const seen = new Set();
+  const deduped = [];
+  const duplicates = [];
+  for (const item of items) {
+    const key = item.checksum_sha256
+      || (item.file_path ? `path:${path.resolve(item.file_path)}` : '')
+      || (item.id ? `${item.source}:${item.id}` : `${item.source}:${item.title}:${item.size || ''}`);
+    if (seen.has(key)) {
+      duplicates.push(item);
+      continue;
+    }
+    seen.add(key);
+    deduped.push(item);
+  }
+  return { deduped, duplicates };
+}
+
+function drawWrappedText(page, text, x, y, maxWidth, font, size, options = {}) {
+  const words = String(text || '').split(/\s+/).filter(Boolean);
+  let line = '';
+  let currentY = y;
+  const lineHeight = options.lineHeight || size * 1.4;
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (font.widthOfTextAtSize(test, size) > maxWidth && line) {
+      page.drawText(line, { x, y: currentY, size, font, color: options.color || rgb(0.16, 0.22, 0.28) });
+      currentY -= lineHeight;
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) page.drawText(line, { x, y: currentY, size, font, color: options.color || rgb(0.16, 0.22, 0.28) });
+  return currentY - lineHeight;
+}
+
+async function appendNoticePage(pdfDoc, item, reason) {
+  const page = pdfDoc.addPage([595.28, 841.89]);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  page.drawText('Annexe non embarquee', { x: 54, y: 760, size: 18, font: bold, color: rgb(0.15, 0.22, 0.29) });
+  let y = drawWrappedText(page, attachmentLabel(item), 54, 720, 480, bold, 12);
+  y = drawWrappedText(page, item.section_title ? `Chapitre rattache : ${item.section_title}` : 'Chapitre rattache : non precise', 54, y - 8, 480, font, 10);
+  drawWrappedText(page, `Motif : ${reason || 'format non embarquable dans le PDF final'}`, 54, y - 8, 480, font, 10, { color: rgb(0.45, 0.22, 0.08) });
+}
+
+async function appendImagePage(pdfDoc, item, buffer) {
+  const page = pdfDoc.addPage([595.28, 841.89]);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const mime = String(item.mime_type || '').toLowerCase();
+  const image = mime.includes('png') || /\.png$/i.test(item.title || '') ? await pdfDoc.embedPng(buffer) : await pdfDoc.embedJpg(buffer);
+  const maxWidth = 487;
+  const maxHeight = 610;
+  const scale = Math.min(maxWidth / image.width, maxHeight / image.height, 1);
+  const width = image.width * scale;
+  const height = image.height * scale;
+  page.drawText('Annexe image', { x: 54, y: 760, size: 18, font: bold, color: rgb(0.15, 0.22, 0.29) });
+  drawWrappedText(page, attachmentLabel(item), 54, 730, 480, font, 11);
+  page.drawImage(image, { x: (595.28 - width) / 2, y: 95 + (maxHeight - height) / 2, width, height });
+}
+
+async function appendPdfAttachment(pdfDoc, buffer) {
+  const sourcePdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
+  const pages = await pdfDoc.copyPages(sourcePdf, sourcePdf.getPageIndices());
+  pages.forEach((page) => pdfDoc.addPage(page));
+  return pages.length;
+}
+
+async function mergeAppendices(mainPdf, appendixItems = [], logger = console) {
+  const pdfDoc = await PDFDocument.load(mainPdf);
+  const summary = {
+    embedded_attachments: 0,
+    embedded_pages: 0,
+    non_embeddable: 0,
+    duplicates: 0,
+    anomalies: [],
+  };
+  const { deduped, duplicates } = dedupeAppendixItems(appendixItems);
+  summary.duplicates = duplicates.length;
+  for (const item of deduped) {
+    try {
+      if (!item.file_path || !fs.existsSync(item.file_path)) throw new Error('fichier absent');
+      const buffer = fs.readFileSync(item.file_path);
+      item.checksum_sha256 = item.checksum_sha256 || sha256Buffer(buffer);
+      if (isPdf(item)) {
+        const pages = await appendPdfAttachment(pdfDoc, buffer);
+        summary.embedded_attachments += 1;
+        summary.embedded_pages += pages;
+      } else if (isImage(item)) {
+        await appendImagePage(pdfDoc, item, buffer);
+        summary.embedded_attachments += 1;
+        summary.embedded_pages += 1;
+      } else {
+        summary.non_embeddable += 1;
+        await appendNoticePage(pdfDoc, item, 'format non embarquable');
+      }
+    } catch (err) {
+      summary.non_embeddable += 1;
+      summary.anomalies.push({ source: item.source, title: attachmentLabel(item), reason: err.message });
+      logger.warn?.('Annexe qualite non embarquee', { source: item.source, title: attachmentLabel(item), reason: err.message });
+      await appendNoticePage(pdfDoc, item, err.message);
+    }
+  }
+  return { pdf: Buffer.from(await pdfDoc.save()), summary };
+}
+
 function buildHtml(documentation, identity, options = {}) {
   const { collection, missing_items: missingItems, attachments } = documentation;
   const masterAnnexes = documentation.master_annexes || [];
+  const externalMasterAttachments = documentation.external_master_attachments || [];
   const sections = filteredSections(documentation.sections, options);
   const chapters = sections.filter((section) => section.section_type !== 'tome');
+  const attachmentAppendixItems = collectAttachmentAppendixItems(documentation, options);
+  const externalAppendixItems = options.include_external_master_documents ? collectExternalAppendixItems(externalMasterAttachments) : [];
   const revisionRows = chapters.slice(0, 20).map((section) => `
     <tr>
       <td>${escapeHtml(section.version)}</td>
@@ -177,6 +397,10 @@ function buildHtml(documentation, identity, options = {}) {
     .filter((item) => !item.archived_at && item.include_in_export !== false)
     .map((item) => `<tr><td>${escapeHtml(item.section_title)}</td><td>${escapeHtml(item.filename)}</td><td>${escapeHtml(item.mime_type || '-')}</td></tr>`)
     .join('');
+  const externalAttachmentRows = externalAppendixItems
+    .map((item) => `<tr><td>${escapeHtml(item.section_title || '-')}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.mime_type || '-')}</td></tr>`)
+    .join('');
+  const annexCount = attachmentAppendixItems.length + externalAppendixItems.length;
 
   const coverAddress = [identity.address_line1, identity.address_line2, [identity.postal_code, identity.city].filter(Boolean).join(' '), identity.country].filter(Boolean).join('<br>');
   const logo = identity.logo_url ? `<img class="cover-logo" src="${escapeHtml(identity.logo_url)}" alt="Logo">` : '';
@@ -199,10 +423,23 @@ function buildHtml(documentation, identity, options = {}) {
         <h1>Sommaire</h1>
         <table><thead><tr><th>Code</th><th>Titre</th><th>Statut</th></tr></thead><tbody>${tocRows}</tbody></table>
       </section>
+      <section class="pdf-page">
+        <h1>Table des annexes</h1>
+        <table>
+          <thead><tr><th>Famille</th><th>Nombre</th><th>Integration</th></tr></thead>
+          <tbody>
+            <tr><td>Procedures et formulaires rattaches</td><td>${masterAnnexes.length}</td><td>${options.include_master_annexes ? 'Rendu dans le dossier' : 'Non demande'}</td></tr>
+            <tr><td>Pieces jointes des chapitres</td><td>${attachmentAppendixItems.length}</td><td>${options.include_attachments === false ? 'Non demande' : 'Fusion en annexe si possible'}</td></tr>
+            <tr><td>Documents externes associes</td><td>${externalAppendixItems.length}</td><td>${options.include_external_master_documents ? 'Fusion en annexe si possible' : 'Non demande'}</td></tr>
+          </tbody>
+        </table>
+      </section>
       ${options.include_missing === false ? '' : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Priorite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`}
       ${body}
       ${options.include_attachments === false ? '' : `<section class="pdf-page"><h1>Annexes</h1><table><thead><tr><th>Chapitre</th><th>Fichier</th><th>Type</th></tr></thead><tbody>${attachmentRows || '<tr><td colspan="3">Aucune annexe incluse.</td></tr>'}</tbody></table></section>`}
+      ${options.include_external_master_documents ? `<section class="pdf-page"><h1>Documents externes associes</h1><table><thead><tr><th>Chapitres rattaches</th><th>Document</th><th>Type</th></tr></thead><tbody>${externalAttachmentRows || '<tr><td colspan="3">Aucun document externe a embarquer.</td></tr>'}</tbody></table></section>` : ''}
       ${options.include_master_annexes ? renderMasterAnnexes(masterAnnexes) : ''}
+      ${annexCount ? `<section class="pdf-page"><h1>Annexes fichiers</h1><p>Les fichiers PDF et images inclus sont ajoutes apres cette page. Les autres formats font l'objet d'une page de signalement.</p></section>` : ''}
     </main>
   `;
 
@@ -245,6 +482,8 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-diagram-svg { max-height: 230mm; max-width: 100%; height: auto; break-inside: avoid-page; page-break-inside: avoid; }
     .quality-table-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
     .quality-table-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
+    .procedure-section { break-inside: avoid-page; page-break-inside: avoid; margin: 12px 0; }
+    .procedure-section h3 { color: #0f5f73; font-size: 14px; margin: 0 0 6px; }
     .quality-to-complete-block { border: 1px solid #fca5a5; border-left: 4px solid #b42318; background: #fef2f2; color: #7f1d1d; font-weight: 600; margin: 12px 0; padding: 8px 10px; break-inside: avoid-page; page-break-inside: avoid; }
     .quality-document-separator { border: 0; border-top: 1px solid #94a3b8; margin: 16px 0; }
     .quality-image-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
@@ -272,16 +511,45 @@ function buildHtml(documentation, identity, options = {}) {
 async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
   const documentation = await getDocumentation(db, storeId, collectionId);
   if (!documentation) return null;
+  const sections = filteredSections(documentation.sections, options);
   if (options.include_master_annexes) {
-    documentation.master_annexes = await collectMasterAnnexes(db, storeId, filteredSections(documentation.sections, options));
+    documentation.master_annexes = await collectMasterAnnexes(db, storeId, sections);
+  }
+  if (options.include_external_master_documents) {
+    documentation.external_master_attachments = await collectExternalMasterAttachments(db, storeId, sections);
   }
   const identity = await getCompanyIdentity(db, storeId);
   const html = buildHtml(documentation, identity, options);
-  const pdf = await renderHtmlToPdf(html, {
+  let pdf = await renderHtmlToPdf(html, {
     margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
     beforePdfScript: paginationPreparationScript(),
   });
-  return { pdf, html, documentation, identity };
+  const appendixItems = [
+    ...collectAttachmentAppendixItems(documentation, options),
+    ...(options.include_external_master_documents ? collectExternalAppendixItems(documentation.external_master_attachments || []) : []),
+  ];
+  const exportSummary = {
+    chapters: sections.filter((section) => section.section_type !== 'tome').length,
+    procedures: (documentation.master_annexes || []).filter(({ document }) => document.document_type === 'procedure').length,
+    forms: (documentation.master_annexes || []).filter(({ document }) => document.document_type === 'record_form').length,
+    requested_attachments: appendixItems.length,
+    embedded_attachments: 0,
+    non_embeddable: 0,
+    duplicates: 0,
+    anomalies: [],
+  };
+  if (appendixItems.length) {
+    const merged = await mergeAppendices(pdf, appendixItems);
+    pdf = merged.pdf;
+    Object.assign(exportSummary, {
+      embedded_attachments: merged.summary.embedded_attachments,
+      embedded_pages: merged.summary.embedded_pages,
+      non_embeddable: merged.summary.non_embeddable,
+      duplicates: merged.summary.duplicates,
+      anomalies: merged.summary.anomalies,
+    });
+  }
+  return { pdf, html, documentation, identity, export_summary: exportSummary };
 }
 
 async function exportDocumentationPdf(db, storeId, collectionId, userId, options = {}) {
@@ -295,7 +563,7 @@ async function exportDocumentationPdf(db, storeId, collectionId, userId, options
     `INSERT INTO quality_documentation_exports
      (collection_id, store_id, export_type, version, options_json, filename, file_path, generated_by)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-    [collectionId, storeId, options.export_type || 'full', rendered.documentation.collection.version, JSON.stringify(options), filename, filePath, userId]
+    [collectionId, storeId, options.export_type || 'full', rendered.documentation.collection.version, JSON.stringify({ ...options, export_summary: rendered.export_summary }), filename, filePath, userId]
   );
   return { ...rendered, filename, filePath };
 }
@@ -303,7 +571,12 @@ async function exportDocumentationPdf(db, storeId, collectionId, userId, options
 module.exports = {
   buildHtml,
   collectMasterAnnexes,
+  collectExternalMasterAttachments,
+  collectAttachmentAppendixItems,
+  collectExternalAppendixItems,
+  dedupeAppendixItems,
   exportDocumentationPdf,
+  mergeAppendices,
   paginationPreparationScript,
   renderDocumentationPdf,
 };
