@@ -247,11 +247,22 @@ function makeDb(options = {}) {
       }
 
       if (text.includes('UPDATE quality_temperature_limit_tasks')) {
-        const [limitId, scheduledDay, targetTime, deletedBy] = params;
-        const link = state.links.find((item) => item.limit_id === limitId && item.scheduled_day === scheduledDay && item.target_time === targetTime && !item.deleted_at);
-        if (link) {
-          link.deleted_at = new Date().toISOString();
-          link.deleted_by = deletedBy;
+        if (text.includes('task_id IS DISTINCT FROM')) {
+          const [limitId, canonicalTaskId, deletedBy] = params;
+          state.links
+            .filter((item) => item.limit_id === limitId && !item.deleted_at)
+            .filter((item) => item.task_id !== canonicalTaskId || item.scheduled_day !== 'any' || item.target_time !== '00:00:00')
+            .forEach((link) => {
+              link.deleted_at = new Date().toISOString();
+              link.deleted_by = deletedBy;
+            });
+        } else {
+          const [limitId, scheduledDay, targetTime, deletedBy] = params;
+          const link = state.links.find((item) => item.limit_id === limitId && item.scheduled_day === scheduledDay && item.target_time === targetTime && !item.deleted_at);
+          if (link) {
+            link.deleted_at = new Date().toISOString();
+            link.deleted_by = deletedBy;
+          }
         }
         return { rows: [] };
       }
@@ -362,10 +373,12 @@ async function main() {
   assert.deepEqual(scheduled.data.parameter.scheduled_days, ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']);
   assert.deepEqual(scheduled.data.parameter.target_times, ['04:00:00', '08:00:00', '12:00:00']);
   assert.equal(scheduled.data.parameter.target_time, '04:00:00', 'target_time legacy doit rester le premier horaire');
-  assert.equal(scheduledDb.state.tasks.length, 18, 'lundi-samedi x 3 horaires doit generer 18 taches systeme');
-  assert.equal(scheduledDb.state.links.filter((link) => !link.deleted_at).length, 18, 'chaque creneau doit avoir une liaison tache');
+  assert.equal(scheduledDb.state.tasks.length, 1, 'un parametre planifie doit generer une seule tache systeme canonique');
+  assert.equal(scheduledDb.state.links.filter((link) => !link.deleted_at).length, 1, 'la compatibilite ne doit conserver qu une liaison active canonique');
   assert(scheduled.data.parameter.quality_task_id, 'quality_task_id primaire legacy doit rester renseigne');
-  assert(scheduledDb.state.tasks.every((task) => task.task_origin === 'SYSTEM' && task.source_locked === true), 'toutes les taches creneau doivent etre SYSTEM verrouillees');
+  assert(!/monday|tuesday|wednesday|thursday|friday|saturday|04:00|08:00|12:00/i.test(scheduledDb.state.tasks[0].title), 'la tache canonique ne doit pas porter le jour ou l heure');
+  assert.equal(scheduledDb.state.tasks[0].target_time, null, 'la tache canonique ne doit pas porter un horaire unique');
+  assert(scheduledDb.state.tasks.every((task) => task.task_origin === 'SYSTEM' && task.source_locked === true), 'la tache canonique doit etre SYSTEM verrouillee');
 
   const updatedSchedule = await executeAgentTool({
     db: scheduledDb,
@@ -386,8 +399,8 @@ async function main() {
   assert.equal(updatedSchedule.ok, true);
   assert.deepEqual(updatedSchedule.data.parameter.scheduled_days, ['monday', 'tuesday']);
   assert.deepEqual(updatedSchedule.data.parameter.target_times, ['04:00:00']);
-  assert.equal(scheduledDb.state.links.filter((link) => !link.deleted_at).length, 2, 'mise a jour doit retirer les liaisons obsoletes');
-  assert(scheduledDb.state.tasks.some((task) => task.status === 'archived'), 'les taches des creneaux retires doivent etre archivees');
+  assert.equal(scheduledDb.state.tasks.length, 1, 'la mise a jour ne doit pas recreer une tache par creneau');
+  assert.equal(scheduledDb.state.links.filter((link) => !link.deleted_at).length, 1, 'la liaison canonique unique doit rester active');
 
   const movedPrimary = await executeAgentTool({
     db: scheduledDb,
@@ -405,8 +418,8 @@ async function main() {
     },
     context: makeContext(['quality.read', 'quality.configuration.write']),
   });
-  const activePrimaryLink = scheduledDb.state.links.find((link) => !link.deleted_at && link.scheduled_day === 'tuesday' && link.target_time === '04:00:00');
-  assert.equal(movedPrimary.data.parameter.quality_task_id, activePrimaryLink.task_id, 'quality_task_id legacy doit suivre le premier creneau actif');
+  const activePrimaryLink = scheduledDb.state.links.find((link) => !link.deleted_at && link.scheduled_day === 'any' && link.target_time === '00:00:00');
+  assert.equal(movedPrimary.data.parameter.quality_task_id, activePrimaryLink.task_id, 'quality_task_id doit rester la tache canonique unique');
 
   await expectBusinessRefusal(() => executeAgentTool({
     db: makeDb(),

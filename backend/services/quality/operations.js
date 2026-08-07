@@ -447,6 +447,7 @@ async function listQualityTodayWork(db, storeId, query = {}) {
   for (const item of temperatureDue) {
     const task = taskById.get(String(item.quality_task_id)) || {};
     const occurrence = await upsertOccurrence(db, storeId, item.quality_task_id, item.next_due_at, { source_entity_type: 'temperature_parameter', source_entity_id: item.parameter_id });
+    if (occurrence?.status === 'completed') continue;
     work.push(normalizeWorkItem('temperature', { ...item, occurrence_id: occurrence?.id || null }, task));
   }
   for (const item of cleaningDue) {
@@ -456,7 +457,7 @@ async function listQualityTodayWork(db, storeId, query = {}) {
   }
   for (const task of tasks) {
     const type = taskType(task);
-    if (task.source_entity_type === 'temperature_parameter' || task.source_entity_type === 'cleaning_plan') continue;
+    if ((task.source_entity_type === 'temperature_parameter' && task.frequency_unit !== 'events') || task.source_entity_type === 'cleaning_plan') continue;
     if (!includeUpcoming && !['due', 'overdue'].includes(task.computed_status)) continue;
     const occurrence = await upsertOccurrence(db, storeId, task.id, task.next_due_at, { source_entity_type: task.source_entity_type, source_entity_id: task.source_entity_id });
     work.push(normalizeWorkItem(type, { occurrence_id: occurrence?.id || null }, task));

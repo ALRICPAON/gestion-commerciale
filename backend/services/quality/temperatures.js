@@ -31,23 +31,12 @@ function normalizeTime(value) {
   return text.length === 5 ? `${text}:00` : text.slice(0, 8);
 }
 
-function scheduleDayLabel(day) {
-  return {
-    monday: 'lundi',
-    tuesday: 'mardi',
-    wednesday: 'mercredi',
-    thursday: 'jeudi',
-    friday: 'vendredi',
-    saturday: 'samedi',
-    any: 'tous jours',
-  }[day] || day;
-}
-
 function scheduleEntries(limit) {
   const days = jsonArray(limit.scheduled_days).filter((day) => TEMPERATURE_ACTIVE_DAYS.includes(day));
-  const times = jsonArray(limit.target_times).map(normalizeTime).filter(Boolean);
+  const configuredTimes = jsonArray(limit.target_times).map(normalizeTime).filter(Boolean);
+  if (!configuredTimes.length && limit.expected_frequency_unit === 'events') return [];
   const effectiveDays = days.length ? days : ['any'];
-  const effectiveTimes = times.length ? times : [normalizeTime(limit.target_time) || '00:00:00'];
+  const effectiveTimes = configuredTimes.length ? configuredTimes : [normalizeTime(limit.target_time) || '00:00:00'];
   const entries = [];
   for (const day of effectiveDays) {
     for (const targetTime of effectiveTimes) {
@@ -57,10 +46,10 @@ function scheduleEntries(limit) {
   return entries;
 }
 
-function nextScheduledDueAt(entry, active) {
+function nextScheduledDueAt(entry, active, referenceDate = new Date()) {
   if (!active || !entry?.target_time || entry.target_time === '00:00:00') return null;
   const [hours, minutes, seconds] = entry.target_time.split(':').map((part) => Number(part || 0));
-  const now = new Date();
+  const now = new Date(referenceDate);
   const wantedDay = entry.scheduled_day === 'any' ? null : DAY_ORDER.indexOf(entry.scheduled_day);
   for (let offset = 0; offset <= 14; offset += 1) {
     const candidate = new Date(now.getTime());
@@ -70,6 +59,30 @@ function nextScheduledDueAt(entry, active) {
     if (candidate.getTime() > now.getTime()) return candidate;
   }
   return null;
+}
+
+function currentCycleDueAt(entry, active, referenceDate = new Date()) {
+  if (!active || !entry?.target_time || entry.target_time === '00:00:00') return null;
+  const [hours, minutes, seconds] = entry.target_time.split(':').map((part) => Number(part || 0));
+  const reference = new Date(referenceDate);
+  const candidate = new Date(reference.getTime());
+  const wantedDay = entry.scheduled_day === 'any' ? reference.getDay() : DAY_ORDER.indexOf(entry.scheduled_day);
+  if (wantedDay < 0) return null;
+  candidate.setDate(reference.getDate() + (wantedDay - reference.getDay()));
+  candidate.setHours(hours, minutes, seconds || 0, 0);
+  return candidate;
+}
+
+function nextTemperatureScheduleDueAt(limit, active, referenceDate = new Date()) {
+  const dates = scheduleEntries(limit)
+    .map((entry) => nextScheduledDueAt(entry, active, referenceDate))
+    .filter(Boolean)
+    .sort((a, b) => a.getTime() - b.getTime());
+  return dates[0] || null;
+}
+
+function hasNativeSchedule(limit) {
+  return jsonArray(limit.target_times).map(normalizeTime).filter(Boolean).length > 0;
 }
 
 function addFilter(where, params, value, sql) {
@@ -124,16 +137,11 @@ function targetLabel(limit) {
   return limit.equipment_name || limit.zone_name || limit.type_label || limit.type_code || 'temperature';
 }
 
-function synchronizedTemperatureTaskPayload(limit, entry = null) {
+function synchronizedTemperatureTaskPayload(limit) {
   const active = limit.is_active === true;
-  const schedule = entry || { scheduled_day: 'any', target_time: normalizeTime(limit.target_time) };
-  const scheduleLabel = [
-    schedule.scheduled_day && schedule.scheduled_day !== 'any' ? scheduleDayLabel(schedule.scheduled_day) : null,
-    schedule.target_time && schedule.target_time !== '00:00:00' ? schedule.target_time.slice(0, 5) : null,
-  ].filter(Boolean).join(' ');
-  const nextDueAt = nextScheduledDueAt(schedule, active);
+  const nextDueAt = nextTemperatureScheduleDueAt(limit, active);
   return {
-    title: `Releve temperature - ${targetLabel(limit)}${scheduleLabel ? ` - ${scheduleLabel}` : ''}`,
+    title: `Releve temperature - ${targetLabel(limit)}`,
     description: [
       'Tache synchronisee automatiquement depuis le parametre temperature ALTA.',
       limit.type_label ? `Type: ${limit.type_label}` : null,
@@ -143,9 +151,9 @@ function synchronizedTemperatureTaskPayload(limit, entry = null) {
     entity_type: limit.equipment_id ? 'equipment' : limit.zone_id ? 'zone' : null,
     entity_id: limit.equipment_id || limit.zone_id || null,
     responsible_user_id: limit.responsible_user_id || null,
-    frequency_value: limit.expected_frequency_value || null,
-    frequency_unit: limit.expected_frequency_unit || null,
-    target_time: schedule.target_time === '00:00:00' ? null : schedule.target_time || null,
+    frequency_value: hasNativeSchedule(limit) ? 1 : limit.expected_frequency_value || null,
+    frequency_unit: hasNativeSchedule(limit) ? 'days' : limit.expected_frequency_unit || null,
+    target_time: null,
     next_due_at: nextDueAt,
     status: active ? 'planned' : 'paused',
     active,
@@ -260,27 +268,16 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
   const includeUpcoming = ['true', '1', 'yes'].includes(String(query.include_upcoming || '').toLowerCase());
   const result = await db.query(
     `SELECT l.id AS limit_id, l.id AS parameter_id, l.quality_task_id,
-            schedule_link.scheduled_day, schedule_link.scheduled_target_time,
+            l.scheduled_days, l.target_times, l.target_time AS legacy_target_time,
+            l.expected_frequency_unit,
             l.type_code, t.label AS type_label,
             l.zone_id, z.code AS zone_code, z.name AS zone_name,
             l.equipment_id, e.code AS equipment_code, e.name AS equipment_name,
-            l.min_value, l.max_value, l.unit,
+            l.min_value, l.max_value, l.unit, l.is_active,
             ${taskSelectSql()}
      FROM quality_temperature_limits l
      INNER JOIN quality_temperature_types t ON t.code = l.type_code
-     LEFT JOIN LATERAL (
-       SELECT ltt.task_id, NULLIF(ltt.scheduled_day, 'any') AS scheduled_day, NULLIF(ltt.target_time, '00:00'::time) AS scheduled_target_time
-       FROM quality_temperature_limit_tasks ltt
-       WHERE ltt.limit_id = l.id AND ltt.deleted_at IS NULL
-       UNION ALL
-       SELECT l.quality_task_id, NULL::text, NULL::time
-       WHERE l.quality_task_id IS NOT NULL
-         AND NOT EXISTS (
-           SELECT 1 FROM quality_temperature_limit_tasks existing
-           WHERE existing.limit_id = l.id AND existing.deleted_at IS NULL
-         )
-     ) schedule_link ON true
-     INNER JOIN quality_tasks qt ON qt.id = schedule_link.task_id AND qt.store_id = l.store_id
+     INNER JOIN quality_tasks qt ON qt.id = l.quality_task_id AND qt.store_id = l.store_id
      LEFT JOIN users qtu ON qtu.id = qt.responsible_user_id
      LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
      LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
@@ -293,7 +290,7 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
   );
 
   return result.rows
-    .map((row) => {
+    .flatMap((row) => {
       const task = enrichTask({
         id: row.task_id,
         title: row.task_title,
@@ -306,29 +303,35 @@ async function listDueTemperatureReadings(db, storeId, query = {}) {
         active: row.task_active,
         responsible_email: row.task_responsible_email,
       });
-      return {
-        quality_task_id: row.task_id || row.quality_task_id,
-        limit_id: row.limit_id,
-        parameter_id: row.parameter_id,
-        type_code: row.type_code,
-        type_label: row.type_label,
-        scheduled_day: row.scheduled_day,
-        zone_id: row.zone_id,
-        zone_code: row.zone_code,
-        zone_name: row.zone_name,
-        equipment_id: row.equipment_id,
-        equipment_code: row.equipment_code,
-        equipment_name: row.equipment_name,
-        min_value: row.min_value,
-        max_value: row.max_value,
-        unit: row.unit,
-        task_title: task.title,
-        target_time: row.scheduled_target_time || task.target_time,
-        next_due_at: task.next_due_at,
-        computed_status: task.computed_status,
-        last_completed_at: task.last_completed_at,
-      };
+      return scheduleEntries(row).map((entry) => {
+        const dueAt = currentCycleDueAt(entry, row.is_active === true && row.task_active === true);
+        const itemTask = enrichTask({ ...task, next_due_at: dueAt, target_time: entry.target_time });
+        return {
+          quality_task_id: row.task_id || row.quality_task_id,
+          limit_id: row.limit_id,
+          parameter_id: row.parameter_id,
+          type_code: row.type_code,
+          type_label: row.type_label,
+          scheduled_day: entry.scheduled_day === 'any' ? null : entry.scheduled_day,
+          zone_id: row.zone_id,
+          zone_code: row.zone_code,
+          zone_name: row.zone_name,
+          equipment_id: row.equipment_id,
+          equipment_code: row.equipment_code,
+          equipment_name: row.equipment_name,
+          min_value: row.min_value,
+          max_value: row.max_value,
+          unit: row.unit,
+          task_title: task.title,
+          target_time: entry.target_time,
+          next_due_at: dueAt,
+          computed_status: itemTask.computed_status,
+          last_completed_at: task.last_completed_at,
+          frequency_unit: 'scheduled',
+        };
+      });
     })
+    .filter((item) => item.next_due_at)
     .filter((item) => includeUpcoming || ['due', 'overdue'].includes(item.computed_status));
 }
 
@@ -399,62 +402,59 @@ async function upsertTemperatureLimitTaskLink(db, userId, limitId, entry, taskId
   );
 }
 
-async function archiveRemovedTemperatureScheduleTasks(db, storeId, userId, limitId, activeKeys) {
+async function selectCanonicalTemperatureTaskId(db, limit) {
+  if (limit.quality_task_id) return limit.quality_task_id;
+  const links = await listTemperatureLimitTaskLinks(db, limit.id);
+  return links[0]?.task_id || null;
+}
+
+async function archiveLegacyTemperatureSlotTasks(db, storeId, userId, limitId, canonicalTaskId) {
   const links = await listTemperatureLimitTaskLinks(db, limitId);
+  const archived = new Set();
   for (const link of links) {
-    const key = `${link.scheduled_day}|${normalizeTime(link.target_time) || '00:00:00'}`;
-    if (activeKeys.has(key)) continue;
-    await db.query(
-      `UPDATE quality_temperature_limit_tasks
-       SET deleted_at = now(), deleted_by = $4::uuid
-       WHERE limit_id = $1::uuid AND scheduled_day = $2::text AND target_time = $3::time AND deleted_at IS NULL`,
-      [limitId, link.scheduled_day, normalizeTime(link.target_time) || '00:00:00', userId]
-    );
+    if (String(link.task_id) === String(canonicalTaskId)) continue;
+    if (archived.has(String(link.task_id))) continue;
+    archived.add(String(link.task_id));
     await archiveQualityTask(db, storeId, userId, link.task_id);
   }
+  await db.query(
+    `UPDATE quality_temperature_limit_tasks
+     SET deleted_at = now(), deleted_by = $3::uuid
+     WHERE limit_id = $1::uuid
+       AND deleted_at IS NULL
+       AND (
+         task_id IS DISTINCT FROM $2::uuid
+         OR scheduled_day <> 'any'
+         OR target_time <> '00:00'::time
+       )`,
+    [limitId, canonicalTaskId, userId]
+  );
 }
 
 async function syncTemperatureLimitTask(db, storeId, userId, limit) {
   if (!limit) return null;
-  const entries = scheduleEntries(limit);
-  const existingLinks = await listTemperatureLimitTaskLinks(db, limit.id);
-  const linkByKey = new Map(existingLinks.map((link) => [`${link.scheduled_day}|${normalizeTime(link.target_time) || '00:00:00'}`, link]));
-  const activeKeys = new Set();
-  let primaryTaskId = limit.quality_task_id || null;
-  let firstActiveTaskId = null;
+  const canonicalTaskId = await selectCanonicalTemperatureTaskId(db, limit);
+  const task = await saveQualityTask(
+    db,
+    storeId,
+    userId,
+    synchronizedTemperatureTaskPayload(limit),
+    canonicalTaskId
+  );
+  if (!task?.id) return null;
 
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    const key = `${entry.scheduled_day}|${entry.target_time || '00:00:00'}`;
-    activeKeys.add(key);
-    const linked = linkByKey.get(key);
-    const taskId = linked?.task_id || (index === 0 ? primaryTaskId : null);
-    const task = await saveQualityTask(
-      db,
-      storeId,
-      userId,
-      synchronizedTemperatureTaskPayload(limit, entry),
-      taskId
-    );
-    if (!primaryTaskId && index === 0 && task?.id) {
-      primaryTaskId = task.id;
-    }
-    if (index === 0 && task?.id) firstActiveTaskId = task.id;
-    if (task?.id) await upsertTemperatureLimitTaskLink(db, userId, limit.id, entry, task.id);
-  }
-
-  if (firstActiveTaskId && firstActiveTaskId !== limit.quality_task_id) {
-    primaryTaskId = firstActiveTaskId;
+  if (task.id !== limit.quality_task_id) {
     await db.query(
       `UPDATE quality_temperature_limits
        SET quality_task_id=$3::uuid, updated_by=$4::uuid, updated_at=now()
        WHERE id=$1::uuid AND store_id=$2::uuid`,
-      [limit.id, storeId, firstActiveTaskId, userId]
+      [limit.id, storeId, task.id, userId]
     );
   }
 
-  await archiveRemovedTemperatureScheduleTasks(db, storeId, userId, limit.id, activeKeys);
-  return primaryTaskId;
+  await archiveLegacyTemperatureSlotTasks(db, storeId, userId, limit.id, task.id);
+  await upsertTemperatureLimitTaskLink(db, userId, limit.id, { scheduled_day: 'any', target_time: '00:00:00' }, task.id);
+  return task.id;
 }
 
 async function withTransaction(db, work) {
