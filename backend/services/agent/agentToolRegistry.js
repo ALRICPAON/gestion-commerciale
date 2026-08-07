@@ -1844,7 +1844,7 @@ const tools = [
   tool({
     name: 'create_quality_temperature_parameter',
     title: 'Creer parametre temperature',
-    description: 'Cree un parametrage temperature natif, avec jours actifs scheduled_days et horaires multiples target_times. ALTA synchronise les taches SYSTEM liees. Appeler list_quality_temperature_types avant pour choisir un type_code valide.',
+    description: 'Cree un parametrage temperature natif, avec jours actifs scheduled_days et horaires multiples target_times. ALTA synchronise une tache SYSTEM canonique et genere les occurrences par jour/horaire. Appeler list_quality_temperature_types avant pour choisir un type_code valide.',
     domain: 'quality',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'quality.configuration.write',
@@ -1866,7 +1866,7 @@ const tools = [
   tool({
     name: 'update_quality_temperature_parameter',
     title: 'Modifier parametre temperature',
-    description: 'Modifie un parametrage temperature natif, ses jours actifs scheduled_days et ses horaires multiples target_times, sans toucher aux releves historiques. ALTA synchronise les taches SYSTEM liees.',
+    description: 'Modifie un parametrage temperature natif, ses jours actifs scheduled_days et ses horaires multiples target_times, sans toucher aux releves historiques. ALTA synchronise la tache SYSTEM canonique et ses occurrences attendues.',
     domain: 'quality',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'quality.configuration.write',
