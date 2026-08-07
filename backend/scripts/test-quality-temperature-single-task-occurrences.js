@@ -127,7 +127,7 @@ async function main() {
 
   const operations = read('backend/services/quality/operations.js');
   const temperatures = read('backend/services/quality/temperatures.js');
-  const migration = read('backend/db/gestion-commerciale/071_quality_temperature_single_task_occurrences.sql');
+  const migration = read('backend/db/gestion-commerciale/100_quality_temperature_single_task_occurrences.sql');
 
   assert(operations.includes('ON CONFLICT (task_id, due_at)'), 'Occurrences doivent rester idempotentes via task_id + due_at');
   assert(operations.includes("task.source_entity_type === 'temperature_parameter' && task.frequency_unit !== 'events'"), 'Les controles temperature evenementiels doivent rester dans le flux taches');
