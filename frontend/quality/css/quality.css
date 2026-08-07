@@ -958,3 +958,52 @@
   max-width: 180px;
   object-fit: contain;
 }
+
+.quality-doc-hero .quality-actions {
+  align-items: center;
+  gap: 8px 12px;
+  max-width: 620px;
+}
+
+.quality-doc-hero .quality-actions label {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  color: #334155;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 10px;
+}
+
+.quality-doc-tools {
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
+  margin: 12px 0;
+  padding: 0;
+}
+
+.quality-doc-tools > summary {
+  color: #263746;
+  cursor: pointer;
+  font-weight: 700;
+  list-style-position: inside;
+  padding: 10px 12px;
+}
+
+.quality-doc-tools[open] > summary {
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.quality-doc-tools > .quality-doc-editor-toolbar,
+.quality-doc-tools > .quality-actions,
+.quality-doc-tools > section {
+  margin: 10px 12px 12px;
+}
+
+.quality-doc-meta .quality-doc-tools section {
+  border-top: 1px solid #e2e8f0;
+  padding-top: 10px;
+}

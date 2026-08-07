@@ -53,6 +53,9 @@
     preview: $('preview-pdf-btn'),
     exportPdf: $('export-pdf-btn'),
     includeMasterAnnexes: $('include-master-annexes'),
+    includeAttachments: $('include-attachments'),
+    includeExternalDocuments: $('include-external-documents'),
+    includeMissing: $('include-missing'),
     missing: $('missing-list'),
     attachmentForm: $('attachment-form'),
     attachmentFile: $('attachment-file'),
@@ -1520,10 +1523,29 @@
     await load(section.id);
   }
 
+  function exportPayload(download = false) {
+    if (!download) {
+      return {
+        export_type: 'preview',
+        include_missing: els.includeMissing?.checked === true,
+        include_attachments: false,
+        include_master_annexes: false,
+        include_external_master_documents: false,
+      };
+    }
+    return {
+      export_type: 'full',
+      include_missing: els.includeMissing?.checked === true,
+      include_attachments: els.includeAttachments?.checked !== false,
+      include_master_annexes: els.includeMasterAnnexes?.checked === true,
+      include_external_master_documents: els.includeExternalDocuments?.checked === true,
+    };
+  }
+
   async function openPdf(path, download = false) {
     const blob = await requestPdf(path, {
       method: 'POST',
-      body: JSON.stringify({ export_type: 'full', include_missing: true, include_attachments: true, include_master_annexes: els.includeMasterAnnexes?.checked === true }),
+      body: JSON.stringify(exportPayload(download)),
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

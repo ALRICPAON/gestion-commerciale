@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Documentation Qualite - ALTA MAREE</title>
   <link rel="stylesheet" href="../../css/app.css" />
-  <link rel="stylesheet" href="../css/quality.css?v=3" />
+  <link rel="stylesheet" href="../css/quality.css?v=4" />
 </head>
 <body class="app-page quality-documentation-page">
   <header class="topbar">
@@ -27,9 +27,12 @@
         <p>Le pourcentage indique l'etat de completude documentaire. Il ne constitue pas une validation reglementaire.</p>
       </div>
       <div class="quality-actions">
-        <label><input id="include-master-annexes" type="checkbox"> Annexes PMS liees</label>
-        <button id="preview-pdf-btn" class="btn btn-secondary" type="button">Apercu PDF</button>
-        <button id="export-pdf-btn" class="btn btn-primary" type="button">Exporter PDF</button>
+        <label><input id="include-master-annexes" type="checkbox" checked> Procedures / formulaires associes</label>
+        <label><input id="include-attachments" type="checkbox" checked> Pieces jointes des chapitres</label>
+        <label><input id="include-external-documents" type="checkbox" checked> Documents externes associes</label>
+        <label><input id="include-missing" type="checkbox" checked> Informations a completer</label>
+        <button id="preview-pdf-btn" class="btn btn-secondary" type="button">Apercu du manuel</button>
+        <button id="export-pdf-btn" class="btn btn-primary" type="button">Exporter le dossier DDPP complet</button>
       </div>
     </section>
 
@@ -66,27 +69,30 @@
           <span id="section-status-badge" class="quality-badge">-</span>
         </div>
         <label>Titre <input id="section-title" class="form-input"></label>
-        <div class="quality-doc-editor-toolbar">
-          <button class="btn btn-secondary" data-command="bold" type="button">B</button>
-          <button class="btn btn-secondary" data-command="italic" type="button">I</button>
-          <button class="btn btn-secondary quality-color-action quality-color-red" data-text-color="#b42318" type="button">A completer</button>
-          <button class="btn btn-secondary quality-color-action quality-color-black" data-text-color="#000000" type="button">Texte normal</button>
-          <label class="quality-color-picker">Couleur du texte
-            <select id="text-color-select" class="form-input">
-              <option value="">Choisir</option>
-              <option value="#000000">Noir - texte normal</option>
-              <option value="#b42318">Rouge - information a completer</option>
-              <option value="#15803d">Vert - information validee</option>
-              <option value="#1d4ed8">Bleu - information importante</option>
-              <option value="#c2410c">Orange - attention</option>
-            </select>
-          </label>
-          <button class="btn btn-secondary" data-command="insertUnorderedList" type="button">Liste</button>
-          <button id="mark-missing-btn" class="btn btn-secondary" type="button">Marquer a completer</button>
-          <button id="insert-diagram-btn" class="btn btn-secondary" type="button">Inserer un diagramme</button>
-          <button id="insert-table-btn" class="btn btn-secondary" type="button">Inserer un tableau</button>
-          <button id="add-block-btn" class="btn btn-primary" type="button">+ Ajouter un bloc</button>
-        </div>
+        <details class="quality-doc-tools" open>
+          <summary>Mode edition</summary>
+          <div class="quality-doc-editor-toolbar">
+            <button class="btn btn-secondary" data-command="bold" type="button">B</button>
+            <button class="btn btn-secondary" data-command="italic" type="button">I</button>
+            <button class="btn btn-secondary quality-color-action quality-color-red" data-text-color="#b42318" type="button">A completer</button>
+            <button class="btn btn-secondary quality-color-action quality-color-black" data-text-color="#000000" type="button">Texte normal</button>
+            <label class="quality-color-picker">Couleur du texte
+              <select id="text-color-select" class="form-input">
+                <option value="">Choisir</option>
+                <option value="#000000">Noir - texte normal</option>
+                <option value="#b42318">Rouge - information a completer</option>
+                <option value="#15803d">Vert - information validee</option>
+                <option value="#1d4ed8">Bleu - information importante</option>
+                <option value="#c2410c">Orange - attention</option>
+              </select>
+            </label>
+            <button class="btn btn-secondary" data-command="insertUnorderedList" type="button">Liste</button>
+            <button id="mark-missing-btn" class="btn btn-secondary" type="button">Marquer a completer</button>
+            <button id="insert-diagram-btn" class="btn btn-secondary" type="button">Inserer un diagramme</button>
+            <button id="insert-table-btn" class="btn btn-secondary" type="button">Inserer un tableau</button>
+            <button id="add-block-btn" class="btn btn-primary" type="button">+ Ajouter un bloc</button>
+          </div>
+        </details>
         <div id="document-block-list" class="quality-document-block-list"></div>
         <div id="section-editor" class="quality-rich-editor" contenteditable="true"></div>
         <div class="quality-actions">
@@ -117,19 +123,21 @@
         <label><input id="section-include-export" type="checkbox"> Affiche dans le PDF</label>
         <label>References reglementaires <textarea id="section-references" class="form-input"></textarea></label>
         <label>Commentaire interne <textarea id="section-comment" class="form-input"></textarea></label>
-        <div class="quality-actions">
-          <button id="move-up-btn" class="btn btn-secondary" type="button">Monter</button>
-          <button id="move-down-btn" class="btn btn-secondary" type="button">Descendre</button>
-          <button id="delete-section-btn" class="btn btn-secondary" type="button">Supprimer</button>
-        </div>
-
-        <section>
-          <h3>Fusionner</h3>
-          <label>Fusionner ce chapitre dans
-            <select id="merge-target" class="form-input"></select>
-          </label>
-          <button id="merge-section-btn" class="btn btn-secondary" type="button">Fusionner et archiver celui-ci</button>
-        </section>
+        <details class="quality-doc-tools">
+          <summary>Actions avancees</summary>
+          <div class="quality-actions">
+            <button id="move-up-btn" class="btn btn-secondary" type="button">Monter</button>
+            <button id="move-down-btn" class="btn btn-secondary" type="button">Descendre</button>
+            <button id="delete-section-btn" class="btn btn-secondary" type="button">Supprimer</button>
+          </div>
+          <section>
+            <h3>Fusionner</h3>
+            <label>Fusionner ce chapitre dans
+              <select id="merge-target" class="form-input"></select>
+            </label>
+            <button id="merge-section-btn" class="btn btn-secondary" type="button">Fusionner et archiver celui-ci</button>
+          </section>
+        </details>
 
         <section>
           <h3>Informations a completer</h3>
@@ -431,6 +439,6 @@
   <script src="../../js/config.js"></script>
   <script src="../js/permissions.js?v=3"></script>
   <script src="../../vendor/mermaid/mermaid.min.js?v=1"></script>
-  <script src="../js/documentation.js?v=5"></script>
+  <script src="../js/documentation.js?v=6"></script>
 </body>
 </html>
