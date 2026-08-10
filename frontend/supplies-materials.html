@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fournitures & matériels - ALTA MARÉE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./quality/css/quality.css?v=7" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">ALTA MARÉE</h1>
+      <p class="app-subtitle">Fournitures & matériels</p>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-secondary" onclick="window.location.href='./quality/pages/dashboard.html'">Qualité</button>
+      <button class="btn btn-secondary" onclick="window.location.href='./home.html'">Accueil</button>
+    </div>
+  </header>
+
+  <main class="main-content">
+    <section class="welcome-card">
+      <span class="section-kicker">Référentiel transversal</span>
+      <h2>Fournitures & matériels</h2>
+      <p>Consommables, emballages, EPI et petits matériels non commerciaux reliés au PMS et aux documents maîtres.</p>
+    </section>
+
+    <div id="supplies-feedback" class="page-feedback hidden"></div>
+
+    <section class="quality-card">
+      <div class="quality-actions">
+        <label>Recherche <input id="supplies-search" class="form-input" type="search" placeholder="Nom, code, marque, référence"></label>
+        <label>Catégorie <select id="supplies-category-filter" class="form-input"></select></label>
+        <label>Fournisseur <select id="supplies-supplier-filter" class="form-input"></select></label>
+        <label>Statut <select id="supplies-active-filter" class="form-input"><option value="">Tous</option><option value="true">Actifs</option><option value="false">Inactifs</option></select></label>
+        <label>Contact alimentaire <select id="supplies-food-contact-filter" class="form-input"><option value="">Tous</option><option value="true">Oui</option><option value="false">Non</option></select></label>
+        <button id="supplies-refresh-btn" class="btn btn-secondary" type="button">Actualiser</button>
+        <button id="supplies-add-btn" class="btn btn-primary" type="button">Nouvelle fiche</button>
+      </div>
+    </section>
+
+    <section class="quality-card">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Nom</th>
+            <th>Catégorie</th>
+            <th>Marque</th>
+            <th>Fournisseur</th>
+            <th>Documents</th>
+            <th>Stock</th>
+            <th>Statut</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="supplies-table-body"></tbody>
+      </table>
+    </section>
+
+    <section id="supplies-form-card" class="quality-card hidden">
+      <h3 id="supplies-form-title">Nouvelle fiche</h3>
+      <form id="supplies-form" class="quality-form-grid">
+        <input id="supply-id" type="hidden">
+        <label>Code interne <input id="supply-code" class="form-input"></label>
+        <label>Nom * <input id="supply-name" class="form-input" required></label>
+        <label>Catégorie * <select id="supply-category" class="form-input" required></select></label>
+        <label>Sous-catégorie <input id="supply-subcategory" class="form-input"></label>
+        <label>Marque / fabricant <input id="supply-brand" class="form-input"></label>
+        <label>Fournisseur <select id="supply-supplier" class="form-input"></select></label>
+        <label>Référence fournisseur <input id="supply-supplier-reference" class="form-input"></label>
+        <label>URL commande <input id="supply-order-url" class="form-input" type="url"></label>
+        <label>Unité <input id="supply-unit" class="form-input"></label>
+        <label>Conditionnement <input id="supply-packaging" class="form-input"></label>
+        <label>Prix achat <input id="supply-purchase-price" class="form-input" type="number" step="0.0001" min="0"></label>
+        <label>Stock minimum <input id="supply-minimum-stock" class="form-input" type="number" step="0.001" min="0"></label>
+        <label>Stock actuel <input id="supply-current-stock" class="form-input" type="number" step="0.001" min="0"></label>
+        <label><input id="supply-active" type="checkbox" checked> Actif</label>
+        <label class="quality-form-wide">Description<textarea id="supply-description" class="form-input" rows="2"></textarea></label>
+        <fieldset class="quality-form-wide quality-inline-fieldset">
+          <legend>Caractéristiques spécifiques</legend>
+          <label>Dosage <input id="meta-dosage" class="form-input"></label>
+          <label>Mode dosage <input id="meta-dosage-mode" class="form-input"></label>
+          <label>Temps de contact (min) <input id="meta-contact-time" class="form-input" type="number" min="0"></label>
+          <label>Matière / matériau <input id="meta-material" class="form-input"></label>
+          <label>Usage prévu <input id="meta-intended-use" class="form-input"></label>
+          <label>Type EPI <input id="meta-ppe-type" class="form-input"></label>
+          <label><input id="meta-food-contact" type="checkbox"> Contact alimentaire</label>
+          <label><input id="meta-direct-food-contact" type="checkbox"> Contact direct alimentaire</label>
+          <label><input id="meta-dilution-compatible" type="checkbox"> Compatible centrale dilution</label>
+          <label><input id="meta-rinse-required" type="checkbox"> Rinçage obligatoire</label>
+        </fieldset>
+        <label class="quality-form-wide">Notes<textarea id="supply-notes" class="form-input" rows="2"></textarea></label>
+        <div class="quality-actions quality-form-wide">
+          <button class="btn btn-primary" type="submit">Enregistrer</button>
+          <button id="supplies-cancel-btn" class="btn btn-secondary" type="button">Annuler</button>
+          <button id="supplies-archive-btn" class="btn btn-muted hidden" type="button">Archiver</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="supplies-detail-card" class="quality-card hidden">
+      <h3 id="supplies-detail-title">Fiche</h3>
+      <div id="supplies-detail-summary" class="quality-list-grid"></div>
+      <div class="quality-actions">
+        <label>Document maître <select id="supply-document-select" class="form-input"></select></label>
+        <label>Type <select id="supply-document-relation" class="form-input"></select></label>
+        <button id="supply-add-document-btn" class="btn btn-secondary" type="button">Rattacher</button>
+      </div>
+      <div class="quality-actions">
+        <label>Liaison <select id="supply-link-target-type" class="form-input"></select></label>
+        <label>Objet <select id="supply-link-target-id" class="form-input"></select></label>
+        <button id="supply-add-link-btn" class="btn btn-secondary" type="button">Ajouter liaison</button>
+      </div>
+      <div id="supplies-documents-list" class="quality-list-grid"></div>
+      <div id="supplies-links-list" class="quality-list-grid"></div>
+    </section>
+
+    <section class="quality-card">
+      <div class="quality-actions">
+        <button id="supplies-diagnostics-btn" class="btn btn-secondary" type="button">Diagnostic lecture seule</button>
+      </div>
+      <div id="supplies-diagnostics" class="quality-list-grid"></div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./quality/js/permissions.js?v=2"></script>
+  <script src="./quality/js/digital-twin-api.js"></script>
+  <script src="./quality/js/cleaning-api.js?v=1"></script>
+  <script src="./js/supplies-materials.js?v=1"></script>
+</body>
+</html>

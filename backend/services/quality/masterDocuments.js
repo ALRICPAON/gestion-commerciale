@@ -107,6 +107,7 @@ function businessUrl(targetType, row) {
     quality_task: `quality-tasks.html?task_id=${encodeURIComponent(row.id)}`,
     non_conformity: `non-conformities.html?id=${encodeURIComponent(row.id)}`,
     corrective_action: `corrective-actions.html?id=${encodeURIComponent(row.id)}`,
+    supply_material: `../../supplies-materials.html?id=${encodeURIComponent(row.id)}`,
   }[targetType] || null;
 }
 
@@ -136,6 +137,10 @@ const UUID_LABEL_QUERIES = Object.freeze({
   equipment: {
     sql: `SELECT id, CONCAT_WS(' - ', code, name) AS label, status FROM quality_equipments WHERE store_id=$1::uuid AND id = ANY($2::uuid[])`,
     type_label: 'Equipement',
+  },
+  supply_material: {
+    sql: `SELECT id, CONCAT_WS(' - ', code, name) AS label, CASE WHEN active THEN 'actif' ELSE 'inactif' END AS status FROM supplies_materials WHERE store_id=$1::uuid AND id = ANY($2::uuid[])`,
+    type_label: 'Fourniture ou materiel',
   },
   zone: {
     sql: `SELECT id, CONCAT_WS(' - ', code, name) AS label, status FROM quality_zones WHERE store_id=$1::uuid AND id = ANY($2::uuid[])`,
@@ -208,6 +213,7 @@ function groupReferences(references = [], derived = {}) {
     ['temperature_parameter', 'Parametres de temperature'],
     ['cleaning_plan', 'Plans de nettoyage'],
     ['quality_task', 'Taches et occurrences associees'],
+    ['supply_material', 'Fournitures et materiels associes'],
     ['records', 'Enregistrements realises'],
     ['quality_issues', 'Non-conformites et actions correctives'],
     ['document', 'Documents et formulaires associes'],
@@ -246,6 +252,7 @@ function typedLabel(targetType) {
     corrective_action: 'Action corrective',
     ddpp_view: 'Vue DDPP',
     procedure: 'Procedure',
+    supply_material: 'Fourniture ou materiel',
   }[targetType] || targetType || 'Reference';
 }
 
@@ -278,6 +285,11 @@ const TARGET_LABEL_QUERIES = Object.freeze({
     sql: `SELECT id, action FROM quality_corrective_actions WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
     label: (row) => row.action,
     url: (row) => `corrective-actions.html?id=${encodeURIComponent(row.id)}`,
+  },
+  supply_material: {
+    sql: `SELECT id, code, name, category FROM supplies_materials WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    label: (row) => [row.code, row.name].filter(Boolean).join(' - '),
+    url: (row) => `../../supplies-materials.html?id=${encodeURIComponent(row.id)}`,
   },
 });
 

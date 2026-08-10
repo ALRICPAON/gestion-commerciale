@@ -38,6 +38,20 @@ async function main() {
     'compare_quality_documents',
     'diagnose_quality_document_duplicates',
   ];
+  const expectedSupplyMaterialTools = [
+    'list_supplies_materials',
+    'get_supply_material',
+    'search_supplies_materials',
+    'list_supply_material_documents',
+    'list_supply_material_links',
+    'create_supply_material',
+    'update_supply_material',
+    'archive_supply_material',
+    'add_supply_material_document_reference',
+    'add_supply_material_link',
+    'archive_supply_material_link',
+    'diagnose_supplies_materials',
+  ];
   const generatedTools = buildPublicMcpTools();
   const generatedNames = new Set(generatedTools.map((tool) => tool.name));
 
@@ -54,6 +68,7 @@ async function main() {
   assert(Array.isArray(response.result.final_permissions), 'tools/list doit exposer final_permissions');
   assert(response.result.final_permissions.includes('mcp.execute'), 'tools/list doit exposer mcp.execute');
   assert(response.result.final_permissions.includes('quality.documentation.edit'), 'tools/list doit exposer quality.documentation.edit');
+  assert(response.result.final_permissions.includes('supplies_materials.read'), 'tools/list doit exposer supplies_materials.read');
   assert(JSON.stringify(response.result.missing_tools) === '[]', 'tools/list ne doit pas exposer de missing_tools');
   assert(JSON.stringify(response.result.missing_frontend_backend_capabilities) === '[]', 'tools/list ne doit pas exposer de capacites front/backend manquantes');
   const publicTools = response.result.tools;
@@ -72,6 +87,7 @@ async function main() {
     'update_quality_cleaning_plan',
     'archive_or_disable_quality_cleaning_plan',
     ...expectedMasterDocumentTools,
+    ...expectedSupplyMaterialTools,
   ]) {
     assert(publicNames.has(name), `${name} absent de la reponse MCP tools/list`);
     const tool = publicTools.find((item) => item.name === name);
@@ -109,7 +125,7 @@ async function main() {
     mcp_version: MCP_SERVER_VERSION,
     public_tool_count: publicTools.length,
     registry_source: 'legacyTools + agentToolRegistry.listMcpTools + public underscore aliases',
-    expected_tools: [...expectedNames, ...expectedMasterDocumentTools].map((name) => ({
+    expected_tools: [...expectedNames, ...expectedMasterDocumentTools, ...expectedSupplyMaterialTools].map((name) => ({
       name,
       present: publicNames.has(name),
       internal_tool: PUBLIC_QUALITY_BLOCK_TOOL_ALIASES[name],

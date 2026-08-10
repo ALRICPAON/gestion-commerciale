@@ -59,6 +59,7 @@ function mapPlanPayload(body = {}) {
     zone_ids: zoneIds.length ? zoneIds : [zoneId].filter(Boolean),
     equipment_ids: equipmentIds.length ? equipmentIds : [equipmentId].filter(Boolean),
     product_name: nullableText(body.product_name),
+    supply_material_id: cleanUuid(body.supply_material_id || body.supplyMaterialId),
     dosage_concentration: nullableText(body.dosage_concentration || body.dosage),
     usage_temperature: nullableText(body.usage_temperature || body.temperature),
     contact_time_minutes: nullableInteger(body.contact_time_minutes || body.contactTimeMinutes),

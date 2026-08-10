@@ -50,6 +50,10 @@ const EXPECTED_PERMISSIONS = [
   'quality.configuration.write',
   'quality.documentation.read',
   'quality.documentation.edit',
+  'supplies_materials.read',
+  'supplies_materials.write',
+  'supplies_materials.archive',
+  'supplies_materials.documents',
 ];
 
 function fakeReq() {
@@ -100,6 +104,7 @@ async function main() {
     'transformations',
     'quality',
     'quality_documentation',
+    'supplies_materials',
   ];
   assert.deepEqual(coverage.matrix.map((row) => row.module), expectedModules, 'Modules couverts invalides');
 

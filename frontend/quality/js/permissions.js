@@ -15,6 +15,10 @@
     DOCUMENTATION_EXPORT: 'quality.document.export',
     DOCUMENTATION_ADMIN: 'quality.document.admin',
     INSPECTION_EXPORT: 'quality.inspection.export',
+    SUPPLIES_READ: 'supplies_materials.read',
+    SUPPLIES_WRITE: 'supplies_materials.write',
+    SUPPLIES_ARCHIVE: 'supplies_materials.archive',
+    SUPPLIES_DOCUMENTS: 'supplies_materials.documents',
     AI_USE: 'quality.ai.use',
     ADMIN: 'quality.admin',
   });
