@@ -104,17 +104,48 @@
     <section id="supplies-detail-card" class="quality-card hidden">
       <h3 id="supplies-detail-title">Fiche</h3>
       <div id="supplies-detail-summary" class="quality-list-grid"></div>
+      <h4>Documentation</h4>
+      <div id="supplies-document-indicators" class="quality-list-grid"></div>
+      <form id="supply-upload-document-form" class="quality-form-grid">
+        <label class="quality-form-wide">Ajouter / importer un document
+          <input id="supply-upload-file" class="form-input" type="file" accept="application/pdf,image/jpeg,image/png">
+        </label>
+        <label>Type <select id="supply-upload-relation" class="form-input"></select></label>
+        <label>Titre <input id="supply-upload-title" class="form-input"></label>
+        <label>Fabricant <input id="supply-upload-manufacturer" class="form-input"></label>
+        <label>Référence <input id="supply-upload-reference" class="form-input"></label>
+        <label>Version <input id="supply-upload-version" class="form-input" placeholder="1.0"></label>
+        <label>Date document <input id="supply-upload-document-date" class="form-input" type="date"></label>
+        <label>Valide jusqu’au <input id="supply-upload-valid-until" class="form-input" type="date"></label>
+        <label class="quality-form-wide">Commentaire <textarea id="supply-upload-comment" class="form-input" rows="2"></textarea></label>
+        <div class="quality-actions quality-form-wide">
+          <button id="supply-upload-document-btn" class="btn btn-primary" type="submit">Importer le document</button>
+        </div>
+      </form>
       <div class="quality-actions">
         <label>Document maître <select id="supply-document-select" class="form-input"></select></label>
         <label>Type <select id="supply-document-relation" class="form-input"></select></label>
-        <button id="supply-add-document-btn" class="btn btn-secondary" type="button">Rattacher</button>
+        <button id="supply-add-document-btn" class="btn btn-secondary" type="button">Rattacher un document existant</button>
       </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Type</th>
+            <th>Titre</th>
+            <th>Version</th>
+            <th>Date</th>
+            <th>Validité</th>
+            <th>Statut</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="supplies-documents-table"></tbody>
+      </table>
       <div class="quality-actions">
         <label>Liaison <select id="supply-link-target-type" class="form-input"></select></label>
         <label>Objet <select id="supply-link-target-id" class="form-input"></select></label>
         <button id="supply-add-link-btn" class="btn btn-secondary" type="button">Ajouter liaison</button>
       </div>
-      <div id="supplies-documents-list" class="quality-list-grid"></div>
       <div id="supplies-links-list" class="quality-list-grid"></div>
     </section>
 
@@ -130,6 +161,6 @@
   <script src="./quality/js/permissions.js?v=2"></script>
   <script src="./quality/js/digital-twin-api.js"></script>
   <script src="./quality/js/cleaning-api.js?v=1"></script>
-  <script src="./js/supplies-materials.js?v=1"></script>
+  <script src="./js/supplies-materials.js?v=2"></script>
 </body>
 </html>

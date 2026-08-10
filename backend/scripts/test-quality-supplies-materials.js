@@ -39,14 +39,48 @@ async function main() {
 
   const homeCard = read('frontend/quality/js/home-card.js');
   assert(homeCard.includes('supplies_materials.read'), 'Carte Home non protegee par permission fournitures');
+  assert(!homeCard.includes("!sessionUser || !homeContent || document.querySelector('[data-module=\"quality\"]')"), 'La carte Qualite ne doit pas bloquer la carte Fournitures');
+  assert(homeCard.includes("grid.querySelector('[data-module=\"supplies-materials\"]')"), 'Anti-doublon Fournitures manquant');
+  assert(homeCard.includes("['admin', 'responsable']"), 'Roles admin/responsable non couverts explicitement');
   assert(read('frontend/supplies-materials.html').includes('Fournitures & matériels'), 'Page frontend manquante');
-  assert(read('frontend/js/supplies-materials.js').includes('/api/quality/supplies-materials'), 'Frontend ne cible pas la route canonique');
+  const suppliesHtml = read('frontend/supplies-materials.html');
+  const suppliesFrontend = read('frontend/js/supplies-materials.js');
+  assert(suppliesHtml.includes('supply-upload-document-form'), 'Formulaire import document manquant');
+  assert(suppliesHtml.includes('accept="application/pdf,image/jpeg,image/png"'), 'Restriction upload PDF/JPG/PNG manquante');
+  assert(suppliesFrontend.includes('/api/quality/supplies-materials'), 'Frontend ne cible pas la route canonique');
+  assert(suppliesFrontend.includes('body instanceof FormData'), 'Upload FormData doit retirer le Content-Type JSON');
+  assert(suppliesFrontend.includes('fetchProtectedBlob'), 'Ouverture Blob protegee manquante');
+  assert(!suppliesFrontend.includes('token='), 'Le front ne doit pas exposer le JWT en query string');
 
   const cleaningValidator = read('backend/validators/quality/cleaning.js');
   const cleaningService = read('backend/services/quality/cleaning.js');
   assert(cleaningValidator.includes('supply_material_id'), 'Payload nettoyage ne nettoie pas supply_material_id');
   assert(cleaningService.includes('assertSupplyMaterial'), 'Service nettoyage ne valide pas supply_material_id');
   assert(cleaningService.includes('before.supply_material_id || before.product_name'), 'Fallback product_name transitionnel manquant');
+  assert(cleaningService.includes('supply_material_documents'), 'Les plans de nettoyage doivent exposer les documents du produit');
+
+  const suppliesRoutes = read('backend/routes/quality/suppliesMaterials.js');
+  assert(suppliesRoutes.includes("router.post('/:id/documents/upload'"), 'Route upload document fourniture manquante');
+  assert(suppliesRoutes.includes("router.get('/documents/:documentId/file'"), 'Route fichier protegee manquante');
+  assert(suppliesRoutes.includes('ALLOWED_MIME_TYPES'), 'Filtrage MIME upload manquant');
+  assert(!fs.existsSync(path.join(ROOT, 'backend', 'db', 'gestion-commerciale', '102_supplies_materials_upload.sql')), 'Aucune migration ne doit etre ajoutee pour cet upload');
+
+  const suppliesService = read('backend/services/quality/suppliesMaterials.js');
+  assert(suppliesService.includes('createSupplyMaterialDocumentFromUpload'), 'Service upload document fourniture manquant');
+  assert(suppliesService.includes('linkExistingAttachmentToMasterDocument'), 'Upload doit passer par le document maitre');
+  assert(suppliesService.includes('reused_existing'), 'Deduplication par document maitre manquante');
+  assert(suppliesService.includes('product_photo'), 'Type photo produit manquant');
+  [
+    'cleaning_food_contact_products_without_attestation',
+    'archived_documents_still_referenced',
+    'used_in_procedure_without_regulatory_documents',
+    'used_in_pms_but_inactive',
+  ].forEach((diagnostic) => assert(suppliesService.includes(diagnostic), `Diagnostic manquant: ${diagnostic}`));
+
+  const exportService = read('backend/services/quality/qualityDocumentationExportService.js');
+  assert(exportService.includes('collectSupplyMaterialExternalAttachments'), 'Export DDPP ne collecte pas les documents fournitures');
+  assert(exportService.includes('diagnoseSupplyMaterialExportCoverage'), 'Export DDPP ne signale pas les documents fournitures manquants');
+  assert(exportService.includes('checksum_sha256') && exportService.includes("path:${path.resolve(item.file_path)}"), 'Deduplication DDPP par checksum/chemin attendue');
 
   const payload = suppliesMaterials.mapSupplyMaterialPayload({
     name: 'TECHLINE Désinfectant',

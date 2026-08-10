@@ -1,4 +1,7 @@
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
+const multer = require('multer');
 
 const { authenticateToken } = require('../../middleware/auth');
 const { attachDbContext } = require('../../middleware/dbContext');
@@ -8,6 +11,32 @@ const suppliesMaterials = require('../../services/quality/suppliesMaterials');
 const { isQualityUuid } = require('../../validators/quality/common');
 
 const router = express.Router();
+const UPLOAD_DIR = path.resolve(__dirname, '..', '..', 'uploads', 'quality-documents');
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const ALLOWED_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png']);
+
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination(req, file, cb) {
+      cb(null, UPLOAD_DIR);
+    },
+    filename(req, file, cb) {
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const safeStore = String(req.user.store_id || 'store').replace(/[^a-zA-Z0-9-]/g, '');
+      cb(null, `${safeStore}-${Date.now()}-${Math.random().toString(16).slice(2)}${ext}`);
+    },
+  }),
+  limits: { fileSize: MAX_FILE_SIZE },
+  fileFilter(req, file, cb) {
+    if (!ALLOWED_MIME_TYPES.has(file.mimetype)) {
+      return cb(Object.assign(new Error('Format autorise: PDF, JPG, JPEG ou PNG'), { status: 400 }));
+    }
+    cb(null, true);
+  },
+});
+const uploadSupplyDocument = upload.single('file');
 
 router.use(authenticateToken, attachDbContext);
 
@@ -19,6 +48,13 @@ function handleError(res, err, label) {
 function cleanUuid(value) {
   const text = String(value || '').trim();
   return isQualityUuid(text) ? text : null;
+}
+
+function handleUpload(req, res, next) {
+  uploadSupplyDocument(req, res, (err) => {
+    if (err) return handleError(res, err, 'Erreur upload document fourniture');
+    next();
+  });
 }
 
 router.get('/', requireQualityPermission(QUALITY_PERMISSIONS.SUPPLIES_READ), async (req, res) => {
@@ -34,6 +70,18 @@ router.get('/diagnostics', requireQualityPermission(QUALITY_PERMISSIONS.SUPPLIES
     res.json(await suppliesMaterials.diagnoseSuppliesMaterials(req.dbPool, req.user.store_id));
   } catch (err) {
     handleError(res, err, 'Erreur GET /api/quality/supplies-materials/diagnostics');
+  }
+});
+
+router.get('/documents/:documentId/file', requireQualityPermission(QUALITY_PERMISSIONS.SUPPLIES_READ), async (req, res) => {
+  try {
+    const documentId = cleanUuid(req.params.documentId);
+    if (!documentId) return res.status(400).json({ error: 'Identifiant document invalide' });
+    const document = await suppliesMaterials.getSupplyMaterialDocumentFile(req.dbPool, req.user.store_id, documentId);
+    if (!document) return res.status(404).json({ error: 'Document introuvable' });
+    res.download(document.storage_path, document.original_filename || document.title || 'document');
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/supplies-materials/documents/:documentId/file');
   }
 });
 
@@ -103,6 +151,39 @@ router.post('/:id/documents', requireQualityPermission(QUALITY_PERMISSIONS.SUPPL
     res.status(201).json({ reference });
   } catch (err) {
     handleError(res, err, 'Erreur POST /api/quality/supplies-materials/:id/documents');
+  }
+});
+
+router.post('/:id/documents/upload', requireQualityPermission(QUALITY_PERMISSIONS.SUPPLIES_DOCUMENTS), handleUpload, async (req, res) => {
+  try {
+    const materialId = cleanUuid(req.params.id);
+    if (!materialId) return res.status(400).json({ error: 'Identifiant fourniture invalide' });
+    if (!req.file) return res.status(400).json({ error: 'Fichier obligatoire' });
+    const result = await suppliesMaterials.createSupplyMaterialDocumentFromUpload(
+      req.dbPool,
+      req.user.store_id,
+      req.user.id,
+      materialId,
+      req.body,
+      req.file
+    );
+    res.status(201).json(result);
+  } catch (err) {
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    handleError(res, err, 'Erreur POST /api/quality/supplies-materials/:id/documents/upload');
+  }
+});
+
+router.delete('/:id/documents/:referenceId', requireQualityPermission(QUALITY_PERMISSIONS.SUPPLIES_DOCUMENTS), async (req, res) => {
+  try {
+    const materialId = cleanUuid(req.params.id);
+    const referenceId = cleanUuid(req.params.referenceId);
+    if (!materialId || !referenceId) return res.status(400).json({ error: 'Identifiant reference invalide' });
+    const reference = await suppliesMaterials.archiveSupplyMaterialDocumentReference(req.dbPool, req.user.store_id, req.user.id, referenceId, materialId);
+    if (!reference) return res.status(404).json({ error: 'Reference documentaire introuvable' });
+    res.json({ mode: 'archived', reference });
+  } catch (err) {
+    handleError(res, err, 'Erreur DELETE /api/quality/supplies-materials/:id/documents/:referenceId');
   }
 });
 

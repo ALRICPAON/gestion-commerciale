@@ -8,6 +8,16 @@ function ownerColumns(ownerType, ownerId) {
 }
 
 async function assertOwner(db, storeId, ownerType, ownerId) {
+  if (ownerType === 'supply_material') {
+    const result = await db.query(
+      `SELECT id FROM supplies_materials WHERE id = $1 AND store_id = $2 AND archived_at IS NULL LIMIT 1`,
+      [ownerId, storeId]
+    );
+    if (result.rows[0]) return result.rows[0];
+    const err = new Error('Fourniture ou materiel introuvable pour ce magasin');
+    err.status = 400;
+    throw err;
+  }
   const table = ownerType === 'zone' ? 'quality_zones' : 'quality_equipments';
   const result = await db.query(
     `SELECT id, name, status FROM ${table} WHERE id = $1 AND store_id = $2 AND deleted_at IS NULL LIMIT 1`,

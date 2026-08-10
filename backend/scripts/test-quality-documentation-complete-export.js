@@ -7,6 +7,7 @@ const { PDFDocument } = require('pdf-lib');
 const {
   collectAttachmentAppendixItems,
   collectExternalAppendixItems,
+  collectSupplyMaterialExternalAttachments,
   dedupeAppendixItems,
   mergeAppendices,
 } = require('../services/quality/qualityDocumentationExportService');
@@ -48,6 +49,15 @@ async function main() {
     { document: { id: 'd2', title: 'Procedure dupliquee', original_filename: 'procedure.pdf', storage_path: annexPdfPath, mime_type: 'application/pdf' }, references: [{ target_label: 'Reception' }] },
     { document: { id: 'd3', title: 'Fichier absent', original_filename: 'absent.pdf', storage_path: path.join(dir, 'absent.pdf'), mime_type: 'application/pdf' }, references: [{ target_label: 'Reception' }] },
   ]);
+  const supplyExternalItems = collectExternalAppendixItems([
+    {
+      document: { id: 'd4', title: 'TECHLINE', original_filename: 'ft-techline.pdf', storage_path: annexPdfPath, mime_type: 'application/pdf' },
+      references: [{ relation_type: 'technical_sheet', relation_type_label: 'Fiche technique', target_label: 'TECHLINE', usage_label: 'PROC-010 Nettoyage' }],
+    },
+  ]);
+  assert.strictEqual(supplyExternalItems[0].title, 'Fiche technique - ft-techline.pdf', 'Les documents fournitures doivent avoir un libelle annexe lisible');
+  assert.strictEqual(supplyExternalItems[0].section_title, 'PROC-010 Nettoyage', 'Le contexte metier exporte doit etre conserve');
+  assert.strictEqual(typeof collectSupplyMaterialExternalAttachments, 'function', 'Collecte DDPP des documents fournitures manquante');
   const { deduped, duplicates } = dedupeAppendixItems([...chapterItems, ...externalItems]);
   assert.strictEqual(deduped.length, 4, 'le meme fichier rattache plusieurs fois doit etre conserve une seule fois');
   assert.strictEqual(duplicates.length, 1, 'les doublons doivent etre comptabilises');

@@ -27,6 +27,7 @@
     ['manufacturer_notice', 'Notice fabricant'],
     ['attestation', 'Attestation'],
     ['supplier_document', 'Document fournisseur'],
+    ['product_photo', 'Photo produit'],
     ['other', 'Autre'],
   ];
   const linkTypes = [
@@ -57,11 +58,22 @@
     detailCard: $('supplies-detail-card'),
     detailTitle: $('supplies-detail-title'),
     detailSummary: $('supplies-detail-summary'),
-    documentsList: $('supplies-documents-list'),
+    documentIndicators: $('supplies-document-indicators'),
+    documentsTable: $('supplies-documents-table'),
     linksList: $('supplies-links-list'),
     documentSelect: $('supply-document-select'),
     documentRelation: $('supply-document-relation'),
     addDocumentBtn: $('supply-add-document-btn'),
+    uploadForm: $('supply-upload-document-form'),
+    uploadFile: $('supply-upload-file'),
+    uploadRelation: $('supply-upload-relation'),
+    uploadTitle: $('supply-upload-title'),
+    uploadManufacturer: $('supply-upload-manufacturer'),
+    uploadReference: $('supply-upload-reference'),
+    uploadVersion: $('supply-upload-version'),
+    uploadDocumentDate: $('supply-upload-document-date'),
+    uploadValidUntil: $('supply-upload-valid-until'),
+    uploadComment: $('supply-upload-comment'),
     linkTargetType: $('supply-link-target-type'),
     linkTargetId: $('supply-link-target-id'),
     addLinkBtn: $('supply-add-link-btn'),
@@ -122,6 +134,13 @@
     return { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' };
   }
 
+  function requestHeaders(options = {}) {
+    const isFormData = options.body instanceof FormData;
+    const headers = { Authorization: `Bearer ${token}`, ...(options.headers || {}) };
+    if (!isFormData) headers['Content-Type'] = 'application/json';
+    return headers;
+  }
+
   function queryString(filters = {}) {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, value]) => {
@@ -134,7 +153,7 @@
   async function request(path, options = {}) {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
-      headers: { ...authHeaders(), ...(options.headers || {}) },
+      headers: requestHeaders(options),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'Erreur fournitures et matériels');
@@ -143,6 +162,14 @@
 
   function categoryLabel(value) {
     return categories.find(([key]) => key === value)?.[1] || value || '-';
+  }
+
+  function documentRelationLabel(value) {
+    return documentRelations.find(([key]) => key === value)?.[1] || value || '-';
+  }
+
+  function formatDate(value) {
+    return value ? new Date(value).toLocaleDateString('fr-FR') : '-';
   }
 
   function fillOptions(select, rows, options = {}) {
@@ -159,6 +186,7 @@
     fillOptions(els.categoryFilter, categories.map(([value, label]) => ({ value, label })), { emptyLabel: 'Toutes' });
     fillOptions(fields.category, categories.map(([value, label]) => ({ value, label })));
     fillOptions(els.documentRelation, documentRelations.map(([value, label]) => ({ value, label })));
+    fillOptions(els.uploadRelation, documentRelations.map(([value, label]) => ({ value, label })));
     fillOptions(els.linkTargetType, linkTypes.map(([value, label]) => ({ value, label })));
   }
 
@@ -265,14 +293,35 @@
       <article class="quality-list-item"><strong>Stock</strong><span>${escapeHtml(material.current_stock ?? '-')} ${escapeHtml(material.unit || '')}${material.low_stock ? ' · alerte stock faible' : ''}</span></article>
       <article class="quality-list-item"><strong>Utilisation</strong><span>${escapeHtml(material.description || material.notes || '-')}</span></article>
     `;
-    els.documentsList.innerHTML = (material.documents || []).length
-      ? material.documents.map((doc) => `
-        <article class="quality-list-item">
-          <strong>${escapeHtml(doc.title || doc.label || 'Document')}</strong>
-          <span>${escapeHtml(doc.relation_type || doc.document_type || '-')} · ${escapeHtml(doc.status || '-')}</span>
-        </article>
+    const docs = material.documents || [];
+    const docTypes = new Set(docs.map((doc) => doc.relation_type));
+    const indicators = [
+      material.category === 'cleaning_product' ? ['technical_sheet', 'FT'] : null,
+      material.category === 'cleaning_product' ? ['safety_data_sheet', 'FDS'] : null,
+      material.category === 'cleaning_product' && (material.metadata?.food_contact || material.metadata?.direct_food_contact) ? ['attestation', 'Attestation contact alimentaire'] : null,
+      material.category === 'food_packaging' && (material.metadata?.food_contact || material.metadata?.direct_food_contact) ? ['food_contact_declaration', 'Déclaration contact alimentaire'] : null,
+    ].filter(Boolean);
+    els.documentIndicators.innerHTML = indicators.length
+      ? indicators.map(([type, label]) => `<article class="quality-list-item"><strong>${escapeHtml(label)}</strong><span>${docTypes.has(type) || (type === 'attestation' && docTypes.has('food_contact_declaration')) ? 'Présent' : 'Absent'}</span></article>`).join('')
+      : '<div class="quality-muted">Aucun indicateur réglementaire spécifique.</div>';
+    els.documentsTable.innerHTML = docs.length
+      ? docs.map((doc) => `
+        <tr>
+          <td>${escapeHtml(documentRelationLabel(doc.relation_type))}</td>
+          <td>${escapeHtml(doc.document_title || doc.title || doc.label || 'Document')}</td>
+          <td>${escapeHtml(doc.version || '-')}</td>
+          <td>${escapeHtml(formatDate(doc.issue_date || doc.document_date))}</td>
+          <td>${escapeHtml(formatDate(doc.valid_until))}</td>
+          <td>${escapeHtml(doc.document_status || doc.status || '-')}</td>
+          <td>
+            <button class="btn btn-secondary btn-sm" type="button" data-open-doc-id="${escapeHtml(doc.document_id)}">Ouvrir</button>
+            <button class="btn btn-secondary btn-sm" type="button" data-download-doc-id="${escapeHtml(doc.document_id)}">Télécharger</button>
+            <button class="btn btn-secondary btn-sm" type="button" data-master-doc-id="${escapeHtml(doc.document_id)}">Fiche maître</button>
+            <button class="btn btn-muted btn-sm" type="button" data-archive-ref-id="${escapeHtml(doc.id)}">Archiver</button>
+          </td>
+        </tr>
       `).join('')
-      : '<div class="quality-muted">Aucun document maître rattaché.</div>';
+      : '<tr><td colspan="7">Aucun document maître rattaché.</td></tr>';
     els.linksList.innerHTML = (material.links || []).length
       ? material.links.map((link) => `
         <article class="quality-list-item">
@@ -378,6 +427,64 @@
     await openMaterial(selectedMaterial.id);
   }
 
+  async function uploadDocument(event) {
+    event.preventDefault();
+    if (!selectedMaterial) return;
+    if (!canWrite) return setFeedback('Droit documentaire requis.', 'error');
+    const file = els.uploadFile.files?.[0];
+    if (!file) return setFeedback('Choisissez un fichier PDF, JPG ou PNG.', 'error');
+    const body = new FormData();
+    body.set('file', file);
+    body.set('relation_type', els.uploadRelation.value);
+    body.set('title', els.uploadTitle.value || file.name);
+    body.set('manufacturer', els.uploadManufacturer.value);
+    body.set('reference_number', els.uploadReference.value);
+    body.set('version', els.uploadVersion.value || '1.0');
+    body.set('document_date', els.uploadDocumentDate.value);
+    body.set('valid_until', els.uploadValidUntil.value);
+    body.set('comment', els.uploadComment.value);
+    await request(`/api/quality/supplies-materials/${encodeURIComponent(selectedMaterial.id)}/documents/upload`, {
+      method: 'POST',
+      body,
+    });
+    els.uploadForm.reset();
+    setFeedback('Document importé et rattaché.', 'success');
+    await openMaterial(selectedMaterial.id);
+    await loadReferenceData();
+  }
+
+  async function fetchProtectedBlob(path) {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || 'Document introuvable');
+    }
+    return response.blob();
+  }
+
+  async function openProtectedDocument(documentId, download = false) {
+    const blob = await fetchProtectedBlob(`/api/quality/supplies-materials/documents/${encodeURIComponent(documentId)}/file`);
+    const url = URL.createObjectURL(blob);
+    if (download) {
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'document';
+      link.click();
+    } else {
+      window.open(url, '_blank', 'noopener');
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+  }
+
+  async function archiveDocumentReference(referenceId) {
+    if (!selectedMaterial) return;
+    await request(`/api/quality/supplies-materials/${encodeURIComponent(selectedMaterial.id)}/documents/${encodeURIComponent(referenceId)}`, { method: 'DELETE' });
+    setFeedback('Référence documentaire archivée.', 'success');
+    await openMaterial(selectedMaterial.id);
+  }
+
   async function addLink() {
     if (!selectedMaterial) return;
     await request(`/api/quality/supplies-materials/${encodeURIComponent(selectedMaterial.id)}/links`, {
@@ -420,6 +527,17 @@
     });
     els.linkTargetType.addEventListener('change', refreshTargetOptions);
     els.addDocumentBtn.addEventListener('click', () => addDocumentReference().catch((err) => setFeedback(err.message, 'error')));
+    els.uploadForm.addEventListener('submit', (event) => uploadDocument(event).catch((err) => setFeedback(err.message, 'error')));
+    els.documentsTable.addEventListener('click', (event) => {
+      const openButton = event.target.closest('[data-open-doc-id]');
+      const downloadButton = event.target.closest('[data-download-doc-id]');
+      const masterButton = event.target.closest('[data-master-doc-id]');
+      const archiveButton = event.target.closest('[data-archive-ref-id]');
+      if (openButton) openProtectedDocument(openButton.dataset.openDocId).catch((err) => setFeedback(err.message, 'error'));
+      if (downloadButton) openProtectedDocument(downloadButton.dataset.downloadDocId, true).catch((err) => setFeedback(err.message, 'error'));
+      if (masterButton) window.location.href = `./quality/pages/master-documents.html?id=${encodeURIComponent(masterButton.dataset.masterDocId)}`;
+      if (archiveButton) archiveDocumentReference(archiveButton.dataset.archiveRefId).catch((err) => setFeedback(err.message, 'error'));
+    });
     els.addLinkBtn.addEventListener('click', () => addLink().catch((err) => setFeedback(err.message, 'error')));
     els.diagnosticsBtn.addEventListener('click', () => runDiagnostics().catch((err) => setFeedback(err.message, 'error')));
   }

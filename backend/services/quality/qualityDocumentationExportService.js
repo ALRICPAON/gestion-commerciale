@@ -137,6 +137,103 @@ async function collectExternalMasterAttachments(db, storeId, sections = []) {
   return [...byDocumentId.values()].sort((a, b) => String(a.document.reference_number || a.document.title).localeCompare(String(b.document.reference_number || b.document.title)));
 }
 
+function supplyRelationLabel(relationType) {
+  return {
+    technical_sheet: 'Fiche technique',
+    safety_data_sheet: 'FDS',
+    food_contact_declaration: 'Declaration contact alimentaire',
+    certificate: 'Certificat',
+    manufacturer_notice: 'Notice fabricant',
+    attestation: 'Attestation',
+    supplier_document: 'Document fournisseur',
+    product_photo: 'Photo produit',
+    other: 'Document',
+  }[relationType] || 'Document';
+}
+
+async function collectSupplyMaterialExternalAttachments(db, storeId, sections = []) {
+  const chapters = sections.filter((section) => section.section_type !== 'tome');
+  const chapterIds = chapters.map((section) => section.id).filter(Boolean);
+  const chapterCodes = chapters.map((section) => section.code).filter(Boolean);
+  if (!chapterIds.length && !chapterCodes.length) return [];
+  const result = await db.query(
+    `WITH used_supplies AS (
+       SELECT DISTINCT sm.id, sm.code, sm.name, CONCAT_WS(' - ', qs.code, qs.title) AS usage_label
+       FROM supplies_materials sm
+       INNER JOIN supply_material_links sml ON sml.supply_material_id = sm.id AND sml.store_id = sm.store_id
+       LEFT JOIN quality_documentation_sections qs ON qs.id = sml.target_id AND qs.store_id = sml.store_id
+       WHERE sm.store_id = $1::uuid
+         AND sm.archived_at IS NULL
+         AND sml.archived_at IS NULL
+         AND (
+           (sml.target_type = 'documentation_section' AND sml.target_id = ANY($2::uuid[]))
+           OR (sml.target_type = 'pms_chapter' AND sml.target_code = ANY($3::text[]))
+         )
+     )
+     SELECT DISTINCT d.*, qdr.relation_type, us.code AS supply_code, us.name AS supply_name, us.usage_label
+     FROM used_supplies us
+     INNER JOIN quality_document_references qdr ON qdr.store_id = $1::uuid
+      AND qdr.target_type = 'supply_material'
+      AND qdr.target_id = us.id
+      AND qdr.archived_at IS NULL
+     INNER JOIN quality_master_documents d ON d.id = qdr.document_id AND d.store_id = qdr.store_id
+     WHERE d.archived_at IS NULL
+       AND d.status <> 'archived'
+       AND d.storage_path IS NOT NULL
+     ORDER BY us.name ASC, qdr.relation_type ASC, d.title ASC`,
+    [storeId, chapterIds, chapterCodes]
+  );
+  const byDocumentId = new Map();
+  for (const row of result.rows) {
+    if (!byDocumentId.has(row.id)) {
+      byDocumentId.set(row.id, { document: row, references: [] });
+    }
+    byDocumentId.get(row.id).references.push({
+      target_type_label: 'Fourniture utilisee',
+      target_label: [row.supply_code, row.supply_name].filter(Boolean).join(' - '),
+      relation_type: row.relation_type,
+      relation_type_label: supplyRelationLabel(row.relation_type),
+      usage_label: row.usage_label,
+    });
+  }
+  return [...byDocumentId.values()];
+}
+
+async function diagnoseSupplyMaterialExportCoverage(db, storeId, sections = []) {
+  const chapters = sections.filter((section) => section.section_type !== 'tome');
+  const chapterIds = chapters.map((section) => section.id).filter(Boolean);
+  const chapterCodes = chapters.map((section) => section.code).filter(Boolean);
+  if (!chapterIds.length && !chapterCodes.length) return [];
+  const result = await db.query(
+    `WITH used_supplies AS (
+       SELECT DISTINCT sm.*
+       FROM supplies_materials sm
+       INNER JOIN supply_material_links sml ON sml.supply_material_id = sm.id AND sml.store_id = sm.store_id
+       WHERE sm.store_id = $1::uuid
+         AND sm.archived_at IS NULL
+         AND sml.archived_at IS NULL
+         AND (
+           (sml.target_type = 'documentation_section' AND sml.target_id = ANY($2::uuid[]))
+           OR (sml.target_type = 'pms_chapter' AND sml.target_code = ANY($3::text[]))
+         )
+     )
+     SELECT id, code, name, category,
+            EXISTS (SELECT 1 FROM quality_document_references qdr WHERE qdr.store_id=$1::uuid AND qdr.target_type='supply_material' AND qdr.target_id=used_supplies.id AND qdr.relation_type='technical_sheet' AND qdr.archived_at IS NULL) AS has_technical_sheet,
+            EXISTS (SELECT 1 FROM quality_document_references qdr WHERE qdr.store_id=$1::uuid AND qdr.target_type='supply_material' AND qdr.target_id=used_supplies.id AND qdr.relation_type='safety_data_sheet' AND qdr.archived_at IS NULL) AS has_sds,
+            EXISTS (SELECT 1 FROM quality_document_references qdr WHERE qdr.store_id=$1::uuid AND qdr.target_type='supply_material' AND qdr.target_id=used_supplies.id AND qdr.relation_type IN ('food_contact_declaration','attestation') AND qdr.archived_at IS NULL) AS has_food_contact_proof
+     FROM used_supplies
+     ORDER BY name`,
+    [storeId, chapterIds, chapterCodes]
+  );
+  return result.rows.flatMap((row) => {
+    const anomalies = [];
+    if (row.category === 'cleaning_product' && !row.has_technical_sheet) anomalies.push(`${row.name} utilise sans fiche technique`);
+    if (row.category === 'cleaning_product' && !row.has_sds) anomalies.push(`${row.name} utilise sans FDS`);
+    if (row.category === 'food_packaging' && !row.has_food_contact_proof) anomalies.push(`${row.name} utilise sans declaration contact alimentaire`);
+    return anomalies;
+  });
+}
+
 function renderStructuredMasterContent(document) {
   const sections = [
     ['object', 'Objet'],
@@ -238,16 +335,21 @@ function collectAttachmentAppendixItems(documentation, options = {}) {
 }
 
 function collectExternalAppendixItems(externalMasterAttachments = []) {
-  return externalMasterAttachments.map(({ document, references }) => ({
-    source: 'external_master_document',
-    id: document.id,
-    title: attachmentLabel(document),
-    section_title: [...new Set(references.map((reference) => reference.target_label).filter(Boolean))].join(', '),
-    file_path: document.storage_path,
-    mime_type: document.mime_type,
-    size: document.file_size,
-    checksum_sha256: document.checksum_sha256,
-  }));
+  return externalMasterAttachments.map(({ document, references }) => {
+    const firstReference = references?.[0] || {};
+    const relationLabel = firstReference.relation_type_label || null;
+    return {
+      source: 'external_master_document',
+      id: document.id,
+      title: relationLabel ? `${relationLabel} - ${attachmentLabel(document)}` : attachmentLabel(document),
+      section_title: [...new Set(references.map((reference) => reference.usage_label || reference.target_label).filter(Boolean))].join(', '),
+      relation_type_label: relationLabel || document.mime_type || '-',
+      file_path: document.storage_path,
+      mime_type: document.mime_type,
+      size: document.file_size,
+      checksum_sha256: document.checksum_sha256,
+    };
+  });
 }
 
 function dedupeAppendixItems(items = []) {
@@ -398,7 +500,7 @@ function buildHtml(documentation, identity, options = {}) {
     .map((item) => `<tr><td>${escapeHtml(item.section_title)}</td><td>${escapeHtml(item.filename)}</td><td>${escapeHtml(item.mime_type || '-')}</td></tr>`)
     .join('');
   const externalAttachmentRows = externalAppendixItems
-    .map((item) => `<tr><td>${escapeHtml(item.section_title || '-')}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.mime_type || '-')}</td></tr>`)
+    .map((item) => `<tr><td>${escapeHtml(item.section_title || '-')}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.relation_type_label || item.mime_type || '-')}</td></tr>`)
     .join('');
   const annexCount = attachmentAppendixItems.length + externalAppendixItems.length;
 
@@ -516,7 +618,10 @@ async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
     documentation.master_annexes = await collectMasterAnnexes(db, storeId, sections);
   }
   if (options.include_external_master_documents) {
-    documentation.external_master_attachments = await collectExternalMasterAttachments(db, storeId, sections);
+    const directExternalAttachments = await collectExternalMasterAttachments(db, storeId, sections);
+    const supplyExternalAttachments = await collectSupplyMaterialExternalAttachments(db, storeId, sections);
+    documentation.external_master_attachments = [...directExternalAttachments, ...supplyExternalAttachments];
+    documentation.supply_material_export_anomalies = await diagnoseSupplyMaterialExportCoverage(db, storeId, sections);
   }
   const identity = await getCompanyIdentity(db, storeId);
   const html = buildHtml(documentation, identity, options);
@@ -538,6 +643,7 @@ async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
     duplicates: 0,
     anomalies: [],
   };
+  exportSummary.anomalies.push(...(documentation.supply_material_export_anomalies || []));
   if (appendixItems.length) {
     const merged = await mergeAppendices(pdf, appendixItems);
     pdf = merged.pdf;
@@ -546,7 +652,7 @@ async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
       embedded_pages: merged.summary.embedded_pages,
       non_embeddable: merged.summary.non_embeddable,
       duplicates: merged.summary.duplicates,
-      anomalies: merged.summary.anomalies,
+      anomalies: [...exportSummary.anomalies, ...merged.summary.anomalies],
     });
   }
   return { pdf, html, documentation, identity, export_summary: exportSummary };
@@ -572,6 +678,8 @@ module.exports = {
   buildHtml,
   collectMasterAnnexes,
   collectExternalMasterAttachments,
+  collectSupplyMaterialExternalAttachments,
+  diagnoseSupplyMaterialExportCoverage,
   collectAttachmentAppendixItems,
   collectExternalAppendixItems,
   dedupeAppendixItems,
