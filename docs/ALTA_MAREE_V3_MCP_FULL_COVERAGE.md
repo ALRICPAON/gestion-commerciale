@@ -7,7 +7,7 @@ Branche de travail: `feature/mcp-quality-temperature-types`
 Permissions techniques recommandees:
 
 ```text
-ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,suppliers.read,suppliers.write,articles.read,articles.write,stock.read,stock.write,purchases.read,purchases.write,sales.read,sales.write,communications.read,communications.send,statistics.read,cashflow.read,cashflow.write,pennylane.read,pennylane.sync,employee_planning.read,employee_planning.write,transformations.read,transformations.write,quality.read,quality.record.create,quality.nc.manage,quality.action.manage,quality.configuration.write,quality.documentation.read,quality.documentation.edit
+ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,suppliers.read,suppliers.write,articles.read,articles.write,stock.read,stock.write,purchases.read,purchases.write,sales.read,sales.write,communications.read,communications.send,statistics.read,cashflow.read,cashflow.write,pennylane.read,pennylane.sync,employee_planning.read,employee_planning.write,transformations.read,transformations.write,quality.read,quality.record.create,quality.nc.manage,quality.action.manage,quality.configuration.write,quality.documentation.read,quality.documentation.edit,supplies_materials.read,supplies_materials.write,supplies_materials.archive,supplies_materials.documents
 ```
 
 ## Verification tools/list
@@ -27,7 +27,7 @@ ALTA_AGENT_PERMISSIONS=mcp.execute,agent.use,clients.read,clients.write,supplier
 
 `coverage_complete: true` est publie uniquement parce que `backend/scripts/test-agent-mcp-coverage-matrix.js` verifie la matrice MCP, la matrice front/backend, l'absence de `missing_tools` et l'absence de `missing_frontend_backend_capabilities`. Le test force aussi l'echec de couverture si `GET /api/quality/temperatures/types` n'est pas expose via `list_quality_temperature_types`.
 
-Le poste operationnel qualite expose desormais `tool_count: 181`. Les 10 outils operationnels acceptent maintenant les champs de preuve, operateur, controle visuel, conformite, action corrective et detail DDPP necessaires a l'execution reelle.
+Le catalogue public expose desormais `tool_count: 205`, dont le poste operationnel qualite et le referentiel fournitures & materiels. Les outils operationnels acceptent les champs de preuve, operateur, controle visuel, conformite, action corrective et detail DDPP necessaires a l'execution reelle.
 
 ## Audit front/backend
 
@@ -83,6 +83,7 @@ Le plan de nettoyage est la source de verite PMS. Ses champs `responsible_user_i
 | Transformations/negoce | `transformations.read`, `transformations.write` | `get_transformations`, `get_transformation_profile` | `prepare_transformation`, `prepare_transformation_update`, `prepare_transformation_validation` | aucune execution directe | impacts stock non appliques sans raccord metier allowliste |
 | Qualite | `quality.read`, `quality.record.create`, `quality.nc.manage`, `quality.action.manage`, `quality.configuration.write` | contexte, qualite du jour, retards, DDPP, zones, equipements, types temperature, releves temperature, parametres temperature, releves nettoyage, plans nettoyage, taches | taches, plans nettoyage, parametres temperature, affectations zone/equipement, non-conformites, actions correctives | `quality_activate_configuration`, `quality_deactivate_configuration`, `execute_quality_temperature_occurrence`, `execute_quality_cleaning_occurrence`, `execute_quality_manual_occurrence`, `close_quality_non_conformity` | activation et cloture NC exigent confirmation; taches SYSTEM verrouillees executees par formulaire metier |
 | Dossier d'agrement sanitaire | `quality.documentation.read`, `quality.documentation.edit`, `mcp.execute` | liste, plan, section, blocs, recherche | creation/modification sections et blocs structures, preview, restauration | `quality.documentation.apply_section_updates`, `update_quality_section`, `execute_quality_section_update` | action canonique allowlistee et auditee |
+| Fournitures & materiels | `supplies_materials.read`, `supplies_materials.write`, `supplies_materials.archive`, `supplies_materials.documents` | `list_supplies_materials`, `get_supply_material`, `search_supplies_materials`, `list_supply_material_documents`, `list_supply_material_links`, `diagnose_supplies_materials` | `create_supply_material`, `update_supply_material`, `add_supply_material_document_reference`, `add_supply_material_link`, `archive_supply_material_link` | `archive_supply_material` | documents via referentiel maitre uniquement; archivage logique confirme |
 
 ## Garde-fous
 

@@ -134,6 +134,15 @@ const modules = [
     permissions: ['quality.documentation.read', 'quality.documentation.edit'],
     capabilities: ['outline', 'section', 'search', 'missing_items', 'versions', 'preview_update', 'structured_blocks', 'master_documents', 'document_references'],
   },
+  {
+    domain: 'supplies_materials',
+    module: 'Fournitures et materiels',
+    path: '/supplies-materials.html',
+    title: 'Fournitures & materiels',
+    description: 'Referentiel central des consommables, emballages, EPI et petits materiels relies au PMS.',
+    permissions: ['supplies_materials.read', 'supplies_materials.write', 'supplies_materials.archive', 'supplies_materials.documents'],
+    capabilities: ['search', 'profile', 'supplier', 'documents', 'quality_links', 'diagnostics'],
+  },
 ];
 
 function listModules() {

@@ -9,8 +9,11 @@
   const canReadQuality = window.hasQualityPermission
     ? window.hasQualityPermission(sessionUser, 'quality.read') || window.hasQualityPermission(sessionUser, 'quality.document.read')
     : sessionUser.role === 'admin' || sessionUser.role === 'responsable';
+  const canReadSupplies = window.hasQualityPermission
+    ? window.hasQualityPermission(sessionUser, 'supplies_materials.read')
+    : sessionUser.role === 'admin' || sessionUser.role === 'responsable';
 
-  if (!canReadQuality) {
+  if (!canReadQuality && !canReadSupplies) {
     return;
   }
 
@@ -23,16 +26,21 @@
       <h2 id="quality-title">Qualité</h2>
     </div>
     <div class="dashboard-grid home-module-grid">
-      <a class="module-card" href="./quality/pages/dashboard.html" data-module="quality">
+      ${canReadQuality ? `<a class="module-card" href="./quality/pages/dashboard.html" data-module="quality">
         <span class="module-icon" aria-hidden="true">QMS</span>
         <h3>Qualité</h3>
         <p>Module en cours de construction.</p>
-      </a>
-      <a class="module-card" href="./quality/pages/documentation.html" data-module="quality-documentation">
+      </a>` : ''}
+      ${canReadQuality ? `<a class="module-card" href="./quality/pages/documentation.html" data-module="quality-documentation">
         <span class="module-icon" aria-hidden="true">DOC</span>
         <h3>Documentation QualitÃ©</h3>
         <p>Dossier d'agrÃ©ment, PMS, HACCP, procÃ©dures, annexes et export PDF.</p>
-      </a>
+      </a>` : ''}
+      ${canReadSupplies ? `<a class="module-card" href="./supplies-materials.html" data-module="supplies-materials">
+        <span class="module-icon" aria-hidden="true">FM</span>
+        <h3>Fournitures & matériels</h3>
+        <p>Consommables, emballages, EPI et petits matériels reliés au PMS.</p>
+      </a>` : ''}
     </div>
   `;
 

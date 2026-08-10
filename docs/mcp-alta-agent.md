@@ -49,7 +49,7 @@ Le serveur supporte les deux modes utiles pour ChatGPT Business Apps et les outi
 Etat attendu du catalogue public complet ALTA MAREE V3 apres cette evolution:
 
 - version `1.8.4`;
-- `tool_count: 193`;
+- `tool_count: 205`;
 - `coverage_complete: true`;
 - `missing_tools: []`;
 - `frontend_backend_coverage_complete: true`;
@@ -82,6 +82,23 @@ Outils referentiel documentaire maitre ajoutes:
 - `list_quality_document_incoming_references`
 - `compare_quality_documents`
 - `diagnose_quality_document_duplicates`
+
+Outils fournitures et materiels ajoutes:
+
+- `list_supplies_materials`
+- `get_supply_material`
+- `search_supplies_materials`
+- `list_supply_material_documents`
+- `list_supply_material_links`
+- `create_supply_material`
+- `update_supply_material`
+- `archive_supply_material`
+- `add_supply_material_document_reference`
+- `add_supply_material_link`
+- `archive_supply_material_link`
+- `diagnose_supplies_materials`
+
+Ces outils utilisent le meme service metier que `/api/quality/supplies-materials`. Les documents restent rattaches par `quality_master_documents` et `quality_document_references`; aucun systeme documentaire parallele n'est expose au MCP.
 
 Les outils de recherche sont limités à 25 résultats maximum et utilisent les mêmes règles que `/api/agent/*`.
 

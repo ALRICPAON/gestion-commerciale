@@ -27,15 +27,16 @@ Outils raccordes dans ce socle:
 - tresorerie: `get_cashflow_dashboard`, `get_cashflow_forecast`, `get_customer_receivables`, `get_supplier_payables`, `get_bank_accounts_summary`, `get_bank_transactions`, `get_recurring_charges`, `get_cashflow_settings`, `simulate_distrimer_payment`, `prepare_cashflow_plan`;
 - dossier qualite: `list_quality_documentation`, `get_quality_documentation_outline`, `get_quality_section`, `search_quality_sections`, `list_quality_missing_items`, `get_quality_section_versions`, `draft_quality_section_content`, `preview_quality_section_update`, `update_quality_section`, `create_quality_section`, `restore_quality_section_version`, `list_quality_section_tables`, `list_quality_section_diagrams`, `export_quality_documentation_preview`;
 - referentiel documentaire maitre: `list_quality_master_documents`, `get_quality_master_document`, `create_quality_master_document`, `update_quality_master_document`, `archive_quality_master_document`, `link_existing_attachment_to_master_document`, `add_quality_document_reference`, `archive_quality_document_reference`, `list_quality_document_references`, `list_quality_document_incoming_references`, `compare_quality_documents`, `diagnose_quality_document_duplicates`;
+- fournitures et materiels: `list_supplies_materials`, `get_supply_material`, `search_supplies_materials`, `list_supply_material_documents`, `list_supply_material_links`, `create_supply_material`, `update_supply_material`, `archive_supply_material`, `add_supply_material_document_reference`, `add_supply_material_link`, `archive_supply_material_link`, `diagnose_supplies_materials`;
 - configuration qualite: `quality_create_task`, `quality_update_task`, `quality_create_cleaning_plan`, `quality_update_cleaning_plan`, `quality_assign_task_to_zone`, `quality_assign_task_to_equipment`, `quality_activate_configuration`, `quality_deactivate_configuration`;
 - poste qualite operationnel: `get_quality_today_work`, `get_quality_overdue_work`, `get_quality_ddpp_dashboard`, `get_quality_ddpp_record_detail`, `execute_quality_temperature_occurrence`, `execute_quality_cleaning_occurrence`, `execute_quality_manual_occurrence`, `create_quality_non_conformity`, `create_quality_corrective_action`, `close_quality_non_conformity`;
 - audit admin: `list_agent_audit_logs`, `get_agent_audit_log`.
 
 Etat actuel:
 
-- 181 outils dans le catalogue administratif.
-- 161 outils operationnels dans `agentToolRegistry.listMcpTools`.
-- 181 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
+- 205 outils dans le catalogue administratif.
+- 186 outils operationnels dans `agentToolRegistry.listMcpTools`.
+- 205 outils publics exposes par la route MCP `tools/list` apres ajout des wrappers compatibles ChatGPT et des outils legacy non dupliques.
 - `tools/list` expose `coverage_complete: true`, `missing_tools: []`, `frontend_backend_coverage_complete: true`, `missing_frontend_backend_capabilities: []`, `final_permissions`, `coverage_matrix` et `frontend_backend_capabilities` pour ALTA_MAREE_V3.
 - Les outils `planned` restent documentes mais ne sont pas envoyes au modele et sont refuses a l execution.
 

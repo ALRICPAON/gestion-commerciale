@@ -14,13 +14,13 @@
     formCard: $('cleaning-plan-form-card'), form: $('cleaning-plan-form'), formTitle: $('cleaning-plan-form-title'), id: $('cleaning-plan-id'),
     title: $('cleaning-plan-title'), zoneIds: $('cleaning-plan-zone-ids'), equipmentSearch: $('cleaning-plan-equipment-search'),
     equipmentOptions: $('cleaning-plan-equipment-options'), selectZoneEquipments: $('cleaning-plan-select-zone-equipments'), clearEquipments: $('cleaning-plan-clear-equipments'),
-    product: $('cleaning-plan-product'), duration: $('cleaning-plan-duration'), active: $('cleaning-plan-active'), method: $('cleaning-plan-method'),
+    supplyMaterialId: $('cleaning-plan-supply-material-id'), product: $('cleaning-plan-product'), duration: $('cleaning-plan-duration'), active: $('cleaning-plan-active'), method: $('cleaning-plan-method'),
     safety: $('cleaning-plan-safety'), description: $('cleaning-plan-description'), planningMode: $('cleaning-plan-planning-mode'),
     taskId: $('cleaning-plan-quality-task-id'), taskTitle: $('cleaning-plan-task-title'), taskResponsible: $('cleaning-plan-task-responsible'),
     frequencyValue: $('cleaning-plan-frequency-value'), frequencyUnit: $('cleaning-plan-frequency-unit'), targetTime: $('cleaning-plan-target-time'), cancelBtn: $('cleaning-plan-cancel-btn'),
     scheduledDays: $('cleaning-plan-scheduled-days-label'),
   };
-  let plans = []; let zones = []; let equipments = []; let tasks = []; let users = []; let selectedEquipmentIds = new Set();
+  let plans = []; let zones = []; let equipments = []; let tasks = []; let users = []; let supplyMaterials = []; let selectedEquipmentIds = new Set();
 
   function escapeHtml(value) { return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char])); }
   function setFeedback(message = '', type = '') { els.feedback.textContent = message; els.feedback.className = message ? `page-feedback ${type}`.trim() : 'page-feedback hidden'; }
@@ -77,7 +77,7 @@
       `Frequence: ${plan.frequency_value || task?.frequency_value || '-'} ${plan.frequency_unit || task?.frequency_unit || ''}`,
       `Heure cible: ${plan.target_time || task?.target_time || '-'}`,
       `Duree: ${plan.expected_duration_minutes || '-'} min`,
-      `Produit: ${plan.product_name || '-'}`,
+      `Produit: ${plan.supply_material?.name || plan.product_name || '-'}`,
       `Methode: ${plan.method || '-'}`,
       `Preuve: ${plan.expected_proof || '-'}`,
       `Action corrective: ${plan.corrective_action || '-'}`,
@@ -165,6 +165,18 @@
     if (create && els.taskTitle.dataset.touched !== 'true') els.taskTitle.value = `Nettoyage - ${els.title.value || 'Plan'}`;
   }
 
+  function refreshSupplyMaterials(selectedId = '') {
+    if (!els.supplyMaterialId) return;
+    els.supplyMaterialId.innerHTML = '<option value="">Ancien texte libre</option>';
+    supplyMaterials.forEach((material) => {
+      const option = document.createElement('option');
+      option.value = material.id;
+      option.textContent = `${material.code ? `${material.code} - ` : ''}${material.name || ''}${material.supplier?.name ? ` (${material.supplier.name})` : ''}`;
+      els.supplyMaterialId.appendChild(option);
+    });
+    els.supplyMaterialId.value = selectedId || '';
+  }
+
   function taskDescription() {
     const zoneLabels = zones.filter((zone) => selectedZoneIds().includes(zone.id)).map((zone) => zone.name || zone.code);
     const equipmentLabels = equipments.filter((equipment) => selectedEquipmentIds.has(equipment.id)).map((equipment) => equipment.name || equipment.code);
@@ -192,6 +204,7 @@
       zone_ids: zoneIds,
       equipment_ids: equipmentIds,
       product_name: els.product.value,
+      supply_material_id: els.supplyMaterialId?.value || null,
       method: els.method.value,
       safety_instructions: els.safety.value,
       expected_duration_minutes: els.duration.value || null,
@@ -214,6 +227,7 @@
     els.planningMode.value = 'new';
     els.taskTitle.dataset.touched = 'false';
     els.formTitle.textContent = 'Nouveau plan';
+    refreshSupplyMaterials();
     refreshZones();
     refreshEquipments();
     refreshPlanningMode();
@@ -225,6 +239,7 @@
     const equipmentIds = planEquipmentIds(plan);
     els.id.value = plan.id;
     els.title.value = plan.title || '';
+    refreshSupplyMaterials(plan.supply_material_id || '');
     els.product.value = plan.product_name || '';
     els.duration.value = plan.expected_duration_minutes || '';
     els.method.value = plan.method || '';
@@ -262,7 +277,8 @@
       const zoneNames = names(planZones(plan));
       const equipmentNames = names(planEquipments(plan));
       const task = plan.quality_task ? `${escapeHtml(plan.quality_task.title)} - ${taskFrequency(plan.quality_task)} - ${formatDate(plan.quality_task.next_due_at)} - ${taskStatus(plan.quality_task)}` : 'Non planifie';
-      return `<article class="quality-card"><span class="quality-badge">${plan.active ? 'Actif' : 'Inactif'}</span><h3>${escapeHtml(plan.title)}</h3><p>Produit : ${escapeHtml(plan.product_name || '-')} - Duree : ${plan.expected_duration_minutes || '-'} min</p><p class="quality-muted"><strong>Zones concernees :</strong> ${escapeHtml(zoneNames)}</p><p class="quality-muted"><strong>Equipements concernes :</strong> ${escapeHtml(equipmentNames)}</p><p class="quality-muted"><strong>Tache :</strong> ${task}</p><p class="quality-muted">${escapeHtml(plan.method || '')}</p><div class="quality-actions"><button class="btn btn-secondary" data-action="edit" data-id="${plan.id}">Modifier</button><button class="btn btn-secondary" data-action="toggle" data-id="${plan.id}">${plan.active ? 'Desactiver' : 'Reactiver'}</button></div></article>`;
+      const productLabel = plan.supply_material?.name || plan.product_name || '-';
+      return `<article class="quality-card"><span class="quality-badge">${plan.active ? 'Actif' : 'Inactif'}</span><h3>${escapeHtml(plan.title)}</h3><p>Produit : ${escapeHtml(productLabel)} - Duree : ${plan.expected_duration_minutes || '-'} min</p><p class="quality-muted"><strong>Zones concernees :</strong> ${escapeHtml(zoneNames)}</p><p class="quality-muted"><strong>Equipements concernes :</strong> ${escapeHtml(equipmentNames)}</p><p class="quality-muted"><strong>Tache :</strong> ${task}</p><p class="quality-muted">${escapeHtml(plan.method || '')}</p><div class="quality-actions"><button class="btn btn-secondary" data-action="edit" data-id="${plan.id}">Modifier</button><button class="btn btn-secondary" data-action="toggle" data-id="${plan.id}">${plan.active ? 'Desactiver' : 'Reactiver'}</button></div></article>`;
     }).join('');
     Array.from(els.list.querySelectorAll('.quality-actions')).forEach((actions, index) => {
       const plan = plans[index];
@@ -279,6 +295,19 @@
       users = response.ok ? await response.json() : [];
     } catch (error) {
       users = [];
+    }
+  }
+
+  async function loadSupplyMaterials() {
+    const apiBase = window.APP_CONFIG?.API_BASE_URL || '';
+    try {
+      const response = await fetch(`${apiBase}/api/quality/supplies-materials?category=cleaning_product&active=true&limit=200`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = response.ok ? await response.json() : { materials: [] };
+      supplyMaterials = data.materials || [];
+    } catch (error) {
+      supplyMaterials = [];
     }
   }
 
@@ -302,8 +331,10 @@
       twin.listZones({ include_archived: 'false' }),
       twin.listEquipments({ include_archived: 'false' }),
       loadUsers(),
+      loadSupplyMaterials(),
     ]).then(([loadedZones, loadedEquipments]) => [loadedZones, loadedEquipments]);
     refreshUsers();
+    refreshSupplyMaterials();
     refreshZones();
     refreshEquipments();
     els.addBtn.disabled = !canManage;

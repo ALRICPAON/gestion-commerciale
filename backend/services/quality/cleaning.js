@@ -66,6 +66,20 @@ function targetSummary(plan) {
   ].filter(Boolean).join(' | ');
 }
 
+async function assertSupplyMaterial(db, storeId, supplyMaterialId) {
+  if (!supplyMaterialId) return null;
+  const result = await db.query(
+    `SELECT id FROM supplies_materials
+     WHERE id = $1::uuid AND store_id = $2::uuid AND archived_at IS NULL
+     LIMIT 1`,
+    [supplyMaterialId, storeId]
+  );
+  if (result.rows[0]) return supplyMaterialId;
+  const err = new Error('Fourniture ou produit de nettoyage introuvable pour ce magasin');
+  err.status = 400;
+  throw err;
+}
+
 function synchronizedTaskPayload(plan) {
   const equipmentId = plan.equipment_id || plan.equipments?.[0]?.id || null;
   const zoneId = plan.zone_id || plan.zones?.[0]?.id || null;
@@ -134,6 +148,13 @@ function taskSelectSql() {
 function attachTask(row) {
   if (!row) return null;
   const plan = attachTargets(row);
+  plan.supply_material = plan.supply_material_id ? {
+    id: plan.supply_material_id,
+    code: plan.supply_material_code || null,
+    name: plan.supply_material_name || null,
+    category: plan.supply_material_category || null,
+    brand: plan.supply_material_brand || null,
+  } : null;
   if (!plan.task_id) return { ...plan, quality_task: null };
   return {
     ...plan,
@@ -155,10 +176,13 @@ function attachTask(row) {
 function planSelectSql(whereSql) {
   return `SELECT p.*, z.code AS zone_code, z.name AS zone_name,
                  e.code AS equipment_code, e.name AS equipment_name,
+                 sm.name AS supply_material_name, sm.code AS supply_material_code,
+                 sm.category AS supply_material_category, sm.brand AS supply_material_brand,
                  COALESCE(z_targets.zones, CASE WHEN p.zone_id IS NOT NULL THEN json_build_array(json_build_object('id', z.id, 'code', z.code, 'name', z.name, 'status', z.status)) ELSE '[]'::json END) AS zones,
                  COALESCE(e_targets.equipments, CASE WHEN p.equipment_id IS NOT NULL THEN json_build_array(json_build_object('id', e.id, 'code', e.code, 'name', e.name, 'zone_id', e.zone_id, 'zone_name', ez.name, 'status', e.status)) ELSE '[]'::json END) AS equipments,
                  ${taskSelectSql()}
           FROM quality_cleaning_plans p
+          LEFT JOIN supplies_materials sm ON sm.id = p.supply_material_id AND sm.store_id = p.store_id
           LEFT JOIN quality_zones z ON z.id = p.zone_id AND z.store_id = p.store_id
           LEFT JOIN quality_equipments e ON e.id = p.equipment_id AND e.store_id = p.store_id
           LEFT JOIN quality_zones ez ON ez.id = e.zone_id AND ez.store_id = p.store_id
@@ -355,6 +379,7 @@ async function saveCleaningPlanInTransaction(db, storeId, userId, payload, planI
   const legacyZoneId = zoneIds[0] || null;
   const legacyEquipmentId = equipmentIds[0] || null;
   const taskId = await assertCleaningTask(db, storeId, payload.quality_task_id);
+  const supplyMaterialId = await assertSupplyMaterial(db, storeId, payload.supply_material_id);
   const result = planId
     ? await db.query(
       `UPDATE quality_cleaning_plans
@@ -367,10 +392,11 @@ async function saveCleaningPlanInTransaction(db, storeId, userId, payload, planI
            validation_required=$23::boolean, created_source=$24::text, created_by_agent=$25::boolean,
            agent_action_id=$26::text, responsible_user_id=$27::uuid, frequency_value=$28::integer,
            frequency_unit=$29::text, target_time=$30::time, scheduled_days=$31::jsonb,
+           supply_material_id=$32::uuid,
            updated_at=now()
        WHERE id=$1::uuid AND store_id=$2::uuid
        RETURNING *`,
-      [planId, storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payloadValue(payload, before, 'dosage_concentration'), payloadValue(payload, before, 'usage_temperature'), payloadValue(payload, before, 'contact_time_minutes'), payloadValue(payload, before, 'rinse_required'), payloadValue(payload, before, 'material_used'), payloadValue(payload, before, 'post_cleaning_check'), payloadValue(payload, before, 'expected_proof'), payloadValue(payload, before, 'corrective_action'), payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payloadValue(payload, before, 'agent_action_id'), payloadValue(payload, before, 'responsible_user_id'), payloadValue(payload, before, 'frequency_value'), payloadValue(payload, before, 'frequency_unit'), payloadValue(payload, before, 'target_time'), JSON.stringify(payloadValue(payload, before, 'scheduled_days', []) || [])]
+      [planId, storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payloadValue(payload, before, 'dosage_concentration'), payloadValue(payload, before, 'usage_temperature'), payloadValue(payload, before, 'contact_time_minutes'), payloadValue(payload, before, 'rinse_required'), payloadValue(payload, before, 'material_used'), payloadValue(payload, before, 'post_cleaning_check'), payloadValue(payload, before, 'expected_proof'), payloadValue(payload, before, 'corrective_action'), payload.configuration_status || before.configuration_status || 'active', payload.validation_required === true || before.validation_required === true, payload.created_source || before.created_source || 'human', payload.created_by_agent === true || before.created_by_agent === true, payloadValue(payload, before, 'agent_action_id'), payloadValue(payload, before, 'responsible_user_id'), payloadValue(payload, before, 'frequency_value'), payloadValue(payload, before, 'frequency_unit'), payloadValue(payload, before, 'target_time'), JSON.stringify(payloadValue(payload, before, 'scheduled_days', []) || []), supplyMaterialId]
     )
     : await db.query(
       `INSERT INTO quality_cleaning_plans (
@@ -380,16 +406,16 @@ async function saveCleaningPlanInTransaction(db, storeId, userId, payload, planI
         contact_time_minutes, rinse_required, material_used, post_cleaning_check,
         expected_proof, corrective_action, configuration_status, validation_required,
         created_source, created_by_agent, agent_action_id, responsible_user_id,
-        frequency_value, frequency_unit, target_time, scheduled_days
+        frequency_value, frequency_unit, target_time, scheduled_days, supply_material_id
       ) VALUES (
         $1::uuid,$2::text,$3::text,$4::uuid,$5::uuid,$6::text,$7::text,$8::text,
         $9::integer,$10::uuid,$11::boolean,$12::uuid,$12::uuid,$13::text,$14::text,
         $15::integer,$16::boolean,$17::text,$18::text,$19::text,$20::text,$21::text,
         $22::boolean,$23::text,$24::boolean,$25::text,$26::uuid,$27::integer,
-        $28::text,$29::time,$30::jsonb
+        $28::text,$29::time,$30::jsonb,$31::uuid
       )
       RETURNING *`,
-      [storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration, payload.usage_temperature, payload.contact_time_minutes, payload.rinse_required, payload.material_used, payload.post_cleaning_check, payload.expected_proof, payload.corrective_action, payload.configuration_status || 'active', payload.validation_required === true, payload.created_source || 'human', payload.created_by_agent === true, payload.agent_action_id, payload.responsible_user_id, payload.frequency_value, payload.frequency_unit, payload.target_time, JSON.stringify(payload.scheduled_days || [])]
+      [storeId, payload.title, payload.description, legacyZoneId, legacyEquipmentId, payload.product_name, payload.method, payload.safety_instructions, payload.expected_duration_minutes, taskId, payload.active, userId, payload.dosage_concentration, payload.usage_temperature, payload.contact_time_minutes, payload.rinse_required, payload.material_used, payload.post_cleaning_check, payload.expected_proof, payload.corrective_action, payload.configuration_status || 'active', payload.validation_required === true, payload.created_source || 'human', payload.created_by_agent === true, payload.agent_action_id, payload.responsible_user_id, payload.frequency_value, payload.frequency_unit, payload.target_time, JSON.stringify(payload.scheduled_days || []), supplyMaterialId]
     );
   await syncPlanTargets(db, storeId, userId, result.rows[0].id, { ...payload, zone_ids: zoneIds, equipment_ids: equipmentIds, zone_id: legacyZoneId, equipment_id: legacyEquipmentId });
   const savedPlan = await getCleaningPlan(db, storeId, result.rows[0].id);
@@ -406,7 +432,7 @@ async function saveCleaningPlan(db, storeId, userId, payload, planId = null) {
 async function changeCleaningPlanStatusInTransaction(db, storeId, userId, planId, active) {
   const before = await getCleaningPlan(db, storeId, planId);
   if (!before) return null;
-  if (active && (!before.product_name || !before.dosage_concentration || !before.contact_time_minutes || !before.frequency_value || !before.frequency_unit)) {
+  if (active && (!(before.supply_material_id || before.product_name) || !before.dosage_concentration || !before.contact_time_minutes || !before.frequency_value || !before.frequency_unit)) {
     const err = new Error('Activation refusee: produit, dosage/concentration, temps de contact et frequence du plan sont obligatoires');
     err.status = 400;
     throw err;
@@ -451,6 +477,8 @@ async function listDueCleaningRecords(db, storeId, query = {}) {
       equipment_name: plan.equipment_name,
       equipments: plan.equipments,
       product_name: plan.product_name,
+      supply_material_id: plan.supply_material_id,
+      supply_material: plan.supply_material,
       method: plan.method,
       safety_instructions: plan.safety_instructions,
       expected_duration_minutes: plan.expected_duration_minutes,
@@ -506,6 +534,8 @@ async function createCleaningRecord(db, storeId, userId, payload) {
           equipments: plan.equipments || [],
           method: plan.method,
           product_name: plan.product_name,
+          supply_material_id: plan.supply_material_id,
+          supply_material: plan.supply_material,
           dosage_concentration: plan.dosage_concentration,
           contact_time_minutes: plan.contact_time_minutes,
           expected_proof: plan.expected_proof,
