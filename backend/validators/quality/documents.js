@@ -1,5 +1,5 @@
 const DOCUMENT_TYPES = Object.freeze(['NOTICE', 'FACTURE', 'CERTIFICAT', 'GARANTIE', 'PLAN', 'PHOTO', 'VIDEO', 'PROCEDURE', 'FDS', 'CONTRAT', 'AUTRE']);
-const OWNER_TYPES = Object.freeze(['zone', 'equipment']);
+const OWNER_TYPES = Object.freeze(['zone', 'equipment', 'supply_material']);
 
 function text(value) {
   if (value === undefined || value === null) return null;

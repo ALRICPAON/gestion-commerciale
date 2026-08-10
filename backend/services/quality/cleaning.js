@@ -154,6 +154,7 @@ function attachTask(row) {
     name: plan.supply_material_name || null,
     category: plan.supply_material_category || null,
     brand: plan.supply_material_brand || null,
+    documents: jsonArray(plan.supply_material_documents),
   } : null;
   if (!plan.task_id) return { ...plan, quality_task: null };
   return {
@@ -178,11 +179,31 @@ function planSelectSql(whereSql) {
                  e.code AS equipment_code, e.name AS equipment_name,
                  sm.name AS supply_material_name, sm.code AS supply_material_code,
                  sm.category AS supply_material_category, sm.brand AS supply_material_brand,
+                 COALESCE(sm_docs.documents, '[]'::json) AS supply_material_documents,
                  COALESCE(z_targets.zones, CASE WHEN p.zone_id IS NOT NULL THEN json_build_array(json_build_object('id', z.id, 'code', z.code, 'name', z.name, 'status', z.status)) ELSE '[]'::json END) AS zones,
                  COALESCE(e_targets.equipments, CASE WHEN p.equipment_id IS NOT NULL THEN json_build_array(json_build_object('id', e.id, 'code', e.code, 'name', e.name, 'zone_id', e.zone_id, 'zone_name', ez.name, 'status', e.status)) ELSE '[]'::json END) AS equipments,
                  ${taskSelectSql()}
           FROM quality_cleaning_plans p
           LEFT JOIN supplies_materials sm ON sm.id = p.supply_material_id AND sm.store_id = p.store_id
+          LEFT JOIN LATERAL (
+            SELECT json_agg(json_build_object(
+              'document_id', qdr.document_id,
+              'relation_type', qdr.relation_type,
+              'title', d.title,
+              'version', d.version,
+              'valid_until', d.valid_until,
+              'status', d.status
+            ) ORDER BY qdr.relation_type ASC, d.title ASC) AS documents
+            FROM quality_document_references qdr
+            INNER JOIN quality_master_documents d ON d.id = qdr.document_id AND d.store_id = qdr.store_id
+            WHERE qdr.store_id = p.store_id
+              AND qdr.target_type = 'supply_material'
+              AND qdr.target_id = p.supply_material_id
+              AND qdr.archived_at IS NULL
+              AND d.archived_at IS NULL
+              AND d.status <> 'archived'
+              AND qdr.relation_type IN ('technical_sheet','safety_data_sheet','food_contact_declaration','certificate','manufacturer_notice','attestation','supplier_document')
+          ) sm_docs ON true
           LEFT JOIN quality_zones z ON z.id = p.zone_id AND z.store_id = p.store_id
           LEFT JOIN quality_equipments e ON e.id = p.equipment_id AND e.store_id = p.store_id
           LEFT JOIN quality_zones ez ON ez.id = e.zone_id AND ez.store_id = p.store_id

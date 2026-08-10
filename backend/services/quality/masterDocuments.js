@@ -738,7 +738,7 @@ async function listDocumentReferences(db, storeId, query = {}) {
   }
   const result = await db.query(
     `SELECT r.*, d.title AS document_title, d.status AS document_status, d.valid_until,
-            d.document_type, d.category, d.source_type, d.original_filename
+            d.issue_date, d.version, d.document_type, d.category, d.source_type, d.original_filename
      FROM quality_document_references r
      JOIN quality_master_documents d ON d.id = r.document_id AND d.store_id = r.store_id
      WHERE ${where.join(' AND ')}

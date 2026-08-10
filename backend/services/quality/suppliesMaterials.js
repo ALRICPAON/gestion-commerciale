@@ -1,4 +1,6 @@
-const { addDocumentReference, archiveDocumentReference, getDocumentsForTarget } = require('./masterDocuments');
+const fs = require('fs');
+const { addDocumentReference, archiveDocumentReference, getDocumentsForTarget, getMasterDocument, linkExistingAttachmentToMasterDocument } = require('./masterDocuments');
+const { createDocument } = require('./documents');
 const { logQualityEvent } = require('./eventLogger');
 
 const SUPPLY_MATERIAL_CATEGORIES = Object.freeze([
@@ -20,8 +22,33 @@ const SUPPLY_MATERIAL_DOCUMENT_TYPES = Object.freeze([
   'manufacturer_notice',
   'attestation',
   'supplier_document',
+  'product_photo',
   'other',
 ]);
+
+const DOCUMENT_TYPE_TO_QUALITY_DOCUMENT_TYPE = Object.freeze({
+  technical_sheet: 'NOTICE',
+  safety_data_sheet: 'FDS',
+  food_contact_declaration: 'CERTIFICAT',
+  certificate: 'CERTIFICAT',
+  manufacturer_notice: 'NOTICE',
+  attestation: 'CERTIFICAT',
+  supplier_document: 'AUTRE',
+  product_photo: 'PHOTO',
+  other: 'AUTRE',
+});
+
+const DOCUMENT_TYPE_TO_MASTER_TYPE = Object.freeze({
+  technical_sheet: 'external_evidence',
+  safety_data_sheet: 'external_evidence',
+  food_contact_declaration: 'external_evidence',
+  certificate: 'external_evidence',
+  manufacturer_notice: 'external_evidence',
+  attestation: 'external_evidence',
+  supplier_document: 'external_evidence',
+  product_photo: 'external_evidence',
+  other: 'external_evidence',
+});
 
 const SUPPLY_MATERIAL_LINK_TYPES = Object.freeze([
   'zone',
@@ -66,6 +93,15 @@ function jsonObject(value) {
 function limit(value, fallback = 50, max = 100) {
   const parsed = Number(value);
   return Math.min(Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback, max);
+}
+
+function normalizeDocumentRelation(value) {
+  const relationType = text(value) || 'other';
+  if (SUPPLY_MATERIAL_DOCUMENT_TYPES.includes(relationType)) return relationType;
+  if (relationType === 'reference') return relationType;
+  const err = new Error('Type de document fourniture invalide');
+  err.status = 400;
+  throw err;
 }
 
 function ensureCategory(category) {
@@ -360,12 +396,7 @@ async function listSupplyMaterialDocuments(db, storeId, materialId) {
 async function addSupplyMaterialDocumentReference(db, storeId, userId, input = {}) {
   const materialId = text(input.supply_material_id || input.material_id);
   await assertMaterial(db, storeId, materialId);
-  const relationType = text(input.relation_type || input.document_relation_type) || 'reference';
-  if (!SUPPLY_MATERIAL_DOCUMENT_TYPES.includes(relationType) && relationType !== 'reference') {
-    const err = new Error('Type de document fourniture invalide');
-    err.status = 400;
-    throw err;
-  }
+  const relationType = normalizeDocumentRelation(input.relation_type || input.document_relation_type);
   return addDocumentReference(db, storeId, userId, {
     document_id: input.document_id,
     target_type: 'supply_material',
@@ -375,15 +406,118 @@ async function addSupplyMaterialDocumentReference(db, storeId, userId, input = {
   });
 }
 
-async function archiveSupplyMaterialDocumentReference(db, storeId, userId, referenceId) {
+async function createSupplyMaterialDocumentFromUpload(db, storeId, userId, materialId, input = {}, file = null) {
+  await assertMaterial(db, storeId, materialId);
+  if (!file) {
+    const err = new Error('Fichier document obligatoire');
+    err.status = 400;
+    throw err;
+  }
+  const relationType = normalizeDocumentRelation(input.relation_type || input.document_relation_type || input.document_type);
+  const title = text(input.title || input.name, file.originalname);
+  const description = [text(input.comment), text(input.description)].filter(Boolean).join('\n') || null;
+  const nativeDocument = await createDocument(db, storeId, userId, {
+    owner_type: 'supply_material',
+    owner_id: materialId,
+    type_code: DOCUMENT_TYPE_TO_QUALITY_DOCUMENT_TYPE[relationType] || 'AUTRE',
+    name: title,
+    description,
+    version: text(input.version),
+    document_date: text(input.document_date || input.issue_date),
+    author: text(input.manufacturer || input.issuer_name),
+  }, file);
+  const linked = await linkExistingAttachmentToMasterDocument(db, storeId, userId, {
+    source_type: 'quality_document',
+    source_id: nativeDocument.id,
+    target_type: 'supply_material',
+    target_id: materialId,
+    relation_type: relationType,
+    title,
+    document_type: DOCUMENT_TYPE_TO_MASTER_TYPE[relationType] || 'external_evidence',
+    category: 'supplies_materials',
+    source_type_master: 'fournisseur',
+    issuer_name: text(input.manufacturer || input.issuer_name),
+    reference_number: text(input.reference_number || input.reference),
+    issue_date: text(input.document_date || input.issue_date),
+    valid_until: text(input.valid_until),
+    version: text(input.version, '1.0'),
+    status: 'valid',
+    description,
+    label: text(input.label),
+  });
+  const reference = await addDocumentReference(db, storeId, userId, {
+    document_id: linked.document.id,
+    target_type: 'supply_material',
+    target_id: materialId,
+    relation_type: relationType,
+    label: text(input.label || title),
+  });
+  if (linked.reused_existing && linked.document.storage_path && linked.document.storage_path !== file.path) {
+    await db.query(
+      `UPDATE quality_documents
+       SET storage_path = $3::text,
+           original_filename = COALESCE($4::text, original_filename),
+           mime_type = COALESCE($5::text, mime_type),
+           file_size = COALESCE($6::bigint, file_size),
+           updated_by = $7::uuid,
+           updated_at = now()
+       WHERE id = $1::uuid AND store_id = $2::uuid`,
+      [
+        nativeDocument.id,
+        storeId,
+        linked.document.storage_path,
+        linked.document.original_filename,
+        linked.document.mime_type,
+        linked.document.file_size,
+        userId,
+      ]
+    );
+    fs.unlink(file.path, () => {});
+  }
+  return {
+    document: await getMasterDocument(db, storeId, linked.document.id),
+    native_document: nativeDocument,
+    reference,
+    reused_existing: linked.reused_existing,
+  };
+}
+
+async function archiveSupplyMaterialDocumentReference(db, storeId, userId, referenceId, materialId = null) {
+  if (materialId) {
+    await assertMaterial(db, storeId, materialId);
+    const result = await db.query(
+      `SELECT id FROM quality_document_references
+       WHERE id = $1::uuid
+         AND store_id = $2::uuid
+         AND target_type = 'supply_material'
+         AND target_id = $3::uuid
+         AND archived_at IS NULL
+       LIMIT 1`,
+      [referenceId, storeId, materialId]
+    );
+    if (!result.rows[0]) return null;
+  }
   return archiveDocumentReference(db, storeId, userId, referenceId);
+}
+
+async function getSupplyMaterialDocumentFile(db, storeId, documentId) {
+  const document = await getMasterDocument(db, storeId, documentId);
+  if (!document || document.archived_at || !document.storage_path) return null;
+  return document;
 }
 
 async function listSupplyMaterialLinks(db, storeId, materialId) {
   await assertMaterial(db, storeId, materialId);
   const result = await db.query(
-    `SELECT sml.*
+    `SELECT sml.*,
+            COALESCE(z.name, e.name, cp.title, qt.title, CONCAT_WS(' - ', qs.code, qs.title), sml.target_code, sml.relation_type) AS target_label,
+            COALESCE(z.code, e.code, qs.code, sml.target_code) AS target_code_resolved
      FROM supply_material_links sml
+     LEFT JOIN quality_zones z ON z.id = sml.target_id AND z.store_id = sml.store_id AND sml.target_type = 'zone'
+     LEFT JOIN quality_equipments e ON e.id = sml.target_id AND e.store_id = sml.store_id AND sml.target_type = 'equipment'
+     LEFT JOIN quality_cleaning_plans cp ON cp.id = sml.target_id AND cp.store_id = sml.store_id AND sml.target_type = 'cleaning_plan'
+     LEFT JOIN quality_tasks qt ON qt.id = sml.target_id AND qt.store_id = sml.store_id AND sml.target_type = 'quality_task'
+     LEFT JOIN quality_documentation_sections qs ON qs.id = sml.target_id AND qs.store_id = sml.store_id AND sml.target_type = 'documentation_section'
      WHERE sml.store_id = $1::uuid
        AND sml.supply_material_id = $2::uuid
        AND sml.archived_at IS NULL
@@ -442,10 +576,14 @@ async function diagnoseSuppliesMaterials(db, storeId) {
     cleaning_products_without_technical_sheet: `SELECT sm.id, sm.code, sm.name, sm.category FROM supplies_materials sm WHERE sm.store_id=$1::uuid AND sm.archived_at IS NULL AND sm.category = 'cleaning_product' AND NOT EXISTS (SELECT 1 FROM quality_document_references qdr WHERE qdr.store_id=sm.store_id AND qdr.target_type='supply_material' AND qdr.target_id=sm.id AND qdr.relation_type='technical_sheet' AND qdr.archived_at IS NULL) ORDER BY sm.name`,
     cleaning_products_without_sds: `SELECT sm.id, sm.code, sm.name, sm.category FROM supplies_materials sm WHERE sm.store_id=$1::uuid AND sm.archived_at IS NULL AND sm.category = 'cleaning_product' AND NOT EXISTS (SELECT 1 FROM quality_document_references qdr WHERE qdr.store_id=sm.store_id AND qdr.target_type='supply_material' AND qdr.target_id=sm.id AND qdr.relation_type='safety_data_sheet' AND qdr.archived_at IS NULL) ORDER BY sm.name`,
     food_packaging_without_declaration: `SELECT sm.id, sm.code, sm.name, sm.category FROM supplies_materials sm WHERE sm.store_id=$1::uuid AND sm.archived_at IS NULL AND sm.category = 'food_packaging' AND COALESCE((sm.metadata->>'direct_food_contact')::boolean, (sm.metadata->>'food_contact')::boolean, false) = true AND NOT EXISTS (SELECT 1 FROM quality_document_references qdr WHERE qdr.store_id=sm.store_id AND qdr.target_type='supply_material' AND qdr.target_id=sm.id AND qdr.relation_type='food_contact_declaration' AND qdr.archived_at IS NULL) ORDER BY sm.name`,
+    cleaning_food_contact_products_without_attestation: `SELECT sm.id, sm.code, sm.name, sm.category FROM supplies_materials sm WHERE sm.store_id=$1::uuid AND sm.archived_at IS NULL AND sm.category = 'cleaning_product' AND COALESCE((sm.metadata->>'direct_food_contact')::boolean, (sm.metadata->>'food_contact')::boolean, false) = true AND NOT EXISTS (SELECT 1 FROM quality_document_references qdr WHERE qdr.store_id=sm.store_id AND qdr.target_type='supply_material' AND qdr.target_id=sm.id AND qdr.relation_type IN ('attestation','food_contact_declaration') AND qdr.archived_at IS NULL) ORDER BY sm.name`,
     without_category: `SELECT id, code, name, category FROM supplies_materials WHERE store_id=$1::uuid AND archived_at IS NULL AND COALESCE(category, '') = '' ORDER BY name`,
     broken_document_references: `SELECT qdr.* FROM quality_document_references qdr LEFT JOIN supplies_materials sm ON sm.id=qdr.target_id AND sm.store_id=qdr.store_id WHERE qdr.store_id=$1::uuid AND qdr.target_type='supply_material' AND qdr.archived_at IS NULL AND sm.id IS NULL`,
     probable_duplicates: `SELECT lower(name) AS name_key, category, COUNT(*)::integer AS count, json_agg(json_build_object('id', id, 'code', code, 'name', name)) AS items FROM supplies_materials WHERE store_id=$1::uuid AND archived_at IS NULL GROUP BY lower(name), category HAVING COUNT(*) > 1 ORDER BY count DESC`,
     cleaning_plans_with_legacy_product_text: `SELECT id, title, product_name FROM quality_cleaning_plans WHERE store_id=$1::uuid AND archived_at IS NULL AND supply_material_id IS NULL AND COALESCE(product_name, '') <> '' ORDER BY title`,
+    archived_documents_still_referenced: `SELECT qdr.id, qdr.document_id, qdr.target_id, d.title AS document_title FROM quality_document_references qdr INNER JOIN quality_master_documents d ON d.id=qdr.document_id AND d.store_id=qdr.store_id WHERE qdr.store_id=$1::uuid AND qdr.target_type='supply_material' AND qdr.archived_at IS NULL AND (d.archived_at IS NOT NULL OR d.status='archived') ORDER BY d.title`,
+    used_in_procedure_without_regulatory_documents: `SELECT sm.id, sm.code, sm.name, sm.category FROM supplies_materials sm INNER JOIN supply_material_links sml ON sml.supply_material_id=sm.id AND sml.store_id=sm.store_id AND sml.archived_at IS NULL AND sml.target_type='documentation_section' WHERE sm.store_id=$1::uuid AND sm.archived_at IS NULL AND NOT EXISTS (SELECT 1 FROM quality_document_references qdr WHERE qdr.store_id=sm.store_id AND qdr.target_type='supply_material' AND qdr.target_id=sm.id AND qdr.relation_type IN ('technical_sheet','safety_data_sheet','food_contact_declaration','attestation','certificate') AND qdr.archived_at IS NULL) ORDER BY sm.name`,
+    used_in_pms_but_inactive: `SELECT sm.id, sm.code, sm.name, sm.category FROM supplies_materials sm INNER JOIN supply_material_links sml ON sml.supply_material_id=sm.id AND sml.store_id=sm.store_id AND sml.archived_at IS NULL AND sml.target_type IN ('documentation_section','pms_chapter') WHERE sm.store_id=$1::uuid AND sm.archived_at IS NULL AND sm.active=false ORDER BY sm.name`,
   };
   const result = {};
   for (const [key, sql] of Object.entries(queries)) {
@@ -468,8 +606,10 @@ module.exports = {
   archiveSupplyMaterial,
   archiveSupplyMaterialDocumentReference,
   archiveSupplyMaterialLink,
+  createSupplyMaterialDocumentFromUpload,
   createSupplyMaterial,
   diagnoseSuppliesMaterials,
+  getSupplyMaterialDocumentFile,
   getSupplyMaterial,
   listSuppliesMaterials,
   listSupplyMaterialDocuments,
