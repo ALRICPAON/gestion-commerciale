@@ -25,6 +25,13 @@ function permissionList(raw) {
   }
   const expanded = new Set(permissions);
   if (expanded.has('quality.documentation.edit')) expanded.add('quality.documentation.read');
+  if (expanded.has('quality.document.edit')) expanded.add('quality.document.read');
+  if (expanded.has('quality.documentation.read')) expanded.add('quality.document.read');
+  if (expanded.has('quality.document.read')) expanded.add('quality.documentation.read');
+  if (expanded.has('quality.documentation.edit')) expanded.add('quality.document.edit');
+  if (expanded.has('quality.document.edit')) expanded.add('quality.documentation.edit');
+  if (expanded.has('quality.documentation.export')) expanded.add('quality.document.export');
+  if (expanded.has('quality.document.export')) expanded.add('quality.documentation.export');
   if (expanded.has('quality.configuration.write')) expanded.add('quality.read');
   return [...expanded];
 }

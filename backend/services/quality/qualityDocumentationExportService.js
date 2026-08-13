@@ -301,6 +301,21 @@ function renderMasterAnnexes(masterAnnexes = []) {
   `;
 }
 
+const MISSING_ITEM_TIMELINE_LABELS = Object.freeze({
+  before_submission: 'Avant depot',
+  before_opening: 'Avant ouverture',
+  to_confirm: 'A confirmer',
+  external_pending: 'En attente externe',
+  future: 'Futur',
+  after_instruction: 'Apres instruction',
+  blocking: 'Blocage',
+  normal: 'A traiter',
+});
+
+function missingTimelineLabel(severity) {
+  return MISSING_ITEM_TIMELINE_LABELS[severity] || severity || 'A traiter';
+}
+
 function sha256Buffer(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
@@ -493,7 +508,7 @@ function buildHtml(documentation, identity, options = {}) {
   `).join('');
   const missingRows = missingItems
     .filter((item) => item.status !== 'resolved')
-    .map((item) => `<tr><td>${escapeHtml(item.section_code)}</td><td>${escapeHtml(item.section_title)}</td><td class="missing">${escapeHtml(item.description)}</td><td>${escapeHtml(item.severity)}</td><td>${escapeHtml(formatDate(item.due_at))}</td></tr>`)
+    .map((item) => `<tr><td>${escapeHtml(item.section_code)}</td><td>${escapeHtml(item.section_title)}</td><td class="missing">${escapeHtml(item.description)}</td><td>${escapeHtml(missingTimelineLabel(item.severity))}</td><td>${escapeHtml(formatDate(item.due_at))}</td></tr>`)
     .join('');
   const attachmentRows = attachments
     .filter((item) => !item.archived_at && item.include_in_export !== false)
@@ -536,7 +551,7 @@ function buildHtml(documentation, identity, options = {}) {
           </tbody>
         </table>
       </section>
-      ${options.include_missing === false ? '' : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Priorite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`}
+      ${options.include_missing === false ? '' : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Temporalite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`}
       ${body}
       ${options.include_attachments === false ? '' : `<section class="pdf-page"><h1>Annexes</h1><table><thead><tr><th>Chapitre</th><th>Fichier</th><th>Type</th></tr></thead><tbody>${attachmentRows || '<tr><td colspan="3">Aucune annexe incluse.</td></tr>'}</tbody></table></section>`}
       ${options.include_external_master_documents ? `<section class="pdf-page"><h1>Documents externes associes</h1><table><thead><tr><th>Chapitres rattaches</th><th>Document</th><th>Type</th></tr></thead><tbody>${externalAttachmentRows || '<tr><td colspan="3">Aucun document externe a embarquer.</td></tr>'}</tbody></table></section>` : ''}
@@ -665,13 +680,14 @@ async function exportDocumentationPdf(db, storeId, collectionId, userId, options
   const filename = `${fileSafe(`Manuel_Qualite_${rendered.identity.company_name}_V${rendered.documentation.collection.version}_${date}`, 'Manuel_Qualite')}.pdf`;
   const filePath = path.join(EXPORT_DIR, `${collectionId}-${Date.now()}-${filename}`);
   fs.writeFileSync(filePath, rendered.pdf);
-  await db.query(
+  const inserted = await db.query(
     `INSERT INTO quality_documentation_exports
      (collection_id, store_id, export_type, version, options_json, filename, file_path, generated_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     RETURNING id, generated_at`,
     [collectionId, storeId, options.export_type || 'full', rendered.documentation.collection.version, JSON.stringify({ ...options, export_summary: rendered.export_summary }), filename, filePath, userId]
   );
-  return { ...rendered, filename, filePath };
+  return { ...rendered, id: inserted.rows[0]?.id || null, generated_at: inserted.rows[0]?.generated_at || null, filename, filePath };
 }
 
 module.exports = {

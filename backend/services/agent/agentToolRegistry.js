@@ -412,6 +412,42 @@ const qualityDocumentReferenceInputSchema = {
   additionalProperties: false,
 };
 
+const qualityMissingItemInputSchema = {
+  type: 'object',
+  properties: {
+    missing_item_id: { type: 'string' },
+    id: { type: 'string' },
+    collection_id: { type: 'string' },
+    section_id: { type: 'string' },
+    description: { type: 'string' },
+    severity: { type: 'string', enum: ['normal', 'blocking', 'low', 'medium', 'high', 'critical', 'before_submission', 'before_opening', 'future', 'after_instruction', 'to_confirm', 'external_pending'] },
+    responsible_user_id: { type: 'string' },
+    due_at: { type: ['string', 'null'] },
+    reason: { type: 'string' },
+    confirmation: { type: 'string', enum: ['human_confirmed'] },
+    pending_action_id: { type: 'string' },
+  },
+  additionalProperties: false,
+};
+
+const qualityDocumentationExportInputSchema = {
+  type: 'object',
+  required: ['collection_id'],
+  properties: {
+    collection_id: { type: 'string' },
+    export_type: { type: 'string' },
+    tome_id: { type: 'string' },
+    only_validated: { type: 'boolean' },
+    include_missing: { type: 'boolean' },
+    include_attachments: { type: 'boolean' },
+    include_master_annexes: { type: 'boolean' },
+    include_external_master_documents: { type: 'boolean' },
+    confirmation: { type: 'string', enum: ['human_confirmed'] },
+    pending_action_id: { type: 'string' },
+  },
+  additionalProperties: false,
+};
+
 const qualityTaskAssignmentInputSchema = {
   type: 'object',
   required: ['task_id'],
@@ -1532,6 +1568,84 @@ const tools = [
     execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Informations manquantes qualite', data: { items: await qualityDocumentation.listMissingItems(db, context.store_id, input) } }),
   }),
   tool({
+    name: 'update_quality_missing_item',
+    title: 'Modifier information qualite manquante',
+    description: 'Modifie la temporalite/priorite, le responsable ou l echeance d une information manquante qualite. Requiert confirmation humaine.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: qualityMissingItemInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const itemId = input.missing_item_id || input.id;
+      const item = await qualityDocumentation.updateMissingItem(db, context.store_id, itemId, context.user_id, input);
+      if (!item) {
+        const error = new Error('Information manquante introuvable');
+        error.status = 404;
+        error.expose = true;
+        throw error;
+      }
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Information manquante modifiee',
+        data: { item },
+      });
+    },
+  }),
+  tool({
+    name: 'resolve_quality_missing_item',
+    title: 'Resoudre information qualite manquante',
+    description: 'Marque une information manquante qualite comme resolue. Requiert confirmation humaine et conserve l audit.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: qualityMissingItemInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const itemId = input.missing_item_id || input.id;
+      const item = await qualityDocumentation.resolveMissingItem(db, context.store_id, itemId, context.user_id, input);
+      if (!item) {
+        const error = new Error('Information manquante introuvable');
+        error.status = 404;
+        error.expose = true;
+        throw error;
+      }
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Information manquante resolue',
+        data: { item },
+      });
+    },
+  }),
+  tool({
+    name: 'reopen_quality_missing_item',
+    title: 'Rouvrir information qualite manquante',
+    description: 'Rouvre une information manquante qualite resolue. Requiert confirmation humaine et conserve l audit.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.documentation.edit',
+    requiresConfirmation: true,
+    inputSchema: qualityMissingItemInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const itemId = input.missing_item_id || input.id;
+      const item = await qualityDocumentation.reopenMissingItem(db, context.store_id, itemId, context.user_id, input);
+      if (!item) {
+        const error = new Error('Information manquante introuvable');
+        error.status = 404;
+        error.expose = true;
+        throw error;
+      }
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Information manquante rouverte',
+        data: { item },
+      });
+    },
+  }),
+  tool({
     name: 'get_quality_missing_information',
     title: 'Informations qualite manquantes',
     description: 'Alias operationnel listant les informations manquantes qualite.',
@@ -2546,6 +2660,45 @@ const tools = [
     requiresConfirmation: false,
     inputSchema: { type: 'object', properties: { collection_id: { type: 'string' } }, additionalProperties: true },
     execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Apercu export qualite', data: await qualityDocumentation.getDocumentation(db, context.store_id, input.collection_id) }),
+  }),
+  tool({
+    name: 'export_quality_documentation_pdf',
+    title: 'Exporter PDF qualite persistant',
+    description: 'Genere le Manuel Qualite complet avec le moteur PDF persistant existant et retourne l export cree sans embarquer le PDF brut.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.COMMITTING_ACTION,
+    requiredPermission: 'quality.document.export',
+    requiresConfirmation: true,
+    inputSchema: qualityDocumentationExportInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => {
+      const exported = await qualityExport.exportDocumentationPdf(db, context.store_id, input.collection_id, context.user_id, {
+        export_type: input.export_type || 'full',
+        tome_id: input.tome_id || null,
+        only_validated: input.only_validated === true,
+        include_missing: input.include_missing !== false,
+        include_attachments: input.include_attachments !== false,
+        include_master_annexes: input.include_master_annexes === true,
+        include_external_master_documents: input.include_external_master_documents === true,
+      });
+      if (!exported) {
+        const error = new Error('Dossier documentaire introuvable');
+        error.status = 404;
+        error.expose = true;
+        throw error;
+      }
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Export PDF qualite genere',
+        data: {
+          export_id: exported.id,
+          filename: exported.filename,
+          generated_at: exported.generated_at,
+          download_url: `/api/quality/documentation/exports/${exported.id}/download`,
+          export_summary: exported.export_summary,
+        },
+      });
+    },
   }),
   tool({
     name: 'list_agent_audit_logs',

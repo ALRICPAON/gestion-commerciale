@@ -16,6 +16,8 @@ const {
   listDocumentation,
   listMissingItems,
   mergeSections,
+  reopenMissingItem,
+  resolveMissingItem,
   updateMissingItem,
   updateSection,
 } = require('../../services/quality/qualityDocumentationService');
@@ -151,6 +153,26 @@ router.patch('/missing-items/:id', requireQualityPermission(QUALITY_PERMISSIONS.
     res.json(item);
   } catch (err) {
     handleError(res, err, 'Erreur PATCH /api/quality/documentation/missing-items/:id');
+  }
+});
+
+router.post('/missing-items/:id/resolve', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const item = await resolveMissingItem(req.dbPool, req.user.store_id, req.params.id, req.user.id, req.body);
+    if (!item) return res.status(404).json({ error: 'Information manquante introuvable' });
+    res.json(item);
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/missing-items/:id/resolve');
+  }
+});
+
+router.post('/missing-items/:id/reopen', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const item = await reopenMissingItem(req.dbPool, req.user.store_id, req.params.id, req.user.id, req.body);
+    if (!item) return res.status(404).json({ error: 'Information manquante introuvable' });
+    res.json(item);
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/missing-items/:id/reopen');
   }
 });
 
@@ -437,6 +459,20 @@ router.get('/attachments/:id/download', requireQualityPermission(QUALITY_PERMISS
   }
 });
 
+router.get('/exports/:exportId/download', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    const result = await req.dbPool.query(
+      'SELECT * FROM quality_documentation_exports WHERE id = $1 AND store_id = $2 LIMIT 1',
+      [req.params.exportId, req.user.store_id]
+    );
+    const exported = result.rows[0];
+    if (!exported || !fs.existsSync(exported.file_path)) return res.status(404).json({ error: 'Export PDF introuvable' });
+    res.download(exported.file_path, exported.filename);
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/documentation/exports/:exportId/download');
+  }
+});
+
 router.get('/:id', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
   try {
     const documentation = await getDocumentation(req.dbPool, req.user.store_id, req.params.id);
@@ -481,8 +517,19 @@ router.post('/:id/export-pdf', requireQualityPermission(QUALITY_PERMISSIONS.DOCU
   try {
     const exported = await exportDocumentationPdf(req.dbPool, req.user.store_id, req.params.id, req.user.id, exportOptions(req.body));
     if (!exported) return res.status(404).json({ error: 'Dossier documentaire introuvable' });
+    if (req.body.return_json === true) {
+      return res.json({
+        export_id: exported.id,
+        filename: exported.filename,
+        generated_at: exported.generated_at,
+        download_url: `/api/quality/documentation/exports/${exported.id}/download`,
+        export_summary: exported.export_summary,
+      });
+    }
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"`);
+    if (exported.id) res.setHeader('X-Quality-Export-Id', exported.id);
+    res.setHeader('X-Quality-Export-Filename', exported.filename);
     res.send(exported.pdf);
   } catch (err) {
     handleError(res, err, 'Erreur POST /api/quality/documentation/:id/export-pdf');

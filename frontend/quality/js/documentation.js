@@ -717,16 +717,37 @@
 
   function renderMissing() {
     const now = new Date().toISOString().slice(0, 10);
-    let items = state.missing.filter((item) => item.status !== 'resolved');
+    let items = state.filter === 'all'
+      ? [...state.missing]
+      : state.missing.filter((item) => item.status !== 'resolved');
+    if (state.filter === 'active') items = state.missing.filter((item) => item.status !== 'resolved');
+    if (state.filter === 'resolved') items = state.missing.filter((item) => item.status === 'resolved');
     if (state.filter === 'blocking') items = items.filter((item) => item.severity === 'blocking');
     if (state.filter === 'before_submission') items = items.filter((item) => item.severity === 'before_submission');
+    if (state.filter === 'before_opening') items = items.filter((item) => item.severity === 'before_opening');
+    if (state.filter === 'to_confirm') items = items.filter((item) => item.severity === 'to_confirm');
+    if (state.filter === 'external_pending') items = items.filter((item) => item.severity === 'external_pending');
+    if (state.filter === 'future') items = items.filter((item) => item.severity === 'future');
+    if (state.filter === 'after_instruction') items = items.filter((item) => item.severity === 'after_instruction');
     if (state.filter === 'overdue') items = items.filter((item) => item.due_at && item.due_at < now);
     els.missing.innerHTML = items.map((item) => `<article class="quality-doc-mini ${item.section_id === state.currentId ? 'active' : ''}">
       <strong>${item.section_code || ''} ${item.section_title || ''}</strong>
-      <p>${item.description}</p>
-      <small>${item.severity} ${item.due_at ? `- ${item.due_at}` : ''}</small>
-      <div class="quality-actions"><button class="btn btn-secondary" data-open-section="${item.section_id}" type="button">Ouvrir</button><button class="btn btn-secondary" data-resolve-missing="${item.id}" type="button">Resoudre</button></div>
-    </article>`).join('') || '<p class="quality-muted">Aucune information manquante ouverte.</p>';
+      <p>${escapeHtml(item.description)}</p>
+      <small>Statut : ${escapeHtml(item.status || 'open')} - Temporalite : ${escapeHtml(item.severity || 'normal')} ${item.due_at ? `- ${escapeHtml(item.due_at)}` : ''}</small>
+      <div class="quality-actions">
+        <button class="btn btn-secondary" data-open-section="${item.section_id}" type="button">Ouvrir</button>
+        ${item.status === 'resolved'
+          ? `<button class="btn btn-secondary" data-reopen-missing="${item.id}" type="button">Rouvrir</button>`
+          : `<button class="btn btn-secondary" data-resolve-missing="${item.id}" type="button">Resoudre</button>`}
+      </div>
+      ${canEdit ? `<div class="quality-actions">
+        <select class="form-input" data-missing-severity="${item.id}">
+          ${['normal', 'blocking', 'before_submission', 'before_opening', 'to_confirm', 'external_pending', 'future', 'after_instruction'].map((value) => `<option value="${value}" ${item.severity === value ? 'selected' : ''}>${value}</option>`).join('')}
+        </select>
+        <input class="form-input" data-missing-due="${item.id}" type="date" value="${escapeHtml(item.due_at || '')}">
+        <button class="btn btn-secondary" data-save-missing="${item.id}" type="button">Modifier</button>
+      </div>` : ''}
+    </article>`).join('') || '<p class="quality-muted">Aucune information manquante.</p>';
   }
 
   function renderAttachments() {
@@ -2164,16 +2185,37 @@
   els.missing.addEventListener('click', async (event) => {
     const open = event.target.closest('[data-open-section]');
     const resolve = event.target.closest('[data-resolve-missing]');
+    const reopen = event.target.closest('[data-reopen-missing]');
+    const saveMissing = event.target.closest('[data-save-missing]');
     if (open) {
       state.currentId = open.dataset.openSection;
       renderTree();
       renderEditor();
     }
     if (resolve) {
-      await request(`/missing-items/${resolve.dataset.resolveMissing}`, {
+      await request(`/missing-items/${resolve.dataset.resolveMissing}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Resolution depuis la documentation qualite' }),
+      });
+      await load(state.currentId);
+    }
+    if (reopen) {
+      await request(`/missing-items/${reopen.dataset.reopenMissing}/reopen`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: 'Reouverture depuis la documentation qualite' }),
+      });
+      await load(state.currentId);
+    }
+    if (saveMissing) {
+      const id = saveMissing.dataset.saveMissing;
+      const severity = els.missing.querySelector(`[data-missing-severity="${CSS.escape(id)}"]`)?.value;
+      const dueAt = els.missing.querySelector(`[data-missing-due="${CSS.escape(id)}"]`)?.value || null;
+      await request(`/missing-items/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'resolved' }),
+        body: JSON.stringify({ severity, due_at: dueAt, reason: 'Modification depuis la documentation qualite' }),
       });
       await load(state.currentId);
     }
