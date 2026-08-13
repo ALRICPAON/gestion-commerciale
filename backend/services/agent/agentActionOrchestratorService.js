@@ -14,6 +14,14 @@ function clean(value) {
   return String(value || '').trim();
 }
 
+function logActionTransaction(event, details = {}) {
+  if (!String(details.action_type || '').startsWith('quality.documentation.')) return;
+  console.log('agent_action_transaction', {
+    event,
+    ...details,
+  });
+}
+
 function assertExecutionPermission(action, context) {
   if (isTrustedOwnerMode(context)) return;
   if (!context.user_id) {
@@ -205,6 +213,11 @@ async function executeExecutableActionDirect({ dbPool, context, actionType, payl
     frozen_payload: validatedPayload,
   };
   try {
+    logActionTransaction('begin', {
+      action_type: action.name,
+      store_id: context.store_id,
+      target_id: validatedPayload.block_id || validatedPayload.section_id || validatedPayload.chapter_id || null,
+    });
     await client.query('BEGIN');
     const result = await action.execute({
       db: client,
@@ -214,6 +227,11 @@ async function executeExecutableActionDirect({ dbPool, context, actionType, payl
       pendingAction: syntheticPendingAction,
     });
     await client.query('COMMIT');
+    logActionTransaction('commit', {
+      action_type: action.name,
+      store_id: context.store_id,
+      target_id: validatedPayload.block_id || validatedPayload.section_id || validatedPayload.chapter_id || null,
+    });
     return {
       ok: true,
       mode: 'executed',
@@ -223,6 +241,13 @@ async function executeExecutableActionDirect({ dbPool, context, actionType, payl
       execution_result: result,
     };
   } catch (error) {
+    logActionTransaction('rollback', {
+      action_type: action.name,
+      store_id: context.store_id,
+      target_id: validatedPayload.block_id || validatedPayload.section_id || validatedPayload.chapter_id || null,
+      pg_code: error.code,
+      pg_message: error.message,
+    });
     await client.query('ROLLBACK').catch(() => {});
     throw error;
   } finally {

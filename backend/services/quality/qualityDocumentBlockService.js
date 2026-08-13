@@ -33,6 +33,58 @@ function sanitizeHtml(html = '') {
     .replace(/\s(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, '');
 }
 
+function logBlockTransaction(event, details = {}) {
+  console.log('quality_document_block_transaction', {
+    event,
+    ...details,
+  });
+}
+
+async function runOptionalTransactionStep(db, label, work, ignoredCodes = new Set()) {
+  const savepoint = `sp_quality_block_${label}_${Date.now()}_${Math.random().toString(16).slice(2)}`.replace(/[^a-zA-Z0-9_]/g, '_');
+  try {
+    await db.query(`SAVEPOINT ${savepoint}`);
+  } catch (err) {
+    try {
+      return await work();
+    } catch (workErr) {
+      if (!ignoredCodes.has(workErr.code)) throw workErr;
+      logBlockTransaction('optional_step_ignored', {
+        step: label,
+        pg_code: workErr.code,
+        pg_message: workErr.message,
+      });
+      return null;
+    }
+  }
+
+  try {
+    const result = await work();
+    await db.query(`RELEASE SAVEPOINT ${savepoint}`);
+    return result;
+  } catch (err) {
+    await db.query(`ROLLBACK TO SAVEPOINT ${savepoint}`).catch(() => {});
+    await db.query(`RELEASE SAVEPOINT ${savepoint}`).catch(() => {});
+    if (!ignoredCodes.has(err.code)) throw err;
+    logBlockTransaction('optional_step_ignored', {
+      step: label,
+      pg_code: err.code,
+      pg_message: err.message,
+    });
+    return null;
+  }
+}
+
+async function optionalRows(db, label, sql, params = []) {
+  const result = await runOptionalTransactionStep(
+    db,
+    label,
+    () => db.query(sql, params),
+    new Set(['42P01', '42703'])
+  );
+  return result?.rows || [];
+}
+
 function normalizeContent(blockType, content = {}) {
   if (blockType === 'rich_text') {
     return { html: sanitizeHtml(content.html || content.content_html || '') };
@@ -98,22 +150,17 @@ async function getBlocksSnapshot(db, storeId, chapterId) {
 }
 
 async function getHydratedChapterBlocks(db, storeId, chapterId) {
-  const [blocks, tables, diagrams, attachments] = await Promise.all([
-    db.query(
-      `SELECT *
-       FROM quality_document_blocks
-       WHERE store_id = $1 AND chapter_id = $2
-       ORDER BY position ASC, created_at ASC`,
-      [storeId, chapterId]
-    ),
-    db.query('SELECT * FROM quality_document_tables WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
-    db.query('SELECT * FROM quality_document_diagrams WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
-    db.query('SELECT * FROM quality_documentation_attachments WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
-  ]).catch((err) => {
-    if (err.code === '42P01' || err.code === '42703') return [{ rows: [] }, { rows: [] }, { rows: [] }, { rows: [] }];
-    throw err;
-  });
-  return hydrateBlocks(blocks.rows, tables.rows, diagrams.rows, attachments.rows);
+  const blocks = await db.query(
+    `SELECT *
+     FROM quality_document_blocks
+     WHERE store_id = $1 AND chapter_id = $2
+     ORDER BY position ASC, created_at ASC`,
+    [storeId, chapterId]
+  );
+  const tables = await optionalRows(db, 'hydrate_tables', 'SELECT * FROM quality_document_tables WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]);
+  const diagrams = await optionalRows(db, 'hydrate_diagrams', 'SELECT * FROM quality_document_diagrams WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]);
+  const attachments = await optionalRows(db, 'hydrate_attachments', 'SELECT * FROM quality_documentation_attachments WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]);
+  return hydrateBlocks(blocks.rows, tables, diagrams, attachments);
 }
 
 async function syncSectionContentHtmlFromBlocks(db, storeId, chapterId, userId) {
@@ -178,15 +225,18 @@ async function syncRichTextBlockFromContentHtml(db, storeId, section, userId, co
 async function recordBlockVersion(db, storeId, section, userId, summary, type, beforeSection = null, beforeBlocks = null) {
   const snapshot = await getBlocksSnapshot(db, storeId, section.id);
   const version = await recordSectionVersion(db, storeId, section, userId, summary, type, beforeSection || section);
-  await db.query(
-    `UPDATE quality_documentation_versions
-     SET blocks_snapshot = $2::jsonb,
-         previous_blocks_snapshot = $3::jsonb
-     WHERE id = $1`,
-    [version.id, JSON.stringify(snapshot), beforeBlocks ? JSON.stringify(beforeBlocks) : null]
-  ).catch((err) => {
-    if (err.code !== '42703') throw err;
-  });
+  await runOptionalTransactionStep(
+    db,
+    'version_blocks_snapshot',
+    () => db.query(
+      `UPDATE quality_documentation_versions
+       SET blocks_snapshot = $2::jsonb,
+           previous_blocks_snapshot = $3::jsonb
+       WHERE id = $1`,
+      [version.id, JSON.stringify(snapshot), beforeBlocks ? JSON.stringify(beforeBlocks) : null]
+    ),
+    new Set(['42703'])
+  );
   return version;
 }
 
@@ -264,25 +314,20 @@ function hydrateBlocks(blocks, tables = [], diagrams = [], attachments = []) {
 async function listChapterBlocks(db, storeId, chapterId) {
   const section = await getSection(db, storeId, chapterId);
   if (!section) return null;
-  const [blocks, tables, diagrams, attachments] = await Promise.all([
-    db.query(
-      `SELECT *
-       FROM quality_document_blocks
-       WHERE store_id = $1 AND chapter_id = $2
-       ORDER BY position ASC, created_at ASC`,
-      [storeId, chapterId]
-    ),
-    db.query('SELECT * FROM quality_document_tables WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
-    db.query('SELECT * FROM quality_document_diagrams WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
-    db.query('SELECT * FROM quality_documentation_attachments WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]).catch(() => ({ rows: [] })),
-  ]).catch((err) => {
-    if (err.code === '42P01' || err.code === '42703') return [{ rows: [] }, { rows: [] }, { rows: [] }, { rows: [] }];
-    throw err;
-  });
+  const blocks = await db.query(
+    `SELECT *
+     FROM quality_document_blocks
+     WHERE store_id = $1 AND chapter_id = $2
+     ORDER BY position ASC, created_at ASC`,
+    [storeId, chapterId]
+  );
+  const tables = await optionalRows(db, 'list_tables', 'SELECT * FROM quality_document_tables WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]);
+  const diagrams = await optionalRows(db, 'list_diagrams', 'SELECT * FROM quality_document_diagrams WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]);
+  const attachments = await optionalRows(db, 'list_attachments', 'SELECT * FROM quality_documentation_attachments WHERE store_id = $1 AND section_id = $2 AND archived_at IS NULL', [storeId, chapterId]);
   const rows = blocks.rows.length
     ? blocks.rows
-    : fallbackBlocks(section, tables.rows, diagrams.rows, attachments.rows);
-  return hydrateBlocks(rows, tables.rows, diagrams.rows, attachments.rows);
+    : fallbackBlocks(section, tables, diagrams, attachments);
+  return hydrateBlocks(rows, tables, diagrams, attachments);
 }
 
 async function createReferencedObject(db, storeId, section, userId, blockType, content) {
@@ -328,11 +373,24 @@ async function createChapterBlock(db, storeId, chapterId, userId, body = {}) {
 }
 
 async function updateDocumentBlock(db, storeId, blockId, userId, body = {}) {
+  logBlockTransaction('update_text_block_start', {
+    block_id: blockId,
+    store_id: storeId,
+    operation: 'updateDocumentBlock',
+    has_title: Object.prototype.hasOwnProperty.call(body, 'title'),
+    has_content: Boolean(body.content),
+  });
   const beforeResult = await db.query('SELECT * FROM quality_document_blocks WHERE id = $1 AND store_id = $2 LIMIT 1', [blockId, storeId]);
   const before = beforeResult.rows[0];
-  if (!before) return null;
+  if (!before) {
+    logBlockTransaction('update_text_block_not_found', { block_id: blockId, store_id: storeId });
+    return null;
+  }
   const section = await getSection(db, storeId, before.chapter_id);
-  if (!section) return null;
+  if (!section) {
+    logBlockTransaction('update_text_block_section_not_found', { block_id: blockId, store_id: storeId, chapter_id: before.chapter_id });
+    return null;
+  }
   const beforeBlocks = await getBlocksSnapshot(db, storeId, section.id);
   const blockType = before.block_type;
   const content = body.content ? normalizeContent(blockType, body.content) : before.content;
@@ -350,7 +408,9 @@ async function updateDocumentBlock(db, storeId, blockId, userId, body = {}) {
   const syncedSection = await syncSectionContentHtmlFromBlocks(db, storeId, section.id, userId) || section;
   await recordBlockVersion(db, storeId, syncedSection, userId, 'Modification d un bloc documentaire', 'block_update', section, beforeBlocks);
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.block.updated', targetType: 'quality_document_block', targetId: blockId, before, after: result.rows[0] });
-  return (await listChapterBlocks(db, storeId, section.id)).find((block) => block.id === blockId);
+  const updated = (await listChapterBlocks(db, storeId, section.id)).find((block) => block.id === blockId);
+  logBlockTransaction('update_text_block_success', { block_id: blockId, store_id: storeId, chapter_id: section.id });
+  return updated;
 }
 
 async function deleteDocumentBlock(db, storeId, blockId, userId) {
@@ -462,11 +522,18 @@ async function duplicateDocumentBlock(db, storeId, blockId, userId) {
 async function withTransaction(db, action) {
   const client = await db.connect();
   try {
+    logBlockTransaction('begin', { operation: 'quality_document_block' });
     await client.query('BEGIN');
     const result = await action(client);
     await client.query('COMMIT');
+    logBlockTransaction('commit', { operation: 'quality_document_block' });
     return result;
   } catch (err) {
+    logBlockTransaction('rollback', {
+      operation: 'quality_document_block',
+      pg_code: err.code,
+      pg_message: err.message,
+    });
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
