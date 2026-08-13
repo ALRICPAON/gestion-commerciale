@@ -6,6 +6,21 @@ const { ensureDefaultProductTables } = require('./qualityDocumentationTableServi
 const { hydrateBlocks, syncRichTextBlockFromContentHtml } = require('./qualityDocumentBlockService');
 
 const STATUSES = new Set(['draft', 'to_complete', 'ready_for_review', 'validated', 'archived']);
+const MISSING_ITEM_STATUSES = new Set(['open', 'resolved']);
+const MISSING_ITEM_SEVERITIES = new Set([
+  'normal',
+  'blocking',
+  'low',
+  'medium',
+  'high',
+  'critical',
+  'before_submission',
+  'before_opening',
+  'future',
+  'after_instruction',
+  'to_confirm',
+  'external_pending',
+]);
 
 function cleanText(value, fallback = null) {
   if (value === undefined || value === null) return fallback;
@@ -18,6 +33,78 @@ function sanitizeHtml(html = '') {
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
     .replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, '')
     .replace(/\s(href|src)\s*=\s*(['"])\s*javascript:[\s\S]*?\2/gi, '');
+}
+
+function assertAllowed(value, allowed, label) {
+  if (value === undefined || value === null || value === '') return null;
+  const normalized = cleanText(value);
+  if (!allowed.has(normalized)) {
+    const err = new Error(`${label} invalide: ${normalized}`);
+    err.status = 400;
+    throw err;
+  }
+  return normalized;
+}
+
+function cleanDate(value, label) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  const normalized = cleanText(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(Date.parse(`${normalized}T00:00:00Z`))) {
+    const err = new Error(`${label} invalide: utiliser YYYY-MM-DD`);
+    err.status = 400;
+    throw err;
+  }
+  return normalized;
+}
+
+async function getMissingItem(db, storeId, id) {
+  if (!cleanText(id)) {
+    const err = new Error('missing_item_id requis');
+    err.status = 400;
+    throw err;
+  }
+  const result = await db.query(
+    `SELECT m.*, s.collection_id, s.title AS section_title, s.code AS section_code
+     FROM quality_documentation_missing_items m
+     JOIN quality_documentation_sections s ON s.id = m.section_id AND s.store_id = m.store_id
+     WHERE m.id = $1 AND m.store_id = $2
+     LIMIT 1`,
+    [id, storeId]
+  );
+  return result.rows[0] || null;
+}
+
+async function assertMissingItemScope(db, storeId, item, body = {}) {
+  if (!item) return;
+  if (body.section_id && String(body.section_id) !== String(item.section_id)) {
+    const err = new Error('Information manquante hors chapitre demande');
+    err.status = 400;
+    throw err;
+  }
+  if (body.collection_id && String(body.collection_id) !== String(item.collection_id)) {
+    const err = new Error('Information manquante hors collection demandee');
+    err.status = 400;
+    throw err;
+  }
+  if (body.responsible_user_id) {
+    const user = await db.query('SELECT id FROM users WHERE id = $1 AND store_id = $2 AND is_active = true LIMIT 1', [body.responsible_user_id, storeId]);
+    if (!user.rows[0]) {
+      const err = new Error('Responsable introuvable pour ce magasin');
+      err.status = 400;
+      throw err;
+    }
+  }
+}
+
+function missingItemChanges(before, after) {
+  const fields = ['description', 'severity', 'responsible_user_id', 'due_at', 'status', 'resolved_at', 'resolved_by'];
+  return fields.reduce((changes, field) => {
+    if (String(before?.[field] ?? '') !== String(after?.[field] ?? '')) {
+      changes[field] = { before: before?.[field] ?? null, after: after?.[field] ?? null };
+    }
+    return changes;
+  }, {});
 }
 
 function sectionPayload(body = {}) {
@@ -365,33 +452,96 @@ async function listMissingItems(db, storeId, query = {}) {
 }
 
 async function createMissingItem(db, storeId, userId, body) {
+  const section = await getSection(db, storeId, body.section_id);
+  if (!section || section.archived_at) {
+    const err = new Error('Chapitre introuvable pour ce magasin');
+    err.status = 404;
+    throw err;
+  }
+  if (body.collection_id && String(body.collection_id) !== String(section.collection_id)) {
+    const err = new Error('Chapitre hors collection demandee');
+    err.status = 400;
+    throw err;
+  }
+  const severity = assertAllowed(body.severity || 'normal', MISSING_ITEM_SEVERITIES, 'Temporalite/priorite');
+  const status = assertAllowed(body.status || 'open', MISSING_ITEM_STATUSES, 'Statut');
+  await assertMissingItemScope(db, storeId, { section_id: body.section_id, collection_id: section.collection_id }, body);
   const result = await db.query(
     `INSERT INTO quality_documentation_missing_items
      (section_id, store_id, description, severity, responsible_user_id, due_at, status)
      VALUES ($1,$2,$3,$4,$5,$6,$7)
      RETURNING *`,
-    [body.section_id, storeId, cleanText(body.description, 'Information a completer'), cleanText(body.severity, 'normal'), cleanText(body.responsible_user_id), cleanText(body.due_at), cleanText(body.status, 'open')]
+    [body.section_id, storeId, cleanText(body.description, 'Information a completer'), severity, cleanText(body.responsible_user_id), cleanDate(body.due_at, 'Echeance') ?? null, status]
   );
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.missing.created', targetType: 'quality_documentation_missing_item', targetId: result.rows[0].id, after: result.rows[0] });
   return result.rows[0];
 }
 
 async function updateMissingItem(db, storeId, id, userId, body) {
+  const before = await getMissingItem(db, storeId, id);
+  if (!before) return null;
+  await assertMissingItemScope(db, storeId, before, body);
+  const severity = Object.prototype.hasOwnProperty.call(body, 'severity') ? assertAllowed(body.severity, MISSING_ITEM_SEVERITIES, 'Temporalite/priorite') : undefined;
+  const status = Object.prototype.hasOwnProperty.call(body, 'status') ? assertAllowed(body.status, MISSING_ITEM_STATUSES, 'Statut') : undefined;
+  const dueAt = cleanDate(body.due_at, 'Echeance');
+  if (status === 'resolved' && before.status === 'resolved') {
+    const err = new Error('Information manquante deja resolue');
+    err.status = 409;
+    throw err;
+  }
+
+  const payload = {
+    description: Object.prototype.hasOwnProperty.call(body, 'description') ? cleanText(body.description, before.description) : before.description,
+    severity: severity ?? before.severity,
+    responsible_user_id: Object.prototype.hasOwnProperty.call(body, 'responsible_user_id') ? cleanText(body.responsible_user_id) : before.responsible_user_id,
+    due_at: dueAt !== undefined ? dueAt : before.due_at,
+    status: status ?? before.status,
+  };
   const result = await db.query(
     `UPDATE quality_documentation_missing_items
-     SET description = COALESCE($3, description),
-         severity = COALESCE($4, severity),
-         responsible_user_id = COALESCE($5, responsible_user_id),
-         due_at = COALESCE($6, due_at),
-         status = COALESCE($7, status),
-         resolved_at = CASE WHEN $7 = 'resolved' THEN COALESCE(resolved_at, now()) ELSE resolved_at END,
-         resolved_by = CASE WHEN $7 = 'resolved' THEN COALESCE(resolved_by, $8) ELSE resolved_by END,
+     SET description = $3,
+         severity = $4,
+         responsible_user_id = $5,
+         due_at = $6,
+         status = $7,
+         resolved_at = CASE WHEN $7 = 'resolved' THEN COALESCE(resolved_at, now()) ELSE NULL END,
+         resolved_by = CASE WHEN $7 = 'resolved' THEN COALESCE(resolved_by, $8) ELSE NULL END,
          updated_at = now()
      WHERE id = $1 AND store_id = $2
      RETURNING *`,
-    [id, storeId, cleanText(body.description), cleanText(body.severity), cleanText(body.responsible_user_id), cleanText(body.due_at), cleanText(body.status), userId]
+    [id, storeId, payload.description, payload.severity, payload.responsible_user_id, payload.due_at, payload.status, userId]
   );
-  return result.rows[0] || null;
+  const updated = result.rows[0] || null;
+  if (updated) {
+    await logQualityEvent({
+      dbPool: db,
+      storeId,
+      actorId: userId,
+      eventType: payload.status === 'resolved' ? 'quality.documentation.missing.resolved' : 'quality.documentation.missing.updated',
+      targetType: 'quality_documentation_missing_item',
+      targetId: updated.id,
+      reason: cleanText(body.reason),
+      before,
+      after: updated,
+      metadata: { changes: missingItemChanges(before, updated) },
+    });
+  }
+  return updated;
+}
+
+async function resolveMissingItem(db, storeId, id, userId, body = {}) {
+  return updateMissingItem(db, storeId, id, userId, { ...body, status: 'resolved' });
+}
+
+async function reopenMissingItem(db, storeId, id, userId, body = {}) {
+  const before = await getMissingItem(db, storeId, id);
+  if (!before) return null;
+  if (before.status !== 'resolved') {
+    const err = new Error('Seule une information resolue peut etre rouverte');
+    err.status = 409;
+    throw err;
+  }
+  return updateMissingItem(db, storeId, id, userId, { ...body, status: 'open' });
 }
 
 module.exports = {
@@ -401,8 +551,11 @@ module.exports = {
   getDocumentation,
   getOrCreateDefaultDocumentation,
   mergeSections,
+  getMissingItem,
   listDocumentation,
   listMissingItems,
+  reopenMissingItem,
+  resolveMissingItem,
   sanitizeHtml,
   updateMissingItem,
   updateSection,
