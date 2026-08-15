@@ -174,7 +174,57 @@ function sanitizeRenderedSvg(svg) {
   if (forbidden.some((pattern) => pattern.test(text))) {
     badRequest('Le SVG Mermaid rendu contient un contenu non autorise');
   }
-  return text;
+  return normalizeSvgForPdf(text);
+}
+
+function firstSvgTag(svg) {
+  return String(svg || '').match(/^<svg\b[^>]*>/i)?.[0] || '';
+}
+
+function svgAttribute(tag, name) {
+  return (tag.match(new RegExp(`\\s${name}\\s*=\\s*["']([^"']+)["']`, 'i')) || [])[1] || '';
+}
+
+function numericSvgSize(value) {
+  const match = String(value || '').trim().match(/^([0-9]+(?:\.[0-9]+)?)(?:px|pt|mm|cm|in)?$/i);
+  return match ? Number(match[1]) : 0;
+}
+
+function normalizeSvgForPdf(svg) {
+  const text = String(svg || '').trim();
+  const tag = firstSvgTag(text);
+  if (!tag) return text;
+
+  let normalizedTag = tag;
+  const currentClass = svgAttribute(tag, 'class');
+  if (currentClass) {
+    if (!/\bquality-diagram-svg\b/.test(currentClass)) {
+      normalizedTag = normalizedTag.replace(/\sclass\s*=\s*(['"])(.*?)\1/i, (_match, quote, value) => ` class=${quote}${value} quality-diagram-svg${quote}`);
+    }
+  } else {
+    normalizedTag = normalizedTag.replace(/^<svg\b/i, '<svg class="quality-diagram-svg"');
+  }
+
+  if (!/\sxmlns\s*=/i.test(normalizedTag)) {
+    normalizedTag = normalizedTag.replace(/^<svg\b/i, '<svg xmlns="http://www.w3.org/2000/svg"');
+  }
+  if (!/\spreserveAspectRatio\s*=/i.test(normalizedTag)) {
+    normalizedTag = normalizedTag.replace(/^<svg\b/i, '<svg preserveAspectRatio="xMidYMid meet"');
+  }
+
+  const hasViewBox = /\sviewBox\s*=/i.test(normalizedTag);
+  const width = numericSvgSize(svgAttribute(tag, 'width'));
+  const height = numericSvgSize(svgAttribute(tag, 'height'));
+  if (!hasViewBox && width > 0 && height > 0) {
+    normalizedTag = normalizedTag.replace(/^<svg\b/i, `<svg viewBox="0 0 ${width} ${height}"`);
+  }
+  if (/\sviewBox\s*=/i.test(normalizedTag)) {
+    normalizedTag = normalizedTag
+      .replace(/\swidth\s*=\s*(['"]).*?\1/i, '')
+      .replace(/\sheight\s*=\s*(['"]).*?\1/i, '');
+  }
+
+  return normalizedTag === tag ? text : normalizedTag + text.slice(tag.length);
 }
 
 function parseMermaidNode(raw) {
@@ -394,7 +444,7 @@ function nodeShape(node, typeMeta) {
 
 function renderDiagramSvg(data, options = {}) {
   const normalized = normalizeDiagramData(data);
-  if (normalized.editor_mode === 'mermaid') return normalized.rendered_svg;
+  if (normalized.editor_mode === 'mermaid') return normalizeSvgForPdf(normalized.rendered_svg);
 
   const layout = layoutDiagram(normalized);
   const nodeMap = new Map(layout.nodes.map((node) => [node.id, node]));
@@ -938,6 +988,7 @@ module.exports = {
   listDiagramTemplates,
   listDiagrams,
   normalizeDiagramData,
+  normalizeSvgForPdf,
   mermaidTemplates,
   preparedFishDiagram,
   preparedFishMermaidSource,

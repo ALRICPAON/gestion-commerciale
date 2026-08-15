@@ -36,12 +36,17 @@ function paginationPreparationScript() {
       };
       Array.from(document.querySelectorAll(selectors)).forEach((element) => {
         element.classList.remove('quality-pdf-force-break');
+        element.classList.remove('quality-pdf-block--oversize');
         element.style.breakBefore = '';
         element.style.pageBreakBefore = '';
       });
       Array.from(document.querySelectorAll(selectors)).forEach((element) => {
         const rect = element.getBoundingClientRect();
-        if (!rect.height || rect.height >= pageContentHeight) return;
+        if (!rect.height) return;
+        if (rect.height >= pageContentHeight) {
+          element.classList.add('quality-pdf-block--oversize');
+          return;
+        }
         const top = element.getBoundingClientRect().top + window.scrollY;
         const usedOnPage = ((top % pageContentHeight) + pageContentHeight) % pageContentHeight;
         const remaining = pageContentHeight - usedOnPage;
@@ -97,6 +102,36 @@ function renderPdfBlock(block, options = {}) {
   const html = renderDocumentBlock(block, options);
   if (!html) return '';
   return `<div class="${pdfBlockClasses(block)}" data-quality-block-type="${escapeHtml(block.block_type)}">${html}</div>`;
+}
+
+function imageMimeType(attachment = {}) {
+  const mimeType = String(attachment.mime_type || '').toLowerCase();
+  if (mimeType.startsWith('image/')) return mimeType;
+  const extension = path.extname(attachment.file_path || attachment.storage_path || '').toLowerCase();
+  return {
+    '.apng': 'image/apng',
+    '.avif': 'image/avif',
+    '.gif': 'image/gif',
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.svg': 'image/svg+xml',
+    '.webp': 'image/webp',
+  }[extension] || '';
+}
+
+function resolveLocalAttachmentPath(attachment = {}) {
+  const filePath = attachment.file_path || attachment.storage_path || '';
+  if (!filePath) return '';
+  return path.isAbsolute(filePath) ? filePath : path.resolve(filePath);
+}
+
+function inlineImageDataUri(attachment = {}) {
+  const mimeType = imageMimeType(attachment);
+  if (!mimeType) return '';
+  const filePath = resolveLocalAttachmentPath(attachment);
+  if (!filePath || !fs.existsSync(filePath)) return '';
+  return `data:${mimeType};base64,${fs.readFileSync(filePath).toString('base64')}`;
 }
 
 async function collectMasterAnnexes(db, storeId, sections = []) {
@@ -477,6 +512,10 @@ async function mergeAppendices(mainPdf, appendixItems = [], logger = console) {
 
 function buildHtml(documentation, identity, options = {}) {
   const { collection, missing_items: missingItems, attachments } = documentation;
+  const renderOptions = {
+    ...options,
+    resolveImageSrc: options.resolveImageSrc || inlineImageDataUri,
+  };
   const masterAnnexes = documentation.master_annexes || [];
   const externalMasterAttachments = documentation.external_master_attachments || [];
   const sections = filteredSections(documentation.sections, options);
@@ -503,7 +542,7 @@ function buildHtml(documentation, identity, options = {}) {
     <section class="${section.section_type === 'tome' ? 'pdf-tome' : 'pdf-section'}">
       <h${section.section_type === 'tome' ? '1' : '2'}>${escapeHtml(section.code)} - ${escapeHtml(section.title)}</h${section.section_type === 'tome' ? '1' : '2'}>
       <div class="section-meta">Version ${escapeHtml(section.version)} - Statut ${escapeHtml(section.status)} - Code ${escapeHtml(section.code)}</div>
-      <div class="rich-content">${section.section_type === 'tome' ? renderSectionContent(section, options.include_missing !== false) : renderSectionBlocks(section, documentation, options)}</div>
+      <div class="rich-content">${section.section_type === 'tome' ? renderSectionContent(section, options.include_missing !== false) : renderSectionBlocks(section, documentation, renderOptions)}</div>
     </section>
   `).join('');
   const missingRows = missingItems
@@ -591,20 +630,23 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-pdf-block--separator { break-inside: avoid; page-break-inside: avoid; }
     .quality-pdf-block--split-table { break-inside: auto; page-break-inside: auto; }
     .quality-pdf-force-break { break-before: page; page-break-before: always; }
+    .quality-pdf-block--oversize,
+    .quality-pdf-block--oversize .quality-diagram-block,
+    .quality-pdf-block--oversize .quality-image-block { break-inside: auto !important; page-break-inside: auto !important; }
     .quality-pdf-block--split-table .quality-table-block { break-inside: auto; page-break-inside: auto; }
     .rich-content table { break-inside: auto; page-break-inside: auto; }
     .missing, .missing-info { color: #b42318; font-weight: 700; }
-    .quality-diagram-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
+    .quality-diagram-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; max-width: 100%; overflow: visible; width: 100%; }
     .quality-diagram-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
-    .quality-diagram-svg { max-height: 230mm; max-width: 100%; height: auto; break-inside: avoid-page; page-break-inside: avoid; }
+    .quality-diagram-svg { box-sizing: border-box; display: block; max-height: 235mm; max-width: 100%; height: auto; width: 100%; break-inside: avoid-page; page-break-inside: avoid; overflow: visible; }
     .quality-table-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
     .quality-table-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
     .procedure-section { break-inside: avoid-page; page-break-inside: avoid; margin: 12px 0; }
     .procedure-section h3 { color: #0f5f73; font-size: 14px; margin: 0 0 6px; }
     .quality-to-complete-block { border: 1px solid #fca5a5; border-left: 4px solid #b42318; background: #fef2f2; color: #7f1d1d; font-weight: 600; margin: 12px 0; padding: 8px 10px; break-inside: avoid-page; page-break-inside: avoid; }
     .quality-document-separator { border: 0; border-top: 1px solid #94a3b8; margin: 16px 0; }
-    .quality-image-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
-    .quality-image-block img { display: block; max-height: 225mm; object-fit: contain; width: auto; }
+    .quality-image-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; max-width: 100%; width: 100%; }
+    .quality-image-block img { display: block; height: auto; max-height: 225mm; max-width: 100%; object-fit: contain; width: auto; }
     .quality-image-block figcaption { color: #52616f; font-size: 10px; margin-top: 4px; }
     .quality-attachment-block { border: 1px solid #cbd5e1; margin: 10px 0; padding: 8px 10px; }
     .quality-attachment-block span { color: #52616f; display: block; font-size: 10px; margin-top: 2px; }
@@ -696,6 +738,7 @@ module.exports = {
   collectExternalMasterAttachments,
   collectSupplyMaterialExternalAttachments,
   diagnoseSupplyMaterialExportCoverage,
+  inlineImageDataUri,
   collectAttachmentAppendixItems,
   collectExternalAppendixItems,
   dedupeAppendixItems,
