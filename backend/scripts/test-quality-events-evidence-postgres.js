@@ -22,12 +22,24 @@ const ROLLBACK_SOURCE_ID = '10000000-0000-4000-8000-000000000250';
 const ZERO_SOURCE_ID = '10000000-0000-4000-8000-000000000251';
 
 function requireTestDatabaseUrl() {
-  const databaseUrl = process.env.QUALITY_EVENTS_EVIDENCE_PG_TEST_DATABASE_URL || process.env.DATABASE_URL;
-  if (!databaseUrl || process.env.QUALITY_EVENTS_EVIDENCE_PG_TEST !== '1') {
+  const databaseUrl = process.env.QUALITY_EVENTS_EVIDENCE_PG_TEST_DATABASE_URL;
+  if (process.env.QUALITY_EVENTS_EVIDENCE_PG_TEST !== '1' || !databaseUrl) {
     console.log(JSON.stringify({
       ok: false,
       skipped: true,
-      reason: 'Set QUALITY_EVENTS_EVIDENCE_PG_TEST=1 and QUALITY_EVENTS_EVIDENCE_PG_TEST_DATABASE_URL or DATABASE_URL to run the real PostgreSQL integration test.',
+      reason: 'Set QUALITY_EVENTS_EVIDENCE_PG_TEST=1 and QUALITY_EVENTS_EVIDENCE_PG_TEST_DATABASE_URL to run the real PostgreSQL integration test.',
+    }, null, 2));
+    process.exit(0);
+  }
+  const parsedUrl = new URL(databaseUrl);
+  if (
+    parsedUrl.pathname.replace(/^\//, '') === 'gestion_commerciale'
+    && process.env.QUALITY_EVENTS_EVIDENCE_ALLOW_PRODUCTION_DB !== 'I_UNDERSTAND_THIS_IS_NOT_A_TEST_DB'
+  ) {
+    console.log(JSON.stringify({
+      ok: false,
+      skipped: true,
+      reason: 'Refusing to run against database gestion_commerciale without explicit production override.',
     }, null, 2));
     process.exit(0);
   }
