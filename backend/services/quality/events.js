@@ -3,6 +3,32 @@ const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
 const EVENT_STATUSES = Object.freeze(['recorded', 'processed', 'ignored', 'failed', 'archived']);
 const EVIDENCE_STATUSES = Object.freeze(['draft', 'recorded', 'validated', 'rejected', 'archived']);
 const EVIDENCE_SOURCE_TYPES = Object.freeze(['human', 'automatic', 'import', 'agent', 'system']);
+const OPTIONAL_REFERENCE_TABLES = Object.freeze({
+  qualityTaskId: {
+    table: 'quality_tasks',
+    label: 'Tache qualite',
+  },
+  occurrenceId: {
+    table: 'quality_task_occurrences',
+    label: 'Occurrence qualite',
+  },
+  nonConformityId: {
+    table: 'quality_non_conformities',
+    label: 'Non-conformite qualite',
+  },
+  documentId: {
+    table: 'quality_documents',
+    label: 'Document qualite',
+  },
+  photoId: {
+    table: 'quality_photos',
+    label: 'Photo qualite',
+  },
+  masterDocumentId: {
+    table: 'quality_master_documents',
+    label: 'Document maitre qualite',
+  },
+});
 
 function text(value, fallback = null) {
   if (value === undefined || value === null) return fallback;
@@ -98,6 +124,7 @@ function normalizeEvidencePayload(input = {}) {
     ),
     sourceRecordType: text(input.sourceRecordType || input.source_record_type),
     sourceRecordId: text(input.sourceRecordId || input.source_record_id),
+    sourceDiscriminator: text(input.sourceDiscriminator || input.source_discriminator, ''),
     qualityTaskId: text(input.qualityTaskId || input.quality_task_id),
     occurrenceId: text(input.occurrenceId || input.occurrence_id),
     nonConformityId: text(input.nonConformityId || input.non_conformity_id),
@@ -125,7 +152,7 @@ function mapDbError(err) {
   }
   if (err?.code === '23505') {
     err.status = 409;
-    err.publicMessage = 'Evenement qualite deja enregistre';
+    err.publicMessage = 'Enregistrement qualite deja present';
   }
   return err;
 }
@@ -142,6 +169,28 @@ async function getQualityEventById({ db, storeId, eventId } = {}) {
     [eventId, storeId]
   );
   return result.rows[0] || null;
+}
+
+async function assertOptionalReferenceStore(db, storeId, referenceId, config) {
+  if (!referenceId) return;
+  const result = await db.query(
+    `SELECT id
+     FROM ${config.table}
+     WHERE id = $1::uuid
+       AND store_id = $2::uuid
+     LIMIT 1`,
+    [referenceId, storeId]
+  );
+  if (result.rows[0]) return;
+  const err = new Error(`${config.label} introuvable pour ce magasin`);
+  err.status = 400;
+  throw err;
+}
+
+async function assertEvidenceReferencesStore(db, evidence) {
+  for (const [key, config] of Object.entries(OPTIONAL_REFERENCE_TABLES)) {
+    await assertOptionalReferenceStore(db, evidence.storeId, evidence[key], config);
+  }
 }
 
 async function createOrGetQualityEvent(input = {}) {
@@ -216,7 +265,11 @@ async function createOrGetQualityEvent(input = {}) {
   }
 }
 
-async function createQualityEvidenceRecord(input = {}) {
+function shouldUseEvidenceIdempotency(evidence) {
+  return Boolean(evidence.qualityEventId && evidence.sourceType !== 'human');
+}
+
+async function createOrGetQualityEvidenceRecord(input = {}) {
   const db = input.db;
   assertDb(db);
   const evidence = normalizeEvidencePayload(input);
@@ -233,23 +286,55 @@ async function createQualityEvidenceRecord(input = {}) {
       throw err;
     }
   }
+  await assertEvidenceReferencesStore(db, evidence);
+
+  const idempotent = shouldUseEvidenceIdempotency(evidence);
 
   try {
-    const result = await db.query(
-      `INSERT INTO quality_evidence_records (
+    const insertSql = idempotent
+      ? `INSERT INTO quality_evidence_records (
         store_id, quality_event_id, evidence_type, evidence_reference,
         evidence_status, evidence_at, recorded_by, source_type,
-        source_record_type, source_record_id, quality_task_id, occurrence_id,
+        source_record_type, source_record_id, source_discriminator, quality_task_id, occurrence_id,
         non_conformity_id, document_id, photo_id, master_document_id,
         payload_version, payload, created_by, updated_by
       ) VALUES (
         $1::uuid, $2::uuid, $3::text, $4::text,
         $5::text, $6::timestamptz, $7::uuid, $8::text,
-        $9::text, $10::uuid, $11::uuid, $12::uuid,
-        $13::uuid, $14::uuid, $15::uuid, $16::uuid,
-        $17::integer, $18::jsonb, $19::uuid, $19::uuid
+        $9::text, $10::uuid, $11::text, $12::uuid, $13::uuid,
+        $14::uuid, $15::uuid, $16::uuid, $17::uuid,
+        $18::integer, $19::jsonb, $20::uuid, $20::uuid
       )
-      RETURNING *`,
+      ON CONFLICT (
+        store_id,
+        quality_event_id,
+        evidence_type,
+        COALESCE(source_record_type, ''),
+        COALESCE(source_record_id, '00000000-0000-0000-0000-000000000000'::uuid),
+        source_discriminator
+      )
+      WHERE archived_at IS NULL
+        AND quality_event_id IS NOT NULL
+        AND source_type <> 'human'
+      DO NOTHING
+      RETURNING *`
+      : `INSERT INTO quality_evidence_records (
+        store_id, quality_event_id, evidence_type, evidence_reference,
+        evidence_status, evidence_at, recorded_by, source_type,
+        source_record_type, source_record_id, source_discriminator, quality_task_id, occurrence_id,
+        non_conformity_id, document_id, photo_id, master_document_id,
+        payload_version, payload, created_by, updated_by
+      ) VALUES (
+        $1::uuid, $2::uuid, $3::text, $4::text,
+        $5::text, $6::timestamptz, $7::uuid, $8::text,
+        $9::text, $10::uuid, $11::text, $12::uuid, $13::uuid,
+        $14::uuid, $15::uuid, $16::uuid, $17::uuid,
+        $18::integer, $19::jsonb, $20::uuid, $20::uuid
+      )
+      RETURNING *`;
+
+    const result = await db.query(
+      insertSql,
       [
         evidence.storeId,
         evidence.qualityEventId,
@@ -261,6 +346,7 @@ async function createQualityEvidenceRecord(input = {}) {
         evidence.sourceType,
         evidence.sourceRecordType,
         evidence.sourceRecordId,
+        evidence.sourceDiscriminator,
         evidence.qualityTaskId,
         evidence.occurrenceId,
         evidence.nonConformityId,
@@ -272,10 +358,39 @@ async function createQualityEvidenceRecord(input = {}) {
         evidence.userId,
       ]
     );
-    return result.rows[0] || null;
+    if (result.rows[0]) return { evidence: result.rows[0], created: true };
+
+    const existing = await db.query(
+      `SELECT *
+       FROM quality_evidence_records
+       WHERE store_id = $1::uuid
+         AND quality_event_id = $2::uuid
+         AND evidence_type = $3::text
+         AND COALESCE(source_record_type, '') = COALESCE($4::text, '')
+         AND COALESCE(source_record_id, $7::uuid) = COALESCE($5::uuid, $7::uuid)
+         AND source_discriminator = $6::text
+         AND archived_at IS NULL
+         AND source_type <> 'human'
+       LIMIT 1`,
+      [
+        evidence.storeId,
+        evidence.qualityEventId,
+        evidence.evidenceType,
+        evidence.sourceRecordType,
+        evidence.sourceRecordId,
+        evidence.sourceDiscriminator,
+        ZERO_UUID,
+      ]
+    );
+    return { evidence: existing.rows[0] || null, created: false };
   } catch (err) {
     throw mapDbError(err);
   }
+}
+
+async function createQualityEvidenceRecord(input = {}) {
+  const result = await createOrGetQualityEvidenceRecord(input);
+  return result.evidence;
 }
 
 async function listEvidenceForEvent({ db, storeId, eventId } = {}) {
@@ -297,6 +412,7 @@ module.exports = {
   EVIDENCE_STATUSES,
   EVIDENCE_SOURCE_TYPES,
   createOrGetQualityEvent,
+  createOrGetQualityEvidenceRecord,
   createQualityEvidenceRecord,
   getQualityEventById,
   listEvidenceForEvent,

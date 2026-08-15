@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS quality_evidence_records (
   source_type text NOT NULL DEFAULT 'human',
   source_record_type text,
   source_record_id uuid,
+  source_discriminator text NOT NULL DEFAULT '',
   quality_task_id uuid REFERENCES quality_tasks(id) ON DELETE SET NULL,
   occurrence_id uuid REFERENCES quality_task_occurrences(id) ON DELETE SET NULL,
   non_conformity_id uuid REFERENCES quality_non_conformities(id) ON DELETE SET NULL,
@@ -114,7 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_quality_evidence_records_store_type
   WHERE archived_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_quality_evidence_records_source
-  ON quality_evidence_records(store_id, source_record_type, source_record_id)
+  ON quality_evidence_records(store_id, source_record_type, source_record_id, source_discriminator)
   WHERE source_record_type IS NOT NULL AND source_record_id IS NOT NULL AND archived_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_quality_evidence_records_task
@@ -127,6 +128,19 @@ CREATE INDEX IF NOT EXISTS idx_quality_evidence_records_master_document
 
 CREATE INDEX IF NOT EXISTS idx_quality_evidence_records_payload
   ON quality_evidence_records USING gin (payload);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_quality_evidence_records_automatic_idempotency
+  ON quality_evidence_records (
+    store_id,
+    quality_event_id,
+    evidence_type,
+    COALESCE(source_record_type, ''),
+    COALESCE(source_record_id, '00000000-0000-0000-0000-000000000000'::uuid),
+    source_discriminator
+  )
+  WHERE archived_at IS NULL
+    AND quality_event_id IS NOT NULL
+    AND source_type <> 'human';
 
 CREATE OR REPLACE FUNCTION set_quality_events_updated_at()
 RETURNS TRIGGER AS $$
