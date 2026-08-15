@@ -82,14 +82,16 @@ function run() {
   assert(html.includes('thead { display: table-header-group'), 'table headers should repeat on page breaks');
   assert(html.includes('break-after: avoid-page'), 'headings should avoid isolated page breaks');
   assert(html.includes('.rich-content ul,'), 'lists should receive pagination rules');
-  assert(html.includes('max-height: 230mm'), 'diagrams should be constrained to page height');
+  assert(html.includes('max-height: 235mm'), 'diagrams should be constrained to page height');
   assert(html.includes('max-height: 225mm'), 'images should be constrained to page height');
+  assert(html.includes('quality-pdf-block--oversize'), 'oversized diagrams/images should release keep rules');
   assert(html.includes('.quality-to-complete-block'), 'to_complete callouts should receive keep rules');
   assert(html.includes('.quality-pdf-force-break'), 'forced page-break class should be available');
 
   const script = paginationPreparationScript();
   assert(script.includes('getBoundingClientRect'), 'pagination script should measure block height');
   assert(script.includes('quality-pdf-force-break'), 'pagination script should force page breaks');
+  assert(script.includes('quality-pdf-block--oversize'), 'pagination script should mark oversized visual blocks');
 
   console.log('quality documentation PDF pagination tests ok');
 }

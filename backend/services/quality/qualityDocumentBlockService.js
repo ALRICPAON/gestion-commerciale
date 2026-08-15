@@ -553,7 +553,13 @@ function renderDocumentBlock(block, options = {}) {
   if (block.block_type === 'mermaid_diagram') return block.diagram ? renderDiagramBlock(block.diagram) : '';
   if (block.block_type === 'image' && block.attachment) {
     const caption = block.content?.caption || block.title || block.attachment.filename || '';
-    return `<figure class="quality-image-block"><img src="${escapeHtml(block.attachment.file_path)}" alt="${escapeHtml(caption)}"><figcaption>${escapeHtml(caption)}</figcaption></figure>`;
+    const source = typeof options.resolveImageSrc === 'function'
+      ? options.resolveImageSrc(block.attachment, block)
+      : block.attachment.file_path;
+    if (!source) {
+      return `<div class="quality-attachment-block quality-image-block--missing"><strong>${escapeHtml(caption || block.attachment.filename || 'Image')}</strong><span>Image non disponible pour le rendu PDF.</span></div>`;
+    }
+    return `<figure class="quality-image-block"><img src="${escapeHtml(source)}" alt="${escapeHtml(caption)}"><figcaption>${escapeHtml(caption)}</figcaption></figure>`;
   }
   if (block.block_type === 'attachment' && block.attachment) {
     return `<div class="quality-attachment-block"><strong>${escapeHtml(block.attachment.filename || block.title || 'Piece jointe')}</strong><span>${escapeHtml(block.attachment.mime_type || '')}</span></div>`;
