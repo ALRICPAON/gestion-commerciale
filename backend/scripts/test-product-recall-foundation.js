@@ -90,6 +90,7 @@ class FakeRecallDb {
     this.snapshots = [];
     this.failOnRecipientInsert = false;
     this.failCampaignInsertConstraint = null;
+    this.failSentPersistenceForRecipientId = null;
   }
 
   async connect() {
@@ -318,6 +319,9 @@ class FakeRecallDb {
     }
 
     if (normalized.startsWith('UPDATE product_recall_recipients SET status = $4::text')) {
+      if (params[3] === 'sent' && this.failSentPersistenceForRecipientId === params[2]) {
+        throw new Error('sent persistence failed');
+      }
       const row = this.recipients.find((recipient) => (
         recipient.store_id === params[0]
         && recipient.campaign_id === params[1]
@@ -634,11 +638,12 @@ async function testSendRecallNotifications() {
   assert.strictEqual(result.summary.sent, 2);
   assert.strictEqual(result.summary.failed, 1);
   assert.strictEqual(result.summary.contact_required, 1);
+  assert.strictEqual(result.summary.pending, 0);
   assert.strictEqual(result.campaign.status, 'partial');
   assert.strictEqual(db.recipients.find((recipient) => recipient.id === contactRequired.id).status, 'contact_required');
   assert(db.recipients.find((recipient) => recipient.email === 'bl-a@example.test').email_message_id);
   assert(db.recipients.find((recipient) => recipient.email === 'primary-b@example.test').error_message.includes('SMTP refuse'));
-  assert.strictEqual(db.events.some((event) => event.event_type === 'product_recall_notifications_sent'), true);
+  assert.strictEqual(db.events.some((event) => event.event_type === 'product_recall_notifications_processed'), true);
   assert.strictEqual(db.evidence.some((record) => record.evidence_type === 'product_recall_notification_record'), true);
 
   const retryTarget = db.recipients.find((recipient) => recipient.email === 'primary-b@example.test');
@@ -653,6 +658,64 @@ async function testSendRecallNotifications() {
   assert.strictEqual(retry.results.length, 1);
   assert.strictEqual(retry.results[0].id, retryTarget.id);
   assert.strictEqual(db.recipients.filter((recipient) => recipient.status === 'sent').length, 3);
+}
+
+async function testSmtpSuccessDbPersistenceFailureStaysPending() {
+  const db = new FakeRecallDb();
+  const draft = await createDraftForSend(db);
+  const target = draft.recipients.find((recipient) => recipient.email === 'bl-a@example.test');
+  let sendCount = 0;
+  db.failSentPersistenceForRecipientId = target.id;
+  const originalConsoleError = console.error;
+  console.error = () => {};
+
+  let result;
+  try {
+    result = await sendProductRecallNotifications({
+      db,
+      storeId: STORE_A,
+      campaignId: draft.campaign.id,
+      recipientIds: [target.id],
+      userId: USER_ID,
+      sendEmailFn: async () => {
+        sendCount += 1;
+        return { message_id: 'smtp-123' };
+      },
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  const stored = db.recipients.find((recipient) => recipient.id === target.id);
+  assert.strictEqual(sendCount, 1);
+  assert.strictEqual(stored.status, 'pending');
+  assert.strictEqual(stored.error_message, null);
+  assert.strictEqual(result.results[0].status, 'pending');
+  assert.strictEqual(result.results[0].email_message_id, 'smtp-123');
+  assert.strictEqual(result.results[0].error_code, 'SMTP_SUCCESS_DB_PERSISTENCE_FAILED');
+  assert.strictEqual(result.summary.pending, 1);
+  assert.strictEqual(result.summary.failed, 0);
+  assert.strictEqual(result.campaign.status, 'sending');
+  assert.strictEqual(db.evidence.at(-1).payload.summary.pending, 1);
+  assert.strictEqual(db.evidence.at(-1).payload.summary.sent, 0);
+
+  db.failSentPersistenceForRecipientId = null;
+  await assert.rejects(
+    () => sendProductRecallNotifications({
+      db,
+      storeId: STORE_A,
+      campaignId: draft.campaign.id,
+      recipientIds: [target.id],
+      userId: USER_ID,
+      sendEmailFn: async () => {
+        sendCount += 1;
+        return { message_id: 'smtp-should-not-send' };
+      },
+    }),
+    (error) => error.status === 409 && error.code === 'PRODUCT_RECALL_NOT_SENDABLE'
+  );
+  assert.strictEqual(sendCount, 1);
+  assert.strictEqual(stored.status, 'pending');
 }
 
 async function testDoubleClickGuard() {
@@ -715,8 +778,9 @@ function testStaticGuards() {
   const service = read('backend/services/productRecallService.js');
   assert(service.includes("eventType: 'product_recall_initiated'"));
   assert(service.includes("evidenceType: 'product_recall_record'"));
-  assert(service.includes("eventType: 'product_recall_notifications_sent'"));
+  assert(service.includes("eventType: 'product_recall_notifications_processed'"));
   assert(service.includes("evidenceType: 'product_recall_notification_record'"));
+  assert(service.includes('SMTP_SUCCESS_DB_PERSISTENCE_FAILED'));
   assert(service.includes("sourceType: 'product_recall'"));
   assert(service.includes("error.code === '23505'"));
   assert(service.includes("error.constraint === ACTIVE_CAMPAIGN_UNIQUE_INDEX"));
@@ -732,6 +796,7 @@ async function main() {
   await testRollback();
   await testRecallEmailMessage();
   await testSendRecallNotifications();
+  await testSmtpSuccessDbPersistenceFailureStaysPending();
   await testDoubleClickGuard();
   testStaticGuards();
   console.log(JSON.stringify({
@@ -748,6 +813,7 @@ async function main() {
       'rollback',
       'backend_email_subject_body_client_delivery_notes',
       'send_success_failure_contact_required_retry_evidence',
+      'smtp_success_db_persistence_failed_stays_pending',
       'double_click_pending_reservation_guard',
       'static_guards_email_send_endpoint_only',
     ],

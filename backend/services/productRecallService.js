@@ -470,6 +470,7 @@ function buildNotificationEvidencePayload({ campaign, lot, article, recipients, 
       sent: rows.filter((recipient) => recipient.status === 'sent').length,
       failed: rows.filter((recipient) => recipient.status === 'failed').length,
       contact_required: rows.filter((recipient) => recipient.status === 'contact_required').length,
+      pending: rows.filter((recipient) => recipient.status === 'pending').length,
       skipped: rows.filter((recipient) => recipient.status === 'skipped').length,
     },
     recipients: rows.map((recipient) => ({
@@ -744,7 +745,7 @@ async function createRecallNotificationEvidence(db, { storeId, campaignId, userI
   const eventResult = await createOrGetQualityEvent({
     db,
     storeId,
-    eventType: 'product_recall_notifications_sent',
+    eventType: 'product_recall_notifications_processed',
     sourceTable: 'product_recall_campaigns',
     sourceId: campaignId,
     sourceDiscriminator: discriminator,
@@ -809,25 +810,14 @@ async function sendProductRecallNotifications({
   const results = [];
   for (const recipient of reservedRecipients) {
     const message = buildRecallEmailMessage(campaignSource, recipient);
+    let delivery;
     try {
-      const delivery = await sendEmailFn({
+      delivery = await sendEmailFn({
         to: message.to,
         subject: message.subject,
         html: message.html,
         text: message.text,
       });
-      const recorded = await recordRecallRecipientSendResult(db, {
-        storeId,
-        campaignId,
-        recipientId: recipient.id,
-        status: 'sent',
-        subject: message.subject,
-        body: message.text,
-        messageId: delivery && delivery.message_id,
-        errorMessage: null,
-        userId,
-      });
-      results.push({ ...recorded, status: 'sent' });
     } catch (error) {
       const recorded = await recordRecallRecipientSendResult(db, {
         storeId,
@@ -841,6 +831,37 @@ async function sendProductRecallNotifications({
         userId,
       });
       results.push({ ...recorded, status: 'failed' });
+      continue;
+    }
+
+    try {
+      const recorded = await recordRecallRecipientSendResult(db, {
+        storeId,
+        campaignId,
+        recipientId: recipient.id,
+        status: 'sent',
+        subject: message.subject,
+        body: message.text,
+        messageId: delivery && delivery.message_id,
+        errorMessage: null,
+        userId,
+      });
+      results.push({ ...recorded, status: 'sent' });
+    } catch (error) {
+      console.error('SMTP_SUCCESS_DB_PERSISTENCE_FAILED', {
+        recipientId: recipient.id,
+        campaignId,
+        storeId,
+        message_id: delivery && delivery.message_id,
+        error: error.message,
+      });
+      results.push({
+        ...recipient,
+        status: 'pending',
+        email_message_id: delivery && delivery.message_id,
+        persistence_error: clean(error.message) || 'Erreur persistance apres succes SMTP',
+        error_code: 'SMTP_SUCCESS_DB_PERSISTENCE_FAILED',
+      });
     }
   }
 
@@ -857,6 +878,7 @@ async function sendProductRecallNotifications({
     sent: recipients.filter((recipient) => recipient.status === 'sent').length,
     failed: recipients.filter((recipient) => recipient.status === 'failed').length,
     contact_required: recipients.filter((recipient) => recipient.status === 'contact_required').length,
+    pending: recipients.filter((recipient) => recipient.status === 'pending').length,
     skipped: recipients.filter((recipient) => recipient.status === 'skipped').length,
   };
 

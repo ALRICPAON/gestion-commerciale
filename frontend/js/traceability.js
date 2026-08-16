@@ -334,7 +334,7 @@ function recallStatusLabel(value) {
 
 function recallRecipientStatusLabel(value) {
   const labels = {
-    pending: 'Envoi en cours',
+    pending: 'Envoi en cours / a verifier',
     ready: 'Pret',
     contact_required: 'Contact a effectuer',
     sent: 'Envoye',
@@ -806,7 +806,7 @@ function renderRecallSendResultPanel(result) {
       <span class="trace-badge ${campaign.status === 'sent' ? 'trace-badge-open' : 'trace-badge-partial'}">${escapeHtml(recallStatusLabel(campaign.status))}</span>
     </div>
     <div class="trace-recall-alert">
-      <strong>${escapeHtml(pluralLabel(result.summary?.sent || 0, 'email envoye', 'emails envoyes'))} &middot; ${escapeHtml(pluralLabel(result.summary?.failed || 0, 'echec', 'echecs'))} &middot; ${escapeHtml(pluralLabel(result.summary?.contact_required || 0, 'contact manuel a effectuer', 'contacts manuels a effectuer'))}</strong>
+      <strong>${escapeHtml(pluralLabel(result.summary?.sent || 0, 'email envoye', 'emails envoyes'))} &middot; ${escapeHtml(pluralLabel(result.summary?.failed || 0, 'echec', 'echecs'))} &middot; ${escapeHtml(pluralLabel(result.summary?.pending || 0, 'envoi a verifier', 'envois a verifier'))} &middot; ${escapeHtml(pluralLabel(result.summary?.contact_required || 0, 'contact manuel a effectuer', 'contacts manuels a effectuer'))}</strong>
       <span>Les statuts ont ete enregistres par destinataire.</span>
     </div>
     <h4>Destinataires</h4>

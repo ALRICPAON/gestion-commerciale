@@ -28,6 +28,7 @@ function testFrontendWiring() {
   assert(js.includes('Envoyer maintenant'), 'Confirmation finale envoi manquante');
   assert(js.includes('Les emails seront envoyes immediatement via ALTA MAREE'), 'Avertissement envoi immediat manquant');
   assert(js.includes("['ready', 'failed'].includes(recipient.status)"), 'Selection ready/failed manquante');
+  assert(js.includes("pending: 'Envoi en cours / a verifier'"), 'Libelle pending a verifier manquant');
   assert(js.includes("recipient_ids: recipientIds"), 'Payload recipient_ids manquant');
   assert(js.includes('recall-recipient-checkbox'), 'Checkbox destinataires envoi manquante');
   assert(js.includes('function updateRecallSendButtonState'), 'Activation bouton envoi manquante');
@@ -62,7 +63,7 @@ function testBackendReadEndpoint() {
   assert(route.includes('sendProductRecallNotifications'), 'Route envoi rappel non branchee au service');
   assert(service.includes('async function getProductRecallCampaign'), 'Service lecture rappel manquant');
   assert(service.includes('async function sendProductRecallNotifications'), 'Service envoi rappel manquant');
-  assert(service.includes("eventType: 'product_recall_notifications_sent'"), 'Evenement qualite notifications manquant');
+  assert(service.includes("eventType: 'product_recall_notifications_processed'"), 'Evenement qualite notifications manquant');
   assert(service.includes("evidenceType: 'product_recall_notification_record'"), 'Preuve qualite notifications manquante');
   assert(service.includes('FROM product_recall_recipients'), 'Lecture recipients rappel manquante');
   assert(service.includes('WHERE c.store_id = $1::uuid'), 'Store isolation campagne manquante');
@@ -79,6 +80,8 @@ function testEmailOnlyOnSendEndpoint() {
   assert(service.includes("const { sendEmail } = require('./emailService')"), 'Le service doit reutiliser emailService');
   assert(service.includes('sendEmailFn = sendEmail'), 'sendEmail doit rester injectable pour les tests');
   assert(service.includes('reserveRecallRecipientsForSend'), 'Reservation backend anti double envoi manquante');
+  assert(service.includes('SMTP_SUCCESS_DB_PERSISTENCE_FAILED'), 'Incident SMTP OK / DB KO non journalise');
+  assert(service.includes("status: 'pending'"), 'Incident apres SMTP doit rester pending');
 }
 
 function main() {
