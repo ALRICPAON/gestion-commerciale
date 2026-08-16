@@ -6,7 +6,9 @@ const {
   ACTIVE_CAMPAIGN_UNIQUE_INDEX,
   analyzeLotRecallImpact,
   createProductRecallDraft,
+  buildRecallEmailMessage,
   isActiveCampaignUniqueViolation,
+  sendProductRecallNotifications,
 } = require('../services/productRecallService');
 
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -88,7 +90,14 @@ class FakeRecallDb {
     this.snapshots = [];
     this.failOnRecipientInsert = false;
     this.failCampaignInsertConstraint = null;
+    this.failSentPersistenceForRecipientId = null;
   }
+
+  async connect() {
+    return this;
+  }
+
+  release() {}
 
   deliveryRow(reference, clientId, billedClientId, quantity) {
     const delivered = this.clients.find((client) => client.id === clientId);
@@ -175,6 +184,42 @@ class FakeRecallDb {
       return { rows: active ? [clone(active)] : [] };
     }
 
+    if (normalized.startsWith('SELECT * FROM product_recall_campaigns WHERE store_id')) {
+      const row = this.campaigns.find((campaign) => campaign.store_id === params[0] && campaign.id === params[1]);
+      return { rows: row ? [clone(row)] : [] };
+    }
+
+    if (normalized.startsWith('SELECT c.*, l.lot_code')) {
+      const campaign = this.campaigns.find((row) => row.store_id === params[0] && row.id === params[1]);
+      if (!campaign) return { rows: [] };
+      const lot = this.lots.find((row) => row.store_id === campaign.store_id && row.lot_id === campaign.lot_id);
+      return {
+        rows: [{
+          ...clone(campaign),
+          lot_code: lot.lot_code,
+          supplier_lot_number: lot.supplier_lot_number,
+          qty_initial: lot.qty_initial,
+          qty_remaining: lot.qty_remaining,
+          quality_status: lot.quality_status,
+          quality_block_reason: lot.quality_block_reason,
+          quality_block_reason_type: lot.quality_block_reason_type,
+          quality_block_comment: lot.quality_block_comment,
+          quality_blocked_at: lot.quality_blocked_at,
+          article_plu: lot.article_plu,
+          article_label: lot.article_label,
+          article_unit: lot.article_unit,
+          family_name: lot.family_name,
+          initiated_by_email: 'responsable@example.test',
+        }],
+      };
+    }
+
+    if (normalized.startsWith('SELECT * FROM product_recall_recipients WHERE store_id')) {
+      return {
+        rows: clone(this.recipients.filter((recipient) => recipient.store_id === params[0] && recipient.campaign_id === params[1])),
+      };
+    }
+
     if (normalized.startsWith('SELECT id, store_id, lot_code, quality_status')) {
       const row = this.lots.find((lot) => lot.lot_id === params[0] && lot.store_id === params[1]);
       return { rows: row ? [{ id: row.lot_id, store_id: row.store_id, lot_code: row.lot_code, quality_status: row.quality_status }] : [] };
@@ -240,8 +285,63 @@ class FakeRecallDb {
         delivered_quantity: params[11],
         delivery_note_count: params[12],
         delivery_notes: JSON.parse(params[13]),
+        prepared_subject: null,
+        prepared_body: null,
+        email_message_id: null,
+        sent_at: null,
+        error_message: null,
       };
       this.recipients.push(row);
+      return { rows: [clone(row)] };
+    }
+
+    if (normalized.startsWith("UPDATE product_recall_recipients SET status = 'pending'")) {
+      const ids = params[2];
+      const sendableStatuses = params[4];
+      const rows = this.recipients.filter((recipient) => (
+        recipient.store_id === params[0]
+        && recipient.campaign_id === params[1]
+        && ids.includes(recipient.id)
+        && sendableStatuses.includes(recipient.status)
+        && recipient.email
+      ));
+      rows.forEach((recipient) => {
+        recipient.status = 'pending';
+        recipient.error_message = null;
+      });
+      return { rows: clone(rows) };
+    }
+
+    if (normalized.startsWith("UPDATE product_recall_campaigns SET status = 'sending'")) {
+      const row = this.campaigns.find((campaign) => campaign.store_id === params[0] && campaign.id === params[1]);
+      if (row) row.status = 'sending';
+      return { rows: [] };
+    }
+
+    if (normalized.startsWith('UPDATE product_recall_recipients SET status = $4::text')) {
+      if (params[3] === 'sent' && this.failSentPersistenceForRecipientId === params[2]) {
+        throw new Error('sent persistence failed');
+      }
+      const row = this.recipients.find((recipient) => (
+        recipient.store_id === params[0]
+        && recipient.campaign_id === params[1]
+        && recipient.id === params[2]
+      ));
+      if (!row) return { rows: [] };
+      row.status = params[3];
+      row.prepared_subject = params[4];
+      row.prepared_body = params[5];
+      row.email_message_id = params[6];
+      if (params[3] === 'sent') row.sent_at = '2026-08-16T08:00:00.000Z';
+      row.error_message = params[7];
+      return { rows: [clone(row)] };
+    }
+
+    if (normalized.startsWith('UPDATE product_recall_campaigns SET status = $3::text')) {
+      const row = this.campaigns.find((campaign) => campaign.store_id === params[0] && campaign.id === params[1]);
+      if (!row) return { rows: [] };
+      row.status = params[2];
+      if (['sent', 'partial'].includes(row.status) && !row.sent_at) row.sent_at = '2026-08-16T08:01:00.000Z';
       return { rows: [clone(row)] };
     }
 
@@ -478,6 +578,187 @@ async function testRollback() {
   assert.strictEqual(db.lots.find((lot) => lot.lot_id === LOT_A).quality_status, 'available');
 }
 
+async function createDraftForSend(db) {
+  const draft = await createProductRecallDraft({
+    db,
+    storeId: STORE_A,
+    lotId: LOT_A,
+    userId: USER_ID,
+    recallType: 'supplier_recall',
+    reason: 'Alerte fournisseur lot SUP-42',
+    comment: 'Commentaire client',
+  });
+  return draft;
+}
+
+async function testRecallEmailMessage() {
+  const db = new FakeRecallDb();
+  const draft = await createDraftForSend(db);
+  const source = await require('../services/productRecallService').getProductRecallCampaign({
+    db,
+    storeId: STORE_A,
+    campaignId: draft.campaign.id,
+  });
+  const recipient = source.recipients.find((row) => row.delivered_client_id === CLIENT_A);
+  const message = buildRecallEmailMessage(source, recipient);
+
+  assert.strictEqual(message.subject, 'Rappel produit - Bar entier - Lot LOT-RAPPEL');
+  assert(message.text.includes('Bonjour Contact BL A,'));
+  assert(message.text.includes('Motif :\nAlerte fournisseur lot SUP-42'));
+  assert(message.text.includes('Informations complementaires :\nCommentaire client'));
+  assert(message.text.includes('DN-1'));
+  assert(message.text.includes('DN-2'));
+  assert(!message.text.includes('DN-3'));
+
+  source.campaign.comment = null;
+  assert(!buildRecallEmailMessage(source, recipient).text.includes('Informations complementaires'));
+}
+
+async function testSendRecallNotifications() {
+  const db = new FakeRecallDb();
+  const draft = await createDraftForSend(db);
+  const readyRecipients = draft.recipients.filter((recipient) => recipient.status === 'ready');
+  const contactRequired = draft.recipients.find((recipient) => recipient.status === 'contact_required');
+  const sent = [];
+
+  const result = await sendProductRecallNotifications({
+    db,
+    storeId: STORE_A,
+    campaignId: draft.campaign.id,
+    recipientIds: readyRecipients.map((recipient) => recipient.id).concat(contactRequired.id),
+    userId: USER_ID,
+    sendEmailFn: async (message) => {
+      sent.push(message);
+      if (message.to === 'primary-b@example.test') throw new Error('SMTP refuse');
+      return { message_id: `smtp-${sent.length}` };
+    },
+  });
+
+  assert.strictEqual(sent.length, 3);
+  assert.strictEqual(result.summary.sent, 2);
+  assert.strictEqual(result.summary.failed, 1);
+  assert.strictEqual(result.summary.contact_required, 1);
+  assert.strictEqual(result.summary.pending, 0);
+  assert.strictEqual(result.campaign.status, 'partial');
+  assert.strictEqual(db.recipients.find((recipient) => recipient.id === contactRequired.id).status, 'contact_required');
+  assert(db.recipients.find((recipient) => recipient.email === 'bl-a@example.test').email_message_id);
+  assert(db.recipients.find((recipient) => recipient.email === 'primary-b@example.test').error_message.includes('SMTP refuse'));
+  assert.strictEqual(db.events.some((event) => event.event_type === 'product_recall_notifications_processed'), true);
+  assert.strictEqual(db.evidence.some((record) => record.evidence_type === 'product_recall_notification_record'), true);
+
+  const retryTarget = db.recipients.find((recipient) => recipient.email === 'primary-b@example.test');
+  const retry = await sendProductRecallNotifications({
+    db,
+    storeId: STORE_A,
+    campaignId: draft.campaign.id,
+    recipientIds: db.recipients.map((recipient) => recipient.id),
+    userId: USER_ID,
+    sendEmailFn: async (message) => ({ message_id: `retry-${message.to}` }),
+  });
+  assert.strictEqual(retry.results.length, 1);
+  assert.strictEqual(retry.results[0].id, retryTarget.id);
+  assert.strictEqual(db.recipients.filter((recipient) => recipient.status === 'sent').length, 3);
+}
+
+async function testSmtpSuccessDbPersistenceFailureStaysPending() {
+  const db = new FakeRecallDb();
+  const draft = await createDraftForSend(db);
+  const target = draft.recipients.find((recipient) => recipient.email === 'bl-a@example.test');
+  let sendCount = 0;
+  db.failSentPersistenceForRecipientId = target.id;
+  const originalConsoleError = console.error;
+  console.error = () => {};
+
+  let result;
+  try {
+    result = await sendProductRecallNotifications({
+      db,
+      storeId: STORE_A,
+      campaignId: draft.campaign.id,
+      recipientIds: [target.id],
+      userId: USER_ID,
+      sendEmailFn: async () => {
+        sendCount += 1;
+        return { message_id: 'smtp-123' };
+      },
+    });
+  } finally {
+    console.error = originalConsoleError;
+  }
+
+  const stored = db.recipients.find((recipient) => recipient.id === target.id);
+  assert.strictEqual(sendCount, 1);
+  assert.strictEqual(stored.status, 'pending');
+  assert.strictEqual(stored.error_message, null);
+  assert.strictEqual(result.results[0].status, 'pending');
+  assert.strictEqual(result.results[0].email_message_id, 'smtp-123');
+  assert.strictEqual(result.results[0].error_code, 'SMTP_SUCCESS_DB_PERSISTENCE_FAILED');
+  assert.strictEqual(result.summary.pending, 1);
+  assert.strictEqual(result.summary.failed, 0);
+  assert.strictEqual(result.campaign.status, 'sending');
+  assert.strictEqual(db.evidence.at(-1).payload.summary.pending, 1);
+  assert.strictEqual(db.evidence.at(-1).payload.summary.sent, 0);
+
+  db.failSentPersistenceForRecipientId = null;
+  await assert.rejects(
+    () => sendProductRecallNotifications({
+      db,
+      storeId: STORE_A,
+      campaignId: draft.campaign.id,
+      recipientIds: [target.id],
+      userId: USER_ID,
+      sendEmailFn: async () => {
+        sendCount += 1;
+        return { message_id: 'smtp-should-not-send' };
+      },
+    }),
+    (error) => error.status === 409 && error.code === 'PRODUCT_RECALL_NOT_SENDABLE'
+  );
+  assert.strictEqual(sendCount, 1);
+  assert.strictEqual(stored.status, 'pending');
+}
+
+async function testDoubleClickGuard() {
+  const db = new FakeRecallDb();
+  const draft = await createDraftForSend(db);
+  const selected = draft.recipients.filter((recipient) => recipient.status === 'ready').map((recipient) => recipient.id);
+  const client = await db.connect();
+
+  await client.query('BEGIN');
+  const first = await client.query(
+    `UPDATE product_recall_recipients
+     SET status = 'pending',
+         error_message = NULL,
+         updated_at = now(),
+         updated_by = $4::uuid
+     WHERE store_id = $1::uuid
+       AND campaign_id = $2::uuid
+       AND id = ANY($3::uuid[])
+       AND status = ANY($5::text[])
+       AND NULLIF(btrim(email), '') IS NOT NULL
+     RETURNING *`,
+    [STORE_A, draft.campaign.id, selected, USER_ID, ['ready', 'failed']]
+  );
+  await client.query('COMMIT');
+  const second = await client.query(
+    `UPDATE product_recall_recipients
+     SET status = 'pending',
+         error_message = NULL,
+         updated_at = now(),
+         updated_by = $4::uuid
+     WHERE store_id = $1::uuid
+       AND campaign_id = $2::uuid
+       AND id = ANY($3::uuid[])
+       AND status = ANY($5::text[])
+       AND NULLIF(btrim(email), '') IS NOT NULL
+     RETURNING *`,
+    [STORE_A, draft.campaign.id, selected, USER_ID, ['ready', 'failed']]
+  );
+
+  assert.strictEqual(first.rows.length, 3);
+  assert.strictEqual(second.rows.length, 0);
+}
+
 function testStaticGuards() {
   const migration = read('backend/db/gestion-commerciale/104_product_recall_foundation.sql');
   assert(migration.includes('CREATE TABLE IF NOT EXISTS product_recall_campaigns'));
@@ -490,15 +771,20 @@ function testStaticGuards() {
   const route = read('backend/routes/traceability.js');
   assert(route.includes("router.get('/lots/:lotId/recall-analysis'"));
   assert(route.includes("router.post('/lots/:lotId/recall'"));
+  assert(route.includes("router.post('/recalls/:campaignId/send'"));
   assert(route.includes('createProductRecallDraft'));
+  assert(route.includes('sendProductRecallNotifications'));
 
   const service = read('backend/services/productRecallService.js');
   assert(service.includes("eventType: 'product_recall_initiated'"));
   assert(service.includes("evidenceType: 'product_recall_record'"));
+  assert(service.includes("eventType: 'product_recall_notifications_processed'"));
+  assert(service.includes("evidenceType: 'product_recall_notification_record'"));
+  assert(service.includes('SMTP_SUCCESS_DB_PERSISTENCE_FAILED'));
   assert(service.includes("sourceType: 'product_recall'"));
   assert(service.includes("error.code === '23505'"));
   assert(service.includes("error.constraint === ACTIVE_CAMPAIGN_UNIQUE_INDEX"));
-  assert(!service.includes('sendEmail'));
+  assert(service.includes("const { sendEmail } = require('./emailService')"));
   assert(!route.includes('sendEmail'));
 }
 
@@ -508,6 +794,10 @@ async function main() {
   await testConcurrentActiveCampaignConflict();
   await testAlreadyBlockedDoesNotOverwrite();
   await testRollback();
+  await testRecallEmailMessage();
+  await testSendRecallNotifications();
+  await testSmtpSuccessDbPersistenceFailureStaysPending();
+  await testDoubleClickGuard();
   testStaticGuards();
   console.log(JSON.stringify({
     ok: true,
@@ -521,7 +811,11 @@ async function main() {
       'concurrent_active_campaign_unique_23505',
       'already_blocked_no_overwrite',
       'rollback',
-      'static_guards_no_email',
+      'backend_email_subject_body_client_delivery_notes',
+      'send_success_failure_contact_required_retry_evidence',
+      'smtp_success_db_persistence_failed_stays_pending',
+      'double_click_pending_reservation_guard',
+      'static_guards_email_send_endpoint_only',
     ],
   }, null, 2));
 }

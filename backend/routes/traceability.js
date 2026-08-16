@@ -13,6 +13,7 @@ const {
   createProductRecallDraft,
   getActiveCampaign,
   getProductRecallCampaign,
+  sendProductRecallNotifications,
 } = require('../services/productRecallService');
 
 const router = express.Router();
@@ -606,6 +607,26 @@ router.post('/lots/:lotId/recall', authenticateToken, attachDbContext, requireAd
     return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur creation campagne retrait/rappel'));
   } finally {
     client.release();
+  }
+});
+
+router.post('/recalls/:campaignId/send', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const campaignId = clean(req.params.campaignId);
+    const recipientIds = Array.isArray(req.body?.recipient_ids)
+      ? req.body.recipient_ids.filter(Boolean)
+      : [];
+    const result = await sendProductRecallNotifications({
+      db: req.dbPool,
+      storeId: req.user.store_id,
+      campaignId,
+      recipientIds,
+      userId: req.user.id,
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('Erreur POST /api/traceability/recalls/:campaignId/send :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur envoi notifications rappel produit'));
   }
 });
 
