@@ -3,6 +3,7 @@ const MAX_LIMIT = 100;
 
 const EVIDENCE_TYPE_LABELS = Object.freeze({
   reception_record: 'Reception fournisseur',
+  traceability_test_record: 'Test de tracabilite',
 });
 
 const EVIDENCE_STATUS_LABELS = Object.freeze({
@@ -70,6 +71,9 @@ function firstProductSummary(products = []) {
 
 function evidenceReference(row, payload) {
   const identification = jsonObject(payload.identification);
+  if (row.evidence_type === 'traceability_test_record') {
+    return text(jsonObject(payload.lot).lot_code) || text(row.evidence_reference) || 'Test de tracabilite';
+  }
   return text(row.evidence_reference)
     || text(identification.supplier_name)
     || text(identification.bl_number)
@@ -81,10 +85,22 @@ function evidenceReference(row, payload) {
 function evidenceOrigin(row, payload) {
   const identification = jsonObject(payload.identification);
   if (row.evidence_type === 'reception_record') return 'Achat / reception';
+  if (row.evidence_type === 'traceability_test_record') return 'Tracabilite';
   return text(identification.record_type) || text(row.source_record_type) || text(row.event_type) || '-';
 }
 
 function evidenceSummary(row, payload) {
+  if (row.evidence_type === 'traceability_test_record') {
+    const lot = jsonObject(payload.lot);
+    const article = jsonObject(payload.article);
+    const result = payload.result === 'non_conform' ? 'Non conforme' : payload.result === 'conform' ? 'Conforme' : null;
+    return [
+      article.designation || article.plu,
+      lot.lot_code,
+      result,
+      payload.duration_seconds !== undefined && payload.duration_seconds !== null ? `${payload.duration_seconds} s` : null,
+    ].filter(Boolean).join(' - ') || 'Test de tracabilite';
+  }
   if (row.evidence_type === 'reception_record') {
     return firstProductSummary(payload.received_products) || text(jsonObject(payload.identification).bl_number) || 'Reception fournisseur';
   }

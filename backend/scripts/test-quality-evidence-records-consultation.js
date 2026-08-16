@@ -16,6 +16,7 @@ const STORE_B = '50000000-0000-4000-8000-000000000002';
 const EVENT_A = '50000000-0000-4000-8000-000000000101';
 const EVIDENCE_A = '50000000-0000-4000-8000-000000000201';
 const EVIDENCE_B = '50000000-0000-4000-8000-000000000202';
+const TRACE_EVIDENCE = '50000000-0000-4000-8000-000000000204';
 
 function read(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
@@ -122,6 +123,8 @@ async function main() {
   assert(page.includes('evidence-record-document-links'), 'Bloc documents applicables manquant');
   assert(page.includes('quality-document-links.js'), 'Mecanisme documentaire Qualite non charge');
   assert(page.includes('evidence-record-export-csv'), 'Export CSV Enregistrements manquant');
+  assert(page.includes('traceability_test_record'), 'Filtre test de tracabilite manquant');
+  assert(page.includes('evidence-records.js?v=4'), 'Cache-buster evidence-records attendu');
   assert(page.includes('<th>Date/heure</th>'), 'Colonne Date/heure manquante');
   assert(page.includes('<th>Type</th>'), 'Colonne Type manquante');
   assert(page.includes('<th>Reference</th>'), 'Colonne Reference manquante');
@@ -130,6 +133,9 @@ async function main() {
   assert(page.includes('<th>Statut</th>'), 'Colonne Statut manquante');
   assert(frontend.includes('/api/quality/evidence-records'), 'Frontend ne cible pas API evidence-records');
   assert(frontend.includes('Reception fournisseur'), 'Libelle reception_record manquant');
+  assert(frontend.includes('Test de tracabilite'), 'Libelle traceability_test_record manquant');
+  assert(frontend.includes('renderTraceabilityTestDetail'), 'Rendu detail test tracabilite manquant');
+  assert(frontend.includes('Tracabilite aval'), 'Bloc aval test tracabilite manquant');
   assert(frontend.includes('Non renseigne'), 'Traduction not_available manquante');
   assert(frontend.includes("conform: 'Conforme'"), 'Libelle conforme manquant');
   assert(frontend.includes("non_conform: 'Non conforme'"), 'Libelle non conforme manquant');
@@ -152,6 +158,7 @@ async function main() {
   assert(cleaningPage.includes('cleaning-record-table-body'), 'Historique nettoyages doit rester present');
 
   assert.equal(evidenceTypeLabel('reception_record'), 'Reception fournisseur');
+  assert.equal(evidenceTypeLabel('traceability_test_record'), 'Test de tracabilite');
   assert.equal(evidenceStatusLabel('recorded'), 'Enregistre');
   assert.equal(evidenceTypeLabel('unknown_future_type'), 'Unknown Future Type');
 
@@ -221,6 +228,32 @@ async function main() {
   }));
   assert.equal(controlledEvidence.payload.controls.temperature.value_c, 6, 'Temperature mesuree doit rester dans le snapshot');
   assert.equal(controlledEvidence.payload.controls.corrective_action, 'lot_isolation', 'Action corrective doit rester dans le snapshot');
+
+  const traceabilityRecord = publicEvidence(sampleEvidence({
+    id: TRACE_EVIDENCE,
+    evidence_type: 'traceability_test_record',
+    source_type: 'human',
+    source_record_type: 'lots',
+    event_type: 'traceability_test_completed',
+    payload: {
+      test_id: 'trace-test-1',
+      lot: { lot_id: 'lot-1', lot_code: 'LOT-ALTA', supplier_lot_number: 'LOT-SUP' },
+      article: { plu: '3063', designation: 'DOS DE CABILLAUD' },
+      started_at: '2026-08-16T08:00:00.000Z',
+      completed_at: '2026-08-16T08:02:14.000Z',
+      duration_seconds: 134,
+      result: 'conform',
+      observation: 'RAS',
+      upstream: { supplier_name: 'ROYALE MAREE', bl_number: 'BL-1', received_quantity: 3 },
+      transformations: [],
+      downstream: [{ delivery_note_reference: 'BL-C1', delivered_client_name: 'CLIENT LIVRE', billed_client_name: 'CENTRALE', delivered_quantity: 3 }],
+      summary: { clients_delivered_count: 1, delivery_notes_count: 1, delivered_quantity: 3, stock_initial: 3, stock_remaining: 0 },
+    },
+  }));
+  assert.equal(traceabilityRecord.type_label, 'Test de tracabilite', 'Type test tracabilite doit etre libelle');
+  assert.equal(traceabilityRecord.reference_label, 'LOT-ALTA', 'Reference test tracabilite doit etre le lot');
+  assert.equal(traceabilityRecord.origin_label, 'Tracabilite', 'Origine test tracabilite incorrecte');
+  assert(traceabilityRecord.summary_label.includes('Conforme'), 'Resume test tracabilite doit afficher le resultat');
 
   console.log(JSON.stringify({
     ok: true,

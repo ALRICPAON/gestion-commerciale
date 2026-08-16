@@ -14,7 +14,8 @@ function testFrontendWiring() {
   const css = read('frontend/css/pages/traceability.css');
 
   assert(html.includes('traceability.css?v=2'), 'Cache-buster CSS traceability attendu');
-  assert(html.includes('traceability.js?v=5'), 'Cache-buster JS traceability attendu');
+  assert(html.includes('traceability.js?v=7'), 'Cache-buster JS traceability attendu');
+  assert(html.includes('start-traceability-test-btn'), 'Bouton test tracabilite manquant');
 
   assert(js.includes('Retrait / Rappel produit'), 'Bouton rappel produit manquant');
   assert(js.includes('/api/traceability/lots/${encodeURIComponent(lotId)}/recall-analysis'), 'GET recall-analysis manquant');
@@ -47,6 +48,10 @@ function testFrontendWiring() {
   assert(js.includes('delivery_notes'), 'Detail BL par destinataire manquant');
   assert(js.includes('selectedRecallRecipient'), 'Preview personnalisee par destinataire manquante');
   assert(js.includes('renderRecallRecipients(source.recipients, { selectable: true })'), 'Selection destinataires post-creation manquante');
+  assert(js.includes('/api/traceability/traceability-tests/lots'), 'Recherche lots test tracabilite manquante');
+  assert(js.includes('/api/traceability/lots/${encodeURIComponent(lotId)}/traceability-test'), 'Endpoint test tracabilite manquant');
+  assert(js.includes('traceability-test-result'), 'Choix resultat test tracabilite manquant');
+  assert(js.includes('Action corrective obligatoire pour un test non conforme'), 'Validation non conforme test tracabilite manquante');
 
   assert(css.includes('.trace-recall-summary'), 'Styles resume rappel manquants');
   assert(css.includes('.trace-recall-recipient-list'), 'Styles recipients rappel manquants');
@@ -58,6 +63,9 @@ function testBackendReadEndpoint() {
   const service = read('backend/services/productRecallService.js');
 
   assert(route.includes("router.get('/recalls/:campaignId'"), 'Endpoint lecture rappel manquant');
+  assert(route.includes("router.get('/traceability-tests/lots'"), 'Endpoint recherche lots test tracabilite manquant');
+  assert(route.includes("router.get('/lots/:lotId/traceability-test'"), 'Endpoint lecture test tracabilite manquant');
+  assert(route.includes("router.post('/lots/:lotId/traceability-test'"), 'Endpoint validation test tracabilite manquant');
   assert(route.includes("router.post('/recalls/:campaignId/send'"), 'Endpoint envoi rappel manquant');
   assert(route.includes('getProductRecallCampaign'), 'Route lecture rappel non branchee au service');
   assert(route.includes('sendProductRecallNotifications'), 'Route envoi rappel non branchee au service');

@@ -41,7 +41,7 @@
   function formatDate(value) { return value ? new Date(value).toLocaleString('fr-FR') : '-'; }
   function compact(values) { return values.filter((value) => value !== undefined && value !== null && value !== ''); }
   function humanize(value) { return String(value || '-').split(/[_:.-]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' '); }
-  function typeLabel(type) { return { reception_record: 'Reception fournisseur' }[type] || humanize(type); }
+  function typeLabel(type) { return { reception_record: 'Reception fournisseur', traceability_test_record: 'Test de tracabilite' }[type] || humanize(type); }
   function statusLabel(status) { return { draft: 'Brouillon', recorded: 'Enregistre', validated: 'Valide', rejected: 'Rejete', archived: 'Archive' }[status] || humanize(status); }
   function controlStatusLabel(status) { return { conform: 'Conforme', non_conform: 'Non conforme', not_available_in_purchase_reception_flow: 'Non renseigne' }[status] || statusLabel(status); }
   function correctiveActionLabel(action) {
@@ -59,8 +59,26 @@
   function documents(record) { return payload(record).documents || {}; }
   function controls(record) { return payload(record).controls || {}; }
   function controlLabel(status) { return !status ? 'Non renseigne' : controlStatusLabel(status); }
+  function testResultLabel(result) { return { conform: 'Conforme', non_conform: 'Non conforme' }[result] || humanize(result); }
+  function formatDuration(seconds) {
+    const total = Math.max(0, Number(seconds || 0));
+    const minutes = Math.floor(total / 60);
+    const remaining = total % 60;
+    return minutes ? `${minutes} min ${remaining} s` : `${remaining} s`;
+  }
 
   function productSummary(record) {
+    if (record.evidence_type === 'traceability_test_record') {
+      const data = payload(record);
+      const article = data.article || {};
+      const lot = data.lot || {};
+      return compact([
+        article.designation || article.plu,
+        lot.lot_code,
+        testResultLabel(data.result),
+        data.duration_seconds !== undefined ? formatDuration(data.duration_seconds) : null,
+      ]).join(' - ') || record.summary_label || '-';
+    }
     const product = products(record)[0];
     if (!product) return record.summary_label || '-';
     const label = product.article_designation || product.supplier_label || product.article_plu || product.supplier_reference || '-';
@@ -258,6 +276,103 @@
     return `<div class="quality-actions">${actions.join('')}</div>`;
   }
 
+  function renderTraceabilityTestTransformations(record) {
+    const rows = Array.isArray(payload(record).transformations) ? payload(record).transformations : [];
+    if (!rows.length) return '<div class="quality-empty-state">Aucune transformation rattachee dans le snapshot du test.</div>';
+    return `
+      <div class="quality-table-wrapper">
+        <table class="quality-table">
+          <thead><tr><th>Date</th><th>Type</th><th>Quantite</th><th>Source</th><th>Note</th></tr></thead>
+          <tbody>${rows.map((row) => `<tr>
+            <td>${escapeHtml(formatDate(row.created_at))}</td>
+            <td>${escapeHtml(humanize(row.movement_type))}</td>
+            <td>${escapeHtml(row.quantity ?? '-')}</td>
+            <td>${escapeHtml(row.source_table || row.source_id || '-')}</td>
+            <td>${escapeHtml(row.notes || '-')}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderTraceabilityTestDownstream(record) {
+    const rows = Array.isArray(payload(record).downstream) ? payload(record).downstream : [];
+    if (!rows.length) return '<div class="quality-empty-state">Aucun BL client dans le snapshot du test.</div>';
+    return `
+      <div class="quality-table-wrapper">
+        <table class="quality-table">
+          <thead><tr><th>BL</th><th>Date</th><th>Client livre</th><th>Client facture</th><th>Quantite</th></tr></thead>
+          <tbody>${rows.map((row) => `<tr>
+            <td>${escapeHtml(row.delivery_note_reference || row.delivery_note_id || '-')}</td>
+            <td>${escapeHtml(formatDate(row.delivery_note_date))}</td>
+            <td>${escapeHtml(row.delivered_client_name || '-')}</td>
+            <td>${escapeHtml(row.billed_client_name || '-')}</td>
+            <td>${escapeHtml(row.delivered_quantity ?? '-')}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>`;
+  }
+
+  function renderTraceabilityTestDetail(record) {
+    const data = payload(record);
+    const lot = data.lot || {};
+    const article = data.article || {};
+    const upstream = data.upstream || {};
+    const trace = upstream.traceability || {};
+    const summary = data.summary || {};
+    els.detail.classList.remove('hidden');
+    els.detail.innerHTML = `
+      <div class="quality-section-header">
+        <div>
+          <span class="quality-badge">${escapeHtml(testResultLabel(data.result))}</span>
+          <h3>Test de tracabilite</h3>
+          <p class="quality-muted">Lot ${escapeHtml(lot.lot_code || '-')} - ${escapeHtml(article.designation || article.plu || '-')}</p>
+        </div>
+        <button class="btn btn-secondary" type="button" data-action="close-detail">Fermer</button>
+      </div>
+      <section><h4>Identification</h4>${detailRows([
+        ['Date', data.completed_at || record.evidence_at],
+        ['Lot ALTA', lot.lot_code],
+        ['Lot fournisseur', lot.supplier_lot_number],
+        ['Article', article.designation || article.plu],
+        ['Resultat', testResultLabel(data.result)],
+        ['Duree', formatDuration(data.duration_seconds)],
+      ])}</section>
+      <section><h4>Tracabilite amont</h4>${detailRows([
+        ['Fournisseur', upstream.supplier_name],
+        ['BL fournisseur', upstream.bl_number],
+        ['Date reception', upstream.receipt_date || upstream.purchase_date],
+        ['Quantite receptionnee', upstream.received_quantity],
+        ['Nom scientifique', trace.latin_name],
+        ['Zone FAO', trace.fao_zone],
+        ['Sous-zone', trace.sous_zone],
+        ['Engin', trace.fishing_gear],
+        ['Origine', trace.origin_label],
+      ])}</section>
+      <section><h4>Transformations</h4>${renderTraceabilityTestTransformations(record)}</section>
+      <section><h4>Tracabilite aval</h4>${renderTraceabilityTestDownstream(record)}</section>
+      <section><h4>Resultat du test</h4>${detailRows([
+        ['Resultat', testResultLabel(data.result)],
+        ['Clients livres', summary.clients_delivered_count],
+        ['BL concernes', summary.delivery_notes_count],
+        ['Quantite livree', summary.delivered_quantity],
+        ['Stock initial', summary.stock_initial],
+        ['Stock restant', summary.stock_remaining],
+      ])}</section>
+      <section><h4>Observation / action corrective</h4>${detailRows([
+        ['Observation', data.observation],
+        ['Action corrective', data.corrective_action],
+      ])}</section>
+      <section><h4>Realise par / date / duree</h4>${detailRows([
+        ['Realise par', record.recorded_by_email || data.user_id],
+        ['Debut', data.started_at],
+        ['Fin', data.completed_at],
+        ['Duree', formatDuration(data.duration_seconds)],
+      ])}</section>
+    `;
+    renderApplicableDocuments(record).catch(() => {});
+    els.detail.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   function documentTargetForRecord(record) {
     const resolver = DOCUMENT_TARGETS_BY_TYPE[record?.evidence_type];
     if (resolver) return resolver(record);
@@ -285,6 +400,10 @@
   }
 
   function renderDetail(record) {
+    if (record.evidence_type === 'traceability_test_record') {
+      renderTraceabilityTestDetail(record);
+      return;
+    }
     const id = identification(record);
     els.detail.classList.remove('hidden');
     els.detail.innerHTML = `

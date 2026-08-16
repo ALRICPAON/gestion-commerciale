@@ -22,6 +22,7 @@ const els = {
   sourceType: document.getElementById('filter-source-type'),
   movementType: document.getElementById('filter-movement-type'),
   apply: document.getElementById('apply-filters-btn'),
+  startTraceabilityTest: document.getElementById('start-traceability-test-btn'),
   count: document.getElementById('trace-count'),
   state: document.getElementById('trace-state'),
   list: document.getElementById('trace-list'),
@@ -47,6 +48,7 @@ const state = {
   recallPreviewRecipientId: null,
   pendingRecallPayload: null,
   sendingRecall: false,
+  traceabilityTest: null,
 };
 
 const RECALL_TYPES = [
@@ -822,6 +824,174 @@ function renderRecallSendResultPanel(result) {
   updateRecallSendButtonState();
 }
 
+function formatDuration(seconds) {
+  const total = Math.max(0, Number(seconds || 0));
+  const minutes = Math.floor(total / 60);
+  const remaining = total % 60;
+  return minutes ? `${minutes} min ${remaining} s` : `${remaining} s`;
+}
+
+function traceabilityResultLabel(value) {
+  if (value === 'conform') return 'Conforme';
+  if (value === 'non_conform') return 'Non conforme';
+  return '-';
+}
+
+function renderTraceabilityTestSearchPanel() {
+  els.lotModal.classList.remove('hidden');
+  els.lotModalTitle.textContent = 'Test de tracabilite';
+  els.lotModalSubtitle.textContent = 'Selection du lot';
+  els.lotModalBody.innerHTML = `<section class="trace-detail-card trace-recall-panel">
+    <div class="trace-section-header">
+      <div><h3>Test de tracabilite</h3><p>Choisir un lot existant pour reconstruire la tracabilite ALTA.</p></div>
+    </div>
+    <div class="trace-recall-form">
+      <div class="form-group"><label for="traceability-test-search">Recherche lot</label><input id="traceability-test-search" type="search" placeholder="Lot ALTA, lot fournisseur, PLU, article" /><small class="muted">F9 : afficher les lots</small></div>
+      <div class="form-group trace-filter-actions"><label>&nbsp;</label><button type="button" class="btn btn-primary" data-action="search-traceability-test-lots">Rechercher</button></div>
+    </div>
+    <div id="traceability-test-results" class="trace-recall-recipient-list" style="max-height:52vh;overflow:auto;"></div>
+  </section>`;
+  document.getElementById('traceability-test-search')?.focus();
+}
+
+function renderTraceabilityTestLotResults(lots = []) {
+  const container = document.getElementById('traceability-test-results');
+  if (!container) return;
+  if (!lots.length) {
+    container.innerHTML = '<div class="trace-empty-small">Aucun lot trouve.</div>';
+    return;
+  }
+  container.innerHTML = lots.map((lot) => `<article class="trace-recall-recipient">
+    <div class="trace-recall-recipient-head">
+      <div><strong>${escapeHtml([lot.article_plu, lot.article_label].filter(Boolean).join(' - ') || '-')}</strong><small>Lot ALTA : ${escapeHtml(lot.lot_code || '-')}</small></div>
+      <button type="button" class="btn btn-primary btn-sm" data-action="select-traceability-test-lot" data-lot-id="${escapeHtml(lotIdentifier(lot))}">Selectionner</button>
+    </div>
+    <dl class="trace-recall-recipient-meta">
+      <dt>Lot fourn.</dt><dd>${escapeHtml(lot.supplier_lot_number || '-')}</dd>
+      <dt>Fournisseur</dt><dd>${escapeHtml(lot.supplier_name || '-')}</dd>
+      <dt>Reception</dt><dd>${escapeHtml(formatDate(lot.receipt_date))}</dd>
+      <dt>Restant</dt><dd>${escapeHtml(qty(lot.qty_remaining))}</dd>
+    </dl>
+  </article>`).join('');
+}
+
+async function searchTraceabilityTestLots({ consultation = false } = {}) {
+  const search = document.getElementById('traceability-test-search')?.value.trim() || '';
+  const params = new URLSearchParams({ limit: consultation && !search ? '50' : '20', offset: '0' });
+  if (search) params.set('search', search);
+  const lots = await apiFetch(`/api/traceability/traceability-tests/lots?${params.toString()}`);
+  renderTraceabilityTestLotResults(Array.isArray(lots) ? lots : []);
+}
+
+function renderTraceabilityDownstream(rows = []) {
+  if (!rows.length) return '<div class="trace-empty-small">Aucun BL client pour ce lot.</div>';
+  return `<div class="trace-client-preview">${rows.map((item) => deliveredClientLine({
+    ...item,
+    sale_detail_url: item.delivery_note_id ? `./sale-detail.html?id=${item.delivery_note_id}` : null,
+  })).join('')}</div>`;
+}
+
+function renderTraceabilityTransformations(rows = []) {
+  if (!rows.length) return '<div class="trace-empty-small">Aucune transformation rattachee a ce lot.</div>';
+  return `<div class="trace-movement-list">${rows.map((row) => `<div class="trace-movement-line"><span>${escapeHtml(formatDateTime(row.created_at))}</span><strong>${escapeHtml(movementLabel(row.movement_type))}</strong><span>${escapeHtml(qty(row.quantity))}</span><span>${escapeHtml(row.notes || row.source_table || '-')}</span></div>`).join('')}</div>`;
+}
+
+function renderTraceabilityTestPanel(data) {
+  const lot = data.lot || {};
+  const article = data.article || {};
+  const upstream = data.upstream || {};
+  const summary = data.summary || {};
+  state.traceabilityTest = { ...data, started_at: data.started_at || new Date().toISOString() };
+  els.lotModalTitle.textContent = 'Test de tracabilite';
+  els.lotModalSubtitle.textContent = `Lot ${lot.lot_code || '-'}`;
+  els.lotModalBody.innerHTML = `<section class="trace-detail-card trace-recall-panel">
+    <div class="trace-section-header">
+      <div><h3>Test de tracabilite</h3><p>Verifier la reconstruction avant validation humaine.</p></div>
+      <button type="button" class="btn btn-secondary" data-action="open-traceability-test">Changer de lot</button>
+    </div>
+    <div class="trace-recall-summary">
+      <div><span>Produit</span><strong>${escapeHtml(article.designation || article.plu || '-')}</strong></div>
+      <div><span>Lot ALTA</span><strong>${escapeHtml(lot.lot_code || '-')}</strong></div>
+      <div><span>Lot fournisseur</span><strong>${escapeHtml(lot.supplier_lot_number || '-')}</strong></div>
+      <div><span>Reception</span><strong>${escapeHtml(upstream.supplier_name || '-')} ${escapeHtml(formatDate(upstream.receipt_date || upstream.purchase_date))}</strong></div>
+      <div><span>Stock initial</span><strong>${escapeHtml(qty(summary.stock_initial))}</strong></div>
+      <div><span>Stock restant</span><strong>${escapeHtml(qty(summary.stock_remaining))}</strong></div>
+      <div><span>Clients livres</span><strong>${escapeHtml(summary.clients_delivered_count || 0)}</strong></div>
+      <div><span>BL concernes</span><strong>${escapeHtml(summary.delivery_notes_count || 0)}</strong></div>
+      <div><span>Quantite livree</span><strong>${escapeHtml(qty(summary.delivered_quantity))}</strong></div>
+      <div><span>Transformation</span><strong>${escapeHtml(summary.transformations_count ? summary.transformations_count : 'Aucune')}</strong></div>
+    </div>
+    <h4>Tracabilite amont</h4>
+    <dl class="trace-definition-list">
+      <dt>Fournisseur</dt><dd>${escapeHtml(upstream.supplier_name || '-')}</dd>
+      <dt>BL fournisseur</dt><dd>${escapeHtml(upstream.bl_number || '-')}</dd>
+      <dt>Date reception</dt><dd>${escapeHtml(formatDate(upstream.receipt_date || upstream.purchase_date))}</dd>
+      <dt>Quantite receptionnee</dt><dd>${escapeHtml(qty(upstream.received_quantity))}</dd>
+      <dt>FAO</dt><dd>${escapeHtml(upstream.traceability?.fao_zone || '-')}</dd>
+      <dt>Nom latin</dt><dd>${escapeHtml(upstream.traceability?.latin_name || '-')}</dd>
+    </dl>
+    <h4>Transformations</h4>
+    ${renderTraceabilityTransformations(data.transformations || [])}
+    <h4>Tracabilite aval</h4>
+    ${renderTraceabilityDownstream(data.downstream || [])}
+    <h4>Resultat du test</h4>
+    <div class="trace-recall-form">
+      <div class="form-group"><label for="traceability-test-result">Resultat</label><select id="traceability-test-result"><option value="">Choisir</option><option value="conform">Conforme</option><option value="non_conform">Non conforme</option></select></div>
+      <div class="form-group"><label for="traceability-test-observation">Observation</label><textarea id="traceability-test-observation" rows="3"></textarea></div>
+      <div class="form-group" id="traceability-test-corrective-group"><label for="traceability-test-corrective">Action corrective prevue ou engagee</label><textarea id="traceability-test-corrective" rows="3"></textarea></div>
+    </div>
+    <div class="trace-actions-row">
+      <button type="button" class="btn btn-primary" data-action="validate-traceability-test" data-lot-id="${escapeHtml(lot.lot_id || '')}">Valider le test</button>
+    </div>
+  </section>`;
+  updateTraceabilityTestFields();
+}
+
+function updateTraceabilityTestFields() {
+  const result = document.getElementById('traceability-test-result')?.value || '';
+  const group = document.getElementById('traceability-test-corrective-group');
+  if (group) group.classList.toggle('hidden', result !== 'non_conform');
+}
+
+async function openTraceabilityTestLot(lotId) {
+  els.lotModalBody.innerHTML = '<div class="trace-empty">Chargement du test...</div>';
+  const data = await apiFetch(`/api/traceability/lots/${encodeURIComponent(lotId)}/traceability-test`);
+  renderTraceabilityTestPanel(data);
+}
+
+async function validateTraceabilityTest(lotId) {
+  const current = state.traceabilityTest || {};
+  const payload = {
+    started_at: current.started_at,
+    result: document.getElementById('traceability-test-result')?.value || '',
+    observation: document.getElementById('traceability-test-observation')?.value.trim() || '',
+    corrective_action: document.getElementById('traceability-test-corrective')?.value.trim() || '',
+  };
+  if (!payload.result) throw new Error('Choisir Conforme ou Non conforme.');
+  if (payload.result === 'non_conform' && !payload.observation) throw new Error('Observation obligatoire pour un test non conforme.');
+  if (payload.result === 'non_conform' && !payload.corrective_action) throw new Error('Action corrective obligatoire pour un test non conforme.');
+  const result = await apiFetch(`/api/traceability/lots/${encodeURIComponent(lotId)}/traceability-test`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  const evidenceId = result.quality_evidence_record?.id;
+  els.lotModalTitle.textContent = 'Test de tracabilite valide';
+  els.lotModalSubtitle.textContent = `Lot ${current.lot?.lot_code || '-'}`;
+  els.lotModalBody.innerHTML = `<section class="trace-detail-card trace-recall-panel">
+    <h3>Test enregistre</h3>
+    <dl class="trace-definition-list">
+      <dt>Resultat</dt><dd>${escapeHtml(traceabilityResultLabel(payload.result))}</dd>
+      <dt>Duree</dt><dd>${escapeHtml(formatDuration(result.quality_evidence_record?.payload?.duration_seconds || 0))}</dd>
+      <dt>Observation</dt><dd>${escapeHtml(payload.observation || '-')}</dd>
+      <dt>Action corrective</dt><dd>${escapeHtml(payload.corrective_action || '-')}</dd>
+    </dl>
+    <div class="trace-actions-row">
+      ${evidenceId ? `<a class="btn btn-primary" href="./quality/pages/evidence-records.html">Voir les enregistrements qualite</a>` : ''}
+      <button type="button" class="btn btn-secondary" data-action="open-traceability-test">Nouveau test</button>
+    </div>
+  </section>`;
+}
+
 async function startRecallWorkflow(lotId) {
   state.currentLotId = lotId;
   state.recallAnalysis = null;
@@ -910,6 +1080,7 @@ function bindEvents() {
   els.backHome.addEventListener('click', () => { window.location.href = './home.html'; });
   els.logout.addEventListener('click', logoutAndRedirect);
   els.apply.addEventListener('click', () => loadLots({ append: false }));
+  els.startTraceabilityTest.addEventListener('click', renderTraceabilityTestSearchPanel);
   els.loadMore.addEventListener('click', () => loadLots({ append: true }));
   els.client.addEventListener('input', () => {
     window.clearTimeout(state.clientSearchTimer);
@@ -973,13 +1144,32 @@ function bindEvents() {
       const recipientIds = String(action.dataset.recipientIds || '').split(',').filter(Boolean);
       sendRecallNotifications(action.dataset.campaignId, recipientIds).catch((err) => setState(err.message || 'Erreur envoi rappels', 'error'));
     }
+    if (action.dataset.action === 'open-traceability-test') {
+      renderTraceabilityTestSearchPanel();
+    }
+    if (action.dataset.action === 'search-traceability-test-lots') {
+      searchTraceabilityTestLots().catch((err) => setState(err.message || 'Erreur recherche lots test tracabilite', 'error'));
+    }
+    if (action.dataset.action === 'select-traceability-test-lot' && action.dataset.lotId) {
+      openTraceabilityTestLot(action.dataset.lotId).catch((err) => setState(err.message || 'Erreur chargement test tracabilite', 'error'));
+    }
+    if (action.dataset.action === 'validate-traceability-test' && action.dataset.lotId) {
+      validateTraceabilityTest(action.dataset.lotId).catch((err) => setState(err.message || 'Erreur validation test tracabilite', 'error'));
+    }
   });
   els.lotModalBody.addEventListener('input', (event) => {
     if (event.target.matches('#recall-reason, #recall-comment')) updateRecallEmailPreview();
   });
+  els.lotModalBody.addEventListener('keydown', (event) => {
+    if (event.target.matches('#traceability-test-search') && event.key === 'F9') {
+      event.preventDefault();
+      searchTraceabilityTestLots({ consultation: true }).catch((err) => setState(err.message || 'Erreur recherche lots test tracabilite', 'error'));
+    }
+  });
   els.lotModalBody.addEventListener('change', (event) => {
     if (event.target.matches('#recall-type')) updateRecallEmailPreview();
     if (event.target.matches('.recall-recipient-checkbox')) updateRecallSendButtonState();
+    if (event.target.matches('#traceability-test-result')) updateTraceabilityTestFields();
   });
   els.photoModalClose.addEventListener('click', closePhoto);
   els.photoModal.addEventListener('click', (event) => { if (event.target.dataset.closePhoto === 'true') closePhoto(); });

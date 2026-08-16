@@ -15,6 +15,11 @@ const {
   getProductRecallCampaign,
   sendProductRecallNotifications,
 } = require('../services/productRecallService');
+const {
+  buildTraceabilityTestSnapshot,
+  completeTraceabilityTest,
+  searchTraceabilityTestLots,
+} = require('../services/quality/traceabilityTestService');
 
 const router = express.Router();
 
@@ -558,6 +563,65 @@ router.get('/lots/:lotId/recall-analysis', authenticateToken, attachDbContext, a
   } catch (err) {
     console.error('Erreur GET /api/traceability/lots/:lotId/recall-analysis :', err);
     return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur analyse retrait/rappel lot'));
+  }
+});
+
+router.get('/traceability-tests/lots', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const result = await searchTraceabilityTestLots({
+      db: req.dbPool,
+      storeId: req.user.store_id,
+      search: req.query.search,
+      limit: req.query.limit,
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('Erreur GET /api/traceability/traceability-tests/lots :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur recherche lots test tracabilite'));
+  }
+});
+
+router.get('/lots/:lotId/traceability-test', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const lotId = clean(req.params.lotId);
+    const result = await buildTraceabilityTestSnapshot({
+      db: req.dbPool,
+      storeId: req.user.store_id,
+      lotId,
+    });
+    return res.json({
+      ...result,
+      started_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Erreur GET /api/traceability/lots/:lotId/traceability-test :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur preparation test tracabilite'));
+  }
+});
+
+router.post('/lots/:lotId/traceability-test', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    const lotId = clean(req.params.lotId);
+    await client.query('BEGIN');
+    const result = await completeTraceabilityTest({
+      db: client,
+      storeId: req.user.store_id,
+      lotId,
+      userId: req.user.id,
+      result: req.body?.result,
+      observation: req.body?.observation,
+      correctiveAction: req.body?.corrective_action,
+      startedAt: req.body?.started_at,
+    });
+    await client.query('COMMIT');
+    return res.status(201).json(result);
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Erreur POST /api/traceability/lots/:lotId/traceability-test :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur validation test tracabilite'));
+  } finally {
+    client.release();
   }
 });
 
