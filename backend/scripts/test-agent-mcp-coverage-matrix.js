@@ -68,7 +68,7 @@ function fakeReq() {
 
 async function main() {
   assert.deepEqual(FINAL_AGENT_PERMISSIONS, EXPECTED_PERMISSIONS, 'ALTA_AGENT_PERMISSIONS final invalide');
-  assert.equal(MCP_SERVER_VERSION, '1.8.4', 'Version MCP non incrementee');
+  assert.equal(MCP_SERVER_VERSION, '1.8.5', 'Version MCP non incrementee');
 
   const publicTools = buildPublicMcpTools();
   const publicNames = new Set(publicTools.map((tool) => tool.name));
@@ -146,6 +146,24 @@ async function main() {
     'create_quality_non_conformity',
     'create_quality_corrective_action',
     'close_quality_non_conformity',
+    'list_quality_evidence_records',
+    'get_quality_evidence_record',
+    'list_quality_events',
+    'get_quality_event',
+    'list_quality_blocked_lots',
+    'get_lot_quality_status',
+    'search_traceability_lots',
+    'get_traceability_snapshot',
+    'list_traceability_tests',
+    'get_traceability_test',
+    'list_product_recall_campaigns',
+    'get_product_recall_campaign',
+    'analyze_product_recall_for_lot',
+    'prepare_quality_lot_block',
+    'prepare_quality_lot_release',
+    'prepare_traceability_test_completion',
+    'prepare_product_recall',
+    'prepare_product_recall_notifications',
   ];
   for (const name of requiredFrontendBackendTools) {
     assert(publicNames.has(name), `${name} doit etre expose au MCP public`);
@@ -227,7 +245,7 @@ async function main() {
     id: 1,
     method: 'tools/list',
   });
-  assert.equal(response.result.version, '1.8.4', 'tools/list doit exposer la version MCP');
+  assert.equal(response.result.version, '1.8.5', 'tools/list doit exposer la version MCP');
   assert.equal(response.result.coverage_complete, true, 'tools/list doit exposer coverage_complete=true');
   assert.deepEqual(response.result.missing_tools, [], 'tools/list ne doit pas exposer de missing_tools');
   assert.equal(response.result.frontend_backend_coverage_complete, true, 'tools/list doit exposer frontend_backend_coverage_complete=true');

@@ -55,6 +55,7 @@ function safePermissionLog(tool, context = {}) {
   return {
     tool: tool.name,
     required_permission: tool.requiredPermission,
+    required_permissions: tool.requiredPermissions || (tool.requiredPermission ? [tool.requiredPermission] : []),
     role: context.user?.role || context.role || null,
     user_permissions: permissionList(context.user_permissions || context.userPermissions || context.user?.permissions || context.permissions),
     agent_permissions: permissionList(context.agent_permissions || context.agentPermissions || context.permissions),
@@ -80,9 +81,11 @@ function authorizeTool(tool, context = {}) {
     error.expose = true;
     throw error;
   }
-  if (!hasPermission(context, tool.requiredPermission)) {
+  const requiredPermissions = tool.requiredPermissions || (tool.requiredPermission ? [tool.requiredPermission] : []);
+  const missingPermission = requiredPermissions.find((permission) => !hasPermission(context, permission));
+  if (missingPermission) {
     console.warn('Refus permission outil agent', safePermissionLog(tool, context));
-    const error = new Error(`Permission requise : ${tool.requiredPermission}`);
+    const error = new Error(`Permission requise : ${missingPermission}`);
     error.status = 403;
     error.expose = true;
     throw error;
