@@ -1,4 +1,5 @@
 const { getDefaultPool } = require('../dbRegistry');
+const { assertArticleCategory } = require('./articleCategory');
 
 const MAX_SEARCH_LIMIT = 25;
 const SOURCE = 'chatgpt_business';
@@ -62,6 +63,13 @@ function requireSearchQuery(query) {
   return cleanQuery;
 }
 
+function appendArticleCategoryFilter(input, params, alias = 'a') {
+  const raw = clean(input.article_category || input.category);
+  if (!raw) return '';
+  params.push(assertArticleCategory(raw));
+  return ` AND COALESCE(${alias}.article_category, 'product') = $${params.length}`;
+}
+
 function requireAgentApiKey(req, res, next) {
   const expectedKey = clean(process.env.ALTA_AGENT_API_KEY);
   if (!expectedKey) {
@@ -105,6 +113,7 @@ async function searchClients(dbPool, storeId, input = {}) {
     query,
     params
   );
+  const articleCategorySql = appendArticleCategoryFilter(input, params);
   params.push(safeLimit(input.limit));
 
   const result = await dbPool.query(
@@ -154,6 +163,7 @@ async function searchArticles(dbPool, storeId, input = {}) {
       a.designation,
       a.ean,
       a.unit,
+      COALESCE(a.article_category, 'product') AS article_category,
       a.purchase_unit,
       a.stock_unit,
       a.sale_unit,
@@ -170,6 +180,7 @@ async function searchArticles(dbPool, storeId, input = {}) {
       ON ss.article_id = a.id
      AND ss.store_id = a.store_id
     WHERE a.store_id = $1
+      ${articleCategorySql}
       AND ${searchWhere}
     ORDER BY a.is_active DESC, a.designation ASC
     LIMIT $${params.length}
@@ -188,6 +199,7 @@ async function searchStock(dbPool, storeId, input = {}) {
     query,
     params
   );
+  const articleCategorySql = appendArticleCategoryFilter(input, params);
   params.push(safeLimit(input.limit));
 
   const result = await dbPool.query(
@@ -197,6 +209,7 @@ async function searchStock(dbPool, storeId, input = {}) {
       a.plu,
       a.designation,
       a.unit,
+      COALESCE(a.article_category, 'product') AS article_category,
       a.stock_unit,
       a.sale_unit,
       a.family_name,
@@ -221,6 +234,7 @@ async function searchStock(dbPool, storeId, input = {}) {
       LIMIT 1
     ) lot ON true
     WHERE a.store_id = $1
+      ${articleCategorySql}
       AND ${searchWhere}
     ORDER BY COALESCE(ss.stock_quantity, 0) DESC, a.designation ASC
     LIMIT $${params.length}

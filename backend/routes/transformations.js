@@ -97,6 +97,7 @@ async function getArticle(client, storeId, articleId) {
     WHERE id = $1
       AND store_id = $2
       AND COALESCE(is_active, true) = true
+      AND COALESCE(article_category, 'product') = 'product'
     LIMIT 1
     `,
     [articleId, storeId]
@@ -442,7 +443,7 @@ router.get('/articles/search', authenticateToken, attachDbContext, async (req, r
     const query = clean(req.query.q);
     const mode = clean(req.query.mode) || 'target';
     const params = [req.user.store_id];
-    let where = 'WHERE a.store_id = $1 AND COALESCE(a.is_active, true) = true';
+    let where = "WHERE a.store_id = $1 AND COALESCE(a.is_active, true) = true AND COALESCE(a.article_category, 'product') = 'product'";
 
     if (query) {
       params.push(`%${query}%`);
@@ -456,7 +457,7 @@ router.get('/articles/search', authenticateToken, attachDbContext, async (req, r
     params.push(safeLimit(req.query.limit, 20, 50));
     const result = await req.dbPool.query(
       `
-      SELECT id, plu, designation, unit
+      SELECT id, plu, designation, unit, COALESCE(article_category, 'product') AS article_category
       FROM articles a
       ${where}
       ORDER BY a.designation ASC

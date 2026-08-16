@@ -36,6 +36,33 @@
   grid-template-columns: minmax(260px, 2fr) minmax(160px, 1fr) minmax(180px, 1fr) auto;
 }
 
+.stock-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.stock-tab {
+  border: 1px solid var(--alta-border);
+  background: var(--alta-card);
+  color: var(--alta-text);
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.stock-tab.active {
+  background: var(--alta-turquoise);
+  border-color: var(--alta-turquoise);
+  color: #fff;
+}
+
+.stock-packaging-view .stock-dlc-column,
+.stock-packaging-view .lot-sanitary-column {
+  display: none;
+}
+
 .margin-controls {
   grid-template-columns: repeat(3, minmax(150px, 1fr)) auto auto;
   align-items: end;

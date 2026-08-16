@@ -33,6 +33,7 @@ const articleIdInput = document.getElementById('article-id');
 const articlePluInput = document.getElementById('article-plu');
 const articleDesignationInput = document.getElementById('article-designation');
 const articleUnitInput = document.getElementById('article-unit');
+const articleBusinessCategoryInput = document.getElementById('article-business-category');
 const articleEanInput = document.getElementById('article-ean');
 const articleFamilyInput = document.getElementById('article-family');
 const articleCategoryInput = document.getElementById('article-category');
@@ -89,6 +90,10 @@ function parseNumberInput(input) {
   return Number.isFinite(number) ? number : null;
 }
 
+function articleCategoryLabel(value) {
+  return value === 'packaging' ? 'Emballage' : 'Produit';
+}
+
 function fillTopbar() {
   userNameEl.textContent = sessionUser.email || 'Utilisateur';
 }
@@ -121,6 +126,7 @@ function openModal(editMode = false, article = null) {
   articlePluInput.value = article?.plu || '';
   articleDesignationInput.value = article?.designation || '';
   articleUnitInput.value = article?.unit || 'kg';
+  articleBusinessCategoryInput.value = article?.article_category || 'product';
   articleEanInput.value = article?.ean || '';
   articleFamilyInput.value = article?.family_code || article?.category || '';
   articleCategoryInput.value = article?.category || '';
@@ -145,13 +151,14 @@ function closeModal() {
   articleForm.reset();
   articleIdInput.value = '';
   articleUnitInput.value = 'kg';
+  articleBusinessCategoryInput.value = 'product';
   articleVatRateInput.value = '5.5';
   articleActiveInput.value = 'true';
 }
 
 function renderArticles(rows) {
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="10">Aucun article trouvé.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11">Aucun article trouvé.</td></tr>';
     return;
   }
 
@@ -161,6 +168,7 @@ function renderArticles(rows) {
       <td>${article.designation || ''}</td>
       <td>${article.department_name || ''}</td>
       <td>${article.family_name || ''}</td>
+      <td>${articleCategoryLabel(article.article_category)}</td>
       <td>${article.unit || ''}</td>
       <td>${formatVat(article.vat_rate)}</td>
       <td>${formatPrice(article.sale_price_ex_vat)}</td>
@@ -184,7 +192,7 @@ function renderArticles(rows) {
 async function loadArticles() {
   try {
     setFeedback('Chargement des articles...', '');
-    tbody.innerHTML = '<tr><td colspan="10">Chargement des articles...</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11">Chargement des articles...</td></tr>';
 
     const params = new URLSearchParams();
     if (searchInput.value.trim()) params.set('search', searchInput.value.trim());
@@ -202,7 +210,7 @@ async function loadArticles() {
   } catch (error) {
     console.error(error);
     setFeedback(error.message, 'error');
-    tbody.innerHTML = '<tr><td colspan="10">Erreur de chargement.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11">Erreur de chargement.</td></tr>';
   }
 }
 
@@ -215,6 +223,7 @@ async function saveArticle(event) {
       plu: articlePluInput.value.trim(),
       designation: articleDesignationInput.value.trim(),
       unit: articleUnitInput.value,
+      article_category: articleBusinessCategoryInput.value || 'product',
       ean: articleEanInput.value.trim(),
       family_code: articleFamilyInput.value,
       category: articleCategoryInput.value,

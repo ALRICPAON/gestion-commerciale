@@ -19,6 +19,8 @@ const stockFamilyFilter = document.getElementById('stock-family-filter');
 const stockAvailableFilter = document.getElementById('stock-available-filter');
 const stockFeedback = document.getElementById('stock-feedback');
 const stockTbody = document.getElementById('stock-tbody');
+const stockCategoryTabs = Array.from(document.querySelectorAll('.stock-tab'));
+const stockActionsHeading = document.getElementById('stock-actions-heading');
 const marginLevel1Input = document.getElementById('margin-level-1');
 const marginLevel2Input = document.getElementById('margin-level-2');
 const marginLevel3Input = document.getElementById('margin-level-3');
@@ -38,6 +40,7 @@ const lotFeedback = document.getElementById('lot-feedback');
 const lotsTbody = document.getElementById('lots-tbody');
 
 let stockRows = [];
+let activeStockCategory = 'product';
 
 function authHeaders(json = false) {
   const headers = {
@@ -95,6 +98,10 @@ function validateArticleId(articleId, context, details = {}) {
 
 function getFifoDlc(row) {
   return row.next_lot_dlc || row.next_dlc;
+}
+
+function isPackagingView() {
+  return activeStockCategory === 'packaging';
 }
 
 function formatNumber(value, digits = 3) {
@@ -196,7 +203,7 @@ function updateKpis(rows) {
   kpiArticles.textContent = String(rows.length);
   kpiQuantity.textContent = formatNumber(totalQuantity);
   kpiValue.textContent = formatMoney(totalValue);
-  kpiDlc.textContent = dlcs.length ? formatDate(dlcs[0]) : '-';
+  kpiDlc.textContent = isPackagingView() ? '-' : (dlcs.length ? formatDate(dlcs[0]) : '-');
 }
 
 function tariffCell(row, level) {
@@ -243,7 +250,7 @@ function renderStock(rows) {
         <td class="margin-cell" data-margin-level="2">${marginText(row.sale_price_level_2_ht, row.pma)}</td>
         <td>${tariffCell(row, 3)}</td>
         <td class="margin-cell" data-margin-level="3">${marginText(row.sale_price_level_3_ht, row.pma)}</td>
-        <td>${formatDate(getFifoDlc(row))}</td>
+        <td class="stock-dlc-column">${isPackagingView() ? '-' : formatDate(getFifoDlc(row))}</td>
         <td>${formatMoney(row.stock_value_ex_vat)}</td>
         <td>
           <div class="stock-actions">
@@ -408,6 +415,7 @@ async function loadStock() {
 
     const params = new URLSearchParams();
     params.set('available_only', stockAvailableFilter.value || 'true');
+    params.set('article_category', activeStockCategory);
     params.set('limit', '500');
 
     if (stockSearchInput.value.trim()) params.set('search', stockSearchInput.value.trim());
@@ -416,7 +424,7 @@ async function loadStock() {
     stockRows = await apiGet(`/api/stock?${params.toString()}`);
     warnInvalidStockRows(stockRows);
     renderStock(stockRows);
-    showFeedback(stockFeedback, `${stockRows.length} article(s) charge(s).`, 'success');
+    showFeedback(stockFeedback, `${stockRows.length} ${isPackagingView() ? 'emballage(s)' : 'produit(s)'} charge(s).`, 'success');
   } catch (error) {
     console.error(error);
     showFeedback(stockFeedback, error.message, 'error');
@@ -441,13 +449,15 @@ function renderLots(lots) {
       <td>${escapeHtml(lot.supplier_name || lot.supplier_code || '-')}</td>
       <td>${formatNumber(lot.qty_remaining)} / ${formatNumber(lot.qty_initial)} ${escapeHtml(lot.unit || '')}</td>
       <td>${formatMoney(lot.unit_cost_ex_vat)}</td>
-      <td>${formatDate(lot.dlc)}</td>
-      <td>${escapeHtml(lot.latin_name || '-')}</td>
-      <td>${escapeHtml(lot.fao_zone || '-')}</td>
-      <td>${escapeHtml(lot.sous_zone || '-')}</td>
-      <td>${escapeHtml(lot.fishing_gear || '-')}</td>
-      <td>${escapeHtml(lot.production_method || '-')}</td>
-      <td>${escapeHtml(lot.allergens || '-')}</td>
+      ${isPackagingView() ? '' : `
+        <td class="lot-sanitary-column">${formatDate(lot.dlc)}</td>
+        <td class="lot-sanitary-column">${escapeHtml(lot.latin_name || '-')}</td>
+        <td class="lot-sanitary-column">${escapeHtml(lot.fao_zone || '-')}</td>
+        <td class="lot-sanitary-column">${escapeHtml(lot.sous_zone || '-')}</td>
+        <td class="lot-sanitary-column">${escapeHtml(lot.fishing_gear || '-')}</td>
+        <td class="lot-sanitary-column">${escapeHtml(lot.production_method || '-')}</td>
+        <td class="lot-sanitary-column">${escapeHtml(lot.allergens || '-')}</td>
+      `}
     </tr>
   `).join('');
 }
@@ -461,8 +471,10 @@ async function openLotsModal(articleId, details = {}) {
   const article = stockRows.find((row) => String(row.article_id) === String(cleanArticleId));
   lotModal.classList.remove('hidden');
   lotModalTitle.textContent = article ? `${article.plu || ''} - ${article.designation || 'Lots'}` : 'Lots disponibles';
-  lotModalSubtitle.textContent = 'Lots disponibles tries par FIFO : DLC la plus proche, puis date de creation.';
-  lotsTbody.innerHTML = '<tr><td colspan="12">Chargement des lots...</td></tr>';
+  lotModalSubtitle.textContent = isPackagingView()
+    ? 'Lots emballage disponibles tries par date de creation.'
+    : 'Lots disponibles tries par FIFO : DLC la plus proche, puis date de creation.';
+  lotsTbody.innerHTML = `<tr><td colspan="${isPackagingView() ? 5 : 12}">Chargement des lots...</td></tr>`;
   showFeedback(lotFeedback, '');
 
   try {
@@ -477,8 +489,21 @@ async function openLotsModal(articleId, details = {}) {
 
 function closeLotsModal() {
   lotModal.classList.add('hidden');
-  lotsTbody.innerHTML = '<tr><td colspan="12">Selectionne un article.</td></tr>';
+  lotsTbody.innerHTML = `<tr><td colspan="${isPackagingView() ? 5 : 12}">Selectionne un article.</td></tr>`;
   showFeedback(lotFeedback, '');
+}
+
+function setStockCategory(category) {
+  activeStockCategory = category === 'packaging' ? 'packaging' : 'product';
+  document.body.classList.toggle('stock-packaging-view', isPackagingView());
+  stockCategoryTabs.forEach((tab) => {
+    const active = tab.dataset.category === activeStockCategory;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+  if (stockActionsHeading) stockActionsHeading.textContent = isPackagingView() ? 'Lots' : 'Lots / Tracabilite';
+  closeLotsModal();
+  loadStock();
 }
 
 stockTbody.addEventListener('input', (event) => {
@@ -527,6 +552,7 @@ stockSearchInput.addEventListener('keydown', (event) => {
 stockSearchBtn.addEventListener('click', loadStock);
 refreshStockBtn.addEventListener('click', loadStock);
 stockAvailableFilter.addEventListener('change', loadStock);
+stockCategoryTabs.forEach((tab) => tab.addEventListener('click', () => setStockCategory(tab.dataset.category)));
 prefillPricesBtn.addEventListener('click', prefillPricesFromMargins);
 savePrefilledPricesBtn.addEventListener('click', savePrefilledPrices);
 closeLotModalBtn.addEventListener('click', closeLotsModal);

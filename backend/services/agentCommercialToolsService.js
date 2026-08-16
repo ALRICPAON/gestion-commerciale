@@ -1,5 +1,6 @@
 const base = require('./agentToolsService');
 const { recomputeArticleStock } = require('./stockService');
+const { assertArticleCategory } = require('./articleCategory');
 
 const MAX_LIMIT = 100;
 const ORDER_ACTION_TYPES = new Set(['customer_order_draft', 'create_customer_order', 'create_customer_order_draft']);
@@ -111,6 +112,14 @@ function searchWhere(fields, query, params) {
   }).join(' OR ');
 }
 
+function appendArticleCategoryFilter(input, params, alias = 'a') {
+  const raw = clean(input.article_category || input.category);
+  if (!raw) return '';
+  const category = assertArticleCategory(raw);
+  params.push(category);
+  return ` AND COALESCE(${alias}.article_category, 'product') = $${params.length}`;
+}
+
 function stockSelect() {
   return `
     SELECT
@@ -118,6 +127,7 @@ function stockSelect() {
       a.plu,
       a.designation,
       a.unit,
+      COALESCE(a.article_category, 'product') AS article_category,
       a.stock_unit,
       a.sale_unit,
       a.family_name,
@@ -145,6 +155,10 @@ function stockSelect() {
 async function getStockOverview(dbPool, storeId, input = {}) {
   const availableOnly = input.available_only === false || input.available_only === 'false' ? false : true;
   const availableSql = availableOnly ? 'AND COALESCE(ss.stock_quantity, 0) > 0' : '';
+  const summaryParams = [storeId];
+  const summaryCategorySql = appendArticleCategoryFilter(input, summaryParams);
+  const rowParams = [storeId];
+  const rowCategorySql = appendArticleCategoryFilter(input, rowParams);
   const [summary, rows] = await Promise.all([
     dbPool.query(
       `
@@ -158,18 +172,20 @@ async function getStockOverview(dbPool, storeId, input = {}) {
       FROM articles a
       LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.store_id = $1
+        ${summaryCategorySql}
       `,
-      [storeId]
+      summaryParams
     ),
     dbPool.query(
       `
       ${stockSelect()}
       WHERE a.store_id = $1
         ${availableSql}
+        ${rowCategorySql}
       ORDER BY COALESCE(ss.stock_quantity, 0) DESC, a.designation ASC
-      LIMIT $2
+      LIMIT $${rowParams.length + 1}
       `,
-      [storeId, limit(input.limit)]
+      [...rowParams, limit(input.limit)]
     ),
   ]);
   return { summary: summary.rows[0] || {}, results: rows.rows };
@@ -180,6 +196,7 @@ async function searchStock(dbPool, storeId, input = {}) {
   if (!query) return getStockOverview(dbPool, storeId, input);
 
   const params = [storeId];
+  const categorySql = appendArticleCategoryFilter(input, params);
   const where = searchWhere(
     ['a.plu', 'a.designation', 'a.ean', 'a.family_name', 'a.latin_name', 'l.lot_code', 'l.supplier_lot_number'],
     query,
@@ -217,6 +234,7 @@ async function searchStock(dbPool, storeId, input = {}) {
       LIMIT 1
     ) next_lot ON true
     WHERE a.store_id = $1
+      ${categorySql}
       AND (${where})
     ORDER BY a.id, COALESCE(ss.stock_quantity, 0) DESC, a.designation ASC
     LIMIT $${params.length}
@@ -254,6 +272,10 @@ async function getClientsOverview(dbPool, storeId, input = {}) {
 }
 
 async function getArticlesOverview(dbPool, storeId, input = {}) {
+  const summaryParams = [storeId];
+  const summaryCategorySql = appendArticleCategoryFilter(input, summaryParams);
+  const rowParams = [storeId];
+  const rowCategorySql = appendArticleCategoryFilter(input, rowParams);
   const [summary, rows] = await Promise.all([
     dbPool.query(
       `
@@ -263,21 +285,23 @@ async function getArticlesOverview(dbPool, storeId, input = {}) {
         COUNT(DISTINCT family_code)::int AS family_count
       FROM articles
       WHERE store_id = $1
+        ${summaryCategorySql.replaceAll('a.', '')}
       `,
-      [storeId]
+      summaryParams
     ),
     dbPool.query(
       `
-      SELECT a.id, a.plu, a.designation, a.unit, a.stock_unit, a.sale_unit, a.family_code, a.family_name,
+      SELECT a.id, a.plu, a.designation, a.unit, COALESCE(a.article_category, 'product') AS article_category, a.stock_unit, a.sale_unit, a.family_code, a.family_name,
              a.is_active, a.sale_price_level_1_ht, a.sale_price_level_2_ht, a.sale_price_level_3_ht,
              COALESCE(ss.stock_quantity, 0) AS stock_quantity
       FROM articles a
       LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.store_id = $1
+        ${rowCategorySql}
       ORDER BY a.is_active DESC, a.designation ASC
-      LIMIT $2
+      LIMIT $${rowParams.length + 1}
       `,
-      [storeId, limit(input.limit)]
+      [...rowParams, limit(input.limit)]
     ),
   ]);
   return { summary: summary.rows[0] || {}, results: rows.rows };

@@ -163,8 +163,8 @@ async function fetchStockArticles(search = '', availableOnly = true) {
 
 async function fetchActiveArticles(search = '') {
   const data = search
-    ? await api(`/api/articles/search?q=${encodeURIComponent(search)}`).catch(() => [])
-    : await api('/api/articles?active=true&limit=200').catch(() => []);
+    ? await api(`/api/articles/search?q=${encodeURIComponent(search)}&article_category=product`).catch(() => [])
+    : await api('/api/articles?active=true&article_category=product&limit=200').catch(() => []);
   return (Array.isArray(data) ? data : []).map(normalizeArticle);
 }
 

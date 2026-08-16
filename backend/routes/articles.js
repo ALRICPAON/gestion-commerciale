@@ -5,6 +5,7 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
+const { assertArticleCategory } = require('../services/articleCategory');
 
 function toNullableString(value) {
   if (value === undefined || value === null) return null;
@@ -81,6 +82,7 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
       family = '',
       sector = '',
       active = '',
+      article_category = '',
       limit = '200',
       offset = '0',
     } = req.query;
@@ -118,6 +120,11 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
       where += ` AND a.is_active = $${params.length}`;
     }
 
+    if (article_category) {
+      params.push(assertArticleCategory(article_category));
+      where += ` AND COALESCE(a.article_category, 'product') = $${params.length}`;
+    }
+
     if (search && String(search).trim() !== '') {
       params.push(`%${String(search).trim()}%`);
       const idx = params.length;
@@ -143,6 +150,7 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         a.designation,
         a.ean,
         a.unit,
+        COALESCE(a.article_category, 'product') AS article_category,
         a.is_active,
         a.source_origin,
         a.source_id,
@@ -273,7 +281,7 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
     const familyCode = family || sector;
     const likePattern = `%${searchTerm}%`;
     const startsWithPattern = `${searchTerm}%`;
-    const queryParams = [req.user.store_id, likePattern, searchTerm, startsWithPattern];
+    const queryParams = [req.user.store_id, likePattern, searchTerm, startsWithPattern, assertArticleCategory(req.query.article_category)];
     let extraFilters = '';
 
     if (departmentId && isUuid(departmentId)) {
@@ -301,6 +309,7 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
         a.designation,
         a.unit,
         a.ean,
+        COALESCE(a.article_category, 'product') AS article_category,
         a.is_active,
         COALESCE(a.display_name, ad.display_name) AS display_name,
         COALESCE(a.purchase_unit, ad.purchase_unit) AS purchase_unit,
@@ -326,6 +335,7 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
        AND adm.field_key = 'business_metadata'
       WHERE a.store_id = $1
         AND a.is_active = true
+        AND COALESCE(a.article_category, 'product') = $5
         AND COALESCE(ad.is_active, true) = true
         ${extraFilters}
         AND (
@@ -362,7 +372,7 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
       return res.json([]);
     }
 
-    const params = [req.user.store_id, `%${searchTerm}%`, `${searchTerm}%`];
+    const params = [req.user.store_id, `%${searchTerm}%`, `${searchTerm}%`, assertArticleCategory(req.query.article_category)];
     let departmentFilter = '';
 
     if (departmentId && isUuid(departmentId)) {
@@ -385,6 +395,7 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
         a.designation,
         a.ean,
         a.unit,
+        COALESCE(a.article_category, 'product') AS article_category,
         COALESCE(a.sale_unit, ad.sale_unit) AS sale_unit,
         ad.sale_price_ex_vat,
         ad.sale_price_inc_vat,
@@ -400,6 +411,7 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
       LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.store_id = $1
         AND a.is_active = true
+        AND COALESCE(a.article_category, 'product') = $4
         AND COALESCE(ad.is_active, true) = true
         AND COALESCE(ss.stock_quantity, 0) > 0
         ${departmentFilter}
@@ -437,6 +449,7 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
       designation,
       ean,
       unit,
+      article_category,
       is_active = true,
       family_code,
       sector_code,
@@ -497,6 +510,7 @@ if (departmentIdFinal) {
 
     const selectedFamilyCode = family_code || sector_code;
     const sectorId = await getSectorId(client, departmentIdFinal, selectedFamilyCode);
+    const normalizedArticleCategory = assertArticleCategory(article_category);
 
     const articleInsert = await client.query(
       `
@@ -506,12 +520,13 @@ if (departmentIdFinal) {
         designation,
         ean,
         unit,
+        article_category,
         is_active,
         source_origin,
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, 'manual', $7, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8, $8)
       RETURNING id
       `,
       [
@@ -520,6 +535,7 @@ if (departmentIdFinal) {
         toNullableString(designation),
         toNullableString(ean),
         toNullableString(unit) || 'kg',
+        normalizedArticleCategory,
         !!is_active,
         req.user.id,
       ]
@@ -641,6 +657,7 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         a.designation,
         a.ean,
         a.unit,
+        COALESCE(a.article_category, 'product') AS article_category,
         a.is_active,
         a.source_origin,
         a.source_id,
@@ -732,6 +749,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
       designation,
       ean,
       unit,
+      article_category,
       is_active = true,
       family_code,
       sector_code,
@@ -796,6 +814,7 @@ SET
   purchase_unit = $16,
   stock_unit = $17,
   sale_unit = $18,
+  article_category = $19,
   updated_at = NOW()
 WHERE id = $7
   AND store_id = $8
@@ -820,6 +839,7 @@ RETURNING id
   toNullableString(purchase_unit),
   toNullableString(stock_unit),
   toNullableString(sale_unit),
+  assertArticleCategory(article_category),
 ]
     );
 
@@ -1129,6 +1149,7 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
       `
       SELECT
         a.unit,
+        COALESCE(a.article_category, 'product') AS article_category,
         a.is_active,
         ad.department_id,
         ad.department_sector_id,
@@ -1174,12 +1195,13 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         designation,
         ean,
         unit,
+        article_category,
         is_active,
         source_origin,
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, 'duplicate', $7, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'duplicate', $8, $8)
       RETURNING id
       `,
       [
@@ -1188,6 +1210,7 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         toNullableString(new_designation),
         toNullableString(new_ean),
         source.unit || 'kg',
+        source.article_category || 'product',
         source.is_active,
         req.user.id,
       ]

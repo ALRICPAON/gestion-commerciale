@@ -101,6 +101,7 @@ function lotSelectSql() {
       a.plu AS article_plu,
       a.designation AS article_label,
       a.unit AS article_unit,
+      COALESCE(a.article_category, 'product') AS article_category,
       a.family_name,
       l.purchase_id,
       l.purchase_line_id,
@@ -283,7 +284,7 @@ async function searchTraceabilityTestLots({ db, storeId, search = null, limit = 
   const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
   const term = clean(search);
   const params = [storeId];
-  let where = 'l.store_id = $1::uuid';
+  let where = "l.store_id = $1::uuid AND COALESCE(a.article_category, 'product') = 'product'";
   if (term) {
     params.push(`%${term}%`);
     where += ` AND (
