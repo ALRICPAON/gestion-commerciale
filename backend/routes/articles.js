@@ -281,8 +281,16 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
     const familyCode = family || sector;
     const likePattern = `%${searchTerm}%`;
     const startsWithPattern = `${searchTerm}%`;
-    const queryParams = [req.user.store_id, likePattern, searchTerm, startsWithPattern, assertArticleCategory(req.query.article_category)];
+    const queryParams = [req.user.store_id, likePattern, searchTerm, startsWithPattern];
     let extraFilters = '';
+    const requestedArticleCategory = req.query.article_category !== undefined
+      ? assertArticleCategory(req.query.article_category)
+      : null;
+
+    if (requestedArticleCategory) {
+      queryParams.push(requestedArticleCategory);
+      extraFilters += ` AND COALESCE(a.article_category, 'product') = $${queryParams.length}`;
+    }
 
     if (departmentId && isUuid(departmentId)) {
       queryParams.push(departmentId);
@@ -335,7 +343,6 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
        AND adm.field_key = 'business_metadata'
       WHERE a.store_id = $1
         AND a.is_active = true
-        AND COALESCE(a.article_category, 'product') = $5
         AND COALESCE(ad.is_active, true) = true
         ${extraFilters}
         AND (
@@ -372,8 +379,18 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
       return res.json([]);
     }
 
-    const params = [req.user.store_id, `%${searchTerm}%`, `${searchTerm}%`, assertArticleCategory(req.query.article_category)];
+    const params = [req.user.store_id, `%${searchTerm}%`, `${searchTerm}%`];
     let departmentFilter = '';
+    let categoryFilter = '';
+
+    const requestedArticleCategory = req.query.article_category !== undefined
+      ? assertArticleCategory(req.query.article_category)
+      : null;
+
+    if (requestedArticleCategory) {
+      params.push(requestedArticleCategory);
+      categoryFilter = `AND COALESCE(a.article_category, 'product') = $${params.length}`;
+    }
 
     if (departmentId && isUuid(departmentId)) {
       params.push(departmentId);
@@ -411,9 +428,9 @@ router.get('/search-in-stock', authenticateToken, attachDbContext, async (req, r
       LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
       WHERE a.store_id = $1
         AND a.is_active = true
-        AND COALESCE(a.article_category, 'product') = $4
         AND COALESCE(ad.is_active, true) = true
         AND COALESCE(ss.stock_quantity, 0) > 0
+        ${categoryFilter}
         ${departmentFilter}
         AND (
           a.plu ILIKE $2
@@ -468,7 +485,6 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
       sale_price_ex_vat,
       sale_price_inc_vat,
     } = req.body;
-
     if (!toNullableString(plu) || !toNullableString(designation)) {
   return res.status(400).json({
     error: 'plu et designation sont obligatoires',
@@ -768,14 +784,69 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
       sale_price_ex_vat,
       sale_price_inc_vat,
     } = req.body;
-
-    if (!toNullableString(plu) || !toNullableString(designation)) {
-  return res.status(400).json({
-    error: 'plu et designation sont obligatoires',
-  });
-}
+    const hasPatchField = (field) => Object.prototype.hasOwnProperty.call(req.body, field)
+      && req.body[field] !== undefined;
+    const hasArticleCategoryPatch = hasPatchField('article_category');
+    const normalizedArticleCategory = hasArticleCategoryPatch
+      ? assertArticleCategory(article_category)
+      : null;
 
     await client.query('BEGIN');
+
+    const currentArticleResult = await client.query(
+      `
+      SELECT
+        plu,
+        designation,
+        ean,
+        unit,
+        is_active,
+        latin_name,
+        fao_zone,
+        sous_zone,
+        fishing_gear,
+        allergens,
+        production_method,
+        display_name,
+        purchase_unit,
+        stock_unit,
+        sale_unit,
+        COALESCE(article_category, 'product') AS article_category
+      FROM articles
+      WHERE id = $1
+        AND store_id = $2
+      `,
+      [articleId, req.user.store_id]
+    );
+
+    if (currentArticleResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Article introuvable' });
+    }
+
+    const currentArticle = currentArticleResult.rows[0];
+    const nextPlu = hasPatchField('plu') ? toNullableString(plu) : currentArticle.plu;
+    const nextDesignation = hasPatchField('designation') ? toNullableString(designation) : currentArticle.designation;
+    const nextEan = hasPatchField('ean') ? toNullableString(ean) : currentArticle.ean;
+    const nextUnit = hasPatchField('unit') ? (toNullableString(unit) || 'kg') : (currentArticle.unit || 'kg');
+    const nextIsActive = hasPatchField('is_active') ? !!is_active : currentArticle.is_active;
+    const nextLatinName = hasPatchField('latin_name') ? toNullableString(latin_name) : currentArticle.latin_name;
+    const nextFaoZone = hasPatchField('fao_zone') ? toNullableString(fao_zone) : currentArticle.fao_zone;
+    const nextSousZone = hasPatchField('sous_zone') ? toNullableString(sous_zone) : currentArticle.sous_zone;
+    const nextFishingGear = hasPatchField('engin') ? toNullableString(engin) : currentArticle.fishing_gear;
+    const nextAllergens = hasPatchField('allergenes') ? toNullableString(allergenes) : currentArticle.allergens;
+    const nextProductionMethod = hasPatchField('category') ? toNullableString(category) : currentArticle.production_method;
+    const nextDisplayName = hasPatchField('display_name') ? toNullableString(display_name) : currentArticle.display_name;
+    const nextPurchaseUnit = hasPatchField('purchase_unit') ? toNullableString(purchase_unit) : currentArticle.purchase_unit;
+    const nextStockUnit = hasPatchField('stock_unit') ? toNullableString(stock_unit) : currentArticle.stock_unit;
+    const nextSaleUnit = hasPatchField('sale_unit') ? toNullableString(sale_unit) : currentArticle.sale_unit;
+
+    if (!nextPlu || !nextDesignation) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'plu et designation sont obligatoires',
+      });
+    }
 
     let department = null;
 
@@ -814,32 +885,33 @@ SET
   purchase_unit = $16,
   stock_unit = $17,
   sale_unit = $18,
-  article_category = $19,
+  article_category = CASE WHEN $19 THEN $20 ELSE article_category END,
   updated_at = NOW()
 WHERE id = $7
   AND store_id = $8
 RETURNING id
       `,
      [
-  toNullableString(plu),
-  toNullableString(designation),
-  toNullableString(ean),
-  toNullableString(unit) || 'kg',
-  !!is_active,
+  nextPlu,
+  nextDesignation,
+  nextEan,
+  nextUnit,
+  nextIsActive,
   req.user.id,
   articleId,
   req.user.store_id,
-  toNullableString(latin_name),
-  toNullableString(fao_zone),
-  toNullableString(sous_zone),
-  toNullableString(engin),
-  toNullableString(allergenes),
-  toNullableString(category),
-  toNullableString(display_name),
-  toNullableString(purchase_unit),
-  toNullableString(stock_unit),
-  toNullableString(sale_unit),
-  assertArticleCategory(article_category),
+  nextLatinName,
+  nextFaoZone,
+  nextSousZone,
+  nextFishingGear,
+  nextAllergens,
+  nextProductionMethod,
+  nextDisplayName,
+  nextPurchaseUnit,
+  nextStockUnit,
+  nextSaleUnit,
+  hasArticleCategoryPatch,
+  normalizedArticleCategory,
 ]
     );
 
@@ -1065,8 +1137,12 @@ RETURNING id
       id: articleId,
     });
   } catch (err) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     console.error('Erreur PATCH /api/articles/:id :', err);
+
+    if (err.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
+    }
 
     if (err.code === '23505') {
       return res.status(400).json({ error: 'PLU déjà existant pour ce client' });

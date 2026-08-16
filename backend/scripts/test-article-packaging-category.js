@@ -30,12 +30,62 @@ function main() {
   assert.equal(normalizeArticleCategory('Emballage'), 'packaging');
   assert.equal(articleCategoryLabel('packaging'), 'Emballage');
   assert.equal(assertArticleCategory('product'), 'product');
+  assert.throws(() => assertArticleCategory('metal'), /Catégorie article invalide/);
 
+  const articlesRoute = read('backend/routes/articles.js');
   includes('backend/routes/articles.js', 'article_category', 'articles route doit exposer article_category');
   includes('backend/routes/articles.js', 'assertArticleCategory(article_category)', 'articles route doit valider article_category');
+  assert(
+    articlesRoute.includes("article_category = CASE WHEN $19 THEN $20 ELSE article_category END"),
+    'PATCH partiel article doit conserver article_category si absente'
+  );
+  assert(
+    articlesRoute.includes("const hasPatchField = (field) => Object.prototype.hasOwnProperty.call(req.body, field)"),
+    'PATCH partiel article doit distinguer champ absent et champ fourni'
+  );
+  assert(
+    articlesRoute.includes("const hasArticleCategoryPatch = hasPatchField('article_category')"),
+    'PATCH explicite article_category doit etre detecte separement'
+  );
+  assert(
+    articlesRoute.includes('const currentArticleResult = await client.query'),
+    'PATCH partiel article doit relire la valeur courante avant update'
+  );
+  assert(
+    articlesRoute.includes("const nextDesignation = hasPatchField('designation') ? toNullableString(designation) : currentArticle.designation"),
+    'PATCH partiel designation doit conserver les autres champs existants'
+  );
+  assert(
+    articlesRoute.includes('const normalizedArticleCategory = hasArticleCategoryPatch'),
+    'PATCH explicite article_category doit etre valide avant update'
+  );
+  assert(
+    articlesRoute.includes('if (err.status && err.status < 500)'),
+    'PATCH article_category invalide doit retourner une erreur 400 metier'
+  );
+  assert(
+    !articlesRoute.includes("AND COALESCE(a.article_category, 'product') = $5"),
+    'recherche articles generique sans categorie ne doit pas masquer packaging'
+  );
+  assert(
+    !articlesRoute.includes("AND COALESCE(a.article_category, 'product') = $4"),
+    'recherche stock generique sans categorie ne doit pas masquer packaging'
+  );
+  assert(
+    (articlesRoute.match(/const requestedArticleCategory = req\.query\.article_category !== undefined/g) || []).length >= 2,
+    'recherches generiques doivent filtrer uniquement si article_category est fourni'
+  );
+  assert(
+    (articlesRoute.match(/COALESCE\(a\.article_category, 'product'\) = \$\$\{.*\.length\}/g) || []).length >= 2,
+    'recherches generiques doivent accepter les filtres explicites product et packaging'
+  );
   includes('backend/routes/articlesExcel.js', 'articleCategoryLabel', 'export Excel doit convertir la categorie');
   includes('backend/routes/articlesExcel.js', 'normalizeImportHeader', 'import Excel doit accepter la colonne Categorie');
   includes('backend/routes/articlesExcel.js', 'normalizeArticleCategory(row[column])', 'import Excel doit normaliser product/Produit/packaging/Emballage');
+  assert(
+    !read('backend/routes/articlesExcel.js').includes("article_category = 'product'"),
+    'import update Excel ne doit pas forcer product quand la categorie est absente'
+  );
 
   includes('backend/routes/stock.js', "COALESCE(a.article_category, 'product') = $", 'stock doit filtrer par article_category');
   includes('frontend/stock.html', 'stock-packaging-tab', 'front stock doit avoir onglet Emballages');
@@ -51,6 +101,8 @@ function main() {
   includes('backend/routes/sales.js', "COALESCE(a.article_category,'product')='product'", 'vente doit refuser les emballages');
   includes('frontend/js/sale-detail.js', 'article_category=product', 'front vente doit demander les produits');
   includes('frontend/sale-detail.html', './js/sale-detail.js?v=18', 'cache-buster vente attendu');
+  includes('frontend/js/sale-stock-negative-flow.js', 'article_category=product', 'flux vente stock negatif doit demander les produits');
+  includes('frontend/sale-detail.html', './js/sale-stock-negative-flow.js?v=4', 'cache-buster flux stock negatif attendu');
   includes('frontend/js/quick-order-sheet.js', "article_category: 'product'", 'commande rapide doit demander les produits');
   includes('frontend/quick-order-sheet.html', './js/quick-order-sheet.js?v=8', 'cache-buster commande rapide attendu');
 
@@ -63,6 +115,11 @@ function main() {
   includes('backend/services/agentCommercialToolsService.js', 'appendArticleCategoryFilter', 'agent doit filtrer article_category');
   includes('backend/services/agentToolsService.js', 'appendArticleCategoryFilter', 'agent historique doit filtrer article_category');
   includes('backend/services/agent/agentToolSchemas.js', "article_category: { type: 'string', enum: ['product', 'packaging'] }", 'schema MCP doit exposer article_category');
+  includes('backend/routes/articles.js', 'source.article_category || \'product\'', 'duplication article doit conserver la categorie source');
+  assert(
+    !read('backend/routes/purchases.js').includes("article_category, 'product') = 'product'"),
+    'achat doit pouvoir selectionner product et packaging'
+  );
 
   console.log(JSON.stringify({ ok: true, migration: '105_article_category_packaging.sql' }, null, 2));
 }
