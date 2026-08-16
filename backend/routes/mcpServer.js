@@ -33,6 +33,7 @@ const {
 } = require('../services/agent/agentFullCoverageService');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 const { envTrustedMode } = require('../services/agent/agentTrustedMode');
+const { resolveAgentPermissions } = require('../services/agent/agentPermissionProfileService');
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
@@ -597,16 +598,14 @@ const PUBLIC_QUALITY_BLOCK_TOOL_ALIASES = {
 };
 
 function mcpAgentContext(req) {
-  const configured = String(process.env.ALTA_AGENT_PERMISSIONS || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const role = envTrustedMode() ? 'trusted_owner' : 'agent';
+  const permissions = resolveAgentPermissions({ role, fallbackPermissions: FINAL_AGENT_PERMISSIONS });
   return {
     store_id: req.agentStoreId,
     user_id: process.env.ALTA_AGENT_USER_ID || null,
-    role: envTrustedMode() ? 'trusted_owner' : 'agent',
-    user_permissions: configured.length ? configured : [...FINAL_AGENT_PERMISSIONS],
-    agent_permissions: configured.length ? configured : [...FINAL_AGENT_PERMISSIONS],
+    role,
+    user_permissions: permissions,
+    agent_permissions: permissions,
     source: 'mcp',
     trusted_mode: envTrustedMode(),
     conversation_id: req.get('x-alta-conversation-id') || null,

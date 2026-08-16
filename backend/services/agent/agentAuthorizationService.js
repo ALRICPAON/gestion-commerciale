@@ -14,7 +14,7 @@ function userPermissions(context = {}) {
 }
 
 function isPrivilegedRole(role) {
-  return ['admin', 'administrator'].includes(String(role || '').toLowerCase());
+  return ['admin', 'administrator', 'trusted_owner'].includes(String(role || '').toLowerCase());
 }
 
 function permissionList(raw) {

@@ -2,6 +2,7 @@ const { generateToolCall } = require('./aiClient');
 const { normalizeConversation } = require('./aiMemoryService');
 const { confirmAction, cancelAction } = require('./aiActionService');
 const { executeAgentTool } = require('../agent/agentToolExecutor');
+const { parseAgentPermissions, resolveAgentPermissions } = require('../agent/agentPermissionProfileService');
 
 const MAX_QUESTION_LENGTH = 2000;
 const MAX_TOOL_STEPS = Math.min(Math.max(Number(process.env.AI_AGENT_MAX_TOOL_STEPS || 20), 1), 40);
@@ -656,28 +657,24 @@ async function unavailablePreparation({ name }) {
   return ok({ tool: name, available: false, reason: 'Outil prepare dans le contrat agent, execution non activee dans ce socle.' });
 }
 
-function configuredAgentPermissions() {
-  return String(process.env.ALTA_AGENT_PERMISSIONS || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 let loggedAgentPermissionContext = false;
 
 async function executeRegisteredAgentTool({ db, user, args, name }) {
-  const configured = configuredAgentPermissions();
-  const permissions = configured.length ? configured : [
-    'agent.use',
-    'cashflow.read',
-    'quality.read',
-    'quality.documentation.read',
-    'clients.read',
-    'suppliers.read',
-    'articles.read',
-    'stock.read',
-    'sales.read',
-  ];
+  const permissions = resolveAgentPermissions({
+    role: user.role,
+    configuredPermissions: parseAgentPermissions(),
+    fallbackPermissions: [
+      'agent.use',
+      'cashflow.read',
+      'quality.read',
+      'quality.documentation.read',
+      'clients.read',
+      'suppliers.read',
+      'articles.read',
+      'stock.read',
+      'sales.read',
+    ],
+  });
   if (!loggedAgentPermissionContext) {
     console.info('[AI TOOL FIRST] agent permission context', {
       source: 'ai_agent',

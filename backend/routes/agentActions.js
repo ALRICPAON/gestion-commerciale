@@ -16,6 +16,7 @@ const { listAgentTools } = require('../services/agent/agentToolRegistry');
 const { executeAgentTool } = require('../services/agent/agentToolExecutor');
 const { envTrustedMode } = require('../services/agent/agentTrustedMode');
 const { FINAL_AGENT_PERMISSIONS } = require('../services/agent/agentFullCoverageService');
+const { resolveAgentPermissions } = require('../services/agent/agentPermissionProfileService');
 
 const router = express.Router();
 
@@ -25,15 +26,13 @@ function handleAgentError(res, error, fallbackMessage) {
 }
 
 function agentContext(req) {
-  const configured = String(process.env.ALTA_AGENT_PERMISSIONS || '')
-    .split(',')
-    .map((item) => item.trim())
-    .filter(Boolean);
+  const role = envTrustedMode() ? 'trusted_owner' : 'agent';
+  const permissions = resolveAgentPermissions({ role, fallbackPermissions: FINAL_AGENT_PERMISSIONS });
   return {
     store_id: req.agentStoreId,
     user_id: process.env.ALTA_AGENT_USER_ID || null,
-    role: envTrustedMode() ? 'trusted_owner' : 'agent',
-    permissions: configured.length ? configured : [...FINAL_AGENT_PERMISSIONS],
+    role,
+    permissions,
     client_key: null,
     source: 'agent_rest',
     trusted_mode: envTrustedMode(),
