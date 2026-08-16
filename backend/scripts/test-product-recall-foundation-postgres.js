@@ -171,10 +171,10 @@ async function seed(client) {
     `INSERT INTO sales_documents (
        id, store_id, client_id, document_date, status, document_type, reference_number
      ) VALUES
-       ($1::uuid, $5::uuid, $6::uuid, '2026-08-16', 'validated', 'DELIVERY_NOTE', 'BL-PR-A'),
-       ($2::uuid, $5::uuid, $7::uuid, '2026-08-16', 'validated', 'DELIVERY_NOTE', 'BL-PR-B')
+       ($1::uuid, $3::uuid, $4::uuid, '2026-08-16', 'validated', 'DELIVERY_NOTE', 'BL-PR-A'),
+       ($2::uuid, $3::uuid, $5::uuid, '2026-08-16', 'validated', 'DELIVERY_NOTE', 'BL-PR-B')
      ON CONFLICT (id) DO NOTHING`,
-    [DOC_A, DOC_B, null, null, STORE_A, CLIENT_A, CLIENT_B]
+    [DOC_A, DOC_B, STORE_A, CLIENT_A, CLIENT_B]
   );
   await client.query(
     `INSERT INTO sales_lines (
@@ -202,10 +202,10 @@ async function assertUniqueConstraintCompatibility(client) {
        SELECT
          c.conrelid::regclass::text AS table_name,
          (
-           SELECT array_agg(a.attname ORDER BY keys.ordinality)
-           FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
-           JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
-         ) AS columns
+            SELECT array_agg(a.attname::text ORDER BY keys.ordinality)
+            FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
+            JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
+          ) AS columns
        FROM pg_constraint c
        WHERE c.contype IN ('p', 'u')
          AND c.conrelid IN (
@@ -218,7 +218,7 @@ async function assertUniqueConstraintCompatibility(client) {
            'product_recall_campaigns'::regclass
          )
      ) constraints
-     WHERE columns = ARRAY['id', 'store_id']
+     WHERE columns = ARRAY['id', 'store_id']::text[]
      GROUP BY table_name`,
     []
   );
