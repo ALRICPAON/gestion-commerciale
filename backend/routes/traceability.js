@@ -8,6 +8,10 @@ const {
   errorBody: lotQualityErrorBody,
   releaseLotForQuality,
 } = require('../services/quality/lotBlocking');
+const {
+  analyzeLotRecallImpact,
+  createProductRecallDraft,
+} = require('../services/productRecallService');
 
 const router = express.Router();
 
@@ -536,6 +540,46 @@ router.get('/lots/:lotId', authenticateToken, attachDbContext, async (req, res) 
   } catch (err) {
     console.error('Erreur GET /api/traceability/lots/:lotId :', err);
     res.status(500).json({ error: 'Erreur serveur détail lot' });
+  }
+});
+
+router.get('/lots/:lotId/recall-analysis', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const lotId = clean(req.params.lotId);
+    const result = await analyzeLotRecallImpact({
+      db: req.dbPool,
+      storeId: req.user.store_id,
+      lotId,
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('Erreur GET /api/traceability/lots/:lotId/recall-analysis :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur analyse retrait/rappel lot'));
+  }
+});
+
+router.post('/lots/:lotId/recall', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    const lotId = clean(req.params.lotId);
+    await client.query('BEGIN');
+    const result = await createProductRecallDraft({
+      db: client,
+      storeId: req.user.store_id,
+      lotId,
+      userId: req.user.id,
+      recallType: req.body.recall_type,
+      reason: req.body.reason,
+      comment: req.body.comment,
+    });
+    await client.query('COMMIT');
+    return res.status(201).json({ ok: true, ...result });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Erreur POST /api/traceability/lots/:lotId/recall :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur creation campagne retrait/rappel'));
+  } finally {
+    client.release();
   }
 });
 
