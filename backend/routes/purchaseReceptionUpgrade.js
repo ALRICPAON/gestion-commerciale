@@ -8,6 +8,7 @@ const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const importDocument = require('../services/imports/import-document');
 const { recomputeArticleStock } = require('../services/stockService');
+const { createReceptionQualityEvidence } = require('../services/quality/purchaseReceptionEvidence');
 
 const router = express.Router();
 
@@ -587,8 +588,13 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
       return res.status(409).json({ error: 'Document deja valide ou non modifiable' });
     }
 
+    const supplier = await client.query(
+      'SELECT id, code, name FROM suppliers WHERE id = $1 AND store_id = $2 LIMIT 1',
+      [purchase.supplier_id, purchase.store_id]
+    );
+
     const lines = await client.query(
-      `SELECT pl.*, a.plu, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone,
+      `SELECT pl.*, a.plu, a.designation, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone,
               plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label,
               plm.supplier_lot_number, plm.sanitary_photo_url, plm.sanitary_photo_urls
        FROM purchase_lines pl
@@ -601,6 +607,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
     );
 
     let createdLots = 0;
+    const receivedLines = [];
     for (const line of lines.rows) {
       if (!line.article_id) {
         await client.query('ROLLBACK');
@@ -658,6 +665,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
           }),
         ]
       );
+      const lotRow = lot.rows[0];
 
       await client.query(
         `INSERT INTO stock_movements(
@@ -665,7 +673,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
           unit_cost_ex_vat, source_table, source_id, notes, created_by
          )
          VALUES(gen_random_uuid(), $1, $2, $3, $4, 'purchase_in', $5, $6, 'purchase_lines', $7, $8, $9)`,
-        [purchase.store_id, purchase.client_key, line.article_id, lot.rows[0].id, qty, Number(line.unit_price_ex_vat || 0), line.id, `Reception achat ${purchase.id}`, req.user.id]
+        [purchase.store_id, purchase.client_key, line.article_id, lotRow.id, qty, Number(line.unit_price_ex_vat || 0), line.id, `Reception achat ${purchase.id}`, req.user.id]
       );
 
       const finalAmount = lineAmount({ ...line, received_colis: rc, received_pieces: rp, received_quantity: rq }, true);
@@ -675,8 +683,19 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
              lot_id = $4, line_amount_ex_vat = $5, line_status = 'received',
              received_at = NOW(), updated_at = NOW()
          WHERE id = $6`,
-        [rc, rp, rq, lot.rows[0].id, finalAmount, line.id]
+        [rc, rp, rq, lotRow.id, finalAmount, line.id]
       );
+
+      receivedLines.push({
+        ...line,
+        received_colis: rc,
+        received_pieces: rp,
+        received_quantity: rq,
+        stock_quantity: qty,
+        line_amount_ex_vat: finalAmount,
+        lot_id: lotRow.id,
+        lot_code: lotCode,
+      });
 
       await recomputeArticleStock(client, line.article_id, purchase.store_id);
       createdLots += 1;
@@ -699,8 +718,30 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
     );
 
     await recomputePurchaseTotals(client, purchase.id);
+    const effectiveReceiptDate = req.body.receipt_date || purchase.receipt_date || new Date().toISOString().slice(0, 10);
+    const qualityReception = await createReceptionQualityEvidence({
+      db: client,
+      purchase: {
+        ...purchase,
+        status: 'received_pending_invoice',
+        receipt_date: effectiveReceiptDate,
+      },
+      supplier: supplier.rows[0] || null,
+      lines: receivedLines,
+      userId: req.user.id,
+      receiptDate: effectiveReceiptDate,
+      receivedAt: new Date(),
+    });
     await client.query('COMMIT');
-    return res.json({ ok: true, created_lots: createdLots, message: `Reception validee : ${createdLots} lot(s) cree(s), en attente facture fournisseur` });
+    return res.json({
+      ok: true,
+      created_lots: createdLots,
+      quality_event_id: qualityReception.event?.id || null,
+      quality_evidence_id: qualityReception.evidence?.id || null,
+      quality_event_created: qualityReception.eventCreated,
+      quality_evidence_created: qualityReception.evidenceCreated,
+      message: `Reception validee : ${createdLots} lot(s) cree(s), en attente facture fournisseur`,
+    });
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erreur validation reception enrichie :', error);

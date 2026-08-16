@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Enregistrements qualite - ALTA MAREE</title>
+  <link rel="stylesheet" href="../../css/app.css" />
+  <link rel="stylesheet" href="../css/quality.css?v=6" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">ALTA MAREE</h1>
+      <p class="app-subtitle">Enregistrements qualite</p>
+    </div>
+    <div class="topbar-right">
+      <button class="btn btn-secondary" onclick="window.location.href='./dashboard.html'">Qualite</button>
+    </div>
+  </header>
+  <main class="main-content">
+    <section class="welcome-card">
+      <span class="section-kicker">Historique</span>
+      <h2>Enregistrements qualite</h2>
+      <p>Historique des ENR et preuves generes par les operations metier ALTA.</p>
+    </section>
+
+    <div id="evidence-record-feedback" class="page-feedback hidden"></div>
+    <section id="evidence-record-summary" class="quality-grid"></section>
+    <section id="evidence-record-document-links" class="quality-list-grid"></section>
+
+    <section class="quality-card">
+      <div class="quality-section-header">
+        <div>
+          <h3>Historique</h3>
+          <p class="quality-muted">Registre transversal des preuves qualite generees par les operations metier.</p>
+        </div>
+      </div>
+      <div class="quality-toolbar">
+        <label>Recherche <input id="evidence-record-search" class="form-input" type="search"></label>
+        <label>Type
+          <select id="evidence-record-type" class="form-input">
+            <option value="">Tous</option>
+            <option value="reception_record">Reception fournisseur</option>
+          </select>
+        </label>
+        <label>Statut
+          <select id="evidence-record-status" class="form-input">
+            <option value="">Tous</option>
+            <option value="recorded">Enregistre</option>
+            <option value="validated">Valide</option>
+            <option value="draft">Brouillon</option>
+            <option value="rejected">Rejete</option>
+          </select>
+        </label>
+        <label>Debut <input id="evidence-record-start-date" class="form-input" type="date"></label>
+        <label>Fin <input id="evidence-record-end-date" class="form-input" type="date"></label>
+      </div>
+      <div class="quality-actions">
+        <button id="evidence-record-export-csv" class="btn btn-secondary" type="button">Export CSV</button>
+      </div>
+      <div class="quality-table-wrapper">
+        <table class="quality-table">
+          <thead>
+            <tr>
+              <th>Date/heure</th>
+              <th>Type</th>
+              <th>Reference</th>
+              <th>Origine</th>
+              <th>Resume</th>
+              <th>Statut</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="evidence-record-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="evidence-record-detail" class="quality-card hidden"></section>
+  </main>
+  <script src="../../js/config.js"></script>
+  <script src="../js/permissions.js"></script>
+  <script src="../js/quality-document-links.js?v=2"></script>
+  <script src="../js/evidence-records.js?v=2"></script>
+</body>
+</html>
