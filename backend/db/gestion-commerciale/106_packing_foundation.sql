@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS packing_operations (
   status text NOT NULL DEFAULT 'draft',
   output_article_id uuid NOT NULL,
   total_output_quantity numeric(14,4) NOT NULL,
-  package_count numeric(14,4) NOT NULL,
+  package_count integer NOT NULL,
   quantity_per_package numeric(14,4) NOT NULL,
   fish_cost_ex_vat numeric(14,4) NOT NULL DEFAULT 0,
   packaging_cost_ex_vat numeric(14,4) NOT NULL DEFAULT 0,
@@ -58,6 +58,9 @@ CREATE TABLE IF NOT EXISTS packing_operations (
     REFERENCES lots(id, store_id)
     ON DELETE SET NULL (output_lot_id)
 );
+
+ALTER TABLE packing_operations
+  ALTER COLUMN package_count TYPE integer USING package_count::integer;
 
 DO $$
 BEGIN

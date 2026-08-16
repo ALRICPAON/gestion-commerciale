@@ -73,12 +73,12 @@ function normalizeDraftQuantities({ packageCount, quantityPerPackage, totalOutpu
     ? positiveNumber(totalOutputQuantity)
     : computedTotal;
 
-  if (packages <= 0 || perPackage <= 0 || total <= 0 || !sameQuantity(total, computedTotal)) {
+  if (!Number.isInteger(packages) || packages <= 0 || perPackage <= 0 || total <= 0 || !sameQuantity(total, computedTotal)) {
     throw packingError('PACKING_INVALID_OUTPUT_QUANTITY');
   }
 
   return {
-    packageCount: round4(packages),
+    packageCount: packages,
     quantityPerPackage: round4(perPackage),
     totalOutputQuantity: round4(total),
   };
@@ -215,7 +215,7 @@ async function createPackingDraft(dbPool, input) {
       `INSERT INTO packing_operations (
          store_id, output_article_id, total_output_quantity, package_count,
          quantity_per_package, notes, created_by
-       ) VALUES ($1::uuid, $2::uuid, $3::numeric, $4::numeric, $5::numeric, $6::text, $7::uuid)
+       ) VALUES ($1::uuid, $2::uuid, $3::numeric, $4::integer, $5::numeric, $6::text, $7::uuid)
        RETURNING *`,
       [
         input.storeId,
@@ -413,7 +413,7 @@ async function updatePackingDraft(dbPool, input) {
       `UPDATE packing_operations
        SET output_article_id = $3::uuid,
            total_output_quantity = $4::numeric,
-           package_count = $5::numeric,
+           package_count = $5::integer,
            quantity_per_package = $6::numeric,
            notes = $7::text,
            updated_at = NOW()
@@ -466,6 +466,8 @@ function buildOutputTraceability({ operation, outputArticle, sourceLots, materia
       lot_id: line.lot_id,
       lot_code: line.lot_code || null,
       supplier_lot_number: line.supplier_lot_number || null,
+      supplier_id: line.supplier_id || null,
+      supplier_name: line.supplier_name || null,
       article_id: line.article_id,
       plu: line.article_plu || null,
       designation: line.article_designation || null,
@@ -490,11 +492,13 @@ function buildOutputTraceability({ operation, outputArticle, sourceLots, materia
 async function loadPackingLinesForValidation(client, storeId, operationId, tableName) {
   const result = await client.query(
     `SELECT line.*, l.lot_code, l.supplier_lot_number, l.qty_remaining, l.unit_cost_ex_vat AS current_unit_cost_ex_vat,
-            l.dlc, l.supplier_id, l.quality_status, a.plu AS article_plu, a.designation AS article_designation,
+            l.dlc, l.supplier_id, s.name AS supplier_name, l.quality_status,
+            a.plu AS article_plu, a.designation AS article_designation,
             COALESCE(a.article_category, 'product') AS article_category
      FROM ${tableName} line
      JOIN lots l ON l.id = line.lot_id AND l.store_id = line.store_id
      JOIN articles a ON a.id = line.article_id AND a.store_id = line.store_id
+     LEFT JOIN suppliers s ON s.id = l.supplier_id AND s.store_id = l.store_id
      WHERE line.store_id = $1::uuid
        AND line.packing_operation_id = $2::uuid
      ORDER BY line.created_at ASC, line.id ASC
@@ -624,7 +628,6 @@ async function validatePackingOperation(dbPool, input) {
     }
 
     const nearestDlc = sourceLots.map((line) => line.dlc).filter(Boolean).sort((a, b) => new Date(a) - new Date(b))[0] || null;
-    const supplierId = sourceLots[0]?.supplier_id || null;
     const lotCode = `PKG-${String(outputArticle.plu || 'NOPLU').replace(/\s+/g, '').toUpperCase()}-${String(operation.id).replace(/-/g, '').slice(0, 8).toUpperCase()}`;
     const traceability = buildOutputTraceability({ operation, outputArticle, sourceLots, materials });
 
@@ -634,16 +637,15 @@ async function validatePackingOperation(dbPool, input) {
          lot_code, supplier_lot_number, source_type, qty_initial, qty_remaining,
          unit_cost_ex_vat, dlc, traceability_data, created_at, updated_at
        ) VALUES (
-         gen_random_uuid(), $1::uuid, $2::text, $3::uuid, NULL, NULL, $4::uuid,
-         $5::text, NULL, 'packing', $6::numeric, $6::numeric,
-         $7::numeric, $8::date, $9::jsonb, NOW(), NOW()
+         gen_random_uuid(), $1::uuid, $2::text, $3::uuid, NULL, NULL, NULL,
+         $4::text, NULL, 'packing', $5::numeric, $5::numeric,
+         $6::numeric, $7::date, $8::jsonb, NOW(), NOW()
        )
        RETURNING id, lot_code`,
       [
         input.storeId,
         input.clientKey || null,
         outputArticle.id,
-        supplierId,
         lotCode,
         outputQty,
         unitCost,

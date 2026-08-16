@@ -14,7 +14,7 @@ They use the existing `lots`, `stock_movements`, and `stock_summary` engine.
 
 - `status`: `draft`, `validated`, `cancelled`
 - `output_article_id`: product article used for the single output lot
-- `package_count`, `quantity_per_package`, `total_output_quantity`
+- `package_count` as an integer, `quantity_per_package`, `total_output_quantity`
 - `fish_cost_ex_vat`, `packaging_cost_ex_vat`, `total_cost_ex_vat`, `unit_cost_ex_vat`
 - `output_lot_id`: the single global lot created on validation
 
@@ -117,6 +117,11 @@ The output lot stores `traceability_data.source_type = 'packing'` with:
 - quantity per package
 - source fish lots
 - consumed packaging lots
+
+The output lot is an ALTA packing lot, not a supplier lot:
+
+- `lots.supplier_id` is always `NULL`
+- source supplier provenance stays on each `traceability_data.source_lots[]` entry when available
 
 The relational chain is also preserved:
 

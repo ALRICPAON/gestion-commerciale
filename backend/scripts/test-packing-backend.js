@@ -29,6 +29,8 @@ function main() {
   assert(migration.includes('CREATE TABLE IF NOT EXISTS packing_operations'), 'migration doit creer packing_operations');
   assert(migration.includes('CREATE TABLE IF NOT EXISTS packing_source_lots'), 'migration doit creer packing_source_lots');
   assert(migration.includes('CREATE TABLE IF NOT EXISTS packing_materials'), 'migration doit creer packing_materials');
+  assert(migration.includes('package_count integer NOT NULL'), 'package_count doit etre entier');
+  assert(migration.includes('ALTER COLUMN package_count TYPE integer USING package_count::integer'), 'migration 106 doit corriger package_count en base de test deja migree');
   assert(migration.includes("CHECK (status IN ('draft', 'validated', 'cancelled'))"), 'status draft/validated/cancelled requis');
   assert(migration.includes('packing_operations_quantity_consistency_check'), 'coherence package_count * quantity_per_package requise');
   assert(migration.includes("ARRAY['id', 'store_id']::text[]"), 'detection FK composite lots doit caster en text[]');
@@ -49,7 +51,12 @@ function main() {
   includes('backend/services/packingService.js', "source_type, qty_initial, qty_remaining", 'validation doit creer un lot output');
   includes('backend/services/packingService.js', "'packing_operations'", 'mouvements doivent pointer packing_operations');
   includes('backend/services/packingService.js', "source_type: 'packing'", 'traceabilite output doit marquer packing');
-  includes('backend/services/packingService.js', "'packing', $6::numeric, $6::numeric", 'lot output doit avoir source_type packing');
+  includes('backend/services/packingService.js', "'packing', $5::numeric, $5::numeric", 'lot output doit avoir source_type packing');
+  includes('backend/services/packingService.js', 'purchase_line_id, supplier_id', 'insert output lot doit cibler supplier_id');
+  includes('backend/services/packingService.js', 'NULL, NULL, NULL,', 'lot output colisage doit avoir supplier_id NULL');
+  assert(!service.includes('sourceLots[0]?.supplier_id'), 'lot output ne doit jamais reprendre le premier fournisseur source');
+  includes('backend/services/packingService.js', 'supplier_id: line.supplier_id || null', 'traceabilite doit conserver supplier_id source');
+  includes('backend/services/packingService.js', 'supplier_name: line.supplier_name || null', 'traceabilite doit conserver supplier_name source');
   includes('backend/services/packingService.js', "const lotCode = `PKG-", 'lot output doit avoir un code unique operation');
   includes('backend/services/packingService.js', 'FOR UPDATE OF l', 'validation doit verrouiller les lots consommes');
   includes('backend/services/packingService.js', 'SELECT *', 'operation doit etre relue avant verrouillage');
@@ -90,6 +97,7 @@ function main() {
     quantityPerPackage: 5,
     totalOutputQuantity: 10,
   });
+  assert.throws(() => normalizeDraftQuantities({ packageCount: 2.5, quantityPerPackage: 5, totalOutputQuantity: 12.5 }), /Quantite de sortie/);
   assert.throws(() => normalizeDraftQuantities({ packageCount: 2, quantityPerPackage: 5, totalOutputQuantity: 9 }), /Quantite de sortie/);
 
   const fishCost = 3 * 8 + 7 * 10;
@@ -116,6 +124,21 @@ function main() {
   assert.equal(traceability.source_lots.length, 2, 'traceabilite doit conserver tous les lots poisson');
   assert.equal(traceability.materials.length, 1, 'traceabilite doit conserver les emballages');
 
+  const supplierTraceability = buildOutputTraceability({
+    operation: { id: 'op-supplier', package_count: 1, quantity_per_package: 10, total_output_quantity: 10 },
+    outputArticle: { id: 'out', plu: 'SOLE5', designation: 'SOLE COLIS 5 KG' },
+    sourceLots: [
+      { lot_id: 'lot-x', lot_code: 'X', supplier_id: 'supplier-x', supplier_name: 'Fournisseur X', article_id: 'fish', quantity_used: 3 },
+      { lot_id: 'lot-y', lot_code: 'Y', supplier_id: 'supplier-y', supplier_name: 'Fournisseur Y', article_id: 'fish', quantity_used: 7 },
+    ],
+    materials: [],
+  });
+  assert.deepStrictEqual(
+    supplierTraceability.source_lots.map((lot) => [lot.supplier_id, lot.supplier_name]),
+    [['supplier-x', 'Fournisseur X'], ['supplier-y', 'Fournisseur Y']],
+    'traceability_data doit conserver les deux fournisseurs source'
+  );
+
   const alreadyValidated = packingError('PACKING_ALREADY_VALIDATED');
   assert.equal(alreadyValidated.status, 409);
   assert.equal(alreadyValidated.code, 'PACKING_ALREADY_VALIDATED');
@@ -129,6 +152,8 @@ function main() {
     ok: true,
     tests: [
       'draft_creation_contract',
+      'integer_package_count_accepted',
+      'decimal_package_count_refused',
       'add_two_fish_lots_contract',
       'add_one_packaging_material_contract',
       'fish_cost_94',
@@ -151,6 +176,8 @@ function main() {
       'validated_operation_locked_contract',
       'no_physical_delete_contract',
       'real_transaction_contract',
+      'output_supplier_null_contract',
+      'source_supplier_traceability_kept',
     ],
   }, null, 2));
 }

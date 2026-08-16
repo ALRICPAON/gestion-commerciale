@@ -23,11 +23,15 @@ const ARTICLE_FISH_B = '90000000-0000-4000-8000-000000000202';
 const ARTICLE_OUTPUT = '90000000-0000-4000-8000-000000000203';
 const ARTICLE_BOX = '90000000-0000-4000-8000-000000000204';
 const ARTICLE_STORE_B = '90000000-0000-4000-8000-000000000205';
+const SUPPLIER_X = '90000000-0000-4000-8000-000000000251';
+const SUPPLIER_Y = '90000000-0000-4000-8000-000000000252';
+const SUPPLIER_BOX = '90000000-0000-4000-8000-000000000253';
 const LOT_A = '90000000-0000-4000-8000-000000000301';
 const LOT_B = '90000000-0000-4000-8000-000000000302';
 const LOT_BOX = '90000000-0000-4000-8000-000000000303';
 const LOT_BLOCKED = '90000000-0000-4000-8000-000000000304';
 const LOT_STORE_B = '90000000-0000-4000-8000-000000000305';
+const LOT_SINGLE_SUPPLIER = '90000000-0000-4000-8000-000000000306';
 
 function requireTestDatabaseUrl() {
   const databaseUrl = process.env.PACKING_PG_TEST_DATABASE_URL;
@@ -80,6 +84,10 @@ async function cleanup(client) {
     [STORE_A, STORE_B]
   ).catch(() => {});
   await client.query(
+    `DELETE FROM suppliers WHERE store_id IN ($1::uuid, $2::uuid)`,
+    [STORE_A, STORE_B]
+  ).catch(() => {});
+  await client.query(
     `DELETE FROM articles WHERE store_id IN ($1::uuid, $2::uuid)`,
     [STORE_A, STORE_B]
   ).catch(() => {});
@@ -125,19 +133,48 @@ async function seed(client) {
     [ARTICLE_STORE_B, STORE_B]
   );
   await client.query(
-    `INSERT INTO lots(id, store_id, article_id, lot_code, source_type, qty_initial, qty_remaining, unit_cost_ex_vat, quality_status)
+    `INSERT INTO suppliers(id, store_id, code, name, supplier_type)
      VALUES
-       ($1::uuid, $6::uuid, $7::uuid, 'PACK-FISH-A', 'purchase', 3, 3, 8, 'available'),
-       ($2::uuid, $6::uuid, $8::uuid, 'PACK-FISH-B', 'purchase', 7, 7, 10, 'available'),
-       ($3::uuid, $6::uuid, $9::uuid, 'PACK-BOX-A', 'purchase', 5, 5, 1.5, 'available'),
-       ($4::uuid, $6::uuid, $7::uuid, 'PACK-BLOCKED', 'purchase', 1, 1, 8, 'blocked'),
-       ($5::uuid, $10::uuid, $11::uuid, 'PACK-STORE-B', 'purchase', 1, 1, 8, 'available')
+       ($1::uuid, $4::uuid, 'SUPX', 'Fournisseur X', 'mareyeur'),
+       ($2::uuid, $4::uuid, 'SUPY', 'Fournisseur Y', 'mareyeur'),
+       ($3::uuid, $4::uuid, 'BOX', 'Fournisseur Emballages', 'emballage')
+     ON CONFLICT (store_id, code) DO UPDATE
+       SET name = EXCLUDED.name,
+           supplier_type = EXCLUDED.supplier_type`,
+    [SUPPLIER_X, SUPPLIER_Y, SUPPLIER_BOX, STORE_A]
+  );
+  await client.query(
+    `INSERT INTO lots(id, store_id, article_id, supplier_id, lot_code, source_type, qty_initial, qty_remaining, unit_cost_ex_vat, quality_status)
+     VALUES
+       ($1::uuid, $7::uuid, $8::uuid, $11::uuid, 'PACK-FISH-A', 'purchase', 3, 3, 8, 'available'),
+       ($2::uuid, $7::uuid, $9::uuid, $12::uuid, 'PACK-FISH-B', 'purchase', 7, 7, 10, 'available'),
+       ($3::uuid, $7::uuid, $10::uuid, $13::uuid, 'PACK-BOX-A', 'purchase', 5, 5, 1.5, 'available'),
+       ($4::uuid, $7::uuid, $8::uuid, $11::uuid, 'PACK-BLOCKED', 'purchase', 1, 1, 8, 'blocked'),
+       ($5::uuid, $14::uuid, $15::uuid, NULL, 'PACK-STORE-B', 'purchase', 1, 1, 8, 'available'),
+       ($6::uuid, $7::uuid, $8::uuid, $11::uuid, 'PACK-SINGLE-SUPPLIER', 'purchase', 1, 1, 8, 'available')
      ON CONFLICT (store_id, lot_code) DO UPDATE
        SET qty_initial = EXCLUDED.qty_initial,
            qty_remaining = EXCLUDED.qty_remaining,
            unit_cost_ex_vat = EXCLUDED.unit_cost_ex_vat,
-           quality_status = EXCLUDED.quality_status`,
-    [LOT_A, LOT_B, LOT_BOX, LOT_BLOCKED, LOT_STORE_B, STORE_A, ARTICLE_FISH_A, ARTICLE_FISH_B, ARTICLE_BOX, STORE_B, ARTICLE_STORE_B]
+           quality_status = EXCLUDED.quality_status,
+           supplier_id = EXCLUDED.supplier_id`,
+    [
+      LOT_A,
+      LOT_B,
+      LOT_BOX,
+      LOT_BLOCKED,
+      LOT_STORE_B,
+      LOT_SINGLE_SUPPLIER,
+      STORE_A,
+      ARTICLE_FISH_A,
+      ARTICLE_FISH_B,
+      ARTICLE_BOX,
+      SUPPLIER_X,
+      SUPPLIER_Y,
+      SUPPLIER_BOX,
+      STORE_B,
+      ARTICLE_STORE_B,
+    ]
   );
 }
 
@@ -163,6 +200,17 @@ async function main() {
     });
     assert.strictEqual(draft.status, 'draft');
     assert.strictEqual(Number(draft.total_output_quantity), 10);
+
+    await assert.rejects(
+      () => createPackingDraft(pool, {
+        storeId: STORE_A,
+        userId: USER_A,
+        outputArticleId: ARTICLE_OUTPUT,
+        packageCount: 2.5,
+        quantityPerPackage: 5,
+      }),
+      (error) => error.code === 'PACKING_INVALID_OUTPUT_QUANTITY'
+    );
 
     await addPackingSourceLot(pool, { storeId: STORE_A, packingOperationId: draft.id, lotId: LOT_A, quantityUsed: 3 });
     await addPackingSourceLot(pool, { storeId: STORE_A, packingOperationId: draft.id, lotId: LOT_B, quantityUsed: 7 });
@@ -197,7 +245,7 @@ async function main() {
     assert.strictEqual(validated.materials.length, 1);
 
     const lots = await client.query(
-      `SELECT id, qty_initial, qty_remaining, unit_cost_ex_vat, source_type, traceability_data
+      `SELECT id, qty_initial, qty_remaining, unit_cost_ex_vat, supplier_id, source_type, traceability_data
        FROM lots
        WHERE id IN ($1::uuid, $2::uuid, $3::uuid, $4::uuid)`,
       [LOT_A, LOT_B, LOT_BOX, validated.output_lot_id]
@@ -209,8 +257,13 @@ async function main() {
     assert.strictEqual(Number(byId[validated.output_lot_id].qty_initial), 10);
     assert.strictEqual(Number(byId[validated.output_lot_id].qty_remaining), 10);
     assert.strictEqual(Number(byId[validated.output_lot_id].unit_cost_ex_vat), 9.7);
+    assert.strictEqual(byId[validated.output_lot_id].supplier_id, null);
     assert.strictEqual(byId[validated.output_lot_id].source_type, 'packing');
     assert.strictEqual(byId[validated.output_lot_id].traceability_data.source_lots.length, 2);
+    assert.deepStrictEqual(
+      byId[validated.output_lot_id].traceability_data.source_lots.map((lot) => [lot.supplier_id, lot.supplier_name]).sort(),
+      [[SUPPLIER_X, 'Fournisseur X'], [SUPPLIER_Y, 'Fournisseur Y']].sort()
+    );
 
     const movements = await client.query(
       `SELECT movement_type, quantity
@@ -244,11 +297,47 @@ async function main() {
       (error) => error.code === 'PACKING_ALREADY_VALIDATED'
     );
 
+    const singleSupplierDraft = await createPackingDraft(pool, {
+      storeId: STORE_A,
+      userId: USER_A,
+      clientKey: 'packing-test-a',
+      outputArticleId: ARTICLE_OUTPUT,
+      packageCount: 1,
+      quantityPerPackage: 1,
+      notes: 'Single supplier output keeps supplier null',
+    });
+    await addPackingSourceLot(pool, {
+      storeId: STORE_A,
+      packingOperationId: singleSupplierDraft.id,
+      lotId: LOT_SINGLE_SUPPLIER,
+      quantityUsed: 1,
+    });
+    const singleSupplierValidated = await validatePackingOperation(pool, {
+      storeId: STORE_A,
+      userId: USER_A,
+      clientKey: 'packing-test-a',
+      packingOperationId: singleSupplierDraft.id,
+    });
+    const singleOutput = await client.query(
+      `SELECT supplier_id, traceability_data
+       FROM lots
+       WHERE id = $1::uuid
+         AND store_id = $2::uuid`,
+      [singleSupplierValidated.output_lot_id, STORE_A]
+    );
+    assert.strictEqual(singleOutput.rows[0].supplier_id, null);
+    assert.deepStrictEqual(
+      singleOutput.rows[0].traceability_data.source_lots.map((lot) => [lot.supplier_id, lot.supplier_name]),
+      [[SUPPLIER_X, 'Fournisseur X']]
+    );
+
     console.log(JSON.stringify({
       ok: true,
       migration: '106_packing_foundation.sql',
       tests: [
         'create_draft',
+        'integer_package_count_accepted',
+        'decimal_package_count_refused',
         'add_two_fish_lots',
         'add_one_packaging_material',
         'fish_cost_94',
@@ -264,6 +353,9 @@ async function main() {
         'product_as_material_refused',
         'second_validate_refused',
         'traceability_source_output_kept',
+        'output_supplier_null_multi_supplier',
+        'output_supplier_null_single_supplier',
+        'source_supplier_traceability_kept',
       ],
     }, null, 2));
   } finally {
