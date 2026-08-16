@@ -3,8 +3,10 @@ const fs = require('fs');
 const path = require('path');
 
 const {
+  ACTIVE_CAMPAIGN_UNIQUE_INDEX,
   analyzeLotRecallImpact,
   createProductRecallDraft,
+  isActiveCampaignUniqueViolation,
 } = require('../services/productRecallService');
 
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -85,6 +87,7 @@ class FakeRecallDb {
     this.nextId = 1;
     this.snapshots = [];
     this.failOnRecipientInsert = false;
+    this.failCampaignInsertConstraint = null;
   }
 
   deliveryRow(reference, clientId, billedClientId, quantity) {
@@ -196,6 +199,12 @@ class FakeRecallDb {
     }
 
     if (normalized.startsWith('INSERT INTO product_recall_campaigns')) {
+      if (this.failCampaignInsertConstraint) {
+        const error = new Error('duplicate key value violates unique constraint');
+        error.code = '23505';
+        error.constraint = this.failCampaignInsertConstraint;
+        throw error;
+      }
       const row = {
         id: params[0],
         store_id: params[1],
@@ -384,6 +393,43 @@ async function testDraftTransactionAndEvidence() {
   );
 }
 
+async function testConcurrentActiveCampaignConflict() {
+  const db = new FakeRecallDb();
+  db.failCampaignInsertConstraint = ACTIVE_CAMPAIGN_UNIQUE_INDEX;
+
+  await assert.rejects(
+    () => createProductRecallDraft({
+      db,
+      storeId: STORE_A,
+      lotId: LOT_A,
+      userId: USER_ID,
+      recallType: 'supplier_recall',
+      reason: 'Conflit concurrent',
+    }),
+    (error) => (
+      error.status === 409
+      && error.code === 'PRODUCT_RECALL_ACTIVE_EXISTS'
+      && error.needsActiveCampaignLookup === true
+    )
+  );
+
+  db.failCampaignInsertConstraint = 'some_other_unique_constraint';
+  await assert.rejects(
+    () => createProductRecallDraft({
+      db,
+      storeId: STORE_A,
+      lotId: LOT_A,
+      userId: USER_ID,
+      recallType: 'supplier_recall',
+      reason: 'Autre contrainte',
+    }),
+    (error) => error.code === '23505' && error.constraint === 'some_other_unique_constraint' && !error.status
+  );
+
+  assert.strictEqual(isActiveCampaignUniqueViolation({ code: '23505', constraint: ACTIVE_CAMPAIGN_UNIQUE_INDEX }), true);
+  assert.strictEqual(isActiveCampaignUniqueViolation({ code: '23505', constraint: 'other' }), false);
+}
+
 async function testAlreadyBlockedDoesNotOverwrite() {
   const db = new FakeRecallDb();
   const lot = db.lots.find((row) => row.lot_id === LOT_EMPTY);
@@ -450,6 +496,8 @@ function testStaticGuards() {
   assert(service.includes("eventType: 'product_recall_initiated'"));
   assert(service.includes("evidenceType: 'product_recall_record'"));
   assert(service.includes("sourceType: 'product_recall'"));
+  assert(service.includes("error.code === '23505'"));
+  assert(service.includes("error.constraint === ACTIVE_CAMPAIGN_UNIQUE_INDEX"));
   assert(!service.includes('sendEmail'));
   assert(!route.includes('sendEmail'));
 }
@@ -457,6 +505,7 @@ function testStaticGuards() {
 async function main() {
   await testAnalysis();
   await testDraftTransactionAndEvidence();
+  await testConcurrentActiveCampaignConflict();
   await testAlreadyBlockedDoesNotOverwrite();
   await testRollback();
   testStaticGuards();
@@ -469,6 +518,7 @@ async function main() {
       'multi_store_404',
       'draft_transaction_block_campaign_recipients_event_evidence',
       'active_campaign_idempotence',
+      'concurrent_active_campaign_unique_23505',
       'already_blocked_no_overwrite',
       'rollback',
       'static_guards_no_email',

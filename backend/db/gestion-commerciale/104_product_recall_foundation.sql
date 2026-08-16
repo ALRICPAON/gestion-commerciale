@@ -5,48 +5,78 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 DO $$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'clients_id_store_id_unique'
-      AND conrelid = 'clients'::regclass
+    SELECT 1
+    FROM pg_constraint c
+    WHERE c.conrelid = 'clients'::regclass
+      AND c.contype IN ('p', 'u')
+      AND (
+        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
+      ) = ARRAY['id', 'store_id']
   ) THEN
     ALTER TABLE clients
-      ADD CONSTRAINT clients_id_store_id_unique UNIQUE (id, store_id);
+      ADD CONSTRAINT product_recall_clients_id_store_id_unique UNIQUE (id, store_id);
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'articles_id_store_id_unique'
-      AND conrelid = 'articles'::regclass
+    SELECT 1
+    FROM pg_constraint c
+    WHERE c.conrelid = 'articles'::regclass
+      AND c.contype IN ('p', 'u')
+      AND (
+        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
+      ) = ARRAY['id', 'store_id']
   ) THEN
     ALTER TABLE articles
-      ADD CONSTRAINT articles_id_store_id_unique UNIQUE (id, store_id);
+      ADD CONSTRAINT product_recall_articles_id_store_id_unique UNIQUE (id, store_id);
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'client_contacts_id_store_id_unique'
-      AND conrelid = 'client_contacts'::regclass
+    SELECT 1
+    FROM pg_constraint c
+    WHERE c.conrelid = 'client_contacts'::regclass
+      AND c.contype IN ('p', 'u')
+      AND (
+        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
+      ) = ARRAY['id', 'store_id']
   ) THEN
     ALTER TABLE client_contacts
-      ADD CONSTRAINT client_contacts_id_store_id_unique UNIQUE (id, store_id);
+      ADD CONSTRAINT product_recall_client_contacts_id_store_id_unique UNIQUE (id, store_id);
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'quality_events_id_store_id_unique'
-      AND conrelid = 'quality_events'::regclass
+    SELECT 1
+    FROM pg_constraint c
+    WHERE c.conrelid = 'quality_events'::regclass
+      AND c.contype IN ('p', 'u')
+      AND (
+        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
+      ) = ARRAY['id', 'store_id']
   ) THEN
     ALTER TABLE quality_events
-      ADD CONSTRAINT quality_events_id_store_id_unique UNIQUE (id, store_id);
+      ADD CONSTRAINT product_recall_quality_events_id_store_id_unique UNIQUE (id, store_id);
   END IF;
 
   IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'quality_evidence_records_id_store_id_unique'
-      AND conrelid = 'quality_evidence_records'::regclass
+    SELECT 1
+    FROM pg_constraint c
+    WHERE c.conrelid = 'quality_evidence_records'::regclass
+      AND c.contype IN ('p', 'u')
+      AND (
+        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
+      ) = ARRAY['id', 'store_id']
   ) THEN
     ALTER TABLE quality_evidence_records
-      ADD CONSTRAINT quality_evidence_records_id_store_id_unique UNIQUE (id, store_id);
+      ADD CONSTRAINT product_recall_quality_evidence_records_id_store_id_unique UNIQUE (id, store_id);
   END IF;
 END $$;
 

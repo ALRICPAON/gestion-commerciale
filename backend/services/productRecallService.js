@@ -9,6 +9,7 @@ const {
 } = require('./quality/events');
 
 const ACTIVE_CAMPAIGN_STATUSES = ['draft', 'ready', 'sending', 'sent', 'partial'];
+const ACTIVE_CAMPAIGN_UNIQUE_INDEX = 'uq_product_recall_active_lot';
 const RECALL_TYPES = new Set([
   'supplier_recall',
   'health_alert',
@@ -39,6 +40,18 @@ function makeError(message, status, code, details = null) {
   if (code) error.code = code;
   if (details) error.details = details;
   return error;
+}
+
+function isActiveCampaignUniqueViolation(error) {
+  return Boolean(
+    error
+    && error.code === '23505'
+    && error.constraint === ACTIVE_CAMPAIGN_UNIQUE_INDEX
+  );
+}
+
+function activeCampaignExistsError(details = null) {
+  return makeError('Une campagne de retrait/rappel est déjà active pour ce lot', 409, 'PRODUCT_RECALL_ACTIVE_EXISTS', details);
 }
 
 function assertRecallDraftInput({ storeId, lotId, recallType, reason, comment }) {
@@ -350,21 +363,27 @@ function buildEvidencePayload({ campaign, analysis, recallType, reason, comment,
 }
 
 async function assertNoActiveCampaign(db, storeId, lotId) {
+  const existing = await getActiveCampaign(db, storeId, lotId);
+  if (existing) {
+    throw activeCampaignExistsError({
+      campaign_id: existing.id,
+      status: existing.status,
+    });
+  }
+}
+
+async function getActiveCampaign(db, storeId, lotId) {
   const result = await db.query(
     `SELECT id, status
      FROM product_recall_campaigns
      WHERE store_id = $1::uuid
        AND lot_id = $2::uuid
        AND status = ANY($3::text[])
+     ORDER BY initiated_at DESC NULLS LAST, created_at DESC NULLS LAST, id DESC
      LIMIT 1`,
     [storeId, lotId, ACTIVE_CAMPAIGN_STATUSES]
   );
-  if (result.rows[0]) {
-    throw makeError('Une campagne de retrait/rappel est deja active pour ce lot', 409, 'PRODUCT_RECALL_ACTIVE_EXISTS', {
-      campaign_id: result.rows[0].id,
-      status: result.rows[0].status,
-    });
-  }
+  return result.rows[0] || null;
 }
 
 async function createProductRecallDraft({
@@ -408,26 +427,35 @@ async function createProductRecallDraft({
     }
   }
 
-  const campaignResult = await db.query(
-    `INSERT INTO product_recall_campaigns (
-       id, store_id, lot_id, article_id, status, recall_type, reason, comment,
-       initiated_by, initiated_at, prepared_at, created_by, updated_by
-     ) VALUES (
-       $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'draft', $5::text, $6::text, $7::text,
-       $8::uuid, now(), now(), $8::uuid, $8::uuid
-     )
-     RETURNING *`,
-    [
-      campaignId,
-      storeId,
-      lotId,
-      analysis.article.article_id,
-      normalized.recallType,
-      normalized.reason,
-      normalized.comment,
-      userId,
-    ]
-  );
+  let campaignResult;
+  try {
+    campaignResult = await db.query(
+      `INSERT INTO product_recall_campaigns (
+         id, store_id, lot_id, article_id, status, recall_type, reason, comment,
+         initiated_by, initiated_at, prepared_at, created_by, updated_by
+       ) VALUES (
+         $1::uuid, $2::uuid, $3::uuid, $4::uuid, 'draft', $5::text, $6::text, $7::text,
+         $8::uuid, now(), now(), $8::uuid, $8::uuid
+       )
+       RETURNING *`,
+      [
+        campaignId,
+        storeId,
+        lotId,
+        analysis.article.article_id,
+        normalized.recallType,
+        normalized.reason,
+        normalized.comment,
+        userId,
+      ]
+    );
+  } catch (error) {
+    if (!isActiveCampaignUniqueViolation(error)) throw error;
+    const conflict = activeCampaignExistsError();
+    conflict.cause = error;
+    conflict.needsActiveCampaignLookup = true;
+    throw conflict;
+  }
   const campaign = campaignResult.rows[0];
 
   const recipients = [];
@@ -536,7 +564,10 @@ async function createProductRecallDraft({
 
 module.exports = {
   ACTIVE_CAMPAIGN_STATUSES,
+  ACTIVE_CAMPAIGN_UNIQUE_INDEX,
   RECALL_TYPES,
   analyzeLotRecallImpact,
   createProductRecallDraft,
+  getActiveCampaign,
+  isActiveCampaignUniqueViolation,
 };

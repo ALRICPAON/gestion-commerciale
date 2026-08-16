@@ -11,6 +11,7 @@ const {
 const {
   analyzeLotRecallImpact,
   createProductRecallDraft,
+  getActiveCampaign,
 } = require('../services/productRecallService');
 
 const router = express.Router();
@@ -577,6 +578,15 @@ router.post('/lots/:lotId/recall', authenticateToken, attachDbContext, requireAd
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     console.error('Erreur POST /api/traceability/lots/:lotId/recall :', err);
+    if (err.code === 'PRODUCT_RECALL_ACTIVE_EXISTS' && err.needsActiveCampaignLookup) {
+      const existing = await getActiveCampaign(req.dbPool, req.user.store_id, clean(req.params.lotId)).catch(() => null);
+      if (existing) {
+        err.details = {
+          campaign_id: existing.id,
+          status: existing.status,
+        };
+      }
+    }
     return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur creation campagne retrait/rappel'));
   } finally {
     client.release();
