@@ -10,10 +10,10 @@ BEGIN
     WHERE c.conrelid = 'clients'::regclass
       AND c.contype IN ('p', 'u')
       AND (
-        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        SELECT array_agg(a.attname::text ORDER BY keys.ordinality)
         FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
-      ) = ARRAY['id', 'store_id']
+      ) = ARRAY['id', 'store_id']::text[]
   ) THEN
     ALTER TABLE clients
       ADD CONSTRAINT product_recall_clients_id_store_id_unique UNIQUE (id, store_id);
@@ -25,10 +25,10 @@ BEGIN
     WHERE c.conrelid = 'articles'::regclass
       AND c.contype IN ('p', 'u')
       AND (
-        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        SELECT array_agg(a.attname::text ORDER BY keys.ordinality)
         FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
-      ) = ARRAY['id', 'store_id']
+      ) = ARRAY['id', 'store_id']::text[]
   ) THEN
     ALTER TABLE articles
       ADD CONSTRAINT product_recall_articles_id_store_id_unique UNIQUE (id, store_id);
@@ -40,10 +40,10 @@ BEGIN
     WHERE c.conrelid = 'client_contacts'::regclass
       AND c.contype IN ('p', 'u')
       AND (
-        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        SELECT array_agg(a.attname::text ORDER BY keys.ordinality)
         FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
-      ) = ARRAY['id', 'store_id']
+      ) = ARRAY['id', 'store_id']::text[]
   ) THEN
     ALTER TABLE client_contacts
       ADD CONSTRAINT product_recall_client_contacts_id_store_id_unique UNIQUE (id, store_id);
@@ -55,10 +55,10 @@ BEGIN
     WHERE c.conrelid = 'quality_events'::regclass
       AND c.contype IN ('p', 'u')
       AND (
-        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        SELECT array_agg(a.attname::text ORDER BY keys.ordinality)
         FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
-      ) = ARRAY['id', 'store_id']
+      ) = ARRAY['id', 'store_id']::text[]
   ) THEN
     ALTER TABLE quality_events
       ADD CONSTRAINT product_recall_quality_events_id_store_id_unique UNIQUE (id, store_id);
@@ -70,10 +70,10 @@ BEGIN
     WHERE c.conrelid = 'quality_evidence_records'::regclass
       AND c.contype IN ('p', 'u')
       AND (
-        SELECT array_agg(a.attname ORDER BY keys.ordinality)
+        SELECT array_agg(a.attname::text ORDER BY keys.ordinality)
         FROM unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality)
         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = keys.attnum
-      ) = ARRAY['id', 'store_id']
+      ) = ARRAY['id', 'store_id']::text[]
   ) THEN
     ALTER TABLE quality_evidence_records
       ADD CONSTRAINT product_recall_quality_evidence_records_id_store_id_unique UNIQUE (id, store_id);
