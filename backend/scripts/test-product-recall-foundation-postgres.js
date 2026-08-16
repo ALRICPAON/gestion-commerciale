@@ -25,7 +25,10 @@ const LOT_A = '80000000-0000-4000-8000-000000000301';
 const LOT_ROLLBACK = '80000000-0000-4000-8000-000000000302';
 const CLIENT_A = '80000000-0000-4000-8000-000000000401';
 const CLIENT_B = '80000000-0000-4000-8000-000000000402';
+const CLIENT_A_EXTRA = '80000000-0000-4000-8000-000000000403';
+const CLIENT_STORE_B = '80000000-0000-4000-8000-000000000404';
 const CONTACT_A = '80000000-0000-4000-8000-000000000501';
+const CONTACT_STORE_B = '80000000-0000-4000-8000-000000000502';
 const DOC_A = '80000000-0000-4000-8000-000000000601';
 const DOC_B = '80000000-0000-4000-8000-000000000602';
 const LINE_A = '80000000-0000-4000-8000-000000000701';
@@ -102,8 +105,8 @@ async function cleanup(client) {
     [ARTICLE_A]
   ).catch(() => {});
   await client.query(
-    `DELETE FROM clients WHERE id IN ($1::uuid, $2::uuid)`,
-    [CLIENT_A, CLIENT_B]
+    `DELETE FROM clients WHERE id IN ($1::uuid, $2::uuid, $3::uuid, $4::uuid)`,
+    [CLIENT_A, CLIENT_B, CLIENT_A_EXTRA, CLIENT_STORE_B]
   ).catch(() => {});
   await client.query(
     `DELETE FROM users WHERE id = $1::uuid`,
@@ -145,19 +148,21 @@ async function seed(client) {
   await client.query(
     `INSERT INTO clients (id, store_id, code, name, email, status)
      VALUES
-       ($1::uuid, $3::uuid, 'LIV-A', 'Client livre A', NULL, 'active'),
-       ($2::uuid, $3::uuid, 'LIV-B', 'Client livre B', 'client-b-recall@example.test', 'active')
+        ($1::uuid, $3::uuid, 'LIV-A', 'Client livre A', NULL, 'active'),
+        ($2::uuid, $3::uuid, 'LIV-B', 'Client livre B', 'client-b-recall@example.test', 'active'),
+        ($4::uuid, $3::uuid, 'LIV-A2', 'Client A non destinataire', 'client-a2-recall@example.test', 'active'),
+        ($5::uuid, $6::uuid, 'LIV-B-STORE', 'Client magasin B', 'client-store-b-recall@example.test', 'active')
      ON CONFLICT (id) DO NOTHING`,
-    [CLIENT_A, CLIENT_B, STORE_A]
+    [CLIENT_A, CLIENT_B, STORE_A, CLIENT_A_EXTRA, CLIENT_STORE_B, STORE_B]
   );
   await client.query(
     `INSERT INTO client_contacts (
        id, store_id, client_id, contact_name, email, receives_delivery_notes, is_primary, status
-     ) VALUES (
-       $1::uuid, $2::uuid, $3::uuid, 'Contact BL A', 'contact-a-recall@example.test', true, false, 'active'
-     )
+     ) VALUES
+       ($1::uuid, $2::uuid, $3::uuid, 'Contact BL A', 'contact-a-recall@example.test', true, false, 'active'),
+       ($4::uuid, $5::uuid, $6::uuid, 'Contact store B', 'contact-store-b-recall@example.test', true, false, 'active')
      ON CONFLICT (id) DO NOTHING`,
-    [CONTACT_A, STORE_A, CLIENT_A]
+    [CONTACT_A, STORE_A, CLIENT_A, CONTACT_STORE_B, STORE_B, CLIENT_STORE_B]
   );
   await client.query(
     `INSERT INTO lots (id, store_id, article_id, lot_code, supplier_lot_number, qty_initial, qty_remaining)
@@ -278,21 +283,65 @@ async function main() {
 
     await client.query('BEGIN');
     try {
-      await client.query('SAVEPOINT recall_fk_store');
-      let fkRejected = false;
+      await client.query('SAVEPOINT recall_fk_campaign_store');
+      let campaignStoreError = null;
       try {
         await client.query(
           `INSERT INTO product_recall_recipients (
              store_id, campaign_id, delivered_client_id, status
            ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'ready')`,
-          [STORE_B, draft.campaign.id, CLIENT_A]
+          [STORE_B, draft.campaign.id, CLIENT_STORE_B]
         );
       } catch (error) {
-        fkRejected = error.code === '23503';
+        campaignStoreError = { code: error.code, constraint: error.constraint };
       }
-      await client.query('ROLLBACK TO SAVEPOINT recall_fk_store');
-      await client.query('RELEASE SAVEPOINT recall_fk_store');
-      assert.strictEqual(fkRejected, true, 'FK composite recipient/campaign doit refuser un croisement magasin');
+      await client.query('ROLLBACK TO SAVEPOINT recall_fk_campaign_store');
+      await client.query('RELEASE SAVEPOINT recall_fk_campaign_store');
+      assert.deepStrictEqual(
+        campaignStoreError,
+        { code: '23503', constraint: 'product_recall_recipients_campaign_store_fk' },
+        'FK composite recipient/campaign doit refuser un croisement magasin'
+      );
+
+      await client.query('SAVEPOINT recall_fk_client_store');
+      let clientStoreError = null;
+      try {
+        await client.query(
+          `INSERT INTO product_recall_recipients (
+             store_id, campaign_id, delivered_client_id, status
+           ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'ready')`,
+          [STORE_A, draft.campaign.id, CLIENT_STORE_B]
+        );
+      } catch (error) {
+        clientStoreError = { code: error.code, constraint: error.constraint };
+      }
+      await client.query('ROLLBACK TO SAVEPOINT recall_fk_client_store');
+      await client.query('RELEASE SAVEPOINT recall_fk_client_store');
+      assert.deepStrictEqual(
+        clientStoreError,
+        { code: '23503', constraint: 'product_recall_recipients_client_store_fk' },
+        'FK composite recipient/client doit refuser un croisement magasin'
+      );
+
+      await client.query('SAVEPOINT recall_fk_contact_store');
+      let contactStoreError = null;
+      try {
+        await client.query(
+          `INSERT INTO product_recall_recipients (
+             store_id, campaign_id, delivered_client_id, contact_id, status
+           ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid, 'ready')`,
+          [STORE_A, draft.campaign.id, CLIENT_A_EXTRA, CONTACT_STORE_B]
+        );
+      } catch (error) {
+        contactStoreError = { code: error.code, constraint: error.constraint };
+      }
+      await client.query('ROLLBACK TO SAVEPOINT recall_fk_contact_store');
+      await client.query('RELEASE SAVEPOINT recall_fk_contact_store');
+      assert.deepStrictEqual(
+        contactStoreError,
+        { code: '23503', constraint: 'product_recall_recipients_contact_store_fk' },
+        'FK composite recipient/contact doit refuser un croisement magasin'
+      );
 
       await client.query('SAVEPOINT recall_unique_active');
       let uniqueRejected = false;
@@ -368,7 +417,9 @@ async function main() {
       migration_104_applied: true,
       draft_campaign_created: true,
       recipients_created: true,
-      composite_fk_store_guard: true,
+      composite_fk_campaign_store_guard: true,
+      composite_fk_client_store_guard: true,
+      composite_fk_contact_store_guard: true,
       active_campaign_unique_index: true,
       second_active_campaign_rejected: true,
       closed_campaign_allows_new_draft: true,
