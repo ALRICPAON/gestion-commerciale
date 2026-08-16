@@ -386,6 +386,114 @@ async function getActiveCampaign(db, storeId, lotId) {
   return result.rows[0] || null;
 }
 
+async function getProductRecallCampaign({ db, storeId, campaignId } = {}) {
+  if (!db || typeof db.query !== 'function') throw makeError('Connexion base invalide', 500, 'INVALID_DB');
+  if (!isUuid(storeId)) throw makeError('Magasin invalide', 400, 'INVALID_STORE');
+  if (!isUuid(campaignId)) throw makeError('ID campagne invalide', 400, 'INVALID_RECALL_CAMPAIGN');
+
+  const campaignResult = await db.query(
+    `SELECT
+       c.*,
+       l.lot_code,
+       l.supplier_lot_number,
+       l.qty_initial,
+       l.qty_remaining,
+       COALESCE(l.quality_status, 'available') AS quality_status,
+       l.quality_block_reason,
+       l.quality_block_reason_type,
+       l.quality_block_comment,
+       l.quality_blocked_at,
+       a.plu AS article_plu,
+       a.designation AS article_label,
+       a.unit AS article_unit,
+       a.family_name,
+       u.email AS initiated_by_email
+     FROM product_recall_campaigns c
+     JOIN lots l ON l.id = c.lot_id AND l.store_id = c.store_id
+     LEFT JOIN articles a ON a.id = c.article_id AND a.store_id = c.store_id
+     LEFT JOIN users u ON u.id = c.initiated_by
+     WHERE c.store_id = $1::uuid
+       AND c.id = $2::uuid
+     LIMIT 1`,
+    [storeId, campaignId]
+  );
+  const row = campaignResult.rows[0];
+  if (!row) throw makeError('Rappel produit introuvable pour ce magasin', 404, 'PRODUCT_RECALL_NOT_FOUND');
+
+  const recipientsResult = await db.query(
+    `SELECT *
+     FROM product_recall_recipients
+     WHERE store_id = $1::uuid
+       AND campaign_id = $2::uuid
+     ORDER BY
+       CASE status WHEN 'ready' THEN 1 WHEN 'contact_required' THEN 2 ELSE 3 END,
+       delivered_client_name ASC NULLS LAST,
+       delivered_client_id ASC`,
+    [storeId, campaignId]
+  );
+
+  return {
+    campaign: {
+      id: row.id,
+      store_id: row.store_id,
+      lot_id: row.lot_id,
+      article_id: row.article_id,
+      status: row.status,
+      recall_type: row.recall_type,
+      reason: row.reason,
+      comment: row.comment,
+      initiated_by: row.initiated_by,
+      initiated_by_email: row.initiated_by_email || null,
+      initiated_at: row.initiated_at,
+      prepared_at: row.prepared_at,
+      sent_at: row.sent_at,
+      closed_at: row.closed_at,
+      quality_event_id: row.quality_event_id,
+      quality_evidence_record_id: row.quality_evidence_record_id,
+    },
+    lot: {
+      lot_id: row.lot_id,
+      lot_code: row.lot_code,
+      supplier_lot_number: row.supplier_lot_number || null,
+      qty_initial: toNumber(row.qty_initial),
+      stock_remaining: toNumber(row.qty_remaining),
+      quality: {
+        status: row.quality_status || 'available',
+        block_reason: row.quality_block_reason || null,
+        block_reason_type: row.quality_block_reason_type || null,
+        block_comment: row.quality_block_comment || null,
+        blocked_at: row.quality_blocked_at || null,
+      },
+    },
+    article: {
+      article_id: row.article_id,
+      plu: row.article_plu || null,
+      designation: row.article_label || null,
+      unit: row.article_unit || null,
+      family_name: row.family_name || null,
+    },
+    recipients: recipientsResult.rows.map((recipient) => ({
+      id: recipient.id,
+      delivered_client_id: recipient.delivered_client_id,
+      delivered_client_name: recipient.delivered_client_name,
+      delivered_client_code: recipient.delivered_client_code,
+      delivered_client_store_identifier: recipient.delivered_client_store_identifier,
+      email: recipient.email,
+      contact_id: recipient.contact_id,
+      contact_name: recipient.contact_name,
+      contact_source: recipient.contact_source,
+      status: recipient.status,
+      delivered_quantity: toNumber(recipient.delivered_quantity),
+      delivery_note_count: Number(recipient.delivery_note_count || 0),
+      delivery_notes: Array.isArray(recipient.delivery_notes) ? recipient.delivery_notes : [],
+      prepared_subject: recipient.prepared_subject || null,
+      prepared_body: recipient.prepared_body || null,
+      sent_at: recipient.sent_at || null,
+      error_message: recipient.error_message || null,
+    })),
+  };
+}
+
 async function createProductRecallDraft({
   db,
   storeId,
@@ -569,5 +677,6 @@ module.exports = {
   analyzeLotRecallImpact,
   createProductRecallDraft,
   getActiveCampaign,
+  getProductRecallCampaign,
   isActiveCampaignUniqueViolation,
 };

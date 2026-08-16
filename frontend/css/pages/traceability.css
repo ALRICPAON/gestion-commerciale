@@ -220,7 +220,8 @@
 }
 
 .trace-card-actions,
-.trace-load-more {
+.trace-load-more,
+.trace-actions-row {
   display: flex;
   gap: 10px;
   margin-top: 14px;
@@ -305,6 +306,161 @@
   padding: 16px;
 }
 
+.trace-card-note,
+.trace-section-header p,
+.trace-warning {
+  color: #64748b;
+  margin: 6px 0 0;
+}
+
+.trace-section-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.trace-recall-panel h4 {
+  color: #334155;
+  margin: 18px 0 10px;
+}
+
+.trace-recall-summary {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.trace-recall-summary div,
+.trace-recall-preview,
+.trace-recall-recipient {
+  background: #f8fafc;
+  border: 1px solid #edf1f5;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.trace-recall-summary span,
+.trace-recall-preview span {
+  color: #64748b;
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.trace-recall-alert,
+.trace-warning {
+  background: #fffaeb;
+  border: 1px solid #fedf89;
+  border-radius: 8px;
+  color: #93370d;
+  font-weight: 800;
+  margin-top: 12px;
+  padding: 10px;
+}
+
+.trace-recall-form {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(160px, 0.8fr) minmax(220px, 1fr) minmax(220px, 1fr);
+}
+
+.trace-recall-form .form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.trace-recall-form input,
+.trace-recall-form select,
+.trace-recall-form textarea,
+.trace-recall-preview textarea {
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  color: #111827;
+  font: inherit;
+  padding: 9px 11px;
+  width: 100%;
+}
+
+.trace-recall-recipient-list {
+  display: grid;
+  gap: 12px;
+}
+
+.trace-recall-recipient-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.trace-recall-check {
+  align-items: flex-start;
+  display: flex;
+  gap: 8px;
+}
+
+.trace-recall-check input {
+  margin-top: 3px;
+}
+
+.trace-recall-check small {
+  color: #64748b;
+  display: block;
+  font-size: 0.8rem;
+  margin-top: 2px;
+}
+
+.trace-recall-recipient-meta {
+  display: grid;
+  gap: 6px 12px;
+  grid-template-columns: 90px minmax(0, 1fr) 90px minmax(0, 1fr);
+  margin: 10px 0;
+}
+
+.trace-recall-recipient-meta dt {
+  color: #64748b;
+  font-weight: 900;
+}
+
+.trace-recall-recipient-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.trace-recall-notes {
+  border: 1px solid #d8e0e8;
+  border-radius: 8px;
+  list-style: none;
+  margin: 10px 0;
+  overflow: hidden;
+  padding: 0;
+}
+
+.trace-recall-notes li {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(110px, 1fr) 110px 90px;
+  padding: 8px 10px;
+}
+
+.trace-recall-notes li:nth-child(even) {
+  background: #ffffff;
+}
+
+.trace-recall-preview {
+  display: grid;
+  gap: 10px;
+}
+
+.trace-recall-preview label {
+  color: #334155;
+  font-weight: 900;
+}
+
 .trace-definition-list {
   display: grid;
   gap: 8px 14px;
@@ -375,6 +531,15 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .trace-recall-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .trace-recall-form,
+  .trace-recall-recipient-meta {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .trace-client-line,
   .trace-client-head,
   .trace-client-row {
@@ -390,16 +555,23 @@
   .trace-filters-grid,
   .trace-card-grid,
   .trace-summary-row,
-  .trace-client-line,
-  .trace-client-head,
-  .trace-client-row,
-  .trace-movement-line,
-  .trace-definition-list {
+    .trace-client-line,
+    .trace-client-head,
+    .trace-client-row,
+    .trace-movement-line,
+    .trace-definition-list,
+    .trace-recall-summary,
+    .trace-recall-form,
+    .trace-recall-recipient-meta,
+    .trace-recall-notes li {
     grid-template-columns: 1fr;
   }
 
   .trace-card-header,
-  .trace-modal-header {
+  .trace-modal-header,
+  .trace-section-header,
+  .trace-recall-recipient-head,
+  .trace-actions-row {
     flex-direction: column;
   }
 

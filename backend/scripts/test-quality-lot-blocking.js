@@ -220,7 +220,7 @@ function testStaticGuards() {
   assert(traceabilityFront.includes('qualityStatusBadge'));
   assert(traceabilityFront.includes('block-quality'));
   assert(traceabilityFront.includes('release-quality'));
-  assert(read('frontend/traceability.html').includes('traceability.js?v=2'));
+  assert(read('frontend/traceability.html').includes('traceability.js?v=3'));
 }
 
 async function main() {
