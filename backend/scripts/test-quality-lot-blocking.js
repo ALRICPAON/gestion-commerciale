@@ -3,7 +3,9 @@ const fs = require('fs');
 const path = require('path');
 
 const {
+  ALREADY_BLOCKED_CODE,
   BLOCKED_CODE,
+  NOT_BLOCKED_CODE,
   assertLotUsable,
   availableLotCondition,
   blockLotForQuality,
@@ -34,12 +36,14 @@ class FakeLotDb {
       { id: LOT_B, store_id: STORE_B, lot_code: 'LOT-B', quality_status: 'available', quality_non_conformity_id: null },
     ];
     this.history = [];
+    this.lockedReads = 0;
   }
 
   async query(sql, params = []) {
     const normalized = String(sql).replace(/\s+/g, ' ').trim();
 
     if (normalized.startsWith('SELECT id, store_id, lot_code, quality_status')) {
+      if (normalized.includes('FOR UPDATE')) this.lockedReads += 1;
       const row = this.lots.find((lot) => lot.id === params[0] && lot.store_id === params[1]);
       return { rows: row ? [clone(row)] : [] };
     }
@@ -119,6 +123,20 @@ async function testCentralService() {
   assert.strictEqual(blocked.history.previous_status, 'available');
   assert.strictEqual(blocked.history.new_status, 'blocked');
   assert.strictEqual(db.history.length, 1);
+  assert.strictEqual(db.lockedReads, 1);
+
+  await assert.rejects(
+    () => blockLotForQuality(db, {
+      storeId: STORE_A,
+      lotId: LOT_A,
+      userId: USER_ID,
+      reason: 'Nouveau motif interdit',
+      reasonType: 'quality_suspicion',
+    }),
+    (error) => error.code === ALREADY_BLOCKED_CODE && error.status === 409 && error.details.motif === 'Suspicion odeur'
+  );
+  assert.strictEqual(db.history.length, 1);
+  assert.strictEqual((await getLotQualityStatus(db, STORE_A, LOT_A)).quality_block_reason, 'Suspicion odeur');
 
   await assert.rejects(
     () => assertLotUsable(db, STORE_A, LOT_A),
@@ -127,6 +145,15 @@ async function testCentralService() {
 
   assert.strictEqual((await assertLotUsable(db, STORE_B, LOT_B)).id, LOT_B);
   assert.strictEqual(await assertLotUsable(db, STORE_A, LOT_B), null);
+
+  await assert.rejects(
+    () => blockLotForQuality(db, { storeId: STORE_A, lotId: LOT_A, userId: USER_ID, reason: '', reasonType: 'quality_suspicion' }),
+    /Motif de blocage obligatoire/
+  );
+  await assert.rejects(
+    () => blockLotForQuality(db, { storeId: STORE_A, lotId: LOT_A, userId: USER_ID, reason: 'Suspicion', reasonType: '' }),
+    /Type de motif de blocage obligatoire/
+  );
 
   await assert.rejects(
     () => releaseLotForQuality(db, { storeId: STORE_A, lotId: LOT_A, userId: USER_ID, reason: 'Analyse OK', comment: '' }),
@@ -142,13 +169,29 @@ async function testCentralService() {
   });
   assert.strictEqual(released.lot.quality_status, 'available');
   assert.strictEqual(db.history.length, 2);
+
+  await assert.rejects(
+    () => releaseLotForQuality(db, { storeId: STORE_A, lotId: LOT_A, userId: USER_ID, reason: 'Analyse OK', comment: 'Deja libre' }),
+    (error) => error.code === NOT_BLOCKED_CODE && error.status === 409
+  );
+  assert.strictEqual(db.history.length, 2);
+  assert.strictEqual(db.lockedReads, 4);
 }
 
 function testStaticGuards() {
   const migration = read('backend/db/gestion-commerciale/103_quality_lot_blocking.sql');
   assert(migration.includes('quality_status text NOT NULL DEFAULT'));
   assert(migration.includes('CREATE TABLE IF NOT EXISTS quality_lot_status_history'));
+  assert(migration.includes('lots_id_store_id_unique'));
+  assert(migration.includes('quality_non_conformities_id_store_id_unique'));
+  assert(migration.includes('FOREIGN KEY (lot_id, store_id)'));
+  assert(migration.includes('FOREIGN KEY (quality_non_conformity_id, store_id)'));
   assert(read('backend/db/gestion-commerciale/103_quality_lot_blocking_rollback.sql').includes('DROP TABLE IF EXISTS quality_lot_status_history'));
+
+  const lotBlocking = read('backend/services/quality/lotBlocking.js');
+  assert(lotBlocking.includes('FOR UPDATE'));
+  assert(lotBlocking.includes('LOT_ALREADY_QUALITY_BLOCKED'));
+  assert(lotBlocking.includes('LOT_NOT_QUALITY_BLOCKED'));
 
   const purchase = read('backend/routes/purchaseReceptionUpgrade.js');
   assert(purchase.includes('createNonConformity'));
