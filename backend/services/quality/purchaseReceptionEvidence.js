@@ -43,10 +43,90 @@ function jsonArray(value) {
   return [];
 }
 
+const CONTROL_STATUSES = new Set(['conform', 'non_conform']);
+const OVERALL_STATUSES = new Set(['conform', 'non_conform']);
+const CORRECTIVE_ACTIONS = new Set(['supplier_return', 'lot_isolation', 'accepted_with_reservation', 'destruction', 'other']);
+
 function evidenceDate(receiptDate = null) {
   if (!receiptDate) return new Date();
   const date = receiptDate instanceof Date ? receiptDate : new Date(receiptDate);
   return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function qualityControlError(message) {
+  return Object.assign(new Error(message), { status: 400 });
+}
+
+function normalizeControlStatus(raw, field) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw qualityControlError(`Controle qualite manquant pour ${field}`);
+  }
+  const status = text(raw.status);
+  if (!CONTROL_STATUSES.has(status)) {
+    throw qualityControlError(`Statut qualite invalide pour ${field}`);
+  }
+  return status;
+}
+
+function normalizeReceptionQualityControl(input, { required = false } = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    if (required) throw qualityControlError('Controle qualite reception obligatoire');
+    return null;
+  }
+
+  const overallStatus = text(input.overall_status);
+  if (!OVERALL_STATUSES.has(overallStatus)) {
+    throw qualityControlError('Statut global qualite invalide');
+  }
+
+  const temperatureStatus = normalizeControlStatus(input.temperature, 'temperature');
+  const temperatureValue = numberOrNull(input.temperature?.value_c);
+  if (input.temperature?.value_c !== undefined && input.temperature?.value_c !== null && input.temperature?.value_c !== '' && temperatureValue === null) {
+    throw qualityControlError('Temperature mesuree invalide');
+  }
+
+  const freshnessStatus = normalizeControlStatus(input.freshness, 'freshness');
+  const packagingStatus = normalizeControlStatus(input.packaging, 'packaging');
+  const labelStatus = normalizeControlStatus(input.label_conformity, 'label_conformity');
+  const observation = text(input.observation);
+  const correctiveAction = text(input.corrective_action);
+  const correctiveActionComment = text(input.corrective_action_comment);
+
+  if (overallStatus === 'non_conform') {
+    if (!observation) throw qualityControlError('Observation obligatoire pour une reception non conforme');
+    if (!correctiveAction || !CORRECTIVE_ACTIONS.has(correctiveAction)) {
+      throw qualityControlError('Action corrective obligatoire pour une reception non conforme');
+    }
+    if (correctiveAction === 'other' && !correctiveActionComment) {
+      throw qualityControlError('Commentaire obligatoire pour une action corrective Autre');
+    }
+  } else if (correctiveAction && !CORRECTIVE_ACTIONS.has(correctiveAction)) {
+    throw qualityControlError('Action corrective invalide');
+  }
+
+  return {
+    overall_status: overallStatus,
+    temperature: {
+      status: temperatureStatus,
+      value_c: temperatureValue,
+    },
+    freshness: { status: freshnessStatus },
+    packaging: { status: packagingStatus },
+    label_conformity: { status: labelStatus },
+    observation: overallStatus === 'non_conform' ? observation : null,
+    corrective_action: overallStatus === 'non_conform' ? correctiveAction : null,
+    corrective_action_comment: overallStatus === 'non_conform' ? correctiveActionComment : null,
+  };
+}
+
+function fallbackReceptionControls(purchase) {
+  return {
+    temperature: { status: 'not_available_in_purchase_reception_flow' },
+    freshness: { status: 'not_available_in_purchase_reception_flow' },
+    packaging: { status: 'not_available_in_purchase_reception_flow' },
+    label_conformity: { status: 'not_available_in_purchase_reception_flow' },
+    observations: { status: 'partial', value: text(purchase.notes) },
+  };
 }
 
 function buildReceptionEvidenceLine(line = {}) {
@@ -91,7 +171,9 @@ function buildReceptionEvidencePayload({
   userId = null,
   receiptDate = null,
   receivedAt = new Date(),
+  qualityControl = null,
 } = {}) {
+  const normalizedQualityControl = normalizeReceptionQualityControl(qualityControl);
   return {
     record_type: 'purchase_reception',
     record_version: 1,
@@ -120,13 +202,7 @@ function buildReceptionEvidencePayload({
         ...new Set(lines.flatMap((line) => jsonArray(line.sanitary_photo_urls).concat(text(line.sanitary_photo_url)).filter(Boolean))),
       ],
     },
-    controls: {
-      temperature: { status: 'not_available_in_purchase_reception_flow' },
-      freshness: { status: 'not_available_in_purchase_reception_flow' },
-      packaging: { status: 'not_available_in_purchase_reception_flow' },
-      label_conformity: { status: 'not_available_in_purchase_reception_flow' },
-      observations: { status: 'partial', value: text(purchase.notes) },
-    },
+    controls: normalizedQualityControl || fallbackReceptionControls(purchase),
   };
 }
 
@@ -153,6 +229,7 @@ async function createReceptionQualityEvidence({
   userId = null,
   receiptDate = null,
   receivedAt = new Date(),
+  qualityControl = null,
 } = {}) {
   const eventResult = await createOrGetQualityEvent({
     db,
@@ -188,6 +265,7 @@ async function createReceptionQualityEvidence({
       userId,
       receiptDate,
       receivedAt,
+      qualityControl,
     }),
   });
 
@@ -205,4 +283,5 @@ module.exports = {
   buildReceptionEvidenceLine,
   createReceptionQualityEvidence,
   jsonObject,
+  normalizeReceptionQualityControl,
 };

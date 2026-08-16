@@ -131,6 +131,10 @@ async function main() {
   assert(frontend.includes('/api/quality/evidence-records'), 'Frontend ne cible pas API evidence-records');
   assert(frontend.includes('Reception fournisseur'), 'Libelle reception_record manquant');
   assert(frontend.includes('Non renseigne'), 'Traduction not_available manquante');
+  assert(frontend.includes("conform: 'Conforme'"), 'Libelle conforme manquant');
+  assert(frontend.includes("non_conform: 'Non conforme'"), 'Libelle non conforme manquant');
+  assert(frontend.includes("lot_isolation: 'Isolement du lot'"), 'Libelle action corrective manquant');
+  assert(frontend.includes('value_c') && frontend.includes('Action corrective'), 'Rendu controle qualite reception incomplet');
   assert(frontend.includes('humanize'), 'Fallback type inconnu manquant');
   assert(frontend.includes('DOCUMENT_TARGETS_BY_TYPE'), 'Couche mapping documentaire maintenable manquante');
   assert(frontend.includes('QualityDocumentLinks.render'), 'Documents applicables non reutilises');
@@ -200,6 +204,24 @@ async function main() {
   assert.equal(multiProduct.payload.received_products.length, 2, 'Snapshot multi-produits doit rester disponible pour le tableau detail');
   assert.deepEqual(multiProduct.payload.documents, {}, 'Absence document/photo doit rester lisible et non bloquante');
 
+  const controlledEvidence = publicEvidence(sampleEvidence({
+    payload: {
+      ...sampleEvidence().payload,
+      controls: {
+        overall_status: 'non_conform',
+        temperature: { status: 'non_conform', value_c: 6 },
+        freshness: { status: 'conform' },
+        packaging: { status: 'conform' },
+        label_conformity: { status: 'conform' },
+        observation: 'Temperature reception trop elevee',
+        corrective_action: 'lot_isolation',
+        corrective_action_comment: 'Lot mis de cote',
+      },
+    },
+  }));
+  assert.equal(controlledEvidence.payload.controls.temperature.value_c, 6, 'Temperature mesuree doit rester dans le snapshot');
+  assert.equal(controlledEvidence.payload.controls.corrective_action, 'lot_isolation', 'Action corrective doit rester dans le snapshot');
+
   console.log(JSON.stringify({
     ok: true,
     list_route: 'GET /api/quality/evidence-records',
@@ -210,6 +232,7 @@ async function main() {
     unknown_type_fallback: true,
     multiple_product_rows: true,
     missing_document_photo: true,
+    quality_control_rendering: true,
     applicable_documents_block: true,
     readonly_actions: true,
     csv_export: true,
