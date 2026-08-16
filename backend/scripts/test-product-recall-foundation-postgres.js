@@ -276,37 +276,44 @@ async function main() {
     assert.strictEqual(stored.rows[0].events, 1);
     assert.strictEqual(stored.rows[0].evidence, 1);
 
-    await client.query('SAVEPOINT recall_fk_store');
-    let fkRejected = false;
+    await client.query('BEGIN');
     try {
-      await client.query(
-        `INSERT INTO product_recall_recipients (
-           store_id, campaign_id, delivered_client_id, status
-         ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'ready')`,
-        [STORE_B, draft.campaign.id, CLIENT_A]
-      );
-    } catch (error) {
-      fkRejected = error.code === '23503';
-    }
-    await client.query('ROLLBACK TO SAVEPOINT recall_fk_store');
-    await client.query('RELEASE SAVEPOINT recall_fk_store');
-    assert.strictEqual(fkRejected, true, 'FK composite recipient/campaign doit refuser un croisement magasin');
+      await client.query('SAVEPOINT recall_fk_store');
+      let fkRejected = false;
+      try {
+        await client.query(
+          `INSERT INTO product_recall_recipients (
+             store_id, campaign_id, delivered_client_id, status
+           ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'ready')`,
+          [STORE_B, draft.campaign.id, CLIENT_A]
+        );
+      } catch (error) {
+        fkRejected = error.code === '23503';
+      }
+      await client.query('ROLLBACK TO SAVEPOINT recall_fk_store');
+      await client.query('RELEASE SAVEPOINT recall_fk_store');
+      assert.strictEqual(fkRejected, true, 'FK composite recipient/campaign doit refuser un croisement magasin');
 
-    await client.query('SAVEPOINT recall_unique_active');
-    let uniqueRejected = false;
-    try {
-      await client.query(
-        `INSERT INTO product_recall_campaigns (
-           store_id, lot_id, article_id, status, recall_type, reason
-         ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'draft', 'supplier_recall', 'Doublon actif')`,
-        [STORE_A, LOT_A, ARTICLE_A]
-      );
+      await client.query('SAVEPOINT recall_unique_active');
+      let uniqueRejected = false;
+      try {
+        await client.query(
+          `INSERT INTO product_recall_campaigns (
+             store_id, lot_id, article_id, status, recall_type, reason
+           ) VALUES ($1::uuid, $2::uuid, $3::uuid, 'draft', 'supplier_recall', 'Doublon actif')`,
+          [STORE_A, LOT_A, ARTICLE_A]
+        );
+      } catch (error) {
+        uniqueRejected = error.code === '23505' && error.constraint === 'uq_product_recall_active_lot';
+      }
+      await client.query('ROLLBACK TO SAVEPOINT recall_unique_active');
+      await client.query('RELEASE SAVEPOINT recall_unique_active');
+      assert.strictEqual(uniqueRejected, true, 'Index campagne active doit refuser un doublon actif');
+      await client.query('COMMIT');
     } catch (error) {
-      uniqueRejected = error.code === '23505' && error.constraint === 'uq_product_recall_active_lot';
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
     }
-    await client.query('ROLLBACK TO SAVEPOINT recall_unique_active');
-    await client.query('RELEASE SAVEPOINT recall_unique_active');
-    assert.strictEqual(uniqueRejected, true, 'Index campagne active doit refuser un doublon actif');
 
     await assert.rejects(
       () => createProductRecallDraft({
