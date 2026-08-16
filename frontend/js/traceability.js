@@ -46,6 +46,7 @@ const state = {
   recallCampaign: null,
   recallPreviewRecipientId: null,
   pendingRecallPayload: null,
+  sendingRecall: false,
 };
 
 const RECALL_TYPES = [
@@ -331,6 +332,25 @@ function recallStatusLabel(value) {
   return labels[value] || value || '-';
 }
 
+function recallRecipientStatusLabel(value) {
+  const labels = {
+    pending: 'Envoi en cours',
+    ready: 'Pret',
+    contact_required: 'Contact a effectuer',
+    sent: 'Envoye',
+    failed: 'Echec',
+    skipped: 'Ignore',
+  };
+  return labels[value] || value || '-';
+}
+
+function recallRecipientBadgeClass(value) {
+  if (value === 'sent') return 'trace-badge-open';
+  if (value === 'failed' || value === 'contact_required') return 'trace-badge-partial';
+  if (value === 'pending') return 'trace-badge-closed';
+  return 'trace-badge-open';
+}
+
 function renderQualityHistory(history = []) {
   if (!history.length) return '<div class="trace-empty-small">Aucun historique de statut qualite.</div>';
   return `<div class="trace-movement-list">${history.map((item) => `<div class="trace-movement-line"><span>${escapeHtml(formatDate(item.changed_at))}</span><strong>${escapeHtml(item.previous_status || '-')} -> ${escapeHtml(item.new_status || '-')}</strong><span>${escapeHtml(qualityReasonTypeLabel(item.reason_type))}</span><span>${escapeHtml(item.reason || '')}</span></div>`).join('')}</div>`;
@@ -407,23 +427,26 @@ function deliveryNoteItems(recipient) {
 function renderRecallRecipients(recipients = [], { selectable = false } = {}) {
   if (!recipients.length) return '<div class="trace-empty-small">Aucun client livre concerne. La campagne peut quand meme bloquer le stock restant.</div>';
   return `<div class="trace-recall-recipient-list">${recipients.map((recipient, index) => {
-    const canSelect = recipient.status === 'ready' && recipient.email;
+    const canSelect = ['ready', 'failed'].includes(recipient.status) && recipient.email;
     const checked = canSelect ? 'checked' : '';
     const disabled = selectable && !canSelect ? 'disabled' : '';
     const recipientId = recipient.id || recipient.delivered_client_id || `recipient-${index}`;
     return `<article class="trace-recall-recipient" data-recipient-id="${escapeHtml(recipientId)}">
       <div class="trace-recall-recipient-head">
         <label class="trace-recall-check">
-          ${selectable ? `<input type="checkbox" ${checked} ${disabled} />` : ''}
+          ${selectable ? `<input type="checkbox" class="recall-recipient-checkbox" value="${escapeHtml(recipientId)}" ${checked} ${disabled} />` : ''}
           <span><strong>${escapeHtml(recipient.delivered_client_name || '-')}</strong><small>${escapeHtml(recipient.delivered_client_store_identifier || recipient.delivered_client_code || '')}</small></span>
         </label>
-        <div>${recipient.status === 'contact_required' ? '<span class="trace-badge trace-badge-partial">Contact a effectuer</span>' : '<span class="trace-badge trace-badge-open">Pret</span>'}</div>
+        <div><span class="trace-badge ${recallRecipientBadgeClass(recipient.status)}">${escapeHtml(recallRecipientStatusLabel(recipient.status))}</span></div>
       </div>
       <dl class="trace-recall-recipient-meta">
         <dt>Email</dt><dd>${recipient.email ? escapeHtml(recipient.email) : '<span class="muted">Aucun email disponible</span>'}</dd>
         <dt>Contact</dt><dd>${escapeHtml(recipient.contact_name || '-')} <span class="muted">${escapeHtml(contactSourceLabel(recipient.contact_source))}</span></dd>
         <dt>Total livre</dt><dd>${escapeHtml(qty(recipient.delivered_quantity))}</dd>
         <dt>BL</dt><dd>${escapeHtml(recipient.delivery_note_count || 0)}</dd>
+        ${recipient.sent_at ? `<dt>Envoi</dt><dd>${escapeHtml(formatDateTime(recipient.sent_at))}</dd>` : ''}
+        ${recipient.email_message_id ? `<dt>Message</dt><dd>${escapeHtml(recipient.email_message_id)}</dd>` : ''}
+        ${recipient.error_message ? `<dt>Erreur</dt><dd>${escapeHtml(recipient.error_message)}</dd>` : ''}
       </dl>
       ${deliveryNoteItems(recipient)}
       <button type="button" class="btn btn-secondary btn-sm" data-action="preview-recall-recipient" data-recipient-id="${escapeHtml(recipientId)}">Apercu message</button>
@@ -714,13 +737,89 @@ function renderRecallCampaignPanel(data) {
     ${renderRecallSummary(source)}
     <h4>Destinataires prepares</h4>
     ${renderRecallRecipients(source.recipients, { selectable: true })}
-    <button type="button" class="btn btn-secondary" disabled>Envoyer les rappels - disponible a l'etape suivante</button>
+    <div class="trace-actions-row">
+      <button type="button" class="btn btn-primary" data-action="prepare-send-recall" data-campaign-id="${escapeHtml(campaign.id || '')}">Envoyer les rappels selectionnes</button>
+      <span class="muted" id="recall-send-selection-count"></span>
+    </div>
     <h4>Apercu du futur email</h4>
     <div id="recall-email-preview">${renderRecallEmailPreview(source, { reason: campaign.reason || '', comment: campaign.comment || '' })}</div>
     <div class="trace-actions-row">
       <button type="button" class="btn btn-secondary" data-action="back-lot-detail" data-lot-id="${escapeHtml(source.lot.lot_id || state.currentLotId || '')}">Retour detail lot</button>
     </div>
   </section>`;
+  updateRecallSendButtonState();
+}
+
+function selectedSendableRecallRecipientIds() {
+  return Array.from(document.querySelectorAll('.recall-recipient-checkbox:checked:not(:disabled)'))
+    .map((input) => input.value)
+    .filter(Boolean);
+}
+
+function updateRecallSendButtonState() {
+  const button = document.querySelector('[data-action="prepare-send-recall"]');
+  if (!button) return;
+  const selectedIds = selectedSendableRecallRecipientIds();
+  const label = document.getElementById('recall-send-selection-count');
+  button.disabled = state.sendingRecall || selectedIds.length === 0;
+  if (label) {
+    const emailLabel = pluralLabel(selectedIds.length, 'email selectionne', 'emails selectionnes');
+    label.textContent = selectedIds.length ? emailLabel : 'Aucun destinataire envoyable selectionne';
+  }
+}
+
+function renderRecallSendConfirmPanel(campaignId, recipientIds) {
+  const source = state.recallCampaign || {};
+  const campaign = source.campaign || {};
+  const lot = source.lot || {};
+  const article = source.article || {};
+  const selected = (source.recipients || []).filter((recipient) => recipientIds.includes(String(recipient.id || recipient.delivered_client_id)));
+  const countLabel = pluralLabel(selected.length, 'email de rappel', 'emails de rappel');
+  els.lotModalTitle.textContent = `Envoyer ${countLabel} ?`;
+  els.lotModalSubtitle.textContent = `Campagne ${campaign.id || '-'}`;
+  els.lotModalBody.innerHTML = `<section class="trace-detail-card trace-recall-panel">
+    <h3>Envoyer ${escapeHtml(countLabel)} ?</h3>
+    <dl class="trace-definition-list">
+      <dt>Campagne</dt><dd>${escapeHtml(campaign.id || '-')}</dd>
+      <dt>Lot</dt><dd>${escapeHtml(lot.lot_code || '-')}</dd>
+      <dt>Article</dt><dd>${escapeHtml(article.designation || article.plu || '-')}</dd>
+      <dt>Destinataires</dt><dd>${escapeHtml(selected.length)}</dd>
+    </dl>
+    <div class="trace-recall-recipient-list">${selected.map((recipient) => `<article class="trace-recall-recipient"><strong>${escapeHtml(recipient.delivered_client_name || '-')}</strong><div class="muted">${escapeHtml(recipient.contact_name || '')}${recipient.email ? ` - ${escapeHtml(recipient.email)}` : ''}</div></article>`).join('')}</div>
+    <p class="trace-warning">Les emails seront envoyes immediatement via ALTA MAREE.</p>
+    <div class="trace-actions-row">
+      <button type="button" class="btn btn-secondary" data-action="open-recall-campaign" data-campaign-id="${escapeHtml(campaignId)}">Annuler</button>
+      <button type="button" class="btn btn-primary" data-action="confirm-send-recall" data-campaign-id="${escapeHtml(campaignId)}" data-recipient-ids="${escapeHtml(recipientIds.join(','))}">Envoyer maintenant</button>
+    </div>
+  </section>`;
+}
+
+function renderRecallSendResultPanel(result) {
+  const campaign = result.campaign || {};
+  const recipients = Array.isArray(result.recipients) ? result.recipients : [];
+  state.recallCampaign = normalizeCampaignSource(result);
+  els.lotModalTitle.textContent = 'Envoi des rappels';
+  els.lotModalSubtitle.textContent = `Campagne ${campaign.id || '-'}`;
+  els.lotModalBody.innerHTML = `<section class="trace-detail-card trace-recall-panel">
+    <div class="trace-section-header">
+      <div><h3>Resultat d'envoi</h3><p>${escapeHtml(recallStatusLabel(campaign.status))}</p></div>
+      <span class="trace-badge ${campaign.status === 'sent' ? 'trace-badge-open' : 'trace-badge-partial'}">${escapeHtml(recallStatusLabel(campaign.status))}</span>
+    </div>
+    <div class="trace-recall-alert">
+      <strong>${escapeHtml(pluralLabel(result.summary?.sent || 0, 'email envoye', 'emails envoyes'))} &middot; ${escapeHtml(pluralLabel(result.summary?.failed || 0, 'echec', 'echecs'))} &middot; ${escapeHtml(pluralLabel(result.summary?.contact_required || 0, 'contact manuel a effectuer', 'contacts manuels a effectuer'))}</strong>
+      <span>Les statuts ont ete enregistres par destinataire.</span>
+    </div>
+    <h4>Destinataires</h4>
+    ${renderRecallRecipients(recipients, { selectable: true })}
+    <div class="trace-actions-row">
+      <button type="button" class="btn btn-primary" data-action="prepare-send-recall" data-campaign-id="${escapeHtml(campaign.id || '')}">Envoyer les rappels selectionnes</button>
+      <span class="muted" id="recall-send-selection-count"></span>
+    </div>
+    <div class="trace-actions-row">
+      <button type="button" class="btn btn-secondary" data-action="back-lot-detail" data-lot-id="${escapeHtml(result.lot?.lot_id || state.currentLotId || '')}">Retour detail lot</button>
+    </div>
+  </section>`;
+  updateRecallSendButtonState();
 }
 
 async function startRecallWorkflow(lotId) {
@@ -774,6 +873,24 @@ async function openRecallCampaign(campaignId) {
     renderRecallCampaignPanel(data);
   } catch (err) {
     els.lotModalBody.innerHTML = `<div class="trace-empty">${escapeHtml(err.message || 'Erreur lecture rappel produit')}</div>`;
+  }
+}
+
+async function sendRecallNotifications(campaignId, recipientIds) {
+  if (state.sendingRecall) return;
+  state.sendingRecall = true;
+  els.lotModalBody.innerHTML = '<div class="trace-empty">Envoi des rappels en cours...</div>';
+  try {
+    const result = await apiFetch(`/api/traceability/recalls/${encodeURIComponent(campaignId)}/send`, {
+      method: 'POST',
+      body: JSON.stringify({ recipient_ids: recipientIds }),
+    });
+    renderRecallSendResultPanel(result);
+  } catch (err) {
+    els.lotModalBody.innerHTML = `<div class="trace-empty">${escapeHtml(err.message || 'Erreur envoi rappels')}</div>`;
+  } finally {
+    state.sendingRecall = false;
+    updateRecallSendButtonState();
   }
 }
 
@@ -847,12 +964,22 @@ function bindEvents() {
         updateRecallEmailPreview();
       }
     }
+    if (action.dataset.action === 'prepare-send-recall' && action.dataset.campaignId) {
+      const selectedIds = selectedSendableRecallRecipientIds();
+      if (!selectedIds.length) return;
+      renderRecallSendConfirmPanel(action.dataset.campaignId, selectedIds);
+    }
+    if (action.dataset.action === 'confirm-send-recall' && action.dataset.campaignId) {
+      const recipientIds = String(action.dataset.recipientIds || '').split(',').filter(Boolean);
+      sendRecallNotifications(action.dataset.campaignId, recipientIds).catch((err) => setState(err.message || 'Erreur envoi rappels', 'error'));
+    }
   });
   els.lotModalBody.addEventListener('input', (event) => {
     if (event.target.matches('#recall-reason, #recall-comment')) updateRecallEmailPreview();
   });
   els.lotModalBody.addEventListener('change', (event) => {
     if (event.target.matches('#recall-type')) updateRecallEmailPreview();
+    if (event.target.matches('.recall-recipient-checkbox')) updateRecallSendButtonState();
   });
   els.photoModalClose.addEventListener('click', closePhoto);
   els.photoModal.addEventListener('click', (event) => { if (event.target.dataset.closePhoto === 'true') closePhoto(); });

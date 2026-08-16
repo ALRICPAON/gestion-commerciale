@@ -14,7 +14,7 @@ function testFrontendWiring() {
   const css = read('frontend/css/pages/traceability.css');
 
   assert(html.includes('traceability.css?v=2'), 'Cache-buster CSS traceability attendu');
-  assert(html.includes('traceability.js?v=4'), 'Cache-buster JS traceability attendu');
+  assert(html.includes('traceability.js?v=5'), 'Cache-buster JS traceability attendu');
 
   assert(js.includes('Retrait / Rappel produit'), 'Bouton rappel produit manquant');
   assert(js.includes('/api/traceability/lots/${encodeURIComponent(lotId)}/recall-analysis'), 'GET recall-analysis manquant');
@@ -23,7 +23,15 @@ function testFrontendWiring() {
   assert(js.includes('PRODUCT_RECALL_ACTIVE_EXISTS'), 'Gestion campagne active manquante');
   assert(js.includes('Commentaire obligatoire pour le type Autre'), 'Validation front type other manquante');
   assert(js.includes('Aucun email ne sera envoye'), 'Garde-fou UX email manquant');
-  assert(js.includes("Envoyer les rappels - disponible a l'etape suivante"), 'Bouton envoi doit rester desactive');
+  assert(js.includes('Envoyer les rappels selectionnes'), 'Bouton envoi selectionne manquant');
+  assert(js.includes('/api/traceability/recalls/${encodeURIComponent(campaignId)}/send'), 'Endpoint envoi rappel manquant');
+  assert(js.includes('Envoyer maintenant'), 'Confirmation finale envoi manquante');
+  assert(js.includes('Les emails seront envoyes immediatement via ALTA MAREE'), 'Avertissement envoi immediat manquant');
+  assert(js.includes("['ready', 'failed'].includes(recipient.status)"), 'Selection ready/failed manquante');
+  assert(js.includes("recipient_ids: recipientIds"), 'Payload recipient_ids manquant');
+  assert(js.includes('recall-recipient-checkbox'), 'Checkbox destinataires envoi manquante');
+  assert(js.includes('function updateRecallSendButtonState'), 'Activation bouton envoi manquante');
+  assert(js.includes('function renderRecallSendResultPanel'), 'Resultat detaille envoi manquant');
   assert(js.includes('id="recall-email-preview"'), 'Conteneur preview live manquant');
   assert(js.includes('function updateRecallEmailPreview'), 'Preview live manquante');
   assert(js.includes("matches('#recall-reason, #recall-comment')"), 'Preview live input motif/commentaire manquante');
@@ -49,35 +57,40 @@ function testBackendReadEndpoint() {
   const service = read('backend/services/productRecallService.js');
 
   assert(route.includes("router.get('/recalls/:campaignId'"), 'Endpoint lecture rappel manquant');
+  assert(route.includes("router.post('/recalls/:campaignId/send'"), 'Endpoint envoi rappel manquant');
   assert(route.includes('getProductRecallCampaign'), 'Route lecture rappel non branchee au service');
+  assert(route.includes('sendProductRecallNotifications'), 'Route envoi rappel non branchee au service');
   assert(service.includes('async function getProductRecallCampaign'), 'Service lecture rappel manquant');
+  assert(service.includes('async function sendProductRecallNotifications'), 'Service envoi rappel manquant');
+  assert(service.includes("eventType: 'product_recall_notifications_sent'"), 'Evenement qualite notifications manquant');
+  assert(service.includes("evidenceType: 'product_recall_notification_record'"), 'Preuve qualite notifications manquante');
   assert(service.includes('FROM product_recall_recipients'), 'Lecture recipients rappel manquante');
   assert(service.includes('WHERE c.store_id = $1::uuid'), 'Store isolation campagne manquante');
 }
 
-function testNoEmailOrMigration() {
-  const files = [
-    'frontend/js/traceability.js',
-    'backend/routes/traceability.js',
-    'backend/services/productRecallService.js',
-  ].map(read).join('\n');
+function testEmailOnlyOnSendEndpoint() {
+  const frontend = read('frontend/js/traceability.js');
+  const route = read('backend/routes/traceability.js');
+  const service = read('backend/services/productRecallService.js');
 
-  assert(!files.includes('sendEmail'), 'sendEmail ne doit pas etre utilise');
-  assert(!files.includes('emailService'), 'emailService ne doit pas etre importe');
-  assert(!files.includes('SMTP'), 'SMTP ne doit pas etre modifie');
-  assert(!files.includes('smtp'), 'smtp ne doit pas etre modifie');
+  assert(!frontend.includes('sendEmail'), 'Le frontend ne doit jamais appeler sendEmail');
+  assert(!frontend.includes('emailService'), 'Le frontend ne doit pas importer emailService');
+  assert(!route.includes('sendEmail'), 'La route ne doit pas appeler directement sendEmail');
+  assert(service.includes("const { sendEmail } = require('./emailService')"), 'Le service doit reutiliser emailService');
+  assert(service.includes('sendEmailFn = sendEmail'), 'sendEmail doit rester injectable pour les tests');
+  assert(service.includes('reserveRecallRecipientsForSend'), 'Reservation backend anti double envoi manquante');
 }
 
 function main() {
   testFrontendWiring();
   testBackendReadEndpoint();
-  testNoEmailOrMigration();
+  testEmailOnlyOnSendEndpoint();
   console.log(JSON.stringify({
     ok: true,
     tests: [
       'frontend_recall_workflow_wiring',
       'campaign_read_endpoint',
-      'no_email_no_smtp',
+      'email_only_on_confirmed_send_endpoint',
       'cache_busters',
       'responsive_styles',
     ],
