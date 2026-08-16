@@ -2,7 +2,10 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const { createReceptionQualityEvidence } = require('../services/quality/purchaseReceptionEvidence');
+const {
+  createReceptionQualityEvidence,
+  normalizeReceptionQualityControl,
+} = require('../services/quality/purchaseReceptionEvidence');
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const ZERO_UUID = '00000000-0000-0000-0000-000000000000';
@@ -264,8 +267,14 @@ async function main() {
   const service = read('backend/services/quality/purchaseReceptionEvidence.js');
 
   assert(frontend.includes('apiFetch(`/api/purchases/${purchaseId}/validate-reception`'), 'Frontend validation reception ne cible pas endpoint attendu');
+  assert(frontend.includes('requestReceptionQualityControl'), 'Popup controle qualite reception manquante');
+  assert(frontend.includes('overall_status: "conform"'), 'Payload conforme par defaut manquant');
+  assert(frontend.includes('quality_control: qualityControl'), 'Payload quality_control non envoye au backend');
+  assert(frontend.includes('corrective_action: correctiveAction'), 'Action corrective non collectee');
+  assert(frontend.includes('temperatureValueRaw === "" ? null : Number(temperatureValueRaw)'), 'Temperature mesuree doit rester facultative et numerique');
   assert(server.indexOf('purchaseReceptionUpgradeRoutes') < server.indexOf('purchasesRoutes'), 'La route reception upgrade doit etre montee avant routes/purchases');
   assert(route.includes("router.post('/purchases/:id/validate-reception'"), 'Endpoint backend reel manquant');
+  assert(route.includes('normalizeReceptionQualityControl(req.body.quality_control, { required: true })'), 'Validation backend quality_control obligatoire manquante');
   assert(route.includes('SELECT * FROM purchases WHERE id = $1 AND store_id = $2 FOR UPDATE'), 'Verrou purchase FOR UPDATE manquant');
   assert(route.includes('INSERT INTO lots'), 'Creation lots manquante dans le flux reception');
   assert(route.includes('INSERT INTO stock_movements'), 'Creation stock_movements manquante dans le flux reception');
@@ -279,6 +288,33 @@ async function main() {
   assert(service.includes("evidenceStatus: 'recorded'"), 'Evidence status recorded attendu');
   assert(service.includes("sourceRecordType: 'purchases'"), 'Evidence idempotence source purchases attendue');
   assert(service.includes("sourceDiscriminator: 'reception_record'"), 'Evidence discriminator reception_record attendu');
+  assert(service.includes("CORRECTIVE_ACTIONS = new Set(['supplier_return', 'lot_isolation', 'accepted_with_reservation', 'destruction', 'other'])"), 'Actions correctives attendues manquantes');
+
+  assert.throws(
+    () => normalizeReceptionQualityControl({ overall_status: 'bad' }, { required: true }),
+    /Statut global qualite invalide/,
+    'Statut inconnu doit etre refuse'
+  );
+  assert.throws(
+    () => normalizeReceptionQualityControl({ overall_status: 'non_conform', temperature: { status: 'conform' }, freshness: { status: 'conform' }, packaging: { status: 'conform' }, label_conformity: { status: 'conform' } }, { required: true }),
+    /Observation obligatoire/,
+    'Non conforme sans observation doit etre refuse'
+  );
+  assert.throws(
+    () => normalizeReceptionQualityControl({ overall_status: 'non_conform', temperature: { status: 'conform' }, freshness: { status: 'conform' }, packaging: { status: 'conform' }, label_conformity: { status: 'conform' }, observation: 'Caisse deterioree' }, { required: true }),
+    /Action corrective obligatoire/,
+    'Non conforme sans action doit etre refuse'
+  );
+  assert.throws(
+    () => normalizeReceptionQualityControl({ overall_status: 'non_conform', temperature: { status: 'conform' }, freshness: { status: 'conform' }, packaging: { status: 'conform' }, label_conformity: { status: 'conform' }, observation: 'Odeur anormale', corrective_action: 'other' }, { required: true }),
+    /Commentaire obligatoire/,
+    'Action other sans commentaire doit etre refusee'
+  );
+  assert.throws(
+    () => normalizeReceptionQualityControl({ overall_status: 'non_conform', temperature: { status: 'non_conform', value_c: 'chaud' }, freshness: { status: 'conform' }, packaging: { status: 'conform' }, label_conformity: { status: 'conform' }, observation: 'Temperature elevee', corrective_action: 'lot_isolation' }, { required: true }),
+    /Temperature mesuree invalide/,
+    'Temperature non numerique doit etre refusee'
+  );
 
   const db = new FakeQualityDb();
   const supplier = { id: '20000000-0000-4000-8000-000000000301', code: '81269', name: 'Criée Test' };
@@ -314,6 +350,76 @@ async function main() {
   assert.equal(payload.received_products[0].supplier_lot_number, 'LOT-SUP-1', 'Lot fournisseur manquant');
   assert.equal(payload.received_products[0].traceability.latin_name, 'Salmo salar', 'Traceabilite sanitaire manquante');
   assert.equal(payload.controls.temperature.status, 'not_available_in_purchase_reception_flow', 'Temperature ne doit pas etre inventee');
+
+  const conformDb = new FakeQualityDb();
+  const conform = await createReceptionQualityEvidence({
+    db: conformDb,
+    purchase: purchase(),
+    supplier,
+    lines: lines(),
+    userId: USER_ID,
+    receiptDate: '2026-08-16',
+    receivedAt: new Date(RECEIVED_AT),
+    qualityControl: {
+      overall_status: 'conform',
+      temperature: { status: 'conform', value_c: null },
+      freshness: { status: 'conform' },
+      packaging: { status: 'conform' },
+      label_conformity: { status: 'conform' },
+      observation: null,
+      corrective_action: null,
+      corrective_action_comment: null,
+    },
+  });
+  assert.equal(conform.evidenceCreated, true, 'Controle conforme doit creer evidence');
+  assert.equal(conformDb.evidence[0].payload.controls.overall_status, 'conform', 'Statut conforme manquant dans ENR');
+  assert.equal(conformDb.evidence[0].payload.controls.temperature.status, 'conform', 'Temperature conforme attendue');
+  assert.equal(conformDb.evidence[0].payload.controls.corrective_action, null, 'Action corrective absente en conforme');
+
+  const nonConformDb = new FakeQualityDb();
+  await createReceptionQualityEvidence({
+    db: nonConformDb,
+    purchase: purchase(),
+    supplier,
+    lines: lines(),
+    userId: USER_ID,
+    receiptDate: '2026-08-16',
+    receivedAt: new Date(RECEIVED_AT),
+    qualityControl: {
+      overall_status: 'non_conform',
+      temperature: { status: 'non_conform', value_c: 6 },
+      freshness: { status: 'conform' },
+      packaging: { status: 'conform' },
+      label_conformity: { status: 'conform' },
+      observation: 'Temperature reception trop elevee',
+      corrective_action: 'lot_isolation',
+      corrective_action_comment: 'Lot mis de cote en attente decision',
+    },
+  });
+  assert.equal(nonConformDb.evidence[0].payload.controls.overall_status, 'non_conform', 'Statut non conforme manquant');
+  assert.equal(nonConformDb.evidence[0].payload.controls.temperature.value_c, 6, 'Temperature mesuree manquante');
+  assert.equal(nonConformDb.evidence[0].payload.controls.corrective_action, 'lot_isolation', 'Action isolation attendue');
+
+  const packagingDb = new FakeQualityDb();
+  await createReceptionQualityEvidence({
+    db: packagingDb,
+    purchase: purchase(),
+    supplier,
+    lines: lines(),
+    userId: USER_ID,
+    receiptDate: '2026-08-16',
+    qualityControl: {
+      overall_status: 'non_conform',
+      temperature: { status: 'conform' },
+      freshness: { status: 'conform' },
+      packaging: { status: 'non_conform' },
+      label_conformity: { status: 'conform' },
+      observation: 'Caisse deterioree',
+      corrective_action: 'accepted_with_reservation',
+    },
+  });
+  assert.equal(packagingDb.evidence[0].payload.controls.temperature.value_c, null, 'Temperature facultative si emballage non conforme');
+  assert.equal(packagingDb.evidence[0].payload.controls.packaging.status, 'non_conform', 'Emballage non conforme attendu');
 
   const replay = await createReceptionQualityEvidence({
     db,
@@ -366,7 +472,11 @@ async function main() {
     multi_store: true,
     rollback: true,
     snapshot_lines: payload.received_products.length,
-    physical_controls_not_invented: true,
+    old_physical_controls_preserved_as_not_available: true,
+    conform_quality_control: true,
+    non_conform_temperature_control: true,
+    non_conform_packaging_without_temperature: true,
+    backend_validation: true,
   }, null, 2));
 }
 

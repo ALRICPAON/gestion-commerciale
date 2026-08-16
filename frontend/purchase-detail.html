@@ -185,6 +185,90 @@
     </div>
   </div>
 
+  <div id="quality-control-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="quality-control-modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3 id="quality-control-modal-title">Controle qualite reception</h3>
+          <p>Confirmer la conformite de la reception avant validation.</p>
+        </div>
+      </div>
+
+      <div id="quality-control-feedback" class="page-feedback hidden"></div>
+
+      <div class="form-grid">
+        <div class="form-group form-group-span-2">
+          <label>Statut global</label>
+          <div class="inline-field-actions">
+            <label><input type="radio" name="quality-control-overall" value="conform" checked> Conforme</label>
+            <label><input type="radio" name="quality-control-overall" value="non_conform"> Non conforme</label>
+          </div>
+        </div>
+      </div>
+
+      <div id="quality-control-nonconform-fields" class="hidden">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="quality-control-temperature-status">Temperature</label>
+            <select id="quality-control-temperature-status">
+              <option value="conform">Conforme</option>
+              <option value="non_conform">Non conforme</option>
+            </select>
+          </div>
+          <div id="quality-control-temperature-value-wrap" class="form-group hidden">
+            <label for="quality-control-temperature-value">Temperature mesuree C</label>
+            <input id="quality-control-temperature-value" type="number" step="0.1" placeholder="6" />
+          </div>
+          <div class="form-group">
+            <label for="quality-control-freshness-status">Fraicheur</label>
+            <select id="quality-control-freshness-status">
+              <option value="conform">Conforme</option>
+              <option value="non_conform">Non conforme</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="quality-control-packaging-status">Emballage</label>
+            <select id="quality-control-packaging-status">
+              <option value="conform">Conforme</option>
+              <option value="non_conform">Non conforme</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="quality-control-label-status">Conformite etiquetage</label>
+            <select id="quality-control-label-status">
+              <option value="conform">Conforme</option>
+              <option value="non_conform">Non conforme</option>
+            </select>
+          </div>
+          <div class="form-group form-group-span-2">
+            <label for="quality-control-observation">Observation</label>
+            <textarea id="quality-control-observation" rows="3" placeholder="Temperature elevee a reception"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="quality-control-corrective-action">Action corrective</label>
+            <select id="quality-control-corrective-action">
+              <option value="">Selectionner</option>
+              <option value="supplier_return">Retour fournisseur</option>
+              <option value="lot_isolation">Isolement du lot</option>
+              <option value="accepted_with_reservation">Acceptation sous reserve</option>
+              <option value="destruction">Destruction</option>
+              <option value="other">Autre</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="quality-control-corrective-comment">Commentaire action</label>
+            <input id="quality-control-corrective-comment" type="text" placeholder="Lot mis de cote" />
+          </div>
+        </div>
+      </div>
+
+      <div class="page-actions-right" style="margin-top:16px;">
+        <button type="button" id="cancel-quality-control-btn" class="btn btn-secondary">Annuler</button>
+        <button type="button" id="confirm-quality-control-btn" class="btn btn-primary">Confirmer et valider la reception</button>
+      </div>
+    </div>
+  </div>
+
   <div id="article-modal" class="modal-overlay hidden">
     <div class="modal-card modal-xl">
       <div class="modal-header">
@@ -382,7 +466,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="./js/config.js"></script>
-<script src="./js/purchase-detail.js?v=9"></script>
+<script src="./js/purchase-detail.js?v=10"></script>
 <script src="./js/purchase-photo-gallery.js?v=1"></script>
 <script src="./js/purchase-reception-upgrade.js?v=2"></script>
 <script src="./js/whatsapp-business-documents.js?v=1"></script>

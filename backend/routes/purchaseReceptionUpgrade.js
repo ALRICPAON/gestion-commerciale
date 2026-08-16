@@ -8,7 +8,10 @@ const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const importDocument = require('../services/imports/import-document');
 const { recomputeArticleStock } = require('../services/stockService');
-const { createReceptionQualityEvidence } = require('../services/quality/purchaseReceptionEvidence');
+const {
+  createReceptionQualityEvidence,
+  normalizeReceptionQualityControl,
+} = require('../services/quality/purchaseReceptionEvidence');
 
 const router = express.Router();
 
@@ -576,6 +579,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
   const client = await req.dbPool.connect();
   try {
     await client.query('BEGIN');
+    const qualityControl = normalizeReceptionQualityControl(req.body.quality_control, { required: true });
     const p = await client.query('SELECT * FROM purchases WHERE id = $1 AND store_id = $2 FOR UPDATE', [req.params.id, req.user.store_id]);
     if (!p.rows.length) {
       await client.query('ROLLBACK');
@@ -731,6 +735,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
       userId: req.user.id,
       receiptDate: effectiveReceiptDate,
       receivedAt: new Date(),
+      qualityControl,
     });
     await client.query('COMMIT');
     return res.json({
@@ -745,7 +750,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erreur validation reception enrichie :', error);
-    return res.status(500).json({ error: error.message });
+    return res.status(error.status || 500).json({ error: error.message });
   } finally {
     client.release();
   }

@@ -43,12 +43,22 @@
   function humanize(value) { return String(value || '-').split(/[_:.-]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' '); }
   function typeLabel(type) { return { reception_record: 'Reception fournisseur' }[type] || humanize(type); }
   function statusLabel(status) { return { draft: 'Brouillon', recorded: 'Enregistre', validated: 'Valide', rejected: 'Rejete', archived: 'Archive' }[status] || humanize(status); }
+  function controlStatusLabel(status) { return { conform: 'Conforme', non_conform: 'Non conforme', not_available_in_purchase_reception_flow: 'Non renseigne' }[status] || statusLabel(status); }
+  function correctiveActionLabel(action) {
+    return {
+      supplier_return: 'Retour fournisseur',
+      lot_isolation: 'Isolement du lot',
+      accepted_with_reservation: 'Acceptation sous reserve',
+      destruction: 'Destruction',
+      other: 'Autre',
+    }[action] || humanize(action);
+  }
   function payload(record) { return record?.payload && typeof record.payload === 'object' ? record.payload : {}; }
   function identification(record) { return payload(record).identification || {}; }
   function products(record) { return Array.isArray(payload(record).received_products) ? payload(record).received_products : []; }
   function documents(record) { return payload(record).documents || {}; }
   function controls(record) { return payload(record).controls || {}; }
-  function controlLabel(status) { return !status || status === 'not_available_in_purchase_reception_flow' ? 'Non renseigne' : statusLabel(status); }
+  function controlLabel(status) { return !status ? 'Non renseigne' : controlStatusLabel(status); }
 
   function productSummary(record) {
     const product = products(record)[0];
@@ -209,19 +219,25 @@
 
   function renderControlItem(label, control) {
     const status = controlLabel(control?.status);
-    const value = control?.value || control?.comment || '';
+    const value = control?.value_c !== undefined && control?.value_c !== null ? `${control.value_c} C` : (control?.value || control?.comment || '');
     return `<div><dt>${escapeHtml(label)}</dt><dd><span class="quality-badge">${escapeHtml(status)}</span>${value ? ` ${escapeHtml(value)}` : ''}</dd></div>`;
   }
 
   function renderControls(record) {
     const data = controls(record);
+    const observation = data.observation || data.observations?.value || null;
+    const correctiveAction = data.corrective_action ? correctiveActionLabel(data.corrective_action) : null;
     return `
       <dl class="quality-ddpp-detail-grid">
+        ${data.overall_status ? renderControlItem('Statut global', { status: data.overall_status }) : ''}
         ${renderControlItem('Temperature', data.temperature)}
         ${renderControlItem('Fraicheur', data.freshness)}
         ${renderControlItem('Emballage', data.packaging)}
         ${renderControlItem('Conformite etiquetage', data.label_conformity)}
-        ${renderControlItem('Observations', data.observations)}
+        ${observation ? `<div><dt>Observation</dt><dd>${escapeHtml(observation)}</dd></div>` : ''}
+        ${correctiveAction ? `<div><dt>Action corrective</dt><dd>${escapeHtml(correctiveAction)}</dd></div>` : ''}
+        ${data.corrective_action_comment ? `<div><dt>Commentaire action</dt><dd>${escapeHtml(data.corrective_action_comment)}</dd></div>` : ''}
+        ${!observation && data.observations ? renderControlItem('Observations', data.observations) : ''}
       </dl>
     `;
   }

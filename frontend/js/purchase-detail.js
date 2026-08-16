@@ -75,6 +75,21 @@ const closeLineSheetModalBtn = document.getElementById("close-line-sheet-modal-b
 const saveLineSheetBtn = document.getElementById("save-line-sheet-btn");
 const lineSheetFeedback = document.getElementById("line-sheet-feedback");
 
+const qualityControlModal = document.getElementById("quality-control-modal");
+const qualityControlFeedback = document.getElementById("quality-control-feedback");
+const qualityControlNonconformFields = document.getElementById("quality-control-nonconform-fields");
+const qualityControlTemperatureStatus = document.getElementById("quality-control-temperature-status");
+const qualityControlTemperatureValueWrap = document.getElementById("quality-control-temperature-value-wrap");
+const qualityControlTemperatureValue = document.getElementById("quality-control-temperature-value");
+const qualityControlFreshnessStatus = document.getElementById("quality-control-freshness-status");
+const qualityControlPackagingStatus = document.getElementById("quality-control-packaging-status");
+const qualityControlLabelStatus = document.getElementById("quality-control-label-status");
+const qualityControlObservation = document.getElementById("quality-control-observation");
+const qualityControlCorrectiveAction = document.getElementById("quality-control-corrective-action");
+const qualityControlCorrectiveComment = document.getElementById("quality-control-corrective-comment");
+const cancelQualityControlBtn = document.getElementById("cancel-quality-control-btn");
+const confirmQualityControlBtn = document.getElementById("confirm-quality-control-btn");
+
 const sheetLinePluInput = document.getElementById("sheet-line-plu");
 const sheetLineArticleInput = document.getElementById("sheet-line-article");
 const sheetLineDlcInput = document.getElementById("sheet-line-dlc");
@@ -100,6 +115,7 @@ let articleModalItems = [];
 let currentEditingLineId = null;
 let currentSheetLineId = null;
 let currentSheetLinePhotoUrlsRaw = '[]';
+let resolveQualityControlModal = null;
 
 function getUserDepartments() {
   return Array.isArray(sessionUser.departments) ? sessionUser.departments : [];
@@ -166,6 +182,104 @@ function clearFeedback(el) {
   el.textContent = "";
   el.classList.add("hidden");
   el.classList.remove("error", "success");
+}
+
+function selectedQualityOverallStatus() {
+  return document.querySelector('input[name="quality-control-overall"]:checked')?.value || "conform";
+}
+
+function resetQualityControlModal() {
+  document.querySelectorAll('input[name="quality-control-overall"]').forEach((input) => {
+    input.checked = input.value === "conform";
+  });
+  if (qualityControlTemperatureStatus) qualityControlTemperatureStatus.value = "conform";
+  if (qualityControlFreshnessStatus) qualityControlFreshnessStatus.value = "conform";
+  if (qualityControlPackagingStatus) qualityControlPackagingStatus.value = "conform";
+  if (qualityControlLabelStatus) qualityControlLabelStatus.value = "conform";
+  if (qualityControlTemperatureValue) qualityControlTemperatureValue.value = "";
+  if (qualityControlObservation) qualityControlObservation.value = "";
+  if (qualityControlCorrectiveAction) qualityControlCorrectiveAction.value = "";
+  if (qualityControlCorrectiveComment) qualityControlCorrectiveComment.value = "";
+  if (qualityControlFeedback) clearFeedback(qualityControlFeedback);
+  refreshQualityControlModal();
+}
+
+function refreshQualityControlModal() {
+  const nonConform = selectedQualityOverallStatus() === "non_conform";
+  qualityControlNonconformFields?.classList.toggle("hidden", !nonConform);
+  qualityControlTemperatureValueWrap?.classList.toggle("hidden", qualityControlTemperatureStatus?.value !== "non_conform");
+}
+
+function closeQualityControlModal(result = null) {
+  qualityControlModal?.classList.add("hidden");
+  if (resolveQualityControlModal) {
+    resolveQualityControlModal(result);
+    resolveQualityControlModal = null;
+  }
+}
+
+function conformQualityControlPayload() {
+  return {
+    overall_status: "conform",
+    temperature: { status: "conform", value_c: null },
+    freshness: { status: "conform" },
+    packaging: { status: "conform" },
+    label_conformity: { status: "conform" },
+    observation: null,
+    corrective_action: null,
+    corrective_action_comment: null,
+  };
+}
+
+function readQualityControlPayload() {
+  const overallStatus = selectedQualityOverallStatus();
+  if (overallStatus === "conform") return conformQualityControlPayload();
+
+  const temperatureStatus = qualityControlTemperatureStatus?.value || "conform";
+  const temperatureValueRaw = qualityControlTemperatureValue?.value ?? "";
+  const observation = qualityControlObservation?.value.trim() || "";
+  const correctiveAction = qualityControlCorrectiveAction?.value || "";
+  const correctiveActionComment = qualityControlCorrectiveComment?.value.trim() || "";
+
+  if (!observation) throw new Error("Observation obligatoire pour une reception non conforme");
+  if (!correctiveAction) throw new Error("Action corrective obligatoire pour une reception non conforme");
+  if (correctiveAction === "other" && !correctiveActionComment) {
+    throw new Error("Commentaire obligatoire pour l'action corrective Autre");
+  }
+  if (temperatureValueRaw !== "" && !Number.isFinite(Number(temperatureValueRaw))) {
+    throw new Error("Temperature mesuree invalide");
+  }
+
+  return {
+    overall_status: "non_conform",
+    temperature: {
+      status: temperatureStatus,
+      value_c: temperatureValueRaw === "" ? null : Number(temperatureValueRaw),
+    },
+    freshness: { status: qualityControlFreshnessStatus?.value || "conform" },
+    packaging: { status: qualityControlPackagingStatus?.value || "conform" },
+    label_conformity: { status: qualityControlLabelStatus?.value || "conform" },
+    observation,
+    corrective_action: correctiveAction,
+    corrective_action_comment: correctiveActionComment || null,
+  };
+}
+
+function requestReceptionQualityControl() {
+  if (!qualityControlModal) return Promise.resolve(null);
+  resetQualityControlModal();
+  qualityControlModal.classList.remove("hidden");
+  return new Promise((resolve) => {
+    resolveQualityControlModal = resolve;
+  });
+}
+
+function confirmQualityControlModal() {
+  try {
+    closeQualityControlModal(readQualityControlPayload());
+  } catch (error) {
+    if (qualityControlFeedback) showFeedback(qualityControlFeedback, error.message, true);
+  }
 }
 
 function formatDateForInput(value) {
@@ -1139,9 +1253,8 @@ async function validateReception() {
     return;
   }
 
-  if (!confirm("Confirmer la validation de la réception ?")) {
-    return;
-  }
+  const qualityControl = await requestReceptionQualityControl();
+  if (!qualityControl) return;
 
   const originalButtonText = validateReceptionBtn?.textContent;
   if (validateReceptionBtn) {
@@ -1154,7 +1267,8 @@ async function validateReception() {
     const data = await apiFetch(`/api/purchases/${purchaseId}/validate-reception`, {
       method: "POST",
       body: JSON.stringify({
-        receipt_date: purchaseReceiptDateInput.value || null
+        receipt_date: purchaseReceiptDateInput.value || null,
+        quality_control: qualityControl,
       }),
     });
 
@@ -1253,6 +1367,28 @@ if (supplierModal) {
 
 if (validateReceptionBtn) {
   validateReceptionBtn.addEventListener("click", validateReception);
+}
+
+document.querySelectorAll('input[name="quality-control-overall"]').forEach((input) => {
+  input.addEventListener("change", refreshQualityControlModal);
+});
+
+if (qualityControlTemperatureStatus) {
+  qualityControlTemperatureStatus.addEventListener("change", refreshQualityControlModal);
+}
+
+if (cancelQualityControlBtn) {
+  cancelQualityControlBtn.addEventListener("click", () => closeQualityControlModal(null));
+}
+
+if (confirmQualityControlBtn) {
+  confirmQualityControlBtn.addEventListener("click", confirmQualityControlModal);
+}
+
+if (qualityControlModal) {
+  qualityControlModal.addEventListener("click", (event) => {
+    if (event.target === qualityControlModal) closeQualityControlModal(null);
+  });
 }
 
 if (addLineBtn) {
