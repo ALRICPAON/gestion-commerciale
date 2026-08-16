@@ -12,6 +12,8 @@ const {
   createReceptionQualityEvidence,
   normalizeReceptionQualityControl,
 } = require('../services/quality/purchaseReceptionEvidence');
+const { createNonConformity } = require('../services/quality/operations');
+const { blockLotForQuality } = require('../services/quality/lotBlocking');
 
 const router = express.Router();
 
@@ -288,6 +290,21 @@ function normalizeSanitaryPhotoUrls(rawUrls, primaryUrl = null, context = {}) {
   }
 
   return urls;
+}
+
+function qualityControlSummary(qualityControl = {}, receivedLines = []) {
+  const controls = ['temperature', 'freshness', 'packaging', 'label_conformity']
+    .map((key) => `${key}: ${qualityControl[key]?.status || 'non renseigne'}`)
+    .join(', ');
+  const lotCodes = receivedLines.map((line) => line.lot_code).filter(Boolean).join(', ');
+  return [
+    `Controle reception non conforme.`,
+    `Controles: ${controls}.`,
+    qualityControl.observation ? `Observation: ${qualityControl.observation}` : null,
+    qualityControl.corrective_action ? `Action corrective: ${qualityControl.corrective_action}` : null,
+    qualityControl.corrective_action_comment ? `Commentaire: ${qualityControl.corrective_action_comment}` : null,
+    lotCodes ? `Lots concernes: ${lotCodes}` : null,
+  ].filter(Boolean).join('\n');
 }
 
 router.get('/purchases/:id/document', authenticateToken, attachDbContext, async (req, res) => {
@@ -737,12 +754,53 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
       receivedAt: new Date(),
       qualityControl,
     });
+
+    let qualityNonConformity = null;
+    if (qualityControl.overall_status === 'non_conform' && qualityControl.corrective_action === 'lot_isolation') {
+      qualityNonConformity = await createNonConformity(client, purchase.store_id, req.user.id, {
+        origin_type: 'purchase_reception',
+        origin_record_id: purchase.id,
+        source_entity_type: qualityReception.evidence?.id ? 'quality_evidence_record' : 'purchase',
+        source_entity_id: qualityReception.evidence?.id || purchase.id,
+        severity: 'high',
+        title: `Reception non conforme - ${supplier.rows[0]?.name || purchase.bl_number || purchase.id}`,
+        description: qualityControlSummary(qualityControl, receivedLines),
+        immediate_action: 'Isolement du lot',
+        closure_validation_required: true,
+      });
+
+      if (qualityReception.evidence?.id) {
+        await client.query(
+          `UPDATE quality_evidence_records
+           SET non_conformity_id = $1::uuid
+           WHERE id = $2::uuid AND store_id = $3::uuid`,
+          [qualityNonConformity.id, qualityReception.evidence.id, purchase.store_id]
+        );
+      }
+
+      for (const line of receivedLines) {
+        if (!line.lot_id) continue;
+        await blockLotForQuality(client, {
+          storeId: purchase.store_id,
+          lotId: line.lot_id,
+          userId: req.user.id,
+          reason: qualityControl.observation || 'Reception non conforme',
+          reasonType: 'lot_isolation',
+          comment: qualityControl.corrective_action_comment || null,
+          sourceType: 'purchase_reception',
+          sourceId: purchase.id,
+          qualityNonConformityId: qualityNonConformity.id,
+        });
+      }
+    }
+
     await client.query('COMMIT');
     return res.json({
       ok: true,
       created_lots: createdLots,
       quality_event_id: qualityReception.event?.id || null,
       quality_evidence_id: qualityReception.evidence?.id || null,
+      quality_non_conformity_id: qualityNonConformity?.id || null,
       quality_event_created: qualityReception.eventCreated,
       quality_evidence_created: qualityReception.evidenceCreated,
       message: `Reception validee : ${createdLots} lot(s) cree(s), en attente facture fournisseur`,

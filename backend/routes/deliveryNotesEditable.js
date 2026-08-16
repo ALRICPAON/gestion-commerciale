@@ -4,6 +4,11 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { recomputeArticleStock } = require('../services/stockService');
+const {
+  assertLotUsable,
+  availableLotCondition,
+  errorBody: lotQualityErrorBody,
+} = require('../services/quality/lotBlocking');
 
 const router = express.Router();
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
@@ -150,6 +155,7 @@ async function lotById(db, storeId, articleId, lotId) {
      FROM lots l
      JOIN articles a ON a.id = l.article_id AND a.store_id = l.store_id
      WHERE l.id = $1 AND l.article_id = $2 AND l.store_id = $3 AND l.qty_remaining > 0
+       AND ${availableLotCondition('l')}
      LIMIT 1`,
     [lotId, articleId, storeId]
   );
@@ -163,6 +169,7 @@ async function fifoLot(db, storeId, articleId) {
      FROM lots l
      JOIN articles a ON a.id = l.article_id AND a.store_id = l.store_id
      WHERE l.store_id = $1 AND l.article_id = $2 AND l.qty_remaining > 0
+       AND ${availableLotCondition('l')}
      ORDER BY COALESCE(l.dlc, DATE '9999-12-31'), l.created_at, l.id
      LIMIT 1`,
     [storeId, articleId]
@@ -270,8 +277,8 @@ async function validateStock(db, documentId, storeId, clientKey, userId, options
     let remaining = pos(line.sold_quantity || line.total_weight, 0);
     if (!skipStock && line.article_id && remaining > 0) {
       const lots = line.selected_lot_id
-        ? await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id])
-        : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
+        ? (await assertLotUsable(db, storeId, line.selected_lot_id), await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 AND ${availableLotCondition('lots')} FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id]))
+        : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 AND ${availableLotCondition('lots')} ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
       for (const lot of lots.rows) {
         if (remaining <= 0) break;
         const quantity = Math.min(remaining, num(lot.qty_remaining));
@@ -380,7 +387,7 @@ router.post('/sales/:id/lines', authenticateToken, attachDbContext, requireAdmin
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur ajout ligne BL :', err);
-    res.status(err.status || 500).json(errorBody(err, 'Erreur ajout ligne BL'));
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur ajout ligne BL'));
   } finally {
     db.release();
   }
@@ -397,6 +404,7 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
     const updated = await withReallocation(db, doc, req.user.store_id, req.user.client_key, req.user.id, { forceStockExit: forceRequested(req.body) }, async () => {
       const article = await articleByPayload(db, req.user.store_id, req.body || {});
       if (!article && line.document_origin !== 'negoce') { const error = new Error('Article obligatoire pour une ligne BL'); error.status = 400; throw error; }
+      if (clean(req.body?.selected_lot_id) && line.document_origin !== 'negoce') await assertLotUsable(db, req.user.store_id, clean(req.body.selected_lot_id));
       const selectedLot = await lotById(db, req.user.store_id, article?.id, clean(req.body?.selected_lot_id));
       if (clean(req.body?.selected_lot_id) && !selectedLot && line.document_origin !== 'negoce' && !forceRequested(req.body)) { const error = new Error('Lot selectionne introuvable ou sans stock'); error.status = 400; throw error; }
       const suggestedLot = selectedLot || (line.document_origin === 'negoce' ? null : await fifoLot(db, req.user.store_id, article?.id));
@@ -414,7 +422,7 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur modification ligne BL :', err);
-    res.status(err.status || 500).json(errorBody(err, 'Erreur modification ligne BL'));
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur modification ligne BL'));
   } finally {
     db.release();
   }
@@ -436,7 +444,7 @@ router.delete('/sales/lines/:id', authenticateToken, attachDbContext, requireAdm
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur suppression ligne BL :', err);
-    res.status(err.status || 500).json(errorBody(err, 'Erreur suppression ligne BL'));
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur suppression ligne BL'));
   } finally {
     db.release();
   }

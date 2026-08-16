@@ -4,6 +4,10 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { recomputeArticleStock } = require('../services/stockService');
+const {
+  assertLotUsable,
+  availableLotCondition,
+} = require('../services/quality/lotBlocking');
 
 const router = express.Router();
 
@@ -195,8 +199,9 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
 
 async function findSelectedLot(db, { storeId, articleId, lotId }) {
   if (!lotId) return null;
+  await assertLotUsable(db, storeId, lotId);
   const result = await db.query(
-    `SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 FOR UPDATE`,
+    `SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND ${availableLotCondition('lots')} FOR UPDATE`,
     [storeId, articleId, lotId]
   );
   return result.rows[0] || null;
@@ -303,14 +308,14 @@ async function validateDeliveryNoteStock(db, { deliveryNoteId, storeId, clientKe
     let remaining = pos(line.sold_quantity || line.total_weight, 0);
     if (line.article_id && remaining > 0) {
       const lots = line.selected_lot_id
-        ? await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id])
-        : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
+        ? (await assertLotUsable(db, storeId, line.selected_lot_id), await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 AND ${availableLotCondition('lots')} FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id]))
+        : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 AND ${availableLotCondition('lots')} ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
 
       for (const lot of lots.rows) {
         if (remaining <= 0) break;
         const quantity = Math.min(remaining, num(lot.qty_remaining));
         if (quantity <= 0) continue;
-        await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2`, [quantity, lot.id]);
+        await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2 AND ${availableLotCondition('lots')}`, [quantity, lot.id]);
         await db.query(`INSERT INTO sale_line_allocations(id, sales_line_id, lot_id, quantity, unit_cost_ex_vat) VALUES(gen_random_uuid(), $1, $2, $3, $4)`, [line.id, lot.id, quantity, num(lot.unit_cost_ex_vat)]);
         await db.query(
           `INSERT INTO stock_movements(id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by)

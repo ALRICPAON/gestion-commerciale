@@ -2,8 +2,23 @@ const express = require('express');
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
+const { requireAdminOrManager } = require('../middleware/authorization');
+const {
+  blockLotForQuality,
+  errorBody: lotQualityErrorBody,
+  releaseLotForQuality,
+} = require('../services/quality/lotBlocking');
 
 const router = express.Router();
+
+const QUALITY_BLOCK_REASON_TYPES = new Set([
+  'supplier_recall',
+  'health_alert',
+  'quality_suspicion',
+  'traceability_issue',
+  'authority_request',
+  'other',
+]);
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -116,11 +131,29 @@ function lotSelectSql(extraColumns = '') {
       COALESCE(plm.allergens, l.traceability_data->>'allergens', a.allergens) AS allergens,
       plm.sanitary_photo_url,
       COALESCE(plm.sanitary_photo_urls, '[]'::jsonb) AS sanitary_photo_urls,
+      COALESCE(l.quality_status, 'available') AS quality_status,
+      l.quality_block_reason,
+      l.quality_block_reason_type,
+      l.quality_block_comment,
+      l.quality_blocked_at,
+      l.quality_blocked_by,
+      blocker.email AS quality_blocked_by_email,
+      l.quality_released_at,
+      l.quality_released_by,
+      releaser.email AS quality_released_by_email,
+      l.quality_release_reason,
+      l.quality_release_comment,
+      l.quality_non_conformity_id,
+      qnc.title AS quality_non_conformity_title,
+      qnc.status AS quality_non_conformity_status,
       ${lotStatusSql()} AS status
       ${extraColumns}
     FROM lots l
     JOIN articles a ON a.id = l.article_id AND a.store_id = l.store_id
     LEFT JOIN suppliers s ON s.id = l.supplier_id AND s.store_id = l.store_id
+    LEFT JOIN users blocker ON blocker.id = l.quality_blocked_by
+    LEFT JOIN users releaser ON releaser.id = l.quality_released_by
+    LEFT JOIN quality_non_conformities qnc ON qnc.id = l.quality_non_conformity_id AND qnc.store_id = l.store_id
     LEFT JOIN purchases p ON p.id = l.purchase_id AND p.store_id = l.store_id
     LEFT JOIN purchase_lines pl ON pl.id = l.purchase_line_id AND pl.store_id = l.store_id
     LEFT JOIN LATERAL (
@@ -240,6 +273,23 @@ function mapLot(row) {
     traceability: mapTraceability(row),
     delivered_clients: deliveredClients.map(mapDeliveredClient),
     delivered_clients_count: Number(row.delivered_clients_count || deliveredClients.length || 0),
+    quality: {
+      status: row.quality_status || 'available',
+      block_reason: row.quality_block_reason || null,
+      block_reason_type: row.quality_block_reason_type || null,
+      block_comment: row.quality_block_comment || null,
+      blocked_at: row.quality_blocked_at || null,
+      blocked_by: row.quality_blocked_by || null,
+      blocked_by_email: row.quality_blocked_by_email || null,
+      released_at: row.quality_released_at || null,
+      released_by: row.quality_released_by || null,
+      released_by_email: row.quality_released_by_email || null,
+      release_reason: row.quality_release_reason || null,
+      release_comment: row.quality_release_comment || null,
+      non_conformity_id: row.quality_non_conformity_id || null,
+      non_conformity_title: row.quality_non_conformity_title || null,
+      non_conformity_status: row.quality_non_conformity_status || null,
+    },
   };
 }
 
@@ -323,6 +373,12 @@ router.get('/lots', authenticateToken, attachDbContext, async (req, res) => {
     if (status === 'open') where += ` AND COALESCE(l.qty_remaining, 0) >= COALESCE(l.qty_initial, 0) AND COALESCE(l.qty_remaining, 0) > 0`;
     if (status === 'partial') where += ` AND COALESCE(l.qty_remaining, 0) > 0 AND COALESCE(l.qty_remaining, 0) < COALESCE(l.qty_initial, 0)`;
     if (status === 'closed') where += ` AND COALESCE(l.qty_remaining, 0) <= 0`;
+
+    const qualityStatus = clean(req.query.quality_status);
+    if (['available', 'blocked'].includes(qualityStatus)) {
+      params.push(qualityStatus);
+      where += ` AND COALESCE(l.quality_status, 'available') = $${params.length}`;
+    }
 
     const movementType = clean(req.query.movement_type);
     if (movementType) {
@@ -430,6 +486,34 @@ router.get('/lots/:lotId', authenticateToken, attachDbContext, async (req, res) 
       [req.user.store_id, lotId]
     );
 
+    const historyResult = await req.dbPool.query(
+      `
+      SELECT
+        h.id,
+        h.previous_status,
+        h.new_status,
+        h.reason_type,
+        h.reason,
+        h.comment,
+        h.source_type,
+        h.source_id,
+        h.quality_non_conformity_id,
+        h.changed_by,
+        u.email AS changed_by_email,
+        h.changed_at,
+        qnc.title AS quality_non_conformity_title,
+        qnc.status AS quality_non_conformity_status
+      FROM quality_lot_status_history h
+      LEFT JOIN users u ON u.id = h.changed_by
+      LEFT JOIN quality_non_conformities qnc ON qnc.id = h.quality_non_conformity_id AND qnc.store_id = h.store_id
+      WHERE h.store_id = $1
+        AND h.lot_id = $2
+      ORDER BY h.changed_at DESC, h.id DESC
+      LIMIT 100
+      `,
+      [req.user.store_id, lotId]
+    );
+
     const lot = mapLot({ ...lotResult.rows[0], delivered_clients: deliveredResult.rows, delivered_clients_count: deliveredResult.rows.length });
     const movements = movementsResult.rows.map((movement) => ({
       id: movement.id,
@@ -446,11 +530,78 @@ router.get('/lots/:lotId', authenticateToken, attachDbContext, async (req, res) 
     res.json({
       lot,
       movements,
+      quality_history: historyResult.rows,
       fifo_consumption: lot.delivered_clients,
     });
   } catch (err) {
     console.error('Erreur GET /api/traceability/lots/:lotId :', err);
     res.status(500).json({ error: 'Erreur serveur détail lot' });
+  }
+});
+
+router.post('/lots/:lotId/block-quality', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    const lotId = clean(req.params.lotId);
+    const reasonType = clean(req.body.reason_type);
+    const reason = clean(req.body.reason);
+    const comment = clean(req.body.comment);
+    const qualityNonConformityId = clean(req.body.quality_non_conformity_id);
+    if (!lotId || !isUuid(lotId)) return res.status(400).json({ error: 'ID lot invalide' });
+    if (!QUALITY_BLOCK_REASON_TYPES.has(reasonType)) return res.status(400).json({ error: 'Type de blocage invalide' });
+    if (!reason) return res.status(400).json({ error: 'Motif de blocage obligatoire' });
+    if (reasonType === 'other' && !comment) return res.status(400).json({ error: 'Commentaire obligatoire pour un blocage autre' });
+    if (qualityNonConformityId && !isUuid(qualityNonConformityId)) return res.status(400).json({ error: 'ID non-conformite invalide' });
+
+    await client.query('BEGIN');
+    const result = await blockLotForQuality(client, {
+      storeId: req.user.store_id,
+      lotId,
+      userId: req.user.id,
+      reason,
+      reasonType,
+      comment,
+      sourceType: 'traceability_manual',
+      sourceId: lotId,
+      qualityNonConformityId,
+    });
+    await client.query('COMMIT');
+    return res.json({ ok: true, lot: mapLot({ ...result.lot, lot_id: result.lot.id }), history: result.history });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Erreur POST /api/traceability/lots/:lotId/block-quality :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur blocage qualite lot'));
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/lots/:lotId/release-quality', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    const lotId = clean(req.params.lotId);
+    const reason = clean(req.body.reason);
+    const comment = clean(req.body.comment);
+    if (!lotId || !isUuid(lotId)) return res.status(400).json({ error: 'ID lot invalide' });
+
+    await client.query('BEGIN');
+    const result = await releaseLotForQuality(client, {
+      storeId: req.user.store_id,
+      lotId,
+      userId: req.user.id,
+      reason,
+      comment,
+      sourceType: 'traceability_manual_release',
+      sourceId: lotId,
+    });
+    await client.query('COMMIT');
+    return res.json({ ok: true, lot: mapLot({ ...result.lot, lot_id: result.lot.id }), history: result.history });
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error('Erreur POST /api/traceability/lots/:lotId/release-quality :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur liberation qualite lot'));
+  } finally {
+    client.release();
   }
 });
 

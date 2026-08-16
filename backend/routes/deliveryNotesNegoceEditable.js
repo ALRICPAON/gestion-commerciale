@@ -4,6 +4,11 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { recomputeArticleStock } = require('../services/stockService');
+const {
+  assertLotUsable,
+  availableLotCondition,
+  errorBody: lotQualityErrorBody,
+} = require('../services/quality/lotBlocking');
 
 const router = express.Router();
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
@@ -148,11 +153,13 @@ async function getArticle(db, storeId, body = {}, oldLine = {}) {
 
 async function getSelectedLot(db, storeId, articleId, lotId) {
   if (!lotId || !articleId) return null;
+  await assertLotUsable(db, storeId, lotId);
   const result = await db.query(
     `SELECT l.*, a.latin_name, a.fao_zone, a.sous_zone, a.fishing_gear, a.production_method, a.allergens
      FROM lots l
      JOIN articles a ON a.id = l.article_id AND a.store_id = l.store_id
      WHERE l.id = $1 AND l.article_id = $2 AND l.store_id = $3 AND l.qty_remaining > 0
+       AND ${availableLotCondition('l')}
      LIMIT 1`,
     [lotId, articleId, storeId]
   );
@@ -162,8 +169,9 @@ async function getSelectedLot(db, storeId, articleId, lotId) {
 async function getFifoLots(db, storeId, articleId, selectedLotId = null) {
   if (!articleId) return [];
   if (selectedLotId) {
+    await assertLotUsable(db, storeId, selectedLotId);
     const result = await db.query(
-      `SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`,
+      `SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 AND ${availableLotCondition('lots')} FOR UPDATE`,
       [storeId, articleId, selectedLotId]
     );
     return result.rows;
@@ -171,6 +179,7 @@ async function getFifoLots(db, storeId, articleId, selectedLotId = null) {
   const result = await db.query(
     `SELECT * FROM lots
      WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0
+       AND ${availableLotCondition('lots')}
      ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id
      FOR UPDATE`,
     [storeId, articleId]
@@ -329,7 +338,7 @@ async function validateStock(db, document, storeId, clientKey, userId, options =
         if (remaining <= 0) break;
         const quantity = Math.min(remaining, num(lot.qty_remaining));
         if (quantity <= 0) continue;
-        await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2`, [quantity, lot.id]);
+        await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2 AND ${availableLotCondition('lots')}`, [quantity, lot.id]);
         await db.query(
           `INSERT INTO sale_line_allocations(id, sales_line_id, lot_id, quantity, unit_cost_ex_vat)
            VALUES(gen_random_uuid(), $1, $2, $3, $4)`,
@@ -442,7 +451,7 @@ router.patch('/sales/:id', authenticateToken, attachDbContext, requireAdminOrMan
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur modification entete BL negoce :', err);
-    res.status(err.status || 500).json(errorBody(err, 'Erreur modification BL negoce'));
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur modification BL negoce'));
   } finally {
     db.release();
   }
