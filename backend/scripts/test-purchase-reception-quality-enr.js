@@ -10,6 +10,7 @@ const STORE_A = '20000000-0000-4000-8000-000000000001';
 const STORE_B = '20000000-0000-4000-8000-000000000002';
 const PURCHASE_A = '20000000-0000-4000-8000-000000000101';
 const USER_ID = '20000000-0000-4000-8000-000000000201';
+const RECEIVED_AT = '2026-08-16T06:42:17.123Z';
 
 function read(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
@@ -288,7 +289,7 @@ async function main() {
     lines: lines(),
     userId: USER_ID,
     receiptDate: '2026-08-16',
-    receivedAt: new Date('2026-08-16T08:00:00.000Z'),
+    receivedAt: new Date(RECEIVED_AT),
   });
   assert.equal(first.eventCreated, true, 'Premier passage doit creer event');
   assert.equal(first.evidenceCreated, true, 'Premier passage doit creer evidence');
@@ -298,8 +299,12 @@ async function main() {
   assert.equal(db.events[0].source_table, 'purchases');
   assert.equal(db.evidence[0].evidence_type, 'reception_record');
   assert.equal(db.evidence[0].evidence_status, 'recorded');
+  assert.equal(new Date(db.events[0].occurred_at).toISOString(), RECEIVED_AT, 'occurred_at doit utiliser receivedAt, pas receiptDate');
+  assert.equal(new Date(db.evidence[0].evidence_at).toISOString(), RECEIVED_AT, 'evidence_at doit utiliser receivedAt, pas receiptDate');
 
   const payload = db.evidence[0].payload;
+  assert.equal(payload.identification.receipt_date, '2026-08-16', 'receipt_date metier doit rester dans le snapshot');
+  assert.equal(payload.identification.received_at, RECEIVED_AT, 'received_at snapshot doit utiliser l instant technique reel');
   assert.equal(payload.identification.purchase_id, PURCHASE_A, 'Snapshot purchase_id manquant');
   assert.equal(payload.identification.supplier_name, 'Criée Test', 'Snapshot fournisseur manquant');
   assert.equal(payload.identification.bl_number, 'BL-42', 'Snapshot BL manquant');
