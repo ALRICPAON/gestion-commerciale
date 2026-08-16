@@ -294,20 +294,34 @@ async function prepareRecallNotifications(db, storeId, input = {}) {
   const campaign = await getProductRecallCampaign(db, storeId, input);
   const selectedIds = Array.isArray(input.recipient_ids) ? input.recipient_ids.map(clean).filter(Boolean) : [];
   const recipients = campaign.recipients.filter((recipient) => selectedIds.length === 0 || selectedIds.includes(recipient.id));
+  const sendableStatuses = new Set(['ready', 'failed']);
   return {
     campaign: campaign.campaign,
     lot: campaign.lot,
     article: campaign.article,
-    recipients: recipients.map((recipient) => ({
-      id: recipient.id,
-      delivered_client_name: recipient.delivered_client_name,
-      email: recipient.email,
-      status: recipient.status,
-      prepared_subject: recipient.prepared_subject,
-      prepared_body_preview: recipient.prepared_body ? recipient.prepared_body.slice(0, 500) : null,
-    })),
+    recipients: recipients.map((recipient) => {
+      const message = productRecall.buildRecallEmailMessage(campaign, recipient);
+      return {
+        recipient_id: recipient.id,
+        client: {
+          delivered_client_id: recipient.delivered_client_id,
+          delivered_client_name: recipient.delivered_client_name,
+          delivered_client_code: recipient.delivered_client_code,
+          delivered_client_store_identifier: recipient.delivered_client_store_identifier,
+        },
+        contact_name: recipient.contact_name || null,
+        email: recipient.email || null,
+        subject: message.subject,
+        body: message.text,
+        body_preview: message.text ? message.text.slice(0, 800) : null,
+        delivery_notes: recipient.delivery_notes || [],
+        delivered_quantity: recipient.delivered_quantity,
+        status: recipient.status,
+        sendable: sendableStatuses.has(recipient.status),
+      };
+    }),
     message_count: recipients.length,
-    sendable_count: recipients.filter((recipient) => ['ready', 'failed'].includes(recipient.status)).length,
+    sendable_count: recipients.filter((recipient) => sendableStatuses.has(recipient.status)).length,
   };
 }
 

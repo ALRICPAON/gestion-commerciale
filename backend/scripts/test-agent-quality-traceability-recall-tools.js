@@ -5,6 +5,8 @@ const { buildCoverageReport } = require('../services/agent/agentFullCoverageServ
 const { listExecutableActions } = require('../services/agent/agentExecutableActionRegistry');
 const { getAgentTool, listAgentTools, listMcpTools, RISK_LEVELS } = require('../services/agent/agentToolRegistry');
 const { listModules } = require('../services/agent/agentModuleCatalog');
+const agentQualityRecall = require('../services/agent/agentQualityTraceabilityRecallService');
+const productRecall = require('../services/productRecallService');
 const mcpServer = require('../routes/mcpServer');
 
 const { buildPublicMcpTools } = mcpServer._private;
@@ -40,6 +42,100 @@ const EXECUTABLE_ACTIONS = [
   'product_recall.create_campaign',
   'product_recall.send_notifications',
 ];
+
+const CAMPAIGN_ID = '80000000-0000-4000-8000-000000000301';
+const LOT_ID = '80000000-0000-4000-8000-000000000201';
+const ARTICLE_ID = '80000000-0000-4000-8000-000000000401';
+const RECIPIENT_READY = '80000000-0000-4000-8000-000000000501';
+const RECIPIENT_CONTACT_REQUIRED = '80000000-0000-4000-8000-000000000502';
+
+class FakeRecallPreviewDb {
+  async query(sql) {
+    const normalized = String(sql).replace(/\s+/g, ' ').trim();
+    if (normalized.includes('FROM product_recall_campaigns c')) {
+      return {
+        rows: [{
+          id: CAMPAIGN_ID,
+          store_id: context().store_id,
+          lot_id: LOT_ID,
+          article_id: ARTICLE_ID,
+          status: 'draft',
+          recall_type: 'supplier_recall',
+          reason: 'Rappel fournisseur pour analyse laboratoire',
+          comment: 'Ne plus utiliser le lot avant retour fournisseur',
+          initiated_by: context().user_id,
+          initiated_by_email: 'qualite@alta.test',
+          initiated_at: '2026-08-16T08:00:00.000Z',
+          prepared_at: '2026-08-16T08:01:00.000Z',
+          sent_at: null,
+          closed_at: null,
+          quality_event_id: null,
+          quality_evidence_record_id: null,
+          lot_code: '3063-26228-ABCD',
+          supplier_lot_number: 'ABC123',
+          qty_initial: 10,
+          qty_remaining: 3,
+          quality_status: 'blocked',
+          quality_block_reason: 'Rappel fournisseur pour analyse laboratoire',
+          quality_block_reason_type: 'supplier_recall',
+          quality_block_comment: 'Ne plus utiliser le lot avant retour fournisseur',
+          quality_blocked_at: '2026-08-16T08:01:30.000Z',
+          article_plu: '3063',
+          article_label: 'DOS DE CABILLAUD',
+          article_unit: 'kg',
+          family_name: 'Poisson',
+        }],
+      };
+    }
+    if (normalized.includes('FROM product_recall_recipients')) {
+      return {
+        rows: [
+          {
+            id: RECIPIENT_READY,
+            delivered_client_id: '80000000-0000-4000-8000-000000000601',
+            delivered_client_name: 'CLIENT LIVRE B',
+            delivered_client_code: 'CLB',
+            delivered_client_store_identifier: 'B42',
+            email: 'client-b@example.test',
+            contact_id: '80000000-0000-4000-8000-000000000701',
+            contact_name: 'Marie Client',
+            contact_source: 'client_contact',
+            status: 'ready',
+            delivered_quantity: '2.500',
+            delivery_note_count: 1,
+            delivery_notes: [{ id: 'BL-1', reference: 'BL-2026-001', date: '2026-08-16', delivered_quantity: 2.5 }],
+            prepared_subject: null,
+            prepared_body: null,
+            email_message_id: null,
+            sent_at: null,
+            error_message: null,
+          },
+          {
+            id: RECIPIENT_CONTACT_REQUIRED,
+            delivered_client_id: '80000000-0000-4000-8000-000000000602',
+            delivered_client_name: 'CLIENT SANS EMAIL',
+            delivered_client_code: 'CSE',
+            delivered_client_store_identifier: 'C12',
+            email: null,
+            contact_id: null,
+            contact_name: null,
+            contact_source: 'manual_required',
+            status: 'contact_required',
+            delivered_quantity: '1.000',
+            delivery_note_count: 1,
+            delivery_notes: [{ id: 'BL-2', reference: 'BL-2026-002', date: '2026-08-16', delivered_quantity: 1 }],
+            prepared_subject: null,
+            prepared_body: null,
+            email_message_id: null,
+            sent_at: null,
+            error_message: null,
+          },
+        ],
+      };
+    }
+    throw new Error(`Unexpected SQL: ${normalized}`);
+  }
+}
 
 function context(extra = {}) {
   return {
@@ -113,6 +209,9 @@ async function main() {
   assert(sendAction.requiredPermissions.includes('quality.record.create'), 'envoi rappel doit creer une preuve qualite');
   assert(String(sendAction.description).includes('aucun email silencieux'), 'envoi rappel doit interdire email silencieux');
 
+  const traceabilityAction = actions.find((action) => action.name === 'quality.traceability_test.complete');
+  assert.deepEqual(traceabilityAction.requiredPermissions, ['mcp.execute', 'quality.record.create'], 'execution traceability_test.complete doit exiger uniquement mcp.execute + quality.record.create');
+
   const blockTool = getAgentTool('prepare_quality_lot_block');
   authorizeTool(blockTool, context());
   assert.throws(
@@ -131,14 +230,48 @@ async function main() {
   assert.equal(preparedBlock.data.prepared_action.requires_confirmation, true);
   assert.equal(preparedBlock.data.prepared_action.executable_now, true);
 
-  const preparedTraceability = await getAgentTool('prepare_traceability_test_completion').execute({
+  for (const name of ['list_quality_evidence_records', 'get_quality_evidence_record']) {
+    authorizeTool(getAgentTool(name), context({
+      user_permissions: ['quality.read'],
+      agent_permissions: ['quality.read'],
+    }));
+  }
+
+  const traceabilityTool = getAgentTool('prepare_traceability_test_completion');
+  authorizeTool(traceabilityTool, context({
+    user_permissions: ['quality.record.create'],
+    agent_permissions: ['quality.record.create'],
+  }));
+  assert.deepEqual(traceabilityTool.requiredPermissions || [traceabilityTool.requiredPermission], ['quality.record.create'], 'prepare_traceability_test_completion ne doit pas exiger stock.write');
+  const preparedTraceability = await traceabilityTool.execute({
     db: {},
     context: context(),
     input: { lot_id: 'lot-1', result: 'conform', started_at: '2026-08-16T08:00:00.000Z' },
-    tool: getAgentTool('prepare_traceability_test_completion'),
+    tool: traceabilityTool,
   });
   assert.equal(preparedTraceability.data.prepared_action.action_type, 'quality.traceability_test.complete');
   assert(String(getAgentTool('prepare_traceability_test_completion').description).includes('ne doit jamais decider conforme automatiquement'));
+
+  const preview = await agentQualityRecall.prepareRecallNotifications(new FakeRecallPreviewDb(), context().store_id, {
+    campaign_id: CAMPAIGN_ID,
+    recipient_ids: [RECIPIENT_READY, RECIPIENT_CONTACT_REQUIRED],
+  });
+  assert.equal(preview.message_count, 2, 'message_count doit compter les recipients selectionnes');
+  assert.equal(preview.sendable_count, 1, 'sendable_count doit compter uniquement ready/failed');
+  const readyPreview = preview.recipients.find((recipient) => recipient.recipient_id === RECIPIENT_READY);
+  const blockedPreview = preview.recipients.find((recipient) => recipient.recipient_id === RECIPIENT_CONTACT_REQUIRED);
+  assert.equal(readyPreview.sendable, true, 'ready doit etre envoyable');
+  assert.equal(blockedPreview.sendable, false, 'contact_required ne doit pas etre presente comme envoyable');
+  const campaignSource = await agentQualityRecall.getProductRecallCampaign(new FakeRecallPreviewDb(), context().store_id, { campaign_id: CAMPAIGN_ID });
+  const sourceRecipient = campaignSource.recipients.find((recipient) => recipient.id === RECIPIENT_READY);
+  const sendMessage = productRecall.buildRecallEmailMessage(campaignSource, sourceRecipient);
+  assert.equal(readyPreview.subject, sendMessage.subject, 'preview.subject doit etre le sujet exact du futur envoi');
+  assert.equal(readyPreview.body, sendMessage.text, 'preview.body doit etre le corps exact du futur envoi');
+  assert.equal(readyPreview.client.delivered_client_name, 'CLIENT LIVRE B', 'preview doit exposer le client livre');
+  assert.equal(readyPreview.contact_name, 'Marie Client', 'preview doit exposer le contact');
+  for (const expected of ['Marie Client', 'DOS DE CABILLAUD', '3063-26228-ABCD', 'ABC123', 'BL-2026-001', '2.5', 'Rappel fournisseur pour analyse laboratoire', 'Ne plus utiliser le lot avant retour fournisseur']) {
+    assert(readyPreview.body.includes(expected), `preview body doit contenir ${expected}`);
+  }
 
   const coverage = buildCoverageReport(buildPublicMcpTools(), listModules());
   assert.equal(coverage.coverage_complete, true, JSON.stringify(coverage.missing_tools));
