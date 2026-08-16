@@ -301,14 +301,16 @@ async function searchTraceabilityTestLots({ db, storeId, search = null, limit = 
        l.supplier_lot_number,
        l.qty_initial,
        l.qty_remaining,
+       COALESCE(p.receipt_date, p.purchase_date, l.created_at::date) AS receipt_date,
        a.plu AS article_plu,
        a.designation AS article_label,
        s.name AS supplier_name
      FROM lots l
      JOIN articles a ON a.id = l.article_id AND a.store_id = l.store_id
+     LEFT JOIN purchases p ON p.id = l.purchase_id AND p.store_id = l.store_id
      LEFT JOIN suppliers s ON s.id = l.supplier_id AND s.store_id = l.store_id
      WHERE ${where}
-     ORDER BY l.created_at DESC, l.id DESC
+     ORDER BY COALESCE(p.receipt_date, p.purchase_date, l.created_at::date) DESC NULLS LAST, l.created_at DESC, l.id DESC
      LIMIT $${params.length}::integer`,
     params
   );
@@ -318,6 +320,7 @@ async function searchTraceabilityTestLots({ db, storeId, search = null, limit = 
     supplier_lot_number: row.supplier_lot_number || null,
     qty_initial: toNumber(row.qty_initial),
     qty_remaining: toNumber(row.qty_remaining),
+    receipt_date: row.receipt_date || null,
     article_plu: row.article_plu || null,
     article_label: row.article_label || null,
     supplier_name: row.supplier_name || null,

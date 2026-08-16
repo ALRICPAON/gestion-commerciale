@@ -76,6 +76,8 @@ class FakeTraceabilityDb {
         source_type: 'purchase',
         qty_initial: 5,
         qty_remaining: 5,
+        created_at: '2026-08-17T06:00:00.000Z',
+        receipt_date: '2026-08-17',
         article_id: '80000000-0000-4000-8000-000000000302',
         article_plu: '4000',
         article_label: 'MERLU',
@@ -88,6 +90,8 @@ class FakeTraceabilityDb {
         source_type: 'purchase',
         qty_initial: 1,
         qty_remaining: 1,
+        created_at: '2026-08-18T06:00:00.000Z',
+        receipt_date: '2026-08-18',
         article_id: '80000000-0000-4000-8000-000000000303',
         article_plu: '9999',
         article_label: 'AUTRE',
@@ -117,15 +121,18 @@ class FakeTraceabilityDb {
       const row = this.lots.find((lot) => lot.store_id === params[0] && lot.lot_id === params[1]);
       return { rows: row ? [clone(row)] : [] };
     }
-    if (normalized.startsWith('SELECT l.id AS lot_id') && normalized.includes('ORDER BY l.created_at DESC')) {
+    if (normalized.startsWith('SELECT l.id AS lot_id') && normalized.includes('ORDER BY COALESCE(p.receipt_date')) {
       const storeId = params[0];
       const search = params.find((value) => typeof value === 'string' && value.startsWith('%'));
       const needle = search ? search.replace(/%/g, '').toLowerCase() : null;
+      const limit = Number(params[params.length - 1]) || 20;
+      const valueTime = (lot) => new Date(lot.receipt_date || lot.created_at || 0).getTime();
+      const rows = this.lots.filter((lot) => (
+        lot.store_id === storeId
+        && (!needle || [lot.lot_code, lot.supplier_lot_number, lot.article_plu, lot.article_label].some((value) => String(value || '').toLowerCase().includes(needle)))
+      )).sort((a, b) => valueTime(b) - valueTime(a) || String(b.lot_id).localeCompare(String(a.lot_id))).slice(0, limit);
       return {
-        rows: clone(this.lots.filter((lot) => (
-          lot.store_id === storeId
-          && (!needle || [lot.lot_code, lot.supplier_lot_number, lot.article_plu, lot.article_label].some((value) => String(value || '').toLowerCase().includes(needle)))
-        ))),
+        rows: clone(rows),
       };
     }
     if (normalized.startsWith('SELECT sd.id AS delivery_note_id')) {
@@ -164,9 +171,20 @@ async function main() {
   assert(service.includes('COALESCE(sl.delivered_client_id, sd.client_id) AS delivered_client_id'));
   assert(service.includes('LEFT JOIN clients delivered ON delivered.id = COALESCE(sl.delivered_client_id, sd.client_id)'));
   assert(service.includes('COALESCE(sl.delivered_client_name_snapshot, sd.delivered_client_name_snapshot, delivered.name) AS delivered_client_name'));
+  assert(service.includes('const term = clean(search)'));
+  assert(service.includes('ORDER BY COALESCE(p.receipt_date, p.purchase_date, l.created_at::date) DESC NULLS LAST, l.created_at DESC, l.id DESC'));
+  assert(service.includes('Math.min(Math.max(Number(limit) || 20, 1), 50)'));
   assert(route.includes("router.get('/traceability-tests/lots'"));
   assert(route.includes("router.post('/lots/:lotId/traceability-test'"));
   assert(frontend.includes('Test de tracabilite'));
+  assert(frontend.includes('F9 : afficher les lots'));
+  assert(frontend.includes("event.key === 'F9'"));
+  assert(frontend.includes('event.preventDefault()'));
+  assert(frontend.includes("searchTraceabilityTestLots({ consultation: true })"));
+  assert(frontend.includes("limit: consultation && !search ? '50' : '20'"));
+  assert(frontend.includes("data-action=\"select-traceability-test-lot\""));
+  assert(frontend.includes('openTraceabilityTestLot(action.dataset.lotId)'));
+  assert(read('frontend/traceability.html').includes('traceability.js?v=7'));
   assert(evidenceFrontend.includes('renderTraceabilityTestDetail'));
   assert(!service.includes('blockLotForQuality'));
   assert(!service.includes('sendEmail'));
@@ -176,6 +194,16 @@ async function main() {
   const lots = await searchTraceabilityTestLots({ db, storeId: STORE_A, search: '3063' });
   assert.strictEqual(lots.length, 1);
   assert.strictEqual(lots[0].lot_code, 'LOT-ALTA');
+  const emptySearchLots = await searchTraceabilityTestLots({ db, storeId: STORE_A, search: '', limit: 50 });
+  assert.strictEqual(emptySearchLots.length, 2);
+  assert.strictEqual(emptySearchLots[0].lot_code, 'LOT-NON-VENDU');
+  assert.strictEqual(emptySearchLots[1].lot_code, 'LOT-ALTA');
+  assert(!emptySearchLots.some((lot) => lot.lot_code === 'LOT-AUTRE-STORE'));
+  const limitedLots = await searchTraceabilityTestLots({ db, storeId: STORE_A, search: '', limit: 1 });
+  assert.strictEqual(limitedLots.length, 1);
+  const manualDesignationLots = await searchTraceabilityTestLots({ db, storeId: STORE_A, search: 'cabil' });
+  assert.strictEqual(manualDesignationLots.length, 1);
+  assert.strictEqual(manualDesignationLots[0].article_label, 'DOS DE CABILLAUD');
 
   const snapshot = await buildTraceabilityTestSnapshot({ db, storeId: STORE_A, lotId: LOT_A });
   assert.strictEqual(snapshot.article.designation, 'DOS DE CABILLAUD');
@@ -260,6 +288,13 @@ async function main() {
     ok: true,
     tests: [
       'lot_search_plu_lot_supplier_article',
+      'f9_empty_search_backend_allowed',
+      'frontend_f9_prevent_default',
+      'empty_search_limited',
+      'recent_lots_first',
+      'manual_search_still_filters',
+      'lot_selection_opens_snapshot',
+      'store_isolation_kept',
       'snapshot_upstream_downstream_transformations',
       'line_delivered_client_used_over_document_client',
       'billed_client_kept_separate',

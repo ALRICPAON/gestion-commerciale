@@ -846,11 +846,12 @@ function renderTraceabilityTestSearchPanel() {
       <div><h3>Test de tracabilite</h3><p>Choisir un lot existant pour reconstruire la tracabilite ALTA.</p></div>
     </div>
     <div class="trace-recall-form">
-      <div class="form-group"><label for="traceability-test-search">Recherche lot</label><input id="traceability-test-search" type="search" placeholder="Lot ALTA, lot fournisseur, PLU, article" /></div>
+      <div class="form-group"><label for="traceability-test-search">Recherche lot</label><input id="traceability-test-search" type="search" placeholder="Lot ALTA, lot fournisseur, PLU, article" /><small class="muted">F9 : afficher les lots</small></div>
       <div class="form-group trace-filter-actions"><label>&nbsp;</label><button type="button" class="btn btn-primary" data-action="search-traceability-test-lots">Rechercher</button></div>
     </div>
-    <div id="traceability-test-results" class="trace-recall-recipient-list"></div>
+    <div id="traceability-test-results" class="trace-recall-recipient-list" style="max-height:52vh;overflow:auto;"></div>
   </section>`;
+  document.getElementById('traceability-test-search')?.focus();
 }
 
 function renderTraceabilityTestLotResults(lots = []) {
@@ -862,21 +863,21 @@ function renderTraceabilityTestLotResults(lots = []) {
   }
   container.innerHTML = lots.map((lot) => `<article class="trace-recall-recipient">
     <div class="trace-recall-recipient-head">
-      <div><strong>${escapeHtml(lot.article_label || lot.article_plu || '-')}</strong><small>Lot ${escapeHtml(lot.lot_code || '-')} - Fournisseur ${escapeHtml(lot.supplier_lot_number || '-')}</small></div>
+      <div><strong>${escapeHtml([lot.article_plu, lot.article_label].filter(Boolean).join(' - ') || '-')}</strong><small>Lot ALTA : ${escapeHtml(lot.lot_code || '-')}</small></div>
       <button type="button" class="btn btn-primary btn-sm" data-action="select-traceability-test-lot" data-lot-id="${escapeHtml(lotIdentifier(lot))}">Selectionner</button>
     </div>
     <dl class="trace-recall-recipient-meta">
-      <dt>PLU</dt><dd>${escapeHtml(lot.article_plu || '-')}</dd>
+      <dt>Lot fourn.</dt><dd>${escapeHtml(lot.supplier_lot_number || '-')}</dd>
       <dt>Fournisseur</dt><dd>${escapeHtml(lot.supplier_name || '-')}</dd>
-      <dt>Initial</dt><dd>${escapeHtml(qty(lot.qty_initial))}</dd>
+      <dt>Reception</dt><dd>${escapeHtml(formatDate(lot.receipt_date))}</dd>
       <dt>Restant</dt><dd>${escapeHtml(qty(lot.qty_remaining))}</dd>
     </dl>
   </article>`).join('');
 }
 
-async function searchTraceabilityTestLots() {
+async function searchTraceabilityTestLots({ consultation = false } = {}) {
   const search = document.getElementById('traceability-test-search')?.value.trim() || '';
-  const params = new URLSearchParams({ limit: '20', offset: '0' });
+  const params = new URLSearchParams({ limit: consultation && !search ? '50' : '20', offset: '0' });
   if (search) params.set('search', search);
   const lots = await apiFetch(`/api/traceability/traceability-tests/lots?${params.toString()}`);
   renderTraceabilityTestLotResults(Array.isArray(lots) ? lots : []);
@@ -1158,6 +1159,12 @@ function bindEvents() {
   });
   els.lotModalBody.addEventListener('input', (event) => {
     if (event.target.matches('#recall-reason, #recall-comment')) updateRecallEmailPreview();
+  });
+  els.lotModalBody.addEventListener('keydown', (event) => {
+    if (event.target.matches('#traceability-test-search') && event.key === 'F9') {
+      event.preventDefault();
+      searchTraceabilityTestLots({ consultation: true }).catch((err) => setState(err.message || 'Erreur recherche lots test tracabilite', 'error'));
+    }
   });
   els.lotModalBody.addEventListener('change', (event) => {
     if (event.target.matches('#recall-type')) updateRecallEmailPreview();

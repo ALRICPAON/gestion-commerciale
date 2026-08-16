@@ -14,7 +14,7 @@ function testFrontendWiring() {
   const css = read('frontend/css/pages/traceability.css');
 
   assert(html.includes('traceability.css?v=2'), 'Cache-buster CSS traceability attendu');
-  assert(html.includes('traceability.js?v=6'), 'Cache-buster JS traceability attendu');
+  assert(html.includes('traceability.js?v=7'), 'Cache-buster JS traceability attendu');
   assert(html.includes('start-traceability-test-btn'), 'Bouton test tracabilite manquant');
 
   assert(js.includes('Retrait / Rappel produit'), 'Bouton rappel produit manquant');
