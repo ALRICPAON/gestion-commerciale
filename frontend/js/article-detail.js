@@ -77,6 +77,10 @@ function yesNo(value) {
   return value ? 'Oui' : 'Non';
 }
 
+function articleCategoryLabel(value) {
+  return value === 'packaging' ? 'Emballage' : 'Produit';
+}
+
 function field(label, value) {
   return `
     <div class="info-item">
@@ -101,6 +105,7 @@ function renderArticle(article) {
     field('Nom affiché', article.display_name),
     field('EAN', article.ean),
     field('Famille', article.family_name),
+    field('Catégorie', articleCategoryLabel(article.article_category)),
     field('Actif', yesNo(article.is_active)),
   ].join('');
 

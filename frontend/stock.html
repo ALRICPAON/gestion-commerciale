@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Stock / Tarifs - Gestion Commerciale</title>
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/stock.css?v=3" />
+  <link rel="stylesheet" href="./css/pages/stock.css?v=4" />
 </head>
 <body class="app-page stock-page">
   <header class="topbar">
@@ -84,6 +84,11 @@
     </section>
 
     <section class="card">
+      <div class="stock-tabs" role="tablist" aria-label="Categorie stock">
+        <button id="stock-products-tab" class="stock-tab active" type="button" data-category="product">Produits</button>
+        <button id="stock-packaging-tab" class="stock-tab" type="button" data-category="packaging">Emballages</button>
+      </div>
+
       <div class="filters-row stock-filters">
         <div class="form-group">
           <label for="stock-search-input">Recherche</label>
@@ -127,9 +132,9 @@
               <th>Marge T2</th>
               <th>Tarif 3 HT</th>
               <th>Marge T3</th>
-              <th>DLC</th>
+              <th class="stock-dlc-column">DLC</th>
               <th>Valeur stock HT</th>
-              <th>Lots / Tracabilite</th>
+              <th id="stock-actions-heading">Lots / Tracabilite</th>
             </tr>
           </thead>
           <tbody id="stock-tbody">
@@ -161,13 +166,13 @@
               <th>Fournisseur</th>
               <th>Restant</th>
               <th>PMA</th>
-              <th>DLC</th>
-              <th>Nom latin</th>
-              <th>FAO</th>
-              <th>Sous-zone</th>
-              <th>Engin</th>
-              <th>Methode</th>
-              <th>Allergenes</th>
+              <th class="lot-sanitary-column">DLC</th>
+              <th class="lot-sanitary-column">Nom latin</th>
+              <th class="lot-sanitary-column">FAO</th>
+              <th class="lot-sanitary-column">Sous-zone</th>
+              <th class="lot-sanitary-column">Engin</th>
+              <th class="lot-sanitary-column">Methode</th>
+              <th class="lot-sanitary-column">Allergenes</th>
             </tr>
           </thead>
           <tbody id="lots-tbody">
@@ -179,6 +184,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/stock.js?v=5"></script>
+  <script src="./js/stock.js?v=6"></script>
 </body>
 </html>

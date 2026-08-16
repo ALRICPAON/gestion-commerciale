@@ -5,6 +5,7 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
+const { assertArticleCategory } = require('../services/articleCategory');
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -56,6 +57,7 @@ function lotsSelectSql(extraColumns = '') {
       a.plu,
       a.designation,
       a.unit,
+      COALESCE(a.article_category, 'product') AS article_category,
       a.family_code,
       a.family_name,
       l.purchase_id,
@@ -106,6 +108,7 @@ function summarySelectSql() {
       a.designation,
       a.unit,
       a.ean,
+      COALESCE(a.article_category, 'product') AS article_category,
       a.family_code,
       a.family_name,
       a.sale_price_level_1_ht,
@@ -145,9 +148,12 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const params = [req.user.store_id];
     const availableOnly = parseBool(req.query.available_only, true);
+    const articleCategory = assertArticleCategory(req.query.article_category);
     let where = 'WHERE ss.store_id = $1';
 
     if (availableOnly) where += ' AND ss.stock_quantity > 0';
+    params.push(articleCategory);
+    where += ` AND COALESCE(a.article_category, 'product') = $${params.length}`;
 
     if (clean(req.query.search)) {
       params.push(`%${clean(req.query.search)}%`);
@@ -189,9 +195,14 @@ router.get('/lots', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const params = [req.user.store_id];
     const availableOnly = parseBool(req.query.available_only, true);
+    const articleCategory = req.query.article_category ? assertArticleCategory(req.query.article_category) : null;
     let where = 'WHERE l.store_id = $1';
 
     if (availableOnly) where += ' AND l.qty_remaining > 0';
+    if (articleCategory) {
+      params.push(articleCategory);
+      where += ` AND COALESCE(a.article_category, 'product') = $${params.length}`;
+    }
 
     if (clean(req.query.article_id)) {
       const articleId = clean(req.query.article_id);

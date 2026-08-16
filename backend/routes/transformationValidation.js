@@ -90,6 +90,7 @@ async function getArticle(client, storeId, articleId) {
     WHERE id = $1
       AND store_id = $2
       AND COALESCE(is_active, true) = true
+      AND COALESCE(article_category, 'product') = 'product'
     LIMIT 1
     `,
     [articleId, storeId]

@@ -879,6 +879,7 @@ async function searchArticles(term) {
   const query = new URLSearchParams({
     search: term,
     active: 'true',
+    article_category: 'product',
     limit: '50',
   });
   if (activeDepartment?.id) query.set('department_id', activeDepartment.id);

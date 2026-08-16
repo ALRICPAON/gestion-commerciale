@@ -5,6 +5,7 @@ const XLSX = require('xlsx');
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
+const { articleCategoryLabel, normalizeArticleCategory } = require('../services/articleCategory');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -14,6 +15,7 @@ const CORE_COLUMNS = [
   'id',
   'plu',
   'designation',
+  'article_category',
   'display_name',
   'latin_name',
   'fao_zone',
@@ -51,6 +53,7 @@ const ARTICLE_IMPORT_COLUMNS = [
   'designation',
   'ean',
   'unit',
+  'article_category',
   'display_name',
   'latin_name',
   'fao_zone',
@@ -105,6 +108,19 @@ function numberValue(value) {
 function normalizeAction(value) {
   const action = String(value || 'ignore').trim().toLowerCase();
   return ['update', 'create', 'disable', 'ignore'].includes(action) ? action : null;
+}
+
+function normalizeImportHeader(key) {
+  const normalized = String(key || '').trim().toLowerCase();
+  if (['catégorie', 'categorie', 'catégorie article', 'categorie article', 'article category'].includes(normalized)) return 'article_category';
+  return normalized;
+}
+
+function normalizeImportRow(row = {}) {
+  return Object.entries(row).reduce((acc, [key, value]) => {
+    acc[normalizeImportHeader(key)] = value;
+    return acc;
+  }, {});
 }
 
 function excelDate(value) {
@@ -165,6 +181,8 @@ function buildArticlePayload(row, articleColumns, { creating = false } = {}) {
       if (parsed !== null) payload[column] = parsed;
     } else if (column.startsWith('sale_price_level_')) {
       payload[column] = numberValue(row[column]);
+    } else if (column === 'article_category') {
+      payload[column] = normalizeArticleCategory(row[column]);
     } else {
       payload[column] = clean(row[column]);
     }
@@ -339,6 +357,7 @@ router.get('/export.xlsx', authenticateToken, attachDbContext, requireAdminOrMan
         is_active: article.is_active === false ? false : true,
         created_at: excelDate(article.created_at),
         updated_at: excelDate(article.updated_at),
+        article_category: articleCategoryLabel(article.article_category),
       };
 
       for (const column of optionalColumns) {
@@ -381,7 +400,7 @@ router.post('/import.xlsx', authenticateToken, attachDbContext, requireAdminOrMa
     const firstSheet = workbook.SheetNames[0];
     if (!firstSheet) return res.status(400).json({ error: 'Fichier Excel vide' });
 
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { defval: '', raw: false });
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheet], { defval: '', raw: false }).map(normalizeImportRow);
     if (!rows.length) return res.status(400).json({ error: 'Aucune ligne article a importer' });
 
     const articleColumns = await tableColumns(db, 'articles');

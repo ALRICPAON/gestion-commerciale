@@ -39,6 +39,7 @@ const searchInputSchema = {
   type: 'object',
   properties: {
     query: { type: 'string', maxLength: 200 },
+    article_category: { type: 'string', enum: ['product', 'packaging'] },
     limit: { type: 'integer', minimum: 1, maximum: 100 },
   },
   additionalProperties: false,

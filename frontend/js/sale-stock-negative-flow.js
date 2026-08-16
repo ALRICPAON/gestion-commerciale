@@ -109,7 +109,7 @@
 
   async function findArticleForSale(search) {
     const query = encodeURIComponent(search || '');
-    const articleRows = await getJson(`/api/articles/search?q=${query}`).catch(() => []);
+    const articleRows = await getJson(`/api/articles/search?q=${query}&article_category=product`).catch(() => []);
     const articleItems = (Array.isArray(articleRows) ? articleRows : []).map(normalizeArticle);
     const articleMatch = articleItems.find((item) => String(item.plu) === String(search)) || articleItems[0];
     if (articleMatch) return articleMatch;
@@ -282,4 +282,4 @@
   const observer = new MutationObserver(() => enableLotButtons());
   if (lineBody) observer.observe(lineBody, { childList: true, subtree: true });
   refreshSaleSnapshot().then(enableLotButtons).catch(() => null);
-}());
+})();

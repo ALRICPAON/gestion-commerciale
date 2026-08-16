@@ -84,6 +84,7 @@
               <th>Désignation</th>
               <th>Service</th>
               <th>Famille</th>
+              <th>CatÃ©gorie</th>
               <th>Unité</th>
               <th>TVA</th>
               <th>PV HT</th>
@@ -94,7 +95,7 @@
           </thead>
           <tbody id="articles-tbody">
             <tr>
-              <td colspan="10">Chargement des articles...</td>
+              <td colspan="11">Chargement des articles...</td>
             </tr>
           </tbody>
         </table>
@@ -133,6 +134,14 @@
               <option value="barquette">barquette</option>
               <option value="sachet">sachet</option>
               <option value="unite">unité</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="article-business-category">CatÃ©gorie</label>
+            <select id="article-business-category">
+              <option value="product">Produit</option>
+              <option value="packaging">Emballage</option>
             </select>
           </div>
 
@@ -273,6 +282,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/articles.js?v=16"></script>
+  <script src="./js/articles.js?v=17"></script>
 </body>
 </html>

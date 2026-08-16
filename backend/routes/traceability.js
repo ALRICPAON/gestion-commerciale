@@ -121,6 +121,7 @@ function lotSelectSql(extraColumns = '') {
       a.plu AS article_plu,
       a.designation AS article_label,
       a.unit AS article_unit,
+      COALESCE(a.article_category, 'product') AS article_category,
       a.family_name,
       l.purchase_id,
       l.purchase_line_id,
@@ -343,7 +344,7 @@ router.get('/clients', authenticateToken, attachDbContext, async (req, res) => {
 router.get('/lots', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const params = [req.user.store_id];
-    let where = 'WHERE l.store_id = $1';
+    let where = "WHERE l.store_id = $1 AND COALESCE(a.article_category, 'product') = 'product'";
 
     const from = clean(req.query.from);
     if (from) {
