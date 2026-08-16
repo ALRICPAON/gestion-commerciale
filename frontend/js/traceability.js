@@ -437,7 +437,16 @@ function recallEmailSubject(source) {
   return `Rappel produit - ${article.designation || article.plu || 'Produit'} - Lot ${lot.lot_code || '-'}`;
 }
 
-function recallEmailBody(source, recipient, reason) {
+function recallPreviewTextValue(value) {
+  return String(value || '').trim();
+}
+
+function recallGreeting(recipient) {
+  const name = recallPreviewTextValue(recipient?.contact_name || recipient?.delivered_client_name);
+  return name ? `Bonjour ${name},` : 'Bonjour,';
+}
+
+function recallEmailBody(source, recipient, { reason = '', comment = '' } = {}) {
   const article = source.article || {};
   const lot = source.lot || {};
   const notes = Array.isArray(recipient?.delivery_notes) ? recipient.delivery_notes : [];
@@ -445,7 +454,10 @@ function recallEmailBody(source, recipient, reason) {
     ? notes.map((note) => `- ${note.reference || note.delivery_note_reference || note.delivery_note_id || '-'} - ${formatDate(note.date || note.delivery_note_date)} - ${qty(note.delivered_quantity)}`).join('\n')
     : '- Aucun BL detaille';
   const supplierLot = lot.supplier_lot_number ? `Lot fournisseur : ${lot.supplier_lot_number}\n` : '';
-  return `Bonjour ${recipient?.delivered_client_name || ''},
+  const cleanReason = recallPreviewTextValue(reason) || '-';
+  const cleanComment = recallPreviewTextValue(comment);
+  const commentBlock = cleanComment ? `\nInformations complementaires :\n${cleanComment}\n` : '';
+  return `${recallGreeting(recipient)}
 
 Dans le cadre de notre procedure de retrait/rappel produit, nous vous informons qu'un rappel concerne le produit suivant :
 
@@ -458,7 +470,8 @@ ${noteLines}
 Quantite totale livree : ${qty(recipient?.delivered_quantity)}
 
 Motif :
-${reason || '-'}
+${cleanReason}
+${commentBlock}
 
 Merci d'isoler immediatement le produit restant et de ne plus le commercialiser.
 
@@ -477,14 +490,17 @@ function selectedRecallRecipient(source) {
     || null;
 }
 
-function renderRecallEmailPreview(source, reason) {
+function renderRecallEmailPreview(source, preview = {}) {
   const recipient = selectedRecallRecipient(source);
   if (!recipient) return '<div class="trace-empty-small">Aucun destinataire pour generer un apercu.</div>';
+  const contactName = recipient.contact_name || recipient.delivered_client_name || '-';
+  const contactLine = recipient.email ? `${contactName} - ${recipient.email}` : contactName;
   return `<div class="trace-recall-preview">
-    <div><span>Destinataire apercu</span><strong>${escapeHtml(recipient.delivered_client_name || '-')}</strong></div>
+    <div><span>Destinataire</span><strong>${escapeHtml(contactLine)}</strong></div>
+    <div><span>Client</span><strong>${escapeHtml(recipient.delivered_client_name || '-')}</strong></div>
     <div><span>Objet</span><strong>${escapeHtml(recallEmailSubject(source))}</strong></div>
     <label>Apercu du message</label>
-    <textarea readonly rows="13">${escapeHtml(recallEmailBody(source, recipient, reason))}</textarea>
+    <textarea readonly rows="13">${escapeHtml(recallEmailBody(source, recipient, preview))}</textarea>
     <p class="trace-warning">Apercu uniquement. Aucun email ne sera envoye a cette etape.</p>
   </div>`;
 }
@@ -495,6 +511,10 @@ function renderRecallBlock(lot) {
     <p class="trace-card-note">Analyse aval, preparation des destinataires et creation d'une campagne brouillon sans envoi email.</p>
     <button type="button" class="btn btn-secondary" data-action="start-recall" data-lot-id="${escapeHtml(lotIdentifier(lot))}">Retrait / Rappel produit</button>
   </section>`;
+}
+
+function pluralLabel(count, singular, plural) {
+  return `${count} ${count === 1 ? singular : plural}`;
 }
 
 function renderMovements(movements = []) {
@@ -565,13 +585,15 @@ function renderRecallAnalysisPanel(analysis) {
   const readyCount = recipients.filter((recipient) => recipient.status === 'ready' && recipient.email).length;
   const contactRequiredCount = recipients.filter((recipient) => recipient.status === 'contact_required' || !recipient.email).length;
   const lotId = state.currentLotId || analysis.lot?.lot_id || '';
+  const emailLabel = pluralLabel(readyCount, 'email pret a etre envoye', 'emails prets a etre envoyes');
+  const contactLabel = pluralLabel(contactRequiredCount, 'contact a effectuer', 'contacts a effectuer');
   return `<section class="trace-detail-card trace-recall-panel">
     <div class="trace-section-header">
       <div><h3>Retrait / Rappel produit</h3><p>Analyse aval avant creation de campagne.</p></div>
       <button type="button" class="btn btn-secondary" data-action="back-lot-detail" data-lot-id="${escapeHtml(lotId)}">Retour detail lot</button>
     </div>
     ${renderRecallSummary(analysis)}
-    <div class="trace-recall-alert">${readyCount} destinataire(s) pret(s), ${contactRequiredCount} contact(s) a effectuer. Aucun email ne sera envoye.</div>
+    <div class="trace-recall-alert"><strong>${escapeHtml(emailLabel)} &middot; ${escapeHtml(contactLabel)}</strong><span>Aucun envoi n'est effectue a cette etape.</span></div>
     <h4>Clients impactes</h4>
     ${renderRecallRecipients(recipients)}
     <h4>Creation campagne</h4>
@@ -581,7 +603,7 @@ function renderRecallAnalysisPanel(analysis) {
       <div class="form-group"><label for="recall-comment">Commentaire</label><textarea id="recall-comment" rows="3" placeholder="Obligatoire si type Autre"></textarea></div>
     </div>
     <h4>Apercu du futur email</h4>
-    ${renderRecallEmailPreview(analysis, '')}
+    <div id="recall-email-preview">${renderRecallEmailPreview(analysis, { reason: '', comment: '' })}</div>
     <div class="trace-actions-row">
       <button type="button" class="btn btn-secondary" data-action="back-lot-detail" data-lot-id="${escapeHtml(lotId)}">Annuler</button>
       <button type="button" class="btn btn-primary" data-action="prepare-recall-confirm" data-lot-id="${escapeHtml(lotId)}">Creer le rappel et bloquer le lot</button>
@@ -622,6 +644,24 @@ function renderRecallConfirmPanel(lotId, payload) {
       <button type="button" class="btn btn-primary" data-action="confirm-create-recall" data-lot-id="${escapeHtml(lotId)}">Creer le rappel</button>
     </div>
   </section>`;
+}
+
+function currentRecallPreviewPayload() {
+  return {
+    recall_type: document.getElementById('recall-type')?.value || 'supplier_recall',
+    reason: document.getElementById('recall-reason')?.value.trim() || '',
+    comment: document.getElementById('recall-comment')?.value.trim() || '',
+  };
+}
+
+function updateRecallEmailPreview() {
+  const container = document.getElementById('recall-email-preview');
+  if (!container || !state.recallAnalysis) return;
+  const payload = currentRecallPreviewPayload();
+  container.innerHTML = renderRecallEmailPreview(state.recallAnalysis, {
+    reason: payload.reason,
+    comment: payload.comment,
+  });
 }
 
 function renderActiveRecallError(error) {
@@ -676,7 +716,7 @@ function renderRecallCampaignPanel(data) {
     ${renderRecallRecipients(source.recipients, { selectable: true })}
     <button type="button" class="btn btn-secondary" disabled>Envoyer les rappels - disponible a l'etape suivante</button>
     <h4>Apercu du futur email</h4>
-    ${renderRecallEmailPreview(source, campaign.reason || '')}
+    <div id="recall-email-preview">${renderRecallEmailPreview(source, { reason: campaign.reason || '', comment: campaign.comment || '' })}</div>
     <div class="trace-actions-row">
       <button type="button" class="btn btn-secondary" data-action="back-lot-detail" data-lot-id="${escapeHtml(source.lot.lot_id || state.currentLotId || '')}">Retour detail lot</button>
     </div>
@@ -797,9 +837,22 @@ function bindEvents() {
     }
     if (action.dataset.action === 'preview-recall-recipient' && action.dataset.recipientId) {
       state.recallPreviewRecipientId = action.dataset.recipientId;
-      if (state.recallCampaign) renderRecallCampaignPanel(state.recallCampaign);
-      else if (state.recallAnalysis) els.lotModalBody.innerHTML = renderRecallAnalysisPanel(state.recallAnalysis);
+      const container = document.getElementById('recall-email-preview');
+      if (container && state.recallCampaign) {
+        container.innerHTML = renderRecallEmailPreview(state.recallCampaign, {
+          reason: state.recallCampaign.campaign?.reason || '',
+          comment: state.recallCampaign.campaign?.comment || '',
+        });
+      } else {
+        updateRecallEmailPreview();
+      }
     }
+  });
+  els.lotModalBody.addEventListener('input', (event) => {
+    if (event.target.matches('#recall-reason, #recall-comment')) updateRecallEmailPreview();
+  });
+  els.lotModalBody.addEventListener('change', (event) => {
+    if (event.target.matches('#recall-type')) updateRecallEmailPreview();
   });
   els.photoModalClose.addEventListener('click', closePhoto);
   els.photoModal.addEventListener('click', (event) => { if (event.target.dataset.closePhoto === 'true') closePhoto(); });

@@ -14,7 +14,7 @@ function testFrontendWiring() {
   const css = read('frontend/css/pages/traceability.css');
 
   assert(html.includes('traceability.css?v=2'), 'Cache-buster CSS traceability attendu');
-  assert(html.includes('traceability.js?v=3'), 'Cache-buster JS traceability attendu');
+  assert(html.includes('traceability.js?v=4'), 'Cache-buster JS traceability attendu');
 
   assert(js.includes('Retrait / Rappel produit'), 'Bouton rappel produit manquant');
   assert(js.includes('/api/traceability/lots/${encodeURIComponent(lotId)}/recall-analysis'), 'GET recall-analysis manquant');
@@ -24,6 +24,17 @@ function testFrontendWiring() {
   assert(js.includes('Commentaire obligatoire pour le type Autre'), 'Validation front type other manquante');
   assert(js.includes('Aucun email ne sera envoye'), 'Garde-fou UX email manquant');
   assert(js.includes("Envoyer les rappels - disponible a l'etape suivante"), 'Bouton envoi doit rester desactive');
+  assert(js.includes('id="recall-email-preview"'), 'Conteneur preview live manquant');
+  assert(js.includes('function updateRecallEmailPreview'), 'Preview live manquante');
+  assert(js.includes("matches('#recall-reason, #recall-comment')"), 'Preview live input motif/commentaire manquante');
+  assert(js.includes("matches('#recall-type')"), 'Preview live change type manquante');
+  assert(js.includes('Informations complementaires'), 'Section commentaire email manquante');
+  assert(js.includes('recipient?.contact_name || recipient?.delivered_client_name'), 'Salutation contact_name puis client manquante');
+  assert(js.includes('1 ? singular : plural'), 'Singulier/pluriel bandeau manquant');
+  assert(js.includes('email pret a etre envoye'), 'Bandeau email pret manquant');
+  assert(js.includes('contact a effectuer'), 'Bandeau contact a effectuer manquant');
+  assert(js.includes('<div><span>Destinataire</span>'), 'Destinataire preview manquant');
+  assert(js.includes('<div><span>Client</span>'), 'Client preview manquant');
   assert(js.includes('delivery_notes'), 'Detail BL par destinataire manquant');
   assert(js.includes('selectedRecallRecipient'), 'Preview personnalisee par destinataire manquante');
   assert(js.includes('renderRecallRecipients(source.recipients, { selectable: true })'), 'Selection destinataires post-creation manquante');
