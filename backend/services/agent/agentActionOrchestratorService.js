@@ -30,8 +30,11 @@ function assertExecutionPermission(action, context) {
   if (!hasPermission(context, 'mcp.execute')) {
     throw expose(403, 'Permission requise : mcp.execute');
   }
-  if (!hasPermission(context, action.requiredPermission)) {
-    throw expose(403, `Permission requise : ${action.requiredPermission}`);
+  const requiredPermissions = action.requiredPermissions || [action.requiredPermission];
+  for (const permission of requiredPermissions.filter((item) => item && item !== 'mcp.execute')) {
+    if (!hasPermission(context, permission)) {
+      throw expose(403, `Permission requise : ${permission}`);
+    }
   }
 }
 

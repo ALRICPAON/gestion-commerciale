@@ -1,7 +1,10 @@
 const commercial = require('../agentCommercialToolsService');
+const lotBlocking = require('../quality/lotBlocking');
 const qualityBlocks = require('../quality/qualityDocumentBlockService');
 const qualityDocumentation = require('../quality/qualityDocumentationService');
 const qualityVersions = require('../quality/qualityDocumentationVersionService');
+const traceabilityTests = require('../quality/traceabilityTestService');
+const productRecall = require('../productRecallService');
 
 function text(value) {
   return String(value || '').trim();
@@ -25,6 +28,68 @@ function assertUuidLike(value, label) {
     throw error;
   }
   return normalized;
+}
+
+function optionalUuidLike(value, label) {
+  return text(value) ? assertUuidLike(value, label) : null;
+}
+
+function normalizeLotBlockPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  return {
+    lot_id: assertUuidLike(payload.lot_id || payload.id, 'lot_id'),
+    reason_type: text(payload.reason_type) || text(payload.recall_type),
+    reason: text(payload.reason),
+    comment: text(payload.comment) || null,
+    quality_non_conformity_id: optionalUuidLike(payload.quality_non_conformity_id, 'quality_non_conformity_id'),
+  };
+}
+
+function normalizeLotReleasePayload(payload = {}) {
+  assertObject(payload, 'payload');
+  return {
+    lot_id: assertUuidLike(payload.lot_id || payload.id, 'lot_id'),
+    reason: text(payload.reason),
+    comment: text(payload.comment),
+  };
+}
+
+function normalizeTraceabilityTestCompletionPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  return {
+    lot_id: assertUuidLike(payload.lot_id || payload.id, 'lot_id'),
+    result: text(payload.result),
+    observation: text(payload.observation) || null,
+    corrective_action: text(payload.corrective_action || payload.correctiveAction) || null,
+    started_at: text(payload.started_at || payload.startedAt) || null,
+  };
+}
+
+function normalizeProductRecallPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  return {
+    lot_id: assertUuidLike(payload.lot_id || payload.id, 'lot_id'),
+    recall_type: text(payload.recall_type || payload.recallType),
+    reason: text(payload.reason),
+    comment: text(payload.comment) || null,
+  };
+}
+
+function normalizeRecallNotificationsPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  const recipientIds = Array.isArray(payload.recipient_ids || payload.recipientIds)
+    ? (payload.recipient_ids || payload.recipientIds).map((id) => assertUuidLike(id, 'recipient_id'))
+    : [];
+  if (!recipientIds.length) {
+    const error = new Error('recipient_ids doit contenir au moins un destinataire');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+  return {
+    campaign_id: assertUuidLike(payload.campaign_id || payload.id, 'campaign_id'),
+    recipient_ids: recipientIds,
+  };
 }
 
 function normalizeQualitySectionUpdate(raw = {}) {
@@ -464,6 +529,209 @@ const ACTIONS = [
     example: { action_type: 'quality.documentation.move_block', payload: { section_id: 'uuid-section', block_ids: ['uuid-block-1', 'uuid-block-2'] } },
     validatePayload: normalizeMoveBlockPayload,
     execute: async ({ db, context, payload }) => ({ ok: true, mode: 'executed', action: 'quality.documentation.move_block', module: 'quality_documentation', blocks: await qualityBlocks.reorderChapterBlocks(db, context.store_id, payload.chapter_id, context.user_id, payload.block_ids) }),
+  },
+  {
+    name: 'quality.lot.block',
+    description: 'Bloque un lot pour raison qualite via lotBlocking.blockLotForQuality. Execution uniquement apres confirmation humaine explicite.',
+    aliases: ['execute_quality_lot_block'],
+    module: 'quality',
+    requiredPermission: 'stock.write',
+    requiredPermissions: ['mcp.execute', 'quality.record.create', 'stock.write'],
+    service: 'lotBlocking.blockLotForQuality',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['lot_id', 'reason_type', 'reason'],
+      properties: {
+        lot_id: { type: 'string' },
+        reason_type: { type: 'string' },
+        reason: { type: 'string' },
+        comment: { type: 'string' },
+        quality_non_conformity_id: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'quality.lot.block', payload: { lot_id: 'uuid-lot', reason_type: 'supplier_recall', reason: 'Rappel fournisseur' } },
+    validatePayload: normalizeLotBlockPayload,
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'quality.lot.block',
+      module: 'quality',
+      result: await lotBlocking.blockLotForQuality(db, {
+        storeId: context.store_id,
+        lotId: payload.lot_id,
+        userId: context.user_id,
+        reason: payload.reason,
+        reasonType: payload.reason_type,
+        comment: payload.comment,
+        qualityNonConformityId: payload.quality_non_conformity_id,
+        sourceType: 'agent_mcp_quality_lot_block',
+      }),
+    }),
+  },
+  {
+    name: 'quality.lot.release',
+    description: 'Libere un lot bloque qualite via lotBlocking.releaseLotForQuality. Execution uniquement apres confirmation humaine explicite.',
+    aliases: ['execute_quality_lot_release'],
+    module: 'quality',
+    requiredPermission: 'stock.write',
+    requiredPermissions: ['mcp.execute', 'quality.record.create', 'stock.write'],
+    service: 'lotBlocking.releaseLotForQuality',
+    confirmationLevel: 'explicit_human',
+    reversible: false,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['lot_id', 'reason', 'comment'],
+      properties: {
+        lot_id: { type: 'string' },
+        reason: { type: 'string' },
+        comment: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'quality.lot.release', payload: { lot_id: 'uuid-lot', reason: 'Controle conforme', comment: 'Validation responsable qualite' } },
+    validatePayload: normalizeLotReleasePayload,
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'quality.lot.release',
+      module: 'quality',
+      result: await lotBlocking.releaseLotForQuality(db, {
+        storeId: context.store_id,
+        lotId: payload.lot_id,
+        userId: context.user_id,
+        reason: payload.reason,
+        comment: payload.comment,
+        sourceType: 'agent_mcp_quality_lot_release',
+      }),
+    }),
+  },
+  {
+    name: 'quality.traceability_test.complete',
+    description: 'Enregistre la validation humaine d un test de tracabilite via completeTraceabilityTest. GPT ne doit jamais choisir conforme automatiquement.',
+    aliases: ['execute_traceability_test_completion'],
+    module: 'quality',
+    requiredPermission: 'quality.record.create',
+    requiredPermissions: ['mcp.execute', 'quality.record.create'],
+    service: 'traceabilityTestService.completeTraceabilityTest',
+    confirmationLevel: 'explicit_human',
+    reversible: false,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['lot_id', 'result'],
+      properties: {
+        lot_id: { type: 'string' },
+        result: { type: 'string', enum: ['conform', 'non_conform'] },
+        observation: { type: 'string' },
+        corrective_action: { type: 'string' },
+        started_at: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'quality.traceability_test.complete', payload: { lot_id: 'uuid-lot', result: 'conform', started_at: '2026-08-16T08:00:00.000Z' } },
+    validatePayload: normalizeTraceabilityTestCompletionPayload,
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'quality.traceability_test.complete',
+      module: 'quality',
+      result: await traceabilityTests.completeTraceabilityTest({
+        db,
+        storeId: context.store_id,
+        lotId: payload.lot_id,
+        userId: context.user_id,
+        result: payload.result,
+        observation: payload.observation,
+        correctiveAction: payload.corrective_action,
+        startedAt: payload.started_at,
+      }),
+    }),
+  },
+  {
+    name: 'product_recall.create_campaign',
+    description: 'Cree une campagne de retrait/rappel produit via productRecallService.createProductRecallDraft. Ne declenche jamais l envoi email.',
+    aliases: ['execute_product_recall'],
+    module: 'quality',
+    requiredPermission: 'quality.record.create',
+    requiredPermissions: ['mcp.execute', 'quality.record.create', 'stock.write'],
+    service: 'productRecallService.createProductRecallDraft',
+    confirmationLevel: 'explicit_human',
+    reversible: false,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['lot_id', 'recall_type', 'reason'],
+      properties: {
+        lot_id: { type: 'string' },
+        recall_type: { type: 'string' },
+        reason: { type: 'string' },
+        comment: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'product_recall.create_campaign', payload: { lot_id: 'uuid-lot', recall_type: 'supplier_recall', reason: 'Alerte fournisseur' } },
+    validatePayload: normalizeProductRecallPayload,
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'product_recall.create_campaign',
+      module: 'quality',
+      result: await productRecall.createProductRecallDraft({
+        db,
+        storeId: context.store_id,
+        lotId: payload.lot_id,
+        userId: context.user_id,
+        recallType: payload.recall_type,
+        reason: payload.reason,
+        comment: payload.comment,
+      }),
+    }),
+  },
+  {
+    name: 'product_recall.send_notifications',
+    description: 'Envoie les emails de rappel produit via productRecallService.sendProductRecallNotifications. Confirmation humaine finale obligatoire; aucun email silencieux.',
+    aliases: ['execute_product_recall_notifications'],
+    module: 'communications',
+    requiredPermission: 'communications.send',
+    requiredPermissions: ['mcp.execute', 'communications.send', 'quality.record.create'],
+    service: 'productRecallService.sendProductRecallNotifications',
+    confirmationLevel: 'explicit_human',
+    reversible: false,
+    previewRequired: true,
+    batch: true,
+    payloadSchema: {
+      type: 'object',
+      required: ['campaign_id', 'recipient_ids'],
+      properties: {
+        campaign_id: { type: 'string' },
+        recipient_ids: { type: 'array', minItems: 1, items: { type: 'string' } },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'product_recall.send_notifications', payload: { campaign_id: 'uuid-campaign', recipient_ids: ['uuid-recipient'] } },
+    validatePayload: normalizeRecallNotificationsPayload,
+    execute: async ({ dbPool, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'product_recall.send_notifications',
+      module: 'communications',
+      result: await productRecall.sendProductRecallNotifications({
+        db: dbPool,
+        storeId: context.store_id,
+        campaignId: payload.campaign_id,
+        recipientIds: payload.recipient_ids,
+        userId: context.user_id,
+      }),
+    }),
   },
   {
     name: 'sales.create_customer_order',

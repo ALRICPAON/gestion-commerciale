@@ -52,6 +52,26 @@ async function main() {
     'archive_supply_material_link',
     'diagnose_supplies_materials',
   ];
+  const expectedQualityTraceabilityRecallTools = [
+    'list_quality_evidence_records',
+    'get_quality_evidence_record',
+    'list_quality_events',
+    'get_quality_event',
+    'list_quality_blocked_lots',
+    'get_lot_quality_status',
+    'search_traceability_lots',
+    'get_traceability_snapshot',
+    'list_traceability_tests',
+    'get_traceability_test',
+    'list_product_recall_campaigns',
+    'get_product_recall_campaign',
+    'analyze_product_recall_for_lot',
+    'prepare_quality_lot_block',
+    'prepare_quality_lot_release',
+    'prepare_traceability_test_completion',
+    'prepare_product_recall',
+    'prepare_product_recall_notifications',
+  ];
   const generatedTools = buildPublicMcpTools();
   const generatedNames = new Set(generatedTools.map((tool) => tool.name));
 
@@ -88,6 +108,7 @@ async function main() {
     'archive_or_disable_quality_cleaning_plan',
     ...expectedMasterDocumentTools,
     ...expectedSupplyMaterialTools,
+    ...expectedQualityTraceabilityRecallTools,
   ]) {
     assert(publicNames.has(name), `${name} absent de la reponse MCP tools/list`);
     const tool = publicTools.find((item) => item.name === name);
@@ -125,7 +146,7 @@ async function main() {
     mcp_version: MCP_SERVER_VERSION,
     public_tool_count: publicTools.length,
     registry_source: 'legacyTools + agentToolRegistry.listMcpTools + public underscore aliases',
-    expected_tools: [...expectedNames, ...expectedMasterDocumentTools, ...expectedSupplyMaterialTools].map((name) => ({
+    expected_tools: [...expectedNames, ...expectedMasterDocumentTools, ...expectedSupplyMaterialTools, ...expectedQualityTraceabilityRecallTools].map((name) => ({
       name,
       present: publicNames.has(name),
       internal_tool: PUBLIC_QUALITY_BLOCK_TOOL_ALIASES[name],
