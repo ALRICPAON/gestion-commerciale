@@ -117,11 +117,33 @@ async function main() {
   assert(index.includes("router.use('/evidence-records', evidenceRecordRoutes)"), 'Route evidence-records non montee');
   assert(dashboard.includes('href="./evidence-records.html"'), 'Carte Enregistrements manquante');
   assert(dashboard.includes('Consulter les ENR et preuves qualite.'), 'Description carte incorrecte');
-  assert(page.includes('Date</th><th>Type</th><th>Reference</th><th>Origine</th><th>Resume</th><th>Statut'), 'Colonnes principales manquantes');
+  assert(page.includes('Historique des ENR et preuves generes par les operations metier ALTA.'), 'Sous-titre Enregistrements incorrect');
+  assert(page.includes('evidence-record-summary'), 'Cartes de synthese Enregistrements manquantes');
+  assert(page.includes('evidence-record-document-links'), 'Bloc documents applicables manquant');
+  assert(page.includes('quality-document-links.js'), 'Mecanisme documentaire Qualite non charge');
+  assert(page.includes('evidence-record-export-csv'), 'Export CSV Enregistrements manquant');
+  assert(page.includes('<th>Date/heure</th>'), 'Colonne Date/heure manquante');
+  assert(page.includes('<th>Type</th>'), 'Colonne Type manquante');
+  assert(page.includes('<th>Reference</th>'), 'Colonne Reference manquante');
+  assert(page.includes('<th>Origine</th>'), 'Colonne Origine manquante');
+  assert(page.includes('<th>Resume</th>'), 'Colonne Resume manquante');
+  assert(page.includes('<th>Statut</th>'), 'Colonne Statut manquante');
   assert(frontend.includes('/api/quality/evidence-records'), 'Frontend ne cible pas API evidence-records');
   assert(frontend.includes('Reception fournisseur'), 'Libelle reception_record manquant');
   assert(frontend.includes('Non renseigne'), 'Traduction not_available manquante');
   assert(frontend.includes('humanize'), 'Fallback type inconnu manquant');
+  assert(frontend.includes('DOCUMENT_TARGETS_BY_TYPE'), 'Couche mapping documentaire maintenable manquante');
+  assert(frontend.includes('QualityDocumentLinks.render'), 'Documents applicables non reutilises');
+  assert(frontend.includes('renderProductsTable'), 'Table produits recus manquante');
+  assert(frontend.includes('Tracabilite'), 'Bloc tracabilite manquant');
+  assert(frontend.includes('Documents / preuves'), 'Bloc documents/preuves manquant');
+  assert(frontend.includes('openProtectedUrl'), 'Ouverture securisee des preuves manquante');
+  assert(frontend.includes('exportCsv'), 'Export CSV frontend manquant');
+  assert(frontend.includes('date_heure') && frontend.includes('reference') && !frontend.includes('JSON.stringify(record.payload'), 'Export CSV doit rester lisible sans JSON brut');
+  assert(!frontend.includes("data-action=\"delete\""), 'Action suppression interdite sur les preuves');
+  assert(!frontend.includes("data-action=\"archive\""), 'Action archivage interdite sur les preuves');
+  assert(!frontend.includes("data-action=\"validate\""), 'Action validation interdite sur les preuves');
+  assert(!frontend.includes('fetch(`${API_BASE_URL}/api/quality/evidence-records${path}`, {\n      method:'), 'Frontend ne doit pas ecrire sur les preuves');
   assert(temperaturePage.includes('temperature-record-table-body'), 'Historique temperatures doit rester present');
   assert(cleaningPage.includes('cleaning-record-table-body'), 'Historique nettoyages doit rester present');
 
@@ -165,6 +187,19 @@ async function main() {
   assert.equal(partial.reference_label, 'purchases', 'Payload incomplet doit garder un fallback lisible');
   assert.equal(partial.type_label, 'Unknown Future Type', 'Type inconnu doit avoir un fallback lisible');
 
+  const multiProduct = publicEvidence(sampleEvidence({
+    payload: {
+      ...sampleEvidence().payload,
+      received_products: [
+        sampleEvidence().payload.received_products[0],
+        { article_designation: 'FILET DE LIEU', article_plu: '3099', received_colis: 2, received_quantity: 6, price_unit: 'kg' },
+      ],
+      documents: {},
+    },
+  }));
+  assert.equal(multiProduct.payload.received_products.length, 2, 'Snapshot multi-produits doit rester disponible pour le tableau detail');
+  assert.deepEqual(multiProduct.payload.documents, {}, 'Absence document/photo doit rester lisible et non bloquante');
+
   console.log(JSON.stringify({
     ok: true,
     list_route: 'GET /api/quality/evidence-records',
@@ -173,6 +208,11 @@ async function main() {
     reception_record_rendering: true,
     incomplete_payload_fallback: true,
     unknown_type_fallback: true,
+    multiple_product_rows: true,
+    missing_document_photo: true,
+    applicable_documents_block: true,
+    readonly_actions: true,
+    csv_export: true,
     temperature_history_preserved: true,
     cleaning_history_preserved: true,
   }, null, 2));
