@@ -94,7 +94,7 @@ class FakeTraceabilityDb {
       },
     ];
     this.downstream = [
-      { lot_id: LOT_A, delivery_note_id: 'dn1', delivery_note_reference: 'BL-C1', delivery_note_date: '2026-08-16', document_type: 'DELIVERY_NOTE', delivered_client_id: 'client-a', delivered_client_name: 'CLIENT LIVRE A', delivered_client_code: 'A', delivered_store_identifier: 'A1', billed_client_id: 'bill-a', billed_client_name: 'CENTRALE A', billed_client_code: 'CA', delivered_quantity: 1, allocated_at: '2026-08-16T07:00:00.000Z' },
+      { lot_id: LOT_A, delivery_note_id: 'dn1', delivery_note_reference: 'BL-C1', delivery_note_date: '2026-08-16', document_type: 'DELIVERY_NOTE', document_client_id: 'client-a', delivered_client_id: 'affiliate-b', delivered_client_name: 'AFFILIE LIVRE B', delivered_client_code: 'B', delivered_store_identifier: 'B1', billed_client_id: 'central-c', billed_client_name: 'CENTRALE C', billed_client_code: 'CC', delivered_quantity: 1, allocated_at: '2026-08-16T07:00:00.000Z' },
       { lot_id: LOT_A, delivery_note_id: 'dn2', delivery_note_reference: 'BL-C2', delivery_note_date: '2026-08-16', document_type: 'DELIVERY_NOTE', delivered_client_id: 'client-b', delivered_client_name: 'CLIENT LIVRE B', delivered_client_code: 'B', delivered_store_identifier: 'B1', billed_client_id: 'client-b', billed_client_name: 'CLIENT LIVRE B', billed_client_code: 'B', delivered_quantity: 2, allocated_at: '2026-08-16T07:20:00.000Z' },
     ];
     this.transformations = [
@@ -161,6 +161,9 @@ async function main() {
   assert(service.includes("eventType: 'traceability_test_completed'"));
   assert(service.includes("evidenceType: 'traceability_test_record'"));
   assert(service.includes("sourceType: 'human'"));
+  assert(service.includes('COALESCE(sl.delivered_client_id, sd.client_id) AS delivered_client_id'));
+  assert(service.includes('LEFT JOIN clients delivered ON delivered.id = COALESCE(sl.delivered_client_id, sd.client_id)'));
+  assert(service.includes('COALESCE(sl.delivered_client_name_snapshot, sd.delivered_client_name_snapshot, delivered.name) AS delivered_client_name'));
   assert(route.includes("router.get('/traceability-tests/lots'"));
   assert(route.includes("router.post('/lots/:lotId/traceability-test'"));
   assert(frontend.includes('Test de tracabilite'));
@@ -182,8 +185,11 @@ async function main() {
   assert.strictEqual(snapshot.summary.clients_delivered_count, 2);
   assert.strictEqual(snapshot.summary.delivery_notes_count, 2);
   assert.strictEqual(snapshot.summary.delivered_quantity, 3);
-  assert.strictEqual(snapshot.downstream[0].delivered_client_name, 'CLIENT LIVRE A');
-  assert.strictEqual(snapshot.downstream[0].billed_client_name, 'CENTRALE A');
+  assert.strictEqual(snapshot.downstream[0].delivered_client_id, 'affiliate-b');
+  assert.strictEqual(snapshot.downstream[0].delivered_client_name, 'AFFILIE LIVRE B');
+  assert.strictEqual(snapshot.downstream[0].billed_client_id, 'central-c');
+  assert.strictEqual(snapshot.downstream[0].billed_client_name, 'CENTRALE C');
+  assert.notStrictEqual(snapshot.downstream[0].delivered_client_id, 'client-a');
   assert.strictEqual(snapshot.transformations.length, 1);
 
   const empty = await buildTraceabilityTestSnapshot({ db, storeId: STORE_A, lotId: LOT_EMPTY });
@@ -220,6 +226,18 @@ async function main() {
     () => completeTraceabilityTest({ db, storeId: STORE_A, lotId: LOT_A, userId: USER_ID, result: 'non_conform', observation: 'Rupture lien BL', startedAt: '2026-08-16T08:00:00.000Z' }),
     (error) => error.code === 'TRACEABILITY_TEST_CORRECTIVE_ACTION_REQUIRED'
   );
+  await assert.rejects(
+    () => completeTraceabilityTest({
+      db,
+      storeId: STORE_A,
+      lotId: LOT_A,
+      userId: USER_ID,
+      result: 'conform',
+      startedAt: '2026-08-16T10:00:01.000Z',
+      completedAt: new Date('2026-08-16T10:00:00.000Z'),
+    }),
+    (error) => error.status === 400 && error.code === 'STARTED_AT_AFTER_COMPLETED_AT'
+  );
 
   const nonConform = await completeTraceabilityTest({
     db,
@@ -243,12 +261,15 @@ async function main() {
     tests: [
       'lot_search_plu_lot_supplier_article',
       'snapshot_upstream_downstream_transformations',
+      'line_delivered_client_used_over_document_client',
+      'billed_client_kept_separate',
       'empty_downstream_supported',
       'multi_store_refused',
       'conform_evidence_created',
       'non_conform_validation_required',
       'multiple_tests_same_lot_allowed',
-      'duration_seconds',
+      'started_at_future_refused',
+      'duration_seconds_backend_calculated',
       'quality_evidence_snapshot',
       'no_stock_no_recall_no_nc',
       'frontend_and_evidence_rendering_wired',

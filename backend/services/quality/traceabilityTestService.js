@@ -155,10 +155,10 @@ async function fetchDeliveredClients(db, storeId, lotId) {
        sd.reference_number AS delivery_note_reference,
        sd.document_date AS delivery_note_date,
        sd.document_type,
-       delivered.id AS delivered_client_id,
-       COALESCE(sd.delivered_client_name_snapshot, delivered.name) AS delivered_client_name,
-       COALESCE(sd.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
-       COALESCE(sd.delivered_client_store_identifier, delivered.store_identifier) AS delivered_store_identifier,
+       COALESCE(sl.delivered_client_id, sd.client_id) AS delivered_client_id,
+       COALESCE(sl.delivered_client_name_snapshot, sd.delivered_client_name_snapshot, delivered.name) AS delivered_client_name,
+       COALESCE(sl.delivered_client_code_snapshot, sd.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
+       COALESCE(sl.delivered_client_store_identifier_snapshot, sd.delivered_client_store_identifier, delivered.store_identifier) AS delivered_store_identifier,
        billed.id AS billed_client_id,
        COALESCE(sd.billed_client_name_snapshot, billed.name) AS billed_client_name,
        COALESCE(sd.billed_client_code_snapshot, billed.code) AS billed_client_code,
@@ -167,7 +167,7 @@ async function fetchDeliveredClients(db, storeId, lotId) {
      FROM sale_line_allocations sla
      JOIN sales_lines sl ON sl.id = sla.sales_line_id AND sl.store_id = $1::uuid
      JOIN sales_documents sd ON sd.id = sl.sales_document_id AND sd.store_id = sl.store_id
-     LEFT JOIN clients delivered ON delivered.id = sd.client_id AND delivered.store_id = sd.store_id
+     LEFT JOIN clients delivered ON delivered.id = COALESCE(sl.delivered_client_id, sd.client_id) AND delivered.store_id = sd.store_id
      LEFT JOIN clients billed ON billed.id = COALESCE(sd.billed_client_id, delivered.billed_client_id, sd.client_id) AND billed.store_id = sd.store_id
      WHERE sla.lot_id = $2::uuid
        AND sd.store_id = $1::uuid
@@ -176,6 +176,11 @@ async function fetchDeliveredClients(db, storeId, lotId) {
        sd.reference_number,
        sd.document_date,
        sd.document_type,
+       sd.client_id,
+       sl.delivered_client_id,
+       sl.delivered_client_name_snapshot,
+       sl.delivered_client_code_snapshot,
+       sl.delivered_client_store_identifier_snapshot,
        sd.delivered_client_name_snapshot,
        sd.delivered_client_code_snapshot,
        sd.delivered_client_store_identifier,
@@ -354,6 +359,9 @@ async function completeTraceabilityTest({
   const completed = completedAt instanceof Date ? completedAt : new Date(completedAt);
   if (Number.isNaN(started.getTime())) throw makeError('Date de debut invalide', 400, 'INVALID_STARTED_AT');
   if (Number.isNaN(completed.getTime())) throw makeError('Date de fin invalide', 400, 'INVALID_COMPLETED_AT');
+  if (started.getTime() > completed.getTime()) {
+    throw makeError('Date de debut posterieure a la validation', 400, 'STARTED_AT_AFTER_COMPLETED_AT');
+  }
   const durationSeconds = Math.max(0, Math.round((completed.getTime() - started.getTime()) / 1000));
   const testIdResult = await db.query('SELECT gen_random_uuid() AS id');
   const testId = testIdResult.rows[0].id;
