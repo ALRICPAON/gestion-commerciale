@@ -12,6 +12,7 @@ const {
   analyzeLotRecallImpact,
   createProductRecallDraft,
   getActiveCampaign,
+  getProductRecallCampaign,
 } = require('../services/productRecallService');
 
 const router = express.Router();
@@ -556,6 +557,21 @@ router.get('/lots/:lotId/recall-analysis', authenticateToken, attachDbContext, a
   } catch (err) {
     console.error('Erreur GET /api/traceability/lots/:lotId/recall-analysis :', err);
     return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur analyse retrait/rappel lot'));
+  }
+});
+
+router.get('/recalls/:campaignId', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const campaignId = clean(req.params.campaignId);
+    const result = await getProductRecallCampaign({
+      db: req.dbPool,
+      storeId: req.user.store_id,
+      campaignId,
+    });
+    return res.json(result);
+  } catch (err) {
+    console.error('Erreur GET /api/traceability/recalls/:campaignId :', err);
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur lecture rappel produit'));
   }
 });
 
