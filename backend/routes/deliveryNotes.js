@@ -4,6 +4,11 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { recomputeArticleStock } = require('../services/stockService');
+const {
+  assertLotUsable,
+  availableLotCondition,
+  errorBody: lotQualityErrorBody,
+} = require('../services/quality/lotBlocking');
 
 const router = express.Router();
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
@@ -203,8 +208,8 @@ async function validateDeliveryNoteStock(db, { deliveryNoteId, storeId, clientKe
     let remaining = pos(line.sold_quantity || line.total_weight, 0);
     if (!skipStock && line.article_id && remaining > 0) {
       const lots = line.selected_lot_id
-        ? await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id])
-        : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
+        ? (await assertLotUsable(db, storeId, line.selected_lot_id), await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 AND ${availableLotCondition('lots')} FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id]))
+        : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 AND ${availableLotCondition('lots')} ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
 
       for (const lot of lots.rows) {
         if (remaining <= 0) break;
@@ -386,7 +391,7 @@ router.post('/sales/:id/validate-delivery-note', authenticateToken, attachDbCont
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur validation commande en BL :', err);
-    res.status(err.status || 500).json({ error: err.message || 'Erreur validation en BL' });
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur validation en BL'));
   } finally {
     db.release();
   }
@@ -453,7 +458,7 @@ router.post('/delivery-notes/:id/validate', authenticateToken, attachDbContext, 
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur validation BL :', err);
-    res.status(err.status || 500).json({ error: err.message || 'Erreur validation BL' });
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur validation BL'));
   } finally {
     db.release();
   }

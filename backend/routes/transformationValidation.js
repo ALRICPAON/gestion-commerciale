@@ -4,6 +4,11 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { recomputeArticleStock } = require('../services/stockService');
+const {
+  assertLotUsable,
+  availableLotCondition,
+  errorBody: lotQualityErrorBody,
+} = require('../services/quality/lotBlocking');
 
 const router = express.Router();
 
@@ -112,6 +117,7 @@ async function getAvailableLots(client, { storeId, articleId }) {
     WHERE l.store_id = $1
       AND l.article_id = $2
       AND l.qty_remaining > 0
+      AND ${availableLotCondition('l')}
     ORDER BY COALESCE(l.dlc, DATE '9999-12-31') ASC, l.created_at ASC, l.id ASC
     `,
     [storeId, articleId]
@@ -161,6 +167,7 @@ async function selectLots(client, { storeId, articleId, requiredQty, selectionMo
 
       if (!lotResult.rows.length) throw new Error(`Lot manuel introuvable: ${lotId}`);
       const lot = lotResult.rows[0];
+      await assertLotUsable(client, storeId, lot.lot_id);
       const available = Number(lot.qty_remaining || 0);
       if (available <= 0) throw new Error(`Lot sans stock disponible: ${lot.lot_code || lot.lot_id}`);
       if (quantityTaken > available + 0.0001) throw new Error(`Quantité trop élevée pour le lot ${lot.lot_code || lot.lot_id}`);
@@ -338,7 +345,7 @@ router.post('/:id/validate', authenticateToken, attachDbContext, requireAdminOrM
     for (const lot of selectedLots) {
       const qtyTaken = positiveQty(lot.quantity_taken);
       const updateResult = await client.query(
-        `UPDATE lots SET qty_remaining = qty_remaining - $1 WHERE id = $2 AND store_id = $3 AND qty_remaining >= $1 RETURNING id`,
+        `UPDATE lots SET qty_remaining = qty_remaining - $1 WHERE id = $2 AND store_id = $3 AND qty_remaining >= $1 AND ${availableLotCondition('lots')} RETURNING id`,
         [qtyTaken, lot.lot_id, req.user.store_id]
       );
       if (!updateResult.rows.length) throw new Error('Stock insuffisant ou lot déjà consommé');
@@ -443,7 +450,7 @@ router.post('/:id/validate', authenticateToken, attachDbContext, requireAdminOrM
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Erreur POST /api/transformations/:id/validate :', err);
-    return res.status(err.status || 500).json({ error: err.message || 'Erreur validation transformation' });
+    return res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur validation transformation'));
   } finally {
     client.release();
   }

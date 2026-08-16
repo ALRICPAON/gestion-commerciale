@@ -74,9 +74,12 @@ function absoluteAssetUrl(url) {
   return `${API_BASE_URL}${url}`;
 }
 
-async function apiFetch(path) {
+async function apiFetch(path, options = {}) {
+  const headers = { Authorization: `Bearer ${authToken}`, ...(options.headers || {}) };
+  if (options.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    headers: { Authorization: `Bearer ${authToken}` },
+    ...options,
+    headers,
   });
 
   if (response.status === 401) {
@@ -105,6 +108,11 @@ function sourceLabel(value) {
   if (value === 'transformation') return 'Transformation';
   if (value === 'fabrication') return 'Fabrication';
   return value || 'Lot';
+}
+
+function qualityStatusBadge(quality = {}) {
+  if (quality.status === 'blocked') return '<span class="trace-badge trace-badge-closed">Qualite bloque</span>';
+  return '<span class="trace-badge trace-badge-open">Qualite disponible</span>';
 }
 
 function lotIdentifier(lot) {
@@ -178,7 +186,7 @@ function renderLotCard(lot) {
   return `<article class="trace-card" data-lot-id="${escapeHtml(lotId)}">
     <div class="trace-card-header">
       <div><h3>${escapeHtml(lot.article_plu || '-')} - ${escapeHtml(lot.article_label || '-')}</h3><p>Lot ${escapeHtml(lot.lot_code || '-')} · ${escapeHtml(sourceLabel(lot.source_type))}</p></div>
-      ${statusBadge(lot.status)}
+      <div>${statusBadge(lot.status)} ${qualityStatusBadge(lot.quality)}</div>
     </div>
     <div class="trace-card-grid">
       <div><span>Fournisseur</span><strong>${escapeHtml(lot.supplier_name || '-')}</strong></div>
@@ -245,6 +253,7 @@ function renderInfoBlock(lot) {
       <dt>Lot</dt><dd>${escapeHtml(lot.lot_code || '-')}</dd>
       <dt>Quantité initiale</dt><dd>${escapeHtml(qty(lot.qty_initial))}</dd>
       <dt>Quantité restante</dt><dd>${escapeHtml(qty(lot.qty_remaining))}</dd>
+      <dt>Statut qualite</dt><dd>${qualityStatusBadge(lot.quality)}</dd>
       <dt>FAO</dt><dd>${escapeHtml(trace.fao_zone || '-')}</dd>
       <dt>Sous-zone</dt><dd>${escapeHtml(trace.sous_zone || '-')}</dd>
       <dt>Engin</dt><dd>${escapeHtml(trace.fishing_gear || '-')}</dd>
@@ -254,6 +263,60 @@ function renderInfoBlock(lot) {
     </dl>
     ${lot.purchase_id ? `<a class="btn btn-secondary" href="./purchase-detail.html?id=${encodeURIComponent(lot.purchase_id)}">Ouvrir achat source</a>` : ''}
     ${photoGallery(lot.sanitary_photo_urls)}
+  </section>`;
+}
+
+function qualityReasonTypeLabel(value) {
+  const labels = {
+    supplier_recall: 'Rappel fournisseur',
+    health_alert: 'Alerte sanitaire',
+    quality_suspicion: 'Suspicion qualite',
+    traceability_issue: 'Probleme tracabilite',
+    authority_request: 'Demande autorite',
+    other: 'Autre',
+    lot_isolation: 'Isolement du lot',
+    release: 'Liberation',
+  };
+  return labels[value] || value || '-';
+}
+
+function renderQualityHistory(history = []) {
+  if (!history.length) return '<div class="trace-empty-small">Aucun historique de statut qualite.</div>';
+  return `<div class="trace-movement-list">${history.map((item) => `<div class="trace-movement-line"><span>${escapeHtml(formatDate(item.changed_at))}</span><strong>${escapeHtml(item.previous_status || '-')} -> ${escapeHtml(item.new_status || '-')}</strong><span>${escapeHtml(qualityReasonTypeLabel(item.reason_type))}</span><span>${escapeHtml(item.reason || '')}</span></div>`).join('')}</div>`;
+}
+
+function renderQualityBlock(lot, history = []) {
+  const quality = lot.quality || {};
+  const isBlocked = quality.status === 'blocked';
+  return `<section class="trace-detail-card" data-quality-lot-id="${escapeHtml(lotIdentifier(lot))}">
+    <h3>Blocage qualite</h3>
+    <dl class="trace-definition-list">
+      <dt>Statut</dt><dd>${qualityStatusBadge(quality)}</dd>
+      <dt>Motif</dt><dd>${escapeHtml(qualityReasonTypeLabel(quality.block_reason_type))}</dd>
+      <dt>Detail</dt><dd>${escapeHtml(quality.block_reason || '-')}</dd>
+      <dt>NC liee</dt><dd>${quality.non_conformity_id ? escapeHtml(quality.non_conformity_title || quality.non_conformity_id) : '-'}</dd>
+      <dt>Dernier blocage</dt><dd>${escapeHtml(formatDate(quality.blocked_at))}</dd>
+      <dt>Derniere liberation</dt><dd>${escapeHtml(formatDate(quality.released_at))}</dd>
+    </dl>
+    ${isBlocked ? `
+      <div class="form-group"><label for="quality-release-reason">Motif liberation</label><input id="quality-release-reason" type="text" /></div>
+      <div class="form-group"><label for="quality-release-comment">Commentaire liberation</label><textarea id="quality-release-comment" rows="3"></textarea></div>
+      <button type="button" class="btn btn-primary" data-action="release-quality" data-lot-id="${escapeHtml(lotIdentifier(lot))}">Liberer le lot</button>
+    ` : `
+      <div class="form-group"><label for="quality-block-reason-type">Type blocage</label><select id="quality-block-reason-type">
+        <option value="quality_suspicion">Suspicion qualite</option>
+        <option value="supplier_recall">Rappel fournisseur</option>
+        <option value="health_alert">Alerte sanitaire</option>
+        <option value="traceability_issue">Probleme tracabilite</option>
+        <option value="authority_request">Demande autorite</option>
+        <option value="other">Autre</option>
+      </select></div>
+      <div class="form-group"><label for="quality-block-reason">Motif blocage</label><input id="quality-block-reason" type="text" /></div>
+      <div class="form-group"><label for="quality-block-comment">Commentaire</label><textarea id="quality-block-comment" rows="3"></textarea></div>
+      <button type="button" class="btn btn-primary" data-action="block-quality" data-lot-id="${escapeHtml(lotIdentifier(lot))}">Bloquer le lot</button>
+    `}
+    <h4>Historique</h4>
+    ${renderQualityHistory(history)}
   </section>`;
 }
 
@@ -276,7 +339,7 @@ async function openLotDetail(lotId) {
     const lot = data.lot || {};
     els.lotModalTitle.textContent = `${lot.article_plu || '-'} - ${lot.article_label || 'Lot'}`;
     els.lotModalSubtitle.textContent = `Lot ${lot.lot_code || '-'}`;
-    els.lotModalBody.innerHTML = `<div class="trace-detail-grid">${renderInfoBlock(lot)}${renderDeliveredClients(lot.delivered_clients)}${renderMovements(data.movements || [])}</div>`;
+    els.lotModalBody.innerHTML = `<div class="trace-detail-grid">${renderInfoBlock(lot)}${renderQualityBlock(lot, data.quality_history || [])}${renderDeliveredClients(lot.delivered_clients)}${renderMovements(data.movements || [])}</div>`;
   } catch (err) {
     els.lotModalBody.innerHTML = `<div class="trace-empty">${escapeHtml(err.message || 'Erreur détail lot')}</div>`;
   }
@@ -294,6 +357,29 @@ function openPhoto(src) {
 function closePhoto() {
   els.photoPreview.src = '';
   els.photoModal.classList.add('hidden');
+}
+
+async function blockQualityLot(lotId) {
+  const reasonType = document.getElementById('quality-block-reason-type')?.value || 'quality_suspicion';
+  const reason = document.getElementById('quality-block-reason')?.value.trim();
+  const comment = document.getElementById('quality-block-comment')?.value.trim();
+  await apiFetch(`/api/traceability/lots/${encodeURIComponent(lotId)}/block-quality`, {
+    method: 'POST',
+    body: JSON.stringify({ reason_type: reasonType, reason, comment }),
+  });
+  await openLotDetail(lotId);
+  await loadLots({ append: false });
+}
+
+async function releaseQualityLot(lotId) {
+  const reason = document.getElementById('quality-release-reason')?.value.trim();
+  const comment = document.getElementById('quality-release-comment')?.value.trim();
+  await apiFetch(`/api/traceability/lots/${encodeURIComponent(lotId)}/release-quality`, {
+    method: 'POST',
+    body: JSON.stringify({ reason, comment }),
+  });
+  await openLotDetail(lotId);
+  await loadLots({ append: false });
 }
 
 async function refreshClientSuggestions() {
@@ -327,6 +413,12 @@ function bindEvents() {
   });
   els.lotModalClose.addEventListener('click', closeLotModal);
   els.lotModal.addEventListener('click', (event) => { if (event.target.dataset.closeModal === 'true') closeLotModal(); });
+  els.lotModalBody.addEventListener('click', (event) => {
+    const action = event.target.closest('[data-action]');
+    if (!action?.dataset.lotId) return;
+    if (action.dataset.action === 'block-quality') blockQualityLot(action.dataset.lotId).catch((err) => setState(err.message || 'Erreur blocage qualite', 'error'));
+    if (action.dataset.action === 'release-quality') releaseQualityLot(action.dataset.lotId).catch((err) => setState(err.message || 'Erreur liberation qualite', 'error'));
+  });
   els.photoModalClose.addEventListener('click', closePhoto);
   els.photoModal.addEventListener('click', (event) => { if (event.target.dataset.closePhoto === 'true') closePhoto(); });
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') { closeLotModal(); closePhoto(); } });

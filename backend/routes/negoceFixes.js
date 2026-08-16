@@ -4,6 +4,11 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { recomputeArticleStock } = require('../services/stockService');
+const {
+  assertLotUsable,
+  availableLotCondition,
+  errorBody: lotQualityErrorBody,
+} = require('../services/quality/lotBlocking');
 
 const router = express.Router();
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
@@ -91,14 +96,14 @@ async function validateNegoceDeliveryNote(db, { deliveryNoteId, storeId, clientK
       throw error;
     }
     const lots = line.selected_lot_id
-      ? await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id])
-      : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
+      ? (await assertLotUsable(db, storeId, line.selected_lot_id), await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND id = $3 AND qty_remaining > 0 AND ${availableLotCondition('lots')} FOR UPDATE`, [storeId, line.article_id, line.selected_lot_id]))
+      : await db.query(`SELECT * FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 AND ${availableLotCondition('lots')} ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id FOR UPDATE`, [storeId, line.article_id]);
 
     for (const lot of lots.rows) {
       if (remaining <= 0) break;
       const quantity = Math.min(remaining, num(lot.qty_remaining));
       if (quantity <= 0) continue;
-      await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2`, [quantity, lot.id]);
+      await db.query(`UPDATE lots SET qty_remaining = qty_remaining - $1, updated_at = NOW() WHERE id = $2 AND ${availableLotCondition('lots')}`, [quantity, lot.id]);
       await db.query(`INSERT INTO sale_line_allocations(id, sales_line_id, lot_id, quantity, unit_cost_ex_vat) VALUES(gen_random_uuid(), $1, $2, $3, $4)`, [line.id, lot.id, quantity, num(lot.unit_cost_ex_vat)]);
       await db.query(
         `INSERT INTO stock_movements(id, store_id, client_key, article_id, lot_id, movement_type, quantity, unit_cost_ex_vat, source_table, source_id, notes, created_by)
@@ -184,11 +189,12 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
     const selectedLotId = uuidOrNull(req.body?.selected_lot_id);
     let selectedLot = null;
     if (selectedLotId) {
-      const lotResult = await db.query(`SELECT * FROM lots WHERE id = $1 AND article_id = $2 AND store_id = $3 AND qty_remaining > 0 LIMIT 1`, [selectedLotId, article.id, req.user.store_id]);
+      await assertLotUsable(db, req.user.store_id, selectedLotId);
+      const lotResult = await db.query(`SELECT * FROM lots WHERE id = $1 AND article_id = $2 AND store_id = $3 AND qty_remaining > 0 AND ${availableLotCondition('lots')} LIMIT 1`, [selectedLotId, article.id, req.user.store_id]);
       if (!lotResult.rows.length) { await db.query('ROLLBACK'); return res.status(400).json({ error: 'Lot selectionne introuvable ou sans stock' }); }
       selectedLot = lotResult.rows[0];
     }
-    const suggested = selectedLot ? { rows: [{ id: selectedLot.id }] } : await db.query(`SELECT id FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id LIMIT 1`, [req.user.store_id, article.id]);
+    const suggested = selectedLot ? { rows: [{ id: selectedLot.id }] } : await db.query(`SELECT id FROM lots WHERE store_id = $1 AND article_id = $2 AND qty_remaining > 0 AND ${availableLotCondition('lots')} ORDER BY COALESCE(dlc, DATE '9999-12-31'), created_at, id LIMIT 1`, [req.user.store_id, article.id]);
     const packageCount = pos(req.body?.package_count, line.package_count || 0);
     const weightPerPackage = pos(req.body?.weight_per_package, line.weight_per_package || 0);
     const totalWeight = req.body?.total_weight !== undefined ? pos(req.body.total_weight, 0) : Number((packageCount * weightPerPackage).toFixed(3));
@@ -212,7 +218,7 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur maj ligne negoce :', err);
-    res.status(500).json({ error: err.message || 'Erreur maj ligne negoce' });
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur maj ligne negoce'));
   } finally { db.release(); }
 });
 
@@ -238,7 +244,7 @@ router.post('/sales/:id/validate-delivery-note', authenticateToken, attachDbCont
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur validation commande negoce en BL :', err);
-    res.status(err.status || 500).json({ error: err.message || 'Erreur validation BL negoce' });
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur validation BL negoce'));
   } finally { db.release(); }
 });
 
@@ -253,7 +259,7 @@ router.post('/delivery-notes/:id/validate', authenticateToken, attachDbContext, 
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur validation BL negoce :', err);
-    res.status(err.status || 500).json({ error: err.message || 'Erreur validation BL negoce' });
+    res.status(err.status || 500).json(lotQualityErrorBody(err, 'Erreur validation BL negoce'));
   } finally { db.release(); }
 });
 
