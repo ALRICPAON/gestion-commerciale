@@ -19,6 +19,7 @@ const documentationRoutes = require('./documentation');
 const documentBlockRoutes = require('./documentBlocks');
 const masterDocumentRoutes = require('./masterDocuments');
 const suppliesMaterialsRoutes = require('./suppliesMaterials');
+const evidenceRecordRoutes = require('./evidenceRecords');
 
 const router = express.Router();
 
@@ -30,6 +31,7 @@ router.use('/cleaning', cleaningRoutes);
 router.use('/operations', operationsRoutes);
 router.use('/master-documents', masterDocumentRoutes);
 router.use('/supplies-materials', suppliesMaterialsRoutes);
+router.use('/evidence-records', evidenceRecordRoutes);
 router.use('/', documentBlockRoutes);
 router.use('/documentation', documentationRoutes);
 
