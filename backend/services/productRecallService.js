@@ -150,6 +150,53 @@ async function fetchDeliveryRows(db, storeId, lotId) {
   return result.rows;
 }
 
+async function fetchPackingOutputLinks(db, storeId, lotId) {
+  const result = await db.query(
+    `SELECT
+       po.id AS packing_operation_id,
+       po.output_lot_id,
+       out_lot.lot_code AS output_lot_code,
+       psl.quantity_used,
+       po.validated_at
+     FROM packing_source_lots psl
+     JOIN packing_operations po ON po.id = psl.packing_operation_id AND po.store_id = psl.store_id
+     LEFT JOIN lots out_lot ON out_lot.id = po.output_lot_id AND out_lot.store_id = po.store_id
+     WHERE psl.store_id = $1::uuid
+       AND psl.lot_id = $2::uuid
+       AND po.output_lot_id IS NOT NULL
+     ORDER BY po.validated_at DESC NULLS LAST, po.created_at DESC, po.id DESC`,
+    [storeId, lotId]
+  );
+  return result.rows.map((row) => ({
+    packing_operation_id: row.packing_operation_id,
+    output_lot_id: row.output_lot_id,
+    output_lot_code: row.output_lot_code || null,
+    quantity_used: toNumber(row.quantity_used),
+    validated_at: row.validated_at || null,
+  }));
+}
+
+async function fetchRecallDeliveryRows(db, storeId, lotId) {
+  const directRows = await fetchDeliveryRows(db, storeId, lotId);
+  const packingLinks = await fetchPackingOutputLinks(db, storeId, lotId);
+  const packedRows = [];
+
+  for (const link of packingLinks) {
+    const rows = await fetchDeliveryRows(db, storeId, link.output_lot_id);
+    rows.forEach((row) => {
+      packedRows.push({
+        ...row,
+        source_lot_id: lotId,
+        via_packing_operation_id: link.packing_operation_id,
+        via_output_lot_id: link.output_lot_id,
+        via_output_lot_code: link.output_lot_code,
+      });
+    });
+  }
+
+  return { deliveryRows: [...directRows, ...packedRows], packingLinks };
+}
+
 async function resolveRecallContact(db, storeId, clientId) {
   const deliveryNoteContact = await db.query(
     `SELECT id, contact_name, email
@@ -258,6 +305,9 @@ async function aggregateRecipients(db, storeId, deliveryRows) {
       billed_client_name: row.billed_client_name || null,
       billed_client_code: row.billed_client_code || null,
       allocated_at: row.allocated_at || null,
+      via_packing_operation_id: row.via_packing_operation_id || null,
+      via_output_lot_id: row.via_output_lot_id || null,
+      via_output_lot_code: row.via_output_lot_code || null,
     });
   });
 
@@ -289,7 +339,7 @@ async function analyzeLotRecallImpact({ db, storeId, lotId } = {}) {
   const lotRow = await fetchLot(db, storeId, lotId);
   if (!lotRow) throw makeError('Lot introuvable pour ce magasin', 404, 'LOT_NOT_FOUND');
 
-  const deliveryRows = await fetchDeliveryRows(db, storeId, lotId);
+  const { deliveryRows, packingLinks } = await fetchRecallDeliveryRows(db, storeId, lotId);
   const recipients = await aggregateRecipients(db, storeId, deliveryRows);
 
   return {
@@ -299,6 +349,7 @@ async function analyzeLotRecallImpact({ db, storeId, lotId } = {}) {
     clients_count: recipients.length,
     delivery_notes_count: recipients.reduce((sum, recipient) => sum + recipient.delivery_note_count, 0),
     total_delivered_quantity: recipients.reduce((sum, recipient) => sum + recipient.delivered_quantity, 0),
+    packing_links: packingLinks,
     recipients,
   };
 }

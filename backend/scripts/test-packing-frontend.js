@@ -22,14 +22,20 @@ function main() {
   const packingJs = read('frontend/js/packing.js');
   const packingDetailHtml = read('frontend/packing-detail.html');
   const packingDetailJs = read('frontend/js/packing-detail.js');
+  const traceabilityHtml = read('frontend/traceability.html');
+  const traceabilityJs = read('frontend/js/traceability.js');
+  const traceabilityCss = read('frontend/css/pages/traceability.css');
+  const traceabilityRoute = read('backend/routes/traceability.js');
+  const productRecallService = read('backend/services/productRecallService.js');
+  const stockMovementLabels = read('frontend/js/stock-movement-labels.js');
   const articlesHtml = read('frontend/articles.html');
   const articlesJs = read('frontend/js/articles.js');
 
   assertIncludes(homeHtml, 'href="./packing.html"', 'Home doit exposer le module Colisage');
   assertIncludes(homeHtml, 'data-module="packing"', 'Carte home Colisage manquante');
 
-  assertIncludes(packingHtml, './css/pages/packing.css?v=2', 'Cache-buster CSS liste colisage manquant');
-  assertIncludes(packingHtml, './js/packing.js?v=2', 'Cache-buster JS liste colisage manquant');
+  assertIncludes(packingHtml, './css/pages/packing.css?v=3', 'Cache-buster CSS liste colisage manquant');
+  assertIncludes(packingHtml, './js/packing.js?v=3', 'Cache-buster JS liste colisage manquant');
   assertIncludes(packingHtml, 'Nouvelle operation', 'Creation brouillon colisage manquante');
   assertIncludes(packingHtml, 'F9 : afficher les produits', 'Indication F9 produits manquante');
   ['Brouillon', 'Valide', 'Annule', 'Tous', 'Cout poisson', 'Cout emballage', 'PR/kg'].forEach((label) => {
@@ -41,6 +47,9 @@ function main() {
   assertIncludes(packingJs, 'article_category=product&limit=${ARTICLE_PAGE_SIZE}&offset=${offset}', 'F9 produits doit paginer les products actifs');
   assertIncludes(packingJs, 'active=true&article_category=product', 'F9 produits doit filtrer uniquement les products actifs');
   assertIncludes(packingJs, 'while (Array.isArray(page) && page.length === ARTICLE_PAGE_SIZE)', 'F9 produits ne doit pas couper silencieusement la liste');
+  assertIncludes(packingJs, 'article-result-search', 'Popup F9 article doit contenir une recherche interne');
+  assertIncludes(packingJs, 'queryOverride', 'Recherche F9 article doit pouvoir filtrer sans fermer la popup');
+  assertIncludes(packingJs, "event.target.matches('#article-result-search')", 'Recherche F9 article doit reagir a la saisie et Entree');
   assertIncludes(packingJs, '&search=${encodeURIComponent(query)}', 'Recherche article manuelle manquante');
   assertIncludes(packingJs, "event.key === 'F9'", 'F9 doit etre gere sur article produit');
   assertIncludes(packingJs, 'event.preventDefault();', 'F9 doit appeler preventDefault');
@@ -85,6 +94,25 @@ function main() {
   assertIncludes(articlesJs, "url.searchParams.delete('edit')", 'Le parametre edit doit etre nettoye apres ouverture');
   assertIncludes(articlesJs, "article_category: articleBusinessCategoryInput.value || 'product'", 'La categorie doit etre envoyee a la sauvegarde article');
   assertIncludes(articlesJs, 'refreshedArticle.article_category !== payload.article_category', 'La sauvegarde categorie doit etre verifiee apres relecture');
+
+  assertIncludes(traceabilityHtml, './css/pages/traceability.css?v=3', 'Cache-buster CSS tracabilite attendu');
+  assertIncludes(traceabilityHtml, './js/stock-movement-labels.js?v=1', 'Libelles mouvements centralises doivent etre charges');
+  assertIncludes(traceabilityHtml, './js/traceability.js?v=8', 'Cache-buster traceability.js attendu');
+  assertIncludes(traceabilityRoute, 'async function fetchPackingTrace', 'Backend tracabilite doit exposer les liens colisage');
+  assertIncludes(traceabilityRoute, 'po.output_lot_id = $2::uuid', 'Trace output lot -> operation colisage manquante');
+  assertIncludes(traceabilityRoute, 'FROM packing_source_lots psl', 'Trace lots source colisage manquante');
+  assertIncludes(traceabilityRoute, 'FROM packing_materials pm', 'Trace emballages colisage manquante');
+  assertIncludes(traceabilityRoute, 'packing_trace: packingTrace', 'Reponse detail lot doit inclure packing_trace');
+  assertIncludes(traceabilityJs, 'renderPackingTrace', 'Front tracabilite doit rendre la carte Colisage');
+  assertIncludes(traceabilityJs, 'renderPackingSources', 'Front tracabilite doit afficher les lots source');
+  assertIncludes(traceabilityJs, 'renderPackingMaterials', 'Front tracabilite doit afficher les emballages');
+  assertIncludes(traceabilityJs, "data-action=\"open-lot-detail\"", 'Lots source/output doivent etre cliquables');
+  assertIncludes(traceabilityCss, 'trace-packing-summary', 'Styles carte colisage manquants');
+  assertIncludes(productRecallService, 'fetchRecallDeliveryRows', 'Rappel doit suivre les output lots issus de colisage');
+  assertIncludes(productRecallService, 'via_packing_operation_id', 'Analyse rappel doit conserver le lien source -> colisage -> output');
+  assertIncludes(stockMovementLabels, 'packing_source_out', 'Libelle mouvement packing_source_out manquant');
+  assertIncludes(stockMovementLabels, 'packing_material_out', 'Libelle mouvement packing_material_out manquant');
+  assertIncludes(stockMovementLabels, 'packing_output_in', 'Libelle mouvement packing_output_in manquant');
 
   assertNotIncludes(packingJs, 'sendEmail', 'Le frontend colisage ne doit pas envoyer d email');
   assertNotIncludes(packingDetailJs, 'sendEmail', 'Le detail colisage ne doit pas envoyer d email');

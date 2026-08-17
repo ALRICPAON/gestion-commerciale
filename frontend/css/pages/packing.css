@@ -91,6 +91,23 @@
   background: #fff;
 }
 
+.article-result-tools {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px;
+  border-bottom: 1px solid #EEF2F7;
+  background: #fff;
+}
+
+.article-result-tools input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
 .search-result {
   width: 100%;
   display: grid;

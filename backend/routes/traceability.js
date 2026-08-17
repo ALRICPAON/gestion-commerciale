@@ -76,6 +76,9 @@ function movementLabel(type) {
     case 'fabrication_out': return 'Sortie fabrication';
     case 'adjustment_in': return 'Entrée ajustement';
     case 'adjustment_out': return 'Sortie ajustement';
+    case 'packing_source_out': return 'Colisage - consommation produit';
+    case 'packing_material_out': return 'Colisage - consommation emballage';
+    case 'packing_output_in': return 'Colisage - entree produit';
     default: return type || 'Mouvement';
   }
 }
@@ -229,6 +232,195 @@ function deliveredClientsSql(lotCondition, limitClause = '') {
     ORDER BY sd.document_date DESC, sd.reference_number DESC NULLS LAST
     ${limitClause}
   `;
+}
+
+function mapPackingOperation(row) {
+  if (!row) return null;
+  return {
+    packing_operation_id: row.packing_operation_id,
+    status: row.status,
+    created_at: row.created_at,
+    validated_at: row.validated_at,
+    output_lot_id: row.output_lot_id,
+    output_lot_code: row.output_lot_code,
+    output_article_id: row.output_article_id,
+    output_article_plu: row.output_article_plu,
+    output_article_designation: row.output_article_designation,
+    total_output_quantity: Number(row.total_output_quantity || 0),
+    package_count: Number(row.package_count || 0),
+    quantity_per_package: Number(row.quantity_per_package || 0),
+    fish_cost_ex_vat: Number(row.fish_cost_ex_vat || 0),
+    packaging_cost_ex_vat: Number(row.packaging_cost_ex_vat || 0),
+    total_cost_ex_vat: Number(row.total_cost_ex_vat || 0),
+    unit_cost_ex_vat: Number(row.unit_cost_ex_vat || 0),
+  };
+}
+
+function mapPackingSource(row) {
+  return {
+    line_id: row.line_id,
+    lot_id: row.lot_id,
+    lot_code: row.lot_code,
+    supplier_lot_number: row.supplier_lot_number,
+    article_id: row.article_id,
+    article_plu: row.article_plu,
+    article_designation: row.article_designation,
+    quantity_used: Number(row.quantity_used || 0),
+    unit_cost_ex_vat: Number(row.unit_cost_ex_vat || 0),
+    line_cost_ex_vat: Number(row.line_cost_ex_vat || 0),
+    supplier_id: row.supplier_id,
+    supplier_name: row.supplier_name,
+    dlc: row.dlc,
+    purchase_id: row.purchase_id,
+    purchase_line_id: row.purchase_line_id,
+    purchase_date: row.purchase_date,
+    receipt_date: row.receipt_date,
+    bl_number: row.bl_number,
+  };
+}
+
+function mapPackingMaterial(row) {
+  return {
+    line_id: row.line_id,
+    lot_id: row.lot_id,
+    lot_code: row.lot_code,
+    supplier_lot_number: row.supplier_lot_number,
+    article_id: row.article_id,
+    article_plu: row.article_plu,
+    article_designation: row.article_designation,
+    quantity_used: Number(row.quantity_used || 0),
+    unit: row.unit,
+    unit_cost_ex_vat: Number(row.unit_cost_ex_vat || 0),
+    line_cost_ex_vat: Number(row.line_cost_ex_vat || 0),
+  };
+}
+
+async function fetchPackingTrace(db, storeId, lotId) {
+  const producedResult = await db.query(
+    `SELECT
+       po.id AS packing_operation_id,
+       po.status,
+       po.created_at,
+       po.validated_at,
+       po.output_lot_id,
+       out_lot.lot_code AS output_lot_code,
+       po.output_article_id,
+       out_article.plu AS output_article_plu,
+       out_article.designation AS output_article_designation,
+       po.total_output_quantity,
+       po.package_count,
+       po.quantity_per_package,
+       po.fish_cost_ex_vat,
+       po.packaging_cost_ex_vat,
+       po.total_cost_ex_vat,
+       po.unit_cost_ex_vat
+     FROM packing_operations po
+     JOIN articles out_article ON out_article.id = po.output_article_id AND out_article.store_id = po.store_id
+     LEFT JOIN lots out_lot ON out_lot.id = po.output_lot_id AND out_lot.store_id = po.store_id
+     WHERE po.store_id = $1::uuid
+       AND po.output_lot_id = $2::uuid
+     LIMIT 1`,
+    [storeId, lotId]
+  );
+
+  const producedBy = mapPackingOperation(producedResult.rows[0]);
+  let sourceLots = [];
+  let materials = [];
+
+  if (producedBy) {
+    const sourceResult = await db.query(
+      `SELECT
+         psl.id AS line_id,
+         psl.lot_id,
+         l.lot_code,
+         l.supplier_lot_number,
+         psl.article_id,
+         a.plu AS article_plu,
+         a.designation AS article_designation,
+         psl.quantity_used,
+         psl.unit_cost_ex_vat,
+         psl.line_cost_ex_vat,
+         l.supplier_id,
+         s.name AS supplier_name,
+         l.dlc,
+         l.purchase_id,
+         l.purchase_line_id,
+         p.purchase_date,
+         p.receipt_date,
+         p.bl_number
+       FROM packing_source_lots psl
+       JOIN lots l ON l.id = psl.lot_id AND l.store_id = psl.store_id
+       JOIN articles a ON a.id = psl.article_id AND a.store_id = psl.store_id
+       LEFT JOIN suppliers s ON s.id = l.supplier_id AND s.store_id = l.store_id
+       LEFT JOIN purchases p ON p.id = l.purchase_id AND p.store_id = l.store_id
+       WHERE psl.store_id = $1::uuid
+         AND psl.packing_operation_id = $2::uuid
+       ORDER BY psl.created_at ASC, psl.id ASC`,
+      [storeId, producedBy.packing_operation_id]
+    );
+    sourceLots = sourceResult.rows.map(mapPackingSource);
+
+    const materialResult = await db.query(
+      `SELECT
+         pm.id AS line_id,
+         pm.lot_id,
+         l.lot_code,
+         l.supplier_lot_number,
+         pm.article_id,
+         a.plu AS article_plu,
+         a.designation AS article_designation,
+         a.unit,
+         pm.quantity_used,
+         pm.unit_cost_ex_vat,
+         pm.line_cost_ex_vat
+       FROM packing_materials pm
+       JOIN lots l ON l.id = pm.lot_id AND l.store_id = pm.store_id
+       JOIN articles a ON a.id = pm.article_id AND a.store_id = pm.store_id
+       WHERE pm.store_id = $1::uuid
+         AND pm.packing_operation_id = $2::uuid
+       ORDER BY pm.created_at ASC, pm.id ASC`,
+      [storeId, producedBy.packing_operation_id]
+    );
+    materials = materialResult.rows.map(mapPackingMaterial);
+  }
+
+  const usedResult = await db.query(
+    `SELECT
+       psl.id AS line_id,
+       po.id AS packing_operation_id,
+       po.status,
+       po.created_at,
+       po.validated_at,
+       po.output_lot_id,
+       out_lot.lot_code AS output_lot_code,
+       po.output_article_id,
+       out_article.plu AS output_article_plu,
+       out_article.designation AS output_article_designation,
+       po.total_output_quantity,
+       po.package_count,
+       po.quantity_per_package,
+       po.fish_cost_ex_vat,
+       po.packaging_cost_ex_vat,
+       po.total_cost_ex_vat,
+       po.unit_cost_ex_vat,
+       psl.quantity_used
+     FROM packing_source_lots psl
+     JOIN packing_operations po ON po.id = psl.packing_operation_id AND po.store_id = psl.store_id
+     JOIN articles out_article ON out_article.id = po.output_article_id AND out_article.store_id = po.store_id
+     LEFT JOIN lots out_lot ON out_lot.id = po.output_lot_id AND out_lot.store_id = po.store_id
+     WHERE psl.store_id = $1::uuid
+       AND psl.lot_id = $2::uuid
+     ORDER BY po.validated_at DESC NULLS LAST, po.created_at DESC, po.id DESC`,
+    [storeId, lotId]
+  );
+
+  const usedIn = usedResult.rows.map((row) => ({
+    ...mapPackingOperation(row),
+    line_id: row.line_id,
+    source_quantity_used: Number(row.quantity_used || 0),
+  }));
+
+  return { produced_by: producedBy, source_lots: sourceLots, materials, used_in: usedIn };
 }
 
 function mapDeliveredClient(row) {
@@ -527,6 +719,8 @@ router.get('/lots/:lotId', authenticateToken, attachDbContext, async (req, res) 
       [req.user.store_id, lotId]
     );
 
+    const packingTrace = await fetchPackingTrace(req.dbPool, req.user.store_id, lotId);
+
     const lot = mapLot({ ...lotResult.rows[0], delivered_clients: deliveredResult.rows, delivered_clients_count: deliveredResult.rows.length });
     const movements = movementsResult.rows.map((movement) => ({
       id: movement.id,
@@ -543,6 +737,7 @@ router.get('/lots/:lotId', authenticateToken, attachDbContext, async (req, res) 
     res.json({
       lot,
       movements,
+      packing_trace: packingTrace,
       quality_history: historyResult.rows,
       fifo_consumption: lot.delivered_clients,
     });

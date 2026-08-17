@@ -35,6 +35,7 @@ const state = {
   status: 'draft',
   operations: [],
   selectedArticle: null,
+  articleSearchTimer: null,
 };
 
 const ARTICLE_PAGE_SIZE = 500;
@@ -170,8 +171,8 @@ function updateTotalPreview() {
   els.totalPreview.textContent = `${formatNumber(total)} kg`;
 }
 
-async function searchOutputArticles({ showAll = false } = {}) {
-  const query = els.outputArticleSearch.value.trim();
+async function searchOutputArticles({ showAll = false, queryOverride = null } = {}) {
+  const query = queryOverride === null ? els.outputArticleSearch.value.trim() : String(queryOverride || '').trim();
   if (showAll || !query) {
     const rows = [];
     let offset = 0;
@@ -181,22 +182,22 @@ async function searchOutputArticles({ showAll = false } = {}) {
       rows.push(...(Array.isArray(page) ? page : []));
       offset += ARTICLE_PAGE_SIZE;
     } while (Array.isArray(page) && page.length === ARTICLE_PAGE_SIZE);
-    renderArticleResults(rows, { complete: true });
+    renderArticleResults(rows, { complete: true, query });
     return;
   }
 
   const data = await api(`/api/articles?active=true&article_category=product&limit=${ARTICLE_PAGE_SIZE}&search=${encodeURIComponent(query)}`);
-  renderArticleResults(Array.isArray(data) ? data : [], { complete: true });
+  renderArticleResults(Array.isArray(data) ? data : [], { complete: true, query });
 }
 
-function renderArticleResults(rows, { complete = false } = {}) {
+function renderArticleResults(rows, { complete = false, query = '' } = {}) {
   els.articleResults.classList.remove('hidden');
   if (!rows.length) {
-    els.articleResults.innerHTML = '<div class="search-result"><span>Aucun produit trouve.</span></div>';
+    els.articleResults.innerHTML = `<div class="article-result-tools"><input id="article-result-search" type="search" value="${escapeHtml(query)}" placeholder="Rechercher un article" /></div><div class="search-result"><span>Aucun produit trouve.</span></div>`;
     return;
   }
   const completeness = complete ? `<div class="search-result-note">${rows.length} produit(s) actif(s) affiches.</div>` : '';
-  els.articleResults.innerHTML = `${completeness}${rows.map((article) => `
+  els.articleResults.innerHTML = `<div class="article-result-tools"><input id="article-result-search" type="search" value="${escapeHtml(query)}" placeholder="Rechercher un article" /></div>${completeness}${rows.map((article) => `
     <button type="button" class="search-result article-result" data-id="${escapeHtml(article.id)}">
       <span>
         <strong>${escapeHtml(article.plu || '-')}</strong>
@@ -205,6 +206,7 @@ function renderArticleResults(rows, { complete = false } = {}) {
       <small>${escapeHtml(article.unit || 'kg')} | ${escapeHtml(article.family_name || article.family_code || 'Famille -')} | Produit</small>
     </button>
   `).join('')}`;
+  document.getElementById('article-result-search')?.focus();
 }
 
 function selectOutputArticle(articleId) {
@@ -283,6 +285,20 @@ els.outputArticleSearch.addEventListener('input', () => {
 els.articleResults.addEventListener('click', (event) => {
   const button = event.target.closest('.search-result[data-id]');
   if (button) selectOutputArticle(button.dataset.id);
+});
+
+els.articleResults.addEventListener('input', (event) => {
+  if (!event.target.matches('#article-result-search')) return;
+  window.clearTimeout(state.articleSearchTimer);
+  state.articleSearchTimer = window.setTimeout(() => {
+    searchOutputArticles({ queryOverride: event.target.value }).catch((error) => setFeedback(error.message, 'error'));
+  }, 250);
+});
+
+els.articleResults.addEventListener('keydown', (event) => {
+  if (!event.target.matches('#article-result-search') || event.key !== 'Enter') return;
+  event.preventDefault();
+  searchOutputArticles({ queryOverride: event.target.value }).catch((error) => setFeedback(error.message, 'error'));
 });
 
 loadOperations();
