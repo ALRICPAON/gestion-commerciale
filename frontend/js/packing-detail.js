@@ -44,11 +44,17 @@ const els = {
   lineModalSubtitle: document.getElementById('line-modal-subtitle'),
   closeLineModal: document.getElementById('close-line-modal-btn'),
   lotSearch: document.getElementById('lot-search-input'),
+  lineQuantityGroup: document.getElementById('line-quantity-group'),
   lineQuantity: document.getElementById('line-quantity-input'),
   lotSearchBtn: document.getElementById('lot-search-btn'),
   lotSearchHint: document.getElementById('lot-search-hint'),
   lineFeedback: document.getElementById('line-modal-feedback'),
   lotResultsTbody: document.getElementById('lot-results-tbody'),
+  lotActionHeader: document.getElementById('lot-action-header'),
+  sourceSelectionSummary: document.getElementById('source-selection-summary'),
+  sourceSelectionActions: document.getElementById('source-selection-actions'),
+  autoFillSource: document.getElementById('auto-fill-source-btn'),
+  addSelectedSource: document.getElementById('add-selected-source-btn'),
   confirmModal: document.getElementById('confirm-modal'),
   confirmTitle: document.getElementById('confirm-title'),
   confirmText: document.getElementById('confirm-text'),
@@ -62,6 +68,7 @@ const state = {
   operation: null,
   lineMode: 'source',
   selectedLot: null,
+  visibleLots: [],
   confirmAction: null,
 };
 
@@ -198,6 +205,46 @@ function renderFishBalance(operation) {
   `;
 }
 
+function sourceTargetWeight() {
+  return number(state.operation?.total_output_quantity);
+}
+
+function sourceAlreadySelectedWeight() {
+  return (state.operation?.source_lots || []).reduce((sum, line) => sum + number(line.quantity_used), 0);
+}
+
+function sourcePopupQuantity() {
+  return Array.from(els.lotResultsTbody.querySelectorAll('.source-quantity-input'))
+    .reduce((sum, input) => sum + number(input.value), 0);
+}
+
+function sourceSummaryMode(remaining) {
+  if (Math.abs(remaining) <= 0.001) return 'ok';
+  return remaining > 0 ? 'warning' : 'error';
+}
+
+function renderSourceSelectionSummary() {
+  if (state.lineMode !== 'source') {
+    els.sourceSelectionSummary.classList.add('hidden');
+    els.sourceSelectionActions.classList.add('hidden');
+    return;
+  }
+
+  const target = sourceTargetWeight();
+  const selected = sourceAlreadySelectedWeight();
+  const popup = sourcePopupQuantity();
+  const remaining = target - selected - popup;
+  const mode = sourceSummaryMode(remaining);
+  els.sourceSelectionSummary.className = `source-selection-summary ${mode}`;
+  els.sourceSelectionSummary.innerHTML = `
+    <span>Poids cible : <strong>${formatNumber(target)} kg</strong></span>
+    <span>Deja selectionne : <strong>${formatNumber(selected)} kg</strong></span>
+    <span>Saisi ici : <strong>${formatNumber(popup)} kg</strong></span>
+    <span>Reste apres ajout : <strong>${formatNumber(remaining)} kg</strong></span>
+  `;
+  els.sourceSelectionActions.classList.remove('hidden');
+}
+
 function renderSources(operation) {
   const rows = operation.source_lots || [];
   if (!rows.length) {
@@ -299,15 +346,19 @@ async function saveDraft() {
 function openLineModal(mode) {
   state.lineMode = mode;
   state.selectedLot = null;
+  state.visibleLots = [];
   els.lineModalTitle.textContent = mode === 'source' ? 'Ajouter un lot poisson source' : 'Ajouter un emballage';
   els.lineModalSubtitle.textContent = mode === 'source'
     ? 'F9 : afficher les lots produit disponibles.'
     : 'F9 : afficher les emballages en stock.';
   els.lotSearchHint.textContent = mode === 'source' ? 'F9 : afficher les lots' : 'F9 : afficher les emballages';
   els.lotSearch.value = '';
+  els.lineQuantityGroup.classList.toggle('hidden', mode === 'source');
   els.lineQuantity.value = mode === 'material' ? Math.trunc(number(state.operation.package_count)) || '' : '';
+  els.lotActionHeader.textContent = mode === 'source' ? 'Quantite a utiliser' : 'Action';
   els.lotResultsTbody.innerHTML = '<tr><td colspan="9">Rechercher ou appuyer sur F9.</td></tr>';
   setFeedback(els.lineFeedback, '', '');
+  renderSourceSelectionSummary();
   els.lineModal.classList.remove('hidden');
   els.lotSearch.focus();
 }
@@ -334,6 +385,7 @@ async function searchLots({ showAll = false } = {}) {
         const bSame = b.article_id === state.operation.output_article_id ? 0 : 1;
         return aSame - bSame;
       });
+    state.visibleLots = filtered;
     renderLotResults(filtered);
   } catch (error) {
     console.error(error);
@@ -344,10 +396,25 @@ async function searchLots({ showAll = false } = {}) {
 function renderLotResults(rows) {
   if (!rows.length) {
     els.lotResultsTbody.innerHTML = '<tr><td colspan="9">Aucun lot disponible.</td></tr>';
+    renderSourceSelectionSummary();
     return;
   }
   els.lotResultsTbody.innerHTML = rows.map((lot) => {
     const differentArticle = state.lineMode === 'source' && lot.article_id !== state.operation.output_article_id;
+    const sourceInput = `
+      <input
+        class="source-quantity-input"
+        type="number"
+        min="0"
+        step="0.001"
+        max="${escapeHtml(lot.qty_remaining)}"
+        data-lot-id="${escapeHtml(lot.id)}"
+        data-lot-code="${escapeHtml(lot.lot_code || lot.id)}"
+        data-stock="${escapeHtml(lot.qty_remaining)}"
+        aria-label="Quantite a utiliser pour ${escapeHtml(lot.lot_code || lot.id)}"
+      />
+    `;
+    const materialButton = `<button class="btn btn-primary btn-sm" data-action="choose-lot" data-id="${escapeHtml(lot.id)}">Choisir</button>`;
     return `
       <tr data-lot-id="${escapeHtml(lot.id)}">
         <td>${escapeHtml(lot.plu || '-')}</td>
@@ -358,10 +425,77 @@ function renderLotResults(rows) {
         <td class="numeric">${formatNumber(lot.qty_remaining)} ${escapeHtml(lot.unit || '')}</td>
         <td class="numeric">${formatMoney(lot.unit_cost_ex_vat, 4)}</td>
         <td>${formatDate(lot.dlc)}</td>
-        <td><button class="btn btn-primary btn-sm" data-action="choose-lot" data-id="${escapeHtml(lot.id)}">Choisir</button></td>
+        <td>${state.lineMode === 'source' ? sourceInput : materialButton}</td>
       </tr>
     `;
   }).join('');
+  renderSourceSelectionSummary();
+}
+
+function selectedSourceLotsFromInputs() {
+  return Array.from(els.lotResultsTbody.querySelectorAll('.source-quantity-input'))
+    .map((input) => ({
+      lotId: input.dataset.lotId,
+      lotCode: input.dataset.lotCode,
+      stock: number(input.dataset.stock),
+      quantity: number(input.value),
+    }))
+    .filter((line) => line.quantity > 0);
+}
+
+function validateSelectedSourceLots(lines) {
+  if (!lines.length) throw new Error('Saisir au moins une quantite source.');
+  const overStock = lines.find((line) => line.quantity - line.stock > 0.0001);
+  if (overStock) {
+    throw new Error(`Quantite superieure au stock disponible pour le lot ${overStock.lotCode}.`);
+  }
+}
+
+async function addSelectedSourceLots() {
+  try {
+    const lines = selectedSourceLotsFromInputs();
+    validateSelectedSourceLots(lines);
+    setFeedback(els.lineFeedback, `Ajout de ${lines.length} lot(s)...`, '');
+
+    const successes = [];
+    const failures = [];
+    for (const line of lines) {
+      try {
+        await api(`/api/packing/${encodeURIComponent(operationId)}/source-lots`, {
+          method: 'POST',
+          body: JSON.stringify({ lot_id: line.lotId, quantity_used: line.quantity }),
+        });
+        successes.push(line);
+      } catch (error) {
+        failures.push({ line, message: backendMessage(error) });
+      }
+    }
+
+    await loadOperation();
+    if (failures.length) {
+      const detail = failures.map((failure) => `${failure.line.lotCode}: ${failure.message}`).join(' | ');
+      setFeedback(els.lineFeedback, `${successes.length} lot(s) ajoute(s), ${failures.length} echec(s). ${detail}`, 'error');
+      return;
+    }
+
+    setFeedback(els.feedback, `${successes.length} lot(s) source ajoute(s).`, 'success');
+    closeLineModal();
+  } catch (error) {
+    console.error(error);
+    setFeedback(els.lineFeedback, backendMessage(error), 'error');
+  }
+}
+
+function autofillSourceQuantities() {
+  if (state.lineMode !== 'source') return;
+  let remaining = Math.max(sourceTargetWeight() - sourceAlreadySelectedWeight(), 0);
+  Array.from(els.lotResultsTbody.querySelectorAll('.source-quantity-input')).forEach((input) => {
+    const stock = number(input.dataset.stock);
+    const quantity = Math.min(stock, remaining);
+    input.value = quantity > 0 ? quantity.toFixed(3) : '';
+    remaining -= quantity;
+  });
+  renderSourceSelectionSummary();
 }
 
 async function addSelectedLot(lotId) {
@@ -464,6 +598,8 @@ els.addSource.addEventListener('click', () => openLineModal('source'));
 els.addMaterial.addEventListener('click', () => openLineModal('material'));
 els.closeLineModal.addEventListener('click', closeLineModal);
 els.lotSearchBtn.addEventListener('click', () => searchLots());
+els.autoFillSource.addEventListener('click', autofillSourceQuantities);
+els.addSelectedSource.addEventListener('click', addSelectedSourceLots);
 els.closeConfirm.addEventListener('click', closeConfirm);
 els.confirmCancel.addEventListener('click', closeConfirm);
 els.confirmSubmit.addEventListener('click', async () => {
@@ -491,6 +627,10 @@ els.lotSearch.addEventListener('keydown', (event) => {
 els.lotResultsTbody.addEventListener('click', (event) => {
   const button = event.target.closest('button[data-action="choose-lot"]');
   if (button) addSelectedLot(button.dataset.id);
+});
+
+els.lotResultsTbody.addEventListener('input', (event) => {
+  if (event.target.classList.contains('source-quantity-input')) renderSourceSelectionSummary();
 });
 
 els.sourceTbody.addEventListener('click', (event) => {

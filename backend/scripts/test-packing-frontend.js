@@ -28,8 +28,8 @@ function main() {
   assertIncludes(homeHtml, 'href="./packing.html"', 'Home doit exposer le module Colisage');
   assertIncludes(homeHtml, 'data-module="packing"', 'Carte home Colisage manquante');
 
-  assertIncludes(packingHtml, './css/pages/packing.css?v=1', 'Cache-buster CSS liste colisage manquant');
-  assertIncludes(packingHtml, './js/packing.js?v=1', 'Cache-buster JS liste colisage manquant');
+  assertIncludes(packingHtml, './css/pages/packing.css?v=2', 'Cache-buster CSS liste colisage manquant');
+  assertIncludes(packingHtml, './js/packing.js?v=2', 'Cache-buster JS liste colisage manquant');
   assertIncludes(packingHtml, 'Nouvelle operation', 'Creation brouillon colisage manquante');
   assertIncludes(packingHtml, 'F9 : afficher les produits', 'Indication F9 produits manquante');
   ['Brouillon', 'Valide', 'Annule', 'Tous', 'Cout poisson', 'Cout emballage', 'PR/kg'].forEach((label) => {
@@ -37,18 +37,24 @@ function main() {
   });
 
   assertIncludes(packingJs, "api('/api/packing", 'Liste colisage doit appeler /api/packing');
-  assertIncludes(packingJs, 'article_category=product&limit=50', 'Consultation F9 produits doit filtrer product et limiter');
-  assertIncludes(packingJs, '/api/articles/search?q=', 'Recherche article manuelle manquante');
+  assertIncludes(packingJs, 'ARTICLE_PAGE_SIZE = 500', 'Consultation F9 produits doit charger par pages');
+  assertIncludes(packingJs, 'article_category=product&limit=${ARTICLE_PAGE_SIZE}&offset=${offset}', 'F9 produits doit paginer les products actifs');
+  assertIncludes(packingJs, 'active=true&article_category=product', 'F9 produits doit filtrer uniquement les products actifs');
+  assertIncludes(packingJs, 'while (Array.isArray(page) && page.length === ARTICLE_PAGE_SIZE)', 'F9 produits ne doit pas couper silencieusement la liste');
+  assertIncludes(packingJs, '&search=${encodeURIComponent(query)}', 'Recherche article manuelle manquante');
   assertIncludes(packingJs, "event.key === 'F9'", 'F9 doit etre gere sur article produit');
   assertIncludes(packingJs, 'event.preventDefault();', 'F9 doit appeler preventDefault');
   assertIncludes(packingJs, 'Number.isInteger(packageCount)', 'package_count doit etre controle entier cote frontend');
 
-  assertIncludes(packingDetailHtml, './css/pages/packing-detail.css?v=1', 'Cache-buster CSS detail colisage manquant');
-  assertIncludes(packingDetailHtml, './js/packing-detail.js?v=1', 'Cache-buster JS detail colisage manquant');
+  assertIncludes(packingDetailHtml, './css/pages/packing-detail.css?v=2', 'Cache-buster CSS detail colisage manquant');
+  assertIncludes(packingDetailHtml, './js/packing-detail.js?v=2', 'Cache-buster JS detail colisage manquant');
   assertIncludes(packingDetailHtml, 'Lots poisson source', 'Bloc lots source manquant');
   assertIncludes(packingDetailHtml, 'Emballages / consommables', 'Bloc emballages manquant');
   assertIncludes(packingDetailHtml, 'Valider colisage', 'Action validation manquante');
   assertIncludes(packingDetailHtml, 'F9 : afficher les lots', 'Indication F9 lots manquante');
+  assertIncludes(packingDetailHtml, 'lot-action-header', 'Popup lots doit prevoir la colonne quantite/action');
+  assertIncludes(packingDetailHtml, 'Ajouter les lots selectionnes', 'Bouton ajout groupe lots source manquant');
+  assertIncludes(packingDetailHtml, 'Completer automatiquement', 'Bouton auto-completion lots source manquant');
 
   assertIncludes(packingDetailJs, '/api/stock/lots?', 'Recherche lots doit reutiliser /api/stock/lots');
   assertIncludes(packingDetailJs, "params.set('article_category', state.lineMode === 'source' ? 'product' : 'packaging')", 'Lots source/product et emballages/packaging doivent etre separes');
@@ -58,6 +64,13 @@ function main() {
   assertIncludes(packingDetailJs, "event.key === 'F9'", 'F9 doit etre gere sur les lots');
   assertIncludes(packingDetailJs, 'event.preventDefault();', 'F9 lots doit appeler preventDefault');
   assertIncludes(packingDetailJs, '/source-lots', 'Ajout/suppression lots source manquant');
+  assertIncludes(packingDetailJs, 'source-quantity-input', 'Popup lots source doit afficher un input par ligne');
+  assertIncludes(packingDetailJs, 'selectedSourceLotsFromInputs', 'Selection multi-lots source manquante');
+  assertIncludes(packingDetailJs, 'addSelectedSourceLots', 'Ajout groupe lots source manquant');
+  assertIncludes(packingDetailJs, 'quantity - line.stock > 0.0001', 'Validation frontend quantite > stock manquante');
+  assertIncludes(packingDetailJs, 'renderSourceSelectionSummary', 'Somme live lots source manquante');
+  assertIncludes(packingDetailJs, 'const remaining = target - selected - popup', 'Calcul reste apres ajout incorrect');
+  assertIncludes(packingDetailJs, 'await loadOperation();', 'Operation doit etre rechargee apres ajout groupe');
   assertIncludes(packingDetailJs, '/materials', 'Ajout/suppression emballages manquant');
   assertIncludes(packingDetailJs, '/validate', 'Validation colisage manquante');
   assertIncludes(packingDetailJs, '/cancel', 'Annulation colisage manquante');

@@ -105,9 +105,22 @@
   cursor: pointer;
 }
 
+.article-result {
+  grid-template-columns: 1fr;
+  align-items: flex-start;
+}
+
 .search-result:hover,
 .search-result.is-selected {
   background: #EDF7F8;
+}
+
+.search-result-note {
+  padding: 8px 12px;
+  border-bottom: 1px solid #EEF2F7;
+  color: var(--alta-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .search-result strong {

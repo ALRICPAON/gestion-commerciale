@@ -37,6 +37,8 @@ const state = {
   selectedArticle: null,
 };
 
+const ARTICLE_PAGE_SIZE = 500;
+
 function authHeaders(json = false) {
   const headers = { Authorization: `Bearer ${sessionToken}` };
   if (json) headers['Content-Type'] = 'application/json';
@@ -170,25 +172,39 @@ function updateTotalPreview() {
 
 async function searchOutputArticles({ showAll = false } = {}) {
   const query = els.outputArticleSearch.value.trim();
-  const data = showAll || !query
-    ? await api('/api/articles?active=true&article_category=product&limit=50')
-    : await api(`/api/articles/search?q=${encodeURIComponent(query)}&article_category=product`);
-  renderArticleResults(Array.isArray(data) ? data : []);
+  if (showAll || !query) {
+    const rows = [];
+    let offset = 0;
+    let page = [];
+    do {
+      page = await api(`/api/articles?active=true&article_category=product&limit=${ARTICLE_PAGE_SIZE}&offset=${offset}`);
+      rows.push(...(Array.isArray(page) ? page : []));
+      offset += ARTICLE_PAGE_SIZE;
+    } while (Array.isArray(page) && page.length === ARTICLE_PAGE_SIZE);
+    renderArticleResults(rows, { complete: true });
+    return;
+  }
+
+  const data = await api(`/api/articles?active=true&article_category=product&limit=${ARTICLE_PAGE_SIZE}&search=${encodeURIComponent(query)}`);
+  renderArticleResults(Array.isArray(data) ? data : [], { complete: true });
 }
 
-function renderArticleResults(rows) {
+function renderArticleResults(rows, { complete = false } = {}) {
   els.articleResults.classList.remove('hidden');
   if (!rows.length) {
     els.articleResults.innerHTML = '<div class="search-result"><span>Aucun produit trouve.</span></div>';
     return;
   }
-  els.articleResults.innerHTML = rows.map((article) => `
-    <button type="button" class="search-result" data-id="${escapeHtml(article.id)}">
-      <strong>${escapeHtml(article.plu || '-')}</strong>
-      <span>${escapeHtml(article.designation || article.display_name || '-')}</span>
-      <small>${escapeHtml(article.unit || 'kg')}</small>
+  const completeness = complete ? `<div class="search-result-note">${rows.length} produit(s) actif(s) affiches.</div>` : '';
+  els.articleResults.innerHTML = `${completeness}${rows.map((article) => `
+    <button type="button" class="search-result article-result" data-id="${escapeHtml(article.id)}">
+      <span>
+        <strong>${escapeHtml(article.plu || '-')}</strong>
+        ${escapeHtml(article.designation || article.display_name || '-')}
+      </span>
+      <small>${escapeHtml(article.unit || 'kg')} | ${escapeHtml(article.family_name || article.family_code || 'Famille -')} | Produit</small>
     </button>
-  `).join('');
+  `).join('')}`;
 }
 
 function selectOutputArticle(articleId) {
@@ -198,7 +214,7 @@ function selectOutputArticle(articleId) {
   state.selectedArticle = {
     id: articleId,
     plu: button.querySelector('strong')?.textContent || '',
-    designation: button.querySelector('span')?.textContent || '',
+    designation: button.querySelector('span')?.textContent?.replace(button.querySelector('strong')?.textContent || '', '').trim() || '',
   };
   els.outputArticleId.value = articleId;
   els.outputArticleSelected.textContent = `${state.selectedArticle.plu} - ${state.selectedArticle.designation}`;
