@@ -91,6 +91,11 @@ function qty(value) {
   return number.toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
+function count(value) {
+  const number = Number(value || 0);
+  return Number.isFinite(number) ? number.toLocaleString('fr-FR', { maximumFractionDigits: 0 }) : '0';
+}
+
 function absoluteAssetUrl(url) {
   if (!url) return '';
   if (url.startsWith('http://') || url.startsWith('https://')) return url;
@@ -135,6 +140,7 @@ function sourceLabel(value) {
   if (value === 'purchase') return 'Achat';
   if (value === 'transformation') return 'Transformation';
   if (value === 'fabrication') return 'Fabrication';
+  if (value === 'packing') return 'Colisage';
   return value || 'Lot';
 }
 
@@ -148,6 +154,7 @@ function lotIdentifier(lot) {
 }
 
 function movementLabel(value) {
+  if (window.stockMovementLabel) return window.stockMovementLabel(value);
   const labels = {
     purchase_in: 'Entrée achat',
     sale_out: 'Sortie vente',
@@ -181,6 +188,21 @@ function filterParams({ append = false } = {}) {
   });
 
   return params;
+}
+
+function ensureOption(select, value, label) {
+  if (!select || Array.from(select.options).some((option) => option.value === value)) return;
+  const option = document.createElement('option');
+  option.value = value;
+  option.textContent = label;
+  select.appendChild(option);
+}
+
+function ensurePackingFilterOptions() {
+  ensureOption(els.sourceType, 'packing', 'Colisage');
+  ensureOption(els.movementType, 'packing_source_out', 'Colisage - consommation produit');
+  ensureOption(els.movementType, 'packing_material_out', 'Colisage - consommation emballage');
+  ensureOption(els.movementType, 'packing_output_in', 'Colisage - entree produit');
 }
 
 function deliveredClientLine(item) {
@@ -542,9 +564,81 @@ function pluralLabel(count, singular, plural) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function money(value, digits = 2) {
+  const number = Number(value || 0);
+  return number.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+
+function packingOperationSummary(operation = {}) {
+  return `<div class="trace-packing-summary">
+    <div><span>Validation</span><strong>${escapeHtml(formatDateTime(operation.validated_at || operation.created_at))}</strong></div>
+    <div><span>Colis</span><strong>${escapeHtml(count(operation.package_count))} x ${escapeHtml(qty(operation.quantity_per_package))} kg</strong></div>
+    <div><span>Poids total</span><strong>${escapeHtml(qty(operation.total_output_quantity))} kg</strong></div>
+    <div><span>Cout poisson</span><strong>${escapeHtml(money(operation.fish_cost_ex_vat))}</strong></div>
+    <div><span>Cout emballages</span><strong>${escapeHtml(money(operation.packaging_cost_ex_vat))}</strong></div>
+    <div><span>PR final</span><strong>${escapeHtml(money(operation.unit_cost_ex_vat, 4))} / kg</strong></div>
+  </div>`;
+}
+
+function packingLotLink(lotId, label) {
+  if (!lotId) return escapeHtml(label || '-');
+  return `<button type="button" class="trace-link-button" data-action="open-lot-detail" data-lot-id="${escapeHtml(lotId)}">${escapeHtml(label || 'Voir la tracabilite du lot')}</button>`;
+}
+
+function renderPackingSources(sources = []) {
+  if (!sources.length) return '<div class="trace-empty-small">Aucun lot source rattache.</div>';
+  return `<div class="trace-packing-list">${sources.map((source) => `<div class="trace-packing-row">
+    <div><strong>${escapeHtml(source.article_plu || '-')} - ${escapeHtml(source.article_designation || '-')}</strong><span>${packingLotLink(source.lot_id, `Lot ${source.lot_code || '-'}`)} ${escapeHtml(source.supplier_lot_number ? `- fournisseur ${source.supplier_lot_number}` : '')}</span></div>
+    <div><span>Fournisseur</span><strong>${escapeHtml(source.supplier_name || '-')}</strong></div>
+    <div><span>Reception</span><strong>${escapeHtml(formatDate(source.receipt_date || source.purchase_date))}</strong></div>
+    <div><span>DLC</span><strong>${escapeHtml(formatDate(source.dlc))}</strong></div>
+    <div class="num"><span>Quantite</span><strong>${escapeHtml(qty(source.quantity_used))} kg</strong></div>
+  </div>`).join('')}</div>`;
+}
+
+function renderPackingMaterials(materials = []) {
+  if (!materials.length) return '<div class="trace-empty-small">Aucun emballage rattache.</div>';
+  return `<div class="trace-packing-list">${materials.map((material) => `<div class="trace-packing-row">
+    <div><strong>${escapeHtml(material.article_plu || '-')} - ${escapeHtml(material.article_designation || '-')}</strong><span>${escapeHtml(material.lot_code || '-')} ${escapeHtml(material.supplier_lot_number ? `- fournisseur ${material.supplier_lot_number}` : '')}</span></div>
+    <div class="num"><span>Quantite</span><strong>${escapeHtml(qty(material.quantity_used))} ${escapeHtml(material.unit || '')}</strong></div>
+    <div class="num"><span>Cout unite</span><strong>${escapeHtml(money(material.unit_cost_ex_vat, 4))}</strong></div>
+    <div class="num"><span>Cout ligne</span><strong>${escapeHtml(money(material.line_cost_ex_vat))}</strong></div>
+  </div>`).join('')}</div>`;
+}
+
+function renderPackingUsedIn(operations = []) {
+  if (!operations.length) return '';
+  return `<section class="trace-detail-card"><h3>Utilisation en colisage</h3>
+    <div class="trace-packing-list">${operations.map((operation) => `<div class="trace-packing-row">
+      <div><strong>${escapeHtml(operation.output_article_plu || '-')} - ${escapeHtml(operation.output_article_designation || '-')}</strong><span>Operation ${escapeHtml(operation.packing_operation_id || '-')}</span></div>
+      <div>${packingLotLink(operation.output_lot_id, `Lot output ${operation.output_lot_code || '-'}`)}</div>
+      <div><span>Validation</span><strong>${escapeHtml(formatDateTime(operation.validated_at || operation.created_at))}</strong></div>
+      <div class="num"><span>Quantite utilisee</span><strong>${escapeHtml(qty(operation.source_quantity_used))} kg</strong></div>
+    </div>`).join('')}</div>
+  </section>`;
+}
+
+function renderPackingTrace(trace = {}) {
+  const produced = trace.produced_by;
+  const usedIn = Array.isArray(trace.used_in) ? trace.used_in : [];
+  const sections = [];
+  if (produced) {
+    sections.push(`<section class="trace-detail-card"><h3>Colisage</h3>
+      <p class="trace-card-note">Colisage valide le ${escapeHtml(formatDateTime(produced.validated_at || produced.created_at))}</p>
+      ${packingOperationSummary(produced)}
+      <h4>Lots source</h4>
+      ${renderPackingSources(trace.source_lots || [])}
+      <h4>Emballages utilises</h4>
+      ${renderPackingMaterials(trace.materials || [])}
+    </section>`);
+  }
+  if (usedIn.length) sections.push(renderPackingUsedIn(usedIn));
+  return sections.join('');
+}
+
 function renderMovements(movements = []) {
   if (!movements.length) return '<section class="trace-detail-card"><h3>Mouvements</h3><div class="trace-empty-small">Aucun mouvement.</div></section>';
-  return `<section class="trace-detail-card"><h3>Mouvements</h3><div class="trace-movement-list">${movements.map((movement) => `<div class="trace-movement-line"><span>${escapeHtml(formatDate(movement.created_at))}</span><strong>${escapeHtml(movement.movement_label || movementLabel(movement.movement_type))}</strong><span class="num">${escapeHtml(qty(movement.quantity))}</span><span>${escapeHtml(movement.notes || '')}</span></div>`).join('')}</div></section>`;
+  return `<section class="trace-detail-card"><h3>Mouvements</h3><div class="trace-movement-list">${movements.map((movement) => `<div class="trace-movement-line"><span>${escapeHtml(formatDate(movement.created_at))}</span><strong title="${escapeHtml(movement.movement_type || '')}">${escapeHtml(movement.movement_label || movementLabel(movement.movement_type))}</strong><span class="num">${escapeHtml(qty(movement.quantity))}</span><span>${escapeHtml(movement.notes || '')}${movement.source_table === 'packing_operations' && movement.source_id ? ` <span class="muted">Operation colisage ${escapeHtml(movement.source_id)}</span>` : ''}</span></div>`).join('')}</div></section>`;
 }
 
 function renderDeliveredClients(clients = []) {
@@ -562,7 +656,7 @@ async function openLotDetail(lotId) {
     const lot = data.lot || {};
     els.lotModalTitle.textContent = `${lot.article_plu || '-'} - ${lot.article_label || 'Lot'}`;
     els.lotModalSubtitle.textContent = `Lot ${lot.lot_code || '-'}`;
-    els.lotModalBody.innerHTML = `<div class="trace-detail-grid">${renderInfoBlock(lot)}${renderRecallBlock(lot)}${renderQualityBlock(lot, data.quality_history || [])}${renderDeliveredClients(lot.delivered_clients)}${renderMovements(data.movements || [])}</div>`;
+    els.lotModalBody.innerHTML = `<div class="trace-detail-grid">${renderInfoBlock(lot)}${renderPackingTrace(data.packing_trace || {})}${renderRecallBlock(lot)}${renderQualityBlock(lot, data.quality_history || [])}${renderDeliveredClients(lot.delivered_clients)}${renderMovements(data.movements || [])}</div>`;
   } catch (err) {
     els.lotModalBody.innerHTML = `<div class="trace-empty">${escapeHtml(err.message || 'Erreur détail lot')}</div>`;
   }
@@ -1077,6 +1171,7 @@ async function refreshClientSuggestions() {
 
 function bindEvents() {
   els.userName.textContent = sessionUser.email || 'Utilisateur';
+  ensurePackingFilterOptions();
   els.backHome.addEventListener('click', () => { window.location.href = './home.html'; });
   els.logout.addEventListener('click', logoutAndRedirect);
   els.apply.addEventListener('click', () => loadLots({ append: false }));
@@ -1103,6 +1198,7 @@ function bindEvents() {
     if (action.dataset.action === 'release-quality') releaseQualityLot(action.dataset.lotId).catch((err) => setState(err.message || 'Erreur liberation qualite', 'error'));
     if (action.dataset.action === 'start-recall') startRecallWorkflow(action.dataset.lotId).catch((err) => setState(err.message || 'Erreur rappel produit', 'error'));
     if (action.dataset.action === 'back-lot-detail') openLotDetail(action.dataset.lotId).catch((err) => setState(err.message || 'Erreur detail lot', 'error'));
+    if (action.dataset.action === 'open-lot-detail') openLotDetail(action.dataset.lotId).catch((err) => setState(err.message || 'Erreur detail lot', 'error'));
     if (action.dataset.action === 'prepare-recall-confirm') {
       try {
         renderRecallConfirmPanel(action.dataset.lotId, recallFormPayload());

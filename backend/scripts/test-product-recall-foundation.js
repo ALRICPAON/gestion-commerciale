@@ -18,6 +18,7 @@ const USER_ID = '60000000-0000-4000-8000-000000000101';
 const LOT_A = '60000000-0000-4000-8000-000000000201';
 const LOT_EMPTY = '60000000-0000-4000-8000-000000000202';
 const LOT_B = '60000000-0000-4000-8000-000000000203';
+const LOT_OUTPUT = '60000000-0000-4000-8000-000000000204';
 const ARTICLE_A = '60000000-0000-4000-8000-000000000301';
 const CLIENT_A = '60000000-0000-4000-8000-000000000401';
 const CLIENT_B = '60000000-0000-4000-8000-000000000402';
@@ -81,6 +82,11 @@ class FakeRecallDb {
       this.deliveryRow('DN-4', CLIENT_C, null, 3),
       this.deliveryRow('DN-5', CLIENT_D, null, 2),
     ];
+    this.deliveryRowsByLot = {
+      [LOT_A]: this.deliveryRows,
+      [LOT_OUTPUT]: [this.deliveryRow('DN-PACK', CLIENT_C, null, 6)],
+    };
+    this.packingLinks = [];
     this.campaigns = [];
     this.recipients = [];
     this.events = [];
@@ -159,7 +165,11 @@ class FakeRecallDb {
 
     if (normalized.startsWith('SELECT sd.id AS delivery_note_id')) {
       const lotId = params[1];
-      return { rows: lotId === LOT_A ? clone(this.deliveryRows) : [] };
+      return { rows: clone(this.deliveryRowsByLot[lotId] || []) };
+    }
+
+    if (normalized.startsWith('SELECT po.id AS packing_operation_id') && normalized.includes('FROM packing_source_lots psl')) {
+      return { rows: clone(this.packingLinks.filter((link) => link.store_id === params[0] && link.source_lot_id === params[1])) };
     }
 
     if (normalized.includes('FROM client_contacts') && normalized.includes('receives_delivery_notes = true')) {
@@ -446,6 +456,23 @@ async function testAnalysis() {
   const empty = await analyzeLotRecallImpact({ db, storeId: STORE_A, lotId: LOT_EMPTY });
   assert.strictEqual(empty.clients_count, 0);
   assert.deepStrictEqual(empty.recipients, []);
+
+  db.packingLinks.push({
+    store_id: STORE_A,
+    source_lot_id: LOT_EMPTY,
+    packing_operation_id: '60000000-0000-4000-8000-000000000701',
+    output_lot_id: LOT_OUTPUT,
+    output_lot_code: 'PKG-OUTPUT',
+    quantity_used: 6,
+    validated_at: '2026-08-16T09:00:00.000Z',
+  });
+  const packed = await analyzeLotRecallImpact({ db, storeId: STORE_A, lotId: LOT_EMPTY });
+  assert.strictEqual(packed.clients_count, 1);
+  assert.strictEqual(packed.delivery_notes_count, 1);
+  assert.strictEqual(packed.total_delivered_quantity, 6);
+  assert.strictEqual(packed.packing_links[0].output_lot_id, LOT_OUTPUT);
+  assert.strictEqual(packed.recipients[0].delivery_notes[0].via_packing_operation_id, '60000000-0000-4000-8000-000000000701');
+  assert.strictEqual(packed.recipients[0].delivery_notes[0].via_output_lot_code, 'PKG-OUTPUT');
 
   await assert.rejects(
     () => analyzeLotRecallImpact({ db, storeId: STORE_A, lotId: LOT_B }),

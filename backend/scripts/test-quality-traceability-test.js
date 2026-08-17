@@ -184,7 +184,7 @@ async function main() {
   assert(frontend.includes("limit: consultation && !search ? '50' : '20'"));
   assert(frontend.includes("data-action=\"select-traceability-test-lot\""));
   assert(frontend.includes('openTraceabilityTestLot(action.dataset.lotId)'));
-  assert(read('frontend/traceability.html').includes('traceability.js?v=7'));
+  assert(read('frontend/traceability.html').includes('traceability.js?v=8'));
   assert(evidenceFrontend.includes('renderTraceabilityTestDetail'));
   assert(!service.includes('blockLotForQuality'));
   assert(!service.includes('sendEmail'));

@@ -214,6 +214,26 @@ async function loadArticles() {
   }
 }
 
+async function fetchArticleById(articleId) {
+  const response = await fetch(`${API_BASE_URL}/api/articles/${encodeURIComponent(articleId)}`, { headers: authHeaders(false) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erreur chargement article');
+  return data;
+}
+
+async function openArticleFromEditParam() {
+  const editId = new URLSearchParams(window.location.search).get('edit');
+  if (!isValidId(editId)) return;
+
+  const article = articlesCache.find((item) => String(item.id) === String(editId))
+    || await fetchArticleById(editId);
+  openModal(true, article);
+
+  const url = new URL(window.location.href);
+  url.searchParams.delete('edit');
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
+}
+
 async function saveArticle(event) {
   event.preventDefault();
   try {
@@ -249,6 +269,13 @@ async function saveArticle(event) {
     );
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || 'Erreur enregistrement article');
+
+    if (isEdit) {
+      const refreshedArticle = await fetchArticleById(articleId);
+      if (refreshedArticle.article_category !== payload.article_category) {
+        throw new Error('La categorie article sauvegardee ne correspond pas a la fiche relue.');
+      }
+    }
 
     closeModal();
     setFeedback(data.message || 'Article enregistré', 'success');
@@ -456,6 +483,7 @@ async function init() {
     fillTopbar();
     await loadFamilies();
     await loadArticles();
+    await openArticleFromEditParam();
   } catch (error) {
     console.error(error);
     setFeedback(error.message, 'error');
