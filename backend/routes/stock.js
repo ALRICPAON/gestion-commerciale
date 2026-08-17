@@ -72,6 +72,7 @@ function lotsSelectSql(extraColumns = '') {
       l.lot_code,
       l.supplier_lot_number,
       l.source_type,
+      l.quality_status,
       l.qty_initial,
       l.qty_remaining,
       l.unit_cost_ex_vat,
@@ -195,10 +196,12 @@ router.get('/lots', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const params = [req.user.store_id];
     const availableOnly = parseBool(req.query.available_only, true);
+    const excludeBlockedQuality = parseBool(req.query.exclude_blocked_quality, false);
     const articleCategory = req.query.article_category ? assertArticleCategory(req.query.article_category) : null;
     let where = 'WHERE l.store_id = $1';
 
     if (availableOnly) where += ' AND l.qty_remaining > 0';
+    if (excludeBlockedQuality) where += " AND COALESCE(l.quality_status, 'released') <> 'blocked'";
     if (articleCategory) {
       params.push(articleCategory);
       where += ` AND COALESCE(a.article_category, 'product') = $${params.length}`;

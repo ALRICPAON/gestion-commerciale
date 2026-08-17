@@ -95,7 +95,9 @@ function main() {
 
   includes('frontend/articles.html', 'article-business-category', 'formulaire article doit afficher la categorie metier');
   includes('frontend/js/articles.js', 'article_category: articleBusinessCategoryInput.value', 'front articles doit envoyer article_category');
-  includes('frontend/articles.html', './js/articles.js?v=17', 'cache-buster articles attendu');
+  includes('frontend/js/articles.js', 'openArticleFromEditParam', 'front articles doit ouvrir ?edit=');
+  includes('frontend/js/articles.js', 'refreshedArticle.article_category !== payload.article_category', 'front articles doit verifier la categorie relue apres sauvegarde');
+  includes('frontend/articles.html', './js/articles.js?v=18', 'cache-buster articles attendu');
   includes('frontend/article-detail.html', './js/article-detail.js?v=16', 'cache-buster detail article attendu');
 
   includes('backend/routes/sales.js', "COALESCE(a.article_category,'product')='product'", 'vente doit refuser les emballages');

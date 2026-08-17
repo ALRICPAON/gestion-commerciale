@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Colisage - Gestion Commerciale</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/packing.css?v=1" />
+</head>
+<body class="app-page packing-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Colisage / Conditionnement</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content packing-layout">
+    <section class="welcome-card">
+      <div class="page-actions">
+        <div>
+          <h2>Operations de colisage</h2>
+          <p>Conditionner plusieurs lots produit et integrer le cout des emballages.</p>
+        </div>
+        <div class="page-actions-right">
+          <button id="new-packing-btn" class="btn btn-primary" type="button">Nouvelle operation</button>
+          <button id="refresh-packing-btn" class="btn btn-secondary" type="button">Actualiser</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="packing-tabs" role="tablist" aria-label="Statut colisage">
+        <button class="packing-tab active" type="button" data-status="draft">Brouillon</button>
+        <button class="packing-tab" type="button" data-status="validated">Valide</button>
+        <button class="packing-tab" type="button" data-status="cancelled">Annule</button>
+        <button class="packing-tab" type="button" data-status="">Tous</button>
+      </div>
+      <div id="packing-feedback" class="page-feedback hidden"></div>
+      <div class="table-wrap">
+        <table class="data-table packing-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Article</th>
+              <th>PLU</th>
+              <th class="numeric">Quantite totale</th>
+              <th class="numeric">Colis</th>
+              <th class="numeric">Poids/colis</th>
+              <th class="numeric">Cout poisson</th>
+              <th class="numeric">Cout emballage</th>
+              <th class="numeric">Cout total</th>
+              <th class="numeric">PR/kg</th>
+              <th>Statut</th>
+              <th>Lot output</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="packing-tbody">
+            <tr><td colspan="13">Chargement...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <div id="draft-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3>Nouvelle operation</h3>
+          <p>Creer un brouillon de colisage.</p>
+        </div>
+        <button id="close-draft-modal-btn" class="btn btn-secondary" type="button">Fermer</button>
+      </div>
+      <form id="draft-form" class="modal-form">
+        <input type="hidden" id="output-article-id" />
+        <div class="form-grid">
+          <div class="form-group form-group-full">
+            <label for="output-article-search">Article produit</label>
+            <input id="output-article-search" type="text" placeholder="PLU ou designation" autocomplete="off" required />
+            <small class="field-hint">F9 : afficher les produits</small>
+            <div id="output-article-selected" class="selected-line">Aucun article selectionne.</div>
+          </div>
+          <div class="form-group">
+            <label for="draft-package-count">Nombre de colis</label>
+            <input id="draft-package-count" type="number" min="1" step="1" required />
+          </div>
+          <div class="form-group">
+            <label for="draft-quantity-per-package">Poids par colis</label>
+            <input id="draft-quantity-per-package" type="number" min="0.001" step="0.001" required />
+          </div>
+          <div class="form-group">
+            <label>Poids total cible</label>
+            <div id="draft-total-preview" class="total-preview">0,000 kg</div>
+          </div>
+          <div class="form-group form-group-full">
+            <label for="draft-notes">Notes</label>
+            <textarea id="draft-notes" rows="3"></textarea>
+          </div>
+        </div>
+        <div id="article-results" class="search-results hidden"></div>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Creer le brouillon</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/packing.js?v=1"></script>
+</body>
+</html>
