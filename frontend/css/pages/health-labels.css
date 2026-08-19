@@ -1,0 +1,249 @@
+.health-label-preview-tools {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.health-label-print-sheet {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.health-label-card {
+  aspect-ratio: 1 / 1;
+  background: #ffffff;
+  border: 1px solid #17212b;
+  color: #111820;
+  display: grid;
+  font-family: Arial, Helvetica, sans-serif;
+  grid-template-rows: 18% 17% 23% 1fr auto auto;
+  overflow: hidden;
+  padding: 3.2%;
+  width: min(100%, 100mm);
+}
+
+.health-label-top,
+.health-label-footer {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.health-label-brand {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+  min-width: 0;
+}
+
+.health-label-brand img {
+  max-height: 14mm;
+  max-width: 24mm;
+  object-fit: contain;
+}
+
+.health-label-brand strong {
+  display: block;
+  font-size: 12px;
+  line-height: 1.05;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-label-brand span {
+  color: #45515c;
+  display: block;
+  font-size: 7px;
+  line-height: 1.2;
+}
+
+.health-label-approval {
+  align-items: center;
+  border: 2px solid #111820;
+  border-radius: 50%;
+  display: grid;
+  flex: 0 0 28%;
+  font-size: 8px;
+  font-weight: 800;
+  height: 13mm;
+  justify-content: center;
+  line-height: 1;
+  padding: 2px 8px;
+  text-align: center;
+}
+
+.health-label-approval strong {
+  display: block;
+  font-size: 10px;
+  line-height: 1.05;
+}
+
+.health-label-approval span {
+  display: block;
+}
+
+.health-label-warnings {
+  background: #fff8e6;
+  border: 1px solid #f0c36d;
+  border-radius: 8px;
+  color: #6b4a00;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+}
+
+.health-label-warnings p {
+  margin: 0;
+}
+
+.health-label-client {
+  border-bottom: 2px solid #111820;
+  border-top: 2px solid #111820;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+}
+
+.health-label-client span,
+.health-label-weight span {
+  color: #45515c;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.health-label-client strong {
+  display: block;
+  font-size: clamp(20px, 7.2mm, 30px);
+  line-height: 1;
+  overflow-wrap: anywhere;
+}
+
+.health-label-product {
+  align-items: stretch;
+  border-bottom: 1px solid #111820;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) 34%;
+  padding: 8px 0;
+}
+
+.health-label-product h2 {
+  align-self: center;
+  font-size: 20px;
+  line-height: 1.05;
+  margin: 0;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.health-label-weight {
+  align-content: center;
+  border-left: 1px solid #111820;
+  display: grid;
+  padding-left: 8px;
+}
+
+.health-label-weight strong {
+  font-size: 18px;
+  line-height: 1.05;
+}
+
+.health-label-meta {
+  align-content: start;
+  display: grid;
+  gap: 3px 8px;
+  grid-template-columns: 1fr 1fr;
+  padding: 8px 0;
+}
+
+.health-label-meta div {
+  min-width: 0;
+}
+
+.health-label-meta span {
+  color: #45515c;
+  display: block;
+  font-size: 7px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.health-label-meta strong {
+  display: block;
+  font-size: 10px;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.health-label-meta .health-label-allergen {
+  border: 1px solid #111820;
+  grid-column: 1 / -1;
+  padding: 3px 5px;
+}
+
+.health-label-meta .health-label-allergen strong {
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.health-label-warning {
+  border: 2px solid #111820;
+  font-size: 14px;
+  font-weight: 900;
+  padding: 3px;
+  text-align: center;
+}
+
+.health-label-footer {
+  border-top: 1px solid #111820;
+  color: #45515c;
+  font-size: 8px;
+  font-weight: 700;
+  padding-top: 5px;
+}
+
+@media print {
+  body.printing-health-labels {
+    background: #ffffff !important;
+  }
+
+  body.printing-health-labels > *:not(.delivery-layout):not(.main-content),
+  body.printing-health-labels .delivery-layout > *:not(.print-area),
+  body.printing-health-labels .main-content > *:not(#print-area) {
+    display: none !important;
+  }
+
+  body.printing-health-labels .print-area,
+  body.printing-health-labels #print-area {
+    display: block !important;
+  }
+
+  body.printing-health-labels .health-label-print-sheet {
+    display: block;
+  }
+
+  body.printing-health-labels .health-label-card {
+    border: 0;
+    break-after: page;
+    box-sizing: border-box;
+    height: 100mm;
+    margin: 0;
+    page: health-label;
+    padding: 3mm;
+    page-break-after: always;
+    width: 100mm;
+  }
+}
+
+@page health-label {
+  size: 100mm 100mm;
+  margin: 0;
+}

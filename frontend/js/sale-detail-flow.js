@@ -347,6 +347,15 @@
     return lots || trace.lot_code || trace.supplier_lot_number || '-';
   }
 
+  function healthLabelsModule(requiredMethod) {
+    const module = window.HealthLabels;
+    if (module && (!requiredMethod || typeof module[requiredMethod] === 'function')) return module;
+    const error = new Error(`Module HealthLabels indisponible${requiredMethod ? `: ${requiredMethod}` : ''}`);
+    console.error('Erreur module etiquettes sanitaires :', error);
+    feedback('Module d impression des etiquettes sanitaires non charge. Rechargez la page puis reessayez.', true);
+    return null;
+  }
+
   function buildLabelsHtml(labels) {
     const esc = window.DeliveryNotePrint.escapeHtml;
     const labelQty = window.DeliveryNotePrint.qty;
@@ -369,15 +378,37 @@
   async function printHealthLabels(lineNumber = null) {
     await refreshState();
     if (!isDeliveryNote()) return;
-    const data = await request(`/api/delivery-notes/${currentSale.id}/health-labels`);
+    const labelPrinter = healthLabelsModule('print');
+    if (!labelPrinter) return;
+    const params = new URLSearchParams();
+    if (lineNumber !== null) {
+      const line = currentLines.find((item) => Number(item.line_number) === Number(lineNumber));
+      params.set('line_number', lineNumber);
+      const preview = await request(`/api/delivery-notes/${currentSale.id}/health-labels?${params.toString()}`);
+      if (preview.warnings?.length) {
+        feedback(preview.warnings.join(' '), true);
+      }
+      const selectedLot = typeof labelPrinter.askLot === 'function' ? labelPrinter.askLot(preview.labels || []) : null;
+      if (selectedLot?.id) params.set('lot_id', selectedLot.id);
+      const defaultCopies = selectedLot?.count || line?.package_count || 1;
+      if (typeof labelPrinter.askCopies !== 'function') {
+        console.error('Erreur module etiquettes sanitaires : askCopies indisponible');
+        feedback('Module d impression des etiquettes sanitaires incomplet. Rechargez la page puis reessayez.', true);
+        return;
+      }
+      const copies = labelPrinter.askCopies(defaultCopies);
+      if (copies === null) return;
+      params.set('copies', copies);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const data = await request(`/api/delivery-notes/${currentSale.id}/health-labels${suffix}`);
     let labels = data.labels || [];
-    if (lineNumber !== null) labels = labels.filter((label) => Number(label.line_number) === Number(lineNumber));
     if (!labels.length) {
       feedback('Aucune étiquette sanitaire trouvée pour cette sélection', true);
       return;
     }
-    flowEls.printArea.innerHTML = buildLabelsHtml(labels);
-    window.print();
+    if (data.warnings?.length) feedback(data.warnings.join(' '), true);
+    labelPrinter.print(labels, flowEls.printArea);
   }
 
   async function validateInvoiceFromBl() {

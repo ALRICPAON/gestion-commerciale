@@ -9,6 +9,10 @@ const {
   availableLotCondition,
   errorBody: lotQualityErrorBody,
 } = require('../services/quality/lotBlocking');
+const {
+  buildHealthLabelModels,
+  combineZpl,
+} = require('../services/healthLabelService');
 
 const router = express.Router();
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
@@ -554,36 +558,108 @@ router.get('/delivery-notes/:id/print-data', authenticateToken, attachDbContext,
 
 router.get('/delivery-notes/:id/health-labels', authenticateToken, attachDbContext, async (req, res) => {
   try {
-    const note = await req.dbPool.query(`SELECT dn.id, dn.reference_number, dn.document_date, COALESCE(dn.delivered_client_name_snapshot, c.name) AS delivered_client_name, COALESCE(dn.delivered_client_code_snapshot, c.code) AS delivered_client_code, COALESCE(dn.delivered_client_store_identifier, c.store_identifier) AS delivered_client_store_identifier FROM sales_documents dn LEFT JOIN clients c ON c.id = dn.client_id AND c.store_id = dn.store_id WHERE dn.id = $1 AND dn.store_id = $2 AND dn.document_type = 'DELIVERY_NOTE' LIMIT 1`, [req.params.id, req.user.store_id]);
-    if (!note.rows.length) return res.status(404).json({ error: 'BL introuvable' });
-    const lines = await req.dbPool.query(
-      `SELECT sl.id, sl.line_number, sl.article_label, sl.article_plu, sl.sale_unit, sl.traceability_snapshot,
-        jsonb_agg(jsonb_build_object('lot_id', l.id, 'lot_code', l.lot_code, 'supplier_lot_number', l.supplier_lot_number, 'dlc', l.dlc, 'quantity', sla.quantity)) FILTER (WHERE sla.id IS NOT NULL) AS lots,
-        COALESCE(SUM(sla.quantity), COALESCE(sl.sold_quantity, sl.total_weight, 0)) AS label_quantity
-       FROM sales_lines sl
-       LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
-       LEFT JOIN lots l ON l.id = sla.lot_id
-       WHERE sl.sales_document_id = $1 AND sl.store_id = $2
-       GROUP BY sl.id
-       ORDER BY sl.line_number ASC`,
+    const note = await req.dbPool.query(
+      `SELECT dn.id, dn.reference_number, dn.document_date,
+        COALESCE(dn.delivered_client_name_snapshot, c.name) AS delivered_client_name,
+        COALESCE(dn.delivered_client_code_snapshot, c.code) AS delivered_client_code,
+        COALESCE(dn.delivered_client_store_identifier, c.store_identifier) AS delivered_client_store_identifier,
+        c.store_identifier AS client_store_identifier
+       FROM sales_documents dn
+       LEFT JOIN clients c ON c.id = dn.client_id AND c.store_id = dn.store_id
+       WHERE dn.id = $1 AND dn.store_id = $2 AND dn.document_type = 'DELIVERY_NOTE'
+       LIMIT 1`,
       [req.params.id, req.user.store_id]
     );
-    const labels = lines.rows.map((line) => ({
-      delivery_note_id: note.rows[0].id,
-      delivery_note_reference: note.rows[0].reference_number,
-      document_date: note.rows[0].document_date,
-      delivered_client_name: note.rows[0].delivered_client_name,
-      delivered_client_code: note.rows[0].delivered_client_code,
-      delivered_client_store_identifier: note.rows[0].delivered_client_store_identifier,
-      line_number: line.line_number,
-      article_label: line.article_label,
-      article_plu: line.article_plu,
-      unit: line.sale_unit || 'kg',
-      quantity: line.label_quantity,
-      traceability: line.traceability_snapshot || {},
-      lots: line.lots || [],
-    }));
-    res.json({ labels });
+    if (!note.rows.length) return res.status(404).json({ error: 'BL introuvable' });
+
+    const lineNumber = clean(req.query.line_number);
+    const copies = clean(req.query.copies);
+    const lotId = clean(req.query.lot_id);
+    if (lineNumber && !Number.isFinite(Number(lineNumber))) {
+      return res.status(400).json({ error: 'Numero de ligne invalide' });
+    }
+    if (copies && (!Number.isFinite(Number(copies)) || Number(copies) <= 0)) {
+      return res.status(400).json({ error: 'Nombre d etiquettes invalide' });
+    }
+    const linesParams = [req.params.id, req.user.store_id];
+    let lineFilter = '';
+    if (lineNumber) {
+      linesParams.push(Number(lineNumber));
+      lineFilter = ` AND sl.line_number = $${linesParams.length}`;
+    }
+
+    const [lines, storeSettings] = await Promise.all([
+      req.dbPool.query(
+        `SELECT sl.id, sl.line_number, sl.article_label, sl.article_plu,
+          sl.package_count, sl.weight_per_package, sl.total_weight, sl.sold_quantity,
+          sl.sale_unit, sl.traceability_snapshot,
+          COALESCE(sl.delivered_client_name_snapshot, delivered.name) AS delivered_client_name,
+          COALESCE(sl.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
+          COALESCE(sl.delivered_client_store_identifier_snapshot, delivered.store_identifier) AS delivered_client_store_identifier,
+          a.latin_name, a.fao_zone, a.sous_zone, a.fishing_gear, a.production_method, a.allergens,
+          jsonb_agg(jsonb_build_object(
+            'lot_id', l.id,
+            'lot_code', l.lot_code,
+            'supplier_lot_number', l.supplier_lot_number,
+            'dlc', l.dlc,
+            'quantity', sla.quantity,
+            'traceability_data', COALESCE(l.traceability_data, '{}'::jsonb),
+            'latin_name', COALESCE(l.traceability_data->>'latin_name', a.latin_name),
+            'fao_zone', COALESCE(l.traceability_data->>'fao_zone', a.fao_zone),
+            'sous_zone', COALESCE(l.traceability_data->>'sous_zone', a.sous_zone),
+            'fishing_gear', COALESCE(l.traceability_data->>'fishing_gear', a.fishing_gear),
+            'production_method', COALESCE(l.traceability_data->>'production_method', a.production_method),
+            'allergens', COALESCE(l.traceability_data->>'allergens', a.allergens)
+          )) FILTER (WHERE sla.id IS NOT NULL) AS lots
+         FROM sales_lines sl
+         LEFT JOIN clients delivered ON delivered.id = sl.delivered_client_id AND delivered.store_id = sl.store_id
+         LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
+         LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
+         LEFT JOIN lots l ON l.id = sla.lot_id
+         WHERE sl.sales_document_id = $1 AND sl.store_id = $2${lineFilter}
+         GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier,
+           a.latin_name, a.fao_zone, a.sous_zone, a.fishing_gear, a.production_method, a.allergens
+         ORDER BY sl.line_number ASC`,
+        linesParams
+      ),
+      req.dbPool.query(
+        `SELECT company_name, logo_url, address_line1, address_line2, postal_code, city,
+          country, phone, email, sanitary_approval_number
+         FROM store_settings
+         WHERE store_id = $1
+         LIMIT 1`,
+        [req.user.store_id]
+      ),
+    ]);
+
+    const labels = buildHealthLabelModels({
+      document: note.rows[0],
+      lines: lines.rows,
+      storeSettings: storeSettings.rows[0] || {},
+      lineNumber,
+      copies,
+      lotId,
+    });
+
+    res.json({
+      labels,
+      label_count: labels.length,
+      warnings: labels.warnings || [],
+      zpl_document: combineZpl(labels),
+      printer: labels[0]?.printer || {
+        model: 'Zebra ZT231',
+        dpi: 300,
+        language: 'ZPL II',
+        width_mm: 100,
+        height_mm: 100,
+        width_dots: 1181,
+        height_dots: 1181,
+      },
+      transport_strategy: {
+        current: 'zpl_payload_for_local_usb_driver_or_browser_print',
+        future: 'same_zpl_payload_can_be_sent_to_a_network_zebra_transport',
+      },
+    });
   } catch (err) {
     console.error('Erreur etiquettes sanitaires BL :', err);
     res.status(500).json({ error: 'Erreur generation etiquettes sanitaires' });
