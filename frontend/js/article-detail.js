@@ -30,6 +30,7 @@ const articleTitleEl = document.getElementById('article-title');
 const identityEl = document.getElementById('identity');
 const commercialEl = document.getElementById('commercial');
 const metaEl = document.getElementById('meta');
+const conservationEl = document.getElementById('conservation');
 const unitsEl = document.getElementById('units');
 const technicalEl = document.getElementById('technical');
 
@@ -64,6 +65,13 @@ function formatVat(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '-';
   return `${number.toString().replace('.', ',')} %`;
+}
+
+function formatTemperature(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '-';
+  return `${number.toString().replace('.', ',')} °C`;
 }
 
 function formatDate(value) {
@@ -124,6 +132,12 @@ function renderArticle(article) {
     field('Engin', article.fishing_gear || article.engin),
     field('Methode production', article.production_method),
     field('Allergenes', article.allergens || article.allergenes),
+  ].join('');
+
+  conservationEl.innerHTML = [
+    field('Température min', formatTemperature(article.storage_temperature_min)),
+    field('Température max', formatTemperature(article.storage_temperature_max)),
+    field('Instruction', article.storage_instruction),
   ].join('');
 
   unitsEl.innerHTML = [

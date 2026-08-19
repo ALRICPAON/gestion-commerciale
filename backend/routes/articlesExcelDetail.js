@@ -5,6 +5,11 @@ const XLSX = require('xlsx');
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
+const {
+  hasStorageField,
+  nullableTemperature,
+  validateStorageRange,
+} = require('../services/articleStorageConditions');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -34,6 +39,9 @@ const DETAIL_COLUMNS = [
   'production_method',
   'allergens',
   'allergenes',
+  'Température conservation min °C',
+  'Température conservation max °C',
+  'Instruction conservation',
   'default_dlc_days',
   'purchase_unit',
   'stock_unit',
@@ -57,6 +65,12 @@ const DETAIL_COLUMNS = [
   'created_at',
   'updated_at',
 ];
+
+const STORAGE_EXPORT_COLUMNS = new Set([
+  'Température conservation min °C',
+  'Température conservation max °C',
+  'Instruction conservation',
+]);
 
 const READ_ONLY_COLUMNS = new Set([
   'action',
@@ -102,6 +116,21 @@ function excelDate(value) {
   return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
 }
 
+function normalizeImportHeader(key) {
+  const normalized = String(key || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (normalized === 'temperature conservation min c' || normalized === 'storage_temperature_min') return 'storage_temperature_min';
+  if (normalized === 'temperature conservation max c' || normalized === 'storage_temperature_max') return 'storage_temperature_max';
+  if (normalized === 'instruction conservation' || normalized === 'storage_instruction') return 'storage_instruction';
+  return String(key || '').trim();
+}
+
+function normalizeImportRow(row = {}) {
+  return Object.entries(row).reduce((acc, [key, value]) => {
+    acc[normalizeImportHeader(key)] = value;
+    return acc;
+  }, {});
+}
+
 function normalizeAction(value) {
   const action = String(value || 'ignore').trim().toLowerCase();
   return ['update', 'create', 'disable', 'ignore'].includes(action) ? action : null;
@@ -144,6 +173,8 @@ async function findArticle(db, storeId, row) {
 
 function valueForColumn(column, row, creating = false) {
   if (column === 'is_active') return boolValue(row[column], creating ? true : null);
+  if (column === 'storage_temperature_min') return nullableTemperature(row[column], 'Temperature minimale de conservation');
+  if (column === 'storage_temperature_max') return nullableTemperature(row[column], 'Temperature maximale de conservation');
   if (
     column.includes('price')
     || column.includes('rate')
@@ -162,6 +193,22 @@ function buildArticlePayload(row, articleColumns, creating = false) {
     const value = valueForColumn(column, row, creating);
     if (value !== null || creating) payload[column] = value;
   }
+
+  const storagePatch = {};
+  if (articleColumns.has('storage_temperature_min') && hasStorageField(row, 'storage_temperature_min')) {
+    storagePatch.storage_temperature_min = nullableTemperature(row.storage_temperature_min, 'Temperature minimale de conservation');
+  }
+  if (articleColumns.has('storage_temperature_max') && hasStorageField(row, 'storage_temperature_max')) {
+    storagePatch.storage_temperature_max = nullableTemperature(row.storage_temperature_max, 'Temperature maximale de conservation');
+  }
+  if (articleColumns.has('storage_instruction') && hasStorageField(row, 'storage_instruction')) {
+    storagePatch.storage_instruction = clean(row.storage_instruction);
+  }
+  validateStorageRange({
+    storage_temperature_min: storagePatch.storage_temperature_min ?? null,
+    storage_temperature_max: storagePatch.storage_temperature_max ?? null,
+  });
+  Object.assign(payload, storagePatch);
 
   if (articleColumns.has('production_method') && payload.production_method === undefined) {
     payload.production_method = clean(row.production_method) || clean(row.category);
@@ -274,7 +321,8 @@ router.get('/export.xlsx', authenticateToken, attachDbContext, requireAdminOrMan
   try {
     const articleColumns = await tableColumns(req.dbPool, 'articles');
     const extraArticleColumns = [...articleColumns]
-      .filter((column) => !DETAIL_COLUMNS.includes(column) && !['store_id', 'created_by', 'updated_by'].includes(column))
+      .filter((column) => !DETAIL_COLUMNS.includes(column)
+        && !['storage_temperature_min', 'storage_temperature_max', 'storage_instruction', 'store_id', 'created_by', 'updated_by'].includes(column))
       .sort();
     const columns = [...DETAIL_COLUMNS, ...extraArticleColumns];
 
@@ -346,6 +394,9 @@ router.get('/export.xlsx', authenticateToken, attachDbContext, requireAdminOrMan
         production_method: article.production_method || rawSource.production_method || rawSource.method_production || article.metadata_category || '',
         allergens: article.allergens || article.metadata_allergens || '',
         allergenes: article.allergens || article.metadata_allergens || '',
+        'Température conservation min °C': article.storage_temperature_min ?? '',
+        'Température conservation max °C': article.storage_temperature_max ?? '',
+        'Instruction conservation': article.storage_instruction || '',
         default_dlc_days: article.default_dlc_days ?? '',
         purchase_unit: article.purchase_unit || article.ad_purchase_unit || article.unit || '',
         stock_unit: article.stock_unit || article.ad_stock_unit || article.unit || '',
@@ -377,7 +428,7 @@ router.get('/export.xlsx', authenticateToken, attachDbContext, requireAdminOrMan
     });
 
     const worksheet = XLSX.utils.json_to_sheet(rows, { header: columns });
-    worksheet['!cols'] = columns.map((column) => ({ wch: ['designation', 'display_name', 'description', 'raw_source'].includes(column) ? 34 : 18 }));
+    worksheet['!cols'] = columns.map((column) => ({ wch: ['designation', 'display_name', 'description', 'raw_source'].includes(column) || STORAGE_EXPORT_COLUMNS.has(column) ? 34 : 18 }));
     for (let rowIndex = 2; rowIndex <= rows.length + 1; rowIndex += 1) {
       const pluCell = worksheet[`C${rowIndex}`];
       if (pluCell) pluCell.t = 's';
@@ -412,7 +463,7 @@ router.post('/import.xlsx', authenticateToken, attachDbContext, requireAdminOrMa
     await db.query('BEGIN');
 
     for (const [index, sourceRow] of rows.entries()) {
-      const row = { ...sourceRow, __store_id: req.user.store_id };
+      const row = { ...normalizeImportRow(sourceRow), __store_id: req.user.store_id };
       const excelLine = index + 2;
       try {
         const action = normalizeAction(row.action);

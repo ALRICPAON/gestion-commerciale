@@ -6,6 +6,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { assertArticleCategory } = require('../services/articleCategory');
+const { mergeStoragePatch, normalizeStoragePayload } = require('../services/articleStorageConditions');
 
 function toNullableString(value) {
   if (value === undefined || value === null) return null;
@@ -181,6 +182,9 @@ router.get('/', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.fishing_gear, adm.engin) AS fishing_gear,
         COALESCE(a.allergens, adm.allergenes) AS allergenes,
         COALESCE(a.allergens, adm.allergenes) AS allergens,
+        a.storage_temperature_min,
+        a.storage_temperature_max,
+        a.storage_instruction,
         COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
@@ -334,6 +338,9 @@ router.get('/search', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.fishing_gear, adm.engin) AS fishing_gear,
         COALESCE(a.allergens, adm.allergenes) AS allergenes,
         COALESCE(a.allergens, adm.allergenes) AS allergens,
+        a.storage_temperature_min,
+        a.storage_temperature_max,
+        a.storage_instruction,
         COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method
       FROM articles a
       LEFT JOIN article_departments ad ON ad.article_id = a.id
@@ -485,6 +492,7 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
       sale_price_ex_vat,
       sale_price_inc_vat,
     } = req.body;
+    const storage = normalizeStoragePayload(req.body);
     if (!toNullableString(plu) || !toNullableString(designation)) {
   return res.status(400).json({
     error: 'plu et designation sont obligatoires',
@@ -539,10 +547,13 @@ if (departmentIdFinal) {
         article_category,
         is_active,
         source_origin,
+        storage_temperature_min,
+        storage_temperature_max,
+        storage_instruction,
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'manual', $8, $9, $10, $11, $11)
       RETURNING id
       `,
       [
@@ -553,6 +564,9 @@ if (departmentIdFinal) {
         toNullableString(unit) || 'kg',
         normalizedArticleCategory,
         !!is_active,
+        storage.storage_temperature_min,
+        storage.storage_temperature_max,
+        storage.storage_instruction,
         req.user.id,
       ]
     );
@@ -640,6 +654,10 @@ if (departmentIdFinal) {
       return res.status(400).json({ error: 'PLU déjà existant pour ce client' });
     }
 
+    if (err.status && err.status < 500) {
+      return res.status(err.status).json({ error: err.message });
+    }
+
     res.status(500).json({ error: 'Erreur serveur' });
   } finally {
     client.release();
@@ -705,6 +723,9 @@ router.get('/:id', authenticateToken, attachDbContext, async (req, res) => {
         COALESCE(a.fishing_gear, adm.engin) AS fishing_gear,
         COALESCE(a.allergens, adm.allergenes) AS allergenes,
         COALESCE(a.allergens, adm.allergenes) AS allergens,
+        a.storage_temperature_min,
+        a.storage_temperature_max,
+        a.storage_instruction,
         COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
         COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
       FROM articles a
@@ -811,6 +832,9 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
         purchase_unit,
         stock_unit,
         sale_unit,
+        storage_temperature_min,
+        storage_temperature_max,
+        storage_instruction,
         COALESCE(article_category, 'product') AS article_category
       FROM articles
       WHERE id = $1
@@ -840,6 +864,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
     const nextPurchaseUnit = hasPatchField('purchase_unit') ? toNullableString(purchase_unit) : currentArticle.purchase_unit;
     const nextStockUnit = hasPatchField('stock_unit') ? toNullableString(stock_unit) : currentArticle.stock_unit;
     const nextSaleUnit = hasPatchField('sale_unit') ? toNullableString(sale_unit) : currentArticle.sale_unit;
+    const nextStorage = mergeStoragePatch(currentArticle, req.body);
 
     if (!nextPlu || !nextDesignation) {
       await client.query('ROLLBACK');
@@ -885,7 +910,10 @@ SET
   purchase_unit = $16,
   stock_unit = $17,
   sale_unit = $18,
-  article_category = CASE WHEN $19 THEN $20 ELSE article_category END,
+  storage_temperature_min = $19,
+  storage_temperature_max = $20,
+  storage_instruction = $21,
+  article_category = CASE WHEN $22 THEN $23 ELSE article_category END,
   updated_at = NOW()
 WHERE id = $7
   AND store_id = $8
@@ -910,6 +938,9 @@ RETURNING id
   nextPurchaseUnit,
   nextStockUnit,
   nextSaleUnit,
+  nextStorage.storage_temperature_min,
+  nextStorage.storage_temperature_max,
+  nextStorage.storage_instruction,
   hasArticleCategoryPatch,
   normalizedArticleCategory,
 ]
@@ -1242,7 +1273,10 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         adm.fao_zone,
         adm.sous_zone,
         adm.engin,
-        adm.allergenes
+        adm.allergenes,
+        a.storage_temperature_min,
+        a.storage_temperature_max,
+        a.storage_instruction
       FROM articles a
       JOIN article_departments ad ON ad.article_id = a.id
       LEFT JOIN article_department_metadata adm
@@ -1274,10 +1308,13 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         article_category,
         is_active,
         source_origin,
+        storage_temperature_min,
+        storage_temperature_max,
+        storage_instruction,
         created_by,
         updated_by
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, 'duplicate', $8, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, 'duplicate', $8, $9, $10, $11, $11)
       RETURNING id
       `,
       [
@@ -1288,6 +1325,9 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         source.unit || 'kg',
         source.article_category || 'product',
         source.is_active,
+        source.storage_temperature_min,
+        source.storage_temperature_max,
+        source.storage_instruction,
         req.user.id,
       ]
     );

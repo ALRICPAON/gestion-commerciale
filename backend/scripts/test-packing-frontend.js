@@ -88,12 +88,12 @@ function main() {
   assertIncludes(packingDetailJs, "operation.status !== 'draft'", 'Mode readonly hors brouillon manquant');
   assertIncludes(read('backend/routes/stock.js'), "COALESCE(l.quality_status, 'released') <> 'blocked'", 'Endpoint stock/lots doit supporter exclusion des lots bloques');
 
-  assertIncludes(articlesHtml, './js/articles.js?v=18', 'Cache-buster articles.js doit etre incremente');
+  assertIncludes(articlesHtml, './js/articles.js?v=19', 'Cache-buster articles.js doit etre incremente');
   assertIncludes(articlesJs, 'openArticleFromEditParam', 'articles.html doit traiter ?edit=');
   assertIncludes(articlesJs, 'fetchArticleById', 'articles.js doit relire une fiche article par id');
   assertIncludes(articlesJs, "url.searchParams.delete('edit')", 'Le parametre edit doit etre nettoye apres ouverture');
   assertIncludes(articlesJs, "article_category: articleBusinessCategoryInput.value || 'product'", 'La categorie doit etre envoyee a la sauvegarde article');
-  assertIncludes(articlesJs, 'refreshedArticle.article_category !== payload.article_category', 'La sauvegarde categorie doit etre verifiee apres relecture');
+  assertIncludes(articlesJs, 'assertArticleSaveConsistency(refreshedArticle, payload)', 'La sauvegarde categorie doit etre verifiee apres relecture');
 
   assertIncludes(traceabilityHtml, './css/pages/traceability.css?v=3', 'Cache-buster CSS tracabilite attendu');
   assertIncludes(traceabilityHtml, './js/stock-movement-labels.js?v=1', 'Libelles mouvements centralises doivent etre charges');

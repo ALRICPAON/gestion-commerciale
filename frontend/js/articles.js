@@ -42,6 +42,9 @@ const articleFaoZoneInput = document.getElementById('article-fao-zone');
 const articleSousZoneInput = document.getElementById('article-sous-zone');
 const articleEnginInput = document.getElementById('article-engin');
 const articleAllergenesInput = document.getElementById('article-allergenes');
+const articleStorageTemperatureMinInput = document.getElementById('article-storage-temperature-min');
+const articleStorageTemperatureMaxInput = document.getElementById('article-storage-temperature-max');
+const articleStorageInstructionInput = document.getElementById('article-storage-instruction');
 const articleDisplayNameInput = document.getElementById('article-display-name');
 const articlePurchaseUnitInput = document.getElementById('article-purchase-unit');
 const articleStockUnitInput = document.getElementById('article-stock-unit');
@@ -94,6 +97,48 @@ function articleCategoryLabel(value) {
   return value === 'packaging' ? 'Emballage' : 'Produit';
 }
 
+function normalizeArticleCategoryForComparison(value) {
+  const text = String(value || '').trim().toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_\s-]+/g, '_');
+  if (['packaging', 'emballage', 'emballages', 'package'].includes(text)) return 'packaging';
+  return 'product';
+}
+
+function normalizeNumberForComparison(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(String(value).replace(',', '.'));
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeTextForComparison(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
+}
+
+function assertArticleSaveConsistency(refreshedArticle, payload) {
+  const savedCategory = normalizeArticleCategoryForComparison(refreshedArticle.article_category);
+  const expectedCategory = normalizeArticleCategoryForComparison(payload.article_category);
+  if (savedCategory !== expectedCategory) {
+    throw new Error('La categorie article sauvegardee ne correspond pas a la fiche relue.');
+  }
+
+  const storageChecks = [
+    ['storage_temperature_min', 'temperature minimale de conservation'],
+    ['storage_temperature_max', 'temperature maximale de conservation'],
+  ];
+  storageChecks.forEach(([field, label]) => {
+    if (normalizeNumberForComparison(refreshedArticle[field]) !== normalizeNumberForComparison(payload[field])) {
+      throw new Error(`La ${label} sauvegardee ne correspond pas a la fiche relue.`);
+    }
+  });
+
+  if (normalizeTextForComparison(refreshedArticle.storage_instruction) !== normalizeTextForComparison(payload.storage_instruction)) {
+    throw new Error('L instruction de conservation sauvegardee ne correspond pas a la fiche relue.');
+  }
+}
+
 function fillTopbar() {
   userNameEl.textContent = sessionUser.email || 'Utilisateur';
 }
@@ -135,6 +180,9 @@ function openModal(editMode = false, article = null) {
   articleSousZoneInput.value = article?.sous_zone || '';
   articleEnginInput.value = article?.engin || article?.fishing_gear || '';
   articleAllergenesInput.value = article?.allergenes || article?.allergens || '';
+  articleStorageTemperatureMinInput.value = article?.storage_temperature_min ?? '';
+  articleStorageTemperatureMaxInput.value = article?.storage_temperature_max ?? '';
+  articleStorageInstructionInput.value = article?.storage_instruction || '';
   articleDisplayNameInput.value = article?.display_name || '';
   articlePurchaseUnitInput.value = article?.purchase_unit || '';
   articleStockUnitInput.value = article?.stock_unit || '';
@@ -153,6 +201,9 @@ function closeModal() {
   articleUnitInput.value = 'kg';
   articleBusinessCategoryInput.value = 'product';
   articleVatRateInput.value = '5.5';
+  articleStorageTemperatureMinInput.value = '';
+  articleStorageTemperatureMaxInput.value = '';
+  articleStorageInstructionInput.value = '';
   articleActiveInput.value = 'true';
 }
 
@@ -252,6 +303,9 @@ async function saveArticle(event) {
       sous_zone: articleSousZoneInput.value.trim(),
       engin: articleEnginInput.value.trim(),
       allergenes: articleAllergenesInput.value.trim(),
+      storage_temperature_min: parseNumberInput(articleStorageTemperatureMinInput),
+      storage_temperature_max: parseNumberInput(articleStorageTemperatureMaxInput),
+      storage_instruction: articleStorageInstructionInput.value.trim(),
       display_name: articleDisplayNameInput.value.trim(),
       purchase_unit: articlePurchaseUnitInput.value,
       stock_unit: articleStockUnitInput.value,
@@ -272,9 +326,7 @@ async function saveArticle(event) {
 
     if (isEdit) {
       const refreshedArticle = await fetchArticleById(articleId);
-      if (refreshedArticle.article_category !== payload.article_category) {
-        throw new Error('La categorie article sauvegardee ne correspond pas a la fiche relue.');
-      }
+      assertArticleSaveConsistency(refreshedArticle, payload);
     }
 
     closeModal();

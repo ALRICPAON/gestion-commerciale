@@ -96,6 +96,7 @@ assert(!labels[0].zpl.includes('Origine'), 'Origine ne doit pas apparaitre dans 
 assert(!labels[0].zpl.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('0/+2'), 'aucune temperature inventee ne doit apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('Conservation'), 'aucune condition de conservation non structuree ne doit apparaitre dans le ZPL');
+assert.strictEqual(labels[0].storage_temperature_label, null, 'aucune plage de conservation si les champs structures sont absents');
 assert(!labels[0].zpl.includes('DECONGELE'), 'decongele ne doit pas apparaitre par defaut');
 assert.strictEqual(formatFishingArea('FAO 27'), 'Atlantique Nord-Est - FAO 27');
 assert.strictEqual(formatFishingArea('34'), '34');
@@ -247,6 +248,30 @@ assert.strictEqual(noLotLabels[0].traceability.fao_zone, '27');
 assert(noLotLabels[0].zpl.includes('Gadus morhua'));
 assert(!noLotLabels[0].zpl.includes('SNAPSHOT-LOT-IGNORED'), 'le ZPL ne doit pas imprimer un faux lot sans allocation');
 
+const storageLabels = buildHealthLabelModels({
+  document,
+  lines: [{
+    ...baseLine,
+    storage_temperature_min: 3,
+    storage_temperature_max: 5,
+    storage_instruction: 'Conserver entre 3 et 5 degres',
+  }],
+  storeSettings,
+  copies: 1,
+});
+assert.strictEqual(storageLabels[0].storage_temperature_label, '3 à 5 °C');
+assert.strictEqual(storageLabels[0].storage_instruction_label, 'Conserver entre 3 et 5 degres');
+assert(storageLabels[0].zpl.includes('CONSERVATION: 3 a 5  C'), 'ZPL doit afficher la plage structuree');
+assert(storageLabels[0].zpl.includes('MENTION: Conserver entre 3 et 5 degres'), 'ZPL doit afficher l instruction structuree');
+
+const singleBoundStorageLabels = buildHealthLabelModels({
+  document,
+  lines: [{ ...baseLine, storage_temperature_min: 0 }],
+  storeSettings,
+  copies: 1,
+});
+assert.strictEqual(singleBoundStorageLabels[0].storage_temperature_label, null, 'une seule borne ne doit pas inventer une plage');
+
 const mixedDeliveryNoteLabels = buildHealthLabelModels({
   document,
   lines: [
@@ -318,6 +343,11 @@ assert(!htmlPreview.includes('Origine'), 'Origine ne doit pas apparaitre dans le
 assert(!htmlPreview.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le HTML');
 assert(!htmlPreview.includes('0/+2'), 'aucune temperature inventee ne doit apparaitre dans le HTML');
 assert(!htmlPreview.includes('Conservation'), 'aucune condition de conservation non structuree ne doit apparaitre dans le HTML');
+
+const storageHtmlPreview = frontendSandbox.window.HealthLabels.renderPreview([storageLabels[0]], storageLabels[0].zpl, []);
+assert(storageHtmlPreview.includes('CONSERVATION'), 'HTML doit afficher la plage structuree si disponible');
+assert(storageHtmlPreview.includes('3 à 5 °C'), 'HTML doit afficher la plage structuree exacte');
+assert(storageHtmlPreview.includes('Conserver entre 3 et 5 degres'), 'HTML doit afficher l instruction structuree');
 
 const routeSource = fs.readFileSync(path.join(__dirname, '..', 'routes', 'deliveryNotes.js'), 'utf8');
 const routeStart = routeSource.indexOf("router.get('/delivery-notes/:id/health-labels'");
