@@ -23,6 +23,25 @@
     return items.map(safe).filter(Boolean);
   }
 
+  function resolveLogoUrl(value) {
+    const raw = safe(value);
+    if (!raw) return '';
+    const apiBase = safe(window.APP_CONFIG?.API_BASE_URL);
+    if (/^(data:|blob:)/i.test(raw)) return raw;
+    if (!apiBase) return raw;
+    const UrlCtor = window.URL || (typeof URL !== 'undefined' ? URL : null);
+    if (!UrlCtor) return raw;
+    try {
+      const parsed = new UrlCtor(raw.startsWith('//') ? `${window.location.protocol}${raw}` : raw, apiBase);
+      if (parsed.pathname.startsWith('/uploads/store-logos/')) {
+        return new UrlCtor(`${parsed.pathname}${parsed.search}`, apiBase).href;
+      }
+      return parsed.href;
+    } catch {
+      return raw;
+    }
+  }
+
   function info(label, value) {
     return safe(value) ? `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>` : '';
   }
@@ -48,7 +67,7 @@
     const trace = label.traceability || {};
     const company = label.company || {};
     const healthMark = company.health_mark || null;
-    const logoUrl = safe(company.logo_url);
+    const logoUrl = resolveLogoUrl(company.logo_url);
     const client = label.delivered_client_display || compact([
       label.delivered_client_name,
       label.delivered_client_store_identifier ? `N° ${label.delivered_client_store_identifier}` : '',
@@ -62,7 +81,6 @@
       info('Calibre', label.caliber),
       info('Lot', labelTrace(label)),
       info('Conditionne le', formatDate(trace.packaging_date)),
-      info('Origine', trace.origin),
       info('Allergenes', trace.allergens),
       info('Conservation', trace.conservation),
     ].join('');
@@ -177,5 +195,6 @@
     escapeHtml,
     print,
     renderPreview,
+    resolveLogoUrl,
   };
 }());

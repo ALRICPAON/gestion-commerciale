@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 
 const {
   LABEL_DOTS,
@@ -46,6 +47,7 @@ const baseLine = {
   traceability_snapshot: {
     lot_code: 'LOT-A',
     dlc: '2026-08-21',
+    origin_label: 'DISTRIMER',
   },
   lots: [{
     lot_id: 'lot-a',
@@ -68,6 +70,7 @@ assert.strictEqual(labels[0].net_weight, 3, 'le poids etiquette doit etre le poi
 assert.strictEqual(labels[0].net_weight_label, '3,000 kg');
 assert.strictEqual(labels[0].delivered_client_display, 'LECLERC CHALLANS - N° 88');
 assert.strictEqual(labels[0].company.sanitary_approval_number, 'FR 85.000.001 CE');
+assert.strictEqual(labels[0].company.logo_url, storeSettings.logo_url);
 assert.deepStrictEqual(labels[0].company.health_mark, {
   country: 'FR',
   approval_number: '85.000.001',
@@ -79,6 +82,8 @@ assert(labels[0].zpl.includes('^LL1181'));
 assert(labels[0].zpl.includes('LECLERC CHALLANS - N  88'));
 assert(labels[0].zpl.includes('POIDS NET: 3,000 kg'));
 assert(labels[0].zpl.includes('85.000.001'));
+assert(!labels[0].zpl.includes('Origine'), 'Origine ne doit pas apparaitre dans le ZPL');
+assert(!labels[0].zpl.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('DECONGELE'), 'decongele ne doit pas apparaitre par defaut');
 
 const oneLabel = buildHealthLabelModels({
@@ -255,6 +260,30 @@ assert.deepStrictEqual(parseHealthMark('85.123.456'), {
   authority: 'UE',
   raw: '85.123.456',
 });
+
+const healthLabelsFrontendSource = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'health-labels.js'), 'utf8');
+const frontendSandbox = {
+  window: {
+    APP_CONFIG: { API_BASE_URL: 'http://localhost:3002' },
+    location: { protocol: 'http:' },
+    URL,
+  },
+  document: {},
+  setTimeout,
+};
+vm.runInNewContext(healthLabelsFrontendSource, frontendSandbox);
+assert.strictEqual(
+  frontendSandbox.window.HealthLabels.resolveLogoUrl('http://old-host.local/uploads/store-logos/alta.png'),
+  'http://localhost:3002/uploads/store-logos/alta.png'
+);
+const htmlPreview = frontendSandbox.window.HealthLabels.renderPreview([{
+  ...labels[0],
+  company: { ...labels[0].company, logo_url: '/uploads/store-logos/alta.png' },
+  traceability: { ...labels[0].traceability, origin: 'DISTRIMER' },
+}], labels[0].zpl, []);
+assert(htmlPreview.includes('src="http://localhost:3002/uploads/store-logos/alta.png"'), 'logo_url relatif doit etre resolu sur le backend');
+assert(!htmlPreview.includes('Origine'), 'Origine ne doit pas apparaitre dans le HTML');
+assert(!htmlPreview.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le HTML');
 
 const routeSource = fs.readFileSync(path.join(__dirname, '..', 'routes', 'deliveryNotes.js'), 'utf8');
 const routeStart = routeSource.indexOf("router.get('/delivery-notes/:id/health-labels'");

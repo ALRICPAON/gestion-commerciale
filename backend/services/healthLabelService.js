@@ -329,7 +329,6 @@ function renderHealthLabelZpl(label) {
   lines.push(zplBlock(590, 728, 500, 28, field('Engin', trace.fishing_gear), 1));
   lines.push(zplBlock(54, 774, 500, 28, field('DLC/DDM', formatDate(trace.dlc)), 1));
   lines.push(zplBlock(590, 774, 500, 28, field('Conditionne le', formatDate(trace.packaging_date)), 1));
-  lines.push(zplBlock(54, 820, 1040, 28, field('Origine', trace.origin), 1));
   lines.push(zplBlock(54, 920, 1040, 28, field('Allergenes', trace.allergens), 1));
   if (trace.defrosted) lines.push(zplBlock(54, 968, 1040, 34, 'DECONGELE', 1));
   lines.push(zplBlock(54, 1036, 640, 26, `BL ${label.delivery_note_reference || ''} - Ligne ${label.line_number || ''}`, 1));
