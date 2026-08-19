@@ -13,6 +13,7 @@ const qualityOperations = require('../quality/operations');
 const qualityMasterDocuments = require('../quality/masterDocuments');
 const suppliesMaterials = require('../quality/suppliesMaterials');
 const agentQualityRecall = require('./agentQualityTraceabilityRecallService');
+const { normalizeArticleStorageUpdatePayload } = require('../agentArticleStorageService');
 const temperatureValidators = require('../../validators/quality/temperatures');
 const cleaningValidators = require('../../validators/quality/cleaning');
 const fullCoverage = require('./agentFullCoverageService');
@@ -486,6 +487,29 @@ const preparationInputSchema = {
   },
   additionalProperties: true,
 };
+
+const articleStorageUpdateInputSchema = {
+  type: 'object',
+  required: ['article_id', 'changes'],
+  properties: {
+    article_id: { type: 'string' },
+    summary: { type: 'string', maxLength: 500 },
+    impact: { type: 'string', maxLength: 1000 },
+    target_objects: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    changes: {
+      type: 'object',
+      minProperties: 1,
+      properties: {
+        storage_temperature_min: { type: ['number', 'string', 'null'] },
+        storage_temperature_max: { type: ['number', 'string', 'null'] },
+        storage_instruction: { type: ['string', 'null'] },
+      },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+};
+const articleStoragePrepareInputFields = new Set(['article_id', 'summary', 'impact', 'target_objects', 'changes']);
 
 const qualityEvidenceInputSchema = {
   type: 'object',
@@ -1099,7 +1123,52 @@ const tools = [
   preparationTool({ name: 'prepare_supplier_article_mapping', title: 'mapping article fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
   preparationTool({ name: 'prepare_supplier_order', title: 'commande fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
   preparationTool({ name: 'prepare_article_draft', title: 'brouillon article', domain: 'articles', permission: 'articles.write' }),
-  preparationTool({ name: 'prepare_article_update', title: 'modification article', domain: 'articles', permission: 'articles.write' }),
+  tool({
+    name: 'prepare_article_update',
+    title: 'Preparer conditions conservation Article',
+    description: 'Prepare uniquement une modification allowlistee des champs storage_temperature_min, storage_temperature_max et storage_instruction. Creer ensuite une pending action articles.update_storage_conditions puis execute_pending_action apres confirmation humaine.',
+    domain: 'articles',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'articles.write',
+    requiredPermissions: ['articles.write'],
+    requiresConfirmation: false,
+    inputSchema: articleStorageUpdateInputSchema,
+    execute: async ({ context, input, tool: currentTool }) => {
+      const unknownKeys = Object.keys(input || {}).filter((key) => !articleStoragePrepareInputFields.has(key));
+      if (unknownKeys.length) {
+        const error = new Error(`Cle(s) non autorisee(s) pour prepare_article_update : ${unknownKeys.join(', ')}`);
+        error.status = 400;
+        error.expose = true;
+        throw error;
+      }
+      const payload = normalizeArticleStorageUpdatePayload({
+        article_id: input.article_id,
+        changes: input.changes,
+      });
+      const prepared = preparedBusinessAction(context, {
+        payload,
+        summary: input.summary || 'Modifier les conditions de conservation Article',
+        impact: input.impact || 'Seuls les champs de conservation Article seront modifies apres confirmation humaine.',
+        target_objects: input.target_objects || [{ type: 'article', id: payload.article_id }],
+      }, {
+        action_type: 'articles.update_storage_conditions',
+        required_permissions: ['mcp.execute', 'articles.write'],
+        summary: input.summary || 'Modifier les conditions de conservation Article',
+        impact: input.impact || 'Seuls les champs de conservation Article seront modifies apres confirmation humaine.',
+      });
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Modification Article preparee',
+        data: {
+          prepared_action: prepared,
+          confirmation_tool: 'create_pending_action',
+          action_type: 'articles.update_storage_conditions',
+          payload,
+        },
+      });
+    },
+  }),
   preparationTool({ name: 'prepare_article_price_update', title: 'modification prix article', domain: 'articles', permission: 'articles.write' }),
   preparationTool({ name: 'prepare_lot_update', title: 'modification lot non historique', domain: 'stock', permission: 'stock.write' }),
   preparationTool({ name: 'prepare_stock_regularization', title: 'regularisation stock', domain: 'stock', permission: 'stock.write', requiresConfirmation: true }),

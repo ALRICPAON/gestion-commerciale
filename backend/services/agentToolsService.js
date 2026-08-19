@@ -149,10 +149,11 @@ async function searchArticles(dbPool, storeId, input = {}) {
   const query = requireSearchQuery(input.query);
   const params = [storeId];
   const searchWhere = buildSearchWhere(
-    ['a.plu', 'a.designation', 'a.ean', 'a.family_name', 'a.latin_name'],
+    ['a.id', 'a.plu', 'a.designation', 'a.ean', 'a.family_name', 'a.latin_name'],
     query,
     params
   );
+  const articleCategorySql = appendArticleCategoryFilter(input, params);
   params.push(safeLimit(input.limit));
 
   const result = await dbPool.query(
@@ -173,6 +174,9 @@ async function searchArticles(dbPool, storeId, input = {}) {
       a.sale_price_level_1_ht,
       a.sale_price_level_2_ht,
       a.sale_price_level_3_ht,
+      a.storage_temperature_min,
+      a.storage_temperature_max,
+      a.storage_instruction,
       COALESCE(ss.stock_quantity, 0) AS stock_quantity,
       COALESCE(ss.pma, 0) AS pma
     FROM articles a

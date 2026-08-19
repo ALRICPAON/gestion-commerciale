@@ -5,6 +5,10 @@ const qualityDocumentation = require('../quality/qualityDocumentationService');
 const qualityVersions = require('../quality/qualityDocumentationVersionService');
 const traceabilityTests = require('../quality/traceabilityTestService');
 const productRecall = require('../productRecallService');
+const {
+  executeArticleStorageConditionsUpdate,
+  normalizeArticleStorageUpdatePayload,
+} = require('../agentArticleStorageService');
 
 function text(value) {
   return String(value || '').trim();
@@ -344,6 +348,50 @@ async function executeQualityDocumentationBatch({ db, context, payload, pendingA
 }
 
 const ACTIONS = [
+  {
+    name: 'articles.update_storage_conditions',
+    description: 'Met a jour uniquement les conditions de conservation d un Article apres confirmation humaine. Aucun autre champ Article, stock, lot, allocation, vente ou facture n est modifie.',
+    aliases: ['article.update_storage_conditions', 'update_article_storage_conditions'],
+    module: 'articles',
+    requiredPermission: 'articles.write',
+    requiredPermissions: ['mcp.execute', 'articles.write'],
+    service: 'articleStorageConditions.mergeStoragePatch',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['article_id', 'changes'],
+      properties: {
+        article_id: { type: 'string' },
+        changes: {
+          type: 'object',
+          minProperties: 1,
+          properties: {
+            storage_temperature_min: { type: ['number', 'string', 'null'] },
+            storage_temperature_max: { type: ['number', 'string', 'null'] },
+            storage_instruction: { type: ['string', 'null'] },
+          },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    },
+    example: {
+      action_type: 'articles.update_storage_conditions',
+      payload: {
+        article_id: 'uuid-article',
+        changes: {
+          storage_temperature_min: 3,
+          storage_temperature_max: 5,
+          storage_instruction: 'Ce produit doit etre vendu vivant',
+        },
+      },
+    },
+    validatePayload: normalizeArticleStorageUpdatePayload,
+    execute: executeArticleStorageConditionsUpdate,
+  },
   {
     name: 'quality.documentation.apply_section_updates',
     description: 'Applique un paquet de mises a jour de chapitres de documentation qualite via qualityDocumentationService.updateSection.',
