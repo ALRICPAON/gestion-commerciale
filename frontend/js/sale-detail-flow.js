@@ -369,15 +369,22 @@
   async function printHealthLabels(lineNumber = null) {
     await refreshState();
     if (!isDeliveryNote()) return;
-    const data = await request(`/api/delivery-notes/${currentSale.id}/health-labels`);
+    const params = new URLSearchParams();
+    if (lineNumber !== null) {
+      const line = currentLines.find((item) => Number(item.line_number) === Number(lineNumber));
+      const copies = window.HealthLabels.askCopies(line?.package_count || 1);
+      if (copies === null) return;
+      params.set('line_number', lineNumber);
+      params.set('copies', copies);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const data = await request(`/api/delivery-notes/${currentSale.id}/health-labels${suffix}`);
     let labels = data.labels || [];
-    if (lineNumber !== null) labels = labels.filter((label) => Number(label.line_number) === Number(lineNumber));
     if (!labels.length) {
       feedback('Aucune étiquette sanitaire trouvée pour cette sélection', true);
       return;
     }
-    flowEls.printArea.innerHTML = buildLabelsHtml(labels);
-    window.print();
+    window.HealthLabels.print(labels, flowEls.printArea);
   }
 
   async function validateInvoiceFromBl() {
