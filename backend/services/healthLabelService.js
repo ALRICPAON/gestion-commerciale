@@ -1,6 +1,9 @@
 const DOTS_PER_MM_300_DPI = 300 / 25.4;
 const LABEL_MM = 100;
 const LABEL_DOTS = Math.round(LABEL_MM * DOTS_PER_MM_300_DPI);
+const FAO_AREA_LABELS = new Map([
+  ['27', 'Atlantique Nord-Est'],
+]);
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -56,6 +59,25 @@ function formatDate(value) {
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) return clean(value);
   return date.toLocaleDateString('fr-FR');
+}
+
+function normalizeFaoCode(value) {
+  const text = clean(value);
+  if (!text) return null;
+  return text.replace(/^FAO\s*/i, '').trim().toUpperCase();
+}
+
+function formatFishingArea(value) {
+  const text = clean(value);
+  const code = normalizeFaoCode(text);
+  if (!code) return null;
+  const label = FAO_AREA_LABELS.get(code);
+  return label ? `${label} - FAO ${code}` : text;
+}
+
+function formatAllergen(value) {
+  const text = clean(value);
+  return text ? text.toLocaleUpperCase('fr-FR') : null;
 }
 
 function normalizeLots(rawLots) {
@@ -214,6 +236,7 @@ function buildHealthLabelModels({ document, lines, storeSettings, lineNumber = n
       selectedAssignments.forEach((assignedLot, assignmentIndex) => {
         const trace = pickTrace(line, assignedLot);
         const copyIndex = assignmentIndex + 1;
+        const conditioningDate = document.document_date || null;
         labels.push({
           label_id: `${document.id || 'delivery-note'}-${line.id || line.line_number}-${copyIndex}`,
           delivery_note_id: document.id,
@@ -258,6 +281,10 @@ function buildHealthLabelModels({ document, lines, storeSettings, lineNumber = n
           net_weight: netWeight,
           net_weight_label: `${formatWeight(netWeight)} ${clean(line.sale_unit) || 'kg'}`,
           caliber: trace.caliber,
+          fishing_area_label: formatFishingArea(trace.fao_zone),
+          conditioning_date: conditioningDate,
+          conditioning_date_label: formatDate(conditioningDate),
+          allergen_label: formatAllergen(trace.allergens),
           traceability: trace,
           lots: assignedLot ? [assignedLot] : [],
           zpl: null,
@@ -324,12 +351,12 @@ function renderHealthLabelZpl(label) {
 
   lines.push(zplBlock(54, 638, 1040, 32, trace.latin_name, 1));
   lines.push(zplBlock(54, 684, 500, 28, field('Methode', trace.production_method), 1));
-  lines.push(zplBlock(590, 684, 500, 28, field('FAO', trace.fao_zone), 1));
+  lines.push(zplBlock(590, 684, 500, 28, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
   lines.push(zplBlock(54, 728, 500, 28, field('Sous-zone', trace.sous_zone), 1));
   lines.push(zplBlock(590, 728, 500, 28, field('Engin', trace.fishing_gear), 1));
   lines.push(zplBlock(54, 774, 500, 28, field('DLC/DDM', formatDate(trace.dlc)), 1));
-  lines.push(zplBlock(590, 774, 500, 28, field('Conditionne le', formatDate(trace.packaging_date)), 1));
-  lines.push(zplBlock(54, 920, 1040, 28, field('Allergenes', trace.allergens), 1));
+  lines.push(zplBlock(590, 774, 500, 28, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 2));
+  lines.push(zplBlock(54, 850, 1040, 32, field('ALLERGENE', label.allergen_label), 1));
   if (trace.defrosted) lines.push(zplBlock(54, 968, 1040, 34, 'DECONGELE', 1));
   lines.push(zplBlock(54, 1036, 640, 26, `BL ${label.delivery_note_reference || ''} - Ligne ${label.line_number || ''}`, 1));
   lines.push(zplBlock(780, 1036, 300, 26, `Colis ${label.copy_index}/${label.copy_count}`, 1));
@@ -347,7 +374,9 @@ module.exports = {
   LABEL_MM,
   buildHealthLabelModels,
   combineZpl,
+  formatAllergen,
   formatDate,
+  formatFishingArea,
   formatWeight,
   parseHealthMark,
   renderHealthLabelZpl,

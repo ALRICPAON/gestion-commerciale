@@ -42,8 +42,13 @@
     }
   }
 
-  function info(label, value) {
-    return safe(value) ? `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>` : '';
+  function formatAllergen(value) {
+    const text = safe(value);
+    return text ? text.toLocaleUpperCase('fr-FR') : '';
+  }
+
+  function info(label, value, className = '') {
+    return safe(value) ? `<div${className ? ` class="${escapeHtml(className)}"` : ''}><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>` : '';
   }
 
   function labelTrace(label) {
@@ -75,14 +80,13 @@
     const meta = [
       info('Nom scientifique', trace.latin_name),
       info('Methode', trace.production_method),
-      info('Zone FAO', trace.fao_zone),
+      info('ZONE DE PÊCHE', label.fishing_area_label || trace.fao_zone),
       info('Sous-zone', trace.sous_zone),
       info('Engin', trace.fishing_gear),
       info('Calibre', label.caliber),
       info('Lot', labelTrace(label)),
-      info('Conditionne le', formatDate(trace.packaging_date)),
-      info('Allergenes', trace.allergens),
-      info('Conservation', trace.conservation),
+      info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
+      info('ALLERGÈNE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
     ].join('');
 
     return `<article class="health-label-card">
@@ -196,5 +200,6 @@
     print,
     renderPreview,
     resolveLogoUrl,
+    formatAllergen,
   };
 }());

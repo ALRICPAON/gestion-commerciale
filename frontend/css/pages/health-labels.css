@@ -183,6 +183,17 @@
   overflow-wrap: anywhere;
 }
 
+.health-label-meta .health-label-allergen {
+  border: 1px solid #111820;
+  grid-column: 1 / -1;
+  padding: 3px 5px;
+}
+
+.health-label-meta .health-label-allergen strong {
+  font-size: 11px;
+  font-weight: 900;
+}
+
 .health-label-warning {
   border: 2px solid #111820;
   font-size: 14px;

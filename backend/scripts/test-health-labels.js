@@ -7,6 +7,8 @@ const {
   LABEL_DOTS,
   buildHealthLabelModels,
   combineZpl,
+  formatAllergen,
+  formatFishingArea,
   parseHealthMark,
 } = require('../services/healthLabelService');
 
@@ -43,7 +45,7 @@ const baseLine = {
   sous_zone: 'VIII',
   fishing_gear: 'Casiers',
   production_method: 'Peche',
-  allergens: 'Crustaces',
+  allergens: 'Crustacés',
   traceability_snapshot: {
     lot_code: 'LOT-A',
     dlc: '2026-08-21',
@@ -71,6 +73,10 @@ assert.strictEqual(labels[0].net_weight_label, '3,000 kg');
 assert.strictEqual(labels[0].delivered_client_display, 'LECLERC CHALLANS - N° 88');
 assert.strictEqual(labels[0].company.sanitary_approval_number, 'FR 85.000.001 CE');
 assert.strictEqual(labels[0].company.logo_url, storeSettings.logo_url);
+assert.strictEqual(labels[0].fishing_area_label, 'Atlantique Nord-Est - FAO 27');
+assert.strictEqual(labels[0].conditioning_date, '2026-08-19');
+assert.strictEqual(labels[0].conditioning_date_label, '19/08/2026');
+assert.strictEqual(labels[0].allergen_label, 'CRUSTACÉS');
 assert.deepStrictEqual(labels[0].company.health_mark, {
   country: 'FR',
   approval_number: '85.000.001',
@@ -82,9 +88,18 @@ assert(labels[0].zpl.includes('^LL1181'));
 assert(labels[0].zpl.includes('LECLERC CHALLANS - N  88'));
 assert(labels[0].zpl.includes('POIDS NET: 3,000 kg'));
 assert(labels[0].zpl.includes('85.000.001'));
+assert(labels[0].zpl.includes('ZONE DE PECHE: Atlantique Nord-Est - FAO 27'));
+assert(labels[0].zpl.includes('Sous-zone: VIII'));
+assert(labels[0].zpl.includes('DATE DE CONDITIONNEMENT: 19/08/2026'));
+assert(labels[0].zpl.includes('ALLERGENE: CRUSTACES'));
 assert(!labels[0].zpl.includes('Origine'), 'Origine ne doit pas apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le ZPL');
+assert(!labels[0].zpl.includes('0/+2'), 'aucune temperature inventee ne doit apparaitre dans le ZPL');
+assert(!labels[0].zpl.includes('Conservation'), 'aucune condition de conservation non structuree ne doit apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('DECONGELE'), 'decongele ne doit pas apparaitre par defaut');
+assert.strictEqual(formatFishingArea('FAO 27'), 'Atlantique Nord-Est - FAO 27');
+assert.strictEqual(formatFishingArea('34'), '34');
+assert.strictEqual(formatAllergen('Crustacés'), 'CRUSTACÉS');
 
 const oneLabel = buildHealthLabelModels({
   document,
@@ -119,6 +134,15 @@ const noApproval = buildHealthLabelModels({
 assert.strictEqual(noApproval[0].company.sanitary_approval_number, null);
 assert.strictEqual(noApproval[0].company.health_mark, null);
 assert(!noApproval[0].zpl.includes('FR 85.000.001 CE'));
+
+const noAllergen = buildHealthLabelModels({
+  document,
+  lines: [{ ...baseLine, allergens: '', traceability_snapshot: {}, lots: [] }],
+  storeSettings,
+  copies: 1,
+});
+assert.strictEqual(noAllergen[0].allergen_label, null);
+assert(!noAllergen[0].zpl.includes('ALLERGENE'), 'aucune ligne allergene si la donnee est absente');
 
 const multipleLines = buildHealthLabelModels({
   document,
@@ -282,8 +306,18 @@ const htmlPreview = frontendSandbox.window.HealthLabels.renderPreview([{
   traceability: { ...labels[0].traceability, origin: 'DISTRIMER' },
 }], labels[0].zpl, []);
 assert(htmlPreview.includes('src="http://localhost:3002/uploads/store-logos/alta.png"'), 'logo_url relatif doit etre resolu sur le backend');
+assert(htmlPreview.includes('ZONE DE PÊCHE'), 'la zone de peche doit etre libellee dans le HTML');
+assert(htmlPreview.includes('Atlantique Nord-Est - FAO 27'), 'FAO 27 doit garder le code et afficher son libelle');
+assert(htmlPreview.includes('Sous-zone'), 'la sous-zone doit rester affichee');
+assert(htmlPreview.includes('VIII'), 'la valeur de sous-zone doit rester affichee');
+assert(htmlPreview.includes('DATE DE CONDITIONNEMENT'), 'la date de conditionnement doit etre affichee dans le HTML');
+assert(htmlPreview.includes('19/08/2026'), 'la date de conditionnement doit venir de la date du BL');
+assert(htmlPreview.includes('ALLERGÈNE'), 'le libelle allergene doit etre affiche si la donnee existe');
+assert(htmlPreview.includes('CRUSTACÉS'), 'l allergene doit venir de la donnee Article/snapshot et etre mis en evidence');
 assert(!htmlPreview.includes('Origine'), 'Origine ne doit pas apparaitre dans le HTML');
 assert(!htmlPreview.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le HTML');
+assert(!htmlPreview.includes('0/+2'), 'aucune temperature inventee ne doit apparaitre dans le HTML');
+assert(!htmlPreview.includes('Conservation'), 'aucune condition de conservation non structuree ne doit apparaitre dans le HTML');
 
 const routeSource = fs.readFileSync(path.join(__dirname, '..', 'routes', 'deliveryNotes.js'), 'utf8');
 const routeStart = routeSource.indexOf("router.get('/delivery-notes/:id/health-labels'");
