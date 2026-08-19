@@ -372,9 +372,17 @@
     const params = new URLSearchParams();
     if (lineNumber !== null) {
       const line = currentLines.find((item) => Number(item.line_number) === Number(lineNumber));
-      const copies = window.HealthLabels.askCopies(line?.package_count || 1);
-      if (copies === null) return;
       params.set('line_number', lineNumber);
+      const preview = await request(`/api/delivery-notes/${currentSale.id}/health-labels?${params.toString()}`);
+      if (preview.warnings?.length) {
+        feedback(preview.warnings.join(' '), true);
+        return;
+      }
+      const selectedLot = window.HealthLabels.askLot(preview.labels || []);
+      if (selectedLot?.id) params.set('lot_id', selectedLot.id);
+      const defaultCopies = selectedLot?.count || line?.package_count || 1;
+      const copies = window.HealthLabels.askCopies(defaultCopies);
+      if (copies === null) return;
       params.set('copies', copies);
     }
     const suffix = params.toString() ? `?${params.toString()}` : '';

@@ -28,13 +28,11 @@ function firstValue(...values) {
 }
 
 function boolTrue(value) {
-  if (value === true) return true;
-  if (value === 1) return true;
+  if (value === true || value === 1) return true;
   const text = clean(value);
   if (!text) return false;
-  return ['true', '1', 'yes', 'oui', 'o', 'decongele'].includes(
-    text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-  );
+  const normalized = text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  return ['true', '1', 'yes', 'oui', 'o', 'decongele'].includes(normalized);
 }
 
 function isDefrosted(...sources) {
@@ -78,25 +76,38 @@ function normalizeLots(rawLots) {
   }));
 }
 
-function pickTrace(line, lots) {
+function parseHealthMark(value) {
+  const raw = clean(value);
+  if (!raw) return null;
+  const approvalNumber = raw
+    .replace(/\bFR\b/gi, ' ')
+    .replace(/\bCE\b/gi, ' ')
+    .replace(/\bUE\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!approvalNumber) return null;
+  return { country: 'FR', approval_number: approvalNumber, authority: 'UE', raw };
+}
+
+function pickTrace(line, lot = null) {
   const snapshot = line.traceability_snapshot && typeof line.traceability_snapshot === 'object' ? line.traceability_snapshot : {};
-  const primaryLot = lots[0] || {};
-  const lotTrace = primaryLot.traceability || {};
+  const lotTrace = lot?.traceability || {};
   return {
-    lot_code: firstValue(snapshot.lot_code, primaryLot.lot_code, primaryLot.supplier_lot_number),
-    supplier_lot_number: firstValue(snapshot.supplier_lot_number, primaryLot.supplier_lot_number),
-    dlc: snapshot.dlc || primaryLot.dlc || null,
-    latin_name: firstValue(snapshot.latin_name, lotTrace.latin_name, primaryLot.latin_name, line.latin_name),
-    fao_zone: firstValue(snapshot.fao_zone, lotTrace.fao_zone, primaryLot.fao_zone, line.fao_zone),
-    sous_zone: firstValue(snapshot.sous_zone, lotTrace.sous_zone, primaryLot.sous_zone, line.sous_zone),
-    fishing_gear: firstValue(snapshot.fishing_gear, snapshot.engin, lotTrace.fishing_gear, primaryLot.fishing_gear, line.fishing_gear),
-    production_method: firstValue(snapshot.production_method, snapshot.category, lotTrace.production_method, primaryLot.production_method, line.production_method),
-    allergens: firstValue(snapshot.allergens, snapshot.allergenes, lotTrace.allergens, primaryLot.allergens, line.allergens),
+    lot_id: lot?.lot_id || null,
+    lot_code: firstValue(lot?.lot_code, lot?.supplier_lot_number, snapshot.lot_code),
+    supplier_lot_number: firstValue(lot?.supplier_lot_number, snapshot.supplier_lot_number),
+    dlc: lot?.dlc || snapshot.dlc || null,
+    latin_name: firstValue(lotTrace.latin_name, lot?.latin_name, snapshot.latin_name, line.latin_name),
+    fao_zone: firstValue(lotTrace.fao_zone, lot?.fao_zone, snapshot.fao_zone, line.fao_zone),
+    sous_zone: firstValue(lotTrace.sous_zone, lot?.sous_zone, snapshot.sous_zone, line.sous_zone),
+    fishing_gear: firstValue(lotTrace.fishing_gear, lot?.fishing_gear, snapshot.fishing_gear, snapshot.engin, line.fishing_gear),
+    production_method: firstValue(lotTrace.production_method, lot?.production_method, snapshot.production_method, snapshot.category, line.production_method),
+    allergens: firstValue(lotTrace.allergens, lot?.allergens, snapshot.allergens, snapshot.allergenes, line.allergens),
     caliber: firstValue(snapshot.caliber, snapshot.calibre, line.caliber, line.calibre),
     conservation: firstValue(snapshot.conservation, snapshot.storage_conditions, line.storage_conditions),
     packaging_date: snapshot.packaging_date || snapshot.conditioning_date || line.packaging_date || null,
-    origin: firstValue(snapshot.origin_label, snapshot.origin, lotTrace.origin_label, line.origin_label),
-    defrosted: isDefrosted(snapshot, lotTrace, line),
+    origin: firstValue(lotTrace.origin_label, snapshot.origin_label, snapshot.origin, line.origin_label),
+    defrosted: isDefrosted(lotTrace, lot, snapshot, line),
   };
 }
 
@@ -131,34 +142,84 @@ function netWeightForPackage(line) {
   return packages > 0 && total > 0 ? Number((total / packages).toFixed(3)) : total;
 }
 
-function buildHealthLabelModels({ document, lines, storeSettings, lineNumber = null, copies = null }) {
+function isWholePackageQuantity(quantity, netWeight) {
+  if (netWeight <= 0 || quantity <= 0) return false;
+  const packages = quantity / netWeight;
+  return Math.abs(packages - Math.round(packages)) < 0.001;
+}
+
+function buildPackagePlan(line, lots, netWeight, linePackageCount) {
+  if (!lots.length) return { assignments: Array.from({ length: linePackageCount }, () => null), warnings: [] };
+  if (lots.length === 1) return { assignments: Array.from({ length: linePackageCount }, () => lots[0]), warnings: [] };
+
+  if (netWeight <= 0) {
+    return {
+      assignments: [],
+      warnings: [`Ligne ${line.line_number}: poids par colis manquant, repartition multi-lots impossible.`],
+    };
+  }
+
+  const warnings = [];
+  const assignments = [];
+  lots.forEach((lot) => {
+    if (!isWholePackageQuantity(lot.quantity, netWeight)) {
+      warnings.push(`Ligne ${line.line_number}: allocation ${lot.lot_code || lot.supplier_lot_number || lot.lot_id || 'lot'} (${formatWeight(lot.quantity)} kg) non divisible par ${formatWeight(netWeight)} kg/colis.`);
+      return;
+    }
+    const packageCount = Math.round(lot.quantity / netWeight);
+    for (let index = 0; index < packageCount; index += 1) assignments.push(lot);
+  });
+
+  if (warnings.length || assignments.length !== linePackageCount) {
+    return {
+      assignments: [],
+      warnings: warnings.length ? warnings : [`Ligne ${line.line_number}: ${assignments.length} colis reconstruits depuis les allocations, ${linePackageCount} attendus.`],
+    };
+  }
+
+  return { assignments, warnings: [] };
+}
+
+function buildHealthLabelModels({ document, lines, storeSettings, lineNumber = null, copies = null, lotId = null }) {
   const settings = storeSettings || {};
   const selectedLineNumber = lineNumber === null || lineNumber === undefined || lineNumber === '' ? null : Number(lineNumber);
   const labels = [];
+  const warnings = [];
 
   (lines || [])
     .filter((line) => selectedLineNumber === null || Number(line.line_number) === selectedLineNumber)
     .forEach((line) => {
       const lots = normalizeLots(line.lots || line.allocations);
-      const trace = pickTrace(line, lots);
       const linePackageCount = packageCountForLine(line);
-      const labelCount = copies ? positiveInt(copies, linePackageCount) : linePackageCount;
       const netWeight = netWeightForPackage(line);
+      const plan = buildPackagePlan(line, lots, netWeight, linePackageCount);
+      warnings.push(...plan.warnings);
+      if (!plan.assignments.length && plan.warnings.length) return;
+
+      const filteredAssignments = lotId
+        ? plan.assignments.filter((lot) => String(lot?.lot_id || '') === String(lotId))
+        : plan.assignments;
+      const requestedCount = copies ? positiveInt(copies, filteredAssignments.length) : filteredAssignments.length;
+      const selectedAssignments = filteredAssignments.slice(0, requestedCount);
       const clientName = deliveredName(document, line);
       const storeIdentifier = deliveredStoreIdentifier(document, line);
       const clientDisplay = [clientName, storeIdentifier ? `N° ${storeIdentifier}` : null].filter(Boolean).join(' - ');
+      const healthMark = parseHealthMark(settings.sanitary_approval_number);
 
-      for (let index = 1; index <= labelCount; index += 1) {
+      selectedAssignments.forEach((assignedLot, assignmentIndex) => {
+        const trace = pickTrace(line, assignedLot);
+        const copyIndex = assignmentIndex + 1;
         labels.push({
-          label_id: `${document.id || 'delivery-note'}-${line.id || line.line_number}-${index}`,
+          label_id: `${document.id || 'delivery-note'}-${line.id || line.line_number}-${copyIndex}`,
           delivery_note_id: document.id,
           delivery_note_reference: document.reference_number,
           document_date: document.document_date,
           line_id: line.id,
           line_number: line.line_number,
-          copy_index: index,
-          copy_count: labelCount,
+          copy_index: copyIndex,
+          copy_count: selectedAssignments.length,
           package_count: linePackageCount,
+          allocation_lot_id: assignedLot?.lot_id || null,
           printer: {
             model: 'Zebra ZT231',
             dpi: 300,
@@ -179,6 +240,7 @@ function buildHealthLabelModels({ document, lines, storeSettings, lineNumber = n
             phone: clean(settings.phone),
             email: clean(settings.email),
             sanitary_approval_number: clean(settings.sanitary_approval_number),
+            health_mark: healthMark,
           },
           delivered_client_name: clientName,
           delivered_client_code: firstValue(line.delivered_client_code, document.delivered_client_code),
@@ -192,13 +254,15 @@ function buildHealthLabelModels({ document, lines, storeSettings, lineNumber = n
           net_weight_label: `${formatWeight(netWeight)} ${clean(line.sale_unit) || 'kg'}`,
           caliber: trace.caliber,
           traceability: trace,
-          lots,
+          lots: assignedLot ? [assignedLot] : [],
           zpl: null,
         });
-      }
+      });
     });
 
-  return labels.map((label) => ({ ...label, zpl: renderHealthLabelZpl(label) }));
+  const renderedLabels = labels.map((label) => ({ ...label, zpl: renderHealthLabelZpl(label) }));
+  renderedLabels.warnings = warnings;
+  return renderedLabels;
 }
 
 function zplText(value) {
@@ -212,16 +276,16 @@ function field(label, value) {
   return text ? `${label}: ${text}` : null;
 }
 
-function zplBlock(x, y, width, fontHeight, text, maxLines = 1) {
+function zplBlock(x, y, width, fontHeight, text, maxLines = 1, align = 'L') {
   if (!clean(text)) return '';
-  return `^FO${x},${y}^A0N,${fontHeight},${Math.max(18, Math.round(fontHeight * 0.75))}^FB${width},${maxLines},4,L,0^FD${zplText(text)}^FS\n`;
+  return `^FO${x},${y}^A0N,${fontHeight},${Math.max(18, Math.round(fontHeight * 0.75))}^FB${width},${maxLines},4,${align},0^FD${zplText(text)}^FS\n`;
 }
 
 function renderHealthLabelZpl(label) {
   const trace = label.traceability || {};
   const company = label.company || {};
   const lot = firstValue(trace.lot_code, trace.supplier_lot_number);
-  const approval = clean(company.sanitary_approval_number);
+  const healthMark = company.health_mark || parseHealthMark(company.sanitary_approval_number);
   const lines = [
     '^XA',
     `^PW${LABEL_DOTS}`,
@@ -237,9 +301,11 @@ function renderHealthLabelZpl(label) {
 
   lines.push(zplBlock(54, 48, 430, 34, company.name || 'ALTA MAREE', 1));
   lines.push(zplBlock(54, 92, 430, 24, [company.address_line1, [company.postal_code, company.city].filter(Boolean).join(' ')].filter(Boolean).join(' - '), 1));
-  if (approval) {
+  if (healthMark) {
     lines.push('^FO852,38^GE230,88,3^FS');
-    lines.push(zplBlock(888, 58, 160, 30, approval, 1));
+    lines.push(zplBlock(908, 44, 120, 22, healthMark.country, 1, 'C'));
+    lines.push(zplBlock(874, 72, 188, 26, healthMark.approval_number, 1, 'C'));
+    lines.push(zplBlock(908, 102, 120, 22, healthMark.authority, 1, 'C'));
   }
 
   lines.push(zplBlock(54, 168, 1040, 56, 'POUR', 1));
@@ -279,5 +345,6 @@ module.exports = {
   combineZpl,
   formatDate,
   formatWeight,
+  parseHealthMark,
   renderHealthLabelZpl,
 };

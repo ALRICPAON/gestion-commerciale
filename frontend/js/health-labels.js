@@ -47,7 +47,7 @@
   function renderLabel(label) {
     const trace = label.traceability || {};
     const company = label.company || {};
-    const approval = safe(company.sanitary_approval_number);
+    const healthMark = company.health_mark || null;
     const logoUrl = safe(company.logo_url);
     const client = label.delivered_client_display || compact([
       label.delivered_client_name,
@@ -76,7 +76,7 @@
             <span>${escapeHtml(companyLine(company))}</span>
           </div>
         </div>
-        ${approval ? `<div class="health-label-approval">${escapeHtml(approval)}</div>` : ''}
+        ${healthMark ? `<div class="health-label-approval"><span>${escapeHtml(healthMark.country || 'FR')}</span><strong>${escapeHtml(healthMark.approval_number || '')}</strong><span>${escapeHtml(healthMark.authority || 'UE')}</span></div>` : ''}
       </header>
       <section class="health-label-client">
         <span>POUR</span>
@@ -102,12 +102,15 @@
     return `<section class="health-label-print-sheet">${(labels || []).map(renderLabel).join('')}</section>`;
   }
 
-  function renderPreview(labels, zplDocument) {
+  function renderPreview(labels, zplDocument, warnings = []) {
     const count = Array.isArray(labels) ? labels.length : 0;
+    const warningHtml = warnings.length
+      ? `<div class="health-label-warnings">${warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join('')}</div>`
+      : '';
     return `<div class="health-label-preview-tools">
       <strong>${escapeHtml(count)} etiquette(s) 100 x 100 mm</strong>
       ${zplDocument ? `<button type="button" class="btn btn-secondary btn-sm" data-health-label-zpl>Télécharger ZPL</button>` : ''}
-    </div>${buildHtml(labels)}`;
+    </div>${warningHtml}${buildHtml(labels)}`;
   }
 
   function bindZplDownload(container, zplDocument, filename = 'etiquettes-sanitaires.zpl') {
@@ -134,6 +137,25 @@
     return Number.isFinite(copies) && copies > 0 ? copies : fallback;
   }
 
+  function askLot(labels) {
+    const lots = [];
+    (labels || []).forEach((label) => {
+      const lotId = label.allocation_lot_id || label.traceability?.lot_id || '';
+      if (!lotId || lots.some((lot) => lot.id === lotId)) return;
+      lots.push({
+        id: lotId,
+        label: label.traceability?.lot_code || label.traceability?.supplier_lot_number || lotId,
+        count: (labels || []).filter((item) => (item.allocation_lot_id || item.traceability?.lot_id || '') === lotId).length,
+      });
+    });
+    if (lots.length <= 1) return lots[0] || null;
+    const message = lots.map((lot, index) => `${index + 1}. ${lot.label} (${lot.count} etiquette(s))`).join('\n');
+    const value = prompt(`Lot a reimprimer :\n${message}`, '1');
+    if (value === null) return null;
+    const index = Math.floor(Number(String(value).replace(',', '.'))) - 1;
+    return lots[index] || null;
+  }
+
   function print(labels, printArea) {
     if (!printArea) return;
     printArea.innerHTML = buildHtml(labels);
@@ -149,6 +171,7 @@
 
   window.HealthLabels = {
     askCopies,
+    askLot,
     bindZplDownload,
     buildHtml,
     escapeHtml,

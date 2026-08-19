@@ -574,6 +574,7 @@ router.get('/delivery-notes/:id/health-labels', authenticateToken, attachDbConte
 
     const lineNumber = clean(req.query.line_number);
     const copies = clean(req.query.copies);
+    const lotId = clean(req.query.lot_id);
     if (lineNumber && !Number.isFinite(Number(lineNumber))) {
       return res.status(400).json({ error: 'Numero de ligne invalide' });
     }
@@ -637,11 +638,13 @@ router.get('/delivery-notes/:id/health-labels', authenticateToken, attachDbConte
       storeSettings: storeSettings.rows[0] || {},
       lineNumber,
       copies,
+      lotId,
     });
 
     res.json({
       labels,
       label_count: labels.length,
+      warnings: labels.warnings || [],
       zpl_document: combineZpl(labels),
       printer: labels[0]?.printer || {
         model: 'Zebra ZT231',
