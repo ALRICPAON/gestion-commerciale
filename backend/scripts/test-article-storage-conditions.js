@@ -87,7 +87,9 @@ includes('backend/db/gestion-commerciale/107_article_storage_conditions.sql', 'A
 includes('backend/db/gestion-commerciale/107_article_storage_conditions_rollback.sql', 'DROP COLUMN IF EXISTS storage_instruction', 'rollback instruction manquant');
 
 includes('backend/routes/articlesStoreLevel.js', 'storage_temperature_min, storage_temperature_max, storage_instruction', 'route active doit inserer les champs conservation');
-includes('backend/routes/articlesStoreLevel.js', 'storage_temperature_min = $22', 'route active doit mettre a jour la temperature min');
+includes('backend/routes/articlesStoreLevel.js', "COALESCE(a.article_category, 'product') AS article_category", 'route active doit relire article_category');
+includes('backend/routes/articlesStoreLevel.js', 'article_category = $5', 'route active doit persister article_category sans decalage');
+includes('backend/routes/articlesStoreLevel.js', 'storage_temperature_min = $23', 'route active doit mettre a jour la temperature min');
 includes('backend/routes/articlesStoreLevel.js', 'storage_temperature_min: parseNumber(article.storage_temperature_min)', 'duplication active doit copier la temperature min');
 includes('backend/routes/articlesStoreLevel.js', 'storage_instruction: article.storage_instruction', 'duplication active doit copier l instruction');
 

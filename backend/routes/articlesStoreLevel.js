@@ -5,6 +5,7 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
+const { assertArticleCategory } = require('../services/articleCategory');
 const { normalizeStoragePayload } = require('../services/articleStorageConditions');
 
 const UNIT_FALLBACK = 'kg';
@@ -47,6 +48,7 @@ function articlePayload(body) {
     designation: clean(body.designation),
     ean: clean(body.ean),
     unit: clean(body.unit) || UNIT_FALLBACK,
+    article_category: assertArticleCategory(body.article_category),
     is_active: parseBool(body.is_active, true),
     family_code: clean(body.family_code || body.sector_code),
     family_name: clean(body.family_name),
@@ -75,6 +77,7 @@ function articleInsertParams(storeId, data, userId) {
     data.designation,
     data.ean,
     data.unit,
+    data.article_category,
     data.is_active,
     data.family_code,
     data.family_name,
@@ -235,6 +238,7 @@ function selectArticlesSql() {
       a.designation,
       a.ean,
       a.unit,
+      COALESCE(a.article_category, 'product') AS article_category,
       a.is_active,
       a.source_origin,
       a.source_id,
@@ -468,7 +472,7 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
     const created = await client.query(
       `
       INSERT INTO articles (
-        store_id, plu, designation, ean, unit, is_active, source_origin,
+        store_id, plu, designation, ean, unit, article_category, is_active, source_origin,
         family_code, family_name, display_name, purchase_unit, stock_unit, sale_unit,
         vat_rate, purchase_price_ex_vat, sale_price_ex_vat, sale_price_inc_vat,
         production_method, latin_name, fao_zone, sous_zone, fishing_gear, allergens,
@@ -476,9 +480,9 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
         created_by, updated_by
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, 'manual',
-        $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26
+        $1, $2, $3, $4, $5, $6, $7, 'manual',
+        $8, $9, $10, $11, $12, $13, $14, $15, $16,
+        $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $27
       )
       RETURNING id
       `,
@@ -552,30 +556,31 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
         designation = $2,
         ean = $3,
         unit = $4,
-        is_active = $5,
-        family_code = $6,
-        family_name = $7,
-        display_name = $8,
-        purchase_unit = $9,
-        stock_unit = $10,
-        sale_unit = $11,
-        vat_rate = $12,
-        purchase_price_ex_vat = $13,
-        sale_price_ex_vat = $14,
-        sale_price_inc_vat = $15,
-        production_method = $16,
-        latin_name = $17,
-        fao_zone = $18,
-        sous_zone = $19,
-        fishing_gear = $20,
-        allergens = $21,
-        storage_temperature_min = $22,
-        storage_temperature_max = $23,
-        storage_instruction = $24,
-        updated_by = $25,
+        article_category = $5,
+        is_active = $6,
+        family_code = $7,
+        family_name = $8,
+        display_name = $9,
+        purchase_unit = $10,
+        stock_unit = $11,
+        sale_unit = $12,
+        vat_rate = $13,
+        purchase_price_ex_vat = $14,
+        sale_price_ex_vat = $15,
+        sale_price_inc_vat = $16,
+        production_method = $17,
+        latin_name = $18,
+        fao_zone = $19,
+        sous_zone = $20,
+        fishing_gear = $21,
+        allergens = $22,
+        storage_temperature_min = $23,
+        storage_temperature_max = $24,
+        storage_instruction = $25,
+        updated_by = $26,
         updated_at = NOW()
-      WHERE id = $26
-        AND store_id = $27
+      WHERE id = $27
+        AND store_id = $28
       RETURNING id
       `,
       [
@@ -583,6 +588,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
         data.designation,
         data.ean,
         data.unit,
+        data.article_category,
         data.is_active,
         data.family_code,
         data.family_name,
@@ -714,6 +720,7 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
       designation: newDesignation,
       ean: newEan,
       unit: article.unit || UNIT_FALLBACK,
+      article_category: article.article_category || 'product',
       is_active: article.is_active,
       family_code: article.family_code,
       family_name: article.family_name,
@@ -741,7 +748,7 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
     const created = await client.query(
       `
       INSERT INTO articles (
-        store_id, plu, designation, ean, unit, is_active, source_origin,
+        store_id, plu, designation, ean, unit, article_category, is_active, source_origin,
         family_code, family_name, display_name, purchase_unit, stock_unit, sale_unit,
         vat_rate, purchase_price_ex_vat, sale_price_ex_vat, sale_price_inc_vat,
         production_method, latin_name, fao_zone, sous_zone, fishing_gear, allergens,
@@ -749,9 +756,9 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         created_by, updated_by
       )
       VALUES (
-        $1, $2, $3, $4, $5, $6, 'duplicate',
-        $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26
+        $1, $2, $3, $4, $5, $6, $7, 'duplicate',
+        $8, $9, $10, $11, $12, $13, $14, $15, $16,
+        $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $27
       )
       RETURNING id
       `,

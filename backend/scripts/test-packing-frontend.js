@@ -93,7 +93,7 @@ function main() {
   assertIncludes(articlesJs, 'fetchArticleById', 'articles.js doit relire une fiche article par id');
   assertIncludes(articlesJs, "url.searchParams.delete('edit')", 'Le parametre edit doit etre nettoye apres ouverture');
   assertIncludes(articlesJs, "article_category: articleBusinessCategoryInput.value || 'product'", 'La categorie doit etre envoyee a la sauvegarde article');
-  assertIncludes(articlesJs, 'refreshedArticle.article_category !== payload.article_category', 'La sauvegarde categorie doit etre verifiee apres relecture');
+  assertIncludes(articlesJs, 'assertArticleSaveConsistency(refreshedArticle, payload)', 'La sauvegarde categorie doit etre verifiee apres relecture');
 
   assertIncludes(traceabilityHtml, './css/pages/traceability.css?v=3', 'Cache-buster CSS tracabilite attendu');
   assertIncludes(traceabilityHtml, './js/stock-movement-labels.js?v=1', 'Libelles mouvements centralises doivent etre charges');

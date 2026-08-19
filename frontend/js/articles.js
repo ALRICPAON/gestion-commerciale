@@ -97,6 +97,48 @@ function articleCategoryLabel(value) {
   return value === 'packaging' ? 'Emballage' : 'Produit';
 }
 
+function normalizeArticleCategoryForComparison(value) {
+  const text = String(value || '').trim().toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_\s-]+/g, '_');
+  if (['packaging', 'emballage', 'emballages', 'package'].includes(text)) return 'packaging';
+  return 'product';
+}
+
+function normalizeNumberForComparison(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(String(value).replace(',', '.'));
+  return Number.isFinite(number) ? number : null;
+}
+
+function normalizeTextForComparison(value) {
+  const text = String(value ?? '').trim();
+  return text || null;
+}
+
+function assertArticleSaveConsistency(refreshedArticle, payload) {
+  const savedCategory = normalizeArticleCategoryForComparison(refreshedArticle.article_category);
+  const expectedCategory = normalizeArticleCategoryForComparison(payload.article_category);
+  if (savedCategory !== expectedCategory) {
+    throw new Error('La categorie article sauvegardee ne correspond pas a la fiche relue.');
+  }
+
+  const storageChecks = [
+    ['storage_temperature_min', 'temperature minimale de conservation'],
+    ['storage_temperature_max', 'temperature maximale de conservation'],
+  ];
+  storageChecks.forEach(([field, label]) => {
+    if (normalizeNumberForComparison(refreshedArticle[field]) !== normalizeNumberForComparison(payload[field])) {
+      throw new Error(`La ${label} sauvegardee ne correspond pas a la fiche relue.`);
+    }
+  });
+
+  if (normalizeTextForComparison(refreshedArticle.storage_instruction) !== normalizeTextForComparison(payload.storage_instruction)) {
+    throw new Error('L instruction de conservation sauvegardee ne correspond pas a la fiche relue.');
+  }
+}
+
 function fillTopbar() {
   userNameEl.textContent = sessionUser.email || 'Utilisateur';
 }
@@ -284,9 +326,7 @@ async function saveArticle(event) {
 
     if (isEdit) {
       const refreshedArticle = await fetchArticleById(articleId);
-      if (refreshedArticle.article_category !== payload.article_category) {
-        throw new Error('La categorie article sauvegardee ne correspond pas a la fiche relue.');
-      }
+      assertArticleSaveConsistency(refreshedArticle, payload);
     }
 
     closeModal();
