@@ -183,6 +183,66 @@ const ambiguousLots = buildHealthLabelModels({
 assert.strictEqual(ambiguousLots.length, 0, 'une repartition multi-lots non divisible ne doit pas inventer les colis');
 assert(ambiguousLots.warnings.some((warning) => warning.includes('non divisible')));
 
+const noLotLine = {
+  ...baseLine,
+  id: 'line-no-lot',
+  line_number: 4,
+  package_count: 3,
+  weight_per_package: 2,
+  total_weight: 6,
+  sold_quantity: 6,
+  lots: [],
+  traceability_snapshot: {
+    lot_code: 'SNAPSHOT-LOT-IGNORED',
+    latin_name: 'Gadus morhua',
+    fao_zone: '27',
+    sous_zone: 'VII',
+    fishing_gear: 'Chalut',
+    production_method: 'Peche',
+    allergens: 'Poisson',
+  },
+};
+
+const noLotLabels = buildHealthLabelModels({
+  document,
+  lines: [noLotLine],
+  storeSettings,
+});
+assert.strictEqual(noLotLabels.length, 3, 'ligne sans lot doit rester techniquement generable');
+assert(noLotLabels.warnings.some((warning) => warning.includes('missing_lot_traceability')));
+assert.strictEqual(noLotLabels[0].traceability.lot_id, null);
+assert.strictEqual(noLotLabels[0].traceability.lot_code, null);
+assert.strictEqual(noLotLabels[0].traceability.supplier_lot_number, null);
+assert.strictEqual(noLotLabels[0].traceability.latin_name, 'Gadus morhua');
+assert.strictEqual(noLotLabels[0].traceability.fao_zone, '27');
+assert(noLotLabels[0].zpl.includes('Gadus morhua'));
+assert(!noLotLabels[0].zpl.includes('SNAPSHOT-LOT-IGNORED'), 'le ZPL ne doit pas imprimer un faux lot sans allocation');
+
+const mixedDeliveryNoteLabels = buildHealthLabelModels({
+  document,
+  lines: [
+    { ...baseLine, id: 'mixed-1', line_number: 1, package_count: 2, weight_per_package: 3, total_weight: 6, sold_quantity: 6, lots: [{ lot_id: 'lot-a', lot_code: 'LOT-A', quantity: 6 }] },
+    { ...noLotLine, id: 'mixed-2', line_number: 2 },
+    { ...baseLine, id: 'mixed-3', line_number: 3, package_count: 1, weight_per_package: 4, total_weight: 4, sold_quantity: 4, lots: [{ lot_id: 'lot-c', lot_code: 'LOT-C', quantity: 4 }] },
+  ],
+  storeSettings,
+});
+assert.strictEqual(mixedDeliveryNoteLabels.length, 6, 'BL mixte: 2 + 3 + 1 etiquettes attendues');
+assert.strictEqual(mixedDeliveryNoteLabels.filter((label) => label.line_number === 2).length, 3);
+assert.strictEqual(mixedDeliveryNoteLabels.warnings.filter((warning) => warning.includes('missing_lot_traceability')).length, 1);
+assert(mixedDeliveryNoteLabels.every((label) => label.zpl && label.zpl.includes('^XA')));
+
+const noLotReprint = buildHealthLabelModels({
+  document,
+  lines: [noLotLine],
+  storeSettings,
+  lineNumber: 4,
+  copies: 1,
+});
+assert.strictEqual(noLotReprint.length, 1, 'reimpression ligne sans lot avec copies=1 doit produire un modele');
+assert.strictEqual(noLotReprint[0].traceability.lot_code, null);
+assert(noLotReprint.warnings.some((warning) => warning.includes('missing_lot_traceability')));
+
 assert.deepStrictEqual(parseHealthMark('FR 85 123 456 UE'), {
   country: 'FR',
   approval_number: '85 123 456',

@@ -94,8 +94,8 @@ function pickTrace(line, lot = null) {
   const lotTrace = lot?.traceability || {};
   return {
     lot_id: lot?.lot_id || null,
-    lot_code: firstValue(lot?.lot_code, lot?.supplier_lot_number, snapshot.lot_code),
-    supplier_lot_number: firstValue(lot?.supplier_lot_number, snapshot.supplier_lot_number),
+    lot_code: lot ? firstValue(lot.lot_code, lot.supplier_lot_number, snapshot.lot_code) : null,
+    supplier_lot_number: lot ? firstValue(lot.supplier_lot_number, snapshot.supplier_lot_number) : null,
     dlc: lot?.dlc || snapshot.dlc || null,
     latin_name: firstValue(lotTrace.latin_name, lot?.latin_name, snapshot.latin_name, line.latin_name),
     fao_zone: firstValue(lotTrace.fao_zone, lot?.fao_zone, snapshot.fao_zone, line.fao_zone),
@@ -149,7 +149,12 @@ function isWholePackageQuantity(quantity, netWeight) {
 }
 
 function buildPackagePlan(line, lots, netWeight, linePackageCount) {
-  if (!lots.length) return { assignments: Array.from({ length: linePackageCount }, () => null), warnings: [] };
+  if (!lots.length) {
+    return {
+      assignments: Array.from({ length: linePackageCount }, () => null),
+      warnings: [`missing_lot_traceability: Ligne ${line.line_number}: aucun lot associe, etiquette generee avec les donnees article/snapshot disponibles.`],
+    };
+  }
   if (lots.length === 1) return { assignments: Array.from({ length: linePackageCount }, () => lots[0]), warnings: [] };
 
   if (netWeight <= 0) {
