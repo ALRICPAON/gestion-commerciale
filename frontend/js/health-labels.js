@@ -87,6 +87,8 @@
       info('Lot', labelTrace(label)),
       info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
       info('ALLERGÈNE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
+      info('CONSERVATION', label.storage_temperature_label),
+      info('MENTION', label.storage_instruction_label),
     ].join('');
 
     return `<article class="health-label-card">

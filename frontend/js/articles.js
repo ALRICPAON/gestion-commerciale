@@ -42,6 +42,9 @@ const articleFaoZoneInput = document.getElementById('article-fao-zone');
 const articleSousZoneInput = document.getElementById('article-sous-zone');
 const articleEnginInput = document.getElementById('article-engin');
 const articleAllergenesInput = document.getElementById('article-allergenes');
+const articleStorageTemperatureMinInput = document.getElementById('article-storage-temperature-min');
+const articleStorageTemperatureMaxInput = document.getElementById('article-storage-temperature-max');
+const articleStorageInstructionInput = document.getElementById('article-storage-instruction');
 const articleDisplayNameInput = document.getElementById('article-display-name');
 const articlePurchaseUnitInput = document.getElementById('article-purchase-unit');
 const articleStockUnitInput = document.getElementById('article-stock-unit');
@@ -135,6 +138,9 @@ function openModal(editMode = false, article = null) {
   articleSousZoneInput.value = article?.sous_zone || '';
   articleEnginInput.value = article?.engin || article?.fishing_gear || '';
   articleAllergenesInput.value = article?.allergenes || article?.allergens || '';
+  articleStorageTemperatureMinInput.value = article?.storage_temperature_min ?? '';
+  articleStorageTemperatureMaxInput.value = article?.storage_temperature_max ?? '';
+  articleStorageInstructionInput.value = article?.storage_instruction || '';
   articleDisplayNameInput.value = article?.display_name || '';
   articlePurchaseUnitInput.value = article?.purchase_unit || '';
   articleStockUnitInput.value = article?.stock_unit || '';
@@ -153,6 +159,9 @@ function closeModal() {
   articleUnitInput.value = 'kg';
   articleBusinessCategoryInput.value = 'product';
   articleVatRateInput.value = '5.5';
+  articleStorageTemperatureMinInput.value = '';
+  articleStorageTemperatureMaxInput.value = '';
+  articleStorageInstructionInput.value = '';
   articleActiveInput.value = 'true';
 }
 
@@ -252,6 +261,9 @@ async function saveArticle(event) {
       sous_zone: articleSousZoneInput.value.trim(),
       engin: articleEnginInput.value.trim(),
       allergenes: articleAllergenesInput.value.trim(),
+      storage_temperature_min: parseNumberInput(articleStorageTemperatureMinInput),
+      storage_temperature_max: parseNumberInput(articleStorageTemperatureMaxInput),
+      storage_instruction: articleStorageInstructionInput.value.trim(),
       display_name: articleDisplayNameInput.value.trim(),
       purchase_unit: articlePurchaseUnitInput.value,
       stock_unit: articleStockUnitInput.value,

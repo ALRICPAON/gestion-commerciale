@@ -17,6 +17,12 @@ function number(value, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function nullableNumber(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(String(value).replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function positiveInt(value, fallback = 0) {
   const parsed = Math.floor(number(value, fallback));
   return parsed > 0 ? parsed : fallback;
@@ -80,6 +86,20 @@ function formatAllergen(value) {
   return text ? text.toLocaleUpperCase('fr-FR') : null;
 }
 
+function formatTemperature(value) {
+  const parsed = nullableNumber(value);
+  if (parsed === null) return null;
+  return parsed.toLocaleString('fr-FR', { maximumFractionDigits: 2 });
+}
+
+function formatStorageTemperatureRange(min, max) {
+  const minText = formatTemperature(min);
+  const maxText = formatTemperature(max);
+  if (!minText || !maxText) return null;
+  if (minText === maxText) return `${minText} °C`;
+  return `${minText} à ${maxText} °C`;
+}
+
 function normalizeLots(rawLots) {
   if (!Array.isArray(rawLots)) return [];
   return rawLots.filter(Boolean).map((lot) => ({
@@ -95,6 +115,9 @@ function normalizeLots(rawLots) {
     fishing_gear: clean(lot.fishing_gear || lot.engin),
     production_method: clean(lot.production_method),
     allergens: clean(lot.allergens || lot.allergenes),
+    storage_temperature_min: nullableNumber(lot.storage_temperature_min),
+    storage_temperature_max: nullableNumber(lot.storage_temperature_max),
+    storage_instruction: clean(lot.storage_instruction),
   }));
 }
 
@@ -125,6 +148,13 @@ function pickTrace(line, lot = null) {
     fishing_gear: firstValue(lotTrace.fishing_gear, lot?.fishing_gear, snapshot.fishing_gear, snapshot.engin, line.fishing_gear),
     production_method: firstValue(lotTrace.production_method, lot?.production_method, snapshot.production_method, snapshot.category, line.production_method),
     allergens: firstValue(lotTrace.allergens, lot?.allergens, snapshot.allergens, snapshot.allergenes, line.allergens),
+    storage_temperature_min: nullableNumber(
+      lotTrace.storage_temperature_min ?? lot?.storage_temperature_min ?? snapshot.storage_temperature_min ?? line.storage_temperature_min
+    ),
+    storage_temperature_max: nullableNumber(
+      lotTrace.storage_temperature_max ?? lot?.storage_temperature_max ?? snapshot.storage_temperature_max ?? line.storage_temperature_max
+    ),
+    storage_instruction: firstValue(lotTrace.storage_instruction, lot?.storage_instruction, snapshot.storage_instruction, line.storage_instruction),
     caliber: firstValue(snapshot.caliber, snapshot.calibre, line.caliber, line.calibre),
     conservation: firstValue(snapshot.conservation, snapshot.storage_conditions, line.storage_conditions),
     packaging_date: snapshot.packaging_date || snapshot.conditioning_date || line.packaging_date || null,
@@ -285,6 +315,8 @@ function buildHealthLabelModels({ document, lines, storeSettings, lineNumber = n
           conditioning_date: conditioningDate,
           conditioning_date_label: formatDate(conditioningDate),
           allergen_label: formatAllergen(trace.allergens),
+          storage_temperature_label: formatStorageTemperatureRange(trace.storage_temperature_min, trace.storage_temperature_max),
+          storage_instruction_label: clean(trace.storage_instruction),
           traceability: trace,
           lots: assignedLot ? [assignedLot] : [],
           zpl: null,
@@ -357,6 +389,8 @@ function renderHealthLabelZpl(label) {
   lines.push(zplBlock(54, 774, 500, 28, field('DLC/DDM', formatDate(trace.dlc)), 1));
   lines.push(zplBlock(590, 774, 500, 28, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 2));
   lines.push(zplBlock(54, 850, 1040, 32, field('ALLERGENE', label.allergen_label), 1));
+  lines.push(zplBlock(54, 906, 500, 28, field('CONSERVATION', label.storage_temperature_label), 1));
+  lines.push(zplBlock(590, 906, 500, 28, field('MENTION', label.storage_instruction_label), 2));
   if (trace.defrosted) lines.push(zplBlock(54, 968, 1040, 34, 'DECONGELE', 1));
   lines.push(zplBlock(54, 1036, 640, 26, `BL ${label.delivery_note_reference || ''} - Ligne ${label.line_number || ''}`, 1));
   lines.push(zplBlock(780, 1036, 300, 26, `Colis ${label.copy_index}/${label.copy_count}`, 1));

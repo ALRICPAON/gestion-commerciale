@@ -88,7 +88,7 @@ function main() {
   assertIncludes(packingDetailJs, "operation.status !== 'draft'", 'Mode readonly hors brouillon manquant');
   assertIncludes(read('backend/routes/stock.js'), "COALESCE(l.quality_status, 'released') <> 'blocked'", 'Endpoint stock/lots doit supporter exclusion des lots bloques');
 
-  assertIncludes(articlesHtml, './js/articles.js?v=18', 'Cache-buster articles.js doit etre incremente');
+  assertIncludes(articlesHtml, './js/articles.js?v=19', 'Cache-buster articles.js doit etre incremente');
   assertIncludes(articlesJs, 'openArticleFromEditParam', 'articles.html doit traiter ?edit=');
   assertIncludes(articlesJs, 'fetchArticleById', 'articles.js doit relire une fiche article par id');
   assertIncludes(articlesJs, "url.searchParams.delete('edit')", 'Le parametre edit doit etre nettoye apres ouverture');

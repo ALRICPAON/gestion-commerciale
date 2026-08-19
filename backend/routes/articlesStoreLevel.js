@@ -5,6 +5,7 @@ const router = express.Router();
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
+const { normalizeStoragePayload } = require('../services/articleStorageConditions');
 
 const UNIT_FALLBACK = 'kg';
 
@@ -40,6 +41,7 @@ function parseNumber(value, fallback = null) {
 }
 
 function articlePayload(body) {
+  const storage = normalizeStoragePayload(body);
   return {
     plu: clean(body.plu),
     designation: clean(body.designation),
@@ -62,6 +64,7 @@ function articlePayload(body) {
     sous_zone: clean(body.sous_zone),
     fishing_gear: clean(body.fishing_gear || body.engin),
     allergens: clean(body.allergens || body.allergenes),
+    ...storage,
   };
 }
 
@@ -89,6 +92,9 @@ function articleInsertParams(storeId, data, userId) {
     data.sous_zone,
     data.fishing_gear,
     data.allergens,
+    data.storage_temperature_min,
+    data.storage_temperature_max,
+    data.storage_instruction,
     userId,
   ];
 }
@@ -257,6 +263,9 @@ function selectArticlesSql() {
       COALESCE(a.fishing_gear, adm.engin) AS fishing_gear,
       COALESCE(a.allergens, adm.allergenes) AS allergenes,
       COALESCE(a.allergens, adm.allergenes) AS allergens,
+      a.storage_temperature_min,
+      a.storage_temperature_max,
+      a.storage_instruction,
       COALESCE(a.production_method, adm.raw_source->>'production_method', adm.raw_source->>'method_production') AS production_method,
       COALESCE(adm.raw_source, '{}'::jsonb) AS raw_source
     FROM articles a
@@ -463,12 +472,13 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
         family_code, family_name, display_name, purchase_unit, stock_unit, sale_unit,
         vat_rate, purchase_price_ex_vat, sale_price_ex_vat, sale_price_inc_vat,
         production_method, latin_name, fao_zone, sous_zone, fishing_gear, allergens,
+        storage_temperature_min, storage_temperature_max, storage_instruction,
         created_by, updated_by
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, 'manual',
         $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19, $20, $21, $22, $23, $23
+        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26
       )
       RETURNING id
       `,
@@ -559,10 +569,13 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
         sous_zone = $19,
         fishing_gear = $20,
         allergens = $21,
-        updated_by = $22,
+        storage_temperature_min = $22,
+        storage_temperature_max = $23,
+        storage_instruction = $24,
+        updated_by = $25,
         updated_at = NOW()
-      WHERE id = $23
-        AND store_id = $24
+      WHERE id = $26
+        AND store_id = $27
       RETURNING id
       `,
       [
@@ -587,6 +600,9 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
         data.sous_zone,
         data.fishing_gear,
         data.allergens,
+        data.storage_temperature_min,
+        data.storage_temperature_max,
+        data.storage_instruction,
         req.user.id,
         articleId,
         req.user.store_id,
@@ -715,6 +731,9 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
       sous_zone: article.sous_zone,
       fishing_gear: article.fishing_gear || article.engin,
       allergens: article.allergens || article.allergenes,
+      storage_temperature_min: parseNumber(article.storage_temperature_min),
+      storage_temperature_max: parseNumber(article.storage_temperature_max),
+      storage_instruction: article.storage_instruction,
     };
 
     await client.query('BEGIN');
@@ -726,12 +745,13 @@ router.post('/:id/duplicate', authenticateToken, attachDbContext, requireAdminOr
         family_code, family_name, display_name, purchase_unit, stock_unit, sale_unit,
         vat_rate, purchase_price_ex_vat, sale_price_ex_vat, sale_price_inc_vat,
         production_method, latin_name, fao_zone, sous_zone, fishing_gear, allergens,
+        storage_temperature_min, storage_temperature_max, storage_instruction,
         created_by, updated_by
       )
       VALUES (
         $1, $2, $3, $4, $5, $6, 'duplicate',
         $7, $8, $9, $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19, $20, $21, $22, $23, $23
+        $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26
       )
       RETURNING id
       `,

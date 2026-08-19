@@ -597,6 +597,7 @@ router.get('/delivery-notes/:id/health-labels', authenticateToken, attachDbConte
           COALESCE(sl.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
           COALESCE(sl.delivered_client_store_identifier_snapshot, delivered.store_identifier) AS delivered_client_store_identifier,
           a.latin_name, a.fao_zone, a.sous_zone, a.fishing_gear, a.production_method, a.allergens,
+          a.storage_temperature_min, a.storage_temperature_max, a.storage_instruction,
           jsonb_agg(jsonb_build_object(
             'lot_id', l.id,
             'lot_code', l.lot_code,
@@ -609,7 +610,10 @@ router.get('/delivery-notes/:id/health-labels', authenticateToken, attachDbConte
             'sous_zone', COALESCE(l.traceability_data->>'sous_zone', a.sous_zone),
             'fishing_gear', COALESCE(l.traceability_data->>'fishing_gear', a.fishing_gear),
             'production_method', COALESCE(l.traceability_data->>'production_method', a.production_method),
-            'allergens', COALESCE(l.traceability_data->>'allergens', a.allergens)
+            'allergens', COALESCE(l.traceability_data->>'allergens', a.allergens),
+            'storage_temperature_min', a.storage_temperature_min,
+            'storage_temperature_max', a.storage_temperature_max,
+            'storage_instruction', a.storage_instruction
           )) FILTER (WHERE sla.id IS NOT NULL) AS lots
          FROM sales_lines sl
          LEFT JOIN clients delivered ON delivered.id = sl.delivered_client_id AND delivered.store_id = sl.store_id
@@ -618,7 +622,8 @@ router.get('/delivery-notes/:id/health-labels', authenticateToken, attachDbConte
          LEFT JOIN lots l ON l.id = sla.lot_id
          WHERE sl.sales_document_id = $1 AND sl.store_id = $2${lineFilter}
          GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier,
-           a.latin_name, a.fao_zone, a.sous_zone, a.fishing_gear, a.production_method, a.allergens
+           a.latin_name, a.fao_zone, a.sous_zone, a.fishing_gear, a.production_method, a.allergens,
+           a.storage_temperature_min, a.storage_temperature_max, a.storage_instruction
          ORDER BY sl.line_number ASC`,
         linesParams
       ),

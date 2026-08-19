@@ -36,7 +36,7 @@ function main() {
   includes('backend/routes/articles.js', 'article_category', 'articles route doit exposer article_category');
   includes('backend/routes/articles.js', 'assertArticleCategory(article_category)', 'articles route doit valider article_category');
   assert(
-    articlesRoute.includes("article_category = CASE WHEN $19 THEN $20 ELSE article_category END"),
+    articlesRoute.includes("article_category = CASE WHEN $22 THEN $23 ELSE article_category END"),
     'PATCH partiel article doit conserver article_category si absente'
   );
   assert(
@@ -97,8 +97,8 @@ function main() {
   includes('frontend/js/articles.js', 'article_category: articleBusinessCategoryInput.value', 'front articles doit envoyer article_category');
   includes('frontend/js/articles.js', 'openArticleFromEditParam', 'front articles doit ouvrir ?edit=');
   includes('frontend/js/articles.js', 'refreshedArticle.article_category !== payload.article_category', 'front articles doit verifier la categorie relue apres sauvegarde');
-  includes('frontend/articles.html', './js/articles.js?v=18', 'cache-buster articles attendu');
-  includes('frontend/article-detail.html', './js/article-detail.js?v=16', 'cache-buster detail article attendu');
+  includes('frontend/articles.html', './js/articles.js?v=19', 'cache-buster articles attendu');
+  includes('frontend/article-detail.html', './js/article-detail.js?v=17', 'cache-buster detail article attendu');
 
   includes('backend/routes/sales.js', "COALESCE(a.article_category,'product')='product'", 'vente doit refuser les emballages');
   includes('frontend/js/sale-detail.js', 'article_category=product', 'front vente doit demander les produits');
