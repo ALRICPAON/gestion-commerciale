@@ -72,6 +72,15 @@ const modules = [
     capabilities: ['draft_email', 'preview', 'send_confirmed'],
   },
   {
+    domain: 'call_sheet',
+    module: "Fiche d'appel / Mercuriale",
+    path: '/quick-order-sheet.html',
+    title: "Fiche d'appel",
+    description: "Fiches d'appel clients, lignes produits du jour, fournisseur, prix d'achat et tarifs de vente saisis.",
+    permissions: ['call_sheet.read', 'call_sheet.write'],
+    capabilities: ['list', 'detail', 'lines', 'prepare_line_add', 'prepare_line_update', 'prepare_line_delete'],
+  },
+  {
     domain: 'statistics',
     module: 'Tableaux de bord et statistiques',
     path: '/statistiques.html',

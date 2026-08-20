@@ -13,6 +13,8 @@ const qualityOperations = require('../quality/operations');
 const qualityMasterDocuments = require('../quality/masterDocuments');
 const suppliesMaterials = require('../quality/suppliesMaterials');
 const agentQualityRecall = require('./agentQualityTraceabilityRecallService');
+const { normalizeArticleStorageUpdatePayload } = require('../agentArticleStorageService');
+const callSheet = require('../agentCallSheetService');
 const temperatureValidators = require('../../validators/quality/temperatures');
 const cleaningValidators = require('../../validators/quality/cleaning');
 const fullCoverage = require('./agentFullCoverageService');
@@ -487,6 +489,103 @@ const preparationInputSchema = {
   additionalProperties: true,
 };
 
+const articleStorageUpdateInputSchema = {
+  type: 'object',
+  required: ['article_id', 'changes'],
+  properties: {
+    article_id: { type: 'string' },
+    summary: { type: 'string', maxLength: 500 },
+    impact: { type: 'string', maxLength: 1000 },
+    target_objects: { type: 'array', items: { type: 'object', additionalProperties: true } },
+    changes: {
+      type: 'object',
+      minProperties: 1,
+      properties: {
+        storage_temperature_min: { type: ['number', 'string', 'null'] },
+        storage_temperature_max: { type: ['number', 'string', 'null'] },
+        storage_instruction: { type: ['string', 'null'] },
+      },
+      additionalProperties: false,
+    },
+  },
+  additionalProperties: false,
+};
+const articleStoragePrepareInputFields = new Set(['article_id', 'summary', 'impact', 'target_objects', 'changes']);
+
+const callSheetReadInputSchema = {
+  type: 'object',
+  properties: {
+    sheet_id: { type: 'string' },
+    id: { type: 'string' },
+    date: { type: 'string', maxLength: 10 },
+    sheet_date: { type: 'string', maxLength: 10 },
+    date_from: { type: 'string', maxLength: 10 },
+    date_to: { type: 'string', maxLength: 10 },
+    supplier_id: { type: 'string' },
+    query: { type: 'string', maxLength: 200 },
+    limit: { type: 'integer', minimum: 1, maximum: 100 },
+  },
+  additionalProperties: false,
+};
+
+const callSheetLineInputSchema = {
+  type: 'object',
+  minProperties: 1,
+  properties: {
+    article_id: { type: ['string', 'null'] },
+    designation: { type: ['string', 'null'] },
+    supplier_id: { type: ['string', 'null'] },
+    purchase_price: { type: ['number', 'string', 'null'] },
+    purchase_price_ht: { type: ['number', 'string', 'null'] },
+    unit: { type: ['string', 'null'] },
+    price_unit: { type: ['string', 'null'] },
+    supplier_available_quantity: { type: ['number', 'string', 'null'] },
+    sale_price_level_1_ht: { type: ['number', 'string', 'null'] },
+    sale_price_level_2_ht: { type: ['number', 'string', 'null'] },
+    sale_price_level_3_ht: { type: ['number', 'string', 'null'] },
+    tariff_1: { type: ['number', 'string', 'null'] },
+    tariff_2: { type: ['number', 'string', 'null'] },
+    tariff_3: { type: ['number', 'string', 'null'] },
+    display_order: { type: 'integer' },
+  },
+  additionalProperties: false,
+};
+
+const callSheetAddLineInputSchema = {
+  type: 'object',
+  required: ['sheet_id', 'line'],
+  properties: {
+    sheet_id: { type: 'string' },
+    line: callSheetLineInputSchema,
+    summary: { type: 'string', maxLength: 500 },
+    impact: { type: 'string', maxLength: 1000 },
+  },
+  additionalProperties: false,
+};
+
+const callSheetUpdateLineInputSchema = {
+  type: 'object',
+  required: ['line_id', 'changes'],
+  properties: {
+    line_id: { type: 'string' },
+    changes: callSheetLineInputSchema,
+    summary: { type: 'string', maxLength: 500 },
+    impact: { type: 'string', maxLength: 1000 },
+  },
+  additionalProperties: false,
+};
+
+const callSheetDeleteLineInputSchema = {
+  type: 'object',
+  required: ['line_id'],
+  properties: {
+    line_id: { type: 'string' },
+    summary: { type: 'string', maxLength: 500 },
+    impact: { type: 'string', maxLength: 1000 },
+  },
+  additionalProperties: false,
+};
+
 const qualityEvidenceInputSchema = {
   type: 'object',
   properties: {
@@ -882,6 +981,39 @@ const tools = [
   snapshotTool({ name: 'get_purchases_overview', title: 'Apercu achats', domain: 'purchases', permission: 'purchases.read', snapshotKey: 'purchases' }),
   snapshotTool({ name: 'get_purchase_profile', title: 'Profil achat', domain: 'purchases', permission: 'purchases.read', snapshotKey: 'purchases' }),
   snapshotTool({ name: 'get_communications_overview', title: 'Apercu communications', domain: 'communications', permission: 'communications.read', snapshotKey: 'communications' }),
+  tool({
+    name: 'list_call_sheets',
+    title: "Lister fiches d'appel",
+    description: "Liste les fiches d'appel / mercuriales du magasin courant, avec fournisseur et nombre de lignes.",
+    domain: 'call_sheet',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'call_sheet.read',
+    requiresConfirmation: false,
+    inputSchema: callSheetReadInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: "Fiches d'appel", data: await callSheet.listCallSheets(db, context.store_id, input) }),
+  }),
+  tool({
+    name: 'get_call_sheet',
+    title: "Lire fiche d'appel",
+    description: "Lit une fiche d'appel / mercuriale et ses lignes par id ou date.",
+    domain: 'call_sheet',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'call_sheet.read',
+    requiresConfirmation: false,
+    inputSchema: callSheetReadInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: "Detail fiche d'appel", data: await callSheet.getCallSheet(db, context.store_id, input) }),
+  }),
+  tool({
+    name: 'search_call_sheet_lines',
+    title: "Rechercher lignes fiche d'appel",
+    description: "Recherche les lignes produit d'une fiche d'appel / mercuriale.",
+    domain: 'call_sheet',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'call_sheet.read',
+    requiresConfirmation: false,
+    inputSchema: callSheetReadInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: "Lignes fiche d'appel", data: await callSheet.searchCallSheetLines(db, context.store_id, input) }),
+  }),
   snapshotTool({ name: 'get_pennylane_sync_status', title: 'Etat synchronisation Pennylane', domain: 'pennylane', permission: 'pennylane.read', snapshotKey: 'pennylane' }),
   snapshotTool({ name: 'get_pennylane_diagnostics', title: 'Diagnostics Pennylane', domain: 'pennylane', permission: 'pennylane.read', snapshotKey: 'pennylane' }),
   snapshotTool({ name: 'get_employee_planning', title: 'Planning salarie', domain: 'employee_planning', permission: 'employee_planning.read', snapshotKey: 'employee_planning' }),
@@ -1099,7 +1231,52 @@ const tools = [
   preparationTool({ name: 'prepare_supplier_article_mapping', title: 'mapping article fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
   preparationTool({ name: 'prepare_supplier_order', title: 'commande fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
   preparationTool({ name: 'prepare_article_draft', title: 'brouillon article', domain: 'articles', permission: 'articles.write' }),
-  preparationTool({ name: 'prepare_article_update', title: 'modification article', domain: 'articles', permission: 'articles.write' }),
+  tool({
+    name: 'prepare_article_update',
+    title: 'Preparer conditions conservation Article',
+    description: 'Prepare uniquement une modification allowlistee des champs storage_temperature_min, storage_temperature_max et storage_instruction. Creer ensuite une pending action articles.update_storage_conditions puis execute_pending_action apres confirmation humaine.',
+    domain: 'articles',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'articles.write',
+    requiredPermissions: ['articles.write'],
+    requiresConfirmation: false,
+    inputSchema: articleStorageUpdateInputSchema,
+    execute: async ({ context, input, tool: currentTool }) => {
+      const unknownKeys = Object.keys(input || {}).filter((key) => !articleStoragePrepareInputFields.has(key));
+      if (unknownKeys.length) {
+        const error = new Error(`Cle(s) non autorisee(s) pour prepare_article_update : ${unknownKeys.join(', ')}`);
+        error.status = 400;
+        error.expose = true;
+        throw error;
+      }
+      const payload = normalizeArticleStorageUpdatePayload({
+        article_id: input.article_id,
+        changes: input.changes,
+      });
+      const prepared = preparedBusinessAction(context, {
+        payload,
+        summary: input.summary || 'Modifier les conditions de conservation Article',
+        impact: input.impact || 'Seuls les champs de conservation Article seront modifies apres confirmation humaine.',
+        target_objects: input.target_objects || [{ type: 'article', id: payload.article_id }],
+      }, {
+        action_type: 'articles.update_storage_conditions',
+        required_permissions: ['mcp.execute', 'articles.write'],
+        summary: input.summary || 'Modifier les conditions de conservation Article',
+        impact: input.impact || 'Seuls les champs de conservation Article seront modifies apres confirmation humaine.',
+      });
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Modification Article preparee',
+        data: {
+          prepared_action: prepared,
+          confirmation_tool: 'create_pending_action',
+          action_type: 'articles.update_storage_conditions',
+          payload,
+        },
+      });
+    },
+  }),
   preparationTool({ name: 'prepare_article_price_update', title: 'modification prix article', domain: 'articles', permission: 'articles.write' }),
   preparationTool({ name: 'prepare_lot_update', title: 'modification lot non historique', domain: 'stock', permission: 'stock.write' }),
   preparationTool({ name: 'prepare_stock_regularization', title: 'regularisation stock', domain: 'stock', permission: 'stock.write', requiresConfirmation: true }),
@@ -1113,6 +1290,108 @@ const tools = [
   preparationTool({ name: 'prepare_delivery_note', title: 'bon de livraison', domain: 'sales', permission: 'sales.write', executableNow: true, actionType: 'sales.convert_order_to_delivery_note' }),
   preparationTool({ name: 'prepare_customer_invoice', title: 'facture client', domain: 'sales', permission: 'sales.write', requiresConfirmation: true }),
   preparationTool({ name: 'prepare_customer_credit_note', title: 'avoir client', domain: 'sales', permission: 'sales.write', requiresConfirmation: true }),
+  tool({
+    name: 'prepare_call_sheet_add_line',
+    title: "Preparer ajout ligne fiche d'appel",
+    description: "Prepare l'ajout d'une ligne sur une fiche d'appel existante. Aucun tarif n'est calcule automatiquement.",
+    domain: 'call_sheet',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'call_sheet.write',
+    requiresConfirmation: false,
+    inputSchema: callSheetAddLineInputSchema,
+    execute: async ({ context, input, tool: currentTool }) => {
+      const payload = callSheet.normalizeAddLinePayload({ sheet_id: input.sheet_id, line: input.line });
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: "Ajout ligne fiche d'appel prepare",
+        data: {
+          prepared_action: preparedBusinessAction(context, {
+            payload,
+            summary: input.summary || "Ajouter une ligne fiche d'appel",
+            impact: input.impact || "Une ligne produit sera ajoutee apres confirmation humaine.",
+            target_objects: [{ type: 'quick_order_sheet', id: payload.sheet_id }],
+          }, {
+            action_type: 'call_sheet.add_line',
+            required_permissions: ['mcp.execute', 'call_sheet.write'],
+            summary: input.summary || "Ajouter une ligne fiche d'appel",
+            impact: input.impact || "Une ligne produit sera ajoutee apres confirmation humaine.",
+          }),
+          confirmation_tool: 'create_pending_action',
+          action_type: 'call_sheet.add_line',
+          payload,
+        },
+      });
+    },
+  }),
+  tool({
+    name: 'prepare_call_sheet_update_line',
+    title: "Preparer modification ligne fiche d'appel",
+    description: "Prepare une modification PATCH-like d'une ligne fiche d'appel. Les tarifs 1/2/3 ne changent que si fournis explicitement.",
+    domain: 'call_sheet',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'call_sheet.write',
+    requiresConfirmation: false,
+    inputSchema: callSheetUpdateLineInputSchema,
+    execute: async ({ context, input, tool: currentTool }) => {
+      const payload = callSheet.normalizeUpdateLinePayload({ line_id: input.line_id, changes: input.changes });
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: "Modification ligne fiche d'appel preparee",
+        data: {
+          prepared_action: preparedBusinessAction(context, {
+            payload,
+            summary: input.summary || "Modifier une ligne fiche d'appel",
+            impact: input.impact || "Seuls les champs fournis seront modifies apres confirmation humaine.",
+            target_objects: [{ type: 'quick_order_sheet_product', id: payload.line_id }],
+          }, {
+            action_type: 'call_sheet.update_line',
+            required_permissions: ['mcp.execute', 'call_sheet.write'],
+            summary: input.summary || "Modifier une ligne fiche d'appel",
+            impact: input.impact || "Seuls les champs fournis seront modifies apres confirmation humaine.",
+          }),
+          confirmation_tool: 'create_pending_action',
+          action_type: 'call_sheet.update_line',
+          payload,
+        },
+      });
+    },
+  }),
+  tool({
+    name: 'prepare_call_sheet_delete_line',
+    title: "Preparer suppression ligne fiche d'appel",
+    description: "Prepare la suppression d'une ligne fiche d'appel. L'execution exige create_pending_action puis confirmation humaine.",
+    domain: 'call_sheet',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'call_sheet.write',
+    requiresConfirmation: false,
+    inputSchema: callSheetDeleteLineInputSchema,
+    execute: async ({ context, input, tool: currentTool }) => {
+      const payload = callSheet.normalizeDeleteLinePayload({ line_id: input.line_id });
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: "Suppression ligne fiche d'appel preparee",
+        data: {
+          prepared_action: preparedBusinessAction(context, {
+            payload,
+            summary: input.summary || "Supprimer une ligne fiche d'appel",
+            impact: input.impact || "La ligne sera supprimee apres confirmation humaine explicite.",
+            target_objects: [{ type: 'quick_order_sheet_product', id: payload.line_id }],
+          }, {
+            action_type: 'call_sheet.delete_line',
+            required_permissions: ['mcp.execute', 'call_sheet.write'],
+            summary: input.summary || "Supprimer une ligne fiche d'appel",
+            impact: input.impact || "La ligne sera supprimee apres confirmation humaine explicite.",
+          }),
+          confirmation_tool: 'create_pending_action',
+          action_type: 'call_sheet.delete_line',
+          payload,
+        },
+      });
+    },
+  }),
   preparationTool({ name: 'prepare_email_draft', title: 'brouillon email', domain: 'communications', permission: 'communications.read', requiresConfirmation: false }),
   preparationTool({ name: 'prepare_whatsapp_message', title: 'message WhatsApp', domain: 'communications', permission: 'communications.read', requiresConfirmation: false }),
   preparationTool({ name: 'prepare_sms_message', title: 'message SMS', domain: 'communications', permission: 'communications.read', requiresConfirmation: false }),

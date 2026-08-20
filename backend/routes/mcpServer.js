@@ -37,7 +37,7 @@ const { resolveAgentPermissions } = require('../services/agent/agentPermissionPr
 
 const router = express.Router();
 const PROTOCOL_VERSION = '2025-06-18';
-const MCP_SERVER_VERSION = '1.8.5';
+const MCP_SERVER_VERSION = '1.8.7';
 const LEGACY_SESSIONS = new Map();
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const ALTA_WIDGET_URI = 'ui://widget/alta-maree-connected.html';
@@ -754,6 +754,8 @@ async function handleRequest(req, message) {
         'L’absence d’un outil nommé Pennylane ne signifie pas que les données Pennylane sont indisponibles : elles sont intégrées dans prepare_cashflow_plan.',
         'Pour executer une action metier, utilise uniquement une action exposee par list_executable_actions, cree une pending action, puis appelle execute_pending_action apres confirmation explicite de l utilisateur.',
         'Une execution exige toujours mcp.execute ET la permission metier de l action; ne simule jamais un clic frontend.',
+        'Pour modifier les conditions de conservation Article, lire avec get_article_profile/search_articles, preparer avec prepare_article_update, creer une pending action articles.update_storage_conditions, puis execute_pending_action apres confirmation humaine.',
+        'Pour une fiche d appel / mercuriale, lire avec list_call_sheets/get_call_sheet/search_call_sheet_lines, preparer avec prepare_call_sheet_add_line, prepare_call_sheet_update_line ou prepare_call_sheet_delete_line, puis creer une pending action call_sheet.* et executer apres confirmation humaine.',
         'Pour la documentation qualite, le type canonique de pending action est quality.documentation.apply_section_updates.',
         'Pour modifier des chapitres qualite avec blocs structures depuis ChatGPT, utilise les outils publics compatibles quality_documentation_update_text_block, quality_documentation_add_text_block, quality_documentation_add_table_block, quality_documentation_add_diagram_block, quality_documentation_delete_block et quality_documentation_move_block.',
         'Ces outils publics mappent vers les actions internes canoniques quality.documentation.update_text_block, quality.documentation.add_text_block, quality.documentation.add_table_block, quality.documentation.add_diagram_block, quality.documentation.delete_block et quality.documentation.move_block.',

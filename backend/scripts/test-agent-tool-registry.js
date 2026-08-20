@@ -44,6 +44,17 @@ function main() {
   assert(mcpNames.has('list_executable_actions'), 'list_executable_actions non expose au modele');
   assert(mcpNames.has('execute_business_action'), 'execute_business_action non expose au modele');
   assert(mcpNames.has('quality.documentation.apply_section_updates'), 'quality.documentation.apply_section_updates non expose au modele');
+  for (const name of ['list_call_sheets', 'get_call_sheet', 'search_call_sheet_lines', 'prepare_call_sheet_add_line', 'prepare_call_sheet_update_line', 'prepare_call_sheet_delete_line']) {
+    assert(mcpNames.has(name), `${name} non expose au modele`);
+  }
+  const articleStorageTool = tools.find((tool) => tool.name === 'prepare_article_update');
+  assert(articleStorageTool, 'prepare_article_update manquant');
+  assert(articleStorageTool.description.includes('storage_temperature_min'), 'prepare_article_update doit documenter storage_temperature_min');
+  assert(articleStorageTool.inputSchema.additionalProperties === false, 'prepare_article_update doit refuser les cles racine arbitraires');
+  assert(articleStorageTool.inputSchema.properties.changes.additionalProperties === false, 'prepare_article_update doit refuser les champs Article arbitraires');
+  assert(articleStorageTool.inputSchema.properties.changes.properties.storage_temperature_min, 'prepare_article_update doit exposer storage_temperature_min');
+  assert(articleStorageTool.inputSchema.properties.changes.properties.storage_temperature_max, 'prepare_article_update doit exposer storage_temperature_max');
+  assert(articleStorageTool.inputSchema.properties.changes.properties.storage_instruction, 'prepare_article_update doit exposer storage_instruction');
   const blockToolNames = [
     'quality.documentation.update_text_block',
     'quality.documentation.add_text_block',

@@ -87,12 +87,22 @@ async function main() {
   assert(Array.isArray(response.result.frontend_backend_capabilities), 'tools/list doit exposer frontend_backend_capabilities');
   assert(Array.isArray(response.result.final_permissions), 'tools/list doit exposer final_permissions');
   assert(response.result.final_permissions.includes('mcp.execute'), 'tools/list doit exposer mcp.execute');
+  assert(response.result.final_permissions.includes('articles.write'), 'tools/list doit exposer articles.write');
+  assert(response.result.final_permissions.includes('call_sheet.write'), 'tools/list doit exposer call_sheet.write');
   assert(response.result.final_permissions.includes('quality.documentation.edit'), 'tools/list doit exposer quality.documentation.edit');
   assert(response.result.final_permissions.includes('supplies_materials.read'), 'tools/list doit exposer supplies_materials.read');
   assert(JSON.stringify(response.result.missing_tools) === '[]', 'tools/list ne doit pas exposer de missing_tools');
   assert(JSON.stringify(response.result.missing_frontend_backend_capabilities) === '[]', 'tools/list ne doit pas exposer de capacites front/backend manquantes');
   const publicTools = response.result.tools;
   const publicNames = new Set(publicTools.map((tool) => tool.name));
+  const articlePrepareTool = publicTools.find((tool) => tool.name === 'prepare_article_update');
+  assert(articlePrepareTool, 'prepare_article_update absent de tools/list');
+  assert(articlePrepareTool.inputSchema?.properties?.changes?.properties?.storage_temperature_min, 'prepare_article_update doit exposer storage_temperature_min');
+  assert(articlePrepareTool.inputSchema?.properties?.changes?.properties?.storage_temperature_max, 'prepare_article_update doit exposer storage_temperature_max');
+  assert(articlePrepareTool.inputSchema?.properties?.changes?.properties?.storage_instruction, 'prepare_article_update doit exposer storage_instruction');
+  for (const name of ['list_call_sheets', 'get_call_sheet', 'search_call_sheet_lines', 'prepare_call_sheet_add_line', 'prepare_call_sheet_update_line', 'prepare_call_sheet_delete_line']) {
+    assert(publicNames.has(name), `${name} absent de tools/list`);
+  }
 
   for (const name of [
     'list_quality_temperature_types',
