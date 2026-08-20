@@ -9,6 +9,32 @@ const {
   executeArticleStorageConditionsUpdate,
   normalizeArticleStorageUpdatePayload,
 } = require('../agentArticleStorageService');
+const callSheet = require('../agentCallSheetService');
+
+const callSheetLinePayloadSchema = {
+  type: 'object',
+  minProperties: 1,
+  properties: {
+    article_id: { type: ['string', 'null'] },
+    designation: { type: ['string', 'null'] },
+    designation_snapshot: { type: ['string', 'null'] },
+    supplier_id: { type: ['string', 'null'] },
+    purchase_price: { type: ['number', 'string', 'null'] },
+    purchase_price_ht: { type: ['number', 'string', 'null'] },
+    unit: { type: ['string', 'null'] },
+    price_unit: { type: ['string', 'null'] },
+    sale_unit: { type: ['string', 'null'] },
+    supplier_available_quantity: { type: ['number', 'string', 'null'] },
+    sale_price_level_1_ht: { type: ['number', 'string', 'null'] },
+    sale_price_level_2_ht: { type: ['number', 'string', 'null'] },
+    sale_price_level_3_ht: { type: ['number', 'string', 'null'] },
+    tariff_1: { type: ['number', 'string', 'null'] },
+    tariff_2: { type: ['number', 'string', 'null'] },
+    tariff_3: { type: ['number', 'string', 'null'] },
+    display_order: { type: 'integer' },
+  },
+  additionalProperties: false,
+};
 
 function text(value) {
   return String(value || '').trim();
@@ -348,6 +374,78 @@ async function executeQualityDocumentationBatch({ db, context, payload, pendingA
 }
 
 const ACTIONS = [
+  {
+    name: 'call_sheet.add_line',
+    description: 'Ajoute une ligne produit a une fiche appel existante, sans calcul automatique de tarifs.',
+    aliases: ['quick_order_sheet.add_line'],
+    module: 'call_sheet',
+    requiredPermission: 'call_sheet.write',
+    requiredPermissions: ['mcp.execute', 'call_sheet.write'],
+    service: 'agentCallSheetService.executeAddLine',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['sheet_id', 'line'],
+      properties: {
+        sheet_id: { type: 'string' },
+        line: callSheetLinePayloadSchema,
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'call_sheet.add_line', payload: { sheet_id: 'uuid-fiche', line: { article_id: 'uuid-article', purchase_price: 18.5, supplier_id: 'uuid-fournisseur' } } },
+    validatePayload: callSheet.normalizeAddLinePayload,
+    execute: callSheet.executeAddLine,
+  },
+  {
+    name: 'call_sheet.update_line',
+    description: 'Modifie partiellement une ligne de fiche appel. Les tarifs 1/2/3 ne changent que si les champs sont presents.',
+    aliases: ['quick_order_sheet.update_line'],
+    module: 'call_sheet',
+    requiredPermission: 'call_sheet.write',
+    requiredPermissions: ['mcp.execute', 'call_sheet.write'],
+    service: 'agentCallSheetService.executeUpdateLine',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['line_id', 'changes'],
+      properties: {
+        line_id: { type: 'string' },
+        changes: callSheetLinePayloadSchema,
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'call_sheet.update_line', payload: { line_id: 'uuid-ligne', changes: { purchase_price: 19.2 } } },
+    validatePayload: callSheet.normalizeUpdateLinePayload,
+    execute: callSheet.executeUpdateLine,
+  },
+  {
+    name: 'call_sheet.delete_line',
+    description: 'Supprime physiquement une ligne de fiche appel, apres confirmation humaine explicite.',
+    aliases: ['quick_order_sheet.delete_line'],
+    module: 'call_sheet',
+    requiredPermission: 'call_sheet.write',
+    requiredPermissions: ['mcp.execute', 'call_sheet.write'],
+    service: 'agentCallSheetService.executeDeleteLine',
+    confirmationLevel: 'explicit_human',
+    reversible: false,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['line_id'],
+      properties: { line_id: { type: 'string' } },
+      additionalProperties: false,
+    },
+    example: { action_type: 'call_sheet.delete_line', payload: { line_id: 'uuid-ligne' } },
+    validatePayload: callSheet.normalizeDeleteLinePayload,
+    execute: callSheet.executeDeleteLine,
+  },
   {
     name: 'articles.update_storage_conditions',
     description: 'Met a jour uniquement les conditions de conservation d un Article apres confirmation humaine. Aucun autre champ Article, stock, lot, allocation, vente ou facture n est modifie.',
