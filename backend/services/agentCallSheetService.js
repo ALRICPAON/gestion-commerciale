@@ -165,16 +165,26 @@ async function readLine(db, storeId, lineId) {
 
 async function lockSheet(db, storeId, sheetId) {
   const result = await db.query(
-    `SELECT qs.*, s.name AS supplier_name
+    `SELECT qs.*
      FROM quick_order_sheets qs
-     LEFT JOIN suppliers s ON s.id = qs.supplier_id AND s.store_id = qs.store_id
      WHERE qs.store_id = $1 AND qs.id = $2
-     FOR UPDATE`,
+     FOR UPDATE OF qs`,
     [storeId, sheetId]
   );
   const sheet = result.rows[0];
   if (!sheet) throw expose(404, 'Fiche appel introuvable pour ce magasin');
   return sheet;
+}
+
+async function lockLine(db, storeId, lineId) {
+  const result = await db.query(
+    `SELECT p.*
+     FROM quick_order_sheet_products p
+     WHERE p.store_id = $1 AND p.id = $2
+     FOR UPDATE OF p`,
+    [storeId, lineId]
+  );
+  return result.rows[0] || null;
 }
 
 async function fetchArticle(db, storeId, articleId) {
@@ -364,7 +374,7 @@ async function executeAddLine({ db, context, payload }) {
 
 async function executeUpdateLine({ db, context, payload }) {
   const normalized = normalizeUpdateLinePayload(payload);
-  const before = await readLine(db, context.store_id, normalized.line_id);
+  const before = await lockLine(db, context.store_id, normalized.line_id);
   if (!before) throw expose(404, 'Ligne fiche appel introuvable pour ce magasin');
   await lockSheet(db, context.store_id, before.sheet_id);
   const article = Object.prototype.hasOwnProperty.call(normalized.changes, 'article_id')
@@ -401,7 +411,7 @@ async function executeUpdateLine({ db, context, payload }) {
 
 async function executeDeleteLine({ db, context, payload }) {
   const normalized = normalizeDeleteLinePayload(payload);
-  const before = await readLine(db, context.store_id, normalized.line_id);
+  const before = await lockLine(db, context.store_id, normalized.line_id);
   if (!before) throw expose(404, 'Ligne fiche appel introuvable pour ce magasin');
   await lockSheet(db, context.store_id, before.sheet_id);
   await db.query('DELETE FROM quick_order_sheet_products WHERE store_id = $1 AND id = $2', [context.store_id, normalized.line_id]);

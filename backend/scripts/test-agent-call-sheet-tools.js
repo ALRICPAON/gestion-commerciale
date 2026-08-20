@@ -89,7 +89,7 @@ function makeDb({ foreignStoreSheet = false } = {}) {
       if (compact.startsWith('SELECT qs.id, qs.sheet_date')) {
         return { rows: state.sheet.store_id === params[0] ? [{ ...state.sheet, line_count: state.lines.size }] : [] };
       }
-      if (compact.startsWith('SELECT qs.*') && compact.includes('FOR UPDATE')) {
+      if (compact.startsWith('SELECT qs.*') && compact.includes('FOR UPDATE OF qs')) {
         return { rows: state.sheet.store_id === params[0] && state.sheet.id === params[1] ? [{ ...state.sheet }] : [] };
       }
       if (compact.startsWith('SELECT qs.*')) {
@@ -104,6 +104,10 @@ function makeDb({ foreignStoreSheet = false } = {}) {
           return { rows: line && line.store_id === params[0] ? [lineWithSupplier(line)] : [] };
         }
         return { rows: [...state.lines.values()].filter((line) => line.store_id === params[0]).map(lineWithSupplier) };
+      }
+      if (compact.startsWith('SELECT p.* FROM quick_order_sheet_products p') && compact.includes('FOR UPDATE OF p')) {
+        const line = state.lines.get(String(params[1]));
+        return { rows: line && line.store_id === params[0] ? [{ ...line }] : [] };
       }
       if (compact.startsWith('SELECT id, plu, designation')) {
         const article = state.articles.get(String(params[1]));
@@ -247,6 +251,11 @@ async function main() {
   assert.equal(deleted.deleted, true, 'ligne supprimee');
   assert.equal(db.state.lines.has('line-2'), false, 'relecture apres suppression absente');
 
+  const lockQueries = db.state.calls.map((call) => call.sql).filter((sql) => sql.includes('FOR UPDATE'));
+  assert(lockQueries.some((sql) => sql.includes('FROM quick_order_sheets qs') && sql.includes('FOR UPDATE OF qs')), 'fiche doit etre verrouillee par alias qs');
+  assert(lockQueries.some((sql) => sql.includes('FROM quick_order_sheet_products p') && sql.includes('FOR UPDATE OF p')), 'ligne doit etre verrouillee par alias p');
+  assert.equal(lockQueries.some((sql) => sql.includes('LEFT JOIN') && /FOR UPDATE(?! OF)/.test(sql)), false, 'aucun verrou global ne doit cibler une jointure nullable');
+
   console.log(JSON.stringify({
     ok: true,
     tests: [
@@ -258,6 +267,7 @@ async function main() {
       'cles interdites refusees',
       'isolation magasin refusee',
       'relecture apres ecriture verifiee',
+      'verrouillage SQL sans FOR UPDATE global sur LEFT JOIN',
     ],
   }, null, 2));
 }
