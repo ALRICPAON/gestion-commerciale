@@ -37,6 +37,8 @@ const {
   listDiagramTemplates,
   listDiagrams,
   mermaidTemplates,
+  patchDiagram,
+  relinkDiagram,
   templates: diagramTemplates,
   updateDiagram,
   updateDiagramTemplate,
@@ -49,8 +51,10 @@ const {
   duplicateTable,
   listTableTemplates,
   listTables,
+  relinkTable,
   tableTemplates,
   updateTable,
+  updateTableCell,
   updateTableTemplate,
 } = require('../../services/quality/qualityDocumentationTableService');
 
@@ -296,6 +300,26 @@ router.put('/diagrams/:diagramId', requireQualityPermission(QUALITY_PERMISSIONS.
   }
 });
 
+router.patch('/diagrams/:diagramId/targeted', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const diagram = await patchDiagram(req.dbPool, req.user.store_id, req.params.diagramId, req.user.id, req.body);
+    if (!diagram) return res.status(404).json({ error: 'Diagramme introuvable' });
+    res.json(diagram);
+  } catch (err) {
+    handleError(res, err, 'Erreur PATCH /api/quality/documentation/diagrams/:diagramId/targeted');
+  }
+});
+
+router.post('/diagrams/:diagramId/relink', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const diagram = await relinkDiagram(req.dbPool, req.user.store_id, req.params.diagramId, req.user.id, req.body);
+    if (!diagram) return res.status(404).json({ error: 'Diagramme introuvable' });
+    res.json(diagram);
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/diagrams/:diagramId/relink');
+  }
+});
+
 router.delete('/diagrams/:diagramId', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_DELETE), async (req, res) => {
   try {
     const diagram = await archiveDiagram(req.dbPool, req.user.store_id, req.params.diagramId, req.user.id);
@@ -375,6 +399,26 @@ router.put('/tables/:tableId', requireQualityPermission(QUALITY_PERMISSIONS.DOCU
     res.json(table);
   } catch (err) {
     handleError(res, err, 'Erreur PUT /api/quality/documentation/tables/:tableId');
+  }
+});
+
+router.patch('/tables/:tableId/cell', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const table = await updateTableCell(req.dbPool, req.user.store_id, req.params.tableId, req.user.id, req.body);
+    if (!table) return res.status(404).json({ error: 'Tableau introuvable' });
+    res.json(table);
+  } catch (err) {
+    handleError(res, err, 'Erreur PATCH /api/quality/documentation/tables/:tableId/cell');
+  }
+});
+
+router.post('/tables/:tableId/relink', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    const table = await relinkTable(req.dbPool, req.user.store_id, req.params.tableId, req.user.id, req.body);
+    if (!table) return res.status(404).json({ error: 'Tableau introuvable' });
+    res.json(table);
+  } catch (err) {
+    handleError(res, err, 'Erreur POST /api/quality/documentation/tables/:tableId/relink');
   }
 });
 

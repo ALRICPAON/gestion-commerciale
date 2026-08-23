@@ -1,7 +1,9 @@
 const commercial = require('../agentCommercialToolsService');
 const lotBlocking = require('../quality/lotBlocking');
 const qualityBlocks = require('../quality/qualityDocumentBlockService');
+const qualityDiagrams = require('../quality/qualityDocumentationDiagramService');
 const qualityDocumentation = require('../quality/qualityDocumentationService');
+const qualityTables = require('../quality/qualityDocumentationTableService');
 const qualityVersions = require('../quality/qualityDocumentationVersionService');
 const traceabilityTests = require('../quality/traceabilityTestService');
 const productRecall = require('../productRecallService');
@@ -175,6 +177,49 @@ function normalizeMoveBlockPayload(payload = {}) {
   return {
     chapter_id: assertUuidLike(payload.chapter_id || payload.section_id, 'chapter_id'),
     block_ids: payload.block_ids.map((id) => assertUuidLike(id, 'block_id')),
+  };
+}
+
+function normalizeTableCellPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  return {
+    table_id: assertUuidLike(payload.table_id, 'table_id'),
+    row_id: text(payload.row_id) || undefined,
+    row_index: Number.isInteger(Number(payload.row_index)) ? Number(payload.row_index) : undefined,
+    column_id: text(payload.column_id) || undefined,
+    column_label: text(payload.column_label) || undefined,
+    column_index: Number.isInteger(Number(payload.column_index)) ? Number(payload.column_index) : undefined,
+    expected_value: Object.prototype.hasOwnProperty.call(payload, 'expected_value') ? String(payload.expected_value ?? '') : undefined,
+    value: String(payload.value ?? payload.new_value ?? ''),
+  };
+}
+
+function normalizeRelinkPayload(payload = {}, idName) {
+  assertObject(payload, 'payload');
+  return {
+    [idName]: assertUuidLike(payload[idName] || payload.id, idName),
+    chapter_id: assertUuidLike(payload.chapter_id || payload.section_id, 'chapter_id'),
+    block_id: text(payload.block_id) || undefined,
+    position: Number.isFinite(Number(payload.position)) ? Number(payload.position) : undefined,
+    is_visible: Object.prototype.hasOwnProperty.call(payload, 'is_visible') ? payload.is_visible !== false : undefined,
+    dry_run: payload.dry_run === true,
+  };
+}
+
+function normalizeDiagramPatchPayload(payload = {}) {
+  assertObject(payload, 'payload');
+  return {
+    diagram_id: assertUuidLike(payload.diagram_id, 'diagram_id'),
+    editor_mode: text(payload.editor_mode) || undefined,
+    title: Object.prototype.hasOwnProperty.call(payload, 'title') ? String(payload.title ?? '') : undefined,
+    orientation: text(payload.orientation) || undefined,
+    node_id: text(payload.node_id) || undefined,
+    edge_id: text(payload.edge_id) || undefined,
+    field: text(payload.field) || undefined,
+    value: Object.prototype.hasOwnProperty.call(payload, 'value') ? payload.value : undefined,
+    source: Object.prototype.hasOwnProperty.call(payload, 'source') ? String(payload.source || '') : undefined,
+    rendered_svg: Object.prototype.hasOwnProperty.call(payload, 'rendered_svg') ? String(payload.rendered_svg || '') : undefined,
+    expected_value: Object.prototype.hasOwnProperty.call(payload, 'expected_value') ? String(payload.expected_value ?? '') : undefined,
   };
 }
 
@@ -543,6 +588,156 @@ const ACTIONS = [
     },
     validatePayload: normalizeQualityDocumentationBatch,
     execute: executeQualityDocumentationBatch,
+  },
+  {
+    name: 'quality.documentation.update_table_cell',
+    description: 'Modifie une seule cellule dans quality_document_tables.table_data avec verification optionnelle de l ancienne valeur.',
+    aliases: ['update_quality_table_cell'],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentationTableService.updateTableCell',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: false,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['table_id', 'value'],
+      properties: {
+        table_id: { type: 'string' },
+        row_id: { type: 'string' },
+        row_index: { type: 'integer', minimum: 0 },
+        column_id: { type: 'string' },
+        column_label: { type: 'string' },
+        column_index: { type: 'integer', minimum: 0 },
+        expected_value: { type: 'string' },
+        value: { type: 'string' },
+        new_value: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'quality.documentation.update_table_cell', payload: { table_id: 'uuid-table', row_id: 'row-1', column_id: 'action', expected_value: 'Ancien texte', value: 'Nouveau texte' } },
+    validatePayload: normalizeTableCellPayload,
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'quality.documentation.update_table_cell',
+      module: 'quality_documentation',
+      result: await qualityTables.updateTableCell(db, context.store_id, payload.table_id, context.user_id, payload),
+    }),
+  },
+  {
+    name: 'quality.documentation.relink_table',
+    description: 'Rattache ou repositionne un tableau existant sans changer son id ni son table_data.',
+    aliases: ['relink_quality_table'],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentationTableService.relinkTable',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['table_id', 'chapter_id'],
+      properties: {
+        table_id: { type: 'string' },
+        chapter_id: { type: 'string' },
+        section_id: { type: 'string' },
+        block_id: { type: 'string' },
+        position: { type: 'number' },
+        is_visible: { type: 'boolean' },
+        dry_run: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'quality.documentation.relink_table', payload: { table_id: 'uuid-table', section_id: 'uuid-section', position: 120, dry_run: true } },
+    validatePayload: (payload) => normalizeRelinkPayload(payload, 'table_id'),
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: payload.dry_run ? 'dry_run' : 'executed',
+      action: 'quality.documentation.relink_table',
+      module: 'quality_documentation',
+      result: await qualityTables.relinkTable(db, context.store_id, payload.table_id, context.user_id, payload),
+    }),
+  },
+  {
+    name: 'quality.documentation.update_diagram',
+    description: 'Modifie de facon ciblee un diagramme existant: titre, source Mermaid, libelle/annotation de noeud ou liaison.',
+    aliases: ['update_quality_diagram'],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentationDiagramService.patchDiagram',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: false,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['diagram_id'],
+      properties: {
+        diagram_id: { type: 'string' },
+        editor_mode: { type: 'string', enum: ['structured', 'mermaid'] },
+        title: { type: 'string' },
+        orientation: { type: 'string', enum: ['vertical', 'horizontal'] },
+        node_id: { type: 'string' },
+        edge_id: { type: 'string' },
+        field: { type: 'string' },
+        value: {},
+        source: { type: 'string' },
+        rendered_svg: { type: 'string' },
+        expected_value: { type: 'string' },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'quality.documentation.update_diagram', payload: { diagram_id: 'uuid-diagram', node_id: 'reception', field: 'label', expected_value: 'Ancien', value: 'Nouveau' } },
+    validatePayload: normalizeDiagramPatchPayload,
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: 'executed',
+      action: 'quality.documentation.update_diagram',
+      module: 'quality_documentation',
+      result: await qualityDiagrams.patchDiagram(db, context.store_id, payload.diagram_id, context.user_id, payload),
+    }),
+  },
+  {
+    name: 'quality.documentation.relink_diagram',
+    description: 'Rattache ou repositionne un diagramme existant sans changer son id ni son diagram_data/source.',
+    aliases: ['relink_quality_diagram'],
+    module: 'quality_documentation',
+    requiredPermission: 'quality.documentation.edit',
+    requiredPermissions: ['mcp.execute', 'quality.documentation.edit'],
+    service: 'qualityDocumentationDiagramService.relinkDiagram',
+    confirmationLevel: 'explicit_human',
+    reversible: true,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['diagram_id', 'chapter_id'],
+      properties: {
+        diagram_id: { type: 'string' },
+        chapter_id: { type: 'string' },
+        section_id: { type: 'string' },
+        block_id: { type: 'string' },
+        position: { type: 'number' },
+        is_visible: { type: 'boolean' },
+        dry_run: { type: 'boolean' },
+      },
+      additionalProperties: false,
+    },
+    example: { action_type: 'quality.documentation.relink_diagram', payload: { diagram_id: 'uuid-diagram', section_id: 'uuid-section', dry_run: true } },
+    validatePayload: (payload) => normalizeRelinkPayload(payload, 'diagram_id'),
+    execute: async ({ db, context, payload }) => ({
+      ok: true,
+      mode: payload.dry_run ? 'dry_run' : 'executed',
+      action: 'quality.documentation.relink_diagram',
+      module: 'quality_documentation',
+      result: await qualityDiagrams.relinkDiagram(db, context.store_id, payload.diagram_id, context.user_id, payload),
+    }),
   },
   {
     name: 'quality.documentation.update_text_block',
