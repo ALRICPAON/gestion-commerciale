@@ -7,6 +7,7 @@ const {
   evidenceTypeLabel,
   getQualityEvidenceRecord,
   listReceptionDownstreamDeliveries,
+  listReceptionSupplierDocuments,
   listQualityEvidenceRecords,
   publicEvidence,
   receptionLotIds,
@@ -19,6 +20,7 @@ const EVENT_A = '50000000-0000-4000-8000-000000000101';
 const EVIDENCE_A = '50000000-0000-4000-8000-000000000201';
 const EVIDENCE_B = '50000000-0000-4000-8000-000000000202';
 const TRACE_EVIDENCE = '50000000-0000-4000-8000-000000000204';
+const PURCHASE_A = '50000000-0000-4000-8000-000000000301';
 
 function read(relativePath) {
   return fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
@@ -36,11 +38,11 @@ function sampleEvidence(overrides = {}) {
     recorded_by_email: 'qualite@example.test',
     source_type: 'automatic',
     source_record_type: 'purchases',
-    source_record_id: '50000000-0000-4000-8000-000000000301',
+    source_record_id: PURCHASE_A,
     source_discriminator: 'reception_record',
     event_type: 'purchase_received',
     source_table: 'purchases',
-    source_id: '50000000-0000-4000-8000-000000000301',
+    source_id: PURCHASE_A,
     occurred_at: '2026-08-16T08:54:00.000Z',
     archived_at: null,
     payload: {
@@ -80,14 +82,25 @@ function sampleEvidence(overrides = {}) {
 }
 
 class FakeDb {
-  constructor(rows, downstreamRows = []) {
+  constructor(rows, downstreamRows = [], supplierDocumentRows = []) {
     this.rows = rows;
     this.downstreamRows = downstreamRows;
+    this.supplierDocumentRows = supplierDocumentRows;
     this.calls = [];
   }
 
   async query(sql, params = []) {
     this.calls.push({ sql: String(sql), params });
+    if (String(sql).includes('WITH purchase_document')) {
+      const [storeId, purchaseId] = params;
+      return {
+        rows: this.supplierDocumentRows.filter((row) => row.store_id === storeId && (
+          row.purchase_id === purchaseId
+          || row.source_purchase_id === purchaseId
+          || row.match_purchase_id === purchaseId
+        )),
+      };
+    }
     if (String(sql).includes('FROM sale_line_allocations sla')) {
       const [storeId, lotIds] = params;
       return {
@@ -134,7 +147,7 @@ async function main() {
   assert(page.includes('quality-document-links.js'), 'Mecanisme documentaire Qualite non charge');
   assert(page.includes('evidence-record-export-csv'), 'Export CSV Enregistrements manquant');
   assert(page.includes('traceability_test_record'), 'Filtre test de tracabilite manquant');
-  assert(page.includes('evidence-records.js?v=5'), 'Cache-buster evidence-records attendu');
+  assert(page.includes('evidence-records.js?v=6'), 'Cache-buster evidence-records attendu');
   assert(page.includes('<th>Date/heure</th>'), 'Colonne Date/heure manquante');
   assert(page.includes('<th>Type</th>'), 'Colonne Type manquante');
   assert(page.includes('<th>Reference</th>'), 'Colonne Reference manquante');
@@ -157,6 +170,8 @@ async function main() {
   assert(frontend.includes('renderProductsTable'), 'Table produits recus manquante');
   assert(frontend.includes('renderLinkedDocuments'), 'Bloc documents lies reception manquant');
   assert(frontend.includes('BL fournisseur'), 'Libelle BL fournisseur manquant');
+  assert(frontend.includes('Documents fournisseur'), 'Bloc documents fournisseur manquant');
+  assert(frontend.includes('Aucun document lié à cette réception.'), 'Message absence document fournisseur incorrect');
   assert(frontend.includes('Destination / BL aval'), 'Bloc destination aval manquant');
   assert(frontend.includes('Tracabilite'), 'Bloc tracabilite manquant');
   assert(frontend.includes('Documents / preuves'), 'Bloc documents/preuves manquant');
@@ -208,7 +223,51 @@ async function main() {
       delivered_quantity: '1',
     },
   ];
-  const db = new FakeDb([rowA, rowB, incomplete], downstreamRows);
+  const supplierDocumentRows = [
+    {
+      store_id: STORE_A,
+      purchase_id: PURCHASE_A,
+      document_type: 'purchase_bl',
+      original_name: 'BL-fournisseur-ROYALE.pdf',
+      public_url: `/api/purchases/${PURCHASE_A}/document`,
+      created_at: '2026-08-16T08:53:00.000Z',
+      storage_path: 'C:/private/supplier/bl.pdf',
+      uploaded_by: 'hidden-user-id',
+    },
+    {
+      store_id: STORE_A,
+      purchase_id: PURCHASE_A,
+      document_type: 'purchase_bl',
+      original_name: 'BL-fournisseur-ROYALE.pdf',
+      public_url: `/api/purchases/${PURCHASE_A}/document`,
+      created_at: null,
+    },
+    {
+      store_id: STORE_A,
+      source_purchase_id: PURCHASE_A,
+      document_type: 'invoice',
+      original_name: 'Facture-fournisseur-ROYALE.pdf',
+      public_url: '/api/supplier-invoices/50000000-0000-4000-8000-000000000701/document',
+      created_at: '2026-08-19T10:00:00.000Z',
+    },
+    {
+      store_id: STORE_A,
+      match_purchase_id: PURCHASE_A,
+      document_type: 'other',
+      original_name: 'Annexe-qualite-fournisseur.pdf',
+      public_url: '/api/supplier-invoices/50000000-0000-4000-8000-000000000702/document',
+      created_at: '2026-08-20T10:00:00.000Z',
+    },
+    {
+      store_id: STORE_B,
+      purchase_id: PURCHASE_A,
+      document_type: 'purchase_bl',
+      original_name: 'BL-autre-magasin.pdf',
+      public_url: `/api/purchases/${PURCHASE_A}/document`,
+      created_at: '2026-08-16T08:53:00.000Z',
+    },
+  ];
+  const db = new FakeDb([rowA, rowB, incomplete], downstreamRows, supplierDocumentRows);
 
   const list = await listQualityEvidenceRecords(db, STORE_A, {});
   assert.equal(list.length, 2, 'Liste store A doit exclure store B');
@@ -224,6 +283,18 @@ async function main() {
   assert.equal(detail.payload.received_products[0].article_plu, '3063', 'Detail snapshot PLU manquant');
   assert.equal(detail.payload.received_products[0].traceability.latin_name, 'GADUS MORHUA', 'Detail traceabilite manquant');
   assert.equal(detail.payload.linked_documents.supplier_delivery_note, 'BL-REAL', 'BL fournisseur doit remonter depuis identification.bl_number');
+  assert.equal(detail.payload.linked_documents.supplier_documents.length, 3, 'Tous les documents fournisseur lies a l achat doivent etre listes et dedoublonnes');
+  assert.deepEqual(
+    detail.payload.linked_documents.supplier_documents.map((document) => document.type_label),
+    ['BL fournisseur', 'Facture fournisseur', 'Document fournisseur'],
+    'Les types documents fournisseur doivent etre libelles pour affichage'
+  );
+  assert.equal(detail.payload.linked_documents.supplier_documents[0].name, 'BL-fournisseur-ROYALE.pdf', 'Nom document fournisseur manquant');
+  assert.equal(detail.payload.linked_documents.supplier_documents[0].date, '2026-08-16T08:53:00.000Z', 'Date document achat liee manquante');
+  assert.equal(detail.payload.linked_documents.supplier_documents[0].url, `/api/purchases/${PURCHASE_A}/document`, 'Lien document achat existant manquant');
+  assert.equal(Object.keys(detail.payload.linked_documents.supplier_documents[0]).includes('storage_path'), false, 'La vue DDPP ne doit pas exposer storage_path');
+  assert.equal(Object.keys(detail.payload.linked_documents.supplier_documents[0]).includes('uploaded_by'), false, 'La vue DDPP ne doit pas exposer uploaded_by');
+  assert.equal(Object.keys(detail.payload.linked_documents.supplier_documents[0]).includes('id'), false, 'La vue DDPP ne doit pas exposer id document');
   assert.equal(detail.payload.linked_documents.downstream_delivery_notes.length, 2, 'Multi-destination aval doit etre listee');
   assert.equal(detail.payload.linked_documents.downstream_delivery_notes[0].delivered_client_name, 'E.LECLERC TEST', 'Client livre aval manquant');
   assert.equal(detail.payload.linked_documents.downstream_delivery_notes[0].delivery_note_reference, 'BL-AVAL-1', 'BL aval manquant');
@@ -294,7 +365,41 @@ async function main() {
     '50000000-0000-4000-8000-000000000205'
   );
   assert.equal(physicalWithoutDownstream.payload.linked_documents.supplier_delivery_note, 'BL-REAL', 'Reception physique doit conserver le BL fournisseur');
+  assert.deepEqual(physicalWithoutDownstream.payload.linked_documents.supplier_documents, [], 'Reception physique sans document achat doit rester lisible avec liste vide');
   assert.deepEqual(physicalWithoutDownstream.payload.linked_documents.downstream_delivery_notes, [], 'Reception sans BL aval doit rester lisible avec liste vide');
+
+  const directTradeWithDocument = await getQualityEvidenceRecord(
+    new FakeDb(
+      [sampleEvidence({
+        id: '50000000-0000-4000-8000-000000000206',
+        payload: {
+          ...sampleEvidence().payload,
+          identification: { ...sampleEvidence().payload.identification, purchase_id: PURCHASE_A },
+          reception_mode: 'direct_trade',
+          controls: {
+            overall_status: 'not_applicable',
+            temperature: { status: 'not_applicable' },
+            freshness: { status: 'not_applicable' },
+            packaging: { status: 'not_applicable' },
+            label_conformity: { status: 'not_applicable' },
+          },
+        },
+      })],
+      [],
+      supplierDocumentRows
+    ),
+    STORE_A,
+    '50000000-0000-4000-8000-000000000206'
+  );
+  assert.equal(directTradeWithDocument.payload.reception_mode, 'direct_trade', 'Le mode negoce technique doit rester inchange');
+  assert.equal(directTradeWithDocument.payload.controls.overall_status, 'not_applicable', 'Le statut technique not_applicable doit rester inchange');
+  assert.equal(directTradeWithDocument.payload.linked_documents.supplier_documents.length, 3, 'ENR-005 negoce doit exposer les documents fournisseur existants');
+
+  assert.deepEqual(
+    await listReceptionSupplierDocuments(new FakeDb([rowA], [], supplierDocumentRows), STORE_A, {}, {}),
+    [],
+    'Aucun document fournisseur ne doit etre invente sans purchase_id'
+  );
 
   const noLotIds = receptionLotIds(sampleEvidence({ payload: { identification: { bl_number: 'BL-NOLOT' }, received_products: [{}] } }).payload);
   assert.deepEqual(noLotIds, [], 'Reception sans lot_id ne doit pas inventer de lien aval');
@@ -338,6 +443,9 @@ async function main() {
     missing_document_photo: true,
     quality_control_rendering: true,
     linked_supplier_delivery_note: true,
+    linked_supplier_documents: true,
+    linked_supplier_documents_multi: true,
+    linked_supplier_documents_empty: true,
     downstream_delivery_notes: true,
     downstream_multi_destination: true,
     missing_downstream_delivery_note: true,
