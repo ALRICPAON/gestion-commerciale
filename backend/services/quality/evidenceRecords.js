@@ -125,6 +125,108 @@ function receptionLotIds(payload = {}) {
   return [...new Set(products.map((product) => text(product.lot_id)).filter(Boolean))];
 }
 
+function receptionPurchaseId(record = {}, payload = {}) {
+  const identification = jsonObject(payload.identification);
+  return text(identification.purchase_id)
+    || (record.source_record_type === 'purchases' ? text(record.source_record_id) : null)
+    || (record.source_table === 'purchases' ? text(record.source_id) : null);
+}
+
+const SUPPLIER_DOCUMENT_TYPE_LABELS = Object.freeze({
+  purchase_bl: 'BL fournisseur',
+  delivery_note: 'BL fournisseur',
+  invoice: 'Facture fournisseur',
+  supplier_invoice: 'Facture fournisseur',
+  credit_note: 'Avoir fournisseur',
+  supplier_credit_note: 'Avoir fournisseur',
+  other: 'Document fournisseur',
+});
+
+function supplierDocumentTypeLabel(type) {
+  return SUPPLIER_DOCUMENT_TYPE_LABELS[type] || humanizeCode(type || 'Document fournisseur');
+}
+
+function safeSupplierDocumentUrl(url) {
+  const cleanUrl = text(url);
+  if (!cleanUrl) return null;
+  if (cleanUrl.startsWith('/api/purchases/') || cleanUrl.startsWith('/api/supplier-invoices/')) return cleanUrl;
+  return null;
+}
+
+function publicSupplierDocument(row = {}) {
+  const label = supplierDocumentTypeLabel(row.document_type);
+  return {
+    type_label: label,
+    name: text(row.original_name) || label,
+    date: row.created_at || null,
+    url: safeSupplierDocumentUrl(row.public_url),
+  };
+}
+
+function dedupeSupplierDocuments(documents = []) {
+  const byKey = new Map();
+  for (const document of documents) {
+    const key = [document.type_label, document.name, document.url || ''].join('|');
+    if (!byKey.has(key)) {
+      byKey.set(key, document);
+      continue;
+    }
+    const existing = byKey.get(key);
+    if (!existing.date && document.date) existing.date = document.date;
+    if (!existing.url && document.url) existing.url = document.url;
+  }
+  return [...byKey.values()];
+}
+
+async function listReceptionSupplierDocuments(db, storeId, payload = {}, record = {}) {
+  const purchaseId = receptionPurchaseId(record, payload);
+  if (!purchaseId) return [];
+
+  const result = await db.query(
+    `WITH purchase_document AS (
+       SELECT
+         'purchase_bl'::text AS document_type,
+         p.source_document_original_name AS original_name,
+         CASE
+           WHEN p.source_document_storage_path IS NOT NULL THEN COALESCE(p.source_document_url, '/api/purchases/' || p.id::text || '/document')
+           ELSE p.source_document_url
+         END AS public_url,
+         p.source_document_uploaded_at AS created_at
+       FROM purchases p
+       WHERE p.id = $2::uuid
+         AND p.store_id = $1::uuid
+         AND (p.source_document_url IS NOT NULL OR p.source_document_storage_path IS NOT NULL)
+     ),
+     supplier_documents AS (
+       SELECT DISTINCT
+         d.document_type,
+         d.original_name,
+         d.public_url,
+         d.created_at
+       FROM supplier_invoice_documents d
+       LEFT JOIN supplier_invoices si
+         ON si.id = d.supplier_invoice_id
+        AND si.store_id = d.store_id
+       LEFT JOIN supplier_invoice_matches sim
+         ON sim.supplier_invoice_id = d.supplier_invoice_id
+        AND sim.store_id = d.store_id
+       WHERE d.store_id = $1::uuid
+         AND (
+           d.purchase_id = $2::uuid
+           OR si.source_purchase_id = $2::uuid
+           OR sim.purchase_id = $2::uuid
+         )
+     )
+     SELECT * FROM purchase_document
+     UNION ALL
+     SELECT * FROM supplier_documents
+     ORDER BY created_at DESC NULLS LAST, original_name ASC NULLS LAST`,
+    [storeId, purchaseId]
+  );
+
+  return dedupeSupplierDocuments(result.rows.map(publicSupplierDocument));
+}
+
 async function listReceptionDownstreamDeliveries(db, storeId, payload = {}) {
   const lotIds = receptionLotIds(payload);
   if (!lotIds.length) return [];
@@ -182,7 +284,10 @@ async function enrichReceptionLinkedDocuments(db, storeId, record) {
   if (!record || record.evidence_type !== 'reception_record') return record;
   const payload = jsonObject(record.payload);
   const identification = jsonObject(payload.identification);
-  const downstream = await listReceptionDownstreamDeliveries(db, storeId, payload);
+  const [supplierDocuments, downstream] = await Promise.all([
+    listReceptionSupplierDocuments(db, storeId, payload, record),
+    listReceptionDownstreamDeliveries(db, storeId, payload),
+  ]);
   return {
     ...record,
     payload: {
@@ -190,6 +295,7 @@ async function enrichReceptionLinkedDocuments(db, storeId, record) {
       linked_documents: {
         ...jsonObject(payload.linked_documents),
         supplier_delivery_note: text(identification.bl_number),
+        supplier_documents: supplierDocuments,
         downstream_delivery_notes: downstream,
       },
     },
@@ -282,7 +388,9 @@ module.exports = {
   enrichReceptionLinkedDocuments,
   getQualityEvidenceRecord,
   listReceptionDownstreamDeliveries,
+  listReceptionSupplierDocuments,
   listQualityEvidenceRecords,
   publicEvidence,
   receptionLotIds,
+  receptionPurchaseId,
 };

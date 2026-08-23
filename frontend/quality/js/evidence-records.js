@@ -297,11 +297,23 @@
 
   function renderLinkedDocuments(record) {
     const data = linkedDocuments(record);
+    const supplierDocuments = Array.isArray(data.supplier_documents) ? data.supplier_documents : [];
     const downstream = Array.isArray(data.downstream_delivery_notes) ? data.downstream_delivery_notes : [];
     const supplierBl = data.supplier_delivery_note || identification(record).bl_number || null;
-    const supplierRows = detailRows([
-      ['BL fournisseur', supplierBl],
-    ]);
+    const supplierRows = supplierBl ? detailRows([['BL fournisseur', supplierBl]]) : '';
+    const supplierDocumentsHtml = supplierDocuments.length ? `
+      <div class="quality-table-wrapper">
+        <table class="quality-table">
+          <thead><tr><th>Type</th><th>Document</th><th>Date</th><th>Action</th></tr></thead>
+          <tbody>${supplierDocuments.map((document) => `<tr>
+            <td>${escapeHtml(document.type_label || 'Document fournisseur')}</td>
+            <td>${escapeHtml(document.name || '-')}</td>
+            <td>${escapeHtml(formatDate(document.date))}</td>
+            <td>${document.url ? proofButton('Ouvrir', document.url, document.name) : '-'}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    ` : '<div class="quality-empty-state">Aucun document lié à cette réception.</div>';
     const downstreamHtml = downstream.length ? `
       <div class="quality-table-wrapper">
         <table class="quality-table">
@@ -316,7 +328,7 @@
         </table>
       </div>
     ` : '<div class="quality-empty-state">Aucun BL aval rattache a cette reception pour le moment.</div>';
-    return `${supplierRows}<h4>Destination / BL aval</h4>${downstreamHtml}`;
+    return `${supplierRows}<h4>Documents fournisseur</h4>${supplierDocumentsHtml}<h4>Destination / BL aval</h4>${downstreamHtml}`;
   }
 
   function renderTraceabilityTestTransformations(record) {
