@@ -120,6 +120,82 @@ function publicEvidence(row) {
   };
 }
 
+function receptionLotIds(payload = {}) {
+  const products = Array.isArray(payload.received_products) ? payload.received_products : [];
+  return [...new Set(products.map((product) => text(product.lot_id)).filter(Boolean))];
+}
+
+async function listReceptionDownstreamDeliveries(db, storeId, payload = {}) {
+  const lotIds = receptionLotIds(payload);
+  if (!lotIds.length) return [];
+
+  const result = await db.query(
+    `SELECT
+       l.lot_code,
+       l.supplier_lot_number,
+       sd.reference_number AS delivery_note_reference,
+       sd.document_date AS delivery_date,
+       COALESCE(sl.delivered_client_name_snapshot, sd.delivered_client_name_snapshot, delivered.name) AS delivered_client_name,
+       COALESCE(sl.delivered_client_code_snapshot, sd.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
+       COALESCE(sl.delivered_client_store_identifier_snapshot, sd.delivered_client_store_identifier, delivered.store_identifier) AS delivered_client_store_identifier,
+       SUM(sla.quantity)::numeric AS delivered_quantity
+     FROM sale_line_allocations sla
+     JOIN sales_lines sl
+       ON sl.id = sla.sales_line_id
+      AND sl.store_id = $1::uuid
+     JOIN sales_documents sd
+       ON sd.id = sl.sales_document_id
+      AND sd.store_id = sl.store_id
+      AND sd.document_type = 'DELIVERY_NOTE'
+     LEFT JOIN clients delivered
+       ON delivered.id = COALESCE(sl.delivered_client_id, sd.client_id)
+      AND delivered.store_id = sd.store_id
+     LEFT JOIN lots l
+       ON l.id = sla.lot_id
+      AND l.store_id = sd.store_id
+     WHERE sla.lot_id = ANY($2::uuid[])
+     GROUP BY
+       l.lot_code,
+       l.supplier_lot_number,
+       sd.reference_number,
+       sd.document_date,
+       COALESCE(sl.delivered_client_name_snapshot, sd.delivered_client_name_snapshot, delivered.name),
+       COALESCE(sl.delivered_client_code_snapshot, sd.delivered_client_code_snapshot, delivered.code),
+       COALESCE(sl.delivered_client_store_identifier_snapshot, sd.delivered_client_store_identifier, delivered.store_identifier)
+     ORDER BY sd.document_date ASC NULLS LAST, sd.reference_number ASC NULLS LAST, delivered_client_name ASC NULLS LAST, l.lot_code ASC NULLS LAST`,
+    [storeId, lotIds]
+  );
+
+  return result.rows.map((row) => ({
+    delivery_note_reference: text(row.delivery_note_reference),
+    delivery_date: row.delivery_date || null,
+    delivered_client_name: text(row.delivered_client_name),
+    delivered_client_code: text(row.delivered_client_code),
+    delivered_client_store_identifier: text(row.delivered_client_store_identifier),
+    lot_code: text(row.lot_code),
+    supplier_lot_number: text(row.supplier_lot_number),
+    delivered_quantity: row.delivered_quantity === undefined || row.delivered_quantity === null ? null : Number(row.delivered_quantity),
+  }));
+}
+
+async function enrichReceptionLinkedDocuments(db, storeId, record) {
+  if (!record || record.evidence_type !== 'reception_record') return record;
+  const payload = jsonObject(record.payload);
+  const identification = jsonObject(payload.identification);
+  const downstream = await listReceptionDownstreamDeliveries(db, storeId, payload);
+  return {
+    ...record,
+    payload: {
+      ...payload,
+      linked_documents: {
+        ...jsonObject(payload.linked_documents),
+        supplier_delivery_note: text(identification.bl_number),
+        downstream_delivery_notes: downstream,
+      },
+    },
+  };
+}
+
 function addFilter(where, params, value, sql) {
   if (value !== undefined && value !== null && value !== '') {
     params.push(value);
@@ -194,7 +270,8 @@ async function getQualityEvidenceRecord(db, storeId, evidenceId) {
      LIMIT 1`,
     [evidenceId, storeId]
   );
-  return result.rows[0] ? publicEvidence(result.rows[0]) : null;
+  if (!result.rows[0]) return null;
+  return enrichReceptionLinkedDocuments(db, storeId, publicEvidence(result.rows[0]));
 }
 
 module.exports = {
@@ -202,7 +279,10 @@ module.exports = {
   EVIDENCE_TYPE_LABELS,
   evidenceStatusLabel,
   evidenceTypeLabel,
+  enrichReceptionLinkedDocuments,
   getQualityEvidenceRecord,
+  listReceptionDownstreamDeliveries,
   listQualityEvidenceRecords,
   publicEvidence,
+  receptionLotIds,
 };
