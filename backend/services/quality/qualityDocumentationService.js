@@ -49,13 +49,44 @@ function assertAllowed(value, allowed, label) {
 function cleanDate(value, label) {
   if (value === undefined) return undefined;
   if (value === null || value === '') return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      const err = new Error(`${label} invalide: utiliser YYYY-MM-DD`);
+      err.status = 400;
+      throw err;
+    }
+    return value.toISOString().slice(0, 10);
+  }
   const normalized = cleanText(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) && /\bGMT\b|\d{4}-\d{2}-\d{2}T/.test(normalized)) {
+    const parsed = new Date(normalized);
+    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized) || Number.isNaN(Date.parse(`${normalized}T00:00:00Z`))) {
     const err = new Error(`${label} invalide: utiliser YYYY-MM-DD`);
     err.status = 400;
     throw err;
   }
   return normalized;
+}
+
+function cleanTimestamp(value, label) {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) {
+      const err = new Error(`${label} invalide: utiliser un timestamp ISO 8601`);
+      err.status = 400;
+      throw err;
+    }
+    return value.toISOString();
+  }
+  const normalized = cleanText(value);
+  const parsed = new Date(normalized);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+  const err = new Error(`${label} invalide: utiliser un timestamp ISO 8601`);
+  err.status = 400;
+  throw err;
 }
 
 async function getMissingItem(db, storeId, id) {
@@ -123,9 +154,9 @@ function sectionPayload(body = {}) {
     comment_internal: cleanText(body.comment_internal),
     regulatory_references: cleanText(body.regulatory_references),
     validated_by: cleanText(body.validated_by),
-    validated_at: cleanText(body.validated_at),
-    applicable_from: cleanText(body.applicable_from),
-    revision_due_at: cleanText(body.revision_due_at),
+    validated_at: cleanTimestamp(body.validated_at, 'Date de validation') ?? null,
+    applicable_from: cleanDate(body.applicable_from, 'Date d application') ?? null,
+    revision_due_at: cleanDate(body.revision_due_at, 'Date de revision') ?? null,
   };
 }
 
@@ -557,6 +588,8 @@ module.exports = {
   reopenMissingItem,
   resolveMissingItem,
   sanitizeHtml,
+  cleanDate,
+  cleanTimestamp,
   updateMissingItem,
   updateSection,
 };
