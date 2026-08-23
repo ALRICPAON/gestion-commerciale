@@ -42,8 +42,26 @@
   function compact(values) { return values.filter((value) => value !== undefined && value !== null && value !== ''); }
   function humanize(value) { return String(value || '-').split(/[_:.-]+/).filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' '); }
   function typeLabel(type) { return { reception_record: 'Reception fournisseur', traceability_test_record: 'Test de tracabilite' }[type] || humanize(type); }
-  function statusLabel(status) { return { draft: 'Brouillon', recorded: 'Enregistre', validated: 'Valide', rejected: 'Rejete', archived: 'Archive' }[status] || humanize(status); }
-  function controlStatusLabel(status) { return { conform: 'Conforme', non_conform: 'Non conforme', not_available_in_purchase_reception_flow: 'Non renseigne' }[status] || statusLabel(status); }
+  function statusLabel(status) {
+    return {
+      draft: 'Brouillon',
+      recorded: 'Enregistre',
+      validated: 'Valide',
+      rejected: 'Rejete',
+      archived: 'Archive',
+      direct_trade: 'Négoce',
+      physical: 'Reception physique',
+    }[status] || humanize(status);
+  }
+  function controlStatusLabel(status) {
+    return {
+      conform: 'Conforme',
+      non_conform: 'Non conforme',
+      direct_trade: 'Négoce',
+      not_applicable: 'Non applicable',
+      not_available_in_purchase_reception_flow: 'Non renseigne',
+    }[status] || statusLabel(status);
+  }
   function correctiveActionLabel(action) {
     return {
       supplier_return: 'Retour fournisseur',

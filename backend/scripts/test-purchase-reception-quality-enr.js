@@ -303,6 +303,10 @@ async function main() {
   assert(migration.includes('ADD COLUMN IF NOT EXISTS reception_mode'), 'Migration reception_mode manquante');
   assert(migration.includes("CHECK (reception_mode IN ('physical', 'direct_trade'))"), 'Contrainte reception_mode manquante');
 
+  const evidenceFrontend = read('frontend/quality/js/evidence-records.js');
+  assert(evidenceFrontend.includes("direct_trade: 'Négoce'"), 'Libelle affichage direct_trade doit etre Negoce');
+  assert(evidenceFrontend.includes("not_applicable: 'Non applicable'"), 'Libelle affichage not_applicable doit etre Non applicable');
+
   assert.throws(
     () => normalizeReceptionQualityControl({ overall_status: 'bad' }, { required: true }),
     /Statut global qualite invalide/,
