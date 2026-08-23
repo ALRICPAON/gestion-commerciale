@@ -5,6 +5,7 @@ const {
   MAX_ROWS,
   normalizeTableData,
   productFamiliesTable,
+  replaceTableCellText,
   renderTableBlock,
   renderTableHtml,
   storageConditionsTable,
@@ -63,5 +64,14 @@ mustThrow('refuse too many rows', () => normalizeTableData({
 assert.strictEqual(productFamiliesTable().title, 'Familles de produits');
 assert.strictEqual(storageConditionsTable().title, 'Conditions de conservation');
 assert(tableTemplates().product_families.table_data.rows.length >= 3);
+
+const targeted = replaceTableCellText(
+  table,
+  '0 a +2 C',
+  '0 a +2 C maximum'
+);
+assert.strictEqual(targeted.replacements, 1, 'replacement should only touch matching cells');
+assert.strictEqual(targeted.table_data.rows[0].cells.resultat, '0 a +2 C maximum');
+assert.strictEqual(targeted.table_data.rows[1].cells.resultat, "Conformes aux documents d'achat");
 
 console.log('quality document table tests ok');

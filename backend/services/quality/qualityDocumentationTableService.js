@@ -110,6 +110,28 @@ function normalizeTableData(input = {}) {
   };
 }
 
+function replaceTableCellText(tableData, oldText, newText) {
+  const data = normalizeTableData(tableData);
+  const from = String(oldText ?? '');
+  const to = String(newText ?? '');
+  if (!from) badRequest('Texte cellule source obligatoire');
+  let replacements = 0;
+  const rows = data.rows.map((row) => {
+    const cells = {};
+    data.columns.forEach((column) => {
+      const value = row.cells[column.id] || '';
+      if (value.includes(from)) {
+        replacements += 1;
+        cells[column.id] = value.replace(from, to);
+      } else {
+        cells[column.id] = value;
+      }
+    });
+    return { ...row, cells };
+  });
+  return { table_data: { ...data, rows }, replacements };
+}
+
 function renderTableHtml(tableData) {
   const data = normalizeTableData(tableData);
   const colgroup = data.columns.map((column) => {
@@ -419,6 +441,7 @@ module.exports = {
   listTables,
   normalizeTableData,
   productFamiliesTable,
+  replaceTableCellText,
   renderTableBlock,
   renderTableHtml,
   storageConditionsTable,
