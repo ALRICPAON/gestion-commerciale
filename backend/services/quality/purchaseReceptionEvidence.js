@@ -43,9 +43,10 @@ function jsonArray(value) {
   return [];
 }
 
-const CONTROL_STATUSES = new Set(['conform', 'non_conform']);
-const OVERALL_STATUSES = new Set(['conform', 'non_conform']);
+const CONTROL_STATUSES = new Set(['conform', 'non_conform', 'not_applicable']);
+const OVERALL_STATUSES = new Set(['conform', 'non_conform', 'direct_trade']);
 const CORRECTIVE_ACTIONS = new Set(['supplier_return', 'lot_isolation', 'accepted_with_reservation', 'destruction', 'other']);
+const RECEPTION_MODES = new Set(['physical', 'direct_trade']);
 
 function evidenceDate(receiptDate = null) {
   if (!receiptDate) return new Date();
@@ -79,6 +80,29 @@ function normalizeReceptionQualityControl(input, { required = false } = {}) {
     throw qualityControlError('Statut global qualite invalide');
   }
 
+  const receptionMode = text(input.reception_mode, overallStatus === 'direct_trade' ? 'direct_trade' : 'physical');
+  if (!RECEPTION_MODES.has(receptionMode)) {
+    throw qualityControlError('Mode de reception invalide');
+  }
+
+  if (overallStatus === 'direct_trade') {
+    return {
+      overall_status: 'direct_trade',
+      reception_mode: 'direct_trade',
+      temperature: { status: 'not_applicable', value_c: null },
+      freshness: { status: 'not_applicable' },
+      packaging: { status: 'not_applicable' },
+      label_conformity: { status: 'not_applicable' },
+      observation: text(input.observation, 'Negoce - livraison directe fournisseur vers client, sans passage physique dans l etablissement.'),
+      corrective_action: null,
+      corrective_action_comment: null,
+    };
+  }
+
+  if (receptionMode === 'direct_trade') {
+    throw qualityControlError('Le mode negoce exige le statut global negoce');
+  }
+
   const temperatureStatus = normalizeControlStatus(input.temperature, 'temperature');
   const temperatureValue = numberOrNull(input.temperature?.value_c);
   if (input.temperature?.value_c !== undefined && input.temperature?.value_c !== null && input.temperature?.value_c !== '' && temperatureValue === null) {
@@ -106,6 +130,7 @@ function normalizeReceptionQualityControl(input, { required = false } = {}) {
 
   return {
     overall_status: overallStatus,
+    reception_mode: 'physical',
     temperature: {
       status: temperatureStatus,
       value_c: temperatureValue,
@@ -121,6 +146,7 @@ function normalizeReceptionQualityControl(input, { required = false } = {}) {
 
 function fallbackReceptionControls(purchase) {
   return {
+    reception_mode: text(purchase.reception_mode, 'physical'),
     temperature: { status: 'not_available_in_purchase_reception_flow' },
     freshness: { status: 'not_available_in_purchase_reception_flow' },
     packaging: { status: 'not_available_in_purchase_reception_flow' },
@@ -174,9 +200,16 @@ function buildReceptionEvidencePayload({
   qualityControl = null,
 } = {}) {
   const normalizedQualityControl = normalizeReceptionQualityControl(qualityControl);
+  const receptionMode = normalizedQualityControl?.reception_mode || text(purchase.reception_mode, 'physical');
+  const receptionModeNotice = receptionMode === 'direct_trade'
+    ? 'Mode de reception : Negoce - livraison directe fournisseur vers client - sans passage physique dans l etablissement ALTA MAREE.'
+    : null;
   return {
     record_type: 'purchase_reception',
     record_version: 1,
+    reception_mode: receptionMode,
+    reception_mode_label: receptionMode === 'direct_trade' ? 'Negoce' : 'Reception physique',
+    reception_mode_notice: receptionModeNotice,
     identification: {
       purchase_id: purchase.id,
       purchase_type: text(purchase.purchase_type),
@@ -193,6 +226,9 @@ function buildReceptionEvidencePayload({
       source_document_url: text(purchase.source_document_url),
       source_document_original_name: text(purchase.source_document_original_name),
       source_document_mime_type: text(purchase.source_document_mime_type),
+      reception_mode: receptionMode,
+      reception_mode_label: receptionMode === 'direct_trade' ? 'Negoce' : 'Reception physique',
+      reception_mode_notice: receptionModeNotice,
     },
     received_products: lines.map(buildReceptionEvidenceLine),
     documents: {
@@ -210,6 +246,7 @@ function buildReceptionEventPayload({ purchase, supplier = null, lines = [] } = 
   return {
     purchase_id: purchase.id,
     purchase_type: text(purchase.purchase_type),
+    reception_mode: text(purchase.reception_mode, 'physical'),
     supplier_id: purchase.supplier_id,
     supplier_code: text(supplier?.code),
     supplier_name: text(supplier?.name || purchase.supplier_name),

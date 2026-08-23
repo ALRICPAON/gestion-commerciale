@@ -78,6 +78,7 @@ const lineSheetFeedback = document.getElementById("line-sheet-feedback");
 const qualityControlModal = document.getElementById("quality-control-modal");
 const qualityControlFeedback = document.getElementById("quality-control-feedback");
 const qualityControlNonconformFields = document.getElementById("quality-control-nonconform-fields");
+const qualityControlDirectTradeHelp = document.getElementById("quality-control-direct-trade-help");
 const qualityControlTemperatureStatus = document.getElementById("quality-control-temperature-status");
 const qualityControlTemperatureValueWrap = document.getElementById("quality-control-temperature-value-wrap");
 const qualityControlTemperatureValue = document.getElementById("quality-control-temperature-value");
@@ -205,8 +206,11 @@ function resetQualityControlModal() {
 }
 
 function refreshQualityControlModal() {
-  const nonConform = selectedQualityOverallStatus() === "non_conform";
+  const overallStatus = selectedQualityOverallStatus();
+  const nonConform = overallStatus === "non_conform";
+  const directTrade = overallStatus === "direct_trade";
   qualityControlNonconformFields?.classList.toggle("hidden", !nonConform);
+  qualityControlDirectTradeHelp?.classList.toggle("hidden", !directTrade);
   qualityControlTemperatureValueWrap?.classList.toggle("hidden", qualityControlTemperatureStatus?.value !== "non_conform");
 }
 
@@ -231,9 +235,24 @@ function conformQualityControlPayload() {
   };
 }
 
+function directTradeQualityControlPayload() {
+  return {
+    overall_status: "direct_trade",
+    reception_mode: "direct_trade",
+    temperature: { status: "not_applicable", value_c: null },
+    freshness: { status: "not_applicable" },
+    packaging: { status: "not_applicable" },
+    label_conformity: { status: "not_applicable" },
+    observation: "Negoce - livraison directe fournisseur vers client, sans passage physique dans l'etablissement.",
+    corrective_action: null,
+    corrective_action_comment: null,
+  };
+}
+
 function readQualityControlPayload() {
   const overallStatus = selectedQualityOverallStatus();
   if (overallStatus === "conform") return conformQualityControlPayload();
+  if (overallStatus === "direct_trade") return directTradeQualityControlPayload();
 
   const temperatureStatus = qualityControlTemperatureStatus?.value || "conform";
   const temperatureValueRaw = qualityControlTemperatureValue?.value ?? "";
@@ -1268,6 +1287,7 @@ async function validateReception() {
       method: "POST",
       body: JSON.stringify({
         receipt_date: purchaseReceiptDateInput.value || null,
+        reception_mode: qualityControl.reception_mode || "physical",
         quality_control: qualityControl,
       }),
     });

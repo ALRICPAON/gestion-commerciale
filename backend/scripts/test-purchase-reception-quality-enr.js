@@ -262,19 +262,27 @@ function lines() {
 
 async function main() {
   const frontend = read('frontend/js/purchase-detail.js');
+  const frontendHtml = read('frontend/purchase-detail.html');
   const server = read('backend/server.js');
   const route = read('backend/routes/purchaseReceptionUpgrade.js');
   const service = read('backend/services/quality/purchaseReceptionEvidence.js');
+  const migration = read('backend/db/gestion-commerciale/20260822_purchase_reception_mode.sql');
 
   assert(frontend.includes('apiFetch(`/api/purchases/${purchaseId}/validate-reception`'), 'Frontend validation reception ne cible pas endpoint attendu');
   assert(frontend.includes('requestReceptionQualityControl'), 'Popup controle qualite reception manquante');
   assert(frontend.includes('overall_status: "conform"'), 'Payload conforme par defaut manquant');
+  assert(frontendHtml.includes('value="direct_trade"'), 'Option frontend Negoce manquante');
+  assert(frontend.includes('directTradeQualityControlPayload'), 'Payload frontend Negoce manquant');
+  assert(frontend.includes('status: "not_applicable"'), 'Negoce doit envoyer des controles non applicables');
+  assert(frontend.includes('reception_mode: qualityControl.reception_mode || "physical"'), 'Mode de reception non envoye au backend');
   assert(frontend.includes('quality_control: qualityControl'), 'Payload quality_control non envoye au backend');
   assert(frontend.includes('corrective_action: correctiveAction'), 'Action corrective non collectee');
   assert(frontend.includes('temperatureValueRaw === "" ? null : Number(temperatureValueRaw)'), 'Temperature mesuree doit rester facultative et numerique');
   assert(server.indexOf('purchaseReceptionUpgradeRoutes') < server.indexOf('purchasesRoutes'), 'La route reception upgrade doit etre montee avant routes/purchases');
   assert(route.includes("router.post('/purchases/:id/validate-reception'"), 'Endpoint backend reel manquant');
   assert(route.includes('normalizeReceptionQualityControl(req.body.quality_control, { required: true })'), 'Validation backend quality_control obligatoire manquante');
+  assert(route.includes('receptionModeFromRequest(req.body, qualityControl)'), 'Derivation mode reception manquante');
+  assert(route.includes('reception_mode = $4'), 'Persistance reception_mode manquante');
   assert(route.includes('SELECT * FROM purchases WHERE id = $1 AND store_id = $2 FOR UPDATE'), 'Verrou purchase FOR UPDATE manquant');
   assert(route.includes('INSERT INTO lots'), 'Creation lots manquante dans le flux reception');
   assert(route.includes('INSERT INTO stock_movements'), 'Creation stock_movements manquante dans le flux reception');
@@ -285,10 +293,19 @@ async function main() {
   assert(!route.includes('quality_temperature_records'), 'La PR ne doit pas recreer/brancher temperature');
   assert(service.includes("eventType: 'purchase_received'"), 'Event type purchase_received manquant');
   assert(service.includes("evidenceType: 'reception_record'"), 'Evidence type reception_record manquant');
+  assert(service.includes("'direct_trade'"), 'Mode direct_trade absent du service qualite');
+  assert(service.includes("'not_applicable'"), 'Statut not_applicable absent du service qualite');
+  assert(service.includes('reception_mode_notice'), 'Mention Negoce explicite manquante dans ENR');
   assert(service.includes("evidenceStatus: 'recorded'"), 'Evidence status recorded attendu');
   assert(service.includes("sourceRecordType: 'purchases'"), 'Evidence idempotence source purchases attendue');
   assert(service.includes("sourceDiscriminator: 'reception_record'"), 'Evidence discriminator reception_record attendu');
   assert(service.includes("CORRECTIVE_ACTIONS = new Set(['supplier_return', 'lot_isolation', 'accepted_with_reservation', 'destruction', 'other'])"), 'Actions correctives attendues manquantes');
+  assert(migration.includes('ADD COLUMN IF NOT EXISTS reception_mode'), 'Migration reception_mode manquante');
+  assert(migration.includes("CHECK (reception_mode IN ('physical', 'direct_trade'))"), 'Contrainte reception_mode manquante');
+
+  const evidenceFrontend = read('frontend/quality/js/evidence-records.js');
+  assert(evidenceFrontend.includes("direct_trade: 'Négoce'"), 'Libelle affichage direct_trade doit etre Negoce');
+  assert(evidenceFrontend.includes("not_applicable: 'Non applicable'"), 'Libelle affichage not_applicable doit etre Non applicable');
 
   assert.throws(
     () => normalizeReceptionQualityControl({ overall_status: 'bad' }, { required: true }),
@@ -314,6 +331,11 @@ async function main() {
     () => normalizeReceptionQualityControl({ overall_status: 'non_conform', temperature: { status: 'non_conform', value_c: 'chaud' }, freshness: { status: 'conform' }, packaging: { status: 'conform' }, label_conformity: { status: 'conform' }, observation: 'Temperature elevee', corrective_action: 'lot_isolation' }, { required: true }),
     /Temperature mesuree invalide/,
     'Temperature non numerique doit etre refusee'
+  );
+  assert.throws(
+    () => normalizeReceptionQualityControl({ overall_status: 'conform', reception_mode: 'direct_trade', temperature: { status: 'conform' }, freshness: { status: 'conform' }, packaging: { status: 'conform' }, label_conformity: { status: 'conform' } }, { required: true }),
+    /Le mode negoce exige le statut global negoce/,
+    'Negoce ne doit pas pouvoir etre valide comme conforme physique'
   );
 
   const db = new FakeQualityDb();
@@ -421,6 +443,39 @@ async function main() {
   assert.equal(packagingDb.evidence[0].payload.controls.temperature.value_c, null, 'Temperature facultative si emballage non conforme');
   assert.equal(packagingDb.evidence[0].payload.controls.packaging.status, 'non_conform', 'Emballage non conforme attendu');
 
+  const directTradeDb = new FakeQualityDb();
+  await createReceptionQualityEvidence({
+    db: directTradeDb,
+    purchase: { ...purchase(), reception_mode: 'direct_trade' },
+    supplier,
+    lines: lines(),
+    userId: USER_ID,
+    receiptDate: '2026-08-16',
+    receivedAt: new Date(RECEIVED_AT),
+    qualityControl: {
+      overall_status: 'direct_trade',
+      reception_mode: 'direct_trade',
+      temperature: { status: 'not_applicable', value_c: null },
+      freshness: { status: 'not_applicable' },
+      packaging: { status: 'not_applicable' },
+      label_conformity: { status: 'not_applicable' },
+    },
+  });
+  const directTradePayload = directTradeDb.evidence[0].payload;
+  assert.equal(directTradePayload.reception_mode, 'direct_trade', 'Mode Negoce manquant dans ENR');
+  assert.equal(directTradePayload.reception_mode_label, 'Negoce', 'Libelle Negoce manquant dans ENR');
+  assert(directTradePayload.reception_mode_notice.includes('livraison directe fournisseur vers client'), 'Mention livraison directe manquante');
+  assert.equal(directTradePayload.identification.reception_mode, 'direct_trade', 'Mode Negoce manquant dans identification');
+  assert.equal(directTradePayload.controls.overall_status, 'direct_trade', 'Statut global Negoce manquant');
+  assert.equal(directTradePayload.controls.temperature.status, 'not_applicable', 'Temperature doit etre non applicable en Negoce');
+  assert.equal(directTradePayload.controls.temperature.value_c, null, 'Temperature ne doit pas etre inventee en Negoce');
+  assert.equal(directTradePayload.controls.freshness.status, 'not_applicable', 'Fraicheur doit etre non applicable en Negoce');
+  assert.equal(directTradePayload.controls.packaging.status, 'not_applicable', 'Emballage doit etre non applicable en Negoce');
+  assert.equal(directTradePayload.controls.label_conformity.status, 'not_applicable', 'Etiquetage doit etre non applicable en Negoce');
+  assert.equal(directTradePayload.received_products.length, 2, 'Negoce doit conserver les lignes recues');
+  assert.equal(directTradePayload.received_products[0].supplier_lot_number, 'LOT-SUP-1', 'Negoce doit conserver le lot fournisseur');
+  assert.equal(directTradePayload.received_products[0].lot_code, 'SAUM-26228-ABC-000401', 'Negoce doit conserver le lot ALTA');
+
   const replay = await createReceptionQualityEvidence({
     db,
     purchase: purchase(),
@@ -476,6 +531,8 @@ async function main() {
     conform_quality_control: true,
     non_conform_temperature_control: true,
     non_conform_packaging_without_temperature: true,
+    direct_trade_reception_mode: true,
+    direct_trade_controls_not_applicable: true,
     backend_validation: true,
   }, null, 2));
 }

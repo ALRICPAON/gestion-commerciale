@@ -307,6 +307,12 @@ function qualityControlSummary(qualityControl = {}, receivedLines = []) {
   ].filter(Boolean).join('\n');
 }
 
+function receptionModeFromRequest(body = {}, qualityControl = {}) {
+  const raw = String(body.reception_mode || qualityControl.reception_mode || '').trim();
+  if (raw === 'direct_trade' || qualityControl.overall_status === 'direct_trade') return 'direct_trade';
+  return 'physical';
+}
+
 router.get('/purchases/:id/document', authenticateToken, attachDbContext, async (req, res) => {
   try {
     const result = await req.dbPool.query(
@@ -597,6 +603,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
   try {
     await client.query('BEGIN');
     const qualityControl = normalizeReceptionQualityControl(req.body.quality_control, { required: true });
+    const receptionMode = receptionModeFromRequest(req.body, qualityControl);
     const p = await client.query('SELECT * FROM purchases WHERE id = $1 AND store_id = $2 FOR UPDATE', [req.params.id, req.user.store_id]);
     if (!p.rows.length) {
       await client.query('ROLLBACK');
@@ -731,11 +738,12 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
       `UPDATE purchases
        SET status = 'received_pending_invoice',
            purchase_type = CASE WHEN purchase_type = 'order' THEN 'direct_bl' ELSE purchase_type END,
+           reception_mode = $4,
            receipt_date = COALESCE($1::date, CURRENT_DATE),
            updated_by = $2,
            updated_at = NOW()
        WHERE id = $3`,
-      [req.body.receipt_date || null, req.user.id, purchase.id]
+      [req.body.receipt_date || null, req.user.id, purchase.id, receptionMode]
     );
 
     await recomputePurchaseTotals(client, purchase.id);
@@ -746,6 +754,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
         ...purchase,
         status: 'received_pending_invoice',
         receipt_date: effectiveReceiptDate,
+        reception_mode: receptionMode,
       },
       supplier: supplier.rows[0] || null,
       lines: receivedLines,
@@ -756,7 +765,7 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
     });
 
     let qualityNonConformity = null;
-    if (qualityControl.overall_status === 'non_conform' && qualityControl.corrective_action === 'lot_isolation') {
+    if (receptionMode !== 'direct_trade' && qualityControl.overall_status === 'non_conform' && qualityControl.corrective_action === 'lot_isolation') {
       qualityNonConformity = await createNonConformity(client, purchase.store_id, req.user.id, {
         origin_type: 'purchase_reception',
         origin_record_id: purchase.id,
@@ -803,7 +812,10 @@ router.post('/purchases/:id/validate-reception', authenticateToken, attachDbCont
       quality_non_conformity_id: qualityNonConformity?.id || null,
       quality_event_created: qualityReception.eventCreated,
       quality_evidence_created: qualityReception.evidenceCreated,
-      message: `Reception validee : ${createdLots} lot(s) cree(s), en attente facture fournisseur`,
+      reception_mode: receptionMode,
+      message: receptionMode === 'direct_trade'
+        ? `Reception negoce validee : ${createdLots} lot(s) cree(s), livraison directe fournisseur-client, en attente facture fournisseur`
+        : `Reception validee : ${createdLots} lot(s) cree(s), en attente facture fournisseur`,
     });
   } catch (error) {
     await client.query('ROLLBACK');
