@@ -6,8 +6,10 @@ const {
   evidenceStatusLabel,
   evidenceTypeLabel,
   getQualityEvidenceRecord,
+  listReceptionDownstreamDeliveries,
   listQualityEvidenceRecords,
   publicEvidence,
+  receptionLotIds,
 } = require('../services/quality/evidenceRecords');
 
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -56,6 +58,7 @@ function sampleEvidence(overrides = {}) {
           received_colis: 1,
           received_quantity: 3,
           price_unit: 'kg',
+          lot_id: '50000000-0000-4000-8000-000000000401',
           lot_code: 'LOT-ALTA',
           supplier_lot_number: 'LOT-SUP',
           dlc: null,
@@ -77,13 +80,20 @@ function sampleEvidence(overrides = {}) {
 }
 
 class FakeDb {
-  constructor(rows) {
+  constructor(rows, downstreamRows = []) {
     this.rows = rows;
+    this.downstreamRows = downstreamRows;
     this.calls = [];
   }
 
   async query(sql, params = []) {
     this.calls.push({ sql: String(sql), params });
+    if (String(sql).includes('FROM sale_line_allocations sla')) {
+      const [storeId, lotIds] = params;
+      return {
+        rows: this.downstreamRows.filter((row) => row.store_id === storeId && lotIds.includes(row.lot_id)),
+      };
+    }
     if (String(sql).includes('LIMIT $')) {
       const storeId = params[0];
       const searchParam = params.find((value) => typeof value === 'string' && value.startsWith('%'));
@@ -124,7 +134,7 @@ async function main() {
   assert(page.includes('quality-document-links.js'), 'Mecanisme documentaire Qualite non charge');
   assert(page.includes('evidence-record-export-csv'), 'Export CSV Enregistrements manquant');
   assert(page.includes('traceability_test_record'), 'Filtre test de tracabilite manquant');
-  assert(page.includes('evidence-records.js?v=4'), 'Cache-buster evidence-records attendu');
+  assert(page.includes('evidence-records.js?v=5'), 'Cache-buster evidence-records attendu');
   assert(page.includes('<th>Date/heure</th>'), 'Colonne Date/heure manquante');
   assert(page.includes('<th>Type</th>'), 'Colonne Type manquante');
   assert(page.includes('<th>Reference</th>'), 'Colonne Reference manquante');
@@ -145,6 +155,9 @@ async function main() {
   assert(frontend.includes('DOCUMENT_TARGETS_BY_TYPE'), 'Couche mapping documentaire maintenable manquante');
   assert(frontend.includes('QualityDocumentLinks.render'), 'Documents applicables non reutilises');
   assert(frontend.includes('renderProductsTable'), 'Table produits recus manquante');
+  assert(frontend.includes('renderLinkedDocuments'), 'Bloc documents lies reception manquant');
+  assert(frontend.includes('BL fournisseur'), 'Libelle BL fournisseur manquant');
+  assert(frontend.includes('Destination / BL aval'), 'Bloc destination aval manquant');
   assert(frontend.includes('Tracabilite'), 'Bloc tracabilite manquant');
   assert(frontend.includes('Documents / preuves'), 'Bloc documents/preuves manquant');
   assert(frontend.includes('openProtectedUrl'), 'Ouverture securisee des preuves manquante');
@@ -169,7 +182,33 @@ async function main() {
     evidence_type: 'unknown_future_type',
     payload: {},
   });
-  const db = new FakeDb([rowA, rowB, incomplete]);
+  const downstreamRows = [
+    {
+      store_id: STORE_A,
+      lot_id: '50000000-0000-4000-8000-000000000401',
+      lot_code: 'LOT-ALTA',
+      supplier_lot_number: 'LOT-SUP',
+      delivery_note_reference: 'BL-AVAL-1',
+      delivery_date: '2026-08-17',
+      delivered_client_name: 'E.LECLERC TEST',
+      delivered_client_code: 'CLI-1',
+      delivered_client_store_identifier: 'MAG-01',
+      delivered_quantity: '2',
+    },
+    {
+      store_id: STORE_A,
+      lot_id: '50000000-0000-4000-8000-000000000401',
+      lot_code: 'LOT-ALTA',
+      supplier_lot_number: 'LOT-SUP',
+      delivery_note_reference: 'BL-AVAL-2',
+      delivery_date: '2026-08-18',
+      delivered_client_name: 'INTERMARCHE TEST',
+      delivered_client_code: 'CLI-2',
+      delivered_client_store_identifier: 'MAG-02',
+      delivered_quantity: '1',
+    },
+  ];
+  const db = new FakeDb([rowA, rowB, incomplete], downstreamRows);
 
   const list = await listQualityEvidenceRecords(db, STORE_A, {});
   assert.equal(list.length, 2, 'Liste store A doit exclure store B');
@@ -184,6 +223,13 @@ async function main() {
   assert(detail, 'Detail preuve existante introuvable');
   assert.equal(detail.payload.received_products[0].article_plu, '3063', 'Detail snapshot PLU manquant');
   assert.equal(detail.payload.received_products[0].traceability.latin_name, 'GADUS MORHUA', 'Detail traceabilite manquant');
+  assert.equal(detail.payload.linked_documents.supplier_delivery_note, 'BL-REAL', 'BL fournisseur doit remonter depuis identification.bl_number');
+  assert.equal(detail.payload.linked_documents.downstream_delivery_notes.length, 2, 'Multi-destination aval doit etre listee');
+  assert.equal(detail.payload.linked_documents.downstream_delivery_notes[0].delivered_client_name, 'E.LECLERC TEST', 'Client livre aval manquant');
+  assert.equal(detail.payload.linked_documents.downstream_delivery_notes[0].delivery_note_reference, 'BL-AVAL-1', 'BL aval manquant');
+  assert.equal(detail.payload.linked_documents.downstream_delivery_notes[0].delivery_date, '2026-08-17', 'Date livraison aval manquante');
+  assert.equal(detail.payload.linked_documents.downstream_delivery_notes[0].delivered_quantity, 2, 'Quantite livree aval manquante');
+  assert.equal(Object.keys(detail.payload.linked_documents.downstream_delivery_notes[0]).includes('lot_id'), false, 'La vue DDPP ne doit pas exposer lot_id dans les documents lies');
 
   const missing = await getQualityEvidenceRecord(db, STORE_A, '50000000-0000-4000-8000-000000009999');
   assert.equal(missing, null, 'Preuve inexistante doit retourner null');
@@ -193,6 +239,7 @@ async function main() {
 
   const filtered = await listQualityEvidenceRecords(db, STORE_A, { evidence_type: 'reception_record', search: 'cabil' });
   assert.equal(filtered.length, 1, 'Filtre type/recherche doit trouver reception_record');
+  assert.equal(filtered[0].payload.linked_documents, undefined, 'La liste ne doit pas enrichir chaque ligne avec les BL aval');
 
   const partial = publicEvidence(incomplete);
   assert.equal(partial.reference_label, 'purchases', 'Payload incomplet doit garder un fallback lisible');
@@ -228,6 +275,30 @@ async function main() {
   }));
   assert.equal(controlledEvidence.payload.controls.temperature.value_c, 6, 'Temperature mesuree doit rester dans le snapshot');
   assert.equal(controlledEvidence.payload.controls.corrective_action, 'lot_isolation', 'Action corrective doit rester dans le snapshot');
+
+  const physicalWithoutDownstream = await getQualityEvidenceRecord(
+    new FakeDb([sampleEvidence({
+      id: '50000000-0000-4000-8000-000000000205',
+      payload: {
+        ...sampleEvidence().payload,
+        controls: {
+          overall_status: 'conform',
+          temperature: { status: 'conform' },
+          freshness: { status: 'conform' },
+          packaging: { status: 'conform' },
+          label_conformity: { status: 'conform' },
+        },
+      },
+    })]),
+    STORE_A,
+    '50000000-0000-4000-8000-000000000205'
+  );
+  assert.equal(physicalWithoutDownstream.payload.linked_documents.supplier_delivery_note, 'BL-REAL', 'Reception physique doit conserver le BL fournisseur');
+  assert.deepEqual(physicalWithoutDownstream.payload.linked_documents.downstream_delivery_notes, [], 'Reception sans BL aval doit rester lisible avec liste vide');
+
+  const noLotIds = receptionLotIds(sampleEvidence({ payload: { identification: { bl_number: 'BL-NOLOT' }, received_products: [{}] } }).payload);
+  assert.deepEqual(noLotIds, [], 'Reception sans lot_id ne doit pas inventer de lien aval');
+  assert.deepEqual(await listReceptionDownstreamDeliveries(db, STORE_A, { received_products: [{}] }), [], 'Aucun appel aval utile sans lot_id');
 
   const traceabilityRecord = publicEvidence(sampleEvidence({
     id: TRACE_EVIDENCE,
@@ -266,6 +337,10 @@ async function main() {
     multiple_product_rows: true,
     missing_document_photo: true,
     quality_control_rendering: true,
+    linked_supplier_delivery_note: true,
+    downstream_delivery_notes: true,
+    downstream_multi_destination: true,
+    missing_downstream_delivery_note: true,
     applicable_documents_block: true,
     readonly_actions: true,
     csv_export: true,

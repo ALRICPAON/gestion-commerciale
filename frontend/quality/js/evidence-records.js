@@ -75,6 +75,7 @@
   function identification(record) { return payload(record).identification || {}; }
   function products(record) { return Array.isArray(payload(record).received_products) ? payload(record).received_products : []; }
   function documents(record) { return payload(record).documents || {}; }
+  function linkedDocuments(record) { return payload(record).linked_documents || {}; }
   function controls(record) { return payload(record).controls || {}; }
   function controlLabel(status) { return !status ? 'Non renseigne' : controlStatusLabel(status); }
   function testResultLabel(result) { return { conform: 'Conforme', non_conform: 'Non conforme' }[result] || humanize(result); }
@@ -294,6 +295,30 @@
     return `<div class="quality-actions">${actions.join('')}</div>`;
   }
 
+  function renderLinkedDocuments(record) {
+    const data = linkedDocuments(record);
+    const downstream = Array.isArray(data.downstream_delivery_notes) ? data.downstream_delivery_notes : [];
+    const supplierBl = data.supplier_delivery_note || identification(record).bl_number || null;
+    const supplierRows = detailRows([
+      ['BL fournisseur', supplierBl],
+    ]);
+    const downstreamHtml = downstream.length ? `
+      <div class="quality-table-wrapper">
+        <table class="quality-table">
+          <thead><tr><th>Destination</th><th>BL aval</th><th>Date livraison</th><th>Lot</th><th>Quantite livree</th></tr></thead>
+          <tbody>${downstream.map((row) => `<tr>
+            <td>${escapeHtml(compact([row.delivered_client_name, row.delivered_client_store_identifier]).join(' - ') || '-')}</td>
+            <td>${escapeHtml(row.delivery_note_reference || '-')}</td>
+            <td>${escapeHtml(row.delivery_date || '-')}</td>
+            <td>${escapeHtml(compact([row.lot_code, row.supplier_lot_number]).join(' / ') || '-')}</td>
+            <td>${escapeHtml(row.delivered_quantity ?? '-')}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    ` : '<div class="quality-empty-state">Aucun BL aval rattache a cette reception pour le moment.</div>';
+    return `${supplierRows}<h4>Destination / BL aval</h4>${downstreamHtml}`;
+  }
+
   function renderTraceabilityTestTransformations(record) {
     const rows = Array.isArray(payload(record).transformations) ? payload(record).transformations : [];
     if (!rows.length) return '<div class="quality-empty-state">Aucune transformation rattachee dans le snapshot du test.</div>';
@@ -423,6 +448,7 @@
       return;
     }
     const id = identification(record);
+    const data = payload(record);
     els.detail.classList.remove('hidden');
     els.detail.innerHTML = `
       <div class="quality-section-header">
@@ -437,13 +463,19 @@
         <h4>Identification</h4>
         ${detailRows([
           ['Type', record.type_label || typeLabel(record.evidence_type)],
+          ['Mode', id.reception_mode_label || data.reception_mode_label],
+          ['Mention', id.reception_mode_notice || data.reception_mode_notice],
           ['Date/heure reelle', id.received_at || record.occurred_at || record.evidence_at],
           ['Date metier reception', id.receipt_date],
           ['Fournisseur', id.supplier_name],
           ['Code fournisseur', id.supplier_code],
-          ['N BL', id.bl_number],
+          ['BL fournisseur', id.bl_number],
           ['Operateur / validateur', record.recorded_by_email || id.validated_by],
         ])}
+      </section>
+      <section>
+        <h4>Documents lies</h4>
+        ${renderLinkedDocuments(record)}
       </section>
       <section>
         <h4>Produits recus</h4>
