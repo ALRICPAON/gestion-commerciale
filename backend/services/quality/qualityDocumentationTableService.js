@@ -132,6 +132,40 @@ function replaceTableCellText(tableData, oldText, newText) {
   return { table_data: { ...data, rows }, replacements };
 }
 
+function cellLocator(data, locator = {}) {
+  const row = locator.row_id
+    ? data.rows.find((item) => item.id === locator.row_id)
+    : data.rows[Number(locator.row_index)];
+  if (!row) badRequest('Ligne tableau introuvable');
+  const column = locator.column_id
+    ? data.columns.find((item) => item.id === locator.column_id)
+    : locator.column_label
+      ? data.columns.find((item) => item.label === locator.column_label)
+      : data.columns[Number(locator.column_index)];
+  if (!column) badRequest('Colonne tableau introuvable');
+  return { row, column };
+}
+
+function updateTableDataCell(tableData, locator = {}) {
+  const data = normalizeTableData(tableData);
+  const { row, column } = cellLocator(data, locator);
+  const before = row.cells[column.id] || '';
+  if (Object.prototype.hasOwnProperty.call(locator, 'expected_value') && String(locator.expected_value ?? '') !== before) {
+    const err = new Error('Valeur cellule inattendue: modification refusee');
+    err.status = 409;
+    throw err;
+  }
+  const nextValue = cleanText(locator.value, MAX_CELL_LENGTH);
+  const rows = data.rows.map((item) => (item.id === row.id
+    ? { ...item, cells: { ...item.cells, [column.id]: nextValue } }
+    : item));
+  return {
+    table_data: { ...data, rows },
+    before: { row_id: row.id, column_id: column.id, value: before },
+    after: { row_id: row.id, column_id: column.id, value: nextValue },
+  };
+}
+
 function renderTableHtml(tableData) {
   const data = normalizeTableData(tableData);
   const colgroup = data.columns.map((column) => {
@@ -368,6 +402,134 @@ async function updateTable(db, storeId, tableId, userId, body = {}) {
   return { ...table, block_html: renderTableBlock(table) };
 }
 
+async function updateTableCell(db, storeId, tableId, userId, body = {}) {
+  const beforeResult = await db.query('SELECT * FROM quality_document_tables WHERE id = $1 AND store_id = $2 AND archived_at IS NULL LIMIT 1', [tableId, storeId]);
+  const before = beforeResult.rows[0];
+  if (!before) return null;
+  const update = updateTableDataCell(before.table_data, body);
+  const updated = await updateTable(db, storeId, tableId, userId, {
+    table_data: update.table_data,
+    table_type: before.table_type,
+  });
+  return {
+    table_id: tableId,
+    section_id: before.section_id,
+    before: update.before,
+    after: update.after,
+    table: updated,
+  };
+}
+
+async function nextBlockPosition(db, storeId, sectionId) {
+  const result = await db.query(
+    'SELECT COALESCE(MAX(position), 0) + 10 AS position FROM quality_document_blocks WHERE store_id = $1 AND chapter_id = $2',
+    [storeId, sectionId]
+  );
+  return Number(result.rows[0]?.position || 10);
+}
+
+async function relinkTable(db, storeId, tableId, userId, body = {}) {
+  const beforeResult = await db.query('SELECT * FROM quality_document_tables WHERE id = $1 AND store_id = $2 AND archived_at IS NULL LIMIT 1', [tableId, storeId]);
+  const before = beforeResult.rows[0];
+  if (!before) return null;
+  const targetSectionId = body.chapter_id || body.section_id || before.section_id;
+  const target = await getSection(db, storeId, targetSectionId);
+  if (!target || target.archived_at) badRequest('Chapitre cible introuvable');
+  const source = await getSection(db, storeId, before.section_id);
+  const blockRefs = await db.query(
+    `SELECT *
+     FROM quality_document_blocks
+     WHERE store_id = $1
+       AND content->>'table_id' = $2
+     ORDER BY created_at ASC`,
+    [storeId, tableId]
+  );
+  if (blockRefs.rows.length > 1) {
+    const err = new Error('Rattachements multiples existants: relink refuse');
+    err.status = 409;
+    throw err;
+  }
+  const existingBlock = blockRefs.rows[0] || null;
+  const tableBlockId = body.block_id || before.block_id || `table-${crypto.randomUUID()}`;
+  const blockRefId = existingBlock?.id || crypto.randomUUID();
+  const position = Number.isFinite(Number(body.position)) ? Number(body.position) : existingBlock?.position || await nextBlockPosition(db, storeId, target.id);
+  const afterTableData = normalizeTableData(before.table_data);
+
+  if (body.dry_run === true) {
+    return {
+      dry_run: true,
+      table_id: tableId,
+      before: { section_id: before.section_id, block_id: before.block_id, block_ref_id: existingBlock?.id || null, position: existingBlock?.position || null },
+      after: { section_id: target.id, block_id: tableBlockId, block_ref_id: blockRefId, position },
+    };
+  }
+
+  const updatedTableResult = await db.query(
+    `UPDATE quality_document_tables
+     SET section_id = $3,
+         collection_id = $4,
+         block_id = $5,
+         updated_by = $6,
+         updated_at = now()
+     WHERE id = $1 AND store_id = $2 AND archived_at IS NULL
+     RETURNING *`,
+    [tableId, storeId, target.id, target.collection_id, tableBlockId, userId]
+  );
+  const table = updatedTableResult.rows[0];
+  if (existingBlock) {
+    await db.query(
+      `UPDATE quality_document_blocks
+       SET collection_id = $3,
+           chapter_id = $4,
+           position = $5,
+           title = $6,
+           content = $7::jsonb,
+           is_visible = COALESCE($8, is_visible),
+           updated_by = $9,
+           updated_at = now()
+       WHERE id = $1 AND store_id = $2`,
+      [existingBlock.id, storeId, target.collection_id, target.id, position, table.title, JSON.stringify({ table_id: table.id, source: 'quality_document_tables' }), body.is_visible, userId]
+    );
+  } else {
+    await db.query(
+      `INSERT INTO quality_document_blocks
+       (id, store_id, collection_id, chapter_id, block_type, position, title, content, is_visible, created_by, updated_by)
+       VALUES ($1,$2,$3,$4,'document_table',$5,$6,$7::jsonb,$8,$9,$9)`,
+      [blockRefId, storeId, target.collection_id, target.id, position, table.title, JSON.stringify({ table_id: table.id, source: 'quality_document_tables' }), body.is_visible !== false, userId]
+    );
+  }
+
+  if (source && source.id !== target.id) {
+    const sourceHtml = removeTableBlock(source.content_html, tableId);
+    const updatedSource = await db.query(
+      `UPDATE quality_documentation_sections
+       SET content_html = $3, content_text = $4, updated_by = $5, updated_at = now()
+       WHERE id = $1 AND store_id = $2
+       RETURNING *`,
+      [source.id, storeId, sourceHtml, stripHtml(sourceHtml), userId]
+    );
+    await recordSectionVersion(db, storeId, updatedSource.rows[0], userId, `Detachement du tableau ${before.title}`, 'table_relink_source', source);
+  }
+  const targetFresh = await getSection(db, storeId, target.id);
+  const targetHtml = replaceTableBlock(targetFresh.content_html, { ...table, table_data: afterTableData });
+  const updatedTarget = await db.query(
+    `UPDATE quality_documentation_sections
+     SET content_html = $3, content_text = $4, updated_by = $5, updated_at = now()
+     WHERE id = $1 AND store_id = $2
+     RETURNING *`,
+    [target.id, storeId, targetHtml, stripHtml(targetHtml), userId]
+  );
+  await recordSectionVersion(db, storeId, updatedTarget.rows[0], userId, `Rattachement du tableau ${table.title}`, 'table_relink', target);
+  await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.table.relinked', targetType: 'quality_document_table', targetId: tableId, before, after: table });
+  return {
+    dry_run: false,
+    table_id: tableId,
+    before: { section_id: before.section_id, block_id: before.block_id, block_ref_id: existingBlock?.id || null, position: existingBlock?.position || null },
+    after: { section_id: table.section_id, block_id: table.block_id, block_ref_id: blockRefId, position },
+    table,
+  };
+}
+
 async function archiveTable(db, storeId, tableId, userId) {
   const beforeResult = await db.query('SELECT * FROM quality_document_tables WHERE id = $1 AND store_id = $2 AND archived_at IS NULL LIMIT 1', [tableId, storeId]);
   const before = beforeResult.rows[0];
@@ -442,10 +604,13 @@ module.exports = {
   normalizeTableData,
   productFamiliesTable,
   replaceTableCellText,
+  relinkTable,
   renderTableBlock,
   renderTableHtml,
   storageConditionsTable,
   tableTemplates,
   updateTable,
+  updateTableCell,
+  updateTableDataCell,
   updateTableTemplate,
 };
