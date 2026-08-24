@@ -134,7 +134,8 @@ async function main() {
       const tool = publicTools.find((item) => item.name === name);
       assert(tool.description, `${name} description manquante`);
       assert(tool.inputSchema?.type === 'object', `${name} inputSchema invalide`);
-      assert(tool._meta?.requiredPermission === 'quality.documentation.edit', `${name} permission MCP invalide`);
+      const expectedPermission = name === 'articles_create' ? 'articles.write' : 'quality.documentation.edit';
+      assert(tool._meta?.requiredPermission === expectedPermission, `${name} permission MCP invalide`);
       assert(tool._meta?.internalToolName === PUBLIC_QUALITY_BLOCK_TOOL_ALIASES[name], `${name} mapping interne invalide`);
       const callResponse = await handleRequest(fakeReq(), {
         jsonrpc: '2.0',
