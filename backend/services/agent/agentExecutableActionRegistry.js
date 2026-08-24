@@ -7,6 +7,7 @@ const qualityTables = require('../quality/qualityDocumentationTableService');
 const qualityVersions = require('../quality/qualityDocumentationVersionService');
 const traceabilityTests = require('../quality/traceabilityTestService');
 const productRecall = require('../productRecallService');
+const articleCreation = require('../articleCreationService');
 const {
   executeArticleStorageConditionsUpdate,
   normalizeArticleStorageUpdatePayload,
@@ -491,6 +492,44 @@ const ACTIONS = [
     example: { action_type: 'call_sheet.delete_line', payload: { line_id: 'uuid-ligne' } },
     validatePayload: callSheet.normalizeDeleteLinePayload,
     execute: callSheet.executeDeleteLine,
+  },
+  {
+    name: 'articles.create',
+    description: 'Cree un Article via le service metier partage par POST /api/articles. Ecriture store-scoped, sans acces SQL generique ni modification de stock, lots, achats ou ventes.',
+    aliases: ['article.create', 'create_article', 'articles_create'],
+    module: 'articles',
+    requiredPermission: 'articles.write',
+    requiredPermissions: ['mcp.execute', 'articles.write'],
+    service: 'articleCreationService.createArticle',
+    confirmationLevel: 'explicit_human',
+    reversible: false,
+    previewRequired: true,
+    batch: false,
+    payloadSchema: {
+      type: 'object',
+      required: ['plu', 'designation'],
+      properties: Object.fromEntries(articleCreation.AGENT_ARTICLE_CREATE_FIELDS.map((field) => {
+        if (field === 'is_active') return [field, { type: 'boolean' }];
+        if (['vat_rate', 'purchase_price_ex_vat', 'sale_price_ex_vat', 'sale_price_inc_vat', 'storage_temperature_min', 'storage_temperature_max'].includes(field)) {
+          return [field, { type: ['number', 'string', 'null'] }];
+        }
+        if (field === 'article_category') return [field, { type: 'string', enum: ['product', 'packaging'] }];
+        return [field, { type: ['string', 'null'] }];
+      })),
+      additionalProperties: false,
+    },
+    example: {
+      action_type: 'articles.create',
+      payload: {
+        plu: 'BAR-SAUVAGE-12KG',
+        designation: 'Bar sauvage 1/2 kg',
+        unit: 'kg',
+        article_category: 'product',
+        vat_rate: 5.5,
+      },
+    },
+    validatePayload: articleCreation.normalizeAgentArticleCreatePayload,
+    execute: articleCreation.executeAgentArticleCreate,
   },
   {
     name: 'articles.update_storage_conditions',

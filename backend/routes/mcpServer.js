@@ -589,6 +589,7 @@ const toolHandlers = {
 };
 
 const PUBLIC_QUALITY_BLOCK_TOOL_ALIASES = {
+  articles_create: 'prepare_article_create',
   quality_documentation_update_text_block: 'quality.documentation.update_text_block',
   quality_documentation_add_text_block: 'quality.documentation.add_text_block',
   quality_documentation_add_table_block: 'quality.documentation.add_table_block',
@@ -759,6 +760,7 @@ async function handleRequest(req, message) {
         'Pour executer une action metier, utilise uniquement une action exposee par list_executable_actions, cree une pending action, puis appelle execute_pending_action apres confirmation explicite de l utilisateur.',
         'Une execution exige toujours mcp.execute ET la permission metier de l action; ne simule jamais un clic frontend.',
         'Pour modifier les conditions de conservation Article, lire avec get_article_profile/search_articles, preparer avec prepare_article_update, creer une pending action articles.update_storage_conditions, puis execute_pending_action apres confirmation humaine.',
+        'Pour creer un Article, rechercher d abord avec search_articles pour eviter un doublon evident, preparer avec articles_create ou prepare_article_create, creer une pending action articles.create, puis execute_pending_action apres confirmation humaine.',
         'Pour une fiche d appel / mercuriale, lire avec list_call_sheets/get_call_sheet/search_call_sheet_lines, preparer avec prepare_call_sheet_add_line, prepare_call_sheet_update_line ou prepare_call_sheet_delete_line, puis creer une pending action call_sheet.* et executer apres confirmation humaine.',
         'Pour la documentation qualite, le type canonique de pending action est quality.documentation.apply_section_updates.',
         'Pour modifier des chapitres qualite avec blocs structures depuis ChatGPT, utilise les outils publics compatibles quality_documentation_update_text_block, quality_documentation_add_text_block, quality_documentation_add_table_block, quality_documentation_add_diagram_block, quality_documentation_delete_block, quality_documentation_move_block, quality_documentation_update_table_cell, quality_documentation_relink_table, quality_documentation_update_diagram et quality_documentation_relink_diagram.',

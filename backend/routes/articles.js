@@ -6,7 +6,8 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { assertArticleCategory } = require('../services/articleCategory');
-const { mergeStoragePatch, normalizeStoragePayload } = require('../services/articleStorageConditions');
+const { mergeStoragePatch } = require('../services/articleStorageConditions');
+const { createArticle } = require('../services/articleCreationService');
 
 function toNullableString(value) {
   if (value === undefined || value === null) return null;
@@ -467,37 +468,22 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
   const client = await req.dbPool.connect();
 
   try {
-    const {
-      department_id,
-      plu,
-      designation,
-      ean,
-      unit,
-      article_category,
-      is_active = true,
-      family_code,
-      sector_code,
-      category,
-      latin_name,
-      fao_zone,
-      sous_zone,
-      engin,
-      allergenes,
-      display_name,
-      purchase_unit,
-      stock_unit,
-      sale_unit,
-      vat_rate = 5.5,
-      purchase_price_ex_vat,
-      sale_price_ex_vat,
-      sale_price_inc_vat,
-    } = req.body;
-    const storage = normalizeStoragePayload(req.body);
-    if (!toNullableString(plu) || !toNullableString(designation)) {
-  return res.status(400).json({
-    error: 'plu et designation sont obligatoires',
-  });
-}
+    await client.query('BEGIN');
+    const created = await createArticle(client, {
+      storeId: req.user.store_id,
+      userId: req.user.id,
+      payload: req.body,
+      sourceOrigin: 'manual',
+    });
+    await client.query('COMMIT');
+
+    return res.status(201).json({
+      ok: true,
+      message: 'Article crÃ©Ã© avec succÃ¨s',
+      id: created.id,
+      article: created.article,
+      defaults_applied: created.defaults_applied,
+    });
 
     await client.query('BEGIN');
 
@@ -507,7 +493,7 @@ if (departmentIdFinal) {
   const department = await assertDepartmentBelongsToStore(client, departmentIdFinal, req.user.store_id);
 
   if (!department) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     return res.status(400).json({ error: 'Service invalide pour ce client' });
   }
 } else {
@@ -525,7 +511,7 @@ if (departmentIdFinal) {
   departmentIdFinal = defaultDepartmentResult.rows[0]?.id || null;
 
   if (!departmentIdFinal) {
-    await client.query('ROLLBACK');
+    await client.query('ROLLBACK').catch(() => {});
     return res.status(400).json({
       error: 'Aucun service disponible pour créer le rattachement article',
     });
@@ -655,7 +641,7 @@ if (departmentIdFinal) {
     }
 
     if (err.status && err.status < 500) {
-      return res.status(err.status).json({ error: err.message });
+      return res.status(err.status).json({ error: err.message, duplicate: err.duplicate || undefined });
     }
 
     res.status(500).json({ error: 'Erreur serveur' });

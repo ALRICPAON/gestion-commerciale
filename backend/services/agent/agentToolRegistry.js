@@ -14,6 +14,7 @@ const qualityMasterDocuments = require('../quality/masterDocuments');
 const suppliesMaterials = require('../quality/suppliesMaterials');
 const agentQualityRecall = require('./agentQualityTraceabilityRecallService');
 const { normalizeArticleStorageUpdatePayload } = require('../agentArticleStorageService');
+const { AGENT_ARTICLE_CREATE_FIELDS, normalizeAgentArticleCreatePayload } = require('../articleCreationService');
 const callSheet = require('../agentCallSheetService');
 const temperatureValidators = require('../../validators/quality/temperatures');
 const cleaningValidators = require('../../validators/quality/cleaning');
@@ -513,6 +514,25 @@ const articleStorageUpdateInputSchema = {
   additionalProperties: false,
 };
 const articleStoragePrepareInputFields = new Set(['article_id', 'summary', 'impact', 'target_objects', 'changes']);
+const articleCreateInputSchema = {
+  type: 'object',
+  required: ['plu', 'designation'],
+  properties: {
+    ...Object.fromEntries(AGENT_ARTICLE_CREATE_FIELDS.map((field) => {
+      if (field === 'is_active') return [field, { type: 'boolean' }];
+      if (['vat_rate', 'purchase_price_ex_vat', 'sale_price_ex_vat', 'sale_price_inc_vat', 'storage_temperature_min', 'storage_temperature_max'].includes(field)) {
+        return [field, { type: ['number', 'string', 'null'] }];
+      }
+      if (field === 'article_category') return [field, { type: 'string', enum: ['product', 'packaging'] }];
+      return [field, { type: ['string', 'null'] }];
+    })),
+    summary: { type: 'string', maxLength: 500 },
+    impact: { type: 'string', maxLength: 1000 },
+    target_objects: { type: 'array', items: { type: 'object', additionalProperties: true } },
+  },
+  additionalProperties: false,
+};
+const articleCreatePrepareInputFields = new Set([...AGENT_ARTICLE_CREATE_FIELDS, 'summary', 'impact', 'target_objects']);
 
 const callSheetReadInputSchema = {
   type: 'object',
@@ -1232,6 +1252,50 @@ const tools = [
   preparationTool({ name: 'prepare_supplier_update', title: 'modification fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
   preparationTool({ name: 'prepare_supplier_article_mapping', title: 'mapping article fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
   preparationTool({ name: 'prepare_supplier_order', title: 'commande fournisseur', domain: 'suppliers', permission: 'suppliers.write' }),
+  tool({
+    name: 'prepare_article_create',
+    title: 'Preparer creation Article',
+    description: 'Prepare la creation controlee d un Article via l action canonique articles.create. Rechercher un Article existant avant de preparer pour eviter un doublon evident.',
+    domain: 'articles',
+    riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
+    requiredPermission: 'articles.write',
+    requiredPermissions: ['articles.write'],
+    requiresConfirmation: false,
+    inputSchema: articleCreateInputSchema,
+    execute: async ({ context, input, tool: currentTool }) => {
+      const unknownKeys = Object.keys(input || {}).filter((key) => !articleCreatePrepareInputFields.has(key));
+      if (unknownKeys.length) {
+        const error = new Error(`Cle(s) non autorisee(s) pour prepare_article_create : ${unknownKeys.join(', ')}`);
+        error.status = 400;
+        error.expose = true;
+        throw error;
+      }
+      const payload = normalizeAgentArticleCreatePayload(input);
+      const summary = input.summary || `Creer l article ${payload.designation}`;
+      const prepared = preparedBusinessAction(context, {
+        payload,
+        summary,
+        impact: input.impact || 'Un nouvel Article sera cree dans le referentiel Articles du magasin courant apres confirmation humaine.',
+        target_objects: input.target_objects || [{ type: 'article', designation: payload.designation, plu: payload.plu }],
+      }, {
+        action_type: 'articles.create',
+        required_permissions: ['mcp.execute', 'articles.write'],
+        summary,
+        impact: input.impact || 'Un nouvel Article sera cree dans le referentiel Articles du magasin courant apres confirmation humaine.',
+      });
+      return response({
+        tool: currentTool.name,
+        domain: currentTool.domain,
+        summary: 'Creation Article preparee',
+        data: {
+          prepared_action: prepared,
+          confirmation_tool: 'create_pending_action',
+          action_type: 'articles.create',
+          payload,
+        },
+      });
+    },
+  }),
   preparationTool({ name: 'prepare_article_draft', title: 'brouillon article', domain: 'articles', permission: 'articles.write' }),
   tool({
     name: 'prepare_article_update',
