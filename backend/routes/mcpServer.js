@@ -590,6 +590,11 @@ const toolHandlers = {
 
 const PUBLIC_QUALITY_BLOCK_TOOL_ALIASES = {
   articles_create: 'prepare_article_create',
+  quality_documentation_list_all_tables: 'quality.documentation.list_all_tables',
+  quality_documentation_get_table: 'quality.documentation.get_table',
+  quality_documentation_list_all_diagrams: 'quality.documentation.list_all_diagrams',
+  quality_documentation_get_diagram: 'quality.documentation.get_diagram',
+  quality_documentation_diagnose_structured_objects: 'quality.documentation.diagnose_structured_objects',
   quality_documentation_update_text_block: 'quality.documentation.update_text_block',
   quality_documentation_add_text_block: 'quality.documentation.add_text_block',
   quality_documentation_add_table_block: 'quality.documentation.add_table_block',
@@ -763,6 +768,7 @@ async function handleRequest(req, message) {
         'Pour creer un Article, rechercher d abord avec search_articles pour eviter un doublon evident, preparer avec articles_create ou prepare_article_create, creer une pending action articles.create, puis execute_pending_action apres confirmation humaine.',
         'Pour une fiche d appel / mercuriale, lire avec list_call_sheets/get_call_sheet/search_call_sheet_lines, preparer avec prepare_call_sheet_add_line, prepare_call_sheet_update_line ou prepare_call_sheet_delete_line, puis creer une pending action call_sheet.* et executer apres confirmation humaine.',
         'Pour la documentation qualite, le type canonique de pending action est quality.documentation.apply_section_updates.',
+        'Pour inventorier tous les tableaux et diagrammes structures qualite sans modifier les donnees, utilise quality_documentation_list_all_tables, quality_documentation_get_table, quality_documentation_list_all_diagrams, quality_documentation_get_diagram ou quality_documentation_diagnose_structured_objects. Ces outils sont read-only, store-scoped, et incluent les objets non rattaches, masques ou archives selon les filtres.',
         'Pour modifier des chapitres qualite avec blocs structures depuis ChatGPT, utilise les outils publics compatibles quality_documentation_update_text_block, quality_documentation_add_text_block, quality_documentation_add_table_block, quality_documentation_add_diagram_block, quality_documentation_delete_block, quality_documentation_move_block, quality_documentation_update_table_cell, quality_documentation_relink_table, quality_documentation_update_diagram et quality_documentation_relink_diagram.',
         'Ces outils publics mappent vers les actions internes canoniques quality.documentation.update_text_block, quality.documentation.add_text_block, quality.documentation.add_table_block, quality.documentation.add_diagram_block, quality.documentation.delete_block, quality.documentation.move_block, quality.documentation.update_table_cell, quality.documentation.relink_table, quality.documentation.update_diagram et quality.documentation.relink_diagram.',
         'Pour configurer les taches qualite et plans de nettoyage, utilise quality_create_task, quality_update_task, quality_create_cleaning_plan, quality_update_cleaning_plan, quality_assign_task_to_zone, quality_assign_task_to_equipment, quality_activate_configuration et quality_deactivate_configuration avec quality.configuration.write.',
