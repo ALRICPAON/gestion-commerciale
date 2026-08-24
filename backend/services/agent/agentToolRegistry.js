@@ -6,6 +6,7 @@ const qualityTables = require('../quality/qualityDocumentationTableService');
 const qualityDiagrams = require('../quality/qualityDocumentationDiagramService');
 const qualityExport = require('../quality/qualityDocumentationExportService');
 const qualityContext = require('../quality/agentQualityContextService');
+const qualityStructuredInventory = require('../quality/qualityStructuredObjectInventoryService');
 const qualityConfiguration = require('../quality/agentConfiguration');
 const qualityTemperatures = require('../quality/temperatures');
 const qualityCleaning = require('../quality/cleaning');
@@ -135,6 +136,20 @@ function diagramDataFromInput(input = {}) {
     rendered_svg: input.rendered_svg,
   };
 }
+
+const qualityStructuredInventoryListInputSchema = {
+  type: 'object',
+  properties: {
+    status: { type: 'string', enum: ['all', 'active', 'archived', 'attached', 'unattached', 'hidden'] },
+    filter: { type: 'string', enum: ['all', 'active', 'archived', 'attached', 'unattached', 'hidden'] },
+    section_id: { type: 'string' },
+    collection_id: { type: 'string' },
+    query: { type: 'string' },
+    limit: { type: 'integer', minimum: 1, maximum: 250 },
+    offset: { type: 'integer', minimum: 0 },
+  },
+  additionalProperties: false,
+};
 
 const QUALITY_BLOCK_ACTIONS_WITH_CHAPTER = new Set([
   'quality.documentation.add_text_block',
@@ -2587,6 +2602,38 @@ const tools = [
     execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Tableaux qualite', data: { tables: await qualityTables.listTables(db, context.store_id, input.section_id) } }),
   }),
   tool({
+    name: 'quality.documentation.list_all_tables',
+    title: 'Inventaire global tableaux qualite',
+    description: 'Liste en lecture seule tous les tableaux structures du store, y compris rattaches, non rattaches, masques et archives. Ne modifie jamais les donnees.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.documentation.read',
+    requiresConfirmation: false,
+    inputSchema: qualityStructuredInventoryListInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Inventaire global tableaux qualite',
+      data: await qualityStructuredInventory.listAllTables(db, context.store_id, input),
+    }),
+  }),
+  tool({
+    name: 'quality.documentation.get_table',
+    title: 'Relire tableau qualite',
+    description: 'Relit en lecture seule un tableau structure par ID dans le store courant, avec son rattachement eventuel.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.documentation.read',
+    requiresConfirmation: false,
+    inputSchema: idInputSchema('id'),
+    execute: async ({ db, context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Tableau qualite',
+      data: { table: await qualityStructuredInventory.getTable(db, context.store_id, input.id) },
+    }),
+  }),
+  tool({
     name: 'list_quality_section_diagrams',
     title: 'Diagrammes chapitre qualite',
     description: 'Liste les diagrammes associes a un chapitre qualite.',
@@ -2607,6 +2654,54 @@ const tools = [
     requiresConfirmation: false,
     inputSchema: idInputSchema('section_id'),
     execute: async ({ db, context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Diagrammes qualite', data: { diagrams: await qualityDiagrams.listDiagrams(db, context.store_id, input.section_id) } }),
+  }),
+  tool({
+    name: 'quality.documentation.list_all_diagrams',
+    title: 'Inventaire global diagrammes qualite',
+    description: 'Liste en lecture seule tous les diagrammes structures du store, y compris rattaches, non rattaches, masques et archives. Ne modifie jamais les donnees.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.documentation.read',
+    requiresConfirmation: false,
+    inputSchema: qualityStructuredInventoryListInputSchema,
+    execute: async ({ db, context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Inventaire global diagrammes qualite',
+      data: await qualityStructuredInventory.listAllDiagrams(db, context.store_id, input),
+    }),
+  }),
+  tool({
+    name: 'quality.documentation.get_diagram',
+    title: 'Relire diagramme qualite',
+    description: 'Relit en lecture seule un diagramme structure par ID dans le store courant, avec son rattachement eventuel.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.documentation.read',
+    requiresConfirmation: false,
+    inputSchema: idInputSchema('id'),
+    execute: async ({ db, context, input, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Diagramme qualite',
+      data: { diagram: await qualityStructuredInventory.getDiagram(db, context.store_id, input.id) },
+    }),
+  }),
+  tool({
+    name: 'quality.documentation.diagnose_structured_objects',
+    title: 'Diagnostic objets structures qualite',
+    description: 'Compte en lecture seule les tableaux et diagrammes du store et explique les ecarts entre inventaire global et outils limites au chapitre.',
+    domain: 'quality_documentation',
+    riskLevel: RISK_LEVELS.READ,
+    requiredPermission: 'quality.documentation.read',
+    requiresConfirmation: false,
+    inputSchema: emptyInputSchema,
+    execute: async ({ db, context, tool: currentTool }) => response({
+      tool: currentTool.name,
+      domain: currentTool.domain,
+      summary: 'Diagnostic objets structures qualite',
+      data: await qualityStructuredInventory.diagnoseStructuredObjects(db, context.store_id),
+    }),
   }),
   tool({
     name: 'get_quality_section_attachments',

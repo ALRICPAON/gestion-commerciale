@@ -11,6 +11,18 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+function expectedPermissionForPublicAlias(name) {
+  if (name === 'articles_create') return 'articles.write';
+  if ([
+    'quality_documentation_list_all_tables',
+    'quality_documentation_get_table',
+    'quality_documentation_list_all_diagrams',
+    'quality_documentation_get_diagram',
+    'quality_documentation_diagnose_structured_objects',
+  ].includes(name)) return 'quality.documentation.read';
+  return 'quality.documentation.edit';
+}
+
 function fakeReq() {
   return {
     get: () => null,
@@ -127,14 +139,14 @@ async function main() {
   }
 
   try {
-    process.env.ALTA_AGENT_PERMISSIONS = 'agent.use,quality.documentation.read';
+    process.env.ALTA_AGENT_PERMISSIONS = 'agent.use';
     for (const name of expectedNames) {
       assert(generatedNames.has(name), `${name} absent de buildPublicMcpTools`);
       assert(publicNames.has(name), `${name} absent de la reponse MCP tools/list`);
       const tool = publicTools.find((item) => item.name === name);
       assert(tool.description, `${name} description manquante`);
       assert(tool.inputSchema?.type === 'object', `${name} inputSchema invalide`);
-      const expectedPermission = name === 'articles_create' ? 'articles.write' : 'quality.documentation.edit';
+      const expectedPermission = expectedPermissionForPublicAlias(name);
       assert(tool._meta?.requiredPermission === expectedPermission, `${name} permission MCP invalide`);
       assert(tool._meta?.internalToolName === PUBLIC_QUALITY_BLOCK_TOOL_ALIASES[name], `${name} mapping interne invalide`);
       const callResponse = await handleRequest(fakeReq(), {
