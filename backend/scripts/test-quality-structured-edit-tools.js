@@ -1,5 +1,6 @@
 const assert = require('assert');
 
+const { executeExecutableActionDirect } = require('../services/agent/agentActionOrchestratorService');
 const { getExecutableAction } = require('../services/agent/agentExecutableActionRegistry');
 const { listMcpTools } = require('../services/agent/agentToolRegistry');
 const {
@@ -17,6 +18,7 @@ const {
 const {
   PUBLIC_QUALITY_BLOCK_TOOL_ALIASES,
   buildPublicMcpTools,
+  handleRequest,
 } = require('../routes/mcpServer')._private;
 
 const STORE_ID = '00000000-0000-4000-8000-000000000001';
@@ -149,8 +151,17 @@ class FakeDb {
     ].join('\n');
   }
 
+  async connect() {
+    return this;
+  }
+
+  release() {}
+
   async query(sql, params = []) {
     const compact = sql.replace(/\s+/g, ' ').trim();
+    if (compact === 'BEGIN' || compact === 'COMMIT' || compact === 'ROLLBACK') {
+      return { rows: [] };
+    }
     if (compact.startsWith('SAVEPOINT') || compact.startsWith('RELEASE SAVEPOINT') || compact.startsWith('ROLLBACK TO SAVEPOINT')) {
       return { rows: [] };
     }
@@ -256,6 +267,16 @@ class FakeDb {
   }
 }
 
+function fakeMcpReq(dbPool) {
+  return {
+    get: () => null,
+    protocol: 'https',
+    baseUrl: '/mcp',
+    agentStoreId: STORE_ID,
+    dbPool,
+  };
+}
+
 async function assertRejectsStatus(fn, status, message) {
   let rejected = false;
   try {
@@ -349,6 +370,93 @@ async function main() {
   assert.strictEqual(diagramDb.diagrams[0].diagram_data.edges[0].label, 'continuer');
   assert.strictEqual(diagramDb.diagrams[0].diagram_data.nodes[1].label, 'Ancienne etape', 'les noeuds doivent rester intacts');
   assert.strictEqual(await patchDiagram(new FakeDb(), OTHER_STORE_ID, DIAGRAM_ID, USER_ID, { title: 'x' }), null, 'un mauvais store ne doit pas modifier le diagramme');
+  assert.strictEqual(await patchDiagram(new FakeDb(), STORE_ID, '00000000-0000-4000-8000-000000000999', USER_ID, { title: 'x' }), null, 'un diagramme inexistant doit retourner null');
+  await assertRejectsStatus(
+    () => patchDiagram(new FakeDb(), STORE_ID, DIAGRAM_ID, USER_ID, { node_id: 'step', field: 'unknown', value: 'x' }),
+    400,
+    'un champ de noeud non autorise doit etre refuse'
+  );
+
+  const actionContext = {
+    store_id: STORE_ID,
+    user_id: USER_ID,
+    role: 'agent',
+    user_permissions: ['mcp.execute', 'quality.documentation.edit'],
+    agent_permissions: ['mcp.execute', 'quality.documentation.edit'],
+    source: 'test',
+  };
+  const actionDb = new FakeDb();
+  const actionResult = await executeExecutableActionDirect({
+    dbPool: actionDb,
+    context: actionContext,
+    actionType: 'quality.documentation.update_diagram',
+    payload: {
+      diagram_id: DIAGRAM_ID,
+      node_id: 'step',
+      field: 'label',
+      expected_value: 'Ancienne etape',
+      value: 'Etape via MCP',
+    },
+  });
+  assert.strictEqual(actionResult.ok, true, 'l action MCP canonique update_diagram doit reussir');
+  assert.strictEqual(actionDb.diagrams[0].diagram_data.nodes.find((node) => node.id === 'step').label, 'Etape via MCP');
+  assert.strictEqual(actionDb.diagrams.length, 1, 'l action MCP ne doit pas dupliquer le diagramme');
+
+  const mermaidActionDb = new FakeDb();
+  mermaidActionDb.diagrams[0].diagram_type = 'mermaid';
+  mermaidActionDb.diagrams[0].editor_mode = 'mermaid';
+  mermaidActionDb.diagrams[0].diagram_data = normalizeDiagramData({
+    editor_mode: 'mermaid',
+    title: 'Mermaid service',
+    source: 'flowchart TD\nA[Ancien] --> B[Fin]',
+    rendered_svg: '<svg></svg>',
+  });
+  const mermaidActionResult = await executeExecutableActionDirect({
+    dbPool: mermaidActionDb,
+    context: actionContext,
+    actionType: 'quality.documentation.update_diagram',
+    payload: {
+      diagram_id: DIAGRAM_ID,
+      source: 'flowchart TD\nA[Nouveau] --> B[Fin]',
+      expected_value: 'flowchart TD\nA[Ancien] --> B[Fin]',
+      rendered_svg: '<svg></svg>',
+    },
+  });
+  assert.strictEqual(mermaidActionResult.ok, true, 'l action MCP doit accepter une mise a jour source Mermaid');
+  assert(mermaidActionDb.diagrams[0].diagram_data.source.includes('Nouveau'), 'la source Mermaid doit etre modifiee par le chemin MCP');
+  assert.strictEqual(mermaidActionDb.diagrams[0].diagram_data.title, 'Mermaid service', 'le titre Mermaid non cible doit etre preserve');
+
+  const previousAgentUserId = process.env.ALTA_AGENT_USER_ID;
+  const previousAgentPermissions = process.env.ALTA_AGENT_PERMISSIONS;
+  try {
+    process.env.ALTA_AGENT_USER_ID = USER_ID;
+    process.env.ALTA_AGENT_PERMISSIONS = 'mcp.execute,quality.documentation.edit';
+    const publicAliasDb = new FakeDb();
+    const publicAliasResponse = await handleRequest(fakeMcpReq(publicAliasDb), {
+      jsonrpc: '2.0',
+      id: 'update-diagram-alias',
+      method: 'tools/call',
+      params: {
+        name: 'quality_documentation_update_diagram',
+        arguments: {
+          diagram_id: DIAGRAM_ID,
+          edge_id: 'e1',
+          field: 'label',
+          expected_value: 'suite',
+          value: 'suite via alias public',
+          confirmation: 'human_confirmed',
+        },
+      },
+    });
+    assert(!publicAliasResponse.error, 'l alias public update_diagram ne doit pas etre inconnu');
+    assert.strictEqual(publicAliasResponse.result?.structuredContent?.data?.execution_result?.result?.diagram_id, DIAGRAM_ID, 'l alias public doit executer l action canonique');
+    assert.strictEqual(publicAliasDb.diagrams[0].diagram_data.edges[0].label, 'suite via alias public', 'l alias public doit appliquer la modification ciblee');
+  } finally {
+    if (previousAgentUserId === undefined) delete process.env.ALTA_AGENT_USER_ID;
+    else process.env.ALTA_AGENT_USER_ID = previousAgentUserId;
+    if (previousAgentPermissions === undefined) delete process.env.ALTA_AGENT_PERMISSIONS;
+    else process.env.ALTA_AGENT_PERMISSIONS = previousAgentPermissions;
+  }
 
   const relinkDiagramDb = new FakeDb();
   const diagramDryRun = await relinkDiagram(relinkDiagramDb, STORE_ID, DIAGRAM_ID, USER_ID, { chapter_id: TARGET_SECTION_ID, dry_run: true });
