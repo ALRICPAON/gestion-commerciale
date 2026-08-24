@@ -933,17 +933,21 @@ function assertExpectedValue(current, expected) {
   }
 }
 
+function hasPatchValue(body, field) {
+  return Object.prototype.hasOwnProperty.call(body || {}, field) && body[field] !== undefined;
+}
+
 function patchStructuredDiagramData(data, body = {}) {
   const next = normalizeDiagramData(data);
   const before = {};
   const after = {};
-  if (Object.prototype.hasOwnProperty.call(body, 'title')) {
+  if (hasPatchValue(body, 'title')) {
     assertExpectedValue(next.title, body);
     before.title = next.title;
     next.title = cleanText(body.title, MAX_TITLE_LENGTH, next.title);
     after.title = next.title;
   }
-  if (Object.prototype.hasOwnProperty.call(body, 'orientation')) {
+  if (hasPatchValue(body, 'orientation')) {
     assertExpectedValue(next.orientation, body);
     before.orientation = next.orientation;
     next.orientation = body.orientation === 'horizontal' ? 'horizontal' : 'vertical';
@@ -980,13 +984,13 @@ function patchDiagramData(diagramData, body = {}) {
     const next = { ...diagramData, editor_mode: 'mermaid' };
     const before = {};
     const after = {};
-    if (Object.prototype.hasOwnProperty.call(body, 'title')) {
+    if (hasPatchValue(body, 'title')) {
       assertExpectedValue(next.title, body);
       before.title = next.title;
       next.title = cleanText(body.title, MAX_TITLE_LENGTH, next.title);
       after.title = next.title;
     }
-    if (Object.prototype.hasOwnProperty.call(body, 'source')) {
+    if (hasPatchValue(body, 'source')) {
       assertExpectedValue(next.source, body);
       before.source = next.source;
       next.source = body.source;

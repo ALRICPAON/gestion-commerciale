@@ -208,19 +208,20 @@ function normalizeRelinkPayload(payload = {}, idName) {
 
 function normalizeDiagramPatchPayload(payload = {}) {
   assertObject(payload, 'payload');
-  return {
+  const normalized = {
     diagram_id: assertUuidLike(payload.diagram_id, 'diagram_id'),
-    editor_mode: text(payload.editor_mode) || undefined,
-    title: Object.prototype.hasOwnProperty.call(payload, 'title') ? String(payload.title ?? '') : undefined,
-    orientation: text(payload.orientation) || undefined,
-    node_id: text(payload.node_id) || undefined,
-    edge_id: text(payload.edge_id) || undefined,
-    field: text(payload.field) || undefined,
-    value: Object.prototype.hasOwnProperty.call(payload, 'value') ? payload.value : undefined,
-    source: Object.prototype.hasOwnProperty.call(payload, 'source') ? String(payload.source || '') : undefined,
-    rendered_svg: Object.prototype.hasOwnProperty.call(payload, 'rendered_svg') ? String(payload.rendered_svg || '') : undefined,
-    expected_value: Object.prototype.hasOwnProperty.call(payload, 'expected_value') ? String(payload.expected_value ?? '') : undefined,
   };
+  if (text(payload.editor_mode)) normalized.editor_mode = text(payload.editor_mode);
+  if (Object.prototype.hasOwnProperty.call(payload, 'title')) normalized.title = String(payload.title ?? '');
+  if (text(payload.orientation)) normalized.orientation = text(payload.orientation);
+  if (text(payload.node_id)) normalized.node_id = text(payload.node_id);
+  if (text(payload.edge_id)) normalized.edge_id = text(payload.edge_id);
+  if (text(payload.field)) normalized.field = text(payload.field);
+  if (Object.prototype.hasOwnProperty.call(payload, 'value')) normalized.value = payload.value;
+  if (Object.prototype.hasOwnProperty.call(payload, 'source')) normalized.source = String(payload.source || '');
+  if (Object.prototype.hasOwnProperty.call(payload, 'rendered_svg')) normalized.rendered_svg = String(payload.rendered_svg || '');
+  if (Object.prototype.hasOwnProperty.call(payload, 'expected_value')) normalized.expected_value = String(payload.expected_value ?? '');
+  return normalized;
 }
 
 function normalizeTextBlockPayload(payload = {}) {
