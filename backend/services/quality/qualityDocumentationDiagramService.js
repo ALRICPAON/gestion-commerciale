@@ -177,6 +177,10 @@ function sanitizeRenderedSvg(svg) {
   return normalizeSvgForPdf(text);
 }
 
+function mermaidSourceHash(source) {
+  return crypto.createHash('sha256').update(String(source || ''), 'utf8').digest('hex');
+}
+
 function firstSvgTag(svg) {
   return String(svg || '').match(/^<svg\b[^>]*>/i)?.[0] || '';
 }
@@ -324,8 +328,8 @@ function normalizeNode(raw, index) {
   };
 }
 
-function normalizeDiagramData(input = {}) {
-  if (input.editor_mode === 'mermaid') return normalizeMermaidDiagramData(input);
+function normalizeDiagramData(input = {}, options = {}) {
+  if (input.editor_mode === 'mermaid') return normalizeMermaidDiagramData(input, options);
 
   const nodesInput = Array.isArray(input.nodes) ? input.nodes : [];
   const edgesInput = Array.isArray(input.edges) ? input.edges : [];
@@ -363,9 +367,13 @@ function normalizeDiagramData(input = {}) {
   };
 }
 
-function normalizeMermaidDiagramData(input = {}) {
+function normalizeMermaidDiagramData(input = {}, options = {}) {
   const source = sanitizeMermaidSource(input.source);
-  const renderedSvg = input.rendered_svg ? sanitizeRenderedSvg(input.rendered_svg) : renderMermaidFallbackSvg(source);
+  const sourceHash = mermaidSourceHash(source);
+  const renderedSvgIsCurrent = input.rendered_svg_source_hash === sourceHash || options.assumeRenderedSvgCurrent === true;
+  const shouldUseStoredSvg = input.rendered_svg && renderedSvgIsCurrent && options.forceMermaidRenderFromSource !== true;
+  const providedRenderedSvg = input.rendered_svg ? sanitizeRenderedSvg(input.rendered_svg) : null;
+  const renderedSvg = shouldUseStoredSvg ? providedRenderedSvg : renderMermaidFallbackSvg(source);
   return {
     schema_version: 1,
     version: 1,
@@ -373,6 +381,8 @@ function normalizeMermaidDiagramData(input = {}) {
     title: cleanText(input.title, MAX_TITLE_LENGTH, 'Diagramme Mermaid'),
     source,
     rendered_svg: renderedSvg,
+    rendered_svg_source_hash: sourceHash,
+    rendered_svg_renderer: shouldUseStoredSvg ? (input.rendered_svg_renderer || 'provided') : 'server_fallback',
   };
 }
 
@@ -443,8 +453,14 @@ function nodeShape(node, typeMeta) {
 }
 
 function renderDiagramSvg(data, options = {}) {
-  const normalized = normalizeDiagramData(data);
-  if (normalized.editor_mode === 'mermaid') return normalizeSvgForPdf(normalized.rendered_svg);
+  const normalized = normalizeDiagramData(data, options);
+  if (normalized.editor_mode === 'mermaid') {
+    const sourceHash = mermaidSourceHash(normalized.source);
+    if (normalized.rendered_svg && normalized.rendered_svg_source_hash === sourceHash) {
+      return normalizeSvgForPdf(normalized.rendered_svg);
+    }
+    return normalizeSvgForPdf(renderMermaidFallbackSvg(normalized.source));
+  }
 
   const layout = layoutDiagram(normalized);
   const nodeMap = new Map(layout.nodes.map((node) => [node.id, node]));
@@ -868,7 +884,7 @@ async function createDiagram(db, storeId, sectionId, userId, body = {}) {
   if (!section) return null;
   const mode = body.editor_mode === 'mermaid' || body.diagram_data?.editor_mode === 'mermaid' ? 'mermaid' : 'structured';
   const templateSource = mode === 'mermaid' ? mermaidTemplates()[body.template_key] : templates()[body.template_key];
-  const data = normalizeDiagramData(body.diagram_data || templateSource || templates().blank);
+  const data = normalizeDiagramData(body.diagram_data || templateSource || templates().blank, { assumeRenderedSvgCurrent: true });
   const blockId = body.block_id || `diagram-${crypto.randomUUID()}`;
   const result = await db.query(
     `INSERT INTO quality_document_diagrams
@@ -902,7 +918,15 @@ async function updateDiagram(db, storeId, diagramId, userId, body = {}) {
   if (requestedMode !== previousMode && body.confirm_mode_change !== true) {
     badRequest('Changement de mode non confirme');
   }
-  const data = normalizeDiagramData(body.diagram_data || before.diagram_data);
+  const rawInputData = body.diagram_data || before.diagram_data;
+  const inputData = requestedMode === 'mermaid'
+    ? { ...rawInputData, editor_mode: 'mermaid' }
+    : rawInputData;
+  const previousSource = before.diagram_data?.editor_mode === 'mermaid' ? sanitizeMermaidSource(before.diagram_data.source) : null;
+  const nextSource = inputData?.editor_mode === 'mermaid' ? sanitizeMermaidSource(inputData.source) : null;
+  const data = normalizeDiagramData(inputData, {
+    forceMermaidRenderFromSource: Boolean(previousSource && nextSource && previousSource !== nextSource),
+  });
   const updatedResult = await db.query(
     `UPDATE quality_document_diagrams
      SET title = $3, diagram_type = $4, orientation = $5, diagram_data = $6::jsonb, updated_by = $7, updated_at = now()
@@ -997,9 +1021,57 @@ function patchDiagramData(diagramData, body = {}) {
       if (body.rendered_svg) next.rendered_svg = body.rendered_svg;
       after.source = next.source;
     }
-    return { diagram_data: normalizeDiagramData(next), before, after };
+    return { diagram_data: normalizeDiagramData(next, { forceMermaidRenderFromSource: hasPatchValue(body, 'source') }), before, after };
   }
   return patchStructuredDiagramData(diagramData, body);
+}
+
+async function resyncMermaidDiagramRender(db, storeId, diagramId, userId = null, options = {}) {
+  const dryRun = options.dry_run !== false;
+  const beforeResult = await db.query(
+    'SELECT * FROM quality_document_diagrams WHERE id = $1 AND store_id = $2 AND archived_at IS NULL LIMIT 1',
+    [diagramId, storeId]
+  );
+  const before = beforeResult.rows[0];
+  if (!before) return { found: false, dry_run: dryRun, changed: false };
+  if (before.diagram_data?.editor_mode !== 'mermaid') {
+    return { found: true, dry_run: dryRun, changed: false, reason: 'not_mermaid', diagram_id: before.id };
+  }
+  const nextData = normalizeDiagramData(before.diagram_data, { forceMermaidRenderFromSource: true });
+  const changed = JSON.stringify(before.diagram_data) !== JSON.stringify(nextData);
+  const result = {
+    found: true,
+    dry_run: dryRun,
+    changed,
+    diagram_id: before.id,
+    section_id: before.section_id,
+    block_id: before.block_id,
+    source_unchanged: nextData.source === before.diagram_data.source,
+    rendered_svg_source_hash: nextData.rendered_svg_source_hash,
+  };
+  if (dryRun || !changed) return result;
+
+  const updatedResult = await db.query(
+    `UPDATE quality_document_diagrams
+     SET diagram_data = $3::jsonb, updated_by = $4, updated_at = now()
+     WHERE id = $1 AND store_id = $2
+     RETURNING *`,
+    [diagramId, storeId, JSON.stringify(nextData), userId]
+  );
+  const diagram = updatedResult.rows[0];
+  const section = await getSection(db, storeId, diagram.section_id);
+  if (section) {
+    const updatedHtml = replaceDiagramBlock(section.content_html, diagram);
+    await db.query(
+      `UPDATE quality_documentation_sections
+       SET content_html = $3, content_text = $4, updated_by = $5, updated_at = now()
+       WHERE id = $1 AND store_id = $2
+       RETURNING *`,
+      [section.id, storeId, updatedHtml, stripHtml(updatedHtml), userId]
+    );
+  }
+  await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.documentation.diagram.render_resynced', targetType: 'quality_document_diagram', targetId: diagram.id, before, after: diagram });
+  return { ...result, diagram };
 }
 
 async function patchDiagram(db, storeId, diagramId, userId, body = {}) {
@@ -1204,6 +1276,7 @@ module.exports = {
   preparedFishDiagram,
   preparedFishMermaidSource,
   relinkDiagram,
+  resyncMermaidDiagramRender,
   renderDiagramBlock,
   renderMermaidFallbackSvg,
   renderDiagramSvg,

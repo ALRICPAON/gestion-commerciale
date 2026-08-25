@@ -14,6 +14,8 @@ const {
   patchDiagram,
   patchDiagramData,
   relinkDiagram,
+  renderDiagramSvg,
+  resyncMermaidDiagramRender,
 } = require('../services/quality/qualityDocumentationDiagramService');
 const {
   PUBLIC_QUALITY_BLOCK_TOOL_ALIASES,
@@ -218,6 +220,12 @@ class FakeDb {
       diagram.diagram_data = JSON.parse(params[5]);
       return { rows: [clone(diagram)] };
     }
+    if (compact.startsWith('UPDATE quality_document_diagrams SET diagram_data = $3')) {
+      const diagram = this.diagrams.find((row) => row.id === params[0] && row.store_id === params[1]);
+      if (!diagram) return { rows: [] };
+      diagram.diagram_data = JSON.parse(params[2]);
+      return { rows: [clone(diagram)] };
+    }
     if (compact.startsWith('UPDATE quality_document_diagrams SET section_id = $3')) {
       const diagram = this.diagrams.find((row) => row.id === params[0] && row.store_id === params[1]);
       if (!diagram) return { rows: [] };
@@ -405,26 +413,72 @@ async function main() {
   const mermaidActionDb = new FakeDb();
   mermaidActionDb.diagrams[0].diagram_type = 'mermaid';
   mermaidActionDb.diagrams[0].editor_mode = 'mermaid';
+  mermaidActionDb.diagrams.push({
+    ...clone(mermaidActionDb.diagrams[0]),
+    id: '00000000-0000-4000-8000-000000000502',
+    title: 'Autre diagramme',
+    diagram_data: normalizeDiagramData({
+      editor_mode: 'mermaid',
+      title: 'Autre diagramme',
+      source: 'flowchart TD\nX[Autre] --> Y[Fin]',
+      rendered_svg: '<svg><text>Autre</text></svg>',
+    }),
+  });
   mermaidActionDb.diagrams[0].diagram_data = normalizeDiagramData({
     editor_mode: 'mermaid',
     title: 'Mermaid service',
-    source: 'flowchart TD\nA[Ancien] --> B[Fin]',
-    rendered_svg: '<svg></svg>',
+    source: 'flowchart TD\nA[Reception] --> B[Pelage si necessaire]\nB --> C[Fin]',
+    rendered_svg: '<svg><text>Pelage si necessaire</text></svg>',
   });
+  const originalDiagramId = mermaidActionDb.diagrams[0].id;
+  const originalSectionId = mermaidActionDb.diagrams[0].section_id;
+  const originalBlockId = mermaidActionDb.diagrams[0].block_id;
+  const untouchedDiagramBefore = JSON.stringify(mermaidActionDb.diagrams[1]);
   const mermaidActionResult = await executeExecutableActionDirect({
     dbPool: mermaidActionDb,
     context: actionContext,
     actionType: 'quality.documentation.update_diagram',
     payload: {
       diagram_id: DIAGRAM_ID,
-      source: 'flowchart TD\nA[Nouveau] --> B[Fin]',
-      expected_value: 'flowchart TD\nA[Ancien] --> B[Fin]',
-      rendered_svg: '<svg></svg>',
+      source: 'flowchart TD\nA[Reception] --> C[Fin]',
+      expected_value: 'flowchart TD\nA[Reception] --> B[Pelage si necessaire]\nB --> C[Fin]',
+      rendered_svg: '<svg><text>Pelage si necessaire</text></svg>',
     },
   });
   assert.strictEqual(mermaidActionResult.ok, true, 'l action MCP doit accepter une mise a jour source Mermaid');
-  assert(mermaidActionDb.diagrams[0].diagram_data.source.includes('Nouveau'), 'la source Mermaid doit etre modifiee par le chemin MCP');
+  assert(!mermaidActionDb.diagrams[0].diagram_data.source.includes('Pelage si necessaire'), 'la source Mermaid doit etre modifiee par le chemin MCP');
+  assert(!mermaidActionDb.diagrams[0].diagram_data.rendered_svg.includes('Pelage si necessaire'), 'le SVG courant doit etre regenere apres changement de source');
+  assert(!renderDiagramSvg(mermaidActionDb.diagrams[0].diagram_data).includes('Pelage si necessaire'), 'le rendu courant ne doit plus utiliser l ancien SVG stocke');
+  assert(!mermaidActionResult.execution_result.result.diagram.block_html.includes('Pelage si necessaire'), 'le block_html retourne ne doit plus utiliser l ancien SVG');
+  assert.strictEqual(mermaidActionDb.diagrams[0].id, originalDiagramId, 'l ID du diagramme doit etre conserve');
+  assert.strictEqual(mermaidActionDb.diagrams[0].section_id, originalSectionId, 'le section_id du diagramme doit etre conserve');
+  assert.strictEqual(mermaidActionDb.diagrams[0].block_id, originalBlockId, 'le block_id du diagramme doit etre conserve');
+  assert.strictEqual(mermaidActionDb.diagrams.length, 2, 'l action Mermaid ne doit pas dupliquer le diagramme');
+  assert.strictEqual(JSON.stringify(mermaidActionDb.diagrams[1]), untouchedDiagramBefore, 'un autre diagramme ne doit pas etre modifie');
   assert.strictEqual(mermaidActionDb.diagrams[0].diagram_data.title, 'Mermaid service', 'le titre Mermaid non cible doit etre preserve');
+
+  const resyncDb = new FakeDb();
+  resyncDb.diagrams[0].diagram_type = 'mermaid';
+  resyncDb.diagrams[0].diagram_data = {
+    schema_version: 1,
+    version: 1,
+    editor_mode: 'mermaid',
+    title: 'Resync Mermaid',
+    source: 'flowchart TD\nA[Reception] --> C[Fin]',
+    rendered_svg: '<svg><text>Pelage si necessaire</text></svg>',
+  };
+  const resyncBefore = JSON.stringify(resyncDb.diagrams[0].diagram_data);
+  const dryRunResync = await resyncMermaidDiagramRender(resyncDb, STORE_ID, DIAGRAM_ID, USER_ID, { dry_run: true });
+  assert.strictEqual(dryRunResync.dry_run, true, 'la resynchronisation doit etre en dry-run par defaut');
+  assert.strictEqual(dryRunResync.changed, true, 'le dry-run doit detecter le SVG obsolÃ¨te');
+  assert.strictEqual(JSON.stringify(resyncDb.diagrams[0].diagram_data), resyncBefore, 'le dry-run ne doit pas ecrire');
+  const applyResync = await resyncMermaidDiagramRender(resyncDb, STORE_ID, DIAGRAM_ID, USER_ID, { dry_run: false });
+  assert.strictEqual(applyResync.changed, true, 'l apply doit corriger le rendu obsolÃ¨te');
+  assert(!resyncDb.diagrams[0].diagram_data.rendered_svg.includes('Pelage si necessaire'), 'la resynchronisation ne doit pas conserver l ancien SVG');
+  assert.strictEqual(resyncDb.diagrams[0].diagram_data.source, 'flowchart TD\nA[Reception] --> C[Fin]', 'la resynchronisation ne doit pas modifier la source Mermaid');
+  assert.strictEqual(resyncDb.diagrams[0].id, DIAGRAM_ID, 'la resynchronisation doit conserver l ID');
+  assert.strictEqual(resyncDb.diagrams[0].section_id, SOURCE_SECTION_ID, 'la resynchronisation doit conserver le rattachement');
+  assert.strictEqual(resyncDb.diagrams[0].block_id, 'diagram-block-old', 'la resynchronisation doit conserver le block_id');
 
   const previousAgentUserId = process.env.ALTA_AGENT_USER_ID;
   const previousAgentPermissions = process.env.ALTA_AGENT_PERMISSIONS;
