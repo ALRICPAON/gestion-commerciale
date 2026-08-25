@@ -52,6 +52,7 @@
     textColor: $('text-color-select'),
     preview: $('preview-pdf-btn'),
     exportPdf: $('export-pdf-btn'),
+    exportInternalPdf: $('export-internal-pdf-btn'),
     includeMasterAnnexes: $('include-master-annexes'),
     includeAttachments: $('include-attachments'),
     includeExternalDocuments: $('include-external-documents'),
@@ -1544,14 +1545,25 @@
     await load(section.id);
   }
 
-  function exportPayload(download = false) {
-    if (!download) {
+  function exportPayload(mode = 'preview') {
+    if (mode === 'preview') {
       return {
         export_type: 'preview',
         include_missing: els.includeMissing?.checked === true,
         include_attachments: false,
         include_master_annexes: false,
         include_external_master_documents: false,
+      };
+    }
+    if (mode === 'ddpp') {
+      return {
+        export_type: 'ddpp',
+        profile: 'ddpp',
+        include_missing: true,
+        include_attachments: els.includeAttachments?.checked !== false,
+        include_master_annexes: els.includeMasterAnnexes?.checked !== false,
+        include_external_master_documents: els.includeExternalDocuments?.checked !== false,
+        include_enr_examples: true,
       };
     }
     return {
@@ -1563,16 +1575,17 @@
     };
   }
 
-  async function openPdf(path, download = false) {
+  async function openPdf(path, mode = 'preview') {
     const blob = await requestPdf(path, {
       method: 'POST',
-      body: JSON.stringify(exportPayload(download)),
+      body: JSON.stringify(exportPayload(mode)),
     });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.target = '_blank';
-    if (download) link.download = 'Manuel_Qualite_ALTA_MAREE.pdf';
+    if (mode === 'full') link.download = 'Manuel_Qualite_ALTA_MAREE.pdf';
+    if (mode === 'ddpp') link.download = 'Dossier_DDPP_ALTA_MAREE.pdf';
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -2257,8 +2270,10 @@
   });
   els.preview.disabled = !canExport;
   els.exportPdf.disabled = !canExport;
-  els.preview.addEventListener('click', () => openPdf(`/${state.collection.id}/preview`, false).catch((error) => setFeedback(error.message, 'error')));
-  els.exportPdf.addEventListener('click', () => openPdf(`/${state.collection.id}/export-pdf`, true).catch((error) => setFeedback(error.message, 'error')));
+  if (els.exportInternalPdf) els.exportInternalPdf.disabled = !canExport;
+  els.preview.addEventListener('click', () => openPdf(`/${state.collection.id}/preview`, 'preview').catch((error) => setFeedback(error.message, 'error')));
+  els.exportPdf.addEventListener('click', () => openPdf(`/${state.collection.id}/export-pdf`, 'ddpp').catch((error) => setFeedback(error.message, 'error')));
+  if (els.exportInternalPdf) els.exportInternalPdf.addEventListener('click', () => openPdf(`/${state.collection.id}/export-pdf`, 'full').catch((error) => setFeedback(error.message, 'error')));
   window.addEventListener('beforeunload', (event) => {
     if (!state.dirty) return;
     event.preventDefault();
