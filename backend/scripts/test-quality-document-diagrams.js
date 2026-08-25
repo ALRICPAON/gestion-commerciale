@@ -59,6 +59,16 @@ assert.ok(mermaid.source.includes("Création d'une non-conformité"), 'La source
 assert.ok(mermaid.rendered_svg.includes('<svg'), 'Le mode Mermaid doit stocker un SVG rendu');
 assert.ok(renderDiagramSvg(mermaid).includes('quality-mermaid-svg'), 'Le rendu Mermaid doit retourner un SVG inline');
 
+const staleRenderedMermaid = {
+  schema_version: 1,
+  version: 1,
+  editor_mode: 'mermaid',
+  title: 'Rendu obsolÃ¨te',
+  source: 'flowchart TD\nA[Reception] --> C[Fin]',
+  rendered_svg: '<svg><text>Pelage si necessaire</text></svg>',
+};
+assert(!renderDiagramSvg(staleRenderedMermaid).includes('Pelage si necessaire'), 'Un SVG Mermaid historique sans empreinte de source ne doit pas etre utilise comme rendu courant');
+
 const styledMermaidSource = `flowchart TD
     A([Début]) --> B[Réception d'un lot]
     B --> C{Lot conforme ?}

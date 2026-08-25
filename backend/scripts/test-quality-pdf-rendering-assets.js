@@ -96,7 +96,7 @@ async function run() {
     title: 'SVG brut',
     source: 'flowchart TD\n A[Debut] --> B[Fin]',
     rendered_svg: '<svg width="640" height="320"><text x="10" y="20">Flux</text></svg>',
-  });
+  }, { assumeRenderedSvgCurrent: true });
   assert(normalizedMermaidSvg.includes('viewBox="0 0 640 320"'), 'Mermaid SVG without viewBox should gain stable viewBox');
   assert(normalizedMermaidSvg.includes('quality-diagram-svg'), 'Mermaid SVG should carry PDF diagram class');
   assert(!/\swidth="640"/.test(normalizedMermaidSvg), 'Mermaid SVG fixed width should be removed for PDF scaling');
