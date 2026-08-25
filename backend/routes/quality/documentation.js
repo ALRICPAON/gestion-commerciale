@@ -97,14 +97,18 @@ function handleError(res, err, label) {
 }
 
 function exportOptions(body = {}) {
+  const profile = body.profile || (body.export_type === 'ddpp' ? 'ddpp' : null);
+  const ddpp = profile === 'ddpp';
   return {
-    export_type: body.export_type || 'full',
+    export_type: ddpp ? 'ddpp' : (body.export_type || 'full'),
+    profile,
     tome_id: body.tome_id || null,
-    only_validated: body.only_validated === true,
-    include_missing: body.include_missing !== false,
-    include_attachments: body.include_attachments !== false,
-    include_master_annexes: body.include_master_annexes === true,
-    include_external_master_documents: body.include_external_master_documents === true,
+    only_validated: ddpp ? false : body.only_validated === true,
+    include_missing: ddpp ? true : body.include_missing !== false,
+    include_attachments: ddpp ? body.include_attachments !== false : body.include_attachments !== false,
+    include_master_annexes: ddpp ? body.include_master_annexes !== false : body.include_master_annexes === true,
+    include_external_master_documents: ddpp ? body.include_external_master_documents !== false : body.include_external_master_documents === true,
+    include_enr_examples: ddpp ? body.include_enr_examples !== false : body.include_enr_examples === true,
   };
 }
 

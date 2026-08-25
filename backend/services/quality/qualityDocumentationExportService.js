@@ -18,6 +18,92 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function isDdppProfile(options = {}) {
+  return options.profile === 'ddpp' || options.export_type === 'ddpp';
+}
+
+function fixMojibake(value) {
+  const text = String(value ?? '');
+  const mapped = text
+    .replace(/Ã©/g, 'é')
+    .replace(/Ã¨/g, 'è')
+    .replace(/Ãª/g, 'ê')
+    .replace(/Ã«/g, 'ë')
+    .replace(/Ã /g, 'à')
+    .replace(/Ã¢/g, 'â')
+    .replace(/Ã´/g, 'ô')
+    .replace(/Ã¶/g, 'ö')
+    .replace(/Ã»/g, 'û')
+    .replace(/Ã¹/g, 'ù')
+    .replace(/Ã§/g, 'ç')
+    .replace(/Ã‰/g, 'É')
+    .replace(/ÃŠ/g, 'Ê')
+    .replace(/Â°/g, '°')
+    .replace(/Â«/g, '«')
+    .replace(/Â»/g, '»')
+    .replace(/â€™/g, "'")
+    .replace(/â€”/g, '-');
+  if (!/[ÃÂâ]/.test(mapped)) return mapped;
+  try {
+    const decoded = Buffer.from(mapped, 'latin1').toString('utf8');
+    const score = (candidate) => (candidate.match(/[ÃÂ�]/g) || []).length;
+    return score(decoded) < score(mapped) ? decoded : mapped;
+  } catch (_err) {
+    return mapped;
+  }
+}
+
+function displayText(value) {
+  return fixMojibake(value).replace(/\s+/g, ' ').trim();
+}
+
+function ddppEscape(value) {
+  return escapeHtml(displayText(value));
+}
+
+function stripTechnicalText(value) {
+  return displayText(value)
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, '')
+    .replace(/\b(?:store_id|section_id|block_id|collection_id|source_record_id|quality_event_id|created_by|updated_by|missing_block|is_attached|payload|hash|mcp|api route)\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function sanitizeDdppHtml(html = '') {
+  return String(html || '')
+    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, '')
+    .replace(/\b(?:store_id|section_id|block_id|collection_id|source_record_id|quality_event_id|created_by|updated_by|missing_block|is_attached|payload|hash|mcp)\b\s*:?\s*/gi, '')
+    .replace(/\b(?:draft|to_complete|ready_for_review|validated)\b/gi, '')
+    .replace(/Ã©/g, 'é')
+    .replace(/Ã¨/g, 'è')
+    .replace(/Ãª/g, 'ê')
+    .replace(/Ã /g, 'à')
+    .replace(/Ã´/g, 'ô')
+    .replace(/Ã§/g, 'ç')
+    .replace(/Â°/g, '°')
+    .replace(/Â«/g, '«')
+    .replace(/Â»/g, '»');
+}
+
+function humanAttachmentTitle(item = {}) {
+  const raw = displayText(item.original_filename || item.filename || item.title || item.name || 'Pièce jointe');
+  const withoutExtension = raw.replace(/\.(pdf|png|jpe?g|docx?|xlsx?)$/i, '');
+  const dateMatch = withoutExtension.match(/(\d{4})[._-](\d{2})[._-](\d{2})\s*(.*)/);
+  if (dateMatch) {
+    const [, year, month, day, rest] = dateMatch;
+    const label = displayText(rest || withoutExtension).replace(/[-_]+/g, ' ');
+    return `${label.charAt(0).toUpperCase()}${label.slice(1)} - ${formatDate(`${year}-${month}-${day}`)}`;
+  }
+  return withoutExtension.replace(/[-_]+/g, ' ');
+}
+
+function ddppApprovalLabel(identity = {}, options = {}) {
+  if (options.show_sanitary_approval_number === true && identity.sanitary_approval_number) {
+    return `Agrément sanitaire : ${displayText(identity.sanitary_approval_number)}`;
+  }
+  return 'Agrément sanitaire : demande en cours';
+}
+
 function paginationPreparationScript() {
   return `
     (() => {
@@ -76,8 +162,10 @@ function renderSectionBlocks(section, documentation, options = {}) {
   const blocks = (documentation.blocks || [])
     .filter((block) => block.chapter_id === section.id && block.is_visible !== false)
     .sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
-  if (!blocks.length) return renderSectionContent(section, options.include_missing !== false);
-  return blocks.map((block) => renderPdfBlock(block, options)).join('\n');
+  const html = blocks.length
+    ? blocks.map((block) => renderPdfBlock(block, options)).join('\n')
+    : renderSectionContent(section, options.include_missing !== false);
+  return isDdppProfile(options) ? sanitizeDdppHtml(html) : html;
 }
 
 function tableRowCount(block) {
@@ -299,31 +387,32 @@ function renderMasterReferenceRows(references = []) {
     .join('');
 }
 
-function renderMasterAnnexes(masterAnnexes = []) {
+function renderMasterAnnexes(masterAnnexes = [], options = {}) {
+  const ddpp = isDdppProfile(options);
   const rows = masterAnnexes.map(({ document, references }) => {
-    const chapters = [...new Set(references.map((reference) => reference.target_label).filter(Boolean))].join(', ');
-    return `<tr><td>${escapeHtml(document.reference_number || '-')}</td><td>${escapeHtml(document.title)}</td><td>${escapeHtml(document.version || '-')}</td><td>${escapeHtml(chapters || '-')}</td></tr>`;
+    const chapters = [...new Set(references.map((reference) => reference.target_label).filter(Boolean).map(stripTechnicalText))].join(', ');
+    return `<tr><td>${ddppEscape(document.reference_number || '-')}</td><td>${ddppEscape(document.title)}</td><td>${ddppEscape(document.version || '-')}</td><td>${ddppEscape(chapters || '-')}</td></tr>`;
   }).join('');
   const contents = masterAnnexes.map(({ document }) => {
     const referenceRows = renderMasterReferenceRows(document.references || []);
     return `
       <section class="pdf-section">
-        <h2>${escapeHtml(document.reference_number || '')} - ${escapeHtml(document.title)}</h2>
-        <div class="section-meta">Version ${escapeHtml(document.version || '-')} - Statut ${escapeHtml(document.status || '-')} - Application ${escapeHtml(formatDate(document.valid_from))}</div>
+        <h2>${ddppEscape(document.reference_number || '')} - ${ddppEscape(document.title)}</h2>
+        <div class="section-meta">Version ${ddppEscape(document.version || '-')} - Application ${ddppEscape(formatDate(document.valid_from))}</div>
         <table>
           <tbody>
-            <tr><th>Code / reference</th><td>${escapeHtml(document.reference_number || '-')}</td></tr>
-            <tr><th>Categorie</th><td>${escapeHtml(document.category || '-')}</td></tr>
-            <tr><th>Emetteur</th><td>${escapeHtml(document.issuer_name || '-')}</td></tr>
-            <tr><th>Date emission</th><td>${escapeHtml(formatDate(document.issue_date))}</td></tr>
-            <tr><th>Date application</th><td>${escapeHtml(formatDate(document.valid_from))}</td></tr>
+            <tr><th>Code / reference</th><td>${ddppEscape(document.reference_number || '-')}</td></tr>
+            <tr><th>Categorie</th><td>${ddppEscape(document.category || '-')}</td></tr>
+            <tr><th>Emetteur</th><td>${ddppEscape(document.issuer_name || '-')}</td></tr>
+            <tr><th>Date emission</th><td>${ddppEscape(formatDate(document.issue_date))}</td></tr>
+            <tr><th>Date application</th><td>${ddppEscape(formatDate(document.valid_from))}</td></tr>
           </tbody>
         </table>
-        ${renderStructuredMasterContent(document)}
-        <section class="procedure-section">
+        ${sanitizeDdppHtml(renderStructuredMasterContent(document))}
+        ${ddpp ? '' : `<section class="procedure-section">
           <h3>Documents et objets associes</h3>
           <table><thead><tr><th>Type</th><th>Element</th><th>Relation</th></tr></thead><tbody>${referenceRows || '<tr><td colspan="3">Aucun rattachement.</td></tr>'}</tbody></table>
-        </section>
+        </section>`}
       </section>
     `;
   }).join('');
@@ -351,6 +440,38 @@ function missingTimelineLabel(severity) {
   return MISSING_ITEM_TIMELINE_LABELS[severity] || severity || 'A traiter';
 }
 
+function ddppMissingCategory(item = {}) {
+  const text = `${item.severity || ''} ${item.description || ''}`.toLowerCase();
+  if (/instruction|agr[ée]ment/.test(text)) return 'Après instruction';
+  if (/terrain|d[ée]marrage|post|ouverture/.test(text)) return 'Post-ouverture';
+  if (/contrat|cci|froid|extincteur|maintenance|externe|attente/.test(text)) return 'Attente externe';
+  return 'Avant ouverture';
+}
+
+function renderDdppEnrExamples() {
+  const examples = [
+    ['ENR-005', 'Réception', 'Date, fournisseur, lot, conformité, décision et signature/responsable.'],
+    ['ENR-017', 'Traçabilité lot', 'Identification du lot, origine, destinations, quantités et liens documentaires.'],
+    ['ENR-006', 'Températures', 'Équipement contrôlé, date, mesure, conformité et action corrective si écart.'],
+    ['ENR-010', 'Nettoyage', 'Zone/équipement, méthode, produit, contrôle visuel et validation.'],
+    ['ENR-014', 'Nuisibles', 'Point contrôlé, observation, action et suivi prestataire si nécessaire.'],
+  ];
+  const rows = examples.map(([code, title, content]) => `
+    <tr>
+      <td>${escapeHtml(code)}</td>
+      <td>${escapeHtml(title)}</td>
+      <td>${escapeHtml(content)}</td>
+    </tr>
+  `).join('');
+  return `
+    <section class="pdf-page ddpp-enr-examples">
+      <h1>Exemples de supports d'enregistrements ALTA</h1>
+      <p class="ddpp-notice">Exemple de support ALTA - pré-ouverture - ne constitue pas un enregistrement d'exploitation.</p>
+      <table><thead><tr><th>Support</th><th>Objet</th><th>Informations visibles pour la DDPP</th></tr></thead><tbody>${rows}</tbody></table>
+    </section>
+  `;
+}
+
 function sha256Buffer(buffer) {
   return crypto.createHash('sha256').update(buffer).digest('hex');
 }
@@ -365,7 +486,7 @@ function isImage(item) {
 }
 
 function attachmentLabel(item) {
-  return item.original_filename || item.filename || item.title || 'Piece jointe';
+  return displayText(item.original_filename || item.filename || item.title || 'Pièce jointe');
 }
 
 function collectAttachmentAppendixItems(documentation, options = {}) {
@@ -375,8 +496,8 @@ function collectAttachmentAppendixItems(documentation, options = {}) {
     .map((item) => ({
       source: 'chapter_attachment',
       id: item.id,
-      title: attachmentLabel(item),
-      section_title: item.section_title,
+      title: isDdppProfile(options) ? humanAttachmentTitle(item) : attachmentLabel(item),
+      section_title: stripTechnicalText(item.section_title),
       file_path: item.file_path,
       mime_type: item.mime_type,
       size: item.file_size,
@@ -384,15 +505,17 @@ function collectAttachmentAppendixItems(documentation, options = {}) {
     }));
 }
 
-function collectExternalAppendixItems(externalMasterAttachments = []) {
+function collectExternalAppendixItems(externalMasterAttachments = [], options = {}) {
+  const ddpp = isDdppProfile(options);
   return externalMasterAttachments.map(({ document, references }) => {
     const firstReference = references?.[0] || {};
     const relationLabel = firstReference.relation_type_label || null;
+    const title = ddpp ? humanAttachmentTitle(document) : attachmentLabel(document);
     return {
       source: 'external_master_document',
       id: document.id,
-      title: relationLabel ? `${relationLabel} - ${attachmentLabel(document)}` : attachmentLabel(document),
-      section_title: [...new Set(references.map((reference) => reference.usage_label || reference.target_label).filter(Boolean))].join(', '),
+      title: relationLabel ? `${displayText(relationLabel)} - ${title}` : title,
+      section_title: [...new Set(references.map((reference) => stripTechnicalText(reference.usage_label || reference.target_label)).filter(Boolean))].join(', '),
       relation_type_label: relationLabel || document.mime_type || '-',
       file_path: document.storage_path,
       mime_type: document.mime_type,
@@ -511,6 +634,7 @@ async function mergeAppendices(mainPdf, appendixItems = [], logger = console) {
 }
 
 function buildHtml(documentation, identity, options = {}) {
+  const ddpp = isDdppProfile(options);
   const { collection, missing_items: missingItems, attachments } = documentation;
   const renderOptions = {
     ...options,
@@ -521,63 +645,70 @@ function buildHtml(documentation, identity, options = {}) {
   const sections = filteredSections(documentation.sections, options);
   const chapters = sections.filter((section) => section.section_type !== 'tome');
   const attachmentAppendixItems = collectAttachmentAppendixItems(documentation, options);
-  const externalAppendixItems = options.include_external_master_documents ? collectExternalAppendixItems(externalMasterAttachments) : [];
-  const revisionRows = chapters.slice(0, 20).map((section) => `
+  const externalAppendixItems = options.include_external_master_documents ? collectExternalAppendixItems(externalMasterAttachments, options) : [];
+  const revisionRows = chapters.slice(0, ddpp ? 12 : 20).map((section) => `
     <tr>
-      <td>${escapeHtml(section.version)}</td>
-      <td>${escapeHtml(formatDate(section.updated_at))}</td>
-      <td>${escapeHtml(section.updated_by || '-')}</td>
-      <td>${escapeHtml(section.validated_by || '-')}</td>
-      <td>${escapeHtml(section.title)}</td>
+      <td>${ddppEscape(section.version)}</td>
+      <td>${ddppEscape(formatDate(section.updated_at))}</td>
+      ${ddpp ? '' : `<td>${escapeHtml(section.updated_by || '-')}</td><td>${escapeHtml(section.validated_by || '-')}</td>`}
+      <td>${ddppEscape(section.title)}</td>
     </tr>
   `).join('');
   const tocRows = sections.map((section) => `
     <tr>
-      <td>${escapeHtml(section.code)}</td>
-      <td>${section.section_type === 'tome' ? '<strong>' : ''}${escapeHtml(section.title)}${section.section_type === 'tome' ? '</strong>' : ''}</td>
-      <td>${escapeHtml(section.status)}</td>
+      <td>${ddppEscape(section.code)}</td>
+      <td>${section.section_type === 'tome' ? '<strong>' : ''}${ddppEscape(section.title)}${section.section_type === 'tome' ? '</strong>' : ''}</td>
+      ${ddpp ? `<td class="toc-page"><a href="#section-${escapeHtml(section.id)}">Page</a></td>` : `<td>${escapeHtml(section.status)}</td>`}
     </tr>
   `).join('');
   const body = sections.map((section) => `
-    <section class="${section.section_type === 'tome' ? 'pdf-tome' : 'pdf-section'}">
-      <h${section.section_type === 'tome' ? '1' : '2'}>${escapeHtml(section.code)} - ${escapeHtml(section.title)}</h${section.section_type === 'tome' ? '1' : '2'}>
-      <div class="section-meta">Version ${escapeHtml(section.version)} - Statut ${escapeHtml(section.status)} - Code ${escapeHtml(section.code)}</div>
-      <div class="rich-content">${section.section_type === 'tome' ? renderSectionContent(section, options.include_missing !== false) : renderSectionBlocks(section, documentation, renderOptions)}</div>
+    <section id="section-${escapeHtml(section.id)}" class="${section.section_type === 'tome' ? 'pdf-tome' : 'pdf-section'}">
+      <h${section.section_type === 'tome' ? '1' : '2'}>${ddppEscape(section.code)} - ${ddppEscape(section.title)}</h${section.section_type === 'tome' ? '1' : '2'}>
+      <div class="section-meta">Version ${ddppEscape(section.version)}${ddpp ? '' : ` - Statut ${escapeHtml(section.status)} - Code ${escapeHtml(section.code)}`}</div>
+      <div class="rich-content">${section.section_type === 'tome' ? (ddpp ? sanitizeDdppHtml(renderSectionContent(section, options.include_missing !== false)) : renderSectionContent(section, options.include_missing !== false)) : renderSectionBlocks(section, documentation, renderOptions)}</div>
     </section>
   `).join('');
   const missingRows = missingItems
     .filter((item) => item.status !== 'resolved')
-    .map((item) => `<tr><td>${escapeHtml(item.section_code)}</td><td>${escapeHtml(item.section_title)}</td><td class="missing">${escapeHtml(item.description)}</td><td>${escapeHtml(missingTimelineLabel(item.severity))}</td><td>${escapeHtml(formatDate(item.due_at))}</td></tr>`)
+    .map((item) => ddpp
+      ? `<tr><td>${ddppEscape(ddppMissingCategory(item))}</td><td>${ddppEscape(item.section_code)}</td><td>${ddppEscape(item.section_title)}</td><td>${ddppEscape(item.description)}</td></tr>`
+      : `<tr><td>${escapeHtml(item.section_code)}</td><td>${escapeHtml(item.section_title)}</td><td class="missing">${escapeHtml(item.description)}</td><td>${escapeHtml(missingTimelineLabel(item.severity))}</td><td>${escapeHtml(formatDate(item.due_at))}</td></tr>`)
     .join('');
   const attachmentRows = attachments
     .filter((item) => !item.archived_at && item.include_in_export !== false)
-    .map((item) => `<tr><td>${escapeHtml(item.section_title)}</td><td>${escapeHtml(item.filename)}</td><td>${escapeHtml(item.mime_type || '-')}</td></tr>`)
+    .map((item) => ddpp
+      ? `<tr><td>${ddppEscape(item.section_title)}</td><td>${ddppEscape(humanAttachmentTitle(item))}</td><td>Pièce jointe en annexe</td></tr>`
+      : `<tr><td>${escapeHtml(item.section_title)}</td><td>${escapeHtml(item.filename)}</td><td>${escapeHtml(item.mime_type || '-')}</td></tr>`)
     .join('');
   const externalAttachmentRows = externalAppendixItems
-    .map((item) => `<tr><td>${escapeHtml(item.section_title || '-')}</td><td>${escapeHtml(item.title)}</td><td>${escapeHtml(item.relation_type_label || item.mime_type || '-')}</td></tr>`)
+    .map((item) => `<tr><td>${ddppEscape(item.section_title || '-')}</td><td>${ddppEscape(item.title)}</td><td>${ddppEscape(item.relation_type_label || (ddpp ? 'Document externe en annexe' : item.mime_type) || '-')}</td></tr>`)
     .join('');
   const annexCount = attachmentAppendixItems.length + externalAppendixItems.length;
 
   const coverAddress = [identity.address_line1, identity.address_line2, [identity.postal_code, identity.city].filter(Boolean).join(' '), identity.country].filter(Boolean).join('<br>');
   const logo = identity.logo_url ? `<img class="cover-logo" src="${escapeHtml(identity.logo_url)}" alt="Logo">` : '';
+  const coverTitle = ddpp ? "Manuel qualité et dossier d'agrément sanitaire" : collection.title;
+  const establishment = ddpp
+    ? "Case n°13 - Centre de Marée - 85100 Les Sables-d'Olonne"
+    : coverAddress;
   const content = `
-    <main class="quality-pdf">
+    <main class="quality-pdf ${ddpp ? 'quality-pdf--ddpp' : ''}">
       <section class="cover">
         ${logo}
-        <h1>${escapeHtml(identity.company_name)}</h1>
-        <h2>${escapeHtml(collection.title)}</h2>
-        <p>${coverAddress}</p>
-        <p>${identity.sanitary_approval_number ? `Agrement sanitaire : ${escapeHtml(identity.sanitary_approval_number)}` : ''}</p>
-        <p>Version ${escapeHtml(collection.version)} - Edition du ${escapeHtml(formatDate(new Date()))}</p>
-        <strong>Document maitrise</strong>
+        <h1>${ddppEscape(identity.company_name)}</h1>
+        <h2>${ddppEscape(coverTitle)}</h2>
+        <p><strong>Établissement :</strong> ${ddppEscape(establishment)}</p>
+        <p>${ddppEscape(ddpp ? ddppApprovalLabel(identity, options) : (identity.sanitary_approval_number ? `Agrement sanitaire : ${identity.sanitary_approval_number}` : ''))}</p>
+        <p>Version documentaire ${ddppEscape(collection.version)} - Date d'édition ${ddppEscape(formatDate(new Date()))}</p>
+        ${ddpp ? '' : '<strong>Document maitrise</strong>'}
       </section>
       <section class="pdf-page">
-        <h1>Historique des revisions</h1>
-        <table><thead><tr><th>Version</th><th>Date</th><th>Auteur</th><th>Validateur</th><th>Motif</th></tr></thead><tbody>${revisionRows || '<tr><td colspan="5">Aucune revision.</td></tr>'}</tbody></table>
+        <h1>${ddpp ? 'Synthèse documentaire' : 'Historique des revisions'}</h1>
+        <table><thead><tr><th>Version</th><th>Date</th>${ddpp ? '' : '<th>Auteur</th><th>Validateur</th>'}<th>Chapitre / motif</th></tr></thead><tbody>${revisionRows || `<tr><td colspan="${ddpp ? '3' : '5'}">Aucune revision.</td></tr>`}</tbody></table>
       </section>
       <section class="pdf-page">
         <h1>Sommaire</h1>
-        <table><thead><tr><th>Code</th><th>Titre</th><th>Statut</th></tr></thead><tbody>${tocRows}</tbody></table>
+        <table class="toc-table"><thead><tr><th>Code</th><th>Titre</th><th>${ddpp ? 'Page' : 'Statut'}</th></tr></thead><tbody>${tocRows}</tbody></table>
       </section>
       <section class="pdf-page">
         <h1>Table des annexes</h1>
@@ -590,11 +721,14 @@ function buildHtml(documentation, identity, options = {}) {
           </tbody>
         </table>
       </section>
-      ${options.include_missing === false ? '' : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Temporalite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`}
+      ${options.include_missing === false ? '' : (ddpp
+        ? `<section class="pdf-page ddpp-open-items"><h1>Éléments restant à compléter selon l'avancement du projet</h1><table><thead><tr><th>Temporalité</th><th>Code</th><th>Chapitre</th><th>Élément</th></tr></thead><tbody>${missingRows || '<tr><td colspan="4">Aucun élément ouvert.</td></tr>'}</tbody></table></section>`
+        : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Temporalite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`)}
       ${body}
       ${options.include_attachments === false ? '' : `<section class="pdf-page"><h1>Annexes</h1><table><thead><tr><th>Chapitre</th><th>Fichier</th><th>Type</th></tr></thead><tbody>${attachmentRows || '<tr><td colspan="3">Aucune annexe incluse.</td></tr>'}</tbody></table></section>`}
       ${options.include_external_master_documents ? `<section class="pdf-page"><h1>Documents externes associes</h1><table><thead><tr><th>Chapitres rattaches</th><th>Document</th><th>Type</th></tr></thead><tbody>${externalAttachmentRows || '<tr><td colspan="3">Aucun document externe a embarquer.</td></tr>'}</tbody></table></section>` : ''}
-      ${options.include_master_annexes ? renderMasterAnnexes(masterAnnexes) : ''}
+      ${ddpp && options.include_enr_examples !== false ? renderDdppEnrExamples() : ''}
+      ${options.include_master_annexes ? renderMasterAnnexes(masterAnnexes, options) : ''}
       ${annexCount ? `<section class="pdf-page"><h1>Annexes fichiers</h1><p>Les fichiers PDF et images inclus sont ajoutes apres cette page. Les autres formats font l'objet d'une page de signalement.</p></section>` : ''}
     </main>
   `;
@@ -604,17 +738,23 @@ function buildHtml(documentation, identity, options = {}) {
       size: A4;
       margin: 18mm 12mm 18mm 12mm;
       @top-left { content: "${escapeHtml(identity.company_name)}"; }
-      @top-center { content: "Manuel qualite"; }
+      @top-center { content: "${ddpp ? 'Manuel qualite / PMS' : 'Manuel qualite'}"; }
       @top-right { content: "Version ${escapeHtml(collection.version)}"; }
-      @bottom-left { content: "Document maitrise"; }
+      @bottom-left { content: "${ddpp ? 'ALTA MAREE - DDPP' : 'Document maitrise'}"; }
       @bottom-center { content: "${todayIso()}"; }
-      @bottom-right { content: "Page " counter(page) " / " counter(pages); }
+      @bottom-right { content: "${ddpp ? 'Manuel - page ' : 'Page '} " counter(page) " / " counter(pages); }
     }
     body { font-size: 12px; }
     .cover { align-items: center; display: flex; flex-direction: column; justify-content: center; min-height: 250mm; text-align: center; page-break-after: always; }
     .cover-logo { max-height: 34mm; max-width: 58mm; object-fit: contain; margin-bottom: 18mm; }
     .cover h1 { font-size: 30px; margin: 0 0 8mm; }
     .cover h2 { font-size: 20px; margin: 0 0 8mm; }
+    .quality-pdf--ddpp .cover { min-height: 235mm; }
+    .quality-pdf--ddpp .cover h1 { letter-spacing: 0; text-transform: uppercase; }
+    .quality-pdf--ddpp .section-meta { color: #4b5563; }
+    .toc-table a { color: inherit; text-decoration: none; }
+    .toc-page a::after { content: target-counter(attr(href), page); }
+    .ddpp-notice { border: 1px solid #94a3b8; background: #f8fafc; color: #263746; font-weight: 700; padding: 8px 10px; }
     .pdf-page, .pdf-tome { page-break-before: always; }
     h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; color: #263746; orphans: 3; widows: 3; }
     h1 { font-size: 22px; }
@@ -657,6 +797,11 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-data-table tr { break-inside: avoid; page-break-inside: avoid; }
     .quality-data-table th,
     .quality-data-table td { border: 1px solid #94a3b8; font-size: 10.5px; line-height: 1.35; padding: 5px 6px; vertical-align: top; word-break: break-word; }
+    .quality-pdf--ddpp .quality-data-table th,
+    .quality-pdf--ddpp .quality-data-table td { font-size: 9.5px; overflow-wrap: anywhere; }
+    .quality-pdf--ddpp table { max-width: 100%; }
+    .quality-pdf--ddpp .missing,
+    .quality-pdf--ddpp .missing-info { color: inherit; font-weight: inherit; }
     .quality-data-table th { background: #eef2f7; color: #263746; font-weight: 700; }
     .quality-data-table .align-center { text-align: center; }
     .quality-data-table .align-right { text-align: right; }
@@ -668,6 +813,18 @@ function buildHtml(documentation, identity, options = {}) {
 }
 
 async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
+  if (isDdppProfile(options)) {
+    options = {
+      ...options,
+      export_type: 'ddpp',
+      profile: 'ddpp',
+      include_missing: options.include_missing !== false,
+      include_attachments: options.include_attachments !== false,
+      include_master_annexes: options.include_master_annexes !== false,
+      include_external_master_documents: options.include_external_master_documents !== false,
+      include_enr_examples: options.include_enr_examples !== false,
+    };
+  }
   const documentation = await getDocumentation(db, storeId, collectionId);
   if (!documentation) return null;
   const sections = filteredSections(documentation.sections, options);
@@ -688,7 +845,7 @@ async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
   });
   const appendixItems = [
     ...collectAttachmentAppendixItems(documentation, options),
-    ...(options.include_external_master_documents ? collectExternalAppendixItems(documentation.external_master_attachments || []) : []),
+    ...(options.include_external_master_documents ? collectExternalAppendixItems(documentation.external_master_attachments || [], options) : []),
   ];
   const exportSummary = {
     chapters: sections.filter((section) => section.section_type !== 'tome').length,
@@ -719,7 +876,8 @@ async function exportDocumentationPdf(db, storeId, collectionId, userId, options
   const rendered = await renderDocumentationPdf(db, storeId, collectionId, options);
   if (!rendered) return null;
   const date = todayIso();
-  const filename = `${fileSafe(`Manuel_Qualite_${rendered.identity.company_name}_V${rendered.documentation.collection.version}_${date}`, 'Manuel_Qualite')}.pdf`;
+  const ddpp = isDdppProfile(options);
+  const filename = `${fileSafe(`${ddpp ? 'Dossier_DDPP' : 'Manuel_Qualite'}_${rendered.identity.company_name}_V${rendered.documentation.collection.version}_${date}`, ddpp ? 'Dossier_DDPP' : 'Manuel_Qualite')}.pdf`;
   const filePath = path.join(EXPORT_DIR, `${collectionId}-${Date.now()}-${filename}`);
   fs.writeFileSync(filePath, rendered.pdf);
   const inserted = await db.query(

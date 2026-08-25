@@ -457,12 +457,14 @@ const qualityDocumentationExportInputSchema = {
   properties: {
     collection_id: { type: 'string' },
     export_type: { type: 'string' },
+    profile: { type: 'string', enum: ['ddpp'] },
     tome_id: { type: 'string' },
     only_validated: { type: 'boolean' },
     include_missing: { type: 'boolean' },
     include_attachments: { type: 'boolean' },
     include_master_annexes: { type: 'boolean' },
     include_external_master_documents: { type: 'boolean' },
+    include_enr_examples: { type: 'boolean' },
     confirmation: { type: 'string', enum: ['human_confirmed'] },
     pending_action_id: { type: 'string' },
   },
@@ -3516,12 +3518,14 @@ const tools = [
     execute: async ({ db, context, input, tool: currentTool }) => {
       const exported = await qualityExport.exportDocumentationPdf(db, context.store_id, input.collection_id, context.user_id, {
         export_type: input.export_type || 'full',
+        profile: input.profile || (input.export_type === 'ddpp' ? 'ddpp' : null),
         tome_id: input.tome_id || null,
         only_validated: input.only_validated === true,
         include_missing: input.include_missing !== false,
         include_attachments: input.include_attachments !== false,
-        include_master_annexes: input.include_master_annexes === true,
-        include_external_master_documents: input.include_external_master_documents === true,
+        include_master_annexes: (input.profile === 'ddpp' || input.export_type === 'ddpp') ? input.include_master_annexes !== false : input.include_master_annexes === true,
+        include_external_master_documents: (input.profile === 'ddpp' || input.export_type === 'ddpp') ? input.include_external_master_documents !== false : input.include_external_master_documents === true,
+        include_enr_examples: (input.profile === 'ddpp' || input.export_type === 'ddpp') ? input.include_enr_examples !== false : input.include_enr_examples === true,
       });
       if (!exported) {
         const error = new Error('Dossier documentaire introuvable');
