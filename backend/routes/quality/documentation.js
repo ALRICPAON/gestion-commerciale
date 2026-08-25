@@ -97,6 +97,11 @@ function handleError(res, err, label) {
 }
 
 function exportOptions(body = {}) {
+  if (body.profile && body.profile !== 'ddpp') {
+    const error = new Error(`Profil d'export qualite invalide: ${body.profile}`);
+    error.status = 400;
+    throw error;
+  }
   const profile = body.profile || (body.export_type === 'ddpp' ? 'ddpp' : null);
   const ddpp = profile === 'ddpp';
   return {
@@ -598,5 +603,7 @@ router.get('/:id/exports', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENT
     handleError(res, err, 'Erreur GET /api/quality/documentation/:id/exports');
   }
 });
+
+router.exportOptions = exportOptions;
 
 module.exports = router;
