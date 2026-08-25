@@ -387,6 +387,212 @@ function renderMasterReferenceRows(references = []) {
     .join('');
 }
 
+const DDPP_RECORD_FALLBACK_CLASSIFICATION = Object.freeze({
+  'ENR-005': 'native',
+  'ENR-006': 'native',
+  'ENR-010': 'native',
+  'ENR-017': 'native',
+  'ENR-018': 'native',
+  'ENR-019': 'hybrid',
+  'ENR-021': 'hybrid',
+  'ENR-022': 'native',
+  'ENR-023': 'hybrid',
+  'ENR-024': 'hybrid',
+  'ENR-011': 'generic',
+  'ENR-012': 'generic',
+  'ENR-013': 'generic',
+  'ENR-014': 'generic',
+});
+
+const DDPP_NATIVE_RECORD_TEMPLATES = Object.freeze({
+  'ENR-005': {
+    title: 'Vue ALTA - reception fournisseur',
+    mode: 'native',
+    rows: [
+      ['Date', '12/05/2026 06:42'],
+      ['Fournisseur', 'Criée des Sables-d\'Olonne'],
+      ['BL fournisseur', 'BL-2026-0512-084'],
+      ['Mode de réception', 'Négoce direct fournisseur → client'],
+      ['Produits / lots', 'Bar sauvage - Lot BAR-120526-A - 48 kg'],
+      ['Contrôles applicables', 'Documents fournisseur et traçabilité amont/aval'],
+      ['Contrôles physiques', 'Non applicables en négoce direct'],
+      ['Température', 'Non applicable - aucune mesure inventée'],
+      ['Fraîcheur / emballage / étiquetage', 'Non applicable - produit non manipulé par ALTA'],
+      ['Statut qualité', 'Accepté selon documents fournisseur'],
+      ['Documents fournisseur liés', 'BL fournisseur, facture fournisseur, document sanitaire si requis'],
+      ['Destination aval', 'Client livré directement'],
+      ['BL aval / livraison', 'BL client BLV-2026-0512-017 - 12/05/2026'],
+      ['Non-conformité', 'Aucune non-conformité associée'],
+    ],
+  },
+  'ENR-006': {
+    title: 'Vue ALTA - relevé température',
+    mode: 'native',
+    rows: [
+      ['Zone', 'Chambre froide produits frais'],
+      ['Date / heure', '12/05/2026 05:58'],
+      ['Température', '+1,4 °C'],
+      ['Objectif', '0 °C à +2 °C'],
+      ['Résultat', 'Conforme'],
+      ['Opérateur', 'Responsable qualité'],
+      ['Contrôle de confirmation', 'Non requis'],
+      ['NC / action associée', 'Aucune'],
+    ],
+  },
+  'ENR-010': {
+    title: 'Vue ALTA - exécution plan de nettoyage',
+    mode: 'native',
+    rows: [
+      ['Plan', 'Nettoyage atelier fin de production'],
+      ['Zone', 'Atelier de préparation'],
+      ['Date', '12/05/2026'],
+      ['Opérateur', 'Équipe production'],
+      ['Produit utilisé', 'Détergent désinfectant homologué contact alimentaire'],
+      ['Opération réalisée', 'Nettoyage, rinçage, désinfection selon plan'],
+      ['Contrôle final', 'Contrôle visuel conforme'],
+      ['Résultat', 'Conforme'],
+      ['Preuve / pièce jointe', 'Photo ou document si requis par le plan'],
+      ['NC éventuelle', 'Aucune'],
+    ],
+  },
+  'ENR-017': {
+    title: 'Vue ALTA - filiation lot',
+    mode: 'native',
+    rows: [
+      ['Fournisseur', 'Criée des Sables-d\'Olonne'],
+      ['Document amont', 'BL fournisseur BL-2026-0512-084'],
+      ['Lot', 'BAR-120526-A'],
+      ['Article', 'Bar sauvage'],
+      ['Quantité', '48 kg'],
+      ['Mouvement / vente', 'Réception puis vente directe'],
+      ['Client', 'Restaurant exemple'],
+      ['Document aval', 'BL client BLV-2026-0512-017'],
+    ],
+  },
+  'ENR-018': {
+    title: 'Vue ALTA - non-conformité',
+    mode: 'native',
+    rows: [
+      ['Origine', 'Réception, température, nettoyage ou réclamation'],
+      ['Anomalie', 'Écart enregistré dans ALTA'],
+      ['Produit / lot concerné', 'Renseigné si applicable'],
+      ['Décision qualité', 'Acceptation, isolement, retour, destruction ou action corrective'],
+      ['Action / clôture', 'Suivi jusqu\'à clôture dans ALTA'],
+    ],
+  },
+  'ENR-022': {
+    title: 'Vue ALTA - retrait / rappel',
+    mode: 'native',
+    rows: [
+      ['Déclencheur', 'Alerte fournisseur, anomalie interne ou demande autorité'],
+      ['Lot concerné', 'Lot identifié dans ALTA'],
+      ['Clients impactés', 'Liste issue de la traçabilité aval'],
+      ['Notifications', 'Contacts clients et autorités selon procédure'],
+      ['Actions', 'Blocage, retrait, retour ou destruction'],
+      ['Clôture', 'Bilan et preuves conservées'],
+    ],
+  },
+});
+
+const DDPP_HYBRID_RECORD_TEMPLATES = Object.freeze({
+  'ENR-019': {
+    title: 'Vue ALTA - suivi fournisseurs / produits',
+    rows: [
+      ['Donnée native ALTA', 'Fournisseur, articles associés, documents et statut qualité'],
+      ['Complément documentaire', 'Support conservé uniquement si une information non native reste nécessaire'],
+    ],
+  },
+  'ENR-021': {
+    title: 'Vue ALTA - fournisseur actif / inactif',
+    rows: [
+      ['Donnée native ALTA', 'Statut fournisseur actif/inactif et documents associés'],
+      ['Complément documentaire', 'Justification ou validation si non portée par la fiche fournisseur'],
+    ],
+  },
+  'ENR-023': {
+    title: 'Vue ALTA - enregistrement hybride',
+    rows: [
+      ['Donnée native ALTA', 'Information opérationnelle disponible dans ALTA'],
+      ['Complément documentaire', 'Support limité aux champs non couverts nativement'],
+    ],
+  },
+  'ENR-024': {
+    title: 'Vue ALTA - enregistrement hybride',
+    rows: [
+      ['Donnée native ALTA', 'Information opérationnelle disponible dans ALTA'],
+      ['Complément documentaire', 'Support limité aux champs non couverts nativement'],
+    ],
+  },
+});
+
+const DDPP_GENERIC_RECORD_TEMPLATES = Object.freeze({
+  'ENR-014': {
+    title: 'Support DDPP - surveillance nuisibles',
+    rows: [
+      ['Mode d’exploitation', 'Surveillance interne ALTA'],
+      ['Point surveillé', 'Atelier, réserve, abords ou point sensible'],
+      ['Observation', 'Absence ou présence de trace'],
+      ['Anomalie éventuelle', 'Signalement Criée / CCI si nécessaire'],
+      ['Action / retour', 'Action suivie et clôturée dans ALTA ou dossier qualité'],
+      ['Contrat dératisation', 'Non présenté comme contrat propre ALTA'],
+    ],
+  },
+});
+
+function ddppRecordCode(document = {}) {
+  const value = document.reference_number || document.code || document.title || '';
+  const match = String(value).toUpperCase().match(/\bENR-\d{3}\b/);
+  return match ? match[0] : null;
+}
+
+function ddppRecordClassification(document = {}) {
+  const structured = document.structured_content || {};
+  const metadata = document.metadata || document.meta || {};
+  const configured = structured.ddpp_record_classification
+    || structured.record_classification
+    || metadata.ddpp_record_classification
+    || metadata.record_classification;
+  if (['native', 'hybrid', 'generic'].includes(configured)) return configured;
+  return DDPP_RECORD_FALLBACK_CLASSIFICATION[ddppRecordCode(document)] || 'generic';
+}
+
+function ddppRecordTemplate(document = {}) {
+  const code = ddppRecordCode(document);
+  const classification = ddppRecordClassification(document);
+  if (classification === 'native') return DDPP_NATIVE_RECORD_TEMPLATES[code] || null;
+  if (classification === 'hybrid') return DDPP_HYBRID_RECORD_TEMPLATES[code] || null;
+  return DDPP_GENERIC_RECORD_TEMPLATES[code] || null;
+}
+
+function renderDdppRecordExample(document = {}) {
+  const code = ddppRecordCode(document);
+  const classification = ddppRecordClassification(document);
+  const template = ddppRecordTemplate(document) || {
+    title: classification === 'native'
+      ? 'Vue ALTA - enregistrement natif'
+      : classification === 'hybrid'
+        ? 'Vue ALTA - enregistrement hybride'
+        : 'Support documentaire propre',
+    rows: classification === 'generic'
+      ? [['Mode d’exploitation', 'Support documentaire conservé lorsqu’aucune preuve native ALTA permanente n’existe.']]
+      : [['Donnée native ALTA', 'Vue opérationnelle synthétique de l’enregistrement exploité dans ALTA.']],
+  };
+  const rows = template.rows.map(([label, value]) => `<tr><th>${ddppEscape(label)}</th><td>${ddppEscape(value)}</td></tr>`).join('');
+  return `
+    <section class="ddpp-record-example ddpp-record-example--${classification}">
+      <p class="ddpp-notice">EXEMPLE DE SUPPORT ALTA - PRÉ-OUVERTURE<br>Pré-ouverture - ne constitue pas un enregistrement d'exploitation.</p>
+      <h3>${ddppEscape(template.title)}</h3>
+      <table class="ddpp-record-table">
+        <tbody>
+          <tr><th>Classification DDPP</th><td>${ddppEscape(classification)}</td></tr>
+          <tr><th>Support</th><td>${ddppEscape(code || document.reference_number || '-')}</td></tr>
+          ${rows}
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
 function renderMasterAnnexes(masterAnnexes = [], options = {}) {
   const ddpp = isDdppProfile(options);
   const rows = masterAnnexes.map(({ document, references }) => {
@@ -395,6 +601,7 @@ function renderMasterAnnexes(masterAnnexes = [], options = {}) {
   }).join('');
   const contents = masterAnnexes.map(({ document }) => {
     const referenceRows = renderMasterReferenceRows(document.references || []);
+    const ddppRecordContent = ddpp && document.document_type === 'record_form' ? renderDdppRecordExample(document) : null;
     return `
       <section class="pdf-section">
         <h2>${ddppEscape(document.reference_number || '')} - ${ddppEscape(document.title)}</h2>
@@ -408,7 +615,7 @@ function renderMasterAnnexes(masterAnnexes = [], options = {}) {
             <tr><th>Date application</th><td>${ddppEscape(formatDate(document.valid_from))}</td></tr>
           </tbody>
         </table>
-        ${sanitizeDdppHtml(renderStructuredMasterContent(document))}
+        ${ddppRecordContent || sanitizeDdppHtml(renderStructuredMasterContent(document))}
         ${ddpp ? '' : `<section class="procedure-section">
           <h3>Documents et objets associes</h3>
           <table><thead><tr><th>Type</th><th>Element</th><th>Relation</th></tr></thead><tbody>${referenceRows || '<tr><td colspan="3">Aucun rattachement.</td></tr>'}</tbody></table>
@@ -468,6 +675,18 @@ function renderDdppEnrExamples() {
       <h1>Exemples de supports d'enregistrements ALTA</h1>
       <p class="ddpp-notice">Exemple de support ALTA - pré-ouverture - ne constitue pas un enregistrement d'exploitation.</p>
       <table><thead><tr><th>Support</th><th>Objet</th><th>Informations visibles pour la DDPP</th></tr></thead><tbody>${rows}</tbody></table>
+    </section>
+  `;
+}
+
+function renderDdppNativeEnrExamples() {
+  const examples = ['ENR-005', 'ENR-006', 'ENR-010', 'ENR-017', 'ENR-014']
+    .map((reference_number) => renderDdppRecordExample({ reference_number, document_type: 'record_form' }))
+    .join('');
+  return `
+    <section class="pdf-page ddpp-enr-examples">
+      <h1>Exemples de vues d'enregistrements ALTA</h1>
+      ${examples}
     </section>
   `;
 }
@@ -727,7 +946,7 @@ function buildHtml(documentation, identity, options = {}) {
       ${body}
       ${options.include_attachments === false ? '' : `<section class="pdf-page"><h1>Annexes</h1><table><thead><tr><th>Chapitre</th><th>Fichier</th><th>Type</th></tr></thead><tbody>${attachmentRows || '<tr><td colspan="3">Aucune annexe incluse.</td></tr>'}</tbody></table></section>`}
       ${options.include_external_master_documents ? `<section class="pdf-page"><h1>Documents externes associes</h1><table><thead><tr><th>Chapitres rattaches</th><th>Document</th><th>Type</th></tr></thead><tbody>${externalAttachmentRows || '<tr><td colspan="3">Aucun document externe a embarquer.</td></tr>'}</tbody></table></section>` : ''}
-      ${ddpp && options.include_enr_examples !== false ? renderDdppEnrExamples() : ''}
+      ${ddpp && options.include_enr_examples !== false ? renderDdppNativeEnrExamples() : ''}
       ${options.include_master_annexes ? renderMasterAnnexes(masterAnnexes, options) : ''}
       ${annexCount ? `<section class="pdf-page"><h1>Annexes fichiers</h1><p>Les fichiers PDF et images inclus sont ajoutes apres cette page. Les autres formats font l'objet d'une page de signalement.</p></section>` : ''}
     </main>
@@ -802,6 +1021,12 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-pdf--ddpp table { max-width: 100%; }
     .quality-pdf--ddpp .missing,
     .quality-pdf--ddpp .missing-info { color: inherit; font-weight: inherit; }
+    .ddpp-record-example { border: 1px solid #94a3b8; break-inside: avoid-page; margin: 12px 0 16px; padding: 10px 12px; }
+    .ddpp-record-example h3 { color: #0f5f73; font-size: 14px; margin: 8px 0 8px; }
+    .ddpp-record-table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+    .ddpp-record-table th { background: #eef2f7; color: #263746; width: 34%; }
+    .ddpp-record-table th,
+    .ddpp-record-table td { border: 1px solid #cbd5e1; font-size: 9.5px; line-height: 1.35; padding: 5px 6px; text-align: left; vertical-align: top; word-break: break-word; }
     .quality-data-table th { background: #eef2f7; color: #263746; font-weight: 700; }
     .quality-data-table .align-center { text-align: center; }
     .quality-data-table .align-right { text-align: right; }
