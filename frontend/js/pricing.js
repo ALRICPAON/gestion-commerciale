@@ -41,6 +41,13 @@ const confirmKnownBtn = el('confirm-known-btn');
 const applyImportBtn = el('apply-import-btn');
 const importSummary = el('import-summary');
 const importResults = el('import-results');
+const importArticlePanel = el('import-article-panel');
+const closeImportArticlePanelBtn = el('close-import-article-panel-btn');
+const importArticleLineLabel = el('import-article-line-label');
+const importArticleSearchInput = el('import-article-search-input');
+const importArticleSearchBtn = el('import-article-search-btn');
+const importArticleResults = el('import-article-results');
+const importArticleError = el('import-article-error');
 
 let suppliers = [];
 let tariffLevels = [];
@@ -50,6 +57,7 @@ let dirty = new Set();
 let saveTimer = null;
 let lastImportId = null;
 let currentImport = null;
+let activeImportLineId = null;
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -377,22 +385,36 @@ function setImport(result) {
 
 function decisionLabel(line) {
   if (line.user_decision === 'confirmed') return 'Confirme';
-  if (line.user_decision === 'overridden') return 'Corrige';
+  if (line.user_decision === 'overridden') return 'Remplace';
   if (line.user_decision === 'ignored') return 'Ignore';
   if (line.match_method === 'known_mapping') return 'Mapping connu';
   if (line.match_status === 'probable') return `Proposition ${Number(line.confidence_score || 0).toFixed(0)} %`;
   return 'A traiter';
 }
 
-function renderImport() {
-  const linesForImport = currentImport?.lines || [];
-  const summary = currentImport?.summary || linesForImport.reduce((acc, line) => {
+function matchLabel(line) {
+  if (line.match_method === 'known_mapping') return 'Mapping connu';
+  if (line.match_method === 'normalized_exact_article') return 'Correspondance texte';
+  if (line.match_method === 'plu_alias') return 'Correspondance PLU';
+  if (line.match_method === 'text_similarity') return 'Correspondance texte';
+  if (line.match_status === 'unrecognized' || line.match_method === 'none') return 'Non reconnu';
+  return 'Proposition';
+}
+
+function importSummaryFromLines(linesForImport) {
+  return linesForImport.reduce((acc, line) => {
     acc.total += 1;
     acc.ready += ['confirmed', 'overridden'].includes(line.user_decision) ? 1 : 0;
     acc.pending += line.user_decision === 'pending' ? 1 : 0;
     acc.ignored += line.user_decision === 'ignored' ? 1 : 0;
     return acc;
   }, { total: 0, ready: 0, pending: 0, ignored: 0 });
+}
+
+function updateImportSummary() {
+  const linesForImport = currentImport?.lines || [];
+  const summary = importSummaryFromLines(linesForImport);
+  if (currentImport) currentImport.summary = summary;
   applyImportBtn.disabled = !lastImportId || !session || !summary.ready;
   confirmKnownBtn.disabled = !linesForImport.some((line) => line.match_method === 'known_mapping' && line.user_decision === 'pending');
   importSummary.innerHTML = lastImportId ? `
@@ -401,6 +423,27 @@ function renderImport() {
     <strong>${summary.pending || 0}</strong> a traiter
     <strong>${summary.ignored || 0}</strong> ignorees
   ` : '';
+}
+
+function importRowHtml(line) {
+  return `
+    <tr data-import-line-id="${line.id}">
+      <td>${escapeHtml(line.row_number || '')}</td>
+      <td>${escapeHtml(line.supplier_designation_original || '')}</td>
+      <td class="pricing-number">${money(line.purchase_price_ht)}</td>
+      <td>${escapeHtml([line.caliber, line.unit || line.price_unit].filter(Boolean).join(' / '))}</td>
+      <td>${line.article_designation ? escapeHtml(line.article_designation) : '<span class="pricing-muted">Aucun article</span>'}</td>
+      <td>${escapeHtml(line.article_plu || '')}</td>
+      <td>${escapeHtml(matchLabel(line))}<br><small>${Number(line.confidence_score || 0).toFixed(0)} %</small></td>
+      <td><span class="pricing-decision">${decisionLabel(line)}</span></td>
+      <td>${importActionsHtml(line)}</td>
+    </tr>
+  `;
+}
+
+function renderImport() {
+  const linesForImport = currentImport?.lines || [];
+  updateImportSummary();
   importResults.innerHTML = linesForImport.length ? `
     <table class="pricing-import-table">
       <thead>
@@ -417,19 +460,7 @@ function renderImport() {
         </tr>
       </thead>
       <tbody>
-        ${linesForImport.map((line) => `
-          <tr data-import-line-id="${line.id}">
-            <td>${escapeHtml(line.row_number || '')}</td>
-            <td>${escapeHtml(line.supplier_designation_original || '')}</td>
-            <td class="pricing-number">${money(line.purchase_price_ht)}</td>
-            <td>${escapeHtml([line.caliber, line.unit || line.price_unit].filter(Boolean).join(' / '))}</td>
-            <td>${line.article_designation ? escapeHtml(line.article_designation) : '<span class="pricing-muted">Aucun article</span>'}</td>
-            <td>${escapeHtml(line.article_plu || '')}</td>
-            <td>${escapeHtml(line.match_method || line.match_status || '')}<br><small>${Number(line.confidence_score || 0).toFixed(0)} %</small></td>
-            <td><span class="pricing-decision">${decisionLabel(line)}</span></td>
-            <td>${importActionsHtml(line)}<div class="pricing-inline-search hidden"></div></td>
-          </tr>
-        `).join('')}
+        ${linesForImport.map(importRowHtml).join('')}
       </tbody>
     </table>
   ` : '<p>Aucune ligne detectee.</p>';
@@ -451,32 +482,48 @@ async function refreshImport() {
 }
 
 async function confirmImportLine(lineId) {
-  await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(lineId)}/confirm`, {});
-  await refreshImport();
+  const updated = await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(lineId)}/confirm`, {});
+  updateImportLine(updated);
 }
 
 async function ignoreImportLine(lineId) {
-  await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(lineId)}/ignore`, {});
-  await refreshImport();
+  const updated = await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(lineId)}/ignore`, {});
+  updateImportLine(updated);
 }
 
-function showArticleSearch(row) {
-  const box = row.querySelector('.pricing-inline-search');
-  box.classList.remove('hidden');
-  box.innerHTML = `
-    <input type="search" placeholder="PLU ou designation article" data-import-search-input />
-    <button class="btn btn-secondary btn-sm" data-import-action="search" type="button">Rechercher</button>
-    <div class="pricing-inline-results"></div>
-  `;
-  box.querySelector('input').focus();
+function updateImportLine(updated) {
+  if (!updated?.id || !currentImport?.lines) return;
+  const index = currentImport.lines.findIndex((line) => String(line.id) === String(updated.id));
+  if (index >= 0) currentImport.lines[index] = { ...currentImport.lines[index], ...updated };
+  const row = importResults.querySelector(`[data-import-line-id="${updated.id}"]`);
+  if (row) row.outerHTML = importRowHtml(currentImport.lines[index] || updated);
+  updateImportSummary();
 }
 
-async function searchImportArticles(row) {
-  const query = row.querySelector('[data-import-search-input]')?.value || '';
+function showArticleSearch(lineId) {
+  const line = (currentImport?.lines || []).find((item) => String(item.id) === String(lineId));
+  if (!line) return;
+  activeImportLineId = lineId;
+  importArticlePanel.classList.remove('hidden');
+  importArticleLineLabel.textContent = `${line.supplier_designation_original || ''} - ${money(line.purchase_price_ht)} EUR`;
+  importArticleSearchInput.value = line.supplier_designation_original || '';
+  importArticleResults.innerHTML = '';
+  importArticleError.classList.add('hidden');
+  importArticleSearchInput.focus();
+}
+
+function closeArticleSearch() {
+  activeImportLineId = null;
+  importArticlePanel.classList.add('hidden');
+  importArticleResults.innerHTML = '';
+  importArticleError.classList.add('hidden');
+}
+
+async function searchImportArticles() {
+  const query = importArticleSearchInput.value || '';
   if (!query.trim()) return;
   const data = await api(`/api/pricing/supplier-import-lines/articles/search?query=${encodeURIComponent(query)}&limit=12`);
-  const target = row.querySelector('.pricing-inline-results');
-  target.innerHTML = (data.results || []).map((article) => `
+  importArticleResults.innerHTML = (data.results || []).map((article) => `
     <button class="pricing-article-choice" data-import-action="select-article" data-article-id="${article.id}" type="button">
       <strong>${escapeHtml(article.plu || '')}</strong>
       <span>${escapeHtml(article.designation || '')}</span>
@@ -485,9 +532,16 @@ async function searchImportArticles(row) {
   `).join('') || '<p>Aucun article.</p>';
 }
 
-async function selectImportArticle(lineId, articleId) {
-  await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(lineId)}/override`, { article_id: articleId });
-  await refreshImport();
+async function selectImportArticle(articleId) {
+  if (!activeImportLineId) return;
+  try {
+    const updated = await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(activeImportLineId)}/override`, { article_id: articleId });
+    updateImportLine(updated);
+    closeArticleSearch();
+  } catch (error) {
+    importArticleError.textContent = error.message || 'Erreur changement article';
+    importArticleError.classList.remove('hidden');
+  }
 }
 
 async function confirmKnownMappings() {
@@ -528,14 +582,16 @@ function bindEvents() {
     const action = actionEl.dataset.importAction;
     if (action === 'confirm') confirmImportLine(lineId).catch((error) => showFeedback(error.message, 'error'));
     if (action === 'ignore') ignoreImportLine(lineId).catch((error) => showFeedback(error.message, 'error'));
-    if (action === 'change') showArticleSearch(row);
-    if (action === 'search') searchImportArticles(row).catch((error) => showFeedback(error.message, 'error'));
-    if (action === 'select-article') selectImportArticle(lineId, actionEl.dataset.articleId).catch((error) => showFeedback(error.message, 'error'));
+    if (action === 'change') showArticleSearch(lineId);
   });
-  importResults.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter' || !event.target.matches('[data-import-search-input]')) return;
-    const row = event.target.closest('[data-import-line-id]');
-    if (row) searchImportArticles(row).catch((error) => showFeedback(error.message, 'error'));
+  closeImportArticlePanelBtn.addEventListener('click', closeArticleSearch);
+  importArticleSearchBtn.addEventListener('click', () => searchImportArticles().catch((error) => showFeedback(error.message, 'error')));
+  importArticleSearchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') searchImportArticles().catch((error) => showFeedback(error.message, 'error'));
+  });
+  importArticleResults.addEventListener('click', (event) => {
+    const choice = event.target.closest('[data-import-action="select-article"]');
+    if (choice) selectImportArticle(choice.dataset.articleId);
   });
   searchInput.addEventListener('input', renderLines);
   supplierFilter.addEventListener('change', renderLines);

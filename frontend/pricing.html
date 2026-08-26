@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/pricing.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/pricing.css?v=2" />
 </head>
 <body class="app-page pricing-page">
   <header class="topbar">
@@ -80,7 +80,7 @@
   </div>
 
   <div id="import-modal" class="pricing-modal hidden" role="dialog" aria-modal="true">
-    <div class="pricing-modal-content">
+    <div class="pricing-modal-content pricing-import-modal-content">
       <div class="pricing-modal-header">
         <h2>Import cours fournisseur</h2>
         <button id="close-import-modal-btn" class="btn btn-secondary btn-sm" type="button">Fermer</button>
@@ -104,10 +104,23 @@
       </div>
       <div id="import-summary" class="pricing-import-summary"></div>
       <div id="import-results" class="pricing-results"></div>
+      <div id="import-article-panel" class="pricing-article-panel hidden">
+        <div class="pricing-modal-header">
+          <h3>Choisir l'article ALTA</h3>
+          <button id="close-import-article-panel-btn" class="btn btn-secondary btn-sm" type="button">Fermer</button>
+        </div>
+        <p id="import-article-line-label" class="pricing-muted"></p>
+        <div class="pricing-article-search-row">
+          <input id="import-article-search-input" type="search" placeholder="PLU ou designation article" />
+          <button id="import-article-search-btn" class="btn btn-secondary" type="button">Rechercher</button>
+        </div>
+        <div id="import-article-results" class="pricing-inline-results"></div>
+        <div id="import-article-error" class="page-feedback error hidden"></div>
+      </div>
     </div>
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/pricing.js?v=1"></script>
+  <script src="./js/pricing.js?v=2"></script>
 </body>
 </html>

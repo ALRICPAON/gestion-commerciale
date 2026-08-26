@@ -310,7 +310,9 @@ async function testPublicationReplacementContract() {
 async function testSupplierImportHumanWorkflowContracts() {
   const service = read('backend/services/pricingService.js');
   assert(service.includes("'known_mapping'"), 'known mappings are detected explicitly');
-  assert(service.includes("'pending',\n          null,\n          null,\n          null"), 'known mappings stay pending until human confirmation');
+  assert(service.includes("'pending'") && service.includes('decision_source') && service.includes('null'), 'known mappings stay pending until human confirmation');
+  assert(!service.includes('ON CONFLICT (store_id, supplier_id, supplier_designation_normalized)'), 'supplier mapping upsert avoids fragile partial-index ON CONFLICT');
+  assert(service.includes('FOR UPDATE'), 'supplier mapping override locks the existing mapping transactionally');
   assert(service.includes("user_decision = 'confirmed'"), 'confirmation records a human decision');
   assert(service.includes("user_decision = 'overridden'"), 'override records a human decision');
   assert(service.includes("user_decision = 'ignored'"), 'ignore records a human decision');
@@ -421,6 +423,154 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
   assert.equal(pricingLineUpdates.length, 1);
 }
 
+function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, mappingFails = false } = {}) {
+  const events = [];
+  const importLine = {
+    id: 'import-line-1',
+    import_id: 'import-1',
+    supplier_id: 'supplier-1',
+    supplier_designation_original: 'F JULIENNE',
+    supplier_designation_normalized: 'f julienne',
+    purchase_price_ht: 10.5,
+    matched_article_id: null,
+    mapping_id: null,
+    match_status: 'unrecognized',
+    match_method: 'none',
+    user_decision: 'pending',
+    import_status: 'parsed',
+  };
+  const client = {
+    events,
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        events.push(sql);
+        return { rows: [] };
+      }
+      if (sql.includes('JOIN supplier_price_imports spi') && sql.includes('FOR UPDATE OF spil')) return { rows: [importLine] };
+      if (sql.includes('FROM articles') && sql.includes('WHERE id = $1')) {
+        return { rows: articleFound ? [{ id: params[0], plu: '3013', designation: 'Filet julienne 200/400', sale_unit: 'kg', unit: 'kg' }] : [] };
+      }
+      if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: 'supplier-1', name: 'Sogelmer' }] };
+      if (sql.includes('FROM supplier_article_mappings') && sql.includes('FOR UPDATE')) return { rows: existingMapping ? [{ id: 'mapping-1' }] : [] };
+      if (sql.includes('UPDATE supplier_article_mappings') && sql.includes('RETURNING id')) {
+        if (mappingFails) {
+          const error = new Error('duplicate key value violates unique constraint');
+          error.code = '23505';
+          error.constraint = 'uq_supplier_article_mappings_store_supplier_normalized_active';
+          throw error;
+        }
+        events.push('mapping_update');
+        return { rows: [{ id: 'mapping-1' }] };
+      }
+      if (sql.includes('INSERT INTO supplier_article_mappings')) {
+        if (mappingFails) {
+          const error = new Error('there is no unique or exclusion constraint matching the ON CONFLICT specification');
+          error.code = '42P10';
+          throw error;
+        }
+        events.push('mapping_insert');
+        return { rows: [{ id: 'mapping-new' }] };
+      }
+      if (sql.includes('UPDATE supplier_article_mappings') && sql.includes('SET is_active = false')) {
+        events.push('mapping_dedupe');
+        return { rows: [] };
+      }
+      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('LEFT JOIN suppliers')) {
+        return { rows: [{ id: existingMapping ? 'mapping-1' : 'mapping-new', article_id: 'article-2', article_plu: '3013', article_designation: 'Filet julienne 200/400' }] };
+      }
+      if (sql.includes("SET matched_article_id = $3, mapping_id = $4, user_decision = 'overridden'")) {
+        events.push('import_line_update');
+        importLine.matched_article_id = params[2];
+        importLine.mapping_id = params[3];
+        importLine.user_decision = 'overridden';
+        return { rows: [{ ...importLine }] };
+      }
+      if (sql.includes('FROM supplier_price_import_lines spil') && sql.includes('LEFT JOIN articles')) {
+        return { rows: [{ ...importLine, article_plu: '3013', article_designation: 'Filet julienne 200/400' }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  return { db: { async connect() { return client; } }, client };
+}
+
+async function testSupplierImportOverrideUpdatesExistingMapping() {
+  const { db, client } = pricingOverrideFakeDb({ existingMapping: true });
+  const updated = await pricing.overrideSupplierImportLineMapping(db, 'store-1', {
+    import_line_id: 'import-line-1',
+    article_id: 'article-2',
+  }, { user_id: 'user-1' });
+  assert.equal(updated.matched_article_id, 'article-2');
+  assert.equal(updated.mapping_id, 'mapping-1');
+  assert.equal(updated.user_decision, 'overridden');
+  assert(client.events.includes('mapping_update'), 'existing mapping is updated without unique error');
+  assert(client.events.includes('import_line_update'), 'import line is updated after mapping');
+  assert(client.events.includes('COMMIT'), 'override commits atomically');
+}
+
+async function testSupplierImportOverrideRejectsOtherStoreArticle() {
+  const { db } = pricingOverrideFakeDb({ articleFound: false });
+  await assert.rejects(
+    () => pricing.overrideSupplierImportLineMapping(db, 'store-1', {
+      import_line_id: 'import-line-1',
+      article_id: 'article-other-store',
+    }, { user_id: 'user-1' }),
+    /Article introuvable/
+  );
+}
+
+async function testSupplierImportOverrideRollsBackOnMappingError() {
+  const { db, client } = pricingOverrideFakeDb({ mappingFails: true });
+  await assert.rejects(
+    () => pricing.overrideSupplierImportLineMapping(db, 'store-1', {
+      import_line_id: 'import-line-1',
+      article_id: 'article-2',
+    }, { user_id: 'user-1' }),
+    /duplicate key|unique|constraint/
+  );
+  assert(client.events.includes('ROLLBACK'), 'mapping failure rolls back transaction');
+  assert(!client.events.includes('import_line_update'), 'import line is not partially modified');
+}
+
+async function testSupplierImportTextParserSkipsNonProductLines() {
+  const inserted = [];
+  const client = {
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: 'supplier-1', name: 'Sogelmer' }] };
+      if (sql.includes('INSERT INTO supplier_price_imports')) return { rows: [{ id: 'import-1', supplier_id: 'supplier-1', status: 'parsed' }] };
+      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('sam.supplier_designation_normalized = $3')) return { rows: [] };
+      if (sql.includes('FROM articles') && sql.includes('regexp_replace')) return { rows: [] };
+      if (sql.includes('FROM articles a') && sql.includes('lower(a.designation) LIKE')) return { rows: [] };
+      if (sql.includes('INSERT INTO supplier_price_import_lines')) {
+        inserted.push({ designation: params[4], price: params[9] });
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT * FROM supplier_price_imports WHERE id = $1 AND store_id = $2')) return { rows: [{ id: 'import-1', supplier_id: 'supplier-1' }] };
+      if (sql.includes('FROM supplier_price_import_lines spil') && sql.includes('LEFT JOIN articles')) return { rows: inserted.map((row, index) => ({ id: `line-${index}`, supplier_designation_original: row.designation, purchase_price_ht: row.price, user_decision: 'pending' })) };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const rawText = [
+    'Bonjour',
+    'Cours du jour :',
+    'Poisson',
+    '- Eperlans - 5,90',
+    '- Merlu 1.2/1.8 - 5,50',
+    'Filets',
+    '- F julienne - 10,50',
+  ].join('\n');
+  await pricing.createSupplierPriceImport({ async connect() { return client; } }, 'store-1', {
+    supplier_id: 'supplier-1',
+    raw_text: rawText,
+    source_type: 'text',
+  }, { user_id: 'user-1' });
+  assert.equal(inserted.length, 3);
+  assert.deepEqual(inserted.map((row) => row.designation), ['Eperlans', 'Merlu 1.2/1.8', 'F julienne']);
+}
+
 async function testPricingFrontendImportWorkflowContracts() {
   const html = read('frontend/pricing.html');
   const js = read('frontend/js/pricing.js');
@@ -432,6 +582,14 @@ async function testPricingFrontendImportWorkflowContracts() {
   assert(js.includes('data-import-action="change"'), 'frontend exposes explicit change action');
   assert(js.includes('data-import-action="ignore"'), 'frontend exposes explicit ignore action');
   assert(js.includes('/supplier-import-lines/articles/search'), 'frontend searches ALTA articles in matching workflow');
+  assert(html.includes('pricing-import-modal-content'), 'supplier import modal has dedicated wide workspace');
+  assert(html.includes('id="import-article-panel"'), 'frontend uses a wide article picker panel');
+  assert(html.includes('pricing.css?v=2') && html.includes('pricing.js?v=2'), 'pricing assets are cache-busted');
+  assert(js.includes('matchLabel'), 'frontend translates technical matching labels');
+  assert(js.includes('updateImportLine(updated)'), 'frontend updates selected import line after override');
+  const css = read('frontend/css/pages/pricing.css');
+  assert(css.includes('width: 95vw'), 'import modal is near full screen on desktop');
+  assert(css.includes('position: sticky') && css.includes('right: 0'), 'actions column remains accessible');
 
   const saveDirtyBody = js.slice(js.indexOf('async function saveDirtyLines()'), js.indexOf('async function loadReferenceData()'));
   assert(!saveDirtyBody.includes('loadSession('), 'autosave updates local model without reloading the session');
@@ -445,6 +603,7 @@ async function testPricingRouteFileParsingContracts() {
   assert(route.includes('rowsFromPdf'), 'PDF uses the same supplier row workflow');
   assert(route.includes('rowFromCells'), 'file parsing detects price-like cells instead of always using the last cell blindly');
   assert(route.includes("source_type: req.file.originalname.toLowerCase().endsWith('.pdf') ? 'pdf' : 'file'"), 'PDF source type is preserved');
+  assert(route.includes('logPricingRouteError'), 'pricing routes log unexpected backend errors with context');
 }
 
 async function testIntegrationFilesReferencePricing() {
@@ -474,6 +633,10 @@ async function testIntegrationFilesReferencePricing() {
   await testPublicationReplacementContract();
   await testSupplierImportHumanWorkflowContracts();
   await testKnownSupplierMappingRequiresImportConfirmation();
+  await testSupplierImportOverrideUpdatesExistingMapping();
+  await testSupplierImportOverrideRejectsOtherStoreArticle();
+  await testSupplierImportOverrideRollsBackOnMappingError();
+  await testSupplierImportTextParserSkipsNonProductLines();
   await testPricingFrontendImportWorkflowContracts();
   await testPricingRouteFileParsingContracts();
   await testIntegrationFilesReferencePricing();
