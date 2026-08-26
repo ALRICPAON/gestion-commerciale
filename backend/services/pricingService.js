@@ -816,7 +816,7 @@ async function upsertSupplierArticleMapping(db, storeId, input = {}, context = {
              is_active = true,
              updated_by = $10,
              updated_at = now()
-         WHERE id = $11 AND store_id = $1
+         WHERE id = $11 AND store_id = $1 AND supplier_id = $2
          RETURNING id`,
         [...params, existing.rows[0].id]
       )
