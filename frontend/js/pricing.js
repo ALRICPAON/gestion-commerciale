@@ -371,10 +371,26 @@ async function runImport() {
 
 async function applyImport() {
   if (!lastImportId || !session) return;
-  const result = await apiJson(`/api/pricing/supplier-imports/${encodeURIComponent(lastImportId)}/apply`, { pricing_session_id: session.id });
+  const payload = { pricing_session_id: session.id };
+  if (session.status === 'published') {
+    const confirmed = window.confirm('La tarification du jour est deja publiee. Creer une nouvelle revision pour appliquer cet import ?');
+    if (!confirmed) return;
+    payload.create_revision_if_published = true;
+  }
+  const result = await apiJson(`/api/pricing/supplier-imports/${encodeURIComponent(lastImportId)}/apply`, payload);
   importModal.classList.add('hidden');
-  await loadSession(false);
-  showFeedback(`Import applique : ${result.applied_line_count || 0} ligne(s).`, 'success');
+  if (result.session) {
+    session = result.session;
+    lines = result.lines || [];
+    dirty.clear();
+    renderLines();
+  } else {
+    await loadSession(false);
+  }
+  const message = result.revision_created
+    ? `Revision v${result.session?.version_number || ''} creee et import applique.`
+    : `Import applique : ${result.applied_line_count || 0} ligne(s).`;
+  showFeedback(message, 'success');
 }
 
 function setImport(result) {

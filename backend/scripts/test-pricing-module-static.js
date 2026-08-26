@@ -340,6 +340,8 @@ async function testSupplierImportHumanWorkflowContracts() {
   assert(service.includes('searchArticlesForSupplierMapping'), 'service exposes article search for supplier matching');
   assert(service.includes('mapping_source: \'human_validation\''), 'confirmed mappings are memorized as human validation');
   assert(service.includes('mapping_source: \'human_override\''), 'overridden mappings replace supplier-specific mapping');
+  assert(service.includes('createRevisionFromPublishedSession'), 'service exposes canonical revision creation from published sessions');
+  assert(service.includes('create_revision_if_published === true'), 'published import apply requires explicit revision intent');
 }
 
 async function testKnownSupplierMappingRequiresImportConfirmation() {
@@ -471,6 +473,273 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
   assert.equal(pricingLineUpdates.length, 1);
   assert.equal(connectCount, 4, 'create/apply/confirm/apply each open only their outer transaction');
   assert.equal(events.filter((event) => event === 'pool_connect').length, 4, 'nested confirm/apply calls do not reconnect the transaction client');
+}
+
+function pricingRevisionWorkflowFakeDb() {
+  const events = [];
+  let connectCount = 0;
+  let copiedIndex = 0;
+  let addedIndex = 0;
+  const sessions = [
+    { id: 'published-session', store_id: 'store-1', pricing_date: '2026-08-26', title: 'Tarification du 2026-08-26', status: 'published', version_number: 1, is_active_publication: true },
+  ];
+  const lines = [
+    {
+      id: 'source-line-1',
+      store_id: 'store-1',
+      pricing_session_id: 'published-session',
+      article_id: 'article-1',
+      supplier_id: 'supplier-1',
+      plu_snapshot: '3013',
+      designation_snapshot: 'Filet julienne',
+      family_code: 'F',
+      family_name: 'Filets',
+      sale_unit: 'kg',
+      price_unit: 'kg',
+      purchase_price_ht: 9,
+      supplier_designation_original: 'F JULIENNE',
+      transport_cost_ht: 0.1,
+      transport_cost_source: 'manual',
+      transport_cost_forced: false,
+      display_order: 1,
+      exclude_from_mercuriale: false,
+      notes: null,
+    },
+  ];
+  const tariffs = [
+    { pricing_line_id: 'source-line-1', tariff_level_id: 'tariff-1', price_ht: 12 },
+    { pricing_line_id: 'source-line-1', tariff_level_id: 'tariff-2', price_ht: 13 },
+  ];
+  const importLines = [
+    {
+      id: 'import-line-1',
+      import_id: 'import-1',
+      supplier_id: 'supplier-1',
+      row_number: 1,
+      supplier_designation_original: 'MERLU',
+      purchase_price_ht: 7.5,
+      matched_article_id: 'article-2',
+      mapping_id: 'mapping-2',
+      user_decision: 'confirmed',
+      article_plu: '3020',
+      article_designation: 'Merlu',
+    },
+  ];
+  const articleById = {
+    'article-1': { id: 'article-1', plu: '3013', designation: 'Filet julienne', family_code: 'F', family_name: 'Filets', sale_unit: 'kg', unit: 'kg' },
+    'article-2': { id: 'article-2', plu: '3020', designation: 'Merlu', family_code: 'P', family_name: 'Poissons', sale_unit: 'kg', unit: 'kg' },
+  };
+  const lineWithTariffs = (line) => ({
+    ...line,
+    tariffs: tariffs.filter((tariff) => tariff.pricing_line_id === line.id),
+  });
+  const client = {
+    events,
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        events.push(sql);
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT COALESCE(MAX(version_number)')) {
+        const date = params[1];
+        return { rows: [{ version: Math.max(...sessions.filter((item) => item.pricing_date === date).map((item) => item.version_number), 0) + 1 }] };
+      }
+      if (sql.includes('FROM pricing_sessions') && sql.includes('WHERE id = $1 AND store_id = $2')) {
+        const found = sessions.find((item) => item.id === params[0] && item.store_id === params[1]);
+        return { rows: found ? [found] : [] };
+      }
+      if (sql.includes('SELECT * FROM pricing_sessions WHERE store_id = $1 AND id = $2')) {
+        const found = sessions.find((item) => item.store_id === params[0] && item.id === params[1]);
+        return { rows: found ? [found] : [] };
+      }
+      if (sql.includes('INSERT INTO pricing_sessions')) {
+        const created = {
+          id: 'revision-session',
+          store_id: params[0],
+          pricing_date: params[1],
+          title: params[2],
+          notes: params[3],
+          version_number: params[4],
+          source_session_id: params[5],
+          status: 'draft',
+          is_active_publication: false,
+        };
+        sessions.push(created);
+        events.push('revision_insert');
+        return { rows: [created] };
+      }
+      if (sql.includes('FROM pricing_lines') && sql.includes('ORDER BY display_order ASC, created_at ASC, id ASC')) {
+        return { rows: lines.filter((line) => line.pricing_session_id === params[1]) };
+      }
+      if (sql.includes('INSERT INTO pricing_lines') && sql.includes('RETURNING id')) {
+        copiedIndex += 1;
+        const copied = {
+          id: `copied-line-${copiedIndex}`,
+          store_id: params[0],
+          pricing_session_id: params[1],
+          article_id: params[2],
+          supplier_id: params[3],
+          plu_snapshot: params[4],
+          designation_snapshot: params[5],
+          family_code: params[6],
+          family_name: params[7],
+          sale_unit: params[8],
+          price_unit: params[9],
+          purchase_price_ht: params[10],
+          supplier_designation_original: params[11],
+          transport_cost_ht: params[12],
+          transport_cost_source: params[13],
+          transport_cost_forced: params[14],
+          display_order: params[15],
+          exclude_from_mercuriale: params[16],
+          notes: params[17],
+        };
+        lines.push(copied);
+        return { rows: [{ id: copied.id }] };
+      }
+      if (sql.includes('FROM pricing_line_tariffs') && sql.includes('WHERE store_id = $1 AND pricing_line_id = $2')) {
+        return { rows: tariffs.filter((tariff) => tariff.pricing_line_id === params[1]) };
+      }
+      if (sql.includes('INSERT INTO pricing_line_tariffs')) {
+        tariffs.push({ pricing_line_id: params[1], tariff_level_id: params[2], price_ht: params[3] });
+        events.push('tariff_copy');
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT * FROM supplier_price_imports WHERE id = $1 AND store_id = $2') && sql.includes('FOR UPDATE')) {
+        return { rows: [{ id: params[0], supplier_id: 'supplier-1', status: 'parsed' }] };
+      }
+      if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: 'supplier-1', name: 'Sogelmer' }] };
+      if (sql.includes('FROM supplier_price_import_lines spil') && sql.includes('LEFT JOIN articles')) return { rows: importLines };
+      if (sql.includes('SELECT id FROM pricing_lines WHERE store_id = $1 AND pricing_session_id = $2 AND article_id = $3')) {
+        const found = lines.find((line) => line.store_id === params[0] && line.pricing_session_id === params[1] && line.article_id === params[2]);
+        return { rows: found ? [{ id: found.id }] : [] };
+      }
+      if (sql.includes('FROM articles') && sql.includes('WHERE id = $1')) return { rows: articleById[params[0]] ? [articleById[params[0]]] : [] };
+      if (sql.includes('SELECT COALESCE(MAX(display_order)')) return { rows: [{ n: lines.filter((line) => line.pricing_session_id === params[1]).length + 1 }] };
+      if (sql.includes('INSERT INTO pricing_lines') && sql.includes('RETURNING *')) {
+        addedIndex += 1;
+        const added = {
+          id: `applied-line-${addedIndex}`,
+          store_id: params[0],
+          pricing_session_id: params[1],
+          article_id: params[2],
+          supplier_id: params[3],
+          plu_snapshot: params[4],
+          designation_snapshot: params[5],
+          family_code: params[6],
+          family_name: params[7],
+          sale_unit: params[8],
+          price_unit: params[9],
+          purchase_price_ht: params[10],
+          purchase_price_source: params[11],
+          supplier_designation_original: params[12],
+          transport_cost_ht: params[13],
+          transport_cost_source: params[14],
+          transport_cost_forced: params[15],
+          display_order: params[16],
+          exclude_from_mercuriale: params[17],
+          notes: params[18],
+        };
+        lines.push(added);
+        events.push('import_line_insert');
+        return { rows: [added] };
+      }
+      if (sql.includes('UPDATE supplier_price_import_lines SET applied_pricing_line_id')) {
+        importLines[0].applied_pricing_line_id = params[0];
+        return { rows: [] };
+      }
+      if (sql.includes("UPDATE supplier_price_imports SET status = 'applied'")) {
+        events.push('import_applied');
+        return { rows: [] };
+      }
+      if (sql.includes('FROM pricing_lines pl')) {
+        if (sql.includes('pl.pricing_session_id = $2')) return { rows: lines.filter((line) => line.pricing_session_id === params[1]).map(lineWithTariffs) };
+        if (sql.includes('pl.id = $2')) {
+          const found = lines.find((line) => line.id === params[1]);
+          return { rows: found ? [lineWithTariffs(found)] : [] };
+        }
+        return { rows: [] };
+      }
+      if (sql.includes('UPDATE pricing_sessions') && sql.includes("SET status = 'superseded'")) {
+        sessions.forEach((item) => {
+          if (item.store_id === params[0] && item.pricing_date === params[1] && item.status === 'published' && item.is_active_publication && item.id !== params[2]) {
+            item.status = 'superseded';
+            item.is_active_publication = false;
+          }
+        });
+        events.push('old_superseded');
+        return { rows: [] };
+      }
+      if (sql.includes('UPDATE pricing_sessions') && sql.includes("SET status = 'published'")) {
+        const found = sessions.find((item) => item.store_id === params[0] && item.id === params[1]);
+        found.status = 'published';
+        found.is_active_publication = true;
+        events.push('revision_published');
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    async connect() {
+      throw new Error('transaction client connect should not be called');
+    },
+    release() {
+      events.push('release');
+    },
+  };
+  const db = {
+    async connect() {
+      connectCount += 1;
+      return client;
+    },
+    get connectCount() {
+      return connectCount;
+    },
+  };
+  return { db, client, sessions, lines, tariffs };
+}
+
+async function testSupplierImportRefusesPublishedSessionWithoutRevisionIntent() {
+  const { db, sessions } = pricingRevisionWorkflowFakeDb();
+  await assert.rejects(
+    () => pricing.applySupplierImportToSession(db, 'store-1', {
+      import_id: 'import-1',
+      pricing_session_id: 'published-session',
+    }, { user_id: 'user-1' }),
+    /Une session publiee ne peut pas etre modifiee/
+  );
+  assert.equal(sessions.length, 1, 'no empty revision is created when apply is rejected');
+}
+
+async function testSupplierImportCreatesRevisionFromPublishedSession() {
+  const { db, client, sessions, lines, tariffs } = pricingRevisionWorkflowFakeDb();
+  const result = await pricing.applySupplierImportToSession(db, 'store-1', {
+    import_id: 'import-1',
+    pricing_session_id: 'published-session',
+    create_revision_if_published: true,
+  }, { user_id: 'user-1' });
+
+  assert.equal(result.revision_created, true);
+  assert.equal(result.source_session_id, 'published-session');
+  assert.equal(result.session.id, 'revision-session');
+  assert.equal(result.session.status, 'draft');
+  assert.equal(result.session.version_number, 2);
+  assert.equal(result.session.source_session_id, 'published-session');
+  assert.equal(result.applied_line_count, 1);
+  assert(lines.some((line) => line.id === 'copied-line-1' && line.pricing_session_id === 'revision-session'), 'published lines are copied to the revision');
+  assert(tariffs.some((tariff) => tariff.pricing_line_id === 'copied-line-1' && tariff.tariff_level_id === 'tariff-1' && tariff.price_ht === 12), 'dynamic tariffs are copied to the revision line');
+  assert(lines.some((line) => line.id === 'applied-line-1' && line.article_id === 'article-2' && line.pricing_session_id === 'revision-session'), 'supplier import applies to the revision draft');
+  assert.equal(sessions.find((item) => item.id === 'published-session').status, 'published', 'source publication stays unchanged before republish');
+  assert.equal(client.events.filter((event) => event === 'BEGIN').length, 1, 'revision creation and import apply share one transaction');
+
+  const published = await pricing.publishPricingSession(db, 'store-1', {
+    pricing_session_id: 'revision-session',
+    sync_call_sheet: false,
+  }, { user_id: 'user-1' });
+  assert.equal(published.session.id, 'revision-session');
+  assert.equal(published.session.status, 'published');
+  assert.equal(sessions.find((item) => item.id === 'published-session').status, 'superseded');
+  assert.equal(sessions.find((item) => item.id === 'published-session').is_active_publication, false);
+  assert(lines.some((line) => line.pricing_session_id === 'published-session'), 'historical source lines are preserved');
 }
 
 function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, mappingFails = false } = {}) {
@@ -675,6 +944,9 @@ async function testPricingFrontendImportWorkflowContracts() {
   assert(html.includes('pricing.css?v=2') && html.includes('pricing.js?v=2'), 'pricing assets are cache-busted');
   assert(js.includes('matchLabel'), 'frontend translates technical matching labels');
   assert(js.includes('updateImportLine(updated)'), 'frontend updates selected import line after override');
+  assert(js.includes('Creer une nouvelle revision pour appliquer cet import'), 'frontend confirms revision creation before applying to a published session');
+  assert(js.includes('create_revision_if_published = true'), 'frontend sends explicit revision intent for published sessions');
+  assert(js.includes('Revision v') && js.includes('creee et import applique'), 'frontend explains revision creation after successful apply');
   const css = read('frontend/css/pages/pricing.css');
   assert(css.includes('width: 95vw'), 'import modal is near full screen on desktop');
   assert(css.includes('position: sticky') && css.includes('right: 0'), 'actions column remains accessible');
@@ -708,6 +980,11 @@ async function testIntegrationFilesReferencePricing() {
   const quickOrderSheets = read('backend/routes/quickOrderSheets.js');
   assert(quickOrderSheets.includes('pricing_session_id'), 'call sheet mirror carries pricing_session_id');
   assert(quickOrderSheets.includes('tariff_prices'), 'call sheet mirror carries dynamic tariffs');
+
+  const agentTools = read('backend/services/agent/agentToolRegistry.js');
+  const agentActions = read('backend/services/agent/agentExecutableActionRegistry.js');
+  assert(agentTools.includes('create_revision_if_published'), 'agent prepare tool exposes revision-on-published apply');
+  assert(agentActions.includes('create_revision_if_published'), 'agent executable action accepts revision-on-published apply');
 }
 
 (async () => {
@@ -722,6 +999,8 @@ async function testIntegrationFilesReferencePricing() {
   await testPublicationReplacementContract();
   await testSupplierImportHumanWorkflowContracts();
   await testKnownSupplierMappingRequiresImportConfirmation();
+  await testSupplierImportRefusesPublishedSessionWithoutRevisionIntent();
+  await testSupplierImportCreatesRevisionFromPublishedSession();
   await testSupplierMappingUpsertReusesTransactionalClient();
   await testSupplierImportOverrideUpdatesExistingMapping();
   await testSupplierImportOverrideRejectsOtherStoreArticle();

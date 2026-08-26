@@ -163,6 +163,15 @@ router.post('/sessions/duplicate', requireAdminOrManager, async (req, res) => {
   }
 });
 
+router.post('/sessions/:id/revision', requireAdminOrManager, async (req, res) => {
+  try {
+    const result = await pricing.createRevisionFromPublishedSession(req.dbPool, req.user.store_id, { ...req.body, source_session_id: req.params.id }, context(req));
+    res.status(201).json(result);
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur creation revision tarification' });
+  }
+});
+
 router.get('/sessions/:id', async (req, res) => {
   try {
     res.json(await pricing.getPricingSession(req.dbPool, req.user.store_id, { id: req.params.id, ...req.query }));
