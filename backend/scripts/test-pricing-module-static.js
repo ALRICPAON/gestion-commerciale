@@ -325,9 +325,14 @@ async function testSupplierImportHumanWorkflowContracts() {
 async function testKnownSupplierMappingRequiresImportConfirmation() {
   const importLines = [];
   const pricingLineUpdates = [];
+  const events = [];
+  let connectCount = 0;
   const client = {
     async query(sql, params = []) {
-      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+        events.push(sql);
+        return { rows: [] };
+      }
       if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: params[0], name: 'Sogelmer' }] };
       if (sql.includes('INSERT INTO supplier_price_imports')) return { rows: [{ id: 'import-1', supplier_id: 'supplier-1', status: 'parsed' }] };
       if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('sam.supplier_designation_normalized = $3')) {
@@ -394,9 +399,20 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
       }
       return { rows: [] };
     },
-    release() {},
+    async connect() {
+      throw new Error('transaction client connect should not be called');
+    },
+    release() {
+      events.push('release');
+    },
   };
-  const db = { async connect() { return client; } };
+  const db = {
+    async connect() {
+      connectCount += 1;
+      events.push('pool_connect');
+      return client;
+    },
+  };
 
   const created = await pricing.createSupplierPriceImport(db, 'store-1', {
     supplier_id: 'supplier-1',
@@ -421,10 +437,13 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
   const afterConfirm = await pricing.applySupplierImportToSession(db, 'store-1', { import_id: 'import-1', pricing_session_id: 'session-1' });
   assert.equal(afterConfirm.applied_line_count, 1);
   assert.equal(pricingLineUpdates.length, 1);
+  assert.equal(connectCount, 4, 'create/apply/confirm/apply each open only their outer transaction');
+  assert.equal(events.filter((event) => event === 'pool_connect').length, 4, 'nested confirm/apply calls do not reconnect the transaction client');
 }
 
 function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, mappingFails = false } = {}) {
   const events = [];
+  let connectCount = 0;
   const importLine = {
     id: 'import-line-1',
     import_id: 'import-1',
@@ -490,9 +509,40 @@ function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, ma
       }
       return { rows: [] };
     },
-    release() {},
+    async connect() {
+      throw new Error('transaction client connect should not be called');
+    },
+    release() {
+      events.push('release');
+    },
   };
-  return { db: { async connect() { return client; } }, client };
+  const db = {
+    async connect() {
+      connectCount += 1;
+      events.push('pool_connect');
+      return client;
+    },
+    get connectCount() {
+      return connectCount;
+    },
+  };
+  return { db, client };
+}
+
+async function testSupplierMappingUpsertReusesTransactionalClient() {
+  const { client } = pricingOverrideFakeDb({ existingMapping: true });
+  delete client.release;
+  const mapping = await pricing.upsertSupplierArticleMapping(client, 'store-1', {
+    supplier_id: 'supplier-1',
+    article_id: 'article-2',
+    supplier_designation_original: 'F JULIENNE',
+    mapping_source: 'human_validation',
+    confidence_score: 100,
+  }, { user_id: 'user-1' });
+  assert.equal(mapping.id, 'mapping-1');
+  assert.equal(mapping.article_plu, '3013');
+  assert(!client.events.includes('BEGIN'), 'existing transaction client is reused without opening a nested transaction');
+  assert(!client.events.includes('ROLLBACK'), 'transaction client upsert does not rollback outside its owner');
 }
 
 async function testSupplierImportOverrideUpdatesExistingMapping() {
@@ -503,7 +553,10 @@ async function testSupplierImportOverrideUpdatesExistingMapping() {
   }, { user_id: 'user-1' });
   assert.equal(updated.matched_article_id, 'article-2');
   assert.equal(updated.mapping_id, 'mapping-1');
+  assert.equal(updated.article_plu, '3013');
+  assert.equal(updated.article_designation, 'Filet julienne 200/400');
   assert.equal(updated.user_decision, 'overridden');
+  assert.equal(db.connectCount, 1, 'override opens a single pool transaction');
   assert(client.events.includes('mapping_update'), 'existing mapping is updated without unique error');
   assert(client.events.includes('import_line_update'), 'import line is updated after mapping');
   assert(client.events.includes('COMMIT'), 'override commits atomically');
@@ -530,6 +583,7 @@ async function testSupplierImportOverrideRollsBackOnMappingError() {
     /duplicate key|unique|constraint/
   );
   assert(client.events.includes('ROLLBACK'), 'mapping failure rolls back transaction');
+  assert.equal(client.events.filter((event) => event === 'ROLLBACK').length, 1, 'mapping failure rolls back exactly once');
   assert(!client.events.includes('import_line_update'), 'import line is not partially modified');
 }
 
@@ -633,6 +687,7 @@ async function testIntegrationFilesReferencePricing() {
   await testPublicationReplacementContract();
   await testSupplierImportHumanWorkflowContracts();
   await testKnownSupplierMappingRequiresImportConfirmation();
+  await testSupplierMappingUpsertReusesTransactionalClient();
   await testSupplierImportOverrideUpdatesExistingMapping();
   await testSupplierImportOverrideRejectsOtherStoreArticle();
   await testSupplierImportOverrideRollsBackOnMappingError();
