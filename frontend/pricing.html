@@ -85,12 +85,24 @@
         <h2>Import cours fournisseur</h2>
         <button id="close-import-modal-btn" class="btn btn-secondary btn-sm" type="button">Fermer</button>
       </div>
-      <select id="import-supplier-select"><option value="">Choisir fournisseur</option></select>
-      <textarea id="import-textarea" rows="10" placeholder="F JULIENNE 10.50&#10;MERLU 12/18 5.50"></textarea>
+      <div class="pricing-import-controls">
+        <label>
+          <span>Fournisseur</span>
+          <select id="import-supplier-select"><option value="">Choisir fournisseur</option></select>
+        </label>
+        <label>
+          <span>Fichier fournisseur</span>
+          <input id="import-file-input" type="file" accept=".xlsx,.xls,.csv,.txt,.pdf" />
+        </label>
+        <span id="import-file-name" class="pricing-file-name">Aucun fichier selectionne</span>
+      </div>
+      <textarea id="import-textarea" rows="6" placeholder="Coller le cours fournisseur : F JULIENNE 10.50&#10;MERLU 12/18 5.50"></textarea>
       <div class="pricing-actions">
         <button id="run-import-btn" class="btn btn-primary" type="button">Importer et rapprocher</button>
+        <button id="confirm-known-btn" class="btn btn-secondary" type="button" disabled>Confirmer mappings connus</button>
         <button id="apply-import-btn" class="btn btn-secondary" type="button" disabled>Appliquer a la session</button>
       </div>
+      <div id="import-summary" class="pricing-import-summary"></div>
       <div id="import-results" class="pricing-results"></div>
     </div>
   </div>

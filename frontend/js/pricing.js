@@ -33,9 +33,13 @@ const articleResults = el('article-results');
 const importModal = el('import-modal');
 const closeImportModalBtn = el('close-import-modal-btn');
 const importSupplierSelect = el('import-supplier-select');
+const importFileInput = el('import-file-input');
+const importFileName = el('import-file-name');
 const importTextarea = el('import-textarea');
 const runImportBtn = el('run-import-btn');
+const confirmKnownBtn = el('confirm-known-btn');
 const applyImportBtn = el('apply-import-btn');
+const importSummary = el('import-summary');
 const importResults = el('import-results');
 
 let suppliers = [];
@@ -45,6 +49,7 @@ let lines = [];
 let dirty = new Set();
 let saveTimer = null;
 let lastImportId = null;
+let currentImport = null;
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -73,6 +78,10 @@ async function apiJson(path, payload, method = 'POST') {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload || {}),
   });
+}
+
+async function apiForm(path, formData, method = 'POST') {
+  return api(path, { method, body: formData });
 }
 
 function showFeedback(message, type = 'info') {
@@ -135,6 +144,22 @@ function marginHtml(line, price) {
   const abs = p - cost;
   const rate = (abs / p) * 100;
   return `<span class="pricing-margin">${money(abs)} / ${rate.toFixed(1)}%</span>`;
+}
+
+function refreshRowComputedCells(row, line) {
+  if (!row || !line) return;
+  const cost = Number(line.cost_rendered_ht || 0);
+  const costCell = row.querySelector('.pricing-cost');
+  if (costCell) costCell.textContent = money(cost);
+  row.querySelectorAll('[data-tariff-level-id]').forEach((input) => {
+    const value = input.value;
+    const cell = input.closest('td');
+    if (cell) {
+      const old = cell.querySelector('.pricing-margin');
+      if (old) old.remove();
+      cell.insertAdjacentHTML('beforeend', marginHtml(line, value));
+    }
+  });
 }
 
 function visibleLines() {
@@ -223,9 +248,11 @@ async function saveDirtyLines() {
     const index = lines.findIndex((line) => String(line.id) === String(id));
     if (index >= 0) lines[index] = updated;
     dirty.delete(id);
+    row.classList.remove('pricing-row-dirty');
+    refreshRowComputedCells(row, updated);
   }
   showFeedback('Tarification sauvegardee.', 'success');
-  await loadSession(false);
+  setStatus();
 }
 
 async function loadReferenceData() {
@@ -315,28 +342,158 @@ async function publishSession() {
 
 async function runImport() {
   if (!importSupplierSelect.value) throw new Error('Choisir un fournisseur');
-  const result = await apiJson('/api/pricing/supplier-imports', {
-    supplier_id: importSupplierSelect.value,
-    raw_text: importTextarea.value,
-    source_type: 'text',
-  });
-  lastImportId = result.import?.id;
-  applyImportBtn.disabled = !lastImportId || !session;
-  importResults.innerHTML = (result.lines || []).map((line) => `
-    <div class="pricing-result-row">
-      <strong>${escapeHtml(line.match_status)}</strong>
-      <span>${escapeHtml(line.supplier_designation_original)} - ${money(line.purchase_price_ht)} ${line.article_designation ? `=> ${escapeHtml(line.article_designation)}` : ''}</span>
-      <small>${escapeHtml(line.match_method || '')}</small>
-    </div>
-  `).join('');
+  const file = importFileInput.files?.[0] || null;
+  const rawText = importTextarea.value.trim();
+  let result;
+  if (file) {
+    const formData = new FormData();
+    formData.append('supplier_id', importSupplierSelect.value);
+    formData.append('file', file);
+    if (rawText) formData.append('raw_text', rawText);
+    result = await apiForm('/api/pricing/supplier-imports', formData);
+  } else {
+    result = await apiJson('/api/pricing/supplier-imports', {
+      supplier_id: importSupplierSelect.value,
+      raw_text: rawText,
+      source_type: 'text',
+    });
+  }
+  setImport(result);
 }
 
 async function applyImport() {
   if (!lastImportId || !session) return;
-  await apiJson(`/api/pricing/supplier-imports/${encodeURIComponent(lastImportId)}/apply`, { pricing_session_id: session.id });
+  const result = await apiJson(`/api/pricing/supplier-imports/${encodeURIComponent(lastImportId)}/apply`, { pricing_session_id: session.id });
   importModal.classList.add('hidden');
   await loadSession(false);
-  showFeedback('Import applique a la session.', 'success');
+  showFeedback(`Import applique : ${result.applied_line_count || 0} ligne(s).`, 'success');
+}
+
+function setImport(result) {
+  currentImport = result;
+  lastImportId = result.import?.id || null;
+  renderImport();
+}
+
+function decisionLabel(line) {
+  if (line.user_decision === 'confirmed') return 'Confirme';
+  if (line.user_decision === 'overridden') return 'Corrige';
+  if (line.user_decision === 'ignored') return 'Ignore';
+  if (line.match_method === 'known_mapping') return 'Mapping connu';
+  if (line.match_status === 'probable') return `Proposition ${Number(line.confidence_score || 0).toFixed(0)} %`;
+  return 'A traiter';
+}
+
+function renderImport() {
+  const linesForImport = currentImport?.lines || [];
+  const summary = currentImport?.summary || linesForImport.reduce((acc, line) => {
+    acc.total += 1;
+    acc.ready += ['confirmed', 'overridden'].includes(line.user_decision) ? 1 : 0;
+    acc.pending += line.user_decision === 'pending' ? 1 : 0;
+    acc.ignored += line.user_decision === 'ignored' ? 1 : 0;
+    return acc;
+  }, { total: 0, ready: 0, pending: 0, ignored: 0 });
+  applyImportBtn.disabled = !lastImportId || !session || !summary.ready;
+  confirmKnownBtn.disabled = !linesForImport.some((line) => line.match_method === 'known_mapping' && line.user_decision === 'pending');
+  importSummary.innerHTML = lastImportId ? `
+    <strong>${summary.total || 0}</strong> lignes detectees
+    <strong>${summary.ready || 0}</strong> pretes a appliquer
+    <strong>${summary.pending || 0}</strong> a traiter
+    <strong>${summary.ignored || 0}</strong> ignorees
+  ` : '';
+  importResults.innerHTML = linesForImport.length ? `
+    <table class="pricing-import-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Designation fournisseur</th>
+          <th>Prix</th>
+          <th>Calibre/unite</th>
+          <th>Article ALTA</th>
+          <th>PLU</th>
+          <th>Matching</th>
+          <th>Decision</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${linesForImport.map((line) => `
+          <tr data-import-line-id="${line.id}">
+            <td>${escapeHtml(line.row_number || '')}</td>
+            <td>${escapeHtml(line.supplier_designation_original || '')}</td>
+            <td class="pricing-number">${money(line.purchase_price_ht)}</td>
+            <td>${escapeHtml([line.caliber, line.unit || line.price_unit].filter(Boolean).join(' / '))}</td>
+            <td>${line.article_designation ? escapeHtml(line.article_designation) : '<span class="pricing-muted">Aucun article</span>'}</td>
+            <td>${escapeHtml(line.article_plu || '')}</td>
+            <td>${escapeHtml(line.match_method || line.match_status || '')}<br><small>${Number(line.confidence_score || 0).toFixed(0)} %</small></td>
+            <td><span class="pricing-decision">${decisionLabel(line)}</span></td>
+            <td>${importActionsHtml(line)}<div class="pricing-inline-search hidden"></div></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  ` : '<p>Aucune ligne detectee.</p>';
+}
+
+function importActionsHtml(line) {
+  if (line.user_decision === 'ignored') return '<span class="pricing-muted">Ignoree</span>';
+  const buttons = [];
+  if (line.matched_article_id && line.user_decision === 'pending') buttons.push(`<button class="btn btn-primary btn-sm" data-import-action="confirm" type="button">Confirmer</button>`);
+  if (line.matched_article_id) buttons.push(`<button class="btn btn-secondary btn-sm" data-import-action="change" type="button">Changer</button>`);
+  if (!line.matched_article_id) buttons.push(`<button class="btn btn-primary btn-sm" data-import-action="change" type="button">Choisir article</button>`);
+  buttons.push(`<button class="btn btn-secondary btn-sm" data-import-action="ignore" type="button">Ignorer</button>`);
+  return `<div class="pricing-import-actions">${buttons.join('')}</div>`;
+}
+
+async function refreshImport() {
+  if (!lastImportId) return;
+  setImport(await api(`/api/pricing/supplier-imports/${encodeURIComponent(lastImportId)}`));
+}
+
+async function confirmImportLine(lineId) {
+  await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(lineId)}/confirm`, {});
+  await refreshImport();
+}
+
+async function ignoreImportLine(lineId) {
+  await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(lineId)}/ignore`, {});
+  await refreshImport();
+}
+
+function showArticleSearch(row) {
+  const box = row.querySelector('.pricing-inline-search');
+  box.classList.remove('hidden');
+  box.innerHTML = `
+    <input type="search" placeholder="PLU ou designation article" data-import-search-input />
+    <button class="btn btn-secondary btn-sm" data-import-action="search" type="button">Rechercher</button>
+    <div class="pricing-inline-results"></div>
+  `;
+  box.querySelector('input').focus();
+}
+
+async function searchImportArticles(row) {
+  const query = row.querySelector('[data-import-search-input]')?.value || '';
+  if (!query.trim()) return;
+  const data = await api(`/api/pricing/supplier-import-lines/articles/search?query=${encodeURIComponent(query)}&limit=12`);
+  const target = row.querySelector('.pricing-inline-results');
+  target.innerHTML = (data.results || []).map((article) => `
+    <button class="pricing-article-choice" data-import-action="select-article" data-article-id="${article.id}" type="button">
+      <strong>${escapeHtml(article.plu || '')}</strong>
+      <span>${escapeHtml(article.designation || '')}</span>
+      <small>${escapeHtml(article.sale_unit || article.unit || '')} ${escapeHtml(article.family_name || '')}</small>
+    </button>
+  `).join('') || '<p>Aucun article.</p>';
+}
+
+async function selectImportArticle(lineId, articleId) {
+  await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(lineId)}/override`, { article_id: articleId });
+  await refreshImport();
+}
+
+async function confirmKnownMappings() {
+  const known = (currentImport?.lines || []).filter((line) => line.match_method === 'known_mapping' && line.user_decision === 'pending');
+  for (const line of known) await apiJson(`/api/pricing/supplier-import-lines/${encodeURIComponent(line.id)}/confirm`, {});
+  await refreshImport();
 }
 
 function bindEvents() {
@@ -358,7 +515,28 @@ function bindEvents() {
   importBtn.addEventListener('click', () => importModal.classList.remove('hidden'));
   closeImportModalBtn.addEventListener('click', () => importModal.classList.add('hidden'));
   runImportBtn.addEventListener('click', () => runImport().catch((error) => showFeedback(error.message, 'error')));
+  confirmKnownBtn.addEventListener('click', () => confirmKnownMappings().catch((error) => showFeedback(error.message, 'error')));
   applyImportBtn.addEventListener('click', () => applyImport().catch((error) => showFeedback(error.message, 'error')));
+  importFileInput.addEventListener('change', () => {
+    importFileName.textContent = importFileInput.files?.[0]?.name || 'Aucun fichier selectionne';
+  });
+  importResults.addEventListener('click', (event) => {
+    const actionEl = event.target.closest('[data-import-action]');
+    const row = event.target.closest('[data-import-line-id]');
+    if (!actionEl || !row) return;
+    const lineId = row.dataset.importLineId;
+    const action = actionEl.dataset.importAction;
+    if (action === 'confirm') confirmImportLine(lineId).catch((error) => showFeedback(error.message, 'error'));
+    if (action === 'ignore') ignoreImportLine(lineId).catch((error) => showFeedback(error.message, 'error'));
+    if (action === 'change') showArticleSearch(row);
+    if (action === 'search') searchImportArticles(row).catch((error) => showFeedback(error.message, 'error'));
+    if (action === 'select-article') selectImportArticle(lineId, actionEl.dataset.articleId).catch((error) => showFeedback(error.message, 'error'));
+  });
+  importResults.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || !event.target.matches('[data-import-search-input]')) return;
+    const row = event.target.closest('[data-import-line-id]');
+    if (row) searchImportArticles(row).catch((error) => showFeedback(error.message, 'error'));
+  });
   searchInput.addEventListener('input', renderLines);
   supplierFilter.addEventListener('change', renderLines);
   familyFilter.addEventListener('change', renderLines);
