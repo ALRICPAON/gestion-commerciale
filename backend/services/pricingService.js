@@ -805,7 +805,20 @@ async function matchSupplierLine(db, storeId, supplierId, designation) {
      LIMIT 1`,
     [storeId, supplierId, normalized]
   );
-  if (known.rows[0]) return { status: 'certain', method: 'known_mapping', confidence: 100, article: known.rows[0], mapping_id: known.rows[0].id, normalized };
+  if (known.rows[0]) {
+    return {
+      status: 'certain',
+      method: 'known_mapping',
+      confidence: 100,
+      article: {
+        id: known.rows[0].article_id,
+        article_plu: known.rows[0].article_plu,
+        article_designation: known.rows[0].article_designation,
+      },
+      mapping_id: known.rows[0].id,
+      normalized,
+    };
+  }
 
   const exact = await db.query(
     `SELECT id, plu AS article_plu, designation AS article_designation
@@ -885,7 +898,6 @@ async function createSupplierPriceImport(db, storeId, input = {}, context = {}) 
       const original = clean(raw.supplier_designation_original || raw.designation || raw.label);
       if (!original) continue;
       const match = await matchSupplierLine(client, storeId, supplier.id, original);
-      const isKnownMapping = match.method === 'known_mapping' && match.article?.id;
       await client.query(
         `INSERT INTO supplier_price_import_lines (
           store_id, import_id, supplier_id, row_number, supplier_designation_original,
@@ -900,10 +912,10 @@ async function createSupplierPriceImport(db, storeId, input = {}, context = {}) 
           nonNegative(raw.purchase_price_ht ?? raw.price), clean(raw.price_unit) || 'kg',
           match.article?.id || null, match.mapping_id, match.status, match.method,
           match.confidence,
-          isKnownMapping ? 'confirmed' : 'pending',
-          isKnownMapping ? context.user_id || null : null,
-          isKnownMapping ? new Date().toISOString() : null,
-          isKnownMapping ? 'known_mapping' : null,
+          'pending',
+          null,
+          null,
+          null,
           clean(raw.raw_source_text) || original,
           raw.source_page === undefined || raw.source_page === null ? null : Number(raw.source_page),
           clean(raw.source_filename || input.original_filename),
