@@ -36,6 +36,15 @@ const modules = [
     capabilities: ['search', 'profile', 'prices', 'stock', 'margins'],
   },
   {
+    domain: 'pricing',
+    module: 'Tarification / Cours du jour',
+    path: '/pricing.html',
+    title: 'Tarification',
+    description: 'Source primaire des prix commerciaux du jour: achats, transport, cout rendu, tarifs dynamiques, imports fournisseur et publication.',
+    permissions: ['pricing.read', 'pricing.write'],
+    capabilities: ['sessions', 'lines', 'dynamic_tariffs', 'supplier_imports', 'mappings', 'publish', 'price_resolution'],
+  },
+  {
     domain: 'stock',
     module: 'Stocks, lots et tracabilite',
     path: '/stock.html',

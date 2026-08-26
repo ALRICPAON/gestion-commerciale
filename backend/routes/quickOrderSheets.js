@@ -141,6 +141,11 @@ function normalizeDailyPricingPayload(body = {}) {
       sale_price_level_1_ht: nullablePositive(product.sale_price_level_1_ht ?? product.price_level_1_ht),
       sale_price_level_2_ht: nullablePositive(product.sale_price_level_2_ht ?? product.price_level_2_ht),
       sale_price_level_3_ht: nullablePositive(product.sale_price_level_3_ht ?? product.price_level_3_ht),
+      pricing_session_id: clean(product.pricing_session_id),
+      pricing_line_id: clean(product.pricing_line_id),
+      tariff_prices: Array.isArray(product.tariff_prices) ? product.tariff_prices : [],
+      transport_cost_ht: nullablePositive(product.transport_cost_ht),
+      cost_rendered_ht: nullablePositive(product.cost_rendered_ht),
       real_margin_level_1: nullableNumber(product.real_margin_level_1),
       real_margin_level_2: nullableNumber(product.real_margin_level_2),
       real_margin_level_3: nullableNumber(product.real_margin_level_3),
@@ -240,14 +245,16 @@ router.put('/quick-order-sheets/by-date', authenticateToken, attachDbContext, re
           sale_price_level_1_ht, sale_price_level_2_ht, sale_price_level_3_ht,
           real_margin_level_1, real_margin_level_2, real_margin_level_3,
           manual_price_level_1, manual_price_level_2, manual_price_level_3,
-          family_code, family_name, sale_unit
+          family_code, family_name, sale_unit, pricing_session_id, pricing_line_id,
+          tariff_prices, transport_cost_ht, cost_rendered_ht
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
           $8, $9, $10, $11,
           $12, $13, $14,
           $15, $16, $17,
           $18, $19, $20,
-          $21, $22, $23
+          $21, $22, $23, $24, $25,
+          $26::jsonb, $27, $28
         )`,
         [
           req.user.store_id,
@@ -273,6 +280,11 @@ router.put('/quick-order-sheets/by-date', authenticateToken, attachDbContext, re
           product.family_code,
           product.family_name,
           product.sale_unit,
+          product.pricing_session_id,
+          product.pricing_line_id,
+          JSON.stringify(product.tariff_prices || []),
+          product.transport_cost_ht,
+          product.cost_rendered_ht,
         ]
       );
     }
@@ -1011,11 +1023,13 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
             unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc,
             unit_cost_ex_vat, line_margin_ex_vat, delivered_client_id, delivered_client_name_snapshot,
             delivered_client_code_snapshot, delivered_client_store_identifier_snapshot,
+            pricing_session_id, pricing_line_id, tariff_level_id, source_tariff_price_ht,
+            royale_maree_commission_ht, final_unit_price_ht,
             line_status, source_inventory_line, created_by, updated_by
           ) VALUES(
             gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
             $8, $9, $10, $10, 'kg', $11, $12, $13, $14, $15, $16,
-            $17, $18, $19, $20, $21, $22, 'pending', $23::jsonb, $24, $24
+            $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'pending', $29::jsonb, $30, $30
           )`,
           [
             req.user.store_id,
@@ -1040,6 +1054,12 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
             delivered.name,
             delivered.code,
             delivered.store_identifier,
+            line.product.pricing_session_id || null,
+            line.product.pricing_line_id || null,
+            null,
+            unitPrice,
+            0,
+            unitPrice,
             JSON.stringify({
               quick_order_sheet_id: sheet.sheet_id,
               column_uid: line.product.uid,
