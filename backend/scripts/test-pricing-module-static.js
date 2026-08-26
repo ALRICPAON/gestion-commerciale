@@ -1,0 +1,484 @@
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+
+const pricing = require('../services/pricingService');
+const { listAgentTools } = require('../services/agent/agentToolRegistry');
+const { listExecutableActions } = require('../services/agent/agentExecutableActionRegistry');
+
+const root = path.join(__dirname, '..', '..');
+
+function read(relativePath) {
+  return fs.readFileSync(path.join(root, relativePath), 'utf8');
+}
+
+async function testMigrationContract() {
+  const sql = read('backend/db/gestion-commerciale/108_pricing_daily_tariffs.sql');
+  const decisionSql = read('backend/db/gestion-commerciale/109_supplier_import_human_decisions.sql');
+  for (const table of [
+    'tariff_levels',
+    'pricing_sessions',
+    'pricing_lines',
+    'pricing_line_tariffs',
+    'supplier_price_imports',
+    'supplier_price_import_lines',
+  ]) {
+    assert(sql.includes(`CREATE TABLE IF NOT EXISTS ${table}`), `migration creates ${table}`);
+  }
+  assert(sql.includes('uq_pricing_sessions_active_publication'), 'single active publication index exists');
+  assert(sql.includes('ADD COLUMN IF NOT EXISTS tariff_level_id uuid REFERENCES tariff_levels'), 'clients transition tariff_level_id exists');
+  for (const column of ['pricing_session_id', 'pricing_line_id', 'source_tariff_price_ht', 'royale_maree_commission_ht', 'final_unit_price_ht']) {
+    assert(sql.includes(column), `sales_lines snapshot column ${column}`);
+  }
+  assert(sql.includes('supplier_designation_normalized'), 'mapping normalized key exists');
+  for (const column of ['user_decision', 'decided_by', 'decided_at', 'decision_source', 'raw_source_text', 'source_page', 'source_filename']) {
+    assert(decisionSql.includes(column), `supplier import decision column ${column}`);
+  }
+  assert(decisionSql.includes("user_decision IN ('pending', 'confirmed', 'overridden', 'ignored')"), 'human decision statuses are separated from algorithmic matching');
+}
+
+async function testAgentContracts() {
+  const tools = listAgentTools();
+  const toolNames = new Set(tools.map((tool) => tool.name));
+  for (const name of [
+    'list_pricing_sessions',
+    'get_pricing_session',
+    'get_current_pricing_session',
+    'search_pricing_lines',
+    'get_article_pricing_history',
+    'list_tariff_levels',
+    'list_supplier_price_imports',
+    'get_supplier_price_import',
+    'list_supplier_price_import_lines',
+    'search_supplier_import_unresolved_lines',
+    'search_articles_for_supplier_mapping',
+    'list_supplier_article_mappings',
+    'prepare_pricing_line_update',
+    'prepare_pricing_session_publish',
+  ]) {
+    assert(toolNames.has(name), `agent tool ${name} registered`);
+  }
+  const updateTool = tools.find((tool) => tool.name === 'prepare_pricing_line_update');
+  assert(updateTool.inputSchema.required.includes('pricing_line_id'), 'pricing update schema requires pricing_line_id');
+  assert(updateTool.inputSchema.properties.tariffs, 'pricing update schema exposes dynamic tariffs');
+
+  const actionNames = new Set(listExecutableActions().map((action) => action.name));
+  for (const name of [
+    'pricing.session.create',
+    'pricing.session.duplicate',
+    'pricing.line.add',
+    'pricing.line.update',
+    'pricing.supplier_import.create',
+    'pricing.supplier_import.apply',
+    'pricing.supplier_import_line.confirm',
+    'pricing.supplier_import_line.override',
+    'pricing.supplier_import_line.ignore',
+    'pricing.supplier_mapping.upsert',
+    'pricing.session.publish',
+  ]) {
+    assert(actionNames.has(name), `executable action ${name} registered`);
+  }
+}
+
+async function testServiceHelpers() {
+  assert.equal(pricing.normalizeSupplierDesignation(' F  JULIENNÉ 10/20 '), 'f julienne 10/20');
+  assert.equal(pricing.normalizeSupplierDesignation('MERLU 1,2 / 1,8'), 'merlu 1,2/1,8');
+}
+
+async function testResolvePublishedPriceWithCommission() {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes('FROM clients c')) {
+        return { rows: [{ id: params[1], tariff_level: 1, resolved_legacy_level: 1, is_royale_maree_member: true }] };
+      }
+      if (sql.includes('FROM tariff_levels') && sql.includes('legacy_level')) {
+        return { rows: [{ id: 'tariff-1', store_id: params[0], code: 'T1', name: 'Tarif 1', legacy_level: 1 }] };
+      }
+      if (sql.includes('FROM pricing_sessions ps')) {
+        return {
+          rows: [{
+            pricing_session_id: 'session-1',
+            pricing_line_id: 'line-1',
+            tariff_level_id: 'tariff-1',
+            source_tariff_price_ht: '8.50',
+            royale_maree_commission_eur_per_kg: '0.75',
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+  const resolved = await pricing.resolvePublishedPrice(db, 'store-1', {
+    client_id: 'client-1',
+    article_id: 'article-1',
+    date: '2026-08-26',
+  });
+  assert.equal(resolved.found, true);
+  assert.equal(resolved.source_tariff_price_ht, 8.5);
+  assert.equal(resolved.royale_maree_commission_ht, 0.75);
+  assert.equal(resolved.final_unit_price_ht, 9.25);
+  assert(calls.length >= 3, 'service uses database lookups rather than hardcoded price');
+}
+
+async function testDuplicatePricingSessionUsesSourceLineMap() {
+  const insertedTariffs = [];
+  let copiedLineIndex = 0;
+  const sourceLines = [
+    {
+      id: 'source-line-a',
+      article_id: 'article-same',
+      supplier_id: 'supplier-1',
+      plu_snapshot: 'PLU',
+      designation_snapshot: 'Same fish',
+      family_code: 'F',
+      family_name: 'Fish',
+      sale_unit: 'kg',
+      price_unit: 'kg',
+      purchase_price_ht: 5,
+      supplier_designation_original: 'Same fish',
+      transport_cost_ht: 0.1,
+      transport_cost_source: 'manual',
+      transport_cost_forced: false,
+      display_order: 1,
+      exclude_from_mercuriale: false,
+      notes: null,
+    },
+    {
+      id: 'source-line-b',
+      article_id: 'article-same',
+      supplier_id: 'supplier-1',
+      plu_snapshot: 'PLU',
+      designation_snapshot: 'Same fish',
+      family_code: 'F',
+      family_name: 'Fish',
+      sale_unit: 'kg',
+      price_unit: 'kg',
+      purchase_price_ht: 6,
+      supplier_designation_original: 'Same fish',
+      transport_cost_ht: 0.2,
+      transport_cost_source: 'manual',
+      transport_cost_forced: false,
+      display_order: 1,
+      exclude_from_mercuriale: false,
+      notes: null,
+    },
+  ];
+  const client = {
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('WHERE store_id = $1 AND pricing_date = $2::date')) return { rows: [{ version: 2 }] };
+      if (sql.includes('SELECT * FROM pricing_sessions') && sql.includes('WHERE id = $1 AND store_id = $2')) {
+        return { rows: [{ id: params[0], store_id: params[1], pricing_date: '2026-08-25', status: 'published' }] };
+      }
+      if (sql.includes('INSERT INTO pricing_sessions')) return { rows: [{ id: 'new-session' }] };
+      if (sql.includes('FROM pricing_lines') && sql.includes('ORDER BY display_order ASC, created_at ASC, id ASC')) return { rows: sourceLines };
+      if (sql.includes('INSERT INTO pricing_lines') && sql.includes('RETURNING id')) {
+        copiedLineIndex += 1;
+        return { rows: [{ id: `dest-line-${copiedLineIndex}` }] };
+      }
+      if (sql.includes('FROM pricing_line_tariffs') && sql.includes('WHERE store_id = $1 AND pricing_line_id = $2')) {
+        return {
+          rows: params[1] === 'source-line-a'
+            ? [
+              { tariff_level_id: 'tariff-1', price_ht: 10 },
+              { tariff_level_id: 'tariff-2', price_ht: 11 },
+            ]
+            : [
+              { tariff_level_id: 'tariff-1', price_ht: 20 },
+              { tariff_level_id: 'tariff-2', price_ht: 21 },
+            ],
+        };
+      }
+      if (sql.includes('INSERT INTO pricing_line_tariffs')) {
+        insertedTariffs.push({ pricing_line_id: params[1], tariff_level_id: params[2], price_ht: params[3] });
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT * FROM pricing_sessions WHERE store_id = $1')) return { rows: [{ id: 'new-session' }] };
+      if (sql.includes('FROM pricing_lines pl')) return { rows: [] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const db = { async connect() { return client; } };
+  const duplicated = await pricing.duplicatePricingSession(db, 'store-1', {
+    source_session_id: 'source-session',
+    pricing_date: '2026-08-26',
+  }, { user_id: 'user-1' });
+
+  assert.equal(duplicated.duplicated_line_count, 2);
+  assert.deepEqual(insertedTariffs, [
+    { pricing_line_id: 'dest-line-1', tariff_level_id: 'tariff-1', price_ht: 10 },
+    { pricing_line_id: 'dest-line-1', tariff_level_id: 'tariff-2', price_ht: 11 },
+    { pricing_line_id: 'dest-line-2', tariff_level_id: 'tariff-1', price_ht: 20 },
+    { pricing_line_id: 'dest-line-2', tariff_level_id: 'tariff-2', price_ht: 21 },
+  ]);
+}
+
+async function testSalesLinePricingSnapshotDecisions() {
+  const pricedLine = {
+    pricing_session_id: 'session-old',
+    pricing_line_id: 'line-old',
+    tariff_level_id: 'tariff-1',
+    source_tariff_price_ht: 8.5,
+    royale_maree_commission_ht: 0.75,
+    final_unit_price_ht: 9.25,
+    unit_sale_price_ht: 9.25,
+  };
+  assert.equal(pricing.shouldResolveSalesLinePricing({}, pricedLine), false);
+  assert.equal(pricing.shouldResolveSalesLinePricing({ unit_sale_price_ht: 10.5 }, pricedLine), false);
+  assert.equal(pricing.shouldResolveSalesLinePricing({ reprice_from_pricing: true }, pricedLine), true);
+  assert.equal(pricing.shouldResolveSalesLinePricing({}, { unit_sale_price_ht: 0 }), true);
+
+  const preserved = pricing.buildSalesLinePricingTrace({}, pricedLine, { found: false }, 9.25);
+  assert.equal(preserved.mode, 'preserved');
+  assert.equal(preserved.pricing_session_id, 'session-old');
+  assert.equal(preserved.final_unit_price_ht, 9.25);
+
+  const manual = pricing.buildSalesLinePricingTrace({ unit_sale_price_ht: 10.5 }, pricedLine, { found: false }, 10.5);
+  assert.equal(manual.mode, 'manual_override');
+  assert.equal(manual.pricing_session_id, null);
+  assert.equal(manual.pricing_line_id, null);
+  assert.equal(manual.final_unit_price_ht, 10.5);
+}
+
+async function testSupplierImportHeaderAndSupplierStoreValidation() {
+  const appliedStatusUpdates = [];
+  const missingImportClient = {
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('FROM pricing_sessions') && sql.includes('FOR UPDATE')) return { rows: [{ id: params[0], status: 'draft' }] };
+      if (sql.includes('FROM supplier_price_imports') && sql.includes('FOR UPDATE')) return { rows: [] };
+      if (sql.includes("SET status = 'applied'")) appliedStatusUpdates.push(params);
+      return { rows: [] };
+    },
+    release() {},
+  };
+  await assert.rejects(
+    () => pricing.applySupplierImportToSession({ async connect() { return missingImportClient; } }, 'store-1', {
+      pricing_session_id: 'session-1',
+      import_id: 'foreign-import',
+    }),
+    /Import fournisseur introuvable/
+  );
+  assert.equal(appliedStatusUpdates.length, 0, 'foreign import is never marked applied');
+
+  const missingSupplierClient = {
+    async query(sql) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('FROM suppliers')) return { rows: [] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  await assert.rejects(
+    () => pricing.createSupplierPriceImport({ async connect() { return missingSupplierClient; } }, 'store-1', {
+      supplier_id: 'supplier-from-other-store',
+      lines: [{ supplier_designation_original: 'Bar', purchase_price_ht: 4 }],
+    }),
+    /Fournisseur introuvable/
+  );
+
+  const lineSupplierClient = {
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('FROM pricing_sessions') && sql.includes('FOR UPDATE')) return { rows: [{ id: params[0], status: 'draft' }] };
+      if (sql.includes('FROM articles')) return { rows: [] };
+      if (sql.includes('FROM suppliers')) return { rows: [] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  await assert.rejects(
+    () => pricing.addPricingLine({ async connect() { return lineSupplierClient; } }, 'store-1', {
+      pricing_session_id: 'session-1',
+      supplier_id: 'supplier-from-other-store',
+      designation: 'Bar',
+    }),
+    /Fournisseur introuvable/
+  );
+}
+
+async function testPublicationReplacementContract() {
+  const service = read('backend/services/pricingService.js');
+  assert(service.includes("SET status = 'superseded', is_active_publication = false"), 'old publication is superseded');
+  assert(service.includes("status = 'published' AND is_active_publication = true AND id <> $3"), 'only previous active publication is replaced');
+  assert(service.includes('id <> $3'), 'newly published session is not overwritten during replacement');
+}
+
+async function testSupplierImportHumanWorkflowContracts() {
+  const service = read('backend/services/pricingService.js');
+  assert(service.includes("'known_mapping'"), 'known mappings are detected explicitly');
+  assert(service.includes("'pending',\n          null,\n          null,\n          null"), 'known mappings stay pending until human confirmation');
+  assert(service.includes("user_decision = 'confirmed'"), 'confirmation records a human decision');
+  assert(service.includes("user_decision = 'overridden'"), 'override records a human decision');
+  assert(service.includes("user_decision = 'ignored'"), 'ignore records a human decision');
+  assert(service.includes("['confirmed', 'overridden'].includes(line.user_decision)"), 'apply only uses validated lines');
+  assert(service.includes('searchArticlesForSupplierMapping'), 'service exposes article search for supplier matching');
+  assert(service.includes('mapping_source: \'human_validation\''), 'confirmed mappings are memorized as human validation');
+  assert(service.includes('mapping_source: \'human_override\''), 'overridden mappings replace supplier-specific mapping');
+}
+
+async function testKnownSupplierMappingRequiresImportConfirmation() {
+  const importLines = [];
+  const pricingLineUpdates = [];
+  const client = {
+    async query(sql, params = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
+      if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: params[0], name: 'Sogelmer' }] };
+      if (sql.includes('INSERT INTO supplier_price_imports')) return { rows: [{ id: 'import-1', supplier_id: 'supplier-1', status: 'parsed' }] };
+      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('sam.supplier_designation_normalized = $3')) {
+        return { rows: [{ id: 'mapping-1', article_id: 'article-1', article_plu: '3013', article_designation: 'Filet julienne' }] };
+      }
+      if (sql.includes('INSERT INTO supplier_price_import_lines')) {
+        importLines.push({
+          id: 'import-line-1',
+          import_id: 'import-1',
+          supplier_id: params[2],
+          row_number: params[3],
+          supplier_designation_original: params[4],
+          supplier_designation_normalized: params[5],
+          purchase_price_ht: params[9],
+          matched_article_id: params[11],
+          mapping_id: params[12],
+          match_status: params[13],
+          match_method: params[14],
+          confidence_score: params[15],
+          user_decision: params[16],
+          decided_by: params[17],
+          decided_at: params[18],
+          decision_source: params[19],
+          article_plu: '3013',
+          article_designation: 'Filet julienne',
+        });
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT * FROM supplier_price_imports WHERE id = $1 AND store_id = $2')) {
+        return { rows: [{ id: params[0], supplier_id: 'supplier-1', status: 'parsed' }] };
+      }
+      if (sql.includes('FROM supplier_price_import_lines spil') && sql.includes('LEFT JOIN articles')) return { rows: importLines };
+      if (sql.includes('FROM pricing_sessions') && sql.includes('FOR UPDATE')) return { rows: [{ id: params[0], status: 'draft', pricing_date: '2026-08-26' }] };
+      if (sql.includes('FROM supplier_price_imports') && sql.includes('FOR UPDATE')) return { rows: [{ id: params[0], supplier_id: 'supplier-1', status: 'parsed' }] };
+      if (sql.includes('UPDATE supplier_price_imports SET status')) return { rows: [] };
+      if (sql.includes('SELECT * FROM pricing_sessions WHERE store_id = $1')) return { rows: [{ id: 'session-1', status: 'draft' }] };
+      if (sql.includes('FROM pricing_lines pl')) return { rows: [{ id: 'pricing-line-1' }] };
+      if (sql.includes('JOIN supplier_price_imports spi') && sql.includes('FOR UPDATE OF spil')) return { rows: [{ ...importLines[0], import_status: 'parsed' }] };
+      if (sql.includes('FROM articles') && sql.includes('WHERE id = $1')) {
+        return { rows: [{ id: params[0], plu: '3013', designation: 'Filet julienne', sale_unit: 'kg', unit: 'kg' }] };
+      }
+      if (sql.includes('INSERT INTO supplier_article_mappings')) return { rows: [{ id: 'mapping-1' }] };
+      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('LEFT JOIN suppliers')) {
+        return { rows: [{ id: 'mapping-1', article_id: 'article-1', article_plu: '3013', article_designation: 'Filet julienne' }] };
+      }
+      if (sql.includes("SET matched_article_id = $3, mapping_id = $4, user_decision = 'confirmed'")) {
+        importLines[0] = {
+          ...importLines[0],
+          matched_article_id: params[2],
+          mapping_id: params[3],
+          user_decision: 'confirmed',
+          decided_by: params[4],
+          decision_source: 'human_confirmed',
+        };
+        return { rows: [importLines[0]] };
+      }
+      if (sql.includes('SELECT id FROM pricing_lines')) return { rows: [] };
+      if (sql.includes('SELECT COALESCE(MAX(display_order)')) return { rows: [{ n: 1 }] };
+      if (sql.includes('INSERT INTO pricing_lines')) return { rows: [{ id: 'pricing-line-1' }] };
+      if (sql.includes('UPDATE supplier_price_import_lines SET applied_pricing_line_id')) {
+        pricingLineUpdates.push(params);
+        importLines[0].applied_pricing_line_id = params[0];
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const db = { async connect() { return client; } };
+
+  const created = await pricing.createSupplierPriceImport(db, 'store-1', {
+    supplier_id: 'supplier-1',
+    lines: [{ supplier_designation_original: 'F JULIENNE', purchase_price_ht: 10.5 }],
+  }, { user_id: 'user-1' });
+
+  assert.equal(created.lines[0].matched_article_id, 'article-1');
+  assert.equal(created.lines[0].mapping_id, 'mapping-1');
+  assert.equal(created.lines[0].match_method, 'known_mapping');
+  assert.equal(created.lines[0].user_decision, 'pending');
+  assert.equal(created.lines[0].decided_by, null);
+  assert.equal(created.lines[0].decided_at, null);
+  assert.equal(created.lines[0].decision_source, null);
+
+  const beforeConfirm = await pricing.applySupplierImportToSession(db, 'store-1', { import_id: 'import-1', pricing_session_id: 'session-1' });
+  assert.equal(beforeConfirm.applied_line_count, 0);
+  assert.equal(beforeConfirm.pending_line_count, 1);
+
+  const confirmed = await pricing.confirmSupplierImportLineMapping(db, 'store-1', { import_line_id: 'import-line-1' }, { user_id: 'user-1' });
+  assert.equal(confirmed.user_decision, 'confirmed');
+
+  const afterConfirm = await pricing.applySupplierImportToSession(db, 'store-1', { import_id: 'import-1', pricing_session_id: 'session-1' });
+  assert.equal(afterConfirm.applied_line_count, 1);
+  assert.equal(pricingLineUpdates.length, 1);
+}
+
+async function testPricingFrontendImportWorkflowContracts() {
+  const html = read('frontend/pricing.html');
+  const js = read('frontend/js/pricing.js');
+  assert(html.includes('id="import-file-input"'), 'frontend exposes supplier file input');
+  assert(html.includes('.xlsx,.xls,.csv,.txt,.pdf'), 'frontend accepts Excel CSV TXT PDF');
+  assert(js.includes('new FormData()'), 'frontend sends multipart form data for file imports');
+  assert(js.includes('apiForm(\'/api/pricing/supplier-imports\''), 'file and text imports use same import endpoint');
+  assert(js.includes('data-import-action="confirm"'), 'frontend exposes explicit confirm action');
+  assert(js.includes('data-import-action="change"'), 'frontend exposes explicit change action');
+  assert(js.includes('data-import-action="ignore"'), 'frontend exposes explicit ignore action');
+  assert(js.includes('/supplier-import-lines/articles/search'), 'frontend searches ALTA articles in matching workflow');
+
+  const saveDirtyBody = js.slice(js.indexOf('async function saveDirtyLines()'), js.indexOf('async function loadReferenceData()'));
+  assert(!saveDirtyBody.includes('loadSession('), 'autosave updates local model without reloading the session');
+  assert(saveDirtyBody.includes('refreshRowComputedCells'), 'autosave refreshes computed cells locally');
+}
+
+async function testPricingRouteFileParsingContracts() {
+  const route = read('backend/routes/pricing.js');
+  assert(route.includes("PDFParse") && route.includes("require('pdf-parse')"), 'pricing route uses local PDF text extraction');
+  assert(route.includes("name.endsWith('.pdf')"), 'PDF files are routed to PDF parsing');
+  assert(route.includes('rowsFromPdf'), 'PDF uses the same supplier row workflow');
+  assert(route.includes('rowFromCells'), 'file parsing detects price-like cells instead of always using the last cell blindly');
+  assert(route.includes("source_type: req.file.originalname.toLowerCase().endsWith('.pdf') ? 'pdf' : 'file'"), 'PDF source type is preserved');
+}
+
+async function testIntegrationFilesReferencePricing() {
+  const customerPriceLists = read('backend/routes/customerPriceLists.js');
+  assert(customerPriceLists.includes('fetchPublishedPricingProducts'), 'mercuriale reads pricing first');
+  assert(customerPriceLists.includes('quick_order_sheet_legacy_fallback'), 'mercuriale documents legacy fallback');
+
+  const sales = read('backend/routes/sales.js');
+  assert(sales.includes('resolvePublishedPrice'), 'sales lines resolve published pricing');
+  assert(sales.includes('shouldResolveSalesLinePricing'), 'sales line patch avoids implicit repricing of snapshotted lines');
+  assert(sales.includes('buildSalesLinePricingTrace'), 'sales line patch writes explicit pricing trace decisions');
+  assert(sales.includes('final_unit_price_ht'), 'sales lines write final_unit_price_ht trace');
+
+  const quickOrderSheets = read('backend/routes/quickOrderSheets.js');
+  assert(quickOrderSheets.includes('pricing_session_id'), 'call sheet mirror carries pricing_session_id');
+  assert(quickOrderSheets.includes('tariff_prices'), 'call sheet mirror carries dynamic tariffs');
+}
+
+(async () => {
+  await testMigrationContract();
+  await testAgentContracts();
+  await testServiceHelpers();
+  await testResolvePublishedPriceWithCommission();
+  await testDuplicatePricingSessionUsesSourceLineMap();
+  await testSalesLinePricingSnapshotDecisions();
+  await testSupplierImportHeaderAndSupplierStoreValidation();
+  await testPublicationReplacementContract();
+  await testSupplierImportHumanWorkflowContracts();
+  await testKnownSupplierMappingRequiresImportConfirmation();
+  await testPricingFrontendImportWorkflowContracts();
+  await testPricingRouteFileParsingContracts();
+  await testIntegrationFilesReferencePricing();
+  console.log('OK pricing module static contract tests passed');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

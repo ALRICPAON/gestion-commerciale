@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tarification - ALTA MAREE</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/pricing.css?v=1" />
+</head>
+<body class="app-page pricing-page">
+  <header class="topbar">
+    <div>
+      <h1 class="app-title">ALTA MAREE</h1>
+      <p class="app-subtitle">Tarification / Cours du jour</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content pricing-layout">
+    <section class="pricing-toolbar">
+      <div class="pricing-date-block">
+        <label for="pricing-date-input">Date</label>
+        <input id="pricing-date-input" type="date" />
+      </div>
+      <div class="pricing-status">
+        <strong id="session-status-label">-</strong>
+        <span id="save-state-label">Non charge</span>
+      </div>
+      <div class="pricing-actions">
+        <button id="load-session-btn" class="btn btn-secondary" type="button">Charger</button>
+        <button id="new-session-btn" class="btn btn-secondary" type="button">Nouveau</button>
+        <button id="duplicate-session-btn" class="btn btn-secondary" type="button">Reprendre la derniere</button>
+        <button id="add-line-btn" class="btn btn-secondary" type="button">Ajouter article</button>
+        <button id="import-btn" class="btn btn-secondary" type="button">Import fournisseur</button>
+        <button id="publish-btn" class="btn btn-primary" type="button">Publier</button>
+      </div>
+    </section>
+
+    <div id="page-feedback" class="page-feedback hidden"></div>
+
+    <section class="pricing-filters">
+      <input id="search-input" type="search" placeholder="Rechercher article, PLU, fournisseur" />
+      <select id="supplier-filter"><option value="">Tous fournisseurs</option></select>
+      <select id="family-filter"><option value="">Toutes familles</option></select>
+      <button id="save-now-btn" class="btn btn-secondary" type="button">Sauvegarder</button>
+    </section>
+
+    <section class="pricing-table-wrap" aria-label="Tableau tarification">
+      <table class="pricing-table">
+        <thead>
+          <tr id="pricing-head-row">
+            <th>Code</th>
+            <th>Designation</th>
+            <th>Fournisseur</th>
+            <th>Achat</th>
+            <th>Transport</th>
+            <th>Cout rendu</th>
+          </tr>
+        </thead>
+        <tbody id="pricing-lines-body"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <div id="article-modal" class="pricing-modal hidden" role="dialog" aria-modal="true">
+    <div class="pricing-modal-content">
+      <div class="pricing-modal-header">
+        <h2>Ajouter un article</h2>
+        <button id="close-article-modal-btn" class="btn btn-secondary btn-sm" type="button">Fermer</button>
+      </div>
+      <input id="article-search-input" type="search" placeholder="PLU ou designation" />
+      <div id="article-results" class="pricing-results"></div>
+    </div>
+  </div>
+
+  <div id="import-modal" class="pricing-modal hidden" role="dialog" aria-modal="true">
+    <div class="pricing-modal-content">
+      <div class="pricing-modal-header">
+        <h2>Import cours fournisseur</h2>
+        <button id="close-import-modal-btn" class="btn btn-secondary btn-sm" type="button">Fermer</button>
+      </div>
+      <div class="pricing-import-controls">
+        <label>
+          <span>Fournisseur</span>
+          <select id="import-supplier-select"><option value="">Choisir fournisseur</option></select>
+        </label>
+        <label>
+          <span>Fichier fournisseur</span>
+          <input id="import-file-input" type="file" accept=".xlsx,.xls,.csv,.txt,.pdf" />
+        </label>
+        <span id="import-file-name" class="pricing-file-name">Aucun fichier selectionne</span>
+      </div>
+      <textarea id="import-textarea" rows="6" placeholder="Coller le cours fournisseur : F JULIENNE 10.50&#10;MERLU 12/18 5.50"></textarea>
+      <div class="pricing-actions">
+        <button id="run-import-btn" class="btn btn-primary" type="button">Importer et rapprocher</button>
+        <button id="confirm-known-btn" class="btn btn-secondary" type="button" disabled>Confirmer mappings connus</button>
+        <button id="apply-import-btn" class="btn btn-secondary" type="button" disabled>Appliquer a la session</button>
+      </div>
+      <div id="import-summary" class="pricing-import-summary"></div>
+      <div id="import-results" class="pricing-results"></div>
+    </div>
+  </div>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/pricing.js?v=1"></script>
+</body>
+</html>
