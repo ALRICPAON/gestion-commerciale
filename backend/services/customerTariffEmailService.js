@@ -12,6 +12,7 @@ const {
   fetchSavedPriceListProductsByPricingLevel,
   generateCustomerPriceListPdf,
 } = require('./customerPriceListPdfService');
+const pricingService = require('./pricingService');
 
 const VALID_PRICING_LEVELS = new Set([1, 2, 3]);
 
@@ -312,6 +313,31 @@ async function fetchProductsForPricingLevel(db, storeId, pricingLevel, commissio
   const sheetDate = normalizeIsoDate(mercurialeDate);
   if (!sheetDate) return [];
 
+  const publishedPricing = await pricingService.getCurrentPricingSession(db, storeId, { date: sheetDate });
+  if (publishedPricing.exists) {
+    const levels = await pricingService.listTariffLevels(db, storeId, {});
+    const tariffLevel = levels.results.find((level) => Number(level.legacy_level) === normalizedPricingLevel);
+    if (tariffLevel) {
+      return (publishedPricing.lines || []).filter((line) => !line.exclude_from_mercuriale && line.article_id).map((line) => {
+        const tariff = (line.tariffs || []).find((item) => item.tariff_level_id === tariffLevel.id);
+        return {
+          article_id: line.article_id,
+          plu: line.plu_snapshot,
+          designation: line.designation_snapshot,
+          display_name: line.designation_snapshot,
+          family_name: line.family_name || 'Autre',
+          sale_unit: line.sale_unit || line.price_unit,
+          stock_quantity: null,
+          price_ht: tariff?.price_ht ?? null,
+          pricing_session_id: publishedPricing.session.id,
+          pricing_line_id: line.id,
+          tariff_level_id: tariffLevel.id,
+        };
+      }).filter((row) => row.price_ht !== null && row.price_ht !== undefined);
+    }
+  }
+
+  // Compatibilite transition: anciennes dates sans publication pricing.
   const dailySheet = await db.query(
     `SELECT id
      FROM quick_order_sheets
