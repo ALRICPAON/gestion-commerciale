@@ -14,6 +14,7 @@ function read(relativePath) {
 
 async function testMigrationContract() {
   const sql = read('backend/db/gestion-commerciale/108_pricing_daily_tariffs.sql');
+  const decisionSql = read('backend/db/gestion-commerciale/109_supplier_import_human_decisions.sql');
   for (const table of [
     'tariff_levels',
     'pricing_sessions',
@@ -30,6 +31,10 @@ async function testMigrationContract() {
     assert(sql.includes(column), `sales_lines snapshot column ${column}`);
   }
   assert(sql.includes('supplier_designation_normalized'), 'mapping normalized key exists');
+  for (const column of ['user_decision', 'decided_by', 'decided_at', 'decision_source', 'raw_source_text', 'source_page', 'source_filename']) {
+    assert(decisionSql.includes(column), `supplier import decision column ${column}`);
+  }
+  assert(decisionSql.includes("user_decision IN ('pending', 'confirmed', 'overridden', 'ignored')"), 'human decision statuses are separated from algorithmic matching');
 }
 
 async function testAgentContracts() {
@@ -44,6 +49,9 @@ async function testAgentContracts() {
     'list_tariff_levels',
     'list_supplier_price_imports',
     'get_supplier_price_import',
+    'list_supplier_price_import_lines',
+    'search_supplier_import_unresolved_lines',
+    'search_articles_for_supplier_mapping',
     'list_supplier_article_mappings',
     'prepare_pricing_line_update',
     'prepare_pricing_session_publish',
@@ -62,6 +70,9 @@ async function testAgentContracts() {
     'pricing.line.update',
     'pricing.supplier_import.create',
     'pricing.supplier_import.apply',
+    'pricing.supplier_import_line.confirm',
+    'pricing.supplier_import_line.override',
+    'pricing.supplier_import_line.ignore',
     'pricing.supplier_mapping.upsert',
     'pricing.session.publish',
   ]) {
@@ -296,6 +307,45 @@ async function testPublicationReplacementContract() {
   assert(service.includes('id <> $3'), 'newly published session is not overwritten during replacement');
 }
 
+async function testSupplierImportHumanWorkflowContracts() {
+  const service = read('backend/services/pricingService.js');
+  assert(service.includes("match.method === 'known_mapping'"), 'known mappings are detected explicitly');
+  assert(service.includes("isKnownMapping ? 'confirmed' : 'pending'"), 'only known mappings are prevalidated');
+  assert(service.includes("user_decision = 'confirmed'"), 'confirmation records a human decision');
+  assert(service.includes("user_decision = 'overridden'"), 'override records a human decision');
+  assert(service.includes("user_decision = 'ignored'"), 'ignore records a human decision');
+  assert(service.includes("['confirmed', 'overridden'].includes(line.user_decision)"), 'apply only uses validated lines');
+  assert(service.includes('searchArticlesForSupplierMapping'), 'service exposes article search for supplier matching');
+  assert(service.includes('mapping_source: \'human_validation\''), 'confirmed mappings are memorized as human validation');
+  assert(service.includes('mapping_source: \'human_override\''), 'overridden mappings replace supplier-specific mapping');
+}
+
+async function testPricingFrontendImportWorkflowContracts() {
+  const html = read('frontend/pricing.html');
+  const js = read('frontend/js/pricing.js');
+  assert(html.includes('id="import-file-input"'), 'frontend exposes supplier file input');
+  assert(html.includes('.xlsx,.xls,.csv,.txt,.pdf'), 'frontend accepts Excel CSV TXT PDF');
+  assert(js.includes('new FormData()'), 'frontend sends multipart form data for file imports');
+  assert(js.includes('apiForm(\'/api/pricing/supplier-imports\''), 'file and text imports use same import endpoint');
+  assert(js.includes('data-import-action="confirm"'), 'frontend exposes explicit confirm action');
+  assert(js.includes('data-import-action="change"'), 'frontend exposes explicit change action');
+  assert(js.includes('data-import-action="ignore"'), 'frontend exposes explicit ignore action');
+  assert(js.includes('/supplier-import-lines/articles/search'), 'frontend searches ALTA articles in matching workflow');
+
+  const saveDirtyBody = js.slice(js.indexOf('async function saveDirtyLines()'), js.indexOf('async function loadReferenceData()'));
+  assert(!saveDirtyBody.includes('loadSession('), 'autosave updates local model without reloading the session');
+  assert(saveDirtyBody.includes('refreshRowComputedCells'), 'autosave refreshes computed cells locally');
+}
+
+async function testPricingRouteFileParsingContracts() {
+  const route = read('backend/routes/pricing.js');
+  assert(route.includes("PDFParse") && route.includes("require('pdf-parse')"), 'pricing route uses local PDF text extraction');
+  assert(route.includes("name.endsWith('.pdf')"), 'PDF files are routed to PDF parsing');
+  assert(route.includes('rowsFromPdf'), 'PDF uses the same supplier row workflow');
+  assert(route.includes('rowFromCells'), 'file parsing detects price-like cells instead of always using the last cell blindly');
+  assert(route.includes("source_type: req.file.originalname.toLowerCase().endsWith('.pdf') ? 'pdf' : 'file'"), 'PDF source type is preserved');
+}
+
 async function testIntegrationFilesReferencePricing() {
   const customerPriceLists = read('backend/routes/customerPriceLists.js');
   assert(customerPriceLists.includes('fetchPublishedPricingProducts'), 'mercuriale reads pricing first');
@@ -321,6 +371,9 @@ async function testIntegrationFilesReferencePricing() {
   await testSalesLinePricingSnapshotDecisions();
   await testSupplierImportHeaderAndSupplierStoreValidation();
   await testPublicationReplacementContract();
+  await testSupplierImportHumanWorkflowContracts();
+  await testPricingFrontendImportWorkflowContracts();
+  await testPricingRouteFileParsingContracts();
   await testIntegrationFilesReferencePricing();
   console.log('OK pricing module static contract tests passed');
 })().catch((error) => {
