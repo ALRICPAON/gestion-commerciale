@@ -54,8 +54,22 @@ function normalizeCode(value) {
     .replace(/[^A-Z0-9]+/g, '');
 }
 
+function isPool(db) {
+  return Boolean(db && typeof db.connect === 'function' && (
+    typeof db.query !== 'function'
+    || typeof db.totalCount === 'number'
+    || typeof db.idleCount === 'number'
+    || typeof db.waitingCount === 'number'
+  ));
+}
+
+function isTransactionClient(db) {
+  return Boolean(db && typeof db.query === 'function' && !isPool(db));
+}
+
 async function inTransaction(db, fn) {
-  if (typeof db.connect !== 'function') return fn(db);
+  if (isTransactionClient(db)) return fn(db);
+  if (!isPool(db)) throw expose(500, 'Connexion base indisponible');
   const client = await db.connect();
   try {
     await client.query('BEGIN');
