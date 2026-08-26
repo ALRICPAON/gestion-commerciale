@@ -21,6 +21,21 @@ function clean(value) {
   return text || null;
 }
 
+function logPricingRouteError(req, error, action, extra = {}) {
+  const status = error.status || 500;
+  if (status < 500) return;
+  console.error('Erreur route pricing', {
+    action,
+    endpoint: `${req.method} ${req.originalUrl || req.path}`,
+    import_line_id: extra.import_line_id || req.params?.lineId || null,
+    store_id: req.user?.store_id || null,
+    article_id: extra.article_id || req.body?.article_id || null,
+    pg_code: error.code || null,
+    constraint: error.constraint || null,
+    message: error.message || 'Erreur inattendue',
+  });
+}
+
 function looksLikePrice(value) {
   const text = clean(value);
   if (!text) return false;
@@ -267,6 +282,7 @@ router.post('/supplier-import-lines/:lineId/confirm', requireAdminOrManager, asy
   try {
     res.json(await pricing.confirmSupplierImportLineMapping(req.dbPool, req.user.store_id, { ...req.body, import_line_id: req.params.lineId }, context(req)));
   } catch (error) {
+    logPricingRouteError(req, error, 'supplier_import_line.confirm', { import_line_id: req.params.lineId, article_id: req.body?.article_id });
     res.status(error.status || 500).json({ error: error.message || 'Erreur confirmation ligne import' });
   }
 });
@@ -275,6 +291,7 @@ router.post('/supplier-import-lines/:lineId/override', requireAdminOrManager, as
   try {
     res.json(await pricing.overrideSupplierImportLineMapping(req.dbPool, req.user.store_id, { ...req.body, import_line_id: req.params.lineId }, context(req)));
   } catch (error) {
+    logPricingRouteError(req, error, 'supplier_import_line.override', { import_line_id: req.params.lineId, article_id: req.body?.article_id });
     res.status(error.status || 500).json({ error: error.message || 'Erreur changement ligne import' });
   }
 });
@@ -283,6 +300,7 @@ router.post('/supplier-import-lines/:lineId/ignore', requireAdminOrManager, asyn
   try {
     res.json(await pricing.ignoreSupplierImportLine(req.dbPool, req.user.store_id, { ...req.body, import_line_id: req.params.lineId }, context(req)));
   } catch (error) {
+    logPricingRouteError(req, error, 'supplier_import_line.ignore', { import_line_id: req.params.lineId });
     res.status(error.status || 500).json({ error: error.message || 'Erreur ligne import ignoree' });
   }
 });

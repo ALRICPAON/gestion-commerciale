@@ -765,27 +765,64 @@ async function upsertSupplierArticleMapping(db, storeId, input = {}, context = {
     const article = await fetchArticle(client, storeId, articleId);
     if (!article) throw expose(404, 'Article introuvable');
     const normalized = normalizeSupplierDesignation(input.supplier_designation_normalized || original);
-    const result = await client.query(
-      `INSERT INTO supplier_article_mappings (
-        store_id, supplier_id, article_id, supplier_ref, supplier_label,
-        supplier_designation_original, supplier_designation_normalized,
-        mapping_source, confidence_score, is_active, created_by, updated_by
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,$10,$10)
-      ON CONFLICT (store_id, supplier_id, supplier_designation_normalized)
-      WHERE COALESCE(is_active, true) = true
-      DO UPDATE SET article_id = EXCLUDED.article_id,
-        supplier_ref = EXCLUDED.supplier_ref,
-        supplier_label = EXCLUDED.supplier_label,
-        supplier_designation_original = EXCLUDED.supplier_designation_original,
-        mapping_source = EXCLUDED.mapping_source,
-        confidence_score = EXCLUDED.confidence_score,
-        updated_by = EXCLUDED.updated_by,
-        updated_at = now()
-      RETURNING id`,
+    const existing = await client.query(
+      `SELECT id
+       FROM supplier_article_mappings
+       WHERE store_id = $1 AND supplier_id = $2 AND COALESCE(is_active, true) = true
+         AND (supplier_designation_normalized = $3 OR supplier_ref = $4)
+       ORDER BY CASE WHEN supplier_designation_normalized = $3 THEN 0 ELSE 1 END, updated_at DESC NULLS LAST, created_at DESC NULLS LAST
+       LIMIT 1
+       FOR UPDATE`,
+      [storeId, supplier.id, normalized, original]
+    );
+    const params = [
+      storeId, supplier.id, article.id, original, clean(input.supplier_label) || original,
+      original, normalized, clean(input.mapping_source) || 'manual',
+      num(input.confidence_score, 100), context.user_id || null,
+    ];
+    await client.query(
+      `UPDATE supplier_article_mappings
+       SET is_active = false, updated_by = $5, updated_at = now()
+       WHERE store_id = $1 AND supplier_id = $2
+         AND ($3::uuid IS NULL OR id <> $3::uuid)
+         AND COALESCE(is_active, true) = true
+         AND (supplier_designation_normalized = $4 OR supplier_ref = $6)`,
+      [storeId, supplier.id, existing.rows[0]?.id || null, normalized, context.user_id || null, original]
+    );
+    const result = existing.rows[0]
+      ? await client.query(
+        `UPDATE supplier_article_mappings
+         SET article_id = $3,
+             supplier_ref = $4,
+             supplier_label = $5,
+             supplier_designation_original = $6,
+             supplier_designation_normalized = $7,
+             mapping_source = $8,
+             confidence_score = $9,
+             is_active = true,
+             updated_by = $10,
+             updated_at = now()
+         WHERE id = $11 AND store_id = $1
+         RETURNING id`,
+        [...params, existing.rows[0].id]
+      )
+      : await client.query(
+        `INSERT INTO supplier_article_mappings (
+          store_id, supplier_id, article_id, supplier_ref, supplier_label,
+          supplier_designation_original, supplier_designation_normalized,
+          mapping_source, confidence_score, is_active, created_by, updated_by
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,$10,$10)
+        RETURNING id`,
+        params
+      );
+    await client.query(
+      `UPDATE supplier_article_mappings
+       SET is_active = false, updated_by = $5, updated_at = now()
+       WHERE store_id = $1 AND supplier_id = $2 AND id <> $3
+         AND COALESCE(is_active, true) = true
+         AND (supplier_designation_normalized = $4 OR supplier_ref = $6)`,
       [
-        storeId, supplier.id, article.id, original, clean(input.supplier_label) || original,
-        original, normalized, clean(input.mapping_source) || 'manual',
-        num(input.confidence_score, 100), context.user_id || null,
+        storeId, supplier.id, result.rows[0].id, normalized, context.user_id || null, original,
       ]
     );
     const found = await searchSupplierArticleMappings(client, storeId, { query: original, supplier_id: supplier.id, limit: 1 });
@@ -876,12 +913,30 @@ function parseSupplierTextLines(text) {
     });
 }
 
+function parseSupplierProductTextLines(text) {
+  return String(text || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = line.match(/^(.*?)(?:[;\t]|\s+-\s+|\s+)(\d+(?:[,.]\d{1,4})?)\s*(?:eur)?\s*$/i);
+      if (!match) return { supplier_designation_original: line, purchase_price_ht: null, warnings: ['prix introuvable'] };
+      const designation = match[1].replace(/^[^a-zA-Z0-9]+/, '').replace(/[^a-zA-Z0-9]+$/, '').trim();
+      return {
+        supplier_designation_original: designation || match[1].trim(),
+        purchase_price_ht: Number(match[2].replace(',', '.')),
+        raw_source_text: line,
+        warnings: [],
+      };
+    });
+}
+
 async function createSupplierPriceImport(db, storeId, input = {}, context = {}) {
   return inTransaction(db, async (client) => {
     const supplierId = clean(input.supplier_id);
     if (!supplierId) throw expose(400, 'supplier_id requis');
     const supplier = await assertStoreSupplier(client, storeId, supplierId);
-    const rows = Array.isArray(input.lines) ? input.lines : parseSupplierTextLines(input.raw_text || input.text);
+    const rows = Array.isArray(input.lines) ? input.lines : parseSupplierProductTextLines(input.raw_text || input.text);
     if (!rows.length) throw expose(400, 'Aucune ligne fournisseur exploitable');
     const header = await client.query(
       `INSERT INTO supplier_price_imports (store_id, supplier_id, import_date, source_type, original_filename, raw_text, status, metadata, created_by)
@@ -897,6 +952,8 @@ async function createSupplierPriceImport(db, storeId, input = {}, context = {}) 
     for (const raw of rows) {
       const original = clean(raw.supplier_designation_original || raw.designation || raw.label);
       if (!original) continue;
+      const purchasePrice = nonNegative(raw.purchase_price_ht ?? raw.price);
+      if (purchasePrice === null && input.allow_missing_prices !== true) continue;
       const match = await matchSupplierLine(client, storeId, supplier.id, original);
       await client.query(
         `INSERT INTO supplier_price_import_lines (
@@ -909,7 +966,7 @@ async function createSupplierPriceImport(db, storeId, input = {}, context = {}) 
         [
           storeId, header.rows[0].id, supplier.id, Number(raw.row_number) || rowNumber++, original, match.normalized,
           clean(raw.unit), clean(raw.caliber), clean(raw.availability),
-          nonNegative(raw.purchase_price_ht ?? raw.price), clean(raw.price_unit) || 'kg',
+          purchasePrice, clean(raw.price_unit) || 'kg',
           match.article?.id || null, match.mapping_id, match.status, match.method,
           match.confidence,
           'pending',
@@ -1034,6 +1091,19 @@ async function getSupplierImportLineForDecision(db, storeId, lineId) {
   return line;
 }
 
+async function getSupplierPriceImportLine(db, storeId, lineId) {
+  const result = await db.query(
+    `SELECT spil.*, a.plu AS article_plu, a.designation AS article_designation, s.name AS supplier_name
+     FROM supplier_price_import_lines spil
+     LEFT JOIN articles a ON a.id = spil.matched_article_id AND a.store_id = spil.store_id
+     LEFT JOIN suppliers s ON s.id = spil.supplier_id AND s.store_id = spil.store_id
+     WHERE spil.id = $1 AND spil.store_id = $2
+     LIMIT 1`,
+    [lineId, storeId]
+  );
+  return result.rows[0] || null;
+}
+
 async function confirmSupplierImportLineMapping(db, storeId, input = {}, context = {}) {
   return inTransaction(db, async (client) => {
     const line = await getSupplierImportLineForDecision(client, storeId, clean(input.import_line_id || input.line_id || input.id));
@@ -1054,7 +1124,7 @@ async function confirmSupplierImportLineMapping(db, storeId, input = {}, context
        RETURNING *`,
       [line.id, storeId, articleId, mapping?.id || line.mapping_id || null, context.user_id || null]
     );
-    return result.rows[0];
+    return getSupplierPriceImportLine(client, storeId, result.rows[0].id);
   });
 }
 
@@ -1078,7 +1148,7 @@ async function overrideSupplierImportLineMapping(db, storeId, input = {}, contex
        RETURNING *`,
       [line.id, storeId, article.id, mapping?.id || null, context.user_id || null]
     );
-    return result.rows[0];
+    return getSupplierPriceImportLine(client, storeId, result.rows[0].id);
   });
 }
 
@@ -1093,7 +1163,7 @@ async function ignoreSupplierImportLine(db, storeId, input = {}, context = {}) {
        RETURNING *`,
       [line.id, storeId, context.user_id || null]
     );
-    return result.rows[0];
+    return getSupplierPriceImportLine(client, storeId, result.rows[0].id);
   });
 }
 
@@ -1177,6 +1247,7 @@ module.exports = {
   createSupplierPriceImport,
   listSupplierPriceImports,
   getSupplierPriceImport,
+  getSupplierPriceImportLine,
   listSupplierPriceImportLines,
   searchArticlesForSupplierMapping,
   confirmSupplierImportLineMapping,
