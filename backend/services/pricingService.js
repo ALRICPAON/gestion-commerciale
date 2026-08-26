@@ -296,6 +296,20 @@ async function fetchArticle(db, storeId, articleId) {
   return result.rows[0];
 }
 
+async function assertStoreSupplier(db, storeId, supplierId) {
+  const id = clean(supplierId);
+  if (!id) return null;
+  const result = await db.query(
+    `SELECT id, name
+     FROM suppliers
+     WHERE id = $1 AND store_id = $2 AND COALESCE(status, 'active') <> 'inactive'
+     LIMIT 1`,
+    [id, storeId]
+  );
+  if (!result.rows[0]) throw expose(404, 'Fournisseur introuvable pour ce magasin');
+  return result.rows[0];
+}
+
 async function createPricingSession(db, storeId, input = {}, context = {}) {
   return inTransaction(db, async (client) => {
     const date = isoDate(input.pricing_date || input.date);
@@ -333,34 +347,50 @@ async function duplicatePricingSession(db, storeId, input = {}, context = {}) {
     );
     const newSessionId = created.rows[0].id;
     const sourceLines = await client.query(
-      `INSERT INTO pricing_lines (
-        store_id, pricing_session_id, article_id, supplier_id, plu_snapshot, designation_snapshot,
-        family_code, family_name, sale_unit, price_unit, purchase_price_ht, purchase_price_source,
-        supplier_designation_original, transport_cost_ht, transport_cost_source, transport_cost_forced,
-        display_order, exclude_from_mercuriale, notes, created_by, updated_by
-      )
-      SELECT store_id, $2, article_id, supplier_id, plu_snapshot, designation_snapshot,
-        family_code, family_name, sale_unit, price_unit, purchase_price_ht, 'duplicated',
-        supplier_designation_original, transport_cost_ht, transport_cost_source, transport_cost_forced,
-        display_order, exclude_from_mercuriale, notes, $3, $3
-      FROM pricing_lines
-      WHERE store_id = $1 AND pricing_session_id = $4
-      RETURNING id`,
-      [storeId, newSessionId, context.user_id || null, source.id]
+      `SELECT *
+       FROM pricing_lines
+       WHERE store_id = $1 AND pricing_session_id = $2
+       ORDER BY display_order ASC, created_at ASC, id ASC`,
+      [storeId, source.id]
     );
-    await client.query(
-      `INSERT INTO pricing_line_tariffs (store_id, pricing_line_id, tariff_level_id, price_ht, source)
-       SELECT dst.store_id, dst.id, src_tariff.tariff_level_id, src_tariff.price_ht, 'duplicated'
-       FROM pricing_lines src
-       JOIN pricing_lines dst ON dst.store_id = src.store_id
-        AND dst.pricing_session_id = $2
-        AND dst.display_order = src.display_order
-        AND COALESCE(dst.article_id::text, dst.designation_snapshot) = COALESCE(src.article_id::text, src.designation_snapshot)
-       JOIN pricing_line_tariffs src_tariff ON src_tariff.pricing_line_id = src.id
-       WHERE src.store_id = $1 AND src.pricing_session_id = $3`,
-      [storeId, newSessionId, source.id]
-    );
-    return { ...(await getPricingSession(client, storeId, { id: newSessionId })), duplicated_line_count: sourceLines.rows.length };
+    const lineIdMap = new Map();
+    for (const line of sourceLines.rows) {
+      const copied = await client.query(
+        `INSERT INTO pricing_lines (
+          store_id, pricing_session_id, article_id, supplier_id, plu_snapshot, designation_snapshot,
+          family_code, family_name, sale_unit, price_unit, purchase_price_ht, purchase_price_source,
+          supplier_designation_original, transport_cost_ht, transport_cost_source, transport_cost_forced,
+          display_order, exclude_from_mercuriale, notes, created_by, updated_by
+        ) VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'duplicated',$12,$13,$14,$15,$16,$17,$18,$19,$19
+        )
+        RETURNING id`,
+        [
+          storeId, newSessionId, line.article_id, line.supplier_id, line.plu_snapshot, line.designation_snapshot,
+          line.family_code, line.family_name, line.sale_unit, line.price_unit, line.purchase_price_ht,
+          line.supplier_designation_original, line.transport_cost_ht, line.transport_cost_source,
+          line.transport_cost_forced === true, line.display_order, line.exclude_from_mercuriale === true,
+          line.notes, context.user_id || null,
+        ]
+      );
+      const newLineId = copied.rows[0].id;
+      lineIdMap.set(line.id, newLineId);
+      const tariffs = await client.query(
+        `SELECT tariff_level_id, price_ht
+         FROM pricing_line_tariffs
+         WHERE store_id = $1 AND pricing_line_id = $2
+         ORDER BY tariff_level_id ASC`,
+        [storeId, line.id]
+      );
+      for (const tariff of tariffs.rows) {
+        await client.query(
+          `INSERT INTO pricing_line_tariffs (store_id, pricing_line_id, tariff_level_id, price_ht, source)
+           VALUES ($1, $2, $3, $4, 'duplicated')`,
+          [storeId, newLineId, tariff.tariff_level_id, tariff.price_ht]
+        );
+      }
+    }
+    return { ...(await getPricingSession(client, storeId, { id: newSessionId })), duplicated_line_count: lineIdMap.size };
   });
 }
 
@@ -385,6 +415,7 @@ async function addPricingLine(db, storeId, input = {}, context = {}) {
   return inTransaction(db, async (client) => {
     const session = await assertDraftSession(client, storeId, clean(input.pricing_session_id || input.session_id));
     const article = await fetchArticle(client, storeId, clean(input.article_id));
+    const supplier = await assertStoreSupplier(client, storeId, input.supplier_id);
     const nextOrder = Number.isInteger(Number(input.display_order)) ? Number(input.display_order) : (await client.query(
       'SELECT COALESCE(MAX(display_order), 0)::int + 1 AS n FROM pricing_lines WHERE store_id = $1 AND pricing_session_id = $2',
       [storeId, session.id]
@@ -401,7 +432,7 @@ async function addPricingLine(db, storeId, input = {}, context = {}) {
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$20
       ) RETURNING *`,
       [
-        storeId, session.id, article?.id || null, clean(input.supplier_id),
+        storeId, session.id, article?.id || null, supplier?.id || null,
         article?.plu || clean(input.plu), designation,
         article?.family_code || clean(input.family_code), article?.family_name || clean(input.family_name),
         clean(input.sale_unit) || article?.sale_unit || article?.unit || 'kg',
@@ -431,9 +462,10 @@ async function updatePricingLine(db, storeId, input = {}, context = {}) {
     if (!current) throw expose(404, 'Ligne tarification introuvable');
     await assertDraftSession(client, storeId, current.pricing_session_id);
     const article = input.article_id !== undefined ? await fetchArticle(client, storeId, clean(input.article_id)) : null;
+    const supplier = input.supplier_id !== undefined ? await assertStoreSupplier(client, storeId, input.supplier_id) : null;
     const next = {
       article_id: input.article_id !== undefined ? article?.id || null : current.article_id,
-      supplier_id: input.supplier_id !== undefined ? clean(input.supplier_id) : current.supplier_id,
+      supplier_id: input.supplier_id !== undefined ? supplier?.id || null : current.supplier_id,
       plu_snapshot: article?.plu || (input.plu !== undefined ? clean(input.plu) : current.plu_snapshot),
       designation_snapshot: article?.designation || (input.designation_snapshot !== undefined || input.designation !== undefined ? clean(input.designation_snapshot || input.designation) : current.designation_snapshot),
       family_code: article?.family_code || (input.family_code !== undefined ? clean(input.family_code) : current.family_code),
@@ -611,6 +643,73 @@ async function resolvePublishedPrice(db, storeId, input = {}) {
   };
 }
 
+function salesLineHasPricingSnapshot(line = {}) {
+  return Boolean(
+    clean(line.pricing_session_id)
+    && clean(line.pricing_line_id)
+    && clean(line.tariff_level_id)
+    && line.source_tariff_price_ht !== undefined
+    && line.source_tariff_price_ht !== null
+    && line.royale_maree_commission_ht !== undefined
+    && line.royale_maree_commission_ht !== null
+    && line.final_unit_price_ht !== undefined
+    && line.final_unit_price_ht !== null
+    && line.unit_sale_price_ht !== undefined
+    && line.unit_sale_price_ht !== null
+  );
+}
+
+function salesLineHasExplicitManualPrice(body = {}) {
+  return body.unit_sale_price_ht !== undefined && body.unit_sale_price_ht !== null && body.unit_sale_price_ht !== '';
+}
+
+function shouldResolveSalesLinePricing(body = {}, line = {}) {
+  if (body.reprice_from_pricing === true || body.resolve_pricing === true) return true;
+  if (salesLineHasExplicitManualPrice(body)) return false;
+  if (salesLineHasPricingSnapshot(line)) return false;
+  return Number(line.unit_sale_price_ht || 0) <= 0;
+}
+
+function buildSalesLinePricingTrace(body = {}, line = {}, resolvedPricing = { found: false }, computedUnitPrice = null) {
+  if (salesLineHasExplicitManualPrice(body)) {
+    return {
+      mode: 'manual_override',
+      found: false,
+      pricing_session_id: null,
+      pricing_line_id: null,
+      tariff_level_id: null,
+      source_tariff_price_ht: null,
+      royale_maree_commission_ht: null,
+      final_unit_price_ht: computedUnitPrice,
+    };
+  }
+  if (resolvedPricing && resolvedPricing.found) {
+    return { mode: 'resolved', ...resolvedPricing };
+  }
+  if (salesLineHasPricingSnapshot(line)) {
+    return {
+      mode: 'preserved',
+      found: false,
+      pricing_session_id: line.pricing_session_id,
+      pricing_line_id: line.pricing_line_id,
+      tariff_level_id: line.tariff_level_id,
+      source_tariff_price_ht: line.source_tariff_price_ht,
+      royale_maree_commission_ht: line.royale_maree_commission_ht,
+      final_unit_price_ht: line.final_unit_price_ht,
+    };
+  }
+  return {
+    mode: 'none',
+    found: false,
+    pricing_session_id: null,
+    pricing_line_id: null,
+    tariff_level_id: null,
+    source_tariff_price_ht: null,
+    royale_maree_commission_ht: null,
+    final_unit_price_ht: computedUnitPrice,
+  };
+}
+
 async function getArticlePricingHistory(db, storeId, input = {}) {
   const articleId = clean(input.article_id);
   if (!articleId) throw expose(400, 'article_id requis');
@@ -765,6 +864,7 @@ async function createSupplierPriceImport(db, storeId, input = {}, context = {}) 
   return inTransaction(db, async (client) => {
     const supplierId = clean(input.supplier_id);
     if (!supplierId) throw expose(400, 'supplier_id requis');
+    const supplier = await assertStoreSupplier(client, storeId, supplierId);
     const rows = Array.isArray(input.lines) ? input.lines : parseSupplierTextLines(input.raw_text || input.text);
     if (!rows.length) throw expose(400, 'Aucune ligne fournisseur exploitable');
     const header = await client.query(
@@ -772,7 +872,7 @@ async function createSupplierPriceImport(db, storeId, input = {}, context = {}) 
        VALUES ($1,$2,$3::date,$4,$5,$6,'parsed',$7::jsonb,$8)
        RETURNING *`,
       [
-        storeId, supplierId, isoDate(input.import_date || input.date), clean(input.source_type) || 'text',
+        storeId, supplier.id, isoDate(input.import_date || input.date), clean(input.source_type) || 'text',
         clean(input.original_filename), input.raw_text || input.text || null,
         JSON.stringify(input.metadata || {}), context.user_id || null,
       ]
@@ -781,7 +881,7 @@ async function createSupplierPriceImport(db, storeId, input = {}, context = {}) 
     for (const raw of rows) {
       const original = clean(raw.supplier_designation_original || raw.designation || raw.label);
       if (!original) continue;
-      const match = await matchSupplierLine(client, storeId, supplierId, original);
+      const match = await matchSupplierLine(client, storeId, supplier.id, original);
       await client.query(
         `INSERT INTO supplier_price_import_lines (
           store_id, import_id, supplier_id, row_number, supplier_designation_original,
@@ -790,7 +890,7 @@ async function createSupplierPriceImport(db, storeId, input = {}, context = {}) 
           confidence_score, warnings
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)`,
         [
-          storeId, header.rows[0].id, supplierId, rowNumber++, original, match.normalized,
+          storeId, header.rows[0].id, supplier.id, rowNumber++, original, match.normalized,
           clean(raw.unit), clean(raw.caliber), clean(raw.availability),
           nonNegative(raw.purchase_price_ht ?? raw.price), clean(raw.price_unit) || 'kg',
           match.article?.id || null, match.mapping_id, match.status, match.method,
@@ -861,9 +961,16 @@ async function applySupplierImportToSession(db, storeId, input = {}, context = {
   return inTransaction(db, async (client) => {
     const session = await assertDraftSession(client, storeId, clean(input.pricing_session_id || input.session_id));
     const importId = clean(input.import_id || input.supplier_price_import_id);
+    const header = (await client.query(
+      'SELECT * FROM supplier_price_imports WHERE id = $1 AND store_id = $2 FOR UPDATE',
+      [importId, storeId]
+    )).rows[0];
+    if (!header) throw expose(404, 'Import fournisseur introuvable pour ce magasin');
+    const supplier = await assertStoreSupplier(client, storeId, header.supplier_id);
     const lines = await listSupplierPriceImportLines(client, storeId, { import_id: importId });
     let applied = 0;
     for (const line of lines.results) {
+      if (clean(line.supplier_id) !== supplier.id) throw expose(409, 'Ligne import fournisseur incoherente');
       if (!line.matched_article_id || line.purchase_price_ht === null) continue;
       const existing = await client.query(
         'SELECT id FROM pricing_lines WHERE store_id = $1 AND pricing_session_id = $2 AND article_id = $3 LIMIT 1',
@@ -908,6 +1015,10 @@ module.exports = {
   removePricingLine,
   publishPricingSession,
   resolvePublishedPrice,
+  salesLineHasPricingSnapshot,
+  salesLineHasExplicitManualPrice,
+  shouldResolveSalesLinePricing,
+  buildSalesLinePricingTrace,
   getArticlePricingHistory,
   searchSupplierArticleMappings,
   upsertSupplierArticleMapping,
