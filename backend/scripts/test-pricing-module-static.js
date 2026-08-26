@@ -12,6 +12,26 @@ function read(relativePath) {
   return fs.readFileSync(path.join(root, relativePath), 'utf8');
 }
 
+function assertContiguousPostgresPlaceholders(sql, label = 'SQL') {
+  const numbers = [...sql.matchAll(/\$(\d+)/g)].map((match) => Number(match[1]));
+  if (!numbers.length) return;
+  const used = new Set(numbers);
+  const max = Math.max(...numbers);
+  for (let index = 1; index <= max; index += 1) {
+    assert(used.has(index), `${label} skips PostgreSQL placeholder $${index}`);
+  }
+}
+
+async function testPricingSqlPlaceholdersAreContiguous() {
+  const service = read('backend/services/pricingService.js');
+  const queryTemplates = [...service.matchAll(/\.query\(\s*`([\s\S]*?)`/g)];
+  assert(queryTemplates.length > 20, 'pricing service SQL template queries are inspected');
+  for (const [index, match] of queryTemplates.entries()) {
+    assertContiguousPostgresPlaceholders(match[1], `pricingService query template #${index + 1}`);
+  }
+  assert(service.includes('WHERE id = $11 AND store_id = $1 AND supplier_id = $2'), 'existing supplier mapping update scopes supplier_id and types $2');
+}
+
 async function testMigrationContract() {
   const sql = read('backend/db/gestion-commerciale/108_pricing_daily_tariffs.sql');
   const decisionSql = read('backend/db/gestion-commerciale/109_supplier_import_human_decisions.sql');
@@ -338,6 +358,9 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
       if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('sam.supplier_designation_normalized = $3')) {
         return { rows: [{ id: 'mapping-1', article_id: 'article-1', article_plu: '3013', article_designation: 'Filet julienne' }] };
       }
+      if (sql.includes('FROM supplier_article_mappings') && sql.includes('FOR UPDATE')) {
+        return { rows: [{ id: 'mapping-1' }] };
+      }
       if (sql.includes('INSERT INTO supplier_price_import_lines')) {
         importLines.push({
           id: 'import-line-1',
@@ -373,6 +396,12 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
       if (sql.includes('JOIN supplier_price_imports spi') && sql.includes('FOR UPDATE OF spil')) return { rows: [{ ...importLines[0], import_status: 'parsed' }] };
       if (sql.includes('FROM articles') && sql.includes('WHERE id = $1')) {
         return { rows: [{ id: params[0], plu: '3013', designation: 'Filet julienne', sale_unit: 'kg', unit: 'kg' }] };
+      }
+      if (sql.includes('UPDATE supplier_article_mappings') && sql.includes('RETURNING id')) {
+        assertContiguousPostgresPlaceholders(sql, 'existing supplier mapping confirm update');
+        assert(sql.includes('AND supplier_id = $2'), 'existing supplier mapping confirm update uses supplier_id placeholder');
+        events.push('mapping_update');
+        return { rows: [{ id: 'mapping-1' }] };
       }
       if (sql.includes('INSERT INTO supplier_article_mappings')) return { rows: [{ id: 'mapping-1' }] };
       if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('LEFT JOIN suppliers')) {
@@ -433,6 +462,9 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
 
   const confirmed = await pricing.confirmSupplierImportLineMapping(db, 'store-1', { import_line_id: 'import-line-1' }, { user_id: 'user-1' });
   assert.equal(confirmed.user_decision, 'confirmed');
+  assert.equal(confirmed.matched_article_id, 'article-1');
+  assert.equal(confirmed.mapping_id, 'mapping-1');
+  assert(events.includes('mapping_update'), 'confirm updates the existing supplier mapping without 42P18');
 
   const afterConfirm = await pricing.applySupplierImportToSession(db, 'store-1', { import_id: 'import-1', pricing_session_id: 'session-1' });
   assert.equal(afterConfirm.applied_line_count, 1);
@@ -472,6 +504,8 @@ function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, ma
       if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: 'supplier-1', name: 'Sogelmer' }] };
       if (sql.includes('FROM supplier_article_mappings') && sql.includes('FOR UPDATE')) return { rows: existingMapping ? [{ id: 'mapping-1' }] : [] };
       if (sql.includes('UPDATE supplier_article_mappings') && sql.includes('RETURNING id')) {
+        assertContiguousPostgresPlaceholders(sql, 'existing supplier mapping override update');
+        assert(sql.includes('AND supplier_id = $2'), 'existing supplier mapping override update uses supplier_id placeholder');
         if (mappingFails) {
           const error = new Error('duplicate key value violates unique constraint');
           error.code = '23505';
@@ -677,6 +711,7 @@ async function testIntegrationFilesReferencePricing() {
 }
 
 (async () => {
+  await testPricingSqlPlaceholdersAreContiguous();
   await testMigrationContract();
   await testAgentContracts();
   await testServiceHelpers();
