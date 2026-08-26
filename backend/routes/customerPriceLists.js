@@ -4,6 +4,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { resolveMercurialeTargetTariff } = require('../services/customerTariffEmailService');
 const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
+const pricingService = require('../services/pricingService');
 
 const router = express.Router();
 
@@ -189,6 +190,44 @@ async function fetchQuickOrderSheetProducts(db, storeId, priceListDate, targetTa
     [storeId, sheet.rows[0].id, targetTariffLevel]
   );
   return result.rows;
+}
+
+async function fetchPublishedPricingProducts(db, storeId, priceListDate, targetTariffLevel) {
+  const date = clean(priceListDate);
+  if (!date) return null;
+  const current = await pricingService.getCurrentPricingSession(db, storeId, { date });
+  if (!current.exists) return null;
+  const levels = await pricingService.listTariffLevels(db, storeId, {});
+  const targetLevel = levels.results.find((level) => Number(level.legacy_level) === Number(targetTariffLevel)) || null;
+  return (current.lines || []).filter((line) => !line.exclude_from_mercuriale && line.article_id).map((line) => {
+    const tariffByLegacy = new Map((line.tariffs || []).map((tariff) => [Number(tariff.legacy_level), tariff.price_ht]));
+    const selectedTariff = targetLevel
+      ? (line.tariffs || []).find((tariff) => tariff.tariff_level_id === targetLevel.id)
+      : null;
+    return {
+      article_id: line.article_id,
+      plu: line.plu_snapshot,
+      designation: line.designation_snapshot,
+      display_name: line.designation_snapshot,
+      unit: line.price_unit,
+      sale_unit: line.sale_unit || line.price_unit,
+      family_code: line.family_code,
+      family_name: line.family_name || 'Autre',
+      stock_quantity: null,
+      pma: line.purchase_price_ht,
+      next_dlc: null,
+      caliber_info: null,
+      origin_label: null,
+      price_level_1_ht: tariffByLegacy.get(1) ?? null,
+      price_level_2_ht: tariffByLegacy.get(2) ?? null,
+      price_level_3_ht: tariffByLegacy.get(3) ?? null,
+      suggested_price_ht: selectedTariff?.price_ht ?? null,
+      suggested_price_source: selectedTariff ? 'pricing_session' : 'none',
+      pricing_session_id: current.session.id,
+      pricing_line_id: line.id,
+      tariff_level_id: selectedTariff?.tariff_level_id || null,
+    };
+  });
 }
 
 function headerSelectSql() {
@@ -386,11 +425,12 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const targetTariffLevel = normalizeTargetTariff(req.query.target_tariff_level || req.query.tariff_level);
     const effectiveTargetTariffLevel = resolveMercurialeTargetTariff({ targetTariffLevel, client });
     const requestedDate = clean(req.query.price_list_date || req.query.date);
-    const quickSheetProducts = await fetchQuickOrderSheetProducts(req.dbPool, req.user.store_id, requestedDate, effectiveTargetTariffLevel);
+    const pricingProducts = await fetchPublishedPricingProducts(req.dbPool, req.user.store_id, requestedDate, effectiveTargetTariffLevel);
+    const quickSheetProducts = pricingProducts || await fetchQuickOrderSheetProducts(req.dbPool, req.user.store_id, requestedDate, effectiveTargetTariffLevel);
     const commissionSettings = await fetchCommissionSettings(req.dbPool, req.user.store_id);
 
     if (requestedDate && quickSheetProducts === null) {
-      return res.status(404).json({ error: `Aucune tarification fiche d'appel configurée pour le ${requestedDate}` });
+      return res.status(404).json({ error: `Aucune tarification publiee ni fiche d'appel configuree pour le ${requestedDate}` });
     }
 
     if (quickSheetProducts) {
@@ -413,7 +453,8 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
       return res.json({
         client,
         target_tariff_level: effectiveTargetTariffLevel,
-        source: 'quick_order_sheet',
+        source: pricingProducts ? 'pricing_session' : 'quick_order_sheet_legacy_fallback',
+        legacy_fallback: !pricingProducts,
         products: filteredProducts,
       });
     }
