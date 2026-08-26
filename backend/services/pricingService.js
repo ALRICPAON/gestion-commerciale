@@ -408,6 +408,28 @@ async function duplicatePricingSession(db, storeId, input = {}, context = {}) {
   });
 }
 
+async function createRevisionFromPublishedSession(db, storeId, input = {}, context = {}) {
+  return inTransaction(db, async (client) => {
+    const sourceId = clean(input.source_session_id || input.pricing_session_id || input.session_id || input.id);
+    if (!sourceId) throw expose(400, 'source_session_id requis');
+    const source = (await client.query(
+      `SELECT *
+       FROM pricing_sessions
+       WHERE id = $1 AND store_id = $2
+       FOR UPDATE`,
+      [sourceId, storeId]
+    )).rows[0];
+    if (!source) throw expose(404, 'Session tarification introuvable');
+    if (source.status !== 'published') throw expose(409, 'Seule une session publiee peut servir de base a une revision');
+    return duplicatePricingSession(client, storeId, {
+      source_session_id: source.id,
+      pricing_date: source.pricing_date,
+      title: clean(input.title) || source.title || `Tarification du ${source.pricing_date}`,
+      notes: clean(input.notes) || source.notes,
+    }, context);
+  });
+}
+
 async function upsertLineTariffs(db, storeId, lineId, tariffs = []) {
   if (!Array.isArray(tariffs)) return;
   for (const item of tariffs) {
@@ -1183,7 +1205,22 @@ async function ignoreSupplierImportLine(db, storeId, input = {}, context = {}) {
 
 async function applySupplierImportToSession(db, storeId, input = {}, context = {}) {
   return inTransaction(db, async (client) => {
-    const session = await assertDraftSession(client, storeId, clean(input.pricing_session_id || input.session_id));
+    const requestedSessionId = clean(input.pricing_session_id || input.session_id);
+    const requestedSession = (await client.query(
+      'SELECT * FROM pricing_sessions WHERE id = $1 AND store_id = $2 FOR UPDATE',
+      [requestedSessionId, storeId]
+    )).rows[0];
+    if (!requestedSession) throw expose(404, 'Session tarification introuvable');
+    let session = requestedSession;
+    let revision = null;
+    if (session.status !== 'draft') {
+      if (session.status === 'published' && input.create_revision_if_published === true) {
+        revision = await createRevisionFromPublishedSession(client, storeId, { source_session_id: session.id }, context);
+        session = revision.session;
+      } else {
+        throw expose(409, 'Une session publiee ne peut pas etre modifiee');
+      }
+    }
     const importId = clean(input.import_id || input.supplier_price_import_id);
     const header = (await client.query(
       'SELECT * FROM supplier_price_imports WHERE id = $1 AND store_id = $2 FOR UPDATE',
@@ -1222,14 +1259,19 @@ async function applySupplierImportToSession(db, storeId, input = {}, context = {
       applied += 1;
     }
     await client.query("UPDATE supplier_price_imports SET status = 'applied', updated_at = now() WHERE id = $1 AND store_id = $2", [importId, storeId]);
+    const detail = await getPricingSession(client, storeId, { id: session.id });
     return {
       ok: true,
+      revision_created: Boolean(revision),
+      source_session_id: revision ? requestedSession.id : null,
+      revision_session_id: revision ? session.id : null,
       applied_line_count: applied,
       skipped_line_count: skipped,
       ready_line_count: lines.results.filter((line) => ['confirmed', 'overridden'].includes(line.user_decision)).length,
       pending_line_count: lines.results.filter((line) => line.user_decision === 'pending').length,
       ignored_line_count: lines.results.filter((line) => line.user_decision === 'ignored').length,
-      session: (await getPricingSession(client, storeId, { id: session.id })).session,
+      session: detail.session,
+      lines: detail.lines,
     };
   });
 }
@@ -1246,6 +1288,7 @@ module.exports = {
   getPricingLine,
   createPricingSession,
   duplicatePricingSession,
+  createRevisionFromPublishedSession,
   addPricingLine,
   updatePricingLine,
   removePricingLine,

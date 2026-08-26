@@ -1652,13 +1652,13 @@ const tools = [
   tool({
     name: 'prepare_supplier_import_apply',
     title: 'Preparer application import',
-    description: 'Prepare l application des lignes validees humainement d un import fournisseur vers une session tarification brouillon.',
+    description: 'Prepare l application des lignes validees humainement d un import fournisseur vers une session tarification brouillon. Si la session cible est publiee, create_revision_if_published permet de preparer une revision brouillon avant application.',
     domain: 'pricing',
     riskLevel: RISK_LEVELS.LOW_REVERSIBLE_WRITE,
     requiredPermission: 'pricing.write',
     requiresConfirmation: false,
-    inputSchema: { type: 'object', required: ['import_id', 'pricing_session_id'], properties: { import_id: { type: 'string' }, pricing_session_id: { type: 'string' } }, additionalProperties: false },
-    execute: async ({ context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Application import preparee', data: { prepared_action: pricingPreparedAction(context, input, 'pricing.supplier_import.apply', 'Appliquer un import fournisseur', 'Seules les lignes confirmees ou corrigees humainement alimenteront le brouillon de tarification.'), confirmation_tool: 'create_pending_action', action_type: 'pricing.supplier_import.apply', payload: input } }),
+    inputSchema: { type: 'object', required: ['import_id', 'pricing_session_id'], properties: { import_id: { type: 'string' }, pricing_session_id: { type: 'string' }, create_revision_if_published: { type: 'boolean' } }, additionalProperties: false },
+    execute: async ({ context, input, tool: currentTool }) => response({ tool: currentTool.name, domain: currentTool.domain, summary: 'Application import preparee', data: { prepared_action: pricingPreparedAction(context, input, 'pricing.supplier_import.apply', 'Appliquer un import fournisseur', 'Si la session est publiee, une revision brouillon sera creee uniquement quand create_revision_if_published vaut true. Seules les lignes confirmees ou corrigees humainement alimenteront le brouillon de tarification.'), confirmation_tool: 'create_pending_action', action_type: 'pricing.supplier_import.apply', payload: input } }),
   }),
   tool({
     name: 'prepare_supplier_import_line_confirm',
