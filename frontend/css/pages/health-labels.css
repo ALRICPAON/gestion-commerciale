@@ -145,10 +145,10 @@
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) 34%;
-  height: 10mm;
+  height: 8mm;
   left: 2mm;
   min-height: 0;
-  padding: 3px 0;
+  padding: 2px 0;
   position: absolute;
   top: 52mm;
   width: 146mm;
@@ -156,7 +156,7 @@
 
 .health-label-product h2 {
   align-self: center;
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.05;
   margin: 0;
   overflow-wrap: anywhere;
@@ -171,7 +171,7 @@
 }
 
 .health-label-weight strong {
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.05;
 }
 
@@ -179,14 +179,14 @@
   align-content: start;
   box-sizing: border-box;
   display: grid;
-  gap: 3px 8px;
-  height: 5mm;
+  gap: 2px 8px;
+  height: 4mm;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   left: 2mm;
   min-height: 0;
-  padding: 2px 0;
+  padding: 1px 0;
   position: absolute;
-  top: 62mm;
+  top: 60mm;
   width: 146mm;
 }
 
@@ -197,7 +197,7 @@
 .health-label-meta span {
   color: #45515c;
   display: block;
-  font-size: 7px;
+  font-size: 6px;
   font-weight: 800;
   line-height: 1;
   text-transform: uppercase;
@@ -206,7 +206,7 @@
 .health-label-meta strong {
   display: block;
   font-size: 8px;
-  line-height: 1.15;
+  line-height: 1.05;
   overflow-wrap: anywhere;
 }
 
@@ -277,9 +277,9 @@
   height: 3mm;
   left: 2mm;
   min-height: 0;
-  padding-top: 2px;
+  padding-top: 1px;
   position: absolute;
-  top: 67mm;
+  top: 64mm;
   width: 146mm;
 }
 
@@ -314,13 +314,13 @@
     border: 0;
     break-after: page;
     box-sizing: border-box;
-    height: 70mm;
+    height: 69mm;
     margin: 0;
     overflow: hidden;
     page: health-label;
     padding: 0;
     page-break-after: always;
-    width: 150mm;
+    width: 149mm;
   }
 
   body.printing-health-labels .health-label-card:last-child {

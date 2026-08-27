@@ -423,14 +423,38 @@ assert(storageHtmlPreview.includes('3 à 5 °C'), 'HTML doit afficher la plage s
 assert(storageHtmlPreview.includes('Conserver entre 3 et 5 degres'), 'HTML doit afficher l instruction structuree');
 assert(storageHtmlPreview.includes('150 x 70 mm'), 'preview doit annoncer le format visuel 150 x 70 mm');
 
+assert.strictEqual(frontendSandbox.window.HealthLabels.LABEL_PAGE_WIDTH_MM, 150);
+assert.strictEqual(frontendSandbox.window.HealthLabels.LABEL_PAGE_HEIGHT_MM, 70);
+assert.strictEqual(frontendSandbox.window.HealthLabels.PRINT_CARD_WIDTH_MM, 149);
+assert.strictEqual(frontendSandbox.window.HealthLabels.PRINT_CARD_HEIGHT_MM, 69);
+assert.strictEqual(frontendSandbox.window.HealthLabels.PRINT_SAFE_WIDTH_MM, 146);
+assert.strictEqual(frontendSandbox.window.HealthLabels.PRINT_SAFE_HEIGHT_MM, 66);
+const isolatedPrintHtml = frontendSandbox.window.HealthLabels.buildPrintDocument([labels[0], storageLabels[0]]);
+assert(isolatedPrintHtml.includes('<body><section class="health-label-print-sheet">'), 'document print doit injecter seulement la feuille etiquettes');
+assert(isolatedPrintHtml.includes('@page { size: 150mm 70mm; margin: 0; }'), 'document print isole doit fixer la page Chrome');
+assert(isolatedPrintHtml.includes('width: 149mm'), 'document print isole doit garder 1 mm de tolerance en largeur');
+assert(isolatedPrintHtml.includes('height: 69mm'), 'document print isole doit garder 1 mm de tolerance en hauteur');
+assert(isolatedPrintHtml.includes('top: 64mm'), 'footer HTML print doit rester dans la zone sure basse');
+assert(isolatedPrintHtml.includes('height: 3mm'), 'footer HTML print doit avoir une hauteur bornee');
+assert((isolatedPrintHtml.match(/class="health-label-card"/g) || []).length === 2, 'un colis doit produire une seule carte etiquette dans le document isole');
+for (const forbiddenWrapper of ['delivery-layout', 'main-content', 'sale-document-actions', 'welcome-card', 'id="print-area"']) {
+  assert(!isolatedPrintHtml.includes(forbiddenWrapper), `document print isole ne doit pas contenir le wrapper ${forbiddenWrapper}`);
+}
+const printSource = frontendSandbox.window.HealthLabels.print.toString();
+assert(!printSource.includes('printArea.innerHTML = buildHtml'), 'impression ne doit plus injecter les etiquettes dans sale-detail');
+assert(!printSource.includes('printing-health-labels'), 'impression ne doit plus dependre des wrappers de la page courante');
+assert(!printSource.includes('window.print();'), 'impression ne doit plus appeler window.print sur le document applicatif');
+assert(printSource.includes("document.createElement('iframe')"), 'impression doit passer par un document isole');
+
 const healthLabelsCssSource = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'css', 'pages', 'health-labels.css'), 'utf8');
 assert(healthLabelsCssSource.includes('aspect-ratio: 150 / 70'), 'CSS preview doit respecter le ratio 150 x 70');
 assert(healthLabelsCssSource.includes('position: relative'), 'CSS preview doit utiliser une carte reperee en mm');
 assert(healthLabelsCssSource.includes('top: 20mm'), 'CSS preview doit placer la zone detachable au centre vertical du BAT');
 assert(healthLabelsCssSource.includes('height: 30mm'), 'CSS preview doit donner 30 mm a la zone detachable issue du BAT');
 assert(!healthLabelsCssSource.includes('border-top: 2px dashed'), 'CSS preview ne doit pas dessiner une fausse refente');
-assert(healthLabelsCssSource.includes('height: 70mm'), 'CSS print doit fixer la hauteur etiquette');
-assert(healthLabelsCssSource.includes('width: 150mm'), 'CSS print doit fixer la largeur etiquette');
+assert(healthLabelsCssSource.includes('top: 64mm'), 'CSS preview doit garder le footer dans la zone sure basse');
+assert(healthLabelsCssSource.includes('height: 69mm'), 'CSS print doit garder 1 mm de tolerance en hauteur');
+assert(healthLabelsCssSource.includes('width: 149mm'), 'CSS print doit garder 1 mm de tolerance en largeur');
 assert(healthLabelsCssSource.includes('@page health-label'), 'CSS print doit utiliser une page etiquette dediee');
 assert(healthLabelsCssSource.includes('size: 150mm 70mm'), 'CSS print doit fixer la page logique etiquette');
 assert(healthLabelsCssSource.includes('.health-label-card:last-child'), 'CSS print doit supprimer le saut de page apres la derniere etiquette');

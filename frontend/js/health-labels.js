@@ -1,4 +1,11 @@
 (function () {
+  const LABEL_PAGE_WIDTH_MM = 150;
+  const LABEL_PAGE_HEIGHT_MM = 70;
+  const PRINT_CARD_WIDTH_MM = 149;
+  const PRINT_CARD_HEIGHT_MM = 69;
+  const PRINT_SAFE_WIDTH_MM = 146;
+  const PRINT_SAFE_HEIGHT_MM = 66;
+
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
       '&': '&amp;',
@@ -145,6 +152,241 @@
     return `<section class="health-label-print-sheet">${(labels || []).map(renderLabel).join('')}</section>`;
   }
 
+  function buildPrintDocument(labels) {
+    return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Etiquettes sanitaires</title>
+  <style>
+    @page { size: ${LABEL_PAGE_WIDTH_MM}mm ${LABEL_PAGE_HEIGHT_MM}mm; margin: 0; }
+    html,
+    body {
+      background: #ffffff;
+      margin: 0;
+      padding: 0;
+      width: ${LABEL_PAGE_WIDTH_MM}mm;
+    }
+    * { box-sizing: border-box; }
+    .health-label-print-sheet {
+      display: block;
+      margin: 0;
+      padding: 0;
+    }
+    .health-label-card {
+      background: #ffffff;
+      border: 0;
+      break-after: page;
+      color: #111820;
+      display: block;
+      font-family: Arial, Helvetica, sans-serif;
+      height: ${PRINT_CARD_HEIGHT_MM}mm;
+      margin: 0;
+      overflow: hidden;
+      padding: 0;
+      page-break-after: always;
+      position: relative;
+      width: ${PRINT_CARD_WIDTH_MM}mm;
+    }
+    .health-label-card:last-child {
+      break-after: auto;
+      page-break-after: auto;
+    }
+    .health-label-top,
+    .health-label-footer {
+      align-items: center;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .health-label-top {
+      height: 8mm;
+      left: 2mm;
+      position: absolute;
+      top: 2mm;
+      width: ${PRINT_SAFE_WIDTH_MM}mm;
+    }
+    .health-label-brand {
+      align-items: center;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: auto minmax(0, 1fr);
+      min-width: 0;
+    }
+    .health-label-brand img {
+      max-height: 6mm;
+      max-width: 15mm;
+      object-fit: contain;
+    }
+    .health-label-brand strong {
+      display: block;
+      font-size: 12px;
+      line-height: 1.05;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .health-label-brand span {
+      color: #45515c;
+      display: block;
+      font-size: 7px;
+      line-height: 1.2;
+    }
+    .health-label-approval {
+      align-items: center;
+      border: 2px solid #111820;
+      border-radius: 50%;
+      display: grid;
+      flex: 0 0 25mm;
+      font-size: 8px;
+      font-weight: 800;
+      height: 6mm;
+      justify-content: center;
+      line-height: 1;
+      padding: 2px 8px;
+      text-align: center;
+    }
+    .health-label-approval strong {
+      display: block;
+      font-size: 10px;
+      line-height: 1.05;
+    }
+    .health-label-client {
+      display: flex;
+      flex-direction: column;
+      height: 8mm;
+      justify-content: center;
+      left: 50mm;
+      min-width: 0;
+      position: absolute;
+      top: 10mm;
+      width: 65mm;
+    }
+    .health-label-client span,
+    .health-label-weight span {
+      color: #45515c;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .health-label-client strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1;
+      overflow-wrap: anywhere;
+    }
+    .health-label-tab {
+      display: grid;
+      gap: 0 8px;
+      grid-template-columns: 1fr 1fr;
+      height: 30mm;
+      left: 2mm;
+      min-height: 0;
+      overflow: hidden;
+      padding: 3px 0 1px;
+      position: absolute;
+      top: 20mm;
+      width: ${PRINT_SAFE_WIDTH_MM}mm;
+    }
+    .health-label-tab-column {
+      align-content: start;
+      display: grid;
+      gap: 1px 6px;
+      grid-template-columns: 1fr 1fr;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .health-label-tab span {
+      color: #45515c;
+      display: block;
+      font-size: 5px;
+      font-weight: 800;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .health-label-tab div strong {
+      display: block;
+      font-size: 7px;
+      line-height: 1.05;
+      overflow-wrap: anywhere;
+    }
+    .health-label-product {
+      align-items: stretch;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: minmax(0, 1fr) 34%;
+      height: 8mm;
+      left: 2mm;
+      min-height: 0;
+      padding: 2px 0;
+      position: absolute;
+      top: 52mm;
+      width: ${PRINT_SAFE_WIDTH_MM}mm;
+    }
+    .health-label-product h2 {
+      align-self: center;
+      font-size: 16px;
+      line-height: 1.05;
+      margin: 0;
+      overflow-wrap: anywhere;
+      text-transform: uppercase;
+    }
+    .health-label-weight {
+      align-content: center;
+      border-left: 1px solid #111820;
+      display: grid;
+      padding-left: 8px;
+    }
+    .health-label-weight strong {
+      font-size: 15px;
+      line-height: 1.05;
+    }
+    .health-label-meta {
+      align-content: start;
+      display: grid;
+      gap: 2px 8px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      height: 4mm;
+      left: 2mm;
+      min-height: 0;
+      padding: 1px 0;
+      position: absolute;
+      top: 60mm;
+      width: ${PRINT_SAFE_WIDTH_MM}mm;
+    }
+    .health-label-meta div { min-width: 0; }
+    .health-label-meta span {
+      color: #45515c;
+      display: block;
+      font-size: 6px;
+      font-weight: 800;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .health-label-meta strong {
+      display: block;
+      font-size: 8px;
+      line-height: 1.05;
+      overflow-wrap: anywhere;
+    }
+    .health-label-footer {
+      color: #45515c;
+      font-size: 8px;
+      font-weight: 700;
+      height: 3mm;
+      left: 2mm;
+      min-height: 0;
+      padding-top: 1px;
+      position: absolute;
+      top: 64mm;
+      width: ${PRINT_SAFE_WIDTH_MM}mm;
+    }
+  </style>
+</head>
+<body>${buildHtml(labels)}</body>
+</html>`;
+  }
+
   function renderPreview(labels, zplDocument, warnings = []) {
     const count = Array.isArray(labels) ? labels.length : 0;
     const warningHtml = warnings.length
@@ -199,25 +441,61 @@
     return lots[index] || null;
   }
 
-  function print(labels, printArea) {
-    if (!printArea) return;
-    printArea.innerHTML = buildHtml(labels);
-    document.body.classList.add('printing-health-labels');
+  function print(labels) {
+    if (!Array.isArray(labels) || !labels.length) return;
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.border = '0';
+    frame.style.height = '0';
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '0';
+    document.body.appendChild(frame);
+
+    let didPrint = false;
     const cleanup = () => {
-      document.body.classList.remove('printing-health-labels');
-      window.removeEventListener('afterprint', cleanup);
+      setTimeout(() => frame.remove(), 250);
     };
-    window.addEventListener('afterprint', cleanup);
-    window.print();
-    setTimeout(cleanup, 1200);
+    const printFrame = () => {
+      if (didPrint) return;
+      const frameWindow = frame.contentWindow;
+      if (!frameWindow) {
+        cleanup();
+        return;
+      }
+      didPrint = true;
+      frameWindow.focus();
+      frameWindow.addEventListener('afterprint', cleanup, { once: true });
+      frameWindow.print();
+      setTimeout(cleanup, 2000);
+    };
+
+    const frameDocument = frame.contentDocument || frame.contentWindow?.document;
+    if (!frameDocument) {
+      cleanup();
+      return;
+    }
+    frame.onload = printFrame;
+    frameDocument.open();
+    frameDocument.write(buildPrintDocument(labels));
+    frameDocument.close();
+    setTimeout(printFrame, 250);
   }
 
   window.HealthLabels = {
     askCopies,
     askLot,
     bindZplDownload,
+    buildPrintDocument,
     buildHtml,
     escapeHtml,
+    LABEL_PAGE_WIDTH_MM,
+    LABEL_PAGE_HEIGHT_MM,
+    PRINT_CARD_WIDTH_MM,
+    PRINT_CARD_HEIGHT_MM,
+    PRINT_SAFE_WIDTH_MM,
+    PRINT_SAFE_HEIGHT_MM,
     print,
     renderPreview,
     resolveLogoUrl,
