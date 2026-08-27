@@ -4,7 +4,14 @@ const path = require('path');
 const vm = require('vm');
 
 const {
+  DETACHABLE_TAB,
   LABEL_DOTS,
+  LABEL_HEIGHT_DOTS,
+  LABEL_HEIGHT_MM,
+  LABEL_VISUAL_HEIGHT_DOTS,
+  LABEL_VISUAL_WIDTH_DOTS,
+  LABEL_WIDTH_DOTS,
+  LABEL_WIDTH_MM,
   buildHealthLabelModels,
   combineZpl,
   formatAllergen,
@@ -66,7 +73,14 @@ const labels = buildHealthLabelModels({
   storeSettings,
 });
 
-assert.strictEqual(LABEL_DOTS, 1181);
+assert.strictEqual(LABEL_WIDTH_MM, 70);
+assert.strictEqual(LABEL_HEIGHT_MM, 150);
+assert.strictEqual(LABEL_DOTS, 827);
+assert.strictEqual(LABEL_WIDTH_DOTS, 827);
+assert.strictEqual(LABEL_HEIGHT_DOTS, 1772);
+assert.strictEqual(LABEL_VISUAL_WIDTH_DOTS, 1772);
+assert.strictEqual(LABEL_VISUAL_HEIGHT_DOTS, 827);
+assert.deepStrictEqual(DETACHABLE_TAB, { x: 24, y: 472, width: 1724, height: 354 });
 assert.strictEqual(labels.length, 10, '10 colis doivent produire 10 etiquettes');
 assert.strictEqual(labels[0].net_weight, 3, 'le poids etiquette doit etre le poids par colis');
 assert.strictEqual(labels[0].net_weight_label, '3,000 kg');
@@ -77,14 +91,22 @@ assert.strictEqual(labels[0].fishing_area_label, 'Atlantique Nord-Est - FAO 27')
 assert.strictEqual(labels[0].conditioning_date, '2026-08-19');
 assert.strictEqual(labels[0].conditioning_date_label, '19/08/2026');
 assert.strictEqual(labels[0].allergen_label, 'CRUSTACÉS');
+assert.strictEqual(labels[0].printer.width_mm, 70);
+assert.strictEqual(labels[0].printer.height_mm, 150);
+assert.strictEqual(labels[0].printer.width_dots, 827);
+assert.strictEqual(labels[0].printer.height_dots, 1772);
+assert.strictEqual(labels[0].printer.visual_width_mm, 150);
+assert.strictEqual(labels[0].printer.visual_height_mm, 70);
+assert.deepStrictEqual(labels[0].printer.detachable_tab, DETACHABLE_TAB);
 assert.deepStrictEqual(labels[0].company.health_mark, {
   country: 'FR',
   approval_number: '85.000.001',
   authority: 'UE',
   raw: 'FR 85.000.001 CE',
 });
-assert(labels[0].zpl.includes('^PW1181'));
-assert(labels[0].zpl.includes('^LL1181'));
+assert(labels[0].zpl.includes('^PW827'));
+assert(labels[0].zpl.includes('^LL1772'));
+assert(labels[0].zpl.includes('^A0R'), 'le contenu doit etre imprime dans le sens horizontal apres pose');
 assert(labels[0].zpl.includes('LECLERC CHALLANS - N  88'));
 assert(labels[0].zpl.includes('POIDS NET: 3,000 kg'));
 assert(labels[0].zpl.includes('85.000.001'));
@@ -92,6 +114,9 @@ assert(labels[0].zpl.includes('ZONE DE PECHE: Atlantique Nord-Est - FAO 27'));
 assert(labels[0].zpl.includes('Sous-zone: VIII'));
 assert(labels[0].zpl.includes('DATE DE CONDITIONNEMENT: 19/08/2026'));
 assert(labels[0].zpl.includes('ALLERGENE: CRUSTACES'));
+assert(labels[0].zpl.includes('LANGUETTE TRACABILITE'), 'la zone detachable doit etre identifiee');
+assert(labels[0].zpl.includes('Nephrops norvegicus'), 'la languette doit reprendre le nom scientifique');
+assert(labels[0].zpl.includes('Engin: Casiers'), 'la languette doit reprendre l engin de peche');
 assert(!labels[0].zpl.includes('Origine'), 'Origine ne doit pas apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('0/+2'), 'aucune temperature inventee ne doit apparaitre dans le ZPL');
@@ -109,6 +134,14 @@ const oneLabel = buildHealthLabelModels({
   lineNumber: 1,
   copies: 1,
 });
+const zplOrigins = Array.from(labels[0].zpl.matchAll(/\^FO(\d+),(\d+)/g), (match) => ({
+  x: Number(match[1]),
+  y: Number(match[2]),
+}));
+assert(zplOrigins.length > 20, 'le ZPL doit contenir des champs positionnes');
+assert(zplOrigins.every((origin) => origin.x >= 0 && origin.x <= LABEL_WIDTH_DOTS), 'aucune origine X ne doit depasser la largeur imprimable');
+assert(zplOrigins.every((origin) => origin.y >= 0 && origin.y <= LABEL_HEIGHT_DOTS), 'aucune origine Y ne doit depasser la longueur imprimable');
+assert(zplOrigins.some((origin) => origin.x >= DETACHABLE_TAB.y && origin.y >= DETACHABLE_TAB.x), 'la languette doit recevoir des champs ZPL');
 assert.strictEqual(oneLabel.length, 1, 'reimpression ligne copies=1 doit produire 1 etiquette');
 
 const defrostedLabels = buildHealthLabelModels({

@@ -60,6 +60,13 @@
     ]).join(' - ');
   }
 
+  function formatLabelSize(labels) {
+    const printer = Array.isArray(labels) ? labels[0]?.printer : null;
+    const visualWidth = printer?.visual_width_mm || printer?.height_mm || 150;
+    const visualHeight = printer?.visual_height_mm || printer?.width_mm || 70;
+    return `${visualWidth} x ${visualHeight} mm`;
+  }
+
   function companyLine(company) {
     return compact([
       company?.address_line1,
@@ -90,6 +97,7 @@
       info('CONSERVATION', label.storage_temperature_label),
       info('MENTION', label.storage_instruction_label),
     ].join('');
+    const tabMeta = meta;
 
     return `<article class="health-label-card">
       <header class="health-label-top">
@@ -114,6 +122,7 @@
         </div>
       </section>
       <section class="health-label-meta">${meta}</section>
+      <section class="health-label-tab"><strong>LANGUETTE TRACABILITE</strong>${tabMeta}</section>
       ${trace.defrosted ? '<section class="health-label-warning">DECONGELE</section>' : ''}
       <footer class="health-label-footer">
         <span>${escapeHtml(label.delivery_note_reference || '')} - Ligne ${escapeHtml(label.line_number || '')}</span>
@@ -132,7 +141,7 @@
       ? `<div class="health-label-warnings">${warnings.map((warning) => `<p>${escapeHtml(warning)}</p>`).join('')}</div>`
       : '';
     return `<div class="health-label-preview-tools">
-      <strong>${escapeHtml(count)} etiquette(s) 100 x 100 mm</strong>
+      <strong>${escapeHtml(count)} etiquette(s) ${escapeHtml(formatLabelSize(labels))}</strong>
       ${zplDocument ? `<button type="button" class="btn btn-secondary btn-sm" data-health-label-zpl>Télécharger ZPL</button>` : ''}
     </div>${warningHtml}${buildHtml(labels)}`;
   }

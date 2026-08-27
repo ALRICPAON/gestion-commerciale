@@ -13,16 +13,16 @@
 }
 
 .health-label-card {
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 150 / 70;
   background: #ffffff;
   border: 1px solid #17212b;
   color: #111820;
   display: grid;
   font-family: Arial, Helvetica, sans-serif;
-  grid-template-rows: 18% 17% 23% 1fr auto auto;
+  grid-template-rows: 16% 16% 21% 1fr 30% auto auto;
   overflow: hidden;
   padding: 3.2%;
-  width: min(100%, 100mm);
+  width: min(100%, 150mm);
 }
 
 .health-label-top,
@@ -159,7 +159,7 @@
   align-content: start;
   display: grid;
   gap: 3px 8px;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: 8px 0;
 }
 
@@ -192,6 +192,42 @@
 .health-label-meta .health-label-allergen strong {
   font-size: 11px;
   font-weight: 900;
+}
+
+.health-label-tab {
+  border-top: 2px dashed #111820;
+  display: grid;
+  gap: 2px 8px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: 6px 0 4px;
+}
+
+.health-label-tab > strong {
+  font-size: 8px;
+  grid-column: 1 / -1;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.health-label-tab div {
+  min-width: 0;
+}
+
+.health-label-tab span {
+  color: #45515c;
+  display: block;
+  font-size: 6px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.health-label-tab strong:not(:first-child),
+.health-label-tab div strong {
+  display: block;
+  font-size: 8px;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
 }
 
 .health-label-warning {
@@ -234,16 +270,16 @@
     border: 0;
     break-after: page;
     box-sizing: border-box;
-    height: 100mm;
+    height: 70mm;
     margin: 0;
     page: health-label;
     padding: 3mm;
     page-break-after: always;
-    width: 100mm;
+    width: 150mm;
   }
 }
 
 @page health-label {
-  size: 100mm 100mm;
+  size: 150mm 70mm;
   margin: 0;
 }
