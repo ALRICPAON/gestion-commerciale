@@ -12,6 +12,8 @@ const {
   LABEL_VISUAL_WIDTH_DOTS,
   LABEL_WIDTH_DOTS,
   LABEL_WIDTH_MM,
+  MAIN_ZONE,
+  SAFE_MARGIN,
   buildHealthLabelModels,
   combineZpl,
   formatAllergen,
@@ -80,6 +82,8 @@ assert.strictEqual(LABEL_WIDTH_DOTS, 827);
 assert.strictEqual(LABEL_HEIGHT_DOTS, 1772);
 assert.strictEqual(LABEL_VISUAL_WIDTH_DOTS, 1772);
 assert.strictEqual(LABEL_VISUAL_HEIGHT_DOTS, 827);
+assert.strictEqual(SAFE_MARGIN, 24);
+assert.deepStrictEqual(MAIN_ZONE, { x: 24, y: 24, width: 1724, height: 425 });
 assert.deepStrictEqual(DETACHABLE_TAB, { x: 24, y: 472, width: 1724, height: 354 });
 assert.strictEqual(labels.length, 10, '10 colis doivent produire 10 etiquettes');
 assert.strictEqual(labels[0].net_weight, 3, 'le poids etiquette doit etre le poids par colis');
@@ -97,6 +101,7 @@ assert.strictEqual(labels[0].printer.width_dots, 827);
 assert.strictEqual(labels[0].printer.height_dots, 1772);
 assert.strictEqual(labels[0].printer.visual_width_mm, 150);
 assert.strictEqual(labels[0].printer.visual_height_mm, 70);
+assert.deepStrictEqual(labels[0].printer.main_zone, MAIN_ZONE);
 assert.deepStrictEqual(labels[0].printer.detachable_tab, DETACHABLE_TAB);
 assert.deepStrictEqual(labels[0].company.health_mark, {
   country: 'FR',
@@ -114,7 +119,6 @@ assert(labels[0].zpl.includes('ZONE DE PECHE: Atlantique Nord-Est - FAO 27'));
 assert(labels[0].zpl.includes('Sous-zone: VIII'));
 assert(labels[0].zpl.includes('DATE DE CONDITIONNEMENT: 19/08/2026'));
 assert(labels[0].zpl.includes('ALLERGENE: CRUSTACES'));
-assert(labels[0].zpl.includes('LANGUETTE TRACABILITE'), 'la zone detachable doit etre identifiee');
 assert(labels[0].zpl.includes('Nephrops norvegicus'), 'la languette doit reprendre le nom scientifique');
 assert(labels[0].zpl.includes('Engin: Casiers'), 'la languette doit reprendre l engin de peche');
 assert(!labels[0].zpl.includes('Origine'), 'Origine ne doit pas apparaitre dans le ZPL');
@@ -138,10 +142,40 @@ const zplOrigins = Array.from(labels[0].zpl.matchAll(/\^FO(\d+),(\d+)/g), (match
   x: Number(match[1]),
   y: Number(match[2]),
 }));
+function zplTextBoxes(zpl) {
+  return Array.from(zpl.matchAll(/\^FO(\d+),(\d+)\^A0R,(\d+),\d+\^FB(\d+),(\d+),\d+,[A-Z],0\^FD([^^]+)\^FS/g), (match) => {
+    const fontHeight = Number(match[3]);
+    const lines = Number(match[5]);
+    return {
+      text: match[6],
+      x: Number(match[2]),
+      y: Number(match[1]),
+      width: Number(match[4]),
+      height: lines * (fontHeight + 4),
+    };
+  });
+}
+function isInsideZone(box, zone) {
+  return box.x >= zone.x
+    && box.y >= zone.y
+    && box.x + box.width <= zone.x + zone.width
+    && box.y + box.height <= zone.y + zone.height;
+}
+function textBoxContaining(zpl, text) {
+  return zplTextBoxes(zpl).find((box) => box.text.includes(text));
+}
+function textBoxInZone(zpl, text, zone) {
+  return zplTextBoxes(zpl).find((box) => box.text.includes(text) && isInsideZone(box, zone));
+}
 assert(zplOrigins.length > 20, 'le ZPL doit contenir des champs positionnes');
 assert(zplOrigins.every((origin) => origin.x >= 0 && origin.x <= LABEL_WIDTH_DOTS), 'aucune origine X ne doit depasser la largeur imprimable');
 assert(zplOrigins.every((origin) => origin.y >= 0 && origin.y <= LABEL_HEIGHT_DOTS), 'aucune origine Y ne doit depasser la longueur imprimable');
 assert(zplOrigins.some((origin) => origin.x >= DETACHABLE_TAB.y && origin.y >= DETACHABLE_TAB.x), 'la languette doit recevoir des champs ZPL');
+['Nephrops norvegicus', 'Methode: Peche', 'ZONE DE PECHE', 'Sous-zone: VIII', 'Engin: Casiers', 'Lot: LOT-A', 'DATE DE CONDITIONNEMENT'].forEach((text) => {
+  const box = textBoxInZone(labels[0].zpl, text, DETACHABLE_TAB);
+  assert(box, `champ attendu dans la languette: ${text}`);
+});
+assert(DETACHABLE_TAB.width >= Math.round(144 * 300 / 25.4), 'la languette doit utiliser quasiment toute la longueur de 146 mm');
 assert.strictEqual(oneLabel.length, 1, 'reimpression ligne copies=1 doit produire 1 etiquette');
 
 const defrostedLabels = buildHealthLabelModels({
@@ -296,6 +330,11 @@ assert.strictEqual(storageLabels[0].storage_temperature_label, '3 à 5 °C');
 assert.strictEqual(storageLabels[0].storage_instruction_label, 'Conserver entre 3 et 5 degres');
 assert(storageLabels[0].zpl.includes('CONSERVATION: 3 a 5  C'), 'ZPL doit afficher la plage structuree');
 assert(storageLabels[0].zpl.includes('MENTION: Conserver entre 3 et 5 degres'), 'ZPL doit afficher l instruction structuree');
+['CONSERVATION: 3 a 5  C', 'MENTION: Conserver entre 3 et 5 degres'].forEach((text) => {
+  const box = textBoxContaining(storageLabels[0].zpl, text);
+  assert(box, `champ conservation attendu: ${text}`);
+  assert(isInsideZone(box, DETACHABLE_TAB), `champ conservation hors languette: ${text}`);
+});
 
 const singleBoundStorageLabels = buildHealthLabelModels({
   document,
@@ -364,13 +403,13 @@ const htmlPreview = frontendSandbox.window.HealthLabels.renderPreview([{
   traceability: { ...labels[0].traceability, origin: 'DISTRIMER' },
 }], labels[0].zpl, []);
 assert(htmlPreview.includes('src="http://localhost:3002/uploads/store-logos/alta.png"'), 'logo_url relatif doit etre resolu sur le backend');
-assert(htmlPreview.includes('ZONE DE PÊCHE'), 'la zone de peche doit etre libellee dans le HTML');
+assert(htmlPreview.includes('ZONE DE PECHE'), 'la zone de peche doit etre libellee dans le HTML');
 assert(htmlPreview.includes('Atlantique Nord-Est - FAO 27'), 'FAO 27 doit garder le code et afficher son libelle');
 assert(htmlPreview.includes('Sous-zone'), 'la sous-zone doit rester affichee');
 assert(htmlPreview.includes('VIII'), 'la valeur de sous-zone doit rester affichee');
 assert(htmlPreview.includes('DATE DE CONDITIONNEMENT'), 'la date de conditionnement doit etre affichee dans le HTML');
 assert(htmlPreview.includes('19/08/2026'), 'la date de conditionnement doit venir de la date du BL');
-assert(htmlPreview.includes('ALLERGÈNE'), 'le libelle allergene doit etre affiche si la donnee existe');
+assert(htmlPreview.includes('ALLERGENE'), 'le libelle allergene doit etre affiche si la donnee existe');
 assert(htmlPreview.includes('CRUSTACÉS'), 'l allergene doit venir de la donnee Article/snapshot et etre mis en evidence');
 assert(!htmlPreview.includes('Origine'), 'Origine ne doit pas apparaitre dans le HTML');
 assert(!htmlPreview.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le HTML');
@@ -381,6 +420,15 @@ const storageHtmlPreview = frontendSandbox.window.HealthLabels.renderPreview([st
 assert(storageHtmlPreview.includes('CONSERVATION'), 'HTML doit afficher la plage structuree si disponible');
 assert(storageHtmlPreview.includes('3 à 5 °C'), 'HTML doit afficher la plage structuree exacte');
 assert(storageHtmlPreview.includes('Conserver entre 3 et 5 degres'), 'HTML doit afficher l instruction structuree');
+assert(storageHtmlPreview.includes('150 x 70 mm'), 'preview doit annoncer le format visuel 150 x 70 mm');
+
+const healthLabelsCssSource = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'css', 'pages', 'health-labels.css'), 'utf8');
+assert(healthLabelsCssSource.includes('aspect-ratio: 150 / 70'), 'CSS preview doit respecter le ratio 150 x 70');
+assert(healthLabelsCssSource.includes('grid-template-rows: 8mm 11mm 14mm 6mm 21mm 4mm'), 'CSS preview doit sommer a la hauteur utile de 70 mm');
+assert(healthLabelsCssSource.includes('height: 70mm'), 'CSS print doit fixer la hauteur etiquette');
+assert(healthLabelsCssSource.includes('width: 150mm'), 'CSS print doit fixer la largeur etiquette');
+assert(healthLabelsCssSource.includes('@page health-label'), 'CSS print doit utiliser une page etiquette dediee');
+assert(healthLabelsCssSource.includes('size: 150mm 70mm'), 'CSS print doit fixer la page logique etiquette');
 
 const routeSource = fs.readFileSync(path.join(__dirname, '..', 'routes', 'deliveryNotes.js'), 'utf8');
 const routeStart = routeSource.indexOf("router.get('/delivery-notes/:id/health-labels'");

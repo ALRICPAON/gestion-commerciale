@@ -84,20 +84,28 @@
       label.delivered_client_name,
       label.delivered_client_store_identifier ? `N° ${label.delivered_client_store_identifier}` : '',
     ]).join(' - ');
-    const meta = [
-      info('Nom scientifique', trace.latin_name),
-      info('Methode', trace.production_method),
-      info('ZONE DE PÊCHE', label.fishing_area_label || trace.fao_zone),
-      info('Sous-zone', trace.sous_zone),
-      info('Engin', trace.fishing_gear),
+    const mainMeta = [
       info('Calibre', label.caliber),
       info('Lot', labelTrace(label)),
       info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
-      info('ALLERGÈNE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
+    ].join('');
+    const tabLeft = [
+      info('Produit', label.article_label || 'Article'),
+      info('Nom scientifique', trace.latin_name),
+      info('Methode', trace.production_method),
+      info('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone),
+      info('Sous-zone', trace.sous_zone),
+      info('Engin', trace.fishing_gear),
+    ].join('');
+    const tabRight = [
+      info('Lot', labelTrace(label)),
+      info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
+      info('DLC/DDM', trace.dlc ? formatDate(trace.dlc) : ''),
+      info('ALLERGENE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
       info('CONSERVATION', label.storage_temperature_label),
       info('MENTION', label.storage_instruction_label),
+      info('ETAT', trace.defrosted ? 'DECONGELE' : ''),
     ].join('');
-    const tabMeta = meta;
 
     return `<article class="health-label-card">
       <header class="health-label-top">
@@ -121,9 +129,11 @@
           <strong>${escapeHtml(label.net_weight_label || '')}</strong>
         </div>
       </section>
-      <section class="health-label-meta">${meta}</section>
-      <section class="health-label-tab"><strong>LANGUETTE TRACABILITE</strong>${tabMeta}</section>
-      ${trace.defrosted ? '<section class="health-label-warning">DECONGELE</section>' : ''}
+      <section class="health-label-meta">${mainMeta}</section>
+      <section class="health-label-tab">
+        <div class="health-label-tab-column">${tabLeft}</div>
+        <div class="health-label-tab-column">${tabRight}</div>
+      </section>
       <footer class="health-label-footer">
         <span>${escapeHtml(label.delivery_note_reference || '')} - Ligne ${escapeHtml(label.line_number || '')}</span>
         <span>Colis ${escapeHtml(label.copy_index || '')}/${escapeHtml(label.copy_count || '')}</span>
