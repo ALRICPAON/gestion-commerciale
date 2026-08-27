@@ -18,11 +18,11 @@
   border: 1px solid #17212b;
   box-sizing: border-box;
   color: #111820;
-  display: grid;
+  display: block;
   font-family: Arial, Helvetica, sans-serif;
-  grid-template-rows: 8mm 11mm 14mm 6mm 21mm 4mm;
   overflow: hidden;
-  padding: 2mm;
+  padding: 0;
+  position: relative;
   width: min(100%, 150mm);
 }
 
@@ -34,6 +34,15 @@
   gap: 8px;
 }
 
+.health-label-top {
+  box-sizing: border-box;
+  height: 8mm;
+  left: 2mm;
+  position: absolute;
+  top: 2mm;
+  width: 146mm;
+}
+
 .health-label-brand {
   align-items: center;
   display: grid;
@@ -43,8 +52,8 @@
 }
 
 .health-label-brand img {
-  max-height: 7mm;
-  max-width: 18mm;
+  max-height: 6mm;
+  max-width: 15mm;
   object-fit: contain;
 }
 
@@ -69,10 +78,10 @@
   border: 2px solid #111820;
   border-radius: 50%;
   display: grid;
-  flex: 0 0 30mm;
+  flex: 0 0 25mm;
   font-size: 8px;
   font-weight: 800;
-  height: 7mm;
+  height: 6mm;
   justify-content: center;
   line-height: 1;
   padding: 2px 8px;
@@ -103,12 +112,16 @@
 }
 
 .health-label-client {
-  border-bottom: 2px solid #111820;
-  border-top: 2px solid #111820;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
+  height: 8mm;
   justify-content: center;
+  left: 50mm;
   min-width: 0;
+  position: absolute;
+  top: 10mm;
+  width: 65mm;
 }
 
 .health-label-client span,
@@ -128,12 +141,17 @@
 
 .health-label-product {
   align-items: stretch;
-  border-bottom: 1px solid #111820;
+  box-sizing: border-box;
   display: grid;
   gap: 8px;
   grid-template-columns: minmax(0, 1fr) 34%;
+  height: 10mm;
+  left: 2mm;
   min-height: 0;
   padding: 3px 0;
+  position: absolute;
+  top: 52mm;
+  width: 146mm;
 }
 
 .health-label-product h2 {
@@ -159,11 +177,17 @@
 
 .health-label-meta {
   align-content: start;
+  box-sizing: border-box;
   display: grid;
   gap: 3px 8px;
+  height: 5mm;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  left: 2mm;
   min-height: 0;
   padding: 2px 0;
+  position: absolute;
+  top: 62mm;
+  width: 146mm;
 }
 
 .health-label-meta div {
@@ -198,13 +222,18 @@
 }
 
 .health-label-tab {
-  border-top: 2px dashed #111820;
+  box-sizing: border-box;
   display: grid;
   gap: 0 8px;
+  height: 30mm;
+  left: 2mm;
   grid-template-columns: 1fr 1fr;
   min-height: 0;
   overflow: hidden;
   padding: 3px 0 1px;
+  position: absolute;
+  top: 20mm;
+  width: 146mm;
 }
 
 .health-label-tab-column {
@@ -241,17 +270,24 @@
 }
 
 .health-label-footer {
-  border-top: 1px solid #111820;
+  box-sizing: border-box;
   color: #45515c;
   font-size: 8px;
   font-weight: 700;
+  height: 3mm;
+  left: 2mm;
   min-height: 0;
   padding-top: 2px;
+  position: absolute;
+  top: 67mm;
+  width: 146mm;
 }
 
 @media print {
   body.printing-health-labels {
     background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
   body.printing-health-labels > *:not(.delivery-layout):not(.main-content),
@@ -263,10 +299,15 @@
   body.printing-health-labels .print-area,
   body.printing-health-labels #print-area {
     display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
   }
 
   body.printing-health-labels .health-label-print-sheet {
     display: block;
+    gap: 0;
+    margin: 0;
+    padding: 0;
   }
 
   body.printing-health-labels .health-label-card {
@@ -277,9 +318,14 @@
     margin: 0;
     overflow: hidden;
     page: health-label;
-    padding: 2mm;
+    padding: 0;
     page-break-after: always;
     width: 150mm;
+  }
+
+  body.printing-health-labels .health-label-card:last-child {
+    break-after: auto;
+    page-break-after: auto;
   }
 }
 

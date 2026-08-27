@@ -1,24 +1,44 @@
 const DOTS_PER_MM_300_DPI = 300 / 25.4;
 const LABEL_WIDTH_MM = 70;
 const LABEL_HEIGHT_MM = 150;
+const LABEL_VISUAL_WIDTH_MM = LABEL_HEIGHT_MM;
+const LABEL_VISUAL_HEIGHT_MM = LABEL_WIDTH_MM;
 const LABEL_WIDTH_DOTS = Math.round(LABEL_WIDTH_MM * DOTS_PER_MM_300_DPI);
 const LABEL_HEIGHT_DOTS = Math.round(LABEL_HEIGHT_MM * DOTS_PER_MM_300_DPI);
 const LABEL_VISUAL_WIDTH_DOTS = LABEL_HEIGHT_DOTS;
 const LABEL_VISUAL_HEIGHT_DOTS = LABEL_WIDTH_DOTS;
-const SAFE_MARGIN = Math.round(2 * DOTS_PER_MM_300_DPI);
+const SAFE_MARGIN_MM = 2;
+const SAFE_MARGIN = Math.round(SAFE_MARGIN_MM * DOTS_PER_MM_300_DPI);
+
+function mm(value) {
+  return Math.round(value * DOTS_PER_MM_300_DPI);
+}
+
+const FIXED_TOP_ZONE = {
+  x: mm(2),
+  y: mm(2),
+  width: mm(146),
+  height: mm(16),
+};
+const DETACHABLE_TAB = {
+  x: mm(2),
+  y: mm(20),
+  width: mm(146),
+  height: mm(30),
+};
+const FIXED_BOTTOM_ZONE = {
+  x: mm(2),
+  y: mm(52),
+  width: mm(146),
+  height: mm(16),
+};
 const MAIN_ZONE = {
   x: SAFE_MARGIN,
   y: SAFE_MARGIN,
   width: LABEL_VISUAL_WIDTH_DOTS - (SAFE_MARGIN * 2),
-  height: Math.round(36 * DOTS_PER_MM_300_DPI),
+  height: LABEL_VISUAL_HEIGHT_DOTS - (SAFE_MARGIN * 2),
 };
-const DETACHABLE_TAB = {
-  x: SAFE_MARGIN,
-  y: Math.round((LABEL_WIDTH_MM - 30) * DOTS_PER_MM_300_DPI),
-  width: Math.round(146 * DOTS_PER_MM_300_DPI),
-  height: Math.round(30 * DOTS_PER_MM_300_DPI),
-};
-const TAB_INSET = Math.round(2 * DOTS_PER_MM_300_DPI);
+const TAB_INSET = mm(2);
 const FAO_AREA_LABELS = new Map([
   ['27', 'Atlantique Nord-Est'],
 ]);
@@ -304,12 +324,14 @@ function buildHealthLabelModels({ document, lines, storeSettings, lineNumber = n
             height_mm: LABEL_HEIGHT_MM,
             width_dots: LABEL_WIDTH_DOTS,
             height_dots: LABEL_HEIGHT_DOTS,
-            visual_width_mm: LABEL_HEIGHT_MM,
-            visual_height_mm: LABEL_WIDTH_MM,
+            visual_width_mm: LABEL_VISUAL_WIDTH_MM,
+            visual_height_mm: LABEL_VISUAL_HEIGHT_MM,
             visual_width_dots: LABEL_VISUAL_WIDTH_DOTS,
             visual_height_dots: LABEL_VISUAL_HEIGHT_DOTS,
+            fixed_top_zone: FIXED_TOP_ZONE,
             main_zone: MAIN_ZONE,
             detachable_tab: DETACHABLE_TAB,
+            fixed_bottom_zone: FIXED_BOTTOM_ZONE,
           },
           company: {
             name: clean(settings.company_name),
@@ -403,48 +425,45 @@ function renderHealthLabelZpl(label) {
     `^LL${LABEL_HEIGHT_DOTS}`,
     '^CI28',
     '^LH0,0',
-    zplVisualBox(MAIN_ZONE.x, MAIN_ZONE.y, MAIN_ZONE.width, MAIN_ZONE.height, 3),
-    zplVisualLine(MAIN_ZONE.x, MAIN_ZONE.y + 100, MAIN_ZONE.width, 3),
-    zplVisualLine(MAIN_ZONE.x, MAIN_ZONE.y + 220, MAIN_ZONE.width, 3),
-    zplVisualLine(DETACHABLE_TAB.x, DETACHABLE_TAB.y, DETACHABLE_TAB.width, 3),
+    zplVisualBox(MAIN_ZONE.x, MAIN_ZONE.y, MAIN_ZONE.width, MAIN_ZONE.height, 2),
   ];
 
-  lines.push(zplZoneBlock(MAIN_ZONE, 24, 18, 520, 28, company.name || 'ALTA MAREE', 1));
-  lines.push(zplZoneBlock(MAIN_ZONE, 24, 58, 760, 20, [company.address_line1, [company.postal_code, company.city].filter(Boolean).join(' ')].filter(Boolean).join(' - '), 1));
+  lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(1), mm(1), mm(45), 24, company.name || 'ALTA MAREE', 1));
+  lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(1), mm(5), mm(62), 16, [company.address_line1, [company.postal_code, company.city].filter(Boolean).join(' ')].filter(Boolean).join(' - '), 1));
   if (healthMark) {
-    const mark = visualToPrinter(MAIN_ZONE.x + 1330, MAIN_ZONE.y + 14);
-    lines.push(`^FO${mark.x},${mark.y}^GE88,260,3^FS`);
-    lines.push(zplZoneBlock(MAIN_ZONE, 1362, 24, 104, 18, healthMark.country, 1, 'C'));
-    lines.push(zplZoneBlock(MAIN_ZONE, 1344, 50, 176, 22, healthMark.approval_number, 1, 'C'));
-    lines.push(zplZoneBlock(MAIN_ZONE, 1362, 76, 104, 18, healthMark.authority, 1, 'C'));
+    const mark = visualToPrinter(FIXED_TOP_ZONE.x + mm(118), FIXED_TOP_ZONE.y + mm(1));
+    lines.push(`^FO${mark.x},${mark.y}^GE${mm(7)},${mm(24)},2^FS`);
+    lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(120), mm(2), mm(20), 16, healthMark.country, 1, 'C'));
+    lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(119), mm(5), mm(22), 18, healthMark.approval_number, 1, 'C'));
+    lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(120), mm(8), mm(20), 16, healthMark.authority, 1, 'C'));
   }
 
-  lines.push(zplZoneBlock(MAIN_ZONE, 24, 118, 130, 28, 'POUR', 1));
-  lines.push(zplZoneBlock(MAIN_ZONE, 180, 112, 1190, 52, label.delivered_client_display || label.delivered_client_name || '-', 1));
-
-  lines.push(zplZoneBlock(MAIN_ZONE, 24, 246, 920, 42, label.article_label || '-', 2));
-  lines.push(zplZoneBlock(MAIN_ZONE, 990, 240, 620, 48, `POIDS NET: ${label.net_weight_label}`, 1));
-  lines.push(zplZoneBlock(MAIN_ZONE, 24, 342, 430, 26, field('Calibre', label.caliber), 1));
-  lines.push(zplZoneBlock(MAIN_ZONE, 480, 342, 500, 26, field('Lot', lot), 1));
-  lines.push(zplZoneBlock(MAIN_ZONE, 1010, 342, 610, 26, field('DATE COND.', label.conditioning_date_label || formatDate(label.document_date)), 1));
+  lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(48), mm(1), mm(14), 18, 'POUR', 1));
+  lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(63), mm(1), mm(52), 34, label.delivered_client_display || label.delivered_client_name || '-', 1));
 
   const tab = DETACHABLE_TAB;
   const tabX = TAB_INSET;
-  lines.push(zplZoneBlock(tab, tabX, 22, 420, 22, label.article_label || '-', 1));
-  lines.push(zplZoneBlock(tab, tabX, 62, 420, 20, trace.latin_name, 1));
-  lines.push(zplZoneBlock(tab, tabX, 102, 420, 20, field('Methode', trace.production_method), 1));
-  lines.push(zplZoneBlock(tab, tabX, 142, 460, 20, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
-  lines.push(zplZoneBlock(tab, tabX, 210, 250, 20, field('Sous-zone', trace.sous_zone), 1));
-  lines.push(zplZoneBlock(tab, 300, 210, 300, 20, field('Engin', trace.fishing_gear), 1));
-  lines.push(zplZoneBlock(tab, 580, 22, 320, 20, field('Lot', lot), 1));
-  lines.push(zplZoneBlock(tab, 580, 62, 420, 20, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
-  lines.push(zplZoneBlock(tab, 580, 102, 320, 20, field('DLC/DDM', formatDate(trace.dlc)), 1));
-  lines.push(zplZoneBlock(tab, 580, 142, 420, 20, field('ALLERGENE', label.allergen_label), 1));
-  lines.push(zplZoneBlock(tab, 1080, 22, 340, 20, field('CONSERVATION', label.storage_temperature_label), 1));
-  lines.push(zplZoneBlock(tab, 1080, 62, 560, 20, field('MENTION', label.storage_instruction_label), 3));
-  if (trace.defrosted) lines.push(zplZoneBlock(tab, 1080, 194, 260, 26, 'DECONGELE', 1));
-  lines.push(zplZoneBlock(tab, 1080, 238, 300, 18, `BL ${label.delivery_note_reference || ''} - L${label.line_number || ''}`, 1));
-  lines.push(zplZoneBlock(tab, 1400, 238, 220, 18, `Colis ${label.copy_index}/${label.copy_count}`, 1));
+  lines.push(zplZoneBlock(tab, tabX, mm(1), mm(45), 18, label.article_label || '-', 1));
+  lines.push(zplZoneBlock(tab, tabX, mm(5), mm(45), 16, trace.latin_name, 1));
+  lines.push(zplZoneBlock(tab, tabX, mm(9), mm(45), 16, field('Methode', trace.production_method), 1));
+  lines.push(zplZoneBlock(tab, tabX, mm(13), mm(45), 16, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
+  lines.push(zplZoneBlock(tab, tabX, mm(21), mm(21), 16, field('Sous-zone', trace.sous_zone), 1));
+  lines.push(zplZoneBlock(tab, mm(27), mm(21), mm(26), 16, field('Engin', trace.fishing_gear), 1));
+  lines.push(zplZoneBlock(tab, mm(53), mm(1), mm(34), 16, field('Lot', lot), 1));
+  lines.push(zplZoneBlock(tab, mm(53), mm(5), mm(42), 16, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
+  lines.push(zplZoneBlock(tab, mm(53), mm(9), mm(34), 16, field('DLC/DDM', formatDate(trace.dlc)), 1));
+  lines.push(zplZoneBlock(tab, mm(53), mm(13), mm(42), 16, field('ALLERGENE', label.allergen_label), 1));
+  lines.push(zplZoneBlock(tab, mm(100), mm(1), mm(34), 16, field('CONSERVATION', label.storage_temperature_label), 1));
+  lines.push(zplZoneBlock(tab, mm(100), mm(5), mm(42), 16, field('MENTION', label.storage_instruction_label), 3));
+  if (trace.defrosted) lines.push(zplZoneBlock(tab, mm(100), mm(18), mm(28), 20, 'DECONGELE', 1));
+  lines.push(zplZoneBlock(tab, mm(100), mm(23), mm(30), 14, `BL ${label.delivery_note_reference || ''} - L${label.line_number || ''}`, 1));
+  lines.push(zplZoneBlock(tab, mm(127), mm(23), mm(17), 14, `Colis ${label.copy_index}/${label.copy_count}`, 1));
+
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(1), mm(1), mm(82), 34, label.article_label || '-', 2));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(86), mm(1), mm(58), 38, `POIDS NET: ${label.net_weight_label}`, 1));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(1), mm(10), mm(34), 18, field('Calibre', label.caliber), 1));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(40), mm(10), mm(40), 18, field('Lot', lot), 1));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(86), mm(10), mm(58), 18, field('DATE COND.', label.conditioning_date_label || formatDate(label.document_date)), 1));
   lines.push('^XZ');
 
   return lines.join('\n').replace(/\n{2,}/g, '\n');
@@ -456,12 +475,16 @@ function combineZpl(labels) {
 
 module.exports = {
   DETACHABLE_TAB,
+  FIXED_BOTTOM_ZONE,
+  FIXED_TOP_ZONE,
   LABEL_DOTS: LABEL_WIDTH_DOTS,
   LABEL_HEIGHT_DOTS,
   LABEL_HEIGHT_MM,
+  LABEL_VISUAL_HEIGHT_MM,
   LABEL_MM: LABEL_WIDTH_MM,
   LABEL_VISUAL_HEIGHT_DOTS,
   LABEL_VISUAL_WIDTH_DOTS,
+  LABEL_VISUAL_WIDTH_MM,
   LABEL_WIDTH_DOTS,
   LABEL_WIDTH_MM,
   MAIN_ZONE,

@@ -83,8 +83,8 @@ assert.strictEqual(LABEL_HEIGHT_DOTS, 1772);
 assert.strictEqual(LABEL_VISUAL_WIDTH_DOTS, 1772);
 assert.strictEqual(LABEL_VISUAL_HEIGHT_DOTS, 827);
 assert.strictEqual(SAFE_MARGIN, 24);
-assert.deepStrictEqual(MAIN_ZONE, { x: 24, y: 24, width: 1724, height: 425 });
-assert.deepStrictEqual(DETACHABLE_TAB, { x: 24, y: 472, width: 1724, height: 354 });
+assert.deepStrictEqual(MAIN_ZONE, { x: 24, y: 24, width: 1724, height: 779 });
+assert.deepStrictEqual(DETACHABLE_TAB, { x: 24, y: 236, width: 1724, height: 354 });
 assert.strictEqual(labels.length, 10, '10 colis doivent produire 10 etiquettes');
 assert.strictEqual(labels[0].net_weight, 3, 'le poids etiquette doit etre le poids par colis');
 assert.strictEqual(labels[0].net_weight_label, '3,000 kg');
@@ -121,6 +121,7 @@ assert(labels[0].zpl.includes('DATE DE CONDITIONNEMENT: 19/08/2026'));
 assert(labels[0].zpl.includes('ALLERGENE: CRUSTACES'));
 assert(labels[0].zpl.includes('Nephrops norvegicus'), 'la languette doit reprendre le nom scientifique');
 assert(labels[0].zpl.includes('Engin: Casiers'), 'la languette doit reprendre l engin de peche');
+assert(!labels[0].zpl.includes('LANGUETTE TRACABILITE'), 'aucune fausse mention de languette ne doit etre imprimee');
 assert(!labels[0].zpl.includes('Origine'), 'Origine ne doit pas apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('DISTRIMER'), 'la provenance/fournisseur ne doit pas apparaitre dans le ZPL');
 assert(!labels[0].zpl.includes('0/+2'), 'aucune temperature inventee ne doit apparaitre dans le ZPL');
@@ -424,11 +425,17 @@ assert(storageHtmlPreview.includes('150 x 70 mm'), 'preview doit annoncer le for
 
 const healthLabelsCssSource = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'css', 'pages', 'health-labels.css'), 'utf8');
 assert(healthLabelsCssSource.includes('aspect-ratio: 150 / 70'), 'CSS preview doit respecter le ratio 150 x 70');
-assert(healthLabelsCssSource.includes('grid-template-rows: 8mm 11mm 14mm 6mm 21mm 4mm'), 'CSS preview doit sommer a la hauteur utile de 70 mm');
+assert(healthLabelsCssSource.includes('position: relative'), 'CSS preview doit utiliser une carte reperee en mm');
+assert(healthLabelsCssSource.includes('top: 20mm'), 'CSS preview doit placer la zone detachable au centre vertical du BAT');
+assert(healthLabelsCssSource.includes('height: 30mm'), 'CSS preview doit donner 30 mm a la zone detachable issue du BAT');
+assert(!healthLabelsCssSource.includes('border-top: 2px dashed'), 'CSS preview ne doit pas dessiner une fausse refente');
 assert(healthLabelsCssSource.includes('height: 70mm'), 'CSS print doit fixer la hauteur etiquette');
 assert(healthLabelsCssSource.includes('width: 150mm'), 'CSS print doit fixer la largeur etiquette');
 assert(healthLabelsCssSource.includes('@page health-label'), 'CSS print doit utiliser une page etiquette dediee');
 assert(healthLabelsCssSource.includes('size: 150mm 70mm'), 'CSS print doit fixer la page logique etiquette');
+assert(healthLabelsCssSource.includes('.health-label-card:last-child'), 'CSS print doit supprimer le saut de page apres la derniere etiquette');
+assert(healthLabelsCssSource.includes('margin: 0 !important'), 'CSS print doit supprimer les marges qui creent des pages blanches');
+assert(healthLabelsCssSource.includes('padding: 0 !important'), 'CSS print doit supprimer les paddings de conteneur');
 
 const routeSource = fs.readFileSync(path.join(__dirname, '..', 'routes', 'deliveryNotes.js'), 'utf8');
 const routeStart = routeSource.indexOf("router.get('/delivery-notes/:id/health-labels'");
