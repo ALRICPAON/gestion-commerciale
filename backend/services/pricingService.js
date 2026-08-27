@@ -17,8 +17,15 @@ function clean(value) {
 }
 
 function isoDate(value) {
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw expose(400, 'Date invalide');
+    return value.toISOString().slice(0, 10);
+  }
   const text = clean(value);
-  return text ? text.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  if (!text) return new Date().toISOString().slice(0, 10);
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (!match) throw expose(400, 'Date invalide');
+  return match[1];
 }
 
 function num(value, fallback = null) {
@@ -465,6 +472,7 @@ async function getOrCreateDraftRevisionFromPublishedSession(db, storeId, input =
     )).rows[0];
     if (!source) throw expose(404, 'Session tarification introuvable');
     if (source.status !== 'published') throw expose(409, 'Seule une session publiee peut servir de base a une revision');
+    const sourceDate = isoDate(source.pricing_date);
     const existing = (await client.query(
       `SELECT *
        FROM pricing_sessions
@@ -475,7 +483,7 @@ async function getOrCreateDraftRevisionFromPublishedSession(db, storeId, input =
        ORDER BY version_number DESC, created_at DESC
        LIMIT 1
        FOR UPDATE`,
-      [storeId, source.pricing_date, source.id]
+      [storeId, sourceDate, source.id]
     )).rows[0];
     if (existing) {
       return {
@@ -487,10 +495,10 @@ async function getOrCreateDraftRevisionFromPublishedSession(db, storeId, input =
     }
     return {
       ...(await duplicatePricingSession(client, storeId, {
-      source_session_id: source.id,
-      pricing_date: source.pricing_date,
-      title: clean(input.title) || source.title || `Tarification du ${source.pricing_date}`,
-      notes: clean(input.notes) || source.notes,
+        source_session_id: source.id,
+        pricing_date: sourceDate,
+        title: clean(input.title) || source.title || `Tarification du ${sourceDate}`,
+        notes: clean(input.notes) || source.notes,
       }, context)),
       revision_created: true,
       revision_reused: false,
