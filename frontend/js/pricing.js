@@ -65,6 +65,13 @@ function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function isoDate(value) {
+  if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString().slice(0, 10);
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : '';
+}
+
 function authHeaders() {
   return { Authorization: `Bearer ${sessionToken}` };
 }
@@ -148,13 +155,65 @@ function tariffValue(line, level) {
   return found?.price_ht ?? '';
 }
 
-function marginHtml(line, price) {
+function marginText(line, price) {
   const p = Number(price);
   const cost = Number(line.cost_rendered_ht || 0);
   if (!Number.isFinite(p) || p <= 0) return '';
   const abs = p - cost;
   const rate = (abs / p) * 100;
-  return `<span class="pricing-margin">${money(abs)} / ${rate.toFixed(1)}%</span>`;
+  return `${money(abs)} / ${rate.toFixed(1)}%`;
+}
+
+function marginHtml(line, price) {
+  return `<span class="pricing-margin">${escapeHtml(marginText(line, price)) || '&nbsp;'}</span>`;
+}
+
+function captureViewportState() {
+  const active = document.activeElement;
+  const tableWrap = linesBody.closest('.pricing-table-wrap');
+  let selectionStart = null;
+  let selectionEnd = null;
+  try {
+    selectionStart = active && typeof active.selectionStart === 'number' ? active.selectionStart : null;
+    selectionEnd = active && typeof active.selectionEnd === 'number' ? active.selectionEnd : null;
+  } catch (error) {
+    selectionStart = null;
+    selectionEnd = null;
+  }
+  return {
+    windowX: window.scrollX,
+    windowY: window.scrollY,
+    tableScrollLeft: tableWrap?.scrollLeft || 0,
+    tableScrollTop: tableWrap?.scrollTop || 0,
+    active,
+    selectionStart,
+    selectionEnd,
+  };
+}
+
+function restoreViewportState(state) {
+  if (!state) return;
+  const tableWrap = linesBody.closest('.pricing-table-wrap');
+  if (tableWrap) {
+    tableWrap.scrollLeft = state.tableScrollLeft;
+    tableWrap.scrollTop = state.tableScrollTop;
+  }
+  if (state.active && document.contains(state.active) && document.activeElement !== state.active) {
+    state.active.focus({ preventScroll: true });
+  }
+  if (
+    state.active
+    && document.contains(state.active)
+    && state.selectionStart !== null
+    && typeof state.active.setSelectionRange === 'function'
+  ) {
+    try {
+      state.active.setSelectionRange(state.selectionStart, state.selectionEnd);
+    } catch (error) {
+      // Some input types, notably number, do not support selection ranges.
+    }
+  }
+  window.scrollTo(state.windowX, state.windowY);
 }
 
 function refreshRowComputedCells(row, line) {
@@ -166,9 +225,13 @@ function refreshRowComputedCells(row, line) {
     const value = input.value;
     const cell = input.closest('td');
     if (cell) {
-      const old = cell.querySelector('.pricing-margin');
-      if (old) old.remove();
-      cell.insertAdjacentHTML('beforeend', marginHtml(line, value));
+      let margin = cell.querySelector('.pricing-margin');
+      if (!margin) {
+        margin = document.createElement('span');
+        margin.className = 'pricing-margin';
+        cell.appendChild(margin);
+      }
+      margin.textContent = marginText(line, value) || '\u00a0';
     }
   });
 }
@@ -251,6 +314,7 @@ function rowPayload(row) {
 async function saveDirtyLines() {
   if (!dirty.size) return;
   const ids = [...dirty];
+  const viewportState = captureViewportState();
   saveStateLabel.textContent = 'Sauvegarde...';
   for (const id of ids) {
     const row = linesBody.querySelector(`[data-line-id="${id}"]`);
@@ -262,8 +326,8 @@ async function saveDirtyLines() {
     row.classList.remove('pricing-row-dirty');
     refreshRowComputedCells(row, updated);
   }
-  showFeedback('Tarification sauvegardee.', 'success');
   setStatus();
+  restoreViewportState(viewportState);
 }
 
 async function loadReferenceData() {
@@ -277,7 +341,7 @@ async function loadReferenceData() {
 }
 
 async function loadSession(showMessage = true) {
-  const date = pricingDateInput.value || todayIso();
+  const date = isoDate(pricingDateInput.value) || todayIso();
   const current = await api(`/api/pricing/sessions?date=${encodeURIComponent(date)}&limit=1`);
   if (!current.results?.length) {
     session = null;
@@ -295,7 +359,7 @@ async function loadSession(showMessage = true) {
 }
 
 async function createSession() {
-  const result = await apiJson('/api/pricing/sessions', { pricing_date: pricingDateInput.value || todayIso() });
+  const result = await apiJson('/api/pricing/sessions', { pricing_date: isoDate(pricingDateInput.value) || todayIso() });
   session = result.session;
   lines = result.lines || [];
   dirty.clear();
@@ -304,7 +368,7 @@ async function createSession() {
 }
 
 async function duplicateSession() {
-  const result = await apiJson('/api/pricing/sessions/duplicate', { pricing_date: pricingDateInput.value || todayIso() });
+  const result = await apiJson('/api/pricing/sessions/duplicate', { pricing_date: isoDate(pricingDateInput.value) || todayIso() });
   session = result.session;
   lines = result.lines || [];
   dirty.clear();
@@ -316,12 +380,15 @@ async function createDraftRevision(message = 'Cette tarification est publiee. Cr
   if (!session || session.status !== 'published') return session;
   if (!window.confirm(message)) return null;
   if (!revisionInProgress) {
-    revisionInProgress = apiJson(`/api/pricing/sessions/${encodeURIComponent(session.id)}/revision`, {});
+    revisionInProgress = apiJson(`/api/pricing/sessions/${encodeURIComponent(session.id)}/revision`, {
+      pricing_date: isoDate(session.pricing_date),
+    });
   }
   try {
     const result = await revisionInProgress;
     session = result.session;
     lines = result.lines || [];
+    pricingDateInput.value = isoDate(session.pricing_date) || pricingDateInput.value;
     dirty.clear();
     renderLines();
     showFeedback(result.revision_reused ? `Revision v${session.version_number || ''} ouverte.` : `Revision v${session.version_number || ''} creee.`, 'success');

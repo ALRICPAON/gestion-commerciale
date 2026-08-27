@@ -482,8 +482,9 @@ function pricingRevisionWorkflowFakeDb() {
   let connectCount = 0;
   let copiedIndex = 0;
   let addedIndex = 0;
+  const dateKey = (value) => (value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10));
   const sessions = [
-    { id: 'published-session', store_id: 'store-1', pricing_date: '2026-08-26', title: 'Tarification du 2026-08-26', status: 'published', version_number: 1, is_active_publication: true },
+    { id: 'published-session', store_id: 'store-1', pricing_date: new Date('2026-08-27T00:00:00.000Z'), title: 'Tarification du 2026-08-27', status: 'published', version_number: 1, is_active_publication: true },
   ];
   const lines = [
     {
@@ -544,15 +545,19 @@ function pricingRevisionWorkflowFakeDb() {
       }
       if (sql.includes('SELECT COALESCE(MAX(version_number)')) {
         const date = params[1];
-        return { rows: [{ version: Math.max(...sessions.filter((item) => item.pricing_date === date).map((item) => item.version_number), 0) + 1 }] };
+        assert.equal(date, '2026-08-27', 'revision version lookup uses ISO date');
+        assert(!String(date).includes('Thu Aug'), 'revision version lookup never uses display date');
+        return { rows: [{ version: Math.max(...sessions.filter((item) => dateKey(item.pricing_date) === date).map((item) => item.version_number), 0) + 1 }] };
       }
       if (sql.includes('FROM pricing_sessions') && sql.includes('WHERE id = $1 AND store_id = $2')) {
         const found = sessions.find((item) => item.id === params[0] && item.store_id === params[1]);
         return { rows: found ? [found] : [] };
       }
       if (sql.includes('source_session_id = $3') && sql.includes("status = 'draft'")) {
+        assert.equal(params[1], '2026-08-27', 'revision reuse lookup uses ISO date');
+        assert(!String(params[1]).includes('Thu Aug'), 'revision reuse lookup never uses display date');
         const found = sessions
-          .filter((item) => item.store_id === params[0] && item.pricing_date === params[1] && item.source_session_id === params[2] && item.status === 'draft')
+          .filter((item) => item.store_id === params[0] && dateKey(item.pricing_date) === params[1] && item.source_session_id === params[2] && item.status === 'draft')
           .sort((a, b) => b.version_number - a.version_number)[0];
         if (found) events.push('revision_reused');
         return { rows: found ? [found] : [] };
@@ -671,7 +676,7 @@ function pricingRevisionWorkflowFakeDb() {
       }
       if (sql.includes('UPDATE pricing_sessions') && sql.includes("SET status = 'superseded'")) {
         sessions.forEach((item) => {
-          if (item.store_id === params[0] && item.pricing_date === params[1] && item.status === 'published' && item.is_active_publication && item.id !== params[2]) {
+          if (item.store_id === params[0] && dateKey(item.pricing_date) === params[1] && item.status === 'published' && item.is_active_publication && item.id !== params[2]) {
             item.status = 'superseded';
             item.is_active_publication = false;
           }
@@ -970,10 +975,12 @@ async function testPricingFrontendImportWorkflowContracts() {
   assert(js.includes('/supplier-import-lines/articles/search'), 'frontend searches ALTA articles in matching workflow');
   assert(html.includes('pricing-import-modal-content'), 'supplier import modal has dedicated wide workspace');
   assert(html.includes('id="import-article-panel"'), 'frontend uses a wide article picker panel');
-  assert(html.includes('pricing.css?v=2') && html.includes('pricing.js?v=2'), 'pricing assets are cache-busted');
+  assert(html.includes('pricing.css?v=3') && html.includes('pricing.js?v=3'), 'pricing assets are cache-busted');
   assert(js.includes('matchLabel'), 'frontend translates technical matching labels');
   assert(js.includes('updateImportLine(updated)'), 'frontend updates selected import line after override');
   assert(html.includes('id="create-revision-btn"'), 'frontend exposes explicit revision button on published sessions');
+  assert(js.includes('function isoDate(value)'), 'frontend has a strict API date helper');
+  assert(js.includes('pricing_date: isoDate(session.pricing_date)'), 'revision payload uses backend ISO pricing_date, not display text');
   assert(js.includes('createDraftRevision'), 'frontend centralizes published-session revision creation');
   assert(js.includes('ensureEditableSession'), 'frontend gates natural mutations through revision workflow');
   assert(js.includes('La tarification du jour est deja publiee. Une nouvelle revision va etre creee pour ajouter ce cours fournisseur.'), 'frontend confirms revision creation before supplier import');
@@ -985,7 +992,13 @@ async function testPricingFrontendImportWorkflowContracts() {
 
   const saveDirtyBody = js.slice(js.indexOf('async function saveDirtyLines()'), js.indexOf('async function loadReferenceData()'));
   assert(!saveDirtyBody.includes('loadSession('), 'autosave updates local model without reloading the session');
+  assert(!saveDirtyBody.includes('renderLines('), 'autosave does not rerender the pricing table');
   assert(saveDirtyBody.includes('refreshRowComputedCells'), 'autosave refreshes computed cells locally');
+  assert(saveDirtyBody.includes('captureViewportState') && saveDirtyBody.includes('restoreViewportState'), 'autosave preserves viewport and table scroll');
+  assert(!saveDirtyBody.includes('showFeedback('), 'autosave does not display layout-changing success banners');
+  assert(js.includes("margin.textContent = marginText(line, value) || '\\u00a0'"), 'autosave keeps a stable margin slot in tariff cells');
+  assert(css.includes('.pricing-layout > #page-feedback') && css.includes('position: fixed'), 'pricing feedback does not change layout height');
+  assert(css.includes('min-height: 14px'), 'pricing margin slot reserves row height');
 }
 
 async function testPricingRouteFileParsingContracts() {
@@ -1022,6 +1035,11 @@ async function testIntegrationFilesReferencePricing() {
   assert(agentTools.includes('prepare_pricing_session_revision'), 'agent exposes explicit canonical pricing revision preparation');
   assert(agentActions.includes('pricing.session.revision'), 'agent executable actions expose canonical pricing revision action');
   assert(agentActions.includes('getOrCreateDraftRevisionFromPublishedSession'), 'agent revision action uses canonical revision service');
+
+  const pricingService = read('backend/services/pricingService.js');
+  assert(pricingService.includes('value instanceof Date'), 'pricing backend ISO date helper handles PostgreSQL Date objects');
+  assert(pricingService.includes('const sourceDate = isoDate(source.pricing_date)'), 'revision workflow normalizes source pricing_date before reuse');
+  assert(!pricingService.includes('source.pricing_date, source.id]'), 'revision query never sends raw Date display strings back to PostgreSQL');
 }
 
 (async () => {
