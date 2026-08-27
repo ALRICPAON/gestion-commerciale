@@ -14,6 +14,13 @@ const {
   LABEL_WIDTH_MM,
   MAIN_ZONE,
   SAFE_MARGIN,
+  TAB_BOTTOM_MARGIN_MM,
+  TAB_HEIGHT_MM,
+  TAB_TOP_MARGIN_MM,
+  TAB_WIDTH_MM,
+  TAB_X_END_MM,
+  TAB_X_START_MM,
+  TAB_Y_START_MM,
   buildHealthLabelModels,
   combineZpl,
   formatAllergen,
@@ -84,7 +91,14 @@ assert.strictEqual(LABEL_VISUAL_WIDTH_DOTS, 1772);
 assert.strictEqual(LABEL_VISUAL_HEIGHT_DOTS, 827);
 assert.strictEqual(SAFE_MARGIN, 24);
 assert.deepStrictEqual(MAIN_ZONE, { x: 24, y: 24, width: 1724, height: 779 });
-assert.deepStrictEqual(DETACHABLE_TAB, { x: 24, y: 236, width: 1724, height: 354 });
+assert.strictEqual(TAB_X_START_MM, 30);
+assert.strictEqual(TAB_X_END_MM, 148);
+assert.strictEqual(TAB_WIDTH_MM, 118);
+assert.strictEqual(TAB_Y_START_MM, 34);
+assert.strictEqual(TAB_HEIGHT_MM, 22);
+assert.strictEqual(TAB_TOP_MARGIN_MM, 34);
+assert.strictEqual(TAB_BOTTOM_MARGIN_MM, 14);
+assert.deepStrictEqual(DETACHABLE_TAB, { x: 354, y: 402, width: 1394, height: 260 });
 assert.strictEqual(labels.length, 10, '10 colis doivent produire 10 etiquettes');
 assert.strictEqual(labels[0].net_weight, 3, 'le poids etiquette doit etre le poids par colis');
 assert.strictEqual(labels[0].net_weight_label, '3,000 kg');
@@ -172,11 +186,15 @@ assert(zplOrigins.length > 20, 'le ZPL doit contenir des champs positionnes');
 assert(zplOrigins.every((origin) => origin.x >= 0 && origin.x <= LABEL_WIDTH_DOTS), 'aucune origine X ne doit depasser la largeur imprimable');
 assert(zplOrigins.every((origin) => origin.y >= 0 && origin.y <= LABEL_HEIGHT_DOTS), 'aucune origine Y ne doit depasser la longueur imprimable');
 assert(zplOrigins.some((origin) => origin.x >= DETACHABLE_TAB.y && origin.y >= DETACHABLE_TAB.x), 'la languette doit recevoir des champs ZPL');
-['Nephrops norvegicus', 'Methode: Peche', 'ZONE DE PECHE', 'Sous-zone: VIII', 'Engin: Casiers', 'Lot: LOT-A', 'DATE DE CONDITIONNEMENT'].forEach((text) => {
+['LANGOUSTINE VIVANTE', 'Nephrops norvegicus', 'Methode: Peche', 'ZONE DE PECHE', 'Sous-zone: VIII', 'Engin: Casiers', 'Lot: LOT-A', 'DATE DE CONDITIONNEMENT'].forEach((text) => {
   const box = textBoxInZone(labels[0].zpl, text, DETACHABLE_TAB);
   assert(box, `champ attendu dans la languette: ${text}`);
 });
-assert(DETACHABLE_TAB.width >= Math.round(144 * 300 / 25.4), 'la languette doit utiliser quasiment toute la longueur de 146 mm');
+['Nephrops norvegicus', 'Methode: Peche', 'ZONE DE PECHE', 'Sous-zone: VIII', 'Engin: Casiers'].forEach((text) => {
+  const boxes = zplTextBoxes(labels[0].zpl).filter((box) => box.text.includes(text));
+  assert(boxes.length >= 1, `champ traceabilite attendu: ${text}`);
+  assert(boxes.every((box) => isInsideZone(box, DETACHABLE_TAB)), `champ traceabilite repete hors languette: ${text}`);
+});
 assert.strictEqual(oneLabel.length, 1, 'reimpression ligne copies=1 doit produire 1 etiquette');
 
 const defrostedLabels = buildHealthLabelModels({
@@ -429,11 +447,20 @@ assert.strictEqual(frontendSandbox.window.HealthLabels.PRINT_CARD_WIDTH_MM, 149)
 assert.strictEqual(frontendSandbox.window.HealthLabels.PRINT_CARD_HEIGHT_MM, 69);
 assert.strictEqual(frontendSandbox.window.HealthLabels.PRINT_SAFE_WIDTH_MM, 146);
 assert.strictEqual(frontendSandbox.window.HealthLabels.PRINT_SAFE_HEIGHT_MM, 66);
+assert.strictEqual(frontendSandbox.window.HealthLabels.TAB_X_START_MM, 30);
+assert.strictEqual(frontendSandbox.window.HealthLabels.TAB_X_END_MM, 148);
+assert.strictEqual(frontendSandbox.window.HealthLabels.TAB_WIDTH_MM, 118);
+assert.strictEqual(frontendSandbox.window.HealthLabels.TAB_Y_START_MM, 34);
+assert.strictEqual(frontendSandbox.window.HealthLabels.TAB_HEIGHT_MM, 22);
 const isolatedPrintHtml = frontendSandbox.window.HealthLabels.buildPrintDocument([labels[0], storageLabels[0]]);
 assert(isolatedPrintHtml.includes('<body><section class="health-label-print-sheet">'), 'document print doit injecter seulement la feuille etiquettes');
 assert(isolatedPrintHtml.includes('@page { size: 150mm 70mm; margin: 0; }'), 'document print isole doit fixer la page Chrome');
 assert(isolatedPrintHtml.includes('width: 149mm'), 'document print isole doit garder 1 mm de tolerance en largeur');
 assert(isolatedPrintHtml.includes('height: 69mm'), 'document print isole doit garder 1 mm de tolerance en hauteur');
+assert(isolatedPrintHtml.includes('left: 30mm'), 'document print doit placer la languette au depart reel');
+assert(isolatedPrintHtml.includes('top: 34mm'), 'document print doit placer la languette a la hauteur reelle');
+assert(isolatedPrintHtml.includes('width: 118mm'), 'document print doit utiliser la largeur reelle de languette');
+assert(isolatedPrintHtml.includes('height: 22mm'), 'document print doit utiliser la hauteur reelle de languette');
 assert(isolatedPrintHtml.includes('top: 64mm'), 'footer HTML print doit rester dans la zone sure basse');
 assert(isolatedPrintHtml.includes('height: 3mm'), 'footer HTML print doit avoir une hauteur bornee');
 assert((isolatedPrintHtml.match(/class="health-label-card"/g) || []).length === 2, 'un colis doit produire une seule carte etiquette dans le document isole');
@@ -449,8 +476,10 @@ assert(printSource.includes("document.createElement('iframe')"), 'impression doi
 const healthLabelsCssSource = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'css', 'pages', 'health-labels.css'), 'utf8');
 assert(healthLabelsCssSource.includes('aspect-ratio: 150 / 70'), 'CSS preview doit respecter le ratio 150 x 70');
 assert(healthLabelsCssSource.includes('position: relative'), 'CSS preview doit utiliser une carte reperee en mm');
-assert(healthLabelsCssSource.includes('top: 20mm'), 'CSS preview doit placer la zone detachable au centre vertical du BAT');
-assert(healthLabelsCssSource.includes('height: 30mm'), 'CSS preview doit donner 30 mm a la zone detachable issue du BAT');
+assert(healthLabelsCssSource.includes('left: 30mm'), 'CSS preview doit placer la languette au depart reel');
+assert(healthLabelsCssSource.includes('top: 34mm'), 'CSS preview doit placer la languette a la hauteur reelle');
+assert(healthLabelsCssSource.includes('width: 118mm'), 'CSS preview doit utiliser la largeur reelle de languette');
+assert(healthLabelsCssSource.includes('height: 22mm'), 'CSS preview doit donner 22 mm a la languette');
 assert(!healthLabelsCssSource.includes('border-top: 2px dashed'), 'CSS preview ne doit pas dessiner une fausse refente');
 assert(healthLabelsCssSource.includes('top: 64mm'), 'CSS preview doit garder le footer dans la zone sure basse');
 assert(healthLabelsCssSource.includes('height: 69mm'), 'CSS print doit garder 1 mm de tolerance en hauteur');

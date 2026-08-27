@@ -5,6 +5,11 @@
   const PRINT_CARD_HEIGHT_MM = 69;
   const PRINT_SAFE_WIDTH_MM = 146;
   const PRINT_SAFE_HEIGHT_MM = 66;
+  const TAB_X_START_MM = 30;
+  const TAB_Y_START_MM = 34;
+  const TAB_HEIGHT_MM = 22;
+  const TAB_X_END_MM = 148;
+  const TAB_WIDTH_MM = TAB_X_END_MM - TAB_X_START_MM;
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
@@ -100,15 +105,17 @@
       info('Produit', label.article_label || 'Article'),
       info('Nom scientifique', trace.latin_name),
       info('Methode', trace.production_method),
+      info('ALLERGENE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
+    ].join('');
+    const tabMiddle = [
       info('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone),
       info('Sous-zone', trace.sous_zone),
       info('Engin', trace.fishing_gear),
+      info('DLC/DDM', trace.dlc ? formatDate(trace.dlc) : ''),
     ].join('');
     const tabRight = [
       info('Lot', labelTrace(label)),
       info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
-      info('DLC/DDM', trace.dlc ? formatDate(trace.dlc) : ''),
-      info('ALLERGENE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
       info('CONSERVATION', label.storage_temperature_label),
       info('MENTION', label.storage_instruction_label),
       info('ETAT', trace.defrosted ? 'DECONGELE' : ''),
@@ -139,6 +146,7 @@
       <section class="health-label-meta">${mainMeta}</section>
       <section class="health-label-tab">
         <div class="health-label-tab-column">${tabLeft}</div>
+        <div class="health-label-tab-column">${tabMiddle}</div>
         <div class="health-label-tab-column">${tabRight}</div>
       </section>
       <footer class="health-label-footer">
@@ -277,36 +285,36 @@
     }
     .health-label-tab {
       display: grid;
-      gap: 0 8px;
-      grid-template-columns: 1fr 1fr;
-      height: 30mm;
-      left: 2mm;
+      gap: 0 2mm;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      height: ${TAB_HEIGHT_MM}mm;
+      left: ${TAB_X_START_MM}mm;
       min-height: 0;
       overflow: hidden;
-      padding: 3px 0 1px;
+      padding: 1mm 0 0;
       position: absolute;
-      top: 20mm;
-      width: ${PRINT_SAFE_WIDTH_MM}mm;
+      top: ${TAB_Y_START_MM}mm;
+      width: ${TAB_WIDTH_MM}mm;
     }
     .health-label-tab-column {
       align-content: start;
       display: grid;
-      gap: 1px 6px;
-      grid-template-columns: 1fr 1fr;
+      gap: 1px;
+      grid-template-columns: 1fr;
       min-width: 0;
       overflow: hidden;
     }
     .health-label-tab span {
       color: #45515c;
       display: block;
-      font-size: 5px;
+      font-size: 4.5px;
       font-weight: 800;
       line-height: 1;
       text-transform: uppercase;
     }
     .health-label-tab div strong {
       display: block;
-      font-size: 7px;
+      font-size: 6px;
       line-height: 1.05;
       overflow-wrap: anywhere;
     }
@@ -315,17 +323,17 @@
       display: grid;
       gap: 8px;
       grid-template-columns: minmax(0, 1fr) 34%;
-      height: 8mm;
+      height: 5mm;
       left: 2mm;
       min-height: 0;
-      padding: 2px 0;
+      padding: 1px 0;
       position: absolute;
-      top: 52mm;
+      top: 56mm;
       width: ${PRINT_SAFE_WIDTH_MM}mm;
     }
     .health-label-product h2 {
       align-self: center;
-      font-size: 16px;
+      font-size: 13px;
       line-height: 1.05;
       margin: 0;
       overflow-wrap: anywhere;
@@ -338,7 +346,7 @@
       padding-left: 8px;
     }
     .health-label-weight strong {
-      font-size: 15px;
+      font-size: 13px;
       line-height: 1.05;
     }
     .health-label-meta {
@@ -351,7 +359,7 @@
       min-height: 0;
       padding: 1px 0;
       position: absolute;
-      top: 60mm;
+      top: 61mm;
       width: ${PRINT_SAFE_WIDTH_MM}mm;
     }
     .health-label-meta div { min-width: 0; }
@@ -496,6 +504,11 @@
     PRINT_CARD_HEIGHT_MM,
     PRINT_SAFE_WIDTH_MM,
     PRINT_SAFE_HEIGHT_MM,
+    TAB_X_START_MM,
+    TAB_Y_START_MM,
+    TAB_HEIGHT_MM,
+    TAB_X_END_MM,
+    TAB_WIDTH_MM,
     print,
     renderPreview,
     resolveLogoUrl,

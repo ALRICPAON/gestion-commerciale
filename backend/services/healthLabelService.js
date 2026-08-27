@@ -9,6 +9,13 @@ const LABEL_VISUAL_WIDTH_DOTS = LABEL_HEIGHT_DOTS;
 const LABEL_VISUAL_HEIGHT_DOTS = LABEL_WIDTH_DOTS;
 const SAFE_MARGIN_MM = 2;
 const SAFE_MARGIN = Math.round(SAFE_MARGIN_MM * DOTS_PER_MM_300_DPI);
+const TAB_X_START_MM = 30;
+const TAB_Y_START_MM = 34;
+const TAB_HEIGHT_MM = 22;
+const TAB_X_END_MM = 148;
+const TAB_WIDTH_MM = TAB_X_END_MM - TAB_X_START_MM;
+const TAB_TOP_MARGIN_MM = TAB_Y_START_MM;
+const TAB_BOTTOM_MARGIN_MM = LABEL_VISUAL_HEIGHT_MM - TAB_Y_START_MM - TAB_HEIGHT_MM;
 
 function mm(value) {
   return Math.round(value * DOTS_PER_MM_300_DPI);
@@ -21,16 +28,16 @@ const FIXED_TOP_ZONE = {
   height: mm(16),
 };
 const DETACHABLE_TAB = {
-  x: mm(2),
-  y: mm(20),
-  width: mm(146),
-  height: mm(30),
+  x: mm(TAB_X_START_MM),
+  y: mm(TAB_Y_START_MM),
+  width: mm(TAB_WIDTH_MM),
+  height: mm(TAB_HEIGHT_MM),
 };
 const FIXED_BOTTOM_ZONE = {
   x: mm(2),
-  y: mm(52),
+  y: mm(56),
   width: mm(146),
-  height: mm(16),
+  height: mm(12),
 };
 const MAIN_ZONE = {
   x: SAFE_MARGIN,
@@ -38,7 +45,7 @@ const MAIN_ZONE = {
   width: LABEL_VISUAL_WIDTH_DOTS - (SAFE_MARGIN * 2),
   height: LABEL_VISUAL_HEIGHT_DOTS - (SAFE_MARGIN * 2),
 };
-const TAB_INSET = mm(2);
+const TAB_INSET = mm(1);
 const FAO_AREA_LABELS = new Map([
   ['27', 'Atlantique Nord-Est'],
 ]);
@@ -443,27 +450,28 @@ function renderHealthLabelZpl(label) {
 
   const tab = DETACHABLE_TAB;
   const tabX = TAB_INSET;
-  lines.push(zplZoneBlock(tab, tabX, mm(1), mm(45), 18, label.article_label || '-', 1));
-  lines.push(zplZoneBlock(tab, tabX, mm(5), mm(45), 16, trace.latin_name, 1));
-  lines.push(zplZoneBlock(tab, tabX, mm(9), mm(45), 16, field('Methode', trace.production_method), 1));
-  lines.push(zplZoneBlock(tab, tabX, mm(13), mm(45), 16, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
-  lines.push(zplZoneBlock(tab, tabX, mm(21), mm(21), 16, field('Sous-zone', trace.sous_zone), 1));
-  lines.push(zplZoneBlock(tab, mm(27), mm(21), mm(26), 16, field('Engin', trace.fishing_gear), 1));
-  lines.push(zplZoneBlock(tab, mm(53), mm(1), mm(34), 16, field('Lot', lot), 1));
-  lines.push(zplZoneBlock(tab, mm(53), mm(5), mm(42), 16, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
-  lines.push(zplZoneBlock(tab, mm(53), mm(9), mm(34), 16, field('DLC/DDM', formatDate(trace.dlc)), 1));
-  lines.push(zplZoneBlock(tab, mm(53), mm(13), mm(42), 16, field('ALLERGENE', label.allergen_label), 1));
-  lines.push(zplZoneBlock(tab, mm(100), mm(1), mm(34), 16, field('CONSERVATION', label.storage_temperature_label), 1));
-  lines.push(zplZoneBlock(tab, mm(100), mm(5), mm(42), 16, field('MENTION', label.storage_instruction_label), 3));
-  if (trace.defrosted) lines.push(zplZoneBlock(tab, mm(100), mm(18), mm(28), 20, 'DECONGELE', 1));
-  lines.push(zplZoneBlock(tab, mm(100), mm(23), mm(30), 14, `BL ${label.delivery_note_reference || ''} - L${label.line_number || ''}`, 1));
-  lines.push(zplZoneBlock(tab, mm(127), mm(23), mm(17), 14, `Colis ${label.copy_index}/${label.copy_count}`, 1));
+  const tabCol1 = tabX;
+  const tabCol2 = mm(40);
+  const tabCol3 = mm(78);
+  lines.push(zplZoneBlock(tab, tabCol1, mm(1), mm(36), 14, label.article_label || '-', 1));
+  lines.push(zplZoneBlock(tab, tabCol1, mm(5), mm(36), 13, trace.latin_name, 1));
+  lines.push(zplZoneBlock(tab, tabCol1, mm(9), mm(36), 13, field('Methode', trace.production_method), 1));
+  lines.push(zplZoneBlock(tab, tabCol2, mm(1), mm(36), 13, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
+  lines.push(zplZoneBlock(tab, tabCol2, mm(9), mm(17), 13, field('Sous-zone', trace.sous_zone), 1));
+  lines.push(zplZoneBlock(tab, mm(59), mm(9), mm(18), 13, field('Engin', trace.fishing_gear), 1));
+  lines.push(zplZoneBlock(tab, tabCol3, mm(1), mm(38), 13, field('Lot', lot), 1));
+  lines.push(zplZoneBlock(tab, tabCol3, mm(5), mm(38), 13, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
+  lines.push(zplZoneBlock(tab, tabCol3, mm(9), mm(38), 13, field('CONSERVATION', label.storage_temperature_label), 1));
+  lines.push(zplZoneBlock(tab, tabCol3, mm(13), mm(38), 12, field('MENTION', label.storage_instruction_label), 2));
+  lines.push(zplZoneBlock(tab, tabCol1, mm(14), mm(36), 12, field('ALLERGENE', label.allergen_label), 1));
+  lines.push(zplZoneBlock(tab, tabCol2, mm(14), mm(36), 12, field('DLC/DDM', formatDate(trace.dlc)), 1));
+  if (trace.defrosted) lines.push(zplZoneBlock(tab, tabCol3, mm(20), mm(28), 13, 'DECONGELE', 1));
 
-  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(1), mm(1), mm(82), 34, label.article_label || '-', 2));
-  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(86), mm(1), mm(58), 38, `POIDS NET: ${label.net_weight_label}`, 1));
-  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(1), mm(10), mm(34), 18, field('Calibre', label.caliber), 1));
-  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(40), mm(10), mm(40), 18, field('Lot', lot), 1));
-  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(86), mm(10), mm(58), 18, field('DATE COND.', label.conditioning_date_label || formatDate(label.document_date)), 1));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(1), mm(1), mm(82), 26, label.article_label || '-', 1));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(86), mm(1), mm(58), 30, `POIDS NET: ${label.net_weight_label}`, 1));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(1), mm(7), mm(34), 16, field('Calibre', label.caliber), 1));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(40), mm(7), mm(40), 16, field('Lot', lot), 1));
+  lines.push(zplZoneBlock(FIXED_BOTTOM_ZONE, mm(86), mm(7), mm(58), 16, field('DATE COND.', label.conditioning_date_label || formatDate(label.document_date)), 1));
   lines.push('^XZ');
 
   return lines.join('\n').replace(/\n{2,}/g, '\n');
@@ -489,6 +497,13 @@ module.exports = {
   LABEL_WIDTH_MM,
   MAIN_ZONE,
   SAFE_MARGIN,
+  TAB_BOTTOM_MARGIN_MM,
+  TAB_HEIGHT_MM,
+  TAB_TOP_MARGIN_MM,
+  TAB_WIDTH_MM,
+  TAB_X_END_MM,
+  TAB_X_START_MM,
+  TAB_Y_START_MM,
   buildHealthLabelModels,
   combineZpl,
   formatAllergen,
