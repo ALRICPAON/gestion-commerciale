@@ -124,8 +124,7 @@
   width: 65mm;
 }
 
-.health-label-client span,
-.health-label-weight span {
+.health-label-client span {
   color: #45515c;
   font-size: 9px;
   font-weight: 800;
@@ -139,85 +138,72 @@
   overflow-wrap: anywhere;
 }
 
-.health-label-product {
-  align-items: stretch;
+.health-label-fixed-trace-top {
   box-sizing: border-box;
   display: grid;
-  gap: 8px;
-  grid-template-columns: minmax(0, 1fr) 34%;
-  height: 5mm;
+  gap: 0 3mm;
+  grid-template-columns: 1fr 1fr 42mm;
+  height: 14mm;
   left: 2mm;
   min-height: 0;
-  padding: 1px 0;
+  overflow: hidden;
   position: absolute;
-  top: 56mm;
+  top: 19mm;
   width: 146mm;
 }
 
-.health-label-product h2 {
-  align-self: center;
-  font-size: 13px;
-  line-height: 1.05;
-  margin: 0;
-  overflow-wrap: anywhere;
-  text-transform: uppercase;
-}
-
-.health-label-weight {
-  align-content: center;
-  border-left: 1px solid #111820;
+.health-label-fixed-trace-top > div {
+  align-content: start;
   display: grid;
-  padding-left: 8px;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
 }
 
-.health-label-weight strong {
-  font-size: 13px;
-  line-height: 1.05;
-}
-
-.health-label-meta {
+.health-label-fixed-trace-bottom {
   align-content: start;
   box-sizing: border-box;
   display: grid;
-  gap: 2px 8px;
-  height: 4mm;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px 3mm;
+  height: 10mm;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   left: 2mm;
   min-height: 0;
-  padding: 1px 0;
+  overflow: hidden;
   position: absolute;
-  top: 61mm;
+  top: 54mm;
   width: 146mm;
 }
 
-.health-label-meta div {
+.health-label-fixed-trace-bottom div {
   min-width: 0;
 }
 
-.health-label-meta span {
+.health-label-fixed-trace-top span,
+.health-label-fixed-trace-bottom span {
   color: #45515c;
   display: block;
-  font-size: 6px;
+  font-size: 5px;
   font-weight: 800;
   line-height: 1;
   text-transform: uppercase;
 }
 
-.health-label-meta strong {
+.health-label-fixed-trace-top strong,
+.health-label-fixed-trace-bottom strong {
   display: block;
-  font-size: 8px;
+  font-size: 7px;
   line-height: 1.05;
   overflow-wrap: anywhere;
 }
 
-.health-label-meta .health-label-allergen {
+.health-label-fixed-trace-bottom .health-label-allergen {
   border: 1px solid #111820;
-  grid-column: 1 / -1;
-  padding: 3px 5px;
+  padding: 1px 3px;
 }
 
-.health-label-meta .health-label-allergen strong {
-  font-size: 11px;
+.health-label-fixed-trace-bottom .health-label-allergen strong {
+  font-size: 7px;
   font-weight: 900;
 }
 
@@ -225,14 +211,14 @@
   box-sizing: border-box;
   display: grid;
   gap: 0 2mm;
-  height: 22mm;
+  height: 18mm;
   left: 30mm;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   min-height: 0;
   overflow: hidden;
   padding: 1mm 0 0;
   position: absolute;
-  top: 34mm;
+  top: 35mm;
   width: 118mm;
 }
 

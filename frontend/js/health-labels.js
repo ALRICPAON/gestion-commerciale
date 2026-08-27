@@ -6,10 +6,14 @@
   const PRINT_SAFE_WIDTH_MM = 146;
   const PRINT_SAFE_HEIGHT_MM = 66;
   const TAB_X_START_MM = 30;
-  const TAB_Y_START_MM = 34;
-  const TAB_HEIGHT_MM = 22;
   const TAB_X_END_MM = 148;
   const TAB_WIDTH_MM = TAB_X_END_MM - TAB_X_START_MM;
+  const TAB_PHYSICAL_Y_START_MM = 34;
+  const TAB_PHYSICAL_HEIGHT_MM = 20;
+  const TAB_SAFE_Y_START_MM = 35;
+  const TAB_SAFE_HEIGHT_MM = 18;
+  const TAB_Y_START_MM = TAB_SAFE_Y_START_MM;
+  const TAB_HEIGHT_MM = TAB_SAFE_HEIGHT_MM;
 
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
@@ -96,10 +100,28 @@
       label.delivered_client_name,
       label.delivered_client_store_identifier ? `N° ${label.delivered_client_store_identifier}` : '',
     ]).join(' - ');
-    const mainMeta = [
+    const fixedTopLeft = [
+      info('Produit', label.article_label || 'Article'),
+      info('Nom scientifique', trace.latin_name),
+      info('Methode', trace.production_method),
+    ].join('');
+    const fixedTopMiddle = [
+      info('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone),
+      info('Sous-zone', trace.sous_zone),
+      info('Engin', trace.fishing_gear),
+    ].join('');
+    const fixedTopRight = [
       info('Calibre', label.caliber),
+      info('POIDS NET', label.net_weight_label),
+    ].join('');
+    const fixedBottom = [
       info('Lot', labelTrace(label)),
       info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
+      info('DLC/DDM', trace.dlc ? formatDate(trace.dlc) : ''),
+      info('ALLERGENE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
+      info('CONSERVATION', label.storage_temperature_label),
+      info('MENTION', label.storage_instruction_label),
+      info('ETAT', trace.defrosted ? 'DECONGELE' : ''),
     ].join('');
     const tabLeft = [
       info('Produit', label.article_label || 'Article'),
@@ -136,19 +158,17 @@
         <span>POUR</span>
         <strong>${escapeHtml(client || '-')}</strong>
       </section>
-      <section class="health-label-product">
-        <h2>${escapeHtml(label.article_label || 'Article')}</h2>
-        <div class="health-label-weight">
-          <span>POIDS NET</span>
-          <strong>${escapeHtml(label.net_weight_label || '')}</strong>
-        </div>
+      <section class="health-label-fixed-trace-top">
+        <div>${fixedTopLeft}</div>
+        <div>${fixedTopMiddle}</div>
+        <div>${fixedTopRight}</div>
       </section>
-      <section class="health-label-meta">${mainMeta}</section>
       <section class="health-label-tab">
         <div class="health-label-tab-column">${tabLeft}</div>
         <div class="health-label-tab-column">${tabMiddle}</div>
         <div class="health-label-tab-column">${tabRight}</div>
       </section>
+      <section class="health-label-fixed-trace-bottom">${fixedBottom}</section>
       <footer class="health-label-footer">
         <span>${escapeHtml(label.delivery_note_reference || '')} - Ligne ${escapeHtml(label.line_number || '')}</span>
         <span>Colis ${escapeHtml(label.copy_index || '')}/${escapeHtml(label.copy_count || '')}</span>
@@ -270,8 +290,7 @@
       top: 10mm;
       width: 65mm;
     }
-    .health-label-client span,
-    .health-label-weight span {
+    .health-label-client span {
       color: #45515c;
       font-size: 9px;
       font-weight: 800;
@@ -281,6 +300,41 @@
       display: block;
       font-size: 18px;
       line-height: 1;
+      overflow-wrap: anywhere;
+    }
+    .health-label-fixed-trace-top {
+      display: grid;
+      gap: 0 3mm;
+      grid-template-columns: 1fr 1fr 42mm;
+      height: 14mm;
+      left: 2mm;
+      min-height: 0;
+      overflow: hidden;
+      position: absolute;
+      top: 19mm;
+      width: ${PRINT_SAFE_WIDTH_MM}mm;
+    }
+    .health-label-fixed-trace-top > div {
+      align-content: start;
+      display: grid;
+      gap: 1px;
+      min-width: 0;
+      overflow: hidden;
+    }
+    .health-label-fixed-trace-top span,
+    .health-label-fixed-trace-bottom span {
+      color: #45515c;
+      display: block;
+      font-size: 5px;
+      font-weight: 800;
+      line-height: 1;
+      text-transform: uppercase;
+    }
+    .health-label-fixed-trace-top strong,
+    .health-label-fixed-trace-bottom strong {
+      display: block;
+      font-size: 7px;
+      line-height: 1.05;
       overflow-wrap: anywhere;
     }
     .health-label-tab {
@@ -318,64 +372,18 @@
       line-height: 1.05;
       overflow-wrap: anywhere;
     }
-    .health-label-product {
-      align-items: stretch;
-      display: grid;
-      gap: 8px;
-      grid-template-columns: minmax(0, 1fr) 34%;
-      height: 5mm;
-      left: 2mm;
-      min-height: 0;
-      padding: 1px 0;
-      position: absolute;
-      top: 56mm;
-      width: ${PRINT_SAFE_WIDTH_MM}mm;
-    }
-    .health-label-product h2 {
-      align-self: center;
-      font-size: 13px;
-      line-height: 1.05;
-      margin: 0;
-      overflow-wrap: anywhere;
-      text-transform: uppercase;
-    }
-    .health-label-weight {
-      align-content: center;
-      border-left: 1px solid #111820;
-      display: grid;
-      padding-left: 8px;
-    }
-    .health-label-weight strong {
-      font-size: 13px;
-      line-height: 1.05;
-    }
-    .health-label-meta {
+    .health-label-fixed-trace-bottom {
       align-content: start;
       display: grid;
-      gap: 2px 8px;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      height: 4mm;
+      gap: 1px 3mm;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      height: 10mm;
       left: 2mm;
       min-height: 0;
-      padding: 1px 0;
+      overflow: hidden;
       position: absolute;
-      top: 61mm;
+      top: 54mm;
       width: ${PRINT_SAFE_WIDTH_MM}mm;
-    }
-    .health-label-meta div { min-width: 0; }
-    .health-label-meta span {
-      color: #45515c;
-      display: block;
-      font-size: 6px;
-      font-weight: 800;
-      line-height: 1;
-      text-transform: uppercase;
-    }
-    .health-label-meta strong {
-      display: block;
-      font-size: 8px;
-      line-height: 1.05;
-      overflow-wrap: anywhere;
     }
     .health-label-footer {
       color: #45515c;
@@ -509,6 +517,10 @@
     TAB_HEIGHT_MM,
     TAB_X_END_MM,
     TAB_WIDTH_MM,
+    TAB_PHYSICAL_Y_START_MM,
+    TAB_PHYSICAL_HEIGHT_MM,
+    TAB_SAFE_Y_START_MM,
+    TAB_SAFE_HEIGHT_MM,
     print,
     renderPreview,
     resolveLogoUrl,
