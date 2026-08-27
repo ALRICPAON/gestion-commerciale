@@ -128,34 +128,42 @@ function normalizeDailyPricingPayload(body = {}) {
     default_margin_level_3: margin(body.default_margin_level_3, 0.20),
     selected_client_ids: Array.isArray(body.selected_client_ids) ? body.selected_client_ids.filter(isUuid) : [],
     order_entries: body.entries && typeof body.entries === 'object' ? body.entries : {},
-    products: products.slice(0, 60).map((product, index) => ({
-      column_uid: clean(product.uid || product.column_uid) || `col-${index + 1}`,
-      article_id: isUuid(product.article_id) ? product.article_id : null,
-      supplier_id: isUuid(product.supplier_id || body.supplier_id) ? (product.supplier_id || body.supplier_id) : null,
-      plu: clean(product.plu),
-      designation_snapshot: clean(product.designation || product.designation_snapshot || product.label) || 'Produit',
-      display_order: Number.isFinite(Number(product.display_order)) ? Number(product.display_order) : index + 1,
-      purchase_price_ht: nullablePositive(product.purchase_price_ht),
-      price_unit: clean(product.price_unit || product.unit) || 'kg',
-      supplier_available_quantity: nullablePositive(product.supplier_available_quantity ?? product.stock),
-      sale_price_level_1_ht: nullablePositive(product.sale_price_level_1_ht ?? product.price_level_1_ht),
-      sale_price_level_2_ht: nullablePositive(product.sale_price_level_2_ht ?? product.price_level_2_ht),
-      sale_price_level_3_ht: nullablePositive(product.sale_price_level_3_ht ?? product.price_level_3_ht),
-      pricing_session_id: clean(product.pricing_session_id),
-      pricing_line_id: clean(product.pricing_line_id),
-      tariff_prices: Array.isArray(product.tariff_prices) ? product.tariff_prices : [],
-      transport_cost_ht: nullablePositive(product.transport_cost_ht),
-      cost_rendered_ht: nullablePositive(product.cost_rendered_ht),
-      real_margin_level_1: nullableNumber(product.real_margin_level_1),
-      real_margin_level_2: nullableNumber(product.real_margin_level_2),
-      real_margin_level_3: nullableNumber(product.real_margin_level_3),
-      manual_price_level_1: Boolean(product.manual_price_level_1),
-      manual_price_level_2: Boolean(product.manual_price_level_2),
-      manual_price_level_3: Boolean(product.manual_price_level_3),
-      family_code: clean(product.family_code),
-      family_name: clean(product.family_name),
-      sale_unit: clean(product.sale_unit || product.unit),
-    })),
+    products: products.slice(0, 60).map((product, index) => {
+      const purchasePrice = nullablePositive(product.purchase_price_ht);
+      const transportCost = pos(product.transport_cost_ht, 0);
+      const explicitCostRendered = nullablePositive(product.cost_rendered_ht);
+      const costRendered = explicitCostRendered !== null
+        ? explicitCostRendered
+        : (purchasePrice !== null ? Number((purchasePrice + transportCost).toFixed(4)) : null);
+      return {
+        column_uid: clean(product.uid || product.column_uid) || `col-${index + 1}`,
+        article_id: isUuid(product.article_id) ? product.article_id : null,
+        supplier_id: isUuid(product.supplier_id || body.supplier_id) ? (product.supplier_id || body.supplier_id) : null,
+        plu: clean(product.plu),
+        designation_snapshot: clean(product.designation || product.designation_snapshot || product.label) || 'Produit',
+        display_order: Number.isFinite(Number(product.display_order)) ? Number(product.display_order) : index + 1,
+        purchase_price_ht: purchasePrice,
+        price_unit: clean(product.price_unit || product.unit) || 'kg',
+        supplier_available_quantity: nullablePositive(product.supplier_available_quantity ?? product.stock),
+        sale_price_level_1_ht: nullablePositive(product.sale_price_level_1_ht ?? product.price_level_1_ht),
+        sale_price_level_2_ht: nullablePositive(product.sale_price_level_2_ht ?? product.price_level_2_ht),
+        sale_price_level_3_ht: nullablePositive(product.sale_price_level_3_ht ?? product.price_level_3_ht),
+        pricing_session_id: clean(product.pricing_session_id),
+        pricing_line_id: clean(product.pricing_line_id),
+        tariff_prices: Array.isArray(product.tariff_prices) ? product.tariff_prices : [],
+        transport_cost_ht: transportCost,
+        cost_rendered_ht: costRendered,
+        real_margin_level_1: nullableNumber(product.real_margin_level_1),
+        real_margin_level_2: nullableNumber(product.real_margin_level_2),
+        real_margin_level_3: nullableNumber(product.real_margin_level_3),
+        manual_price_level_1: Boolean(product.manual_price_level_1),
+        manual_price_level_2: Boolean(product.manual_price_level_2),
+        manual_price_level_3: Boolean(product.manual_price_level_3),
+        family_code: clean(product.family_code),
+        family_name: clean(product.family_name),
+        sale_unit: clean(product.sale_unit || product.unit),
+      };
+    }),
   };
 }
 
@@ -1136,3 +1144,4 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
 });
 
 module.exports = router;
+module.exports._normalizeDailyPricingPayloadForTest = normalizeDailyPricingPayload;

@@ -296,6 +296,46 @@ async function assertDraftSession(db, storeId, sessionId) {
   return session;
 }
 
+async function editableSessionForMutation(db, storeId, sessionId, input = {}, context = {}) {
+  const result = await db.query(
+    `SELECT * FROM pricing_sessions WHERE id = $1 AND store_id = $2 FOR UPDATE`,
+    [sessionId, storeId]
+  );
+  const session = result.rows[0];
+  if (!session) throw expose(404, 'Session tarification introuvable');
+  if (session.status === 'draft') return { session, revision: null };
+  if (session.status === 'published' && input.create_revision_if_published === true) {
+    const revision = await getOrCreateDraftRevisionFromPublishedSession(db, storeId, { source_session_id: session.id }, context);
+    return { session: revision.session, revision };
+  }
+  throw expose(409, 'Une session publiee ne peut pas etre modifiee');
+}
+
+async function findRevisionLineForSourceLine(db, storeId, revisionSessionId, sourceLine) {
+  if (sourceLine.article_id) {
+    const byArticle = await db.query(
+      `SELECT id
+       FROM pricing_lines
+       WHERE store_id = $1 AND pricing_session_id = $2 AND article_id = $3
+       ORDER BY display_order ASC, created_at ASC
+       LIMIT 1`,
+      [storeId, revisionSessionId, sourceLine.article_id]
+    );
+    if (byArticle.rows[0]) return byArticle.rows[0].id;
+  }
+  const bySnapshot = await db.query(
+    `SELECT id
+     FROM pricing_lines
+     WHERE store_id = $1 AND pricing_session_id = $2
+       AND COALESCE(plu_snapshot, '') = COALESCE($3, '')
+       AND COALESCE(designation_snapshot, '') = COALESCE($4, '')
+     ORDER BY display_order ASC, created_at ASC
+     LIMIT 1`,
+    [storeId, revisionSessionId, sourceLine.plu_snapshot, sourceLine.designation_snapshot]
+  );
+  return bySnapshot.rows[0]?.id || null;
+}
+
 async function fetchArticle(db, storeId, articleId) {
   if (!clean(articleId)) return null;
   const result = await db.query(
@@ -409,6 +449,10 @@ async function duplicatePricingSession(db, storeId, input = {}, context = {}) {
 }
 
 async function createRevisionFromPublishedSession(db, storeId, input = {}, context = {}) {
+  return getOrCreateDraftRevisionFromPublishedSession(db, storeId, input, context);
+}
+
+async function getOrCreateDraftRevisionFromPublishedSession(db, storeId, input = {}, context = {}) {
   return inTransaction(db, async (client) => {
     const sourceId = clean(input.source_session_id || input.pricing_session_id || input.session_id || input.id);
     if (!sourceId) throw expose(400, 'source_session_id requis');
@@ -421,12 +465,37 @@ async function createRevisionFromPublishedSession(db, storeId, input = {}, conte
     )).rows[0];
     if (!source) throw expose(404, 'Session tarification introuvable');
     if (source.status !== 'published') throw expose(409, 'Seule une session publiee peut servir de base a une revision');
-    return duplicatePricingSession(client, storeId, {
+    const existing = (await client.query(
+      `SELECT *
+       FROM pricing_sessions
+       WHERE store_id = $1
+         AND pricing_date = $2::date
+         AND source_session_id = $3
+         AND status = 'draft'
+       ORDER BY version_number DESC, created_at DESC
+       LIMIT 1
+       FOR UPDATE`,
+      [storeId, source.pricing_date, source.id]
+    )).rows[0];
+    if (existing) {
+      return {
+        ...(await getPricingSession(client, storeId, { id: existing.id })),
+        revision_created: false,
+        revision_reused: true,
+        source_session_id: source.id,
+      };
+    }
+    return {
+      ...(await duplicatePricingSession(client, storeId, {
       source_session_id: source.id,
       pricing_date: source.pricing_date,
       title: clean(input.title) || source.title || `Tarification du ${source.pricing_date}`,
       notes: clean(input.notes) || source.notes,
-    }, context);
+      }, context)),
+      revision_created: true,
+      revision_reused: false,
+      source_session_id: source.id,
+    };
   });
 }
 
@@ -449,7 +518,8 @@ async function upsertLineTariffs(db, storeId, lineId, tariffs = []) {
 
 async function addPricingLine(db, storeId, input = {}, context = {}) {
   return inTransaction(db, async (client) => {
-    const session = await assertDraftSession(client, storeId, clean(input.pricing_session_id || input.session_id));
+    const editable = await editableSessionForMutation(client, storeId, clean(input.pricing_session_id || input.session_id), input, context);
+    const session = editable.session;
     const article = await fetchArticle(client, storeId, clean(input.article_id));
     const supplier = await assertStoreSupplier(client, storeId, input.supplier_id);
     const nextOrder = Number.isInteger(Number(input.display_order)) ? Number(input.display_order) : (await client.query(
@@ -487,7 +557,14 @@ async function addPricingLine(db, storeId, input = {}, context = {}) {
       { legacy_level: 3, price_ht: input.sale_price_level_3_ht ?? input.tariff_3 },
     ].filter((item) => item.price_ht !== undefined);
     await upsertLineTariffs(client, storeId, line.id, defaultTariffs);
-    return getPricingLine(client, storeId, { id: line.id });
+    const saved = await getPricingLine(client, storeId, { id: line.id });
+    if (editable.revision) {
+      saved.revision_created = Boolean(editable.revision.revision_created);
+      saved.revision_reused = Boolean(editable.revision.revision_reused);
+      saved.source_session_id = editable.revision.source_session_id;
+      saved.revision_session_id = session.id;
+    }
+    return saved;
   });
 }
 
@@ -496,26 +573,33 @@ async function updatePricingLine(db, storeId, input = {}, context = {}) {
     const lineId = clean(input.pricing_line_id || input.line_id || input.id);
     const current = (await client.query('SELECT * FROM pricing_lines WHERE id = $1 AND store_id = $2 FOR UPDATE', [lineId, storeId])).rows[0];
     if (!current) throw expose(404, 'Ligne tarification introuvable');
-    await assertDraftSession(client, storeId, current.pricing_session_id);
+    const editable = await editableSessionForMutation(client, storeId, current.pricing_session_id, input, context);
+    const targetLineId = editable.revision
+      ? await findRevisionLineForSourceLine(client, storeId, editable.session.id, current)
+      : lineId;
+    if (!targetLineId) throw expose(404, 'Ligne de revision introuvable');
+    const targetCurrent = editable.revision
+      ? (await client.query('SELECT * FROM pricing_lines WHERE id = $1 AND store_id = $2 FOR UPDATE', [targetLineId, storeId])).rows[0]
+      : current;
     const article = input.article_id !== undefined ? await fetchArticle(client, storeId, clean(input.article_id)) : null;
     const supplier = input.supplier_id !== undefined ? await assertStoreSupplier(client, storeId, input.supplier_id) : null;
     const next = {
-      article_id: input.article_id !== undefined ? article?.id || null : current.article_id,
-      supplier_id: input.supplier_id !== undefined ? supplier?.id || null : current.supplier_id,
-      plu_snapshot: article?.plu || (input.plu !== undefined ? clean(input.plu) : current.plu_snapshot),
-      designation_snapshot: article?.designation || (input.designation_snapshot !== undefined || input.designation !== undefined ? clean(input.designation_snapshot || input.designation) : current.designation_snapshot),
-      family_code: article?.family_code || (input.family_code !== undefined ? clean(input.family_code) : current.family_code),
-      family_name: article?.family_name || (input.family_name !== undefined ? clean(input.family_name) : current.family_name),
-      sale_unit: input.sale_unit !== undefined ? clean(input.sale_unit) : current.sale_unit,
-      price_unit: input.price_unit !== undefined ? clean(input.price_unit) : current.price_unit,
-      purchase_price_ht: input.purchase_price_ht !== undefined || input.purchase_price !== undefined ? nonNegative(input.purchase_price_ht ?? input.purchase_price) : current.purchase_price_ht,
-      purchase_price_source: clean(input.purchase_price_source) || current.purchase_price_source,
-      supplier_designation_original: input.supplier_designation_original !== undefined ? clean(input.supplier_designation_original) : current.supplier_designation_original,
-      transport_cost_ht: input.transport_cost_ht !== undefined || input.transport_cost !== undefined ? nonNegative(input.transport_cost_ht ?? input.transport_cost, 0) : current.transport_cost_ht,
-      transport_cost_source: clean(input.transport_cost_source) || current.transport_cost_source,
-      transport_cost_forced: input.transport_cost_forced !== undefined ? input.transport_cost_forced === true : current.transport_cost_forced,
-      exclude_from_mercuriale: input.exclude_from_mercuriale !== undefined ? input.exclude_from_mercuriale === true : current.exclude_from_mercuriale,
-      notes: input.notes !== undefined ? clean(input.notes) : current.notes,
+      article_id: input.article_id !== undefined ? article?.id || null : targetCurrent.article_id,
+      supplier_id: input.supplier_id !== undefined ? supplier?.id || null : targetCurrent.supplier_id,
+      plu_snapshot: article?.plu || (input.plu !== undefined ? clean(input.plu) : targetCurrent.plu_snapshot),
+      designation_snapshot: article?.designation || (input.designation_snapshot !== undefined || input.designation !== undefined ? clean(input.designation_snapshot || input.designation) : targetCurrent.designation_snapshot),
+      family_code: article?.family_code || (input.family_code !== undefined ? clean(input.family_code) : targetCurrent.family_code),
+      family_name: article?.family_name || (input.family_name !== undefined ? clean(input.family_name) : targetCurrent.family_name),
+      sale_unit: input.sale_unit !== undefined ? clean(input.sale_unit) : targetCurrent.sale_unit,
+      price_unit: input.price_unit !== undefined ? clean(input.price_unit) : targetCurrent.price_unit,
+      purchase_price_ht: input.purchase_price_ht !== undefined || input.purchase_price !== undefined ? nonNegative(input.purchase_price_ht ?? input.purchase_price) : targetCurrent.purchase_price_ht,
+      purchase_price_source: clean(input.purchase_price_source) || targetCurrent.purchase_price_source,
+      supplier_designation_original: input.supplier_designation_original !== undefined ? clean(input.supplier_designation_original) : targetCurrent.supplier_designation_original,
+      transport_cost_ht: input.transport_cost_ht !== undefined || input.transport_cost !== undefined ? nonNegative(input.transport_cost_ht ?? input.transport_cost, 0) : targetCurrent.transport_cost_ht,
+      transport_cost_source: clean(input.transport_cost_source) || targetCurrent.transport_cost_source,
+      transport_cost_forced: input.transport_cost_forced !== undefined ? input.transport_cost_forced === true : targetCurrent.transport_cost_forced,
+      exclude_from_mercuriale: input.exclude_from_mercuriale !== undefined ? input.exclude_from_mercuriale === true : targetCurrent.exclude_from_mercuriale,
+      notes: input.notes !== undefined ? clean(input.notes) : targetCurrent.notes,
     };
     if (!next.designation_snapshot) throw expose(400, 'designation requise');
     await client.query(
@@ -527,15 +611,23 @@ async function updatePricingLine(db, storeId, input = {}, context = {}) {
            exclude_from_mercuriale=$17, notes=$18, updated_by=$19, updated_at=now()
        WHERE store_id=$1 AND id=$2`,
       [
-        storeId, lineId, next.article_id, next.supplier_id, next.plu_snapshot, next.designation_snapshot,
+        storeId, targetLineId, next.article_id, next.supplier_id, next.plu_snapshot, next.designation_snapshot,
         next.family_code, next.family_name, next.sale_unit, next.price_unit, next.purchase_price_ht,
         next.purchase_price_source, next.supplier_designation_original, next.transport_cost_ht,
         next.transport_cost_source, next.transport_cost_forced, next.exclude_from_mercuriale,
         next.notes, context.user_id || null,
       ]
     );
-    await upsertLineTariffs(client, storeId, lineId, input.tariffs || []);
-    return getPricingLine(client, storeId, { id: lineId });
+    await upsertLineTariffs(client, storeId, targetLineId, input.tariffs || []);
+    const saved = await getPricingLine(client, storeId, { id: targetLineId });
+    if (editable.revision) {
+      saved.revision_created = Boolean(editable.revision.revision_created);
+      saved.revision_reused = Boolean(editable.revision.revision_reused);
+      saved.source_session_id = editable.revision.source_session_id;
+      saved.source_line_id = lineId;
+      saved.revision_session_id = editable.session.id;
+    }
+    return saved;
   });
 }
 
@@ -1215,7 +1307,7 @@ async function applySupplierImportToSession(db, storeId, input = {}, context = {
     let revision = null;
     if (session.status !== 'draft') {
       if (session.status === 'published' && input.create_revision_if_published === true) {
-        revision = await createRevisionFromPublishedSession(client, storeId, { source_session_id: session.id }, context);
+        revision = await getOrCreateDraftRevisionFromPublishedSession(client, storeId, { source_session_id: session.id }, context);
         session = revision.session;
       } else {
         throw expose(409, 'Une session publiee ne peut pas etre modifiee');
@@ -1262,7 +1354,8 @@ async function applySupplierImportToSession(db, storeId, input = {}, context = {
     const detail = await getPricingSession(client, storeId, { id: session.id });
     return {
       ok: true,
-      revision_created: Boolean(revision),
+      revision_created: Boolean(revision?.revision_created),
+      revision_reused: Boolean(revision?.revision_reused),
       source_session_id: revision ? requestedSession.id : null,
       revision_session_id: revision ? session.id : null,
       applied_line_count: applied,
@@ -1289,6 +1382,7 @@ module.exports = {
   createPricingSession,
   duplicatePricingSession,
   createRevisionFromPublishedSession,
+  getOrCreateDraftRevisionFromPublishedSession,
   addPricingLine,
   updatePricingLine,
   removePricingLine,

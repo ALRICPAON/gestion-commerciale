@@ -17,6 +17,7 @@ const pageFeedback = el('page-feedback');
 const loadSessionBtn = el('load-session-btn');
 const newSessionBtn = el('new-session-btn');
 const duplicateSessionBtn = el('duplicate-session-btn');
+const createRevisionBtn = el('create-revision-btn');
 const addLineBtn = el('add-line-btn');
 const importBtn = el('import-btn');
 const publishBtn = el('publish-btn');
@@ -58,6 +59,7 @@ let saveTimer = null;
 let lastImportId = null;
 let currentImport = null;
 let activeImportLineId = null;
+let revisionInProgress = null;
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -113,6 +115,7 @@ function numberValue(value) {
 function setStatus() {
   sessionStatusLabel.textContent = session ? `${session.status} - v${session.version_number || 1}` : 'Aucune session';
   saveStateLabel.textContent = dirty.size ? `${dirty.size} ligne(s) modifiee(s)` : 'A jour';
+  createRevisionBtn.classList.toggle('hidden', !session || session.status !== 'published');
   publishBtn.disabled = !session || session.status !== 'draft' || dirty.size > 0;
   saveNowBtn.disabled = !dirty.size;
 }
@@ -309,6 +312,52 @@ async function duplicateSession() {
   showFeedback('Tarification precedente reprise.', 'success');
 }
 
+async function createDraftRevision(message = 'Cette tarification est publiee. Creer une revision modifiable ?') {
+  if (!session || session.status !== 'published') return session;
+  if (!window.confirm(message)) return null;
+  if (!revisionInProgress) {
+    revisionInProgress = apiJson(`/api/pricing/sessions/${encodeURIComponent(session.id)}/revision`, {});
+  }
+  try {
+    const result = await revisionInProgress;
+    session = result.session;
+    lines = result.lines || [];
+    dirty.clear();
+    renderLines();
+    showFeedback(result.revision_reused ? `Revision v${session.version_number || ''} ouverte.` : `Revision v${session.version_number || ''} creee.`, 'success');
+    return session;
+  } finally {
+    revisionInProgress = null;
+  }
+}
+
+async function ensureEditableSession(message, resume) {
+  if (!session || session.status === 'draft') {
+    if (resume) await resume();
+    return session;
+  }
+  if (session.status !== 'published') {
+    showFeedback('Cette session ne peut pas etre modifiee.', 'error');
+    return null;
+  }
+  const editable = await createDraftRevision(message);
+  if (editable && resume) await resume();
+  return editable;
+}
+
+function focusRevisionLine(oldLine, selector) {
+  if (!oldLine || !selector) return;
+  window.setTimeout(() => {
+    const replacement = lines.find((line) => (
+      (oldLine.article_id && String(line.article_id) === String(oldLine.article_id))
+      || String(line.designation_snapshot || '') === String(oldLine.designation_snapshot || '')
+    ));
+    const row = replacement && linesBody.querySelector(`[data-line-id="${replacement.id}"]`);
+    const target = row && row.querySelector(selector);
+    if (target) target.focus();
+  }, 0);
+}
+
 async function searchArticles() {
   const query = articleSearchInput.value.trim();
   if (!query) return;
@@ -325,6 +374,10 @@ async function searchArticles() {
 
 async function addArticle(articleId) {
   if (!session) await createSession();
+  if (session.status === 'published') {
+    const editable = await createDraftRevision('Cette tarification est publiee. Creer une revision modifiable ?');
+    if (!editable) return;
+  }
   const line = await apiJson('/api/pricing/lines', { pricing_session_id: session.id, article_id: articleId });
   lines.push(line);
   articleModal.classList.add('hidden');
@@ -332,6 +385,15 @@ async function addArticle(articleId) {
 }
 
 async function deleteLine(lineId) {
+  if (session?.status === 'published') {
+    const oldLine = lines.find((line) => String(line.id) === String(lineId));
+    const editable = await createDraftRevision('Cette tarification est publiee. Creer une revision modifiable ?');
+    if (!editable) return;
+    const replacement = lines.find((line) => (
+      oldLine?.article_id && String(line.article_id) === String(oldLine.article_id)
+    ));
+    if (replacement) lineId = replacement.id;
+  }
   await api(`/api/pricing/lines/${encodeURIComponent(lineId)}`, { method: 'DELETE' });
   lines = lines.filter((line) => String(line.id) !== String(lineId));
   dirty.delete(lineId);
@@ -373,8 +435,9 @@ async function applyImport() {
   if (!lastImportId || !session) return;
   const payload = { pricing_session_id: session.id };
   if (session.status === 'published') {
-    const confirmed = window.confirm('La tarification du jour est deja publiee. Creer une nouvelle revision pour appliquer cet import ?');
-    if (!confirmed) return;
+    const editable = await createDraftRevision('La tarification du jour est deja publiee. Une nouvelle revision va etre creee pour ajouter ce cours fournisseur.');
+    if (!editable) return;
+    payload.pricing_session_id = editable.id;
     payload.create_revision_if_published = true;
   }
   const result = await apiJson(`/api/pricing/supplier-imports/${encodeURIComponent(lastImportId)}/apply`, payload);
@@ -387,8 +450,8 @@ async function applyImport() {
   } else {
     await loadSession(false);
   }
-  const message = result.revision_created
-    ? `Revision v${result.session?.version_number || ''} creee et import applique.`
+  const message = result.revision_created || result.revision_reused
+    ? `Revision v${result.session?.version_number || ''} ${result.revision_reused ? 'ouverte' : 'creee'} et import applique.`
     : `Import applique : ${result.applied_line_count || 0} ligne(s).`;
   showFeedback(message, 'success');
 }
@@ -573,16 +636,23 @@ function bindEvents() {
   loadSessionBtn.addEventListener('click', () => loadSession());
   newSessionBtn.addEventListener('click', createSession);
   duplicateSessionBtn.addEventListener('click', duplicateSession);
+  createRevisionBtn.addEventListener('click', () => createDraftRevision('Cette tarification est publiee. Creer une revision modifiable ?').catch((error) => showFeedback(error.message, 'error')));
   saveNowBtn.addEventListener('click', saveDirtyLines);
   publishBtn.addEventListener('click', publishSession);
-  addLineBtn.addEventListener('click', () => articleModal.classList.remove('hidden'));
+  addLineBtn.addEventListener('click', () => ensureEditableSession('Cette tarification est publiee. Creer une revision modifiable ?', () => {
+    articleModal.classList.remove('hidden');
+    articleSearchInput.focus();
+  }).catch((error) => showFeedback(error.message, 'error')));
   closeArticleModalBtn.addEventListener('click', () => articleModal.classList.add('hidden'));
   articleSearchInput.addEventListener('keydown', (event) => { if (event.key === 'Enter') searchArticles(); });
   articleResults.addEventListener('click', (event) => {
     const button = event.target.closest('[data-article-id]');
     if (button) addArticle(button.dataset.articleId).catch((error) => showFeedback(error.message, 'error'));
   });
-  importBtn.addEventListener('click', () => importModal.classList.remove('hidden'));
+  importBtn.addEventListener('click', () => ensureEditableSession('La tarification du jour est deja publiee. Une nouvelle revision va etre creee pour ajouter ce cours fournisseur.', () => {
+    importModal.classList.remove('hidden');
+    importSupplierSelect.focus();
+  }).catch((error) => showFeedback(error.message, 'error')));
   closeImportModalBtn.addEventListener('click', () => importModal.classList.add('hidden'));
   runImportBtn.addEventListener('click', () => runImport().catch((error) => showFeedback(error.message, 'error')));
   confirmKnownBtn.addEventListener('click', () => confirmKnownMappings().catch((error) => showFeedback(error.message, 'error')));
@@ -615,6 +685,16 @@ function bindEvents() {
   linesBody.addEventListener('input', (event) => {
     const row = event.target.closest('[data-line-id]');
     if (row) markDirty(row.dataset.lineId);
+  });
+  linesBody.addEventListener('focusin', (event) => {
+    const row = event.target.closest('[data-line-id]');
+    if (!row || session?.status !== 'published') return;
+    const oldLine = lines.find((line) => String(line.id) === String(row.dataset.lineId));
+    const field = event.target.dataset.field;
+    const tariffLevelId = event.target.dataset.tariffLevelId;
+    const selector = field ? `[data-field="${field}"]` : `[data-tariff-level-id="${tariffLevelId}"]`;
+    ensureEditableSession('Cette tarification est publiee. Creer une revision modifiable ?', () => focusRevisionLine(oldLine, selector))
+      .catch((error) => showFeedback(error.message, 'error'));
   });
   linesBody.addEventListener('change', (event) => {
     const row = event.target.closest('[data-line-id]');

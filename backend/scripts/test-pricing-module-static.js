@@ -74,6 +74,7 @@ async function testAgentContracts() {
     'search_articles_for_supplier_mapping',
     'list_supplier_article_mappings',
     'prepare_pricing_line_update',
+    'prepare_pricing_session_revision',
     'prepare_pricing_session_publish',
   ]) {
     assert(toolNames.has(name), `agent tool ${name} registered`);
@@ -86,6 +87,7 @@ async function testAgentContracts() {
   for (const name of [
     'pricing.session.create',
     'pricing.session.duplicate',
+    'pricing.session.revision',
     'pricing.line.add',
     'pricing.line.update',
     'pricing.supplier_import.create',
@@ -548,6 +550,13 @@ function pricingRevisionWorkflowFakeDb() {
         const found = sessions.find((item) => item.id === params[0] && item.store_id === params[1]);
         return { rows: found ? [found] : [] };
       }
+      if (sql.includes('source_session_id = $3') && sql.includes("status = 'draft'")) {
+        const found = sessions
+          .filter((item) => item.store_id === params[0] && item.pricing_date === params[1] && item.source_session_id === params[2] && item.status === 'draft')
+          .sort((a, b) => b.version_number - a.version_number)[0];
+        if (found) events.push('revision_reused');
+        return { rows: found ? [found] : [] };
+      }
       if (sql.includes('SELECT * FROM pricing_sessions WHERE store_id = $1 AND id = $2')) {
         const found = sessions.find((item) => item.store_id === params[0] && item.id === params[1]);
         return { rows: found ? [found] : [] };
@@ -740,6 +749,26 @@ async function testSupplierImportCreatesRevisionFromPublishedSession() {
   assert.equal(sessions.find((item) => item.id === 'published-session').status, 'superseded');
   assert.equal(sessions.find((item) => item.id === 'published-session').is_active_publication, false);
   assert(lines.some((line) => line.pricing_session_id === 'published-session'), 'historical source lines are preserved');
+}
+
+async function testSupplierImportReusesExistingDraftRevision() {
+  const { db, client, sessions, lines } = pricingRevisionWorkflowFakeDb();
+  const first = await pricing.applySupplierImportToSession(db, 'store-1', {
+    import_id: 'import-1',
+    pricing_session_id: 'published-session',
+    create_revision_if_published: true,
+  }, { user_id: 'user-1' });
+  assert.equal(first.revision_created, true);
+
+  const second = await pricing.getOrCreateDraftRevisionFromPublishedSession(db, 'store-1', {
+    source_session_id: 'published-session',
+  }, { user_id: 'user-1' });
+  assert.equal(second.revision_created, false);
+  assert.equal(second.revision_reused, true);
+  assert.equal(second.session.id, 'revision-session');
+  assert.equal(sessions.filter((item) => item.source_session_id === 'published-session' && item.status === 'draft').length, 1, 'only one draft revision exists for the source publication');
+  assert.equal(lines.filter((line) => line.pricing_session_id === 'revision-session' && line.id === 'copied-line-1').length, 1, 'source lines are not copied again when reusing draft');
+  assert(client.events.includes('revision_reused'), 'canonical service detects existing draft revision');
 }
 
 function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, mappingFails = false } = {}) {
@@ -944,9 +973,12 @@ async function testPricingFrontendImportWorkflowContracts() {
   assert(html.includes('pricing.css?v=2') && html.includes('pricing.js?v=2'), 'pricing assets are cache-busted');
   assert(js.includes('matchLabel'), 'frontend translates technical matching labels');
   assert(js.includes('updateImportLine(updated)'), 'frontend updates selected import line after override');
-  assert(js.includes('Creer une nouvelle revision pour appliquer cet import'), 'frontend confirms revision creation before applying to a published session');
+  assert(html.includes('id="create-revision-btn"'), 'frontend exposes explicit revision button on published sessions');
+  assert(js.includes('createDraftRevision'), 'frontend centralizes published-session revision creation');
+  assert(js.includes('ensureEditableSession'), 'frontend gates natural mutations through revision workflow');
+  assert(js.includes('La tarification du jour est deja publiee. Une nouvelle revision va etre creee pour ajouter ce cours fournisseur.'), 'frontend confirms revision creation before supplier import');
   assert(js.includes('create_revision_if_published = true'), 'frontend sends explicit revision intent for published sessions');
-  assert(js.includes('Revision v') && js.includes('creee et import applique'), 'frontend explains revision creation after successful apply');
+  assert(js.includes('revision_reused') && js.includes('ouverte'), 'frontend explains reused draft revisions');
   const css = read('frontend/css/pages/pricing.css');
   assert(css.includes('width: 95vw'), 'import modal is near full screen on desktop');
   assert(css.includes('position: sticky') && css.includes('right: 0'), 'actions column remains accessible');
@@ -980,11 +1012,16 @@ async function testIntegrationFilesReferencePricing() {
   const quickOrderSheets = read('backend/routes/quickOrderSheets.js');
   assert(quickOrderSheets.includes('pricing_session_id'), 'call sheet mirror carries pricing_session_id');
   assert(quickOrderSheets.includes('tariff_prices'), 'call sheet mirror carries dynamic tariffs');
+  assert(quickOrderSheets.includes('const transportCost = pos(product.transport_cost_ht, 0)'), 'manual call sheet save normalizes missing transport to zero');
+  assert(quickOrderSheets.includes('purchasePrice + transportCost'), 'manual call sheet save recalculates rendered cost when absent');
 
   const agentTools = read('backend/services/agent/agentToolRegistry.js');
   const agentActions = read('backend/services/agent/agentExecutableActionRegistry.js');
   assert(agentTools.includes('create_revision_if_published'), 'agent prepare tool exposes revision-on-published apply');
   assert(agentActions.includes('create_revision_if_published'), 'agent executable action accepts revision-on-published apply');
+  assert(agentTools.includes('prepare_pricing_session_revision'), 'agent exposes explicit canonical pricing revision preparation');
+  assert(agentActions.includes('pricing.session.revision'), 'agent executable actions expose canonical pricing revision action');
+  assert(agentActions.includes('getOrCreateDraftRevisionFromPublishedSession'), 'agent revision action uses canonical revision service');
 }
 
 (async () => {
@@ -1001,6 +1038,7 @@ async function testIntegrationFilesReferencePricing() {
   await testKnownSupplierMappingRequiresImportConfirmation();
   await testSupplierImportRefusesPublishedSessionWithoutRevisionIntent();
   await testSupplierImportCreatesRevisionFromPublishedSession();
+  await testSupplierImportReusesExistingDraftRevision();
   await testSupplierMappingUpsertReusesTransactionalClient();
   await testSupplierImportOverrideUpdatesExistingMapping();
   await testSupplierImportOverrideRejectsOtherStoreArticle();
