@@ -31,6 +31,8 @@ const articleForm = document.getElementById('article-form');
 
 const articleIdInput = document.getElementById('article-id');
 const articlePluInput = document.getElementById('article-plu');
+const articlePluHint = document.getElementById('article-plu-hint');
+const refreshPluBtn = document.getElementById('refresh-plu-btn');
 const articleDesignationInput = document.getElementById('article-designation');
 const articleUnitInput = document.getElementById('article-unit');
 const articleBusinessCategoryInput = document.getElementById('article-business-category');
@@ -97,6 +99,13 @@ function articleCategoryLabel(value) {
   return value === 'packaging' ? 'Emballage' : 'Produit';
 }
 
+function setPluSuggestionHint(message = '', type = '') {
+  if (!articlePluHint) return;
+  articlePluHint.textContent = message;
+  articlePluHint.className = 'plu-suggestion-hint';
+  if (type) articlePluHint.classList.add(type);
+}
+
 function normalizeArticleCategoryForComparison(value) {
   const text = String(value || '').trim().toLowerCase()
     .normalize('NFD')
@@ -151,6 +160,35 @@ function fillFamilySelects() {
   articleFamilyInput.innerHTML = `<option value="">-- Choisir --</option>${options}`;
 }
 
+async function fetchNextProductPlu() {
+  const response = await fetch(`${API_BASE_URL}/api/articles/next-plu`, { headers: authHeaders(false) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erreur proposition PLU');
+  return data.plu;
+}
+
+async function applyNextProductPlu({ force = false } = {}) {
+  if (articleBusinessCategoryInput.value !== 'product') {
+    setPluSuggestionHint('');
+    refreshPluBtn?.classList.add('hidden');
+    return;
+  }
+
+  try {
+    setPluSuggestionHint('Recherche du prochain PLU...');
+    const plu = await fetchNextProductPlu();
+    if (force || !articlePluInput.value.trim()) {
+      articlePluInput.value = plu;
+    }
+    setPluSuggestionHint('PLU proposé automatiquement');
+    refreshPluBtn?.classList.remove('hidden');
+  } catch (error) {
+    console.error(error);
+    setPluSuggestionHint(error.message, 'error');
+    refreshPluBtn?.classList.remove('hidden');
+  }
+}
+
 async function loadFamilies() {
   const response = await fetch(`${API_BASE_URL}/api/articles/families`, { headers: authHeaders(false) });
   const data = await response.json();
@@ -166,6 +204,8 @@ function canManageArticle(article) {
 function openModal(editMode = false, article = null) {
   modal.classList.remove('hidden');
   modalTitle.textContent = editMode ? 'Modifier un article' : 'Créer un article';
+  setPluSuggestionHint('');
+  refreshPluBtn?.classList.toggle('hidden', editMode);
 
   articleIdInput.value = article?.id || '';
   articlePluInput.value = article?.plu || '';
@@ -192,6 +232,10 @@ function openModal(editMode = false, article = null) {
   articleSalePriceExVatInput.value = article?.sale_price_ex_vat ?? '';
   articleSalePriceIncVatInput.value = article?.sale_price_inc_vat ?? '';
   articleActiveInput.value = String(article?.is_active ?? true);
+
+  if (!editMode) {
+    applyNextProductPlu({ force: true });
+  }
 }
 
 function closeModal() {
@@ -200,6 +244,8 @@ function closeModal() {
   articleIdInput.value = '';
   articleUnitInput.value = 'kg';
   articleBusinessCategoryInput.value = 'product';
+  setPluSuggestionHint('');
+  refreshPluBtn?.classList.add('hidden');
   articleVatRateInput.value = '5.5';
   articleStorageTemperatureMinInput.value = '';
   articleStorageTemperatureMaxInput.value = '';
@@ -322,7 +368,14 @@ async function saveArticle(event) {
       { method: isEdit ? 'PATCH' : 'POST', headers: authHeaders(true), body: JSON.stringify(payload) }
     );
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error || 'Erreur enregistrement article');
+    if (!response.ok) {
+      if (!isEdit && data.next_plu) {
+        articlePluInput.value = data.next_plu;
+        setPluSuggestionHint('PLU pris entre-temps, nouvelle proposition appliquée', 'error');
+        refreshPluBtn?.classList.remove('hidden');
+      }
+      throw new Error(data.error || 'Erreur enregistrement article');
+    }
 
     if (isEdit) {
       const refreshedArticle = await fetchArticleById(articleId);
@@ -513,6 +566,14 @@ importArticlesFile?.addEventListener('change', () => importArticlesExcel(importA
 createArticleBtn.addEventListener('click', () => openModal(false));
 closeModalBtn.addEventListener('click', closeModal);
 articleForm.addEventListener('submit', saveArticle);
+refreshPluBtn?.addEventListener('click', () => applyNextProductPlu({ force: true }));
+articleBusinessCategoryInput.addEventListener('change', () => {
+  if (!articleIdInput.value && !articlePluInput.value.trim()) applyNextProductPlu({ force: true });
+  if (articleBusinessCategoryInput.value !== 'product') {
+    setPluSuggestionHint('');
+    refreshPluBtn?.classList.add('hidden');
+  }
+});
 
 searchInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') {

@@ -8,6 +8,7 @@ const { requireAdminOrManager } = require('../middleware/authorization');
 const { assertArticleCategory } = require('../services/articleCategory');
 const { mergeStoragePatch } = require('../services/articleStorageConditions');
 const { createArticle } = require('../services/articleCreationService');
+const { enrichPgUniquePluError, getNextProductPlu } = require('../services/articlePluService');
 
 function toNullableString(value) {
   if (value === undefined || value === null) return null;
@@ -269,6 +270,20 @@ router.get('/families', authenticateToken, attachDbContext, async (req, res) => 
   } catch (err) {
     console.error('Erreur GET /api/articles/families :', err);
     res.status(500).json({ error: 'Erreur serveur' });
+  }
+});
+
+// GET /api/articles/next-plu
+router.get('/next-plu', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const plu = await getNextProductPlu(req.dbPool, req.user.store_id);
+    if (!plu) {
+      return res.status(409).json({ error: 'Aucun PLU disponible dans la serie 3000-3999' });
+    }
+    return res.json({ plu });
+  } catch (err) {
+    console.error('Erreur GET /api/articles/next-plu :', err);
+    return res.status(500).json({ error: 'Erreur serveur' });
   }
 });
 
@@ -636,12 +651,13 @@ if (departmentIdFinal) {
     await client.query('ROLLBACK');
     console.error('Erreur POST /api/articles :', err);
 
-    if (err.code === '23505') {
-      return res.status(400).json({ error: 'PLU déjà existant pour ce client' });
-    }
-
-    if (err.status && err.status < 500) {
-      return res.status(err.status).json({ error: err.message, duplicate: err.duplicate || undefined });
+    const exposedError = await enrichPgUniquePluError(client, req.user.store_id, err);
+    if (exposedError.status && exposedError.status < 500) {
+      return res.status(exposedError.status).json({
+        error: exposedError.message,
+        duplicate: exposedError.duplicate || undefined,
+        next_plu: exposedError.next_plu || undefined,
+      });
     }
 
     res.status(500).json({ error: 'Erreur serveur' });

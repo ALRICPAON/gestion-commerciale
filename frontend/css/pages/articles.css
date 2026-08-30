@@ -27,6 +27,25 @@
   color: #b71c1c;
 }
 
+.plu-suggestion-row {
+  min-height: 28px;
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.plu-suggestion-hint {
+  color: #667085;
+  font-size: 12px;
+}
+
+.plu-suggestion-hint.error {
+  color: #b71c1c;
+}
+
 .modal-form .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));
