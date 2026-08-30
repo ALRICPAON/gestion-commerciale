@@ -1,5 +1,6 @@
 const PRODUCT_PLU_MIN = 3000;
 const PRODUCT_PLU_MAX = 3999;
+const ARTICLE_PLU_UNIQUE_CONSTRAINT = 'uq_articles_store_plu';
 
 function expose(status, message) {
   const error = new Error(message);
@@ -79,7 +80,7 @@ async function assertPluAvailable(client, storeId, plu, options = {}) {
 
   if (result.rows[0]) {
     const nextPlu = await getNextProductPlu(client, storeId);
-    const error = expose(409, `PLU ${normalizedPlu} deja utilise pour ce client`);
+    const error = expose(409, `PLU ${normalizedPlu} déjà utilisé`);
     error.duplicate = result.rows[0];
     decoratePluConflict(error, nextPlu);
     throw error;
@@ -87,16 +88,19 @@ async function assertPluAvailable(client, storeId, plu, options = {}) {
 }
 
 async function enrichPgUniquePluError(client, storeId, error) {
-  if (error?.code !== '23505') return error;
+  if (error?.code !== '23505' || error.constraint !== ARTICLE_PLU_UNIQUE_CONSTRAINT) {
+    return error;
+  }
 
   const nextPlu = await getNextProductPlu(client, storeId).catch(() => null);
-  const conflict = expose(409, 'PLU deja utilise pour ce client');
+  const conflict = expose(409, 'PLU déjà utilisé');
   conflict.cause = error;
   decoratePluConflict(conflict, nextPlu);
   return conflict;
 }
 
 module.exports = {
+  ARTICLE_PLU_UNIQUE_CONSTRAINT,
   PRODUCT_PLU_MAX,
   PRODUCT_PLU_MIN,
   assertPluAvailable,

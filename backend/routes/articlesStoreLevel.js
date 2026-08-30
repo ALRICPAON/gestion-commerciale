@@ -530,6 +530,7 @@ router.post('/', authenticateToken, attachDbContext, requireAdminOrManager, asyn
         next_plu: exposedError.next_plu || undefined,
       });
     }
+    if (err.code === '23505') return res.status(400).json({ error: 'Valeur déjà utilisée' });
     res.status(500).json({ error: 'Erreur serveur' });
   } finally {
     client.release();
@@ -659,7 +660,7 @@ router.patch('/:id', authenticateToken, attachDbContext, requireAdminOrManager, 
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Erreur PATCH /api/articles/:id :', err);
-    if (err.code === '23505') return res.status(400).json({ error: 'PLU deja existant pour ce client' });
+    if (err.code === '23505') return res.status(400).json({ error: 'PLU déjà utilisé' });
     if (err.status) return res.status(err.status).json({ error: err.message });
     res.status(500).json({ error: 'Erreur serveur' });
   } finally {

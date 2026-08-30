@@ -660,6 +660,7 @@ if (departmentIdFinal) {
       });
     }
 
+    if (err.code === '23505') return res.status(400).json({ error: 'Valeur déjà utilisée' });
     res.status(500).json({ error: 'Erreur serveur' });
   } finally {
     client.release();
@@ -1178,7 +1179,7 @@ RETURNING id
     }
 
     if (err.code === '23505') {
-      return res.status(400).json({ error: 'PLU déjà existant pour ce client' });
+      return res.status(400).json({ error: 'PLU déjà utilisé' });
     }
 
     res.status(500).json({ error: 'Erreur serveur' });

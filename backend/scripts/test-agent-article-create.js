@@ -255,7 +255,7 @@ async function main() {
     storeId: 'store-1',
     userId: 'user-1',
     payload: validPayload(),
-  }), 409, /PLU BAR-SAUVAGE-12KG deja utilise/);
+  }), 409, /PLU BAR-SAUVAGE-12KG/);
   assert.equal(duplicateError.duplicate.id, 'article-existing');
   assert.equal(duplicateError.next_plu, '3895');
 

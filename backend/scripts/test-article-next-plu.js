@@ -1,9 +1,16 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const {
+  ARTICLE_PLU_UNIQUE_CONSTRAINT,
   assertPluAvailable,
+  enrichPgUniquePluError,
   getNextProductPlu,
 } = require('../services/articlePluService');
 const { createArticle } = require('../services/articleCreationService');
+
+const ROOT = path.join(__dirname, '..', '..');
+const read = (file) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
 function makeDb(initialArticles = []) {
   const state = {
@@ -88,6 +95,7 @@ function makeDb(initialArticles = []) {
         if (state.articles.some((article) => article.store_id === params[0] && article.plu === params[1])) {
           const error = new Error('duplicate key value violates unique constraint "uq_articles_store_plu"');
           error.code = '23505';
+          error.constraint = ARTICLE_PLU_UNIQUE_CONSTRAINT;
           throw error;
         }
         state.created = {
@@ -162,8 +170,22 @@ async function main() {
   await assertRejectsStatus(
     () => assertPluAvailable(makeDb([{ plu: '3894', is_active: false }]), 'store-1', '3894'),
     409,
-    /PLU 3894 deja utilise/
+    /PLU 3894/
   );
+
+  const pluUniqueError = await enrichPgUniquePluError(makeDb([{ plu: '3894', is_active: false }]), 'store-1', {
+    code: '23505',
+    constraint: ARTICLE_PLU_UNIQUE_CONSTRAINT,
+  });
+  assert.equal(pluUniqueError.status, 409);
+  assert.equal(pluUniqueError.message, 'PLU déjà utilisé');
+  assert.equal(pluUniqueError.next_plu, '3895');
+
+  const otherUniqueError = { code: '23505', constraint: 'uq_articles_store_designation' };
+  const unchangedError = await enrichPgUniquePluError(makeDb([{ plu: '3894' }]), 'store-1', otherUniqueError);
+  assert.strictEqual(unchangedError, otherUniqueError);
+  assert.equal(unchangedError.status, undefined);
+  assert.equal(unchangedError.next_plu, undefined);
 
   const manualDb = makeDb([{ plu: '3893' }]);
   const manualCreated = await createArticle(manualDb, {
@@ -192,14 +214,28 @@ async function main() {
       },
     }),
     409,
-    /PLU 3894 deja utilise/
+    /PLU 3894/
   );
   assert.equal(conflictError.next_plu, '3895');
+
+  const newPluFiles = [
+    'backend/services/articlePluService.js',
+    'backend/routes/articlesStoreLevel.js',
+    'backend/routes/articles.js',
+  ];
+  const forbiddenPluWording = ['pour', 'ce', 'client'].join(' ');
+  for (const file of newPluFiles) {
+    const forbiddenLines = read(file)
+      .split(/\r?\n/)
+      .filter((line) => /PLU/i.test(line) && line.toLowerCase().includes(forbiddenPluWording));
+    assert.deepEqual(forbiddenLines, [], `${file} contient un libelle PLU avec le mauvais vocabulaire`);
+  }
 
   console.log(JSON.stringify({
     ok: true,
     next_after_3893: '3894',
     next_after_taken_3894: '3895',
+    plu_constraint: ARTICLE_PLU_UNIQUE_CONSTRAINT,
     ean_preserved: manualCreated.article.ean,
   }, null, 2));
 }
