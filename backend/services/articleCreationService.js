@@ -1,5 +1,6 @@
 const { assertArticleCategory } = require('./articleCategory');
 const { normalizeStoragePayload } = require('./articleStorageConditions');
+const { assertPluAvailable } = require('./articlePluService');
 
 const DEFAULT_UNIT = 'kg';
 const DEFAULT_VAT_RATE = 5.5;
@@ -248,6 +249,8 @@ async function createArticle(client, { storeId, userId, payload, sourceOrigin = 
       throw expose(400, 'Aucun service disponible pour creer le rattachement article');
     }
   }
+
+  await assertPluAvailable(client, storeId, normalized.plu);
 
   const duplicate = await findObviousDuplicate(client, storeId, normalized);
   if (duplicate) {

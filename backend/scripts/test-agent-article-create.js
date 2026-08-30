@@ -116,6 +116,16 @@ function makePool({ pending = null, duplicate = null, badDepartment = false } = 
       if (compact.includes('FROM departments') && compact.includes('ORDER BY created_at ASC')) {
         return { rows: [state.departments.get('dept-1')] };
       }
+      if (
+        compact.includes('FROM articles')
+        && compact.includes('WHERE store_id = $1')
+        && compact.includes('AND plu = $2')
+      ) {
+        return { rows: duplicate && duplicate.plu === params[1] ? [duplicate] : [] };
+      }
+      if (compact.includes('generate_series') && compact.includes('product_plu')) {
+        return { rows: [{ plu: '3895' }] };
+      }
       if (compact.includes('FROM articles') && compact.includes('lower(trim')) {
         return { rows: duplicate ? [duplicate] : [] };
       }
@@ -245,8 +255,9 @@ async function main() {
     storeId: 'store-1',
     userId: 'user-1',
     payload: validPayload(),
-  }), 409, /Article existant/);
+  }), 409, /PLU BAR-SAUVAGE-12KG/);
   assert.equal(duplicateError.duplicate.id, 'article-existing');
+  assert.equal(duplicateError.next_plu, '3895');
 
   const pendingPayload = validPayload();
   const pending = makePending(pendingPayload);
