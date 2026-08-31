@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 const { sendEmail, getSmtpStatus } = require('./emailService');
 const { renderHtmlToPdf } = require('./pdf/pdfRenderer');
 const {
@@ -61,6 +63,52 @@ function normalizeIsoDate(value) {
   if (!text) return null;
   const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
   return match ? `${match[1]}-${match[2]}-${match[3]}` : null;
+}
+
+function generateEmailTrackingToken() {
+  return crypto.randomUUID();
+}
+
+function resolvePublicApiBaseUrl(env = process.env) {
+  return clean(env.PUBLIC_API_BASE_URL) || '';
+}
+
+function openTrackingStatus(env = process.env) {
+  const missing = [];
+  if (!resolvePublicApiBaseUrl(env)) missing.push('PUBLIC_API_BASE_URL');
+  if (!clean(env.OPEN_TRACKING_SECRET) && !clean(env.JWT_SECRET)) missing.push('OPEN_TRACKING_SECRET or JWT_SECRET');
+  return {
+    open_tracking_configured: missing.length === 0,
+    open_tracking_missing: missing,
+  };
+}
+
+function trackingTenantKey(clientKey, env = process.env) {
+  const key = clean(clientKey);
+  const secret = clean(env.OPEN_TRACKING_SECRET) || clean(env.JWT_SECRET);
+  if (!key || !secret) return null;
+  return crypto
+    .createHmac('sha256', secret)
+    .update(`customer-price-list-email:${key}`)
+    .digest('base64url')
+    .slice(0, 32);
+}
+
+function trackingPixelUrl(trackingToken, options = {}) {
+  const baseUrl = (clean(options.publicApiBaseUrl) || resolvePublicApiBaseUrl(options.env)).replace(/\/+$/, '');
+  const tenantKey = clean(options.tenantKey) || trackingTenantKey(options.clientKey, options.env);
+  if (!baseUrl || !tenantKey || !clean(trackingToken)) return null;
+  return `${baseUrl}/api/customer-price-lists/email/open/${encodeURIComponent(tenantKey)}/${encodeURIComponent(trackingToken)}`;
+}
+
+function appendEmailOpenTrackingPixel(html, trackingToken, options = {}) {
+  const source = String(html || '');
+  const url = trackingPixelUrl(trackingToken, options);
+  if (!url) return source;
+  const pixel = `<img src="${escapeHtml(url)}" width="1" height="1" alt="" style="display:none;width:1px;height:1px;border:0;">`;
+  return source.includes('</body>')
+    ? source.replace('</body>', `${pixel}</body>`)
+    : `${source}${pixel}`;
 }
 
 function formatDateFr(value) {
@@ -506,7 +554,10 @@ async function buildCustomerTariffEmailPreview(db, storeId, options = {}) {
     });
 
   return {
-    smtp: getSmtpStatus(),
+    smtp: {
+      ...getSmtpStatus(),
+      ...openTrackingStatus(),
+    },
     sender: resolveReplyTo(storeSettings),
     test_recipient: resolveCompanyEmail(storeSettings),
     attachment_filename: filename,
@@ -570,29 +621,39 @@ function buildMercurialeEmailMessage({
   storeSettings,
   clientTariffLevel,
   pdfFilename,
+  trackingToken,
+  publicApiBaseUrl,
+  clientKey,
+  tenantKey,
 } = {}) {
   const settings = companySettings || storeSettings || {};
   const resolvedContactName = clean(contactName) || resolveFirstContactName(recipientResolution);
   const salutation = resolveEmailSalutation(resolvedContactName);
   const message = resolveCommonMessage(commonMessage);
   const text = buildEmailText(settings, salutation, message);
+  const html = appendEmailOpenTrackingPixel(
+    buildEmailHtml(settings, salutation, message),
+    trackingToken,
+    { publicApiBaseUrl, clientKey, tenantKey }
+  );
   const replyTo = resolveReplyTo(settings);
 
   return {
     from: replyTo,
     replyTo,
     subject: buildSubject(mercurialeDate),
-    html: buildEmailHtml(settings, salutation, message),
+    html,
     text,
     body: text,
     textBody: text,
-    htmlBody: buildEmailHtml(settings, salutation, message),
+    htmlBody: html,
     salutation,
     contact_name: resolvedContactName,
     common_message: message,
     mercuriale_date: normalizeIsoDate(mercurialeDate),
     client_tariff_level: normalizePricingLevel(clientTariffLevel),
     attachment_filename: pdfFilename || buildPdfFilename(mercurialeDate),
+    tracking_token: clean(trackingToken),
   };
 }
 
@@ -694,8 +755,10 @@ async function recordEmailResult(db, storeId, batchId, result) {
       status,
       error,
       message_id,
-      item_count
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      item_count,
+      sent_at,
+      tracking_token
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, CASE WHEN $6 = 'sent' THEN now() ELSE NULL END, $10)
     `,
     [
       batchId,
@@ -707,6 +770,7 @@ async function recordEmailResult(db, storeId, batchId, result) {
       result.error || null,
       result.message_id || null,
       result.item_count || 0,
+      result.status === 'sent' ? result.tracking_token || null : null,
     ]
   );
 }
@@ -738,27 +802,132 @@ async function fetchCustomerTariffEmailHistory(db, storeId, limit = 20) {
   const result = await db.query(
     `
     SELECT
-      id::text AS id,
-      sent_at,
-      total_clients,
-      clients_with_email,
-      clients_without_email,
-      emails_planned,
-      emails_sent,
-      clients_skipped,
-      errors,
-      smtp_errors,
-      created_by,
-      updated_at
-    FROM customer_price_list_email_batches
-    WHERE store_id = $1
-    ORDER BY sent_at DESC
+      b.id::text AS id,
+      b.sent_at,
+      b.total_clients,
+      b.clients_with_email,
+      b.clients_without_email,
+      b.emails_planned,
+      b.emails_sent,
+      b.clients_skipped,
+      b.errors,
+      b.smtp_errors,
+      b.created_by,
+      b.updated_at,
+      COALESCE(opened_count, 0)::integer AS opened_count,
+      COALESCE(unopened_count, 0)::integer AS unopened_count,
+      first_opened_at,
+      last_opened_at
+    FROM customer_price_list_email_batches b
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*) FILTER (WHERE r.status = 'sent' AND COALESCE(r.open_count, 0) > 0)::integer AS opened_count,
+        COUNT(*) FILTER (WHERE r.status = 'sent' AND COALESCE(r.open_count, 0) = 0)::integer AS unopened_count,
+        MIN(r.first_opened_at) FILTER (WHERE r.status = 'sent' AND COALESCE(r.open_count, 0) > 0) AS first_opened_at,
+        MAX(r.last_opened_at) FILTER (WHERE r.status = 'sent' AND COALESCE(r.open_count, 0) > 0) AS last_opened_at
+      FROM customer_price_list_email_results r
+      WHERE r.batch_id = b.id AND r.store_id = b.store_id
+    ) stats ON true
+    WHERE b.store_id = $1
+    ORDER BY b.sent_at DESC
     LIMIT $2
     `,
     [storeId, safeLimit]
   );
 
   return result.rows;
+}
+
+async function fetchCustomerTariffEmailBatchDetail(db, storeId, batchId) {
+  const batchResult = await db.query(
+    `
+    SELECT
+      b.id::text AS id,
+      b.sent_at,
+      b.total_clients,
+      b.clients_with_email,
+      b.clients_without_email,
+      b.emails_planned,
+      b.emails_sent,
+      b.clients_skipped,
+      b.errors,
+      b.smtp_errors,
+      b.created_by,
+      b.updated_at,
+      COALESCE(stats.opened_count, 0)::integer AS opened_count,
+      COALESCE(stats.unopened_count, 0)::integer AS unopened_count,
+      stats.first_opened_at,
+      stats.last_opened_at
+    FROM customer_price_list_email_batches b
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*) FILTER (WHERE r.status = 'sent' AND COALESCE(r.open_count, 0) > 0)::integer AS opened_count,
+        COUNT(*) FILTER (WHERE r.status = 'sent' AND COALESCE(r.open_count, 0) = 0)::integer AS unopened_count,
+        MIN(r.first_opened_at) FILTER (WHERE r.status = 'sent' AND COALESCE(r.open_count, 0) > 0) AS first_opened_at,
+        MAX(r.last_opened_at) FILTER (WHERE r.status = 'sent' AND COALESCE(r.open_count, 0) > 0) AS last_opened_at
+      FROM customer_price_list_email_results r
+      WHERE r.batch_id = b.id AND r.store_id = b.store_id
+    ) stats ON true
+    WHERE b.id = $1 AND b.store_id = $2
+    LIMIT 1
+    `,
+    [batchId, storeId]
+  );
+  const batch = batchResult.rows[0];
+  if (!batch) {
+    const error = new Error('Campagne email introuvable');
+    error.status = 404;
+    throw error;
+  }
+
+  const results = await db.query(
+    `
+    SELECT
+      client_id::text AS client_id,
+      client_name,
+      email,
+      status,
+      error,
+      message_id,
+      COALESCE(sent_at, created_at) AS sent_at,
+      item_count,
+      (COALESCE(open_count, 0) > 0) AS opening_detected,
+      first_opened_at,
+      last_opened_at,
+      COALESCE(open_count, 0)::integer AS open_count
+    FROM customer_price_list_email_results
+    WHERE batch_id = $1 AND store_id = $2
+    ORDER BY
+      CASE status WHEN 'sent' THEN 0 WHEN 'error' THEN 1 ELSE 2 END,
+      client_name NULLS LAST,
+      email NULLS LAST,
+      created_at ASC
+    `,
+    [batchId, storeId]
+  );
+
+  return { batch, results: results.rows };
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+async function recordCustomerTariffEmailOpen(db, trackingToken) {
+  if (!isUuid(trackingToken)) return { found: false };
+  const result = await db.query(
+    `
+    UPDATE customer_price_list_email_results
+    SET
+      first_opened_at = COALESCE(first_opened_at, now()),
+      last_opened_at = now(),
+      open_count = COALESCE(open_count, 0) + 1
+    WHERE tracking_token = $1 AND status = 'sent'
+    RETURNING id
+    `,
+    [trackingToken]
+  );
+  return { found: result.rows.length > 0 };
 }
 
 function logTariffEmailResult(result) {
@@ -818,6 +987,12 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   const smtpErrors = [];
   const filename = buildPdfFilename(context.mercuriale_date);
   const sendEmailFn = options.sendEmail || sendEmail;
+  const trackingConfig = openTrackingStatus();
+  if (!trackingConfig.open_tracking_configured) {
+    console.warn('Suivi des ouvertures mercuriales non configure', {
+      missing: trackingConfig.open_tracking_missing,
+    });
+  }
   const buildPdfFn = options.buildPdf || (async (args) => {
     if (args.priceListId) {
       const generated = await generateCustomerPriceListPdf({
@@ -874,6 +1049,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
     }
 
     const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
+    const trackingToken = generateEmailTrackingToken();
     const mail = buildMercurialeEmailMessage({
       companySettings: storeSettings,
       recipientResolution: previewRow.recipient_resolution,
@@ -881,6 +1057,8 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
       commonMessage,
       clientTariffLevel: pricingLevel,
       pdfFilename: filename,
+      trackingToken,
+      clientKey: options.client_key,
     });
 
     try {
@@ -915,7 +1093,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
       };
       summary.sent += 1;
       results.push(result);
-      await recordEmailResult(db, storeId, batch.id, result);
+      await recordEmailResult(db, storeId, batch.id, { ...result, tracking_token: mail.tracking_token });
       logTariffEmailResult(result);
     } catch (err) {
       const errorMessage = err.message || 'Erreur envoi email';
@@ -1051,14 +1229,21 @@ async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
 
 module.exports = {
   buildMercurialeEmailMessage,
+  appendEmailOpenTrackingPixel,
   buildCustomerTariffEmailPreview,
   buildSummary,
   customerMercurialPdfPriceList,
+  fetchCustomerTariffEmailBatchDetail,
   fetchCustomerTariffEmailHistory,
+  generateEmailTrackingToken,
   isMercurialEmailSendReady,
+  openTrackingStatus,
+  recordCustomerTariffEmailOpen,
   resolveClientPricingLevel,
   resolveClientPricingLevelSource,
   resolveMercurialeTargetTariff,
+  trackingPixelUrl,
+  trackingTenantKey,
   resolveEmailSalutation,
   sendCustomerTariffEmails,
   sendCustomerTariffTestEmail,

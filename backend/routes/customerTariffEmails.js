@@ -2,14 +2,19 @@ const express = require('express');
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
+const { DB_CLIENTS, getPoolByDatabase } = require('../dbRegistry');
 const {
   buildCustomerTariffEmailPreview,
+  fetchCustomerTariffEmailBatchDetail,
   fetchCustomerTariffEmailHistory,
+  recordCustomerTariffEmailOpen,
   sendCustomerTariffEmails,
   sendCustomerTariffTestEmail,
+  trackingTenantKey,
 } = require('../services/customerTariffEmailService');
 
 const router = express.Router();
+const TRANSPARENT_GIF = Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64');
 
 function requireTariffEmailSender(req, res, next) {
   const allowedRoles = ['admin', 'responsable', 'commercial'];
@@ -18,6 +23,32 @@ function requireTariffEmailSender(req, res, next) {
   }
   return next();
 }
+
+function sendTransparentPixel(res) {
+  res.set({
+    'Content-Type': 'image/gif',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    Pragma: 'no-cache',
+    Expires: '0',
+  });
+  return res.status(200).send(TRANSPARENT_GIF);
+}
+
+function poolForTrackingTenantKey(tenantKey) {
+  const match = Object.entries(DB_CLIENTS).find(([clientKey]) => trackingTenantKey(clientKey) === tenantKey);
+  const databaseName = match && match[1];
+  return databaseName ? getPoolByDatabase(databaseName) : null;
+}
+
+router.get('/open/:tenantKey/:token', async (req, res) => {
+  try {
+    const pool = poolForTrackingTenantKey(req.params.tenantKey);
+    if (pool) await recordCustomerTariffEmailOpen(pool, req.params.token);
+  } catch (err) {
+    console.warn('Erreur tracking ouverture mercuriale', { message: err.message });
+  }
+  return sendTransparentPixel(res);
+});
 
 router.get('/preview', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
   try {
@@ -65,6 +96,7 @@ router.post('/send', authenticateToken, attachDbContext, requireTariffEmailSende
       mercuriale_date: req.body?.mercuriale_date,
       common_message: req.body?.common_message,
       selected_client_ids: selectedClientIds,
+      client_key: req.user.client_key,
     });
 
     res.json(result);
@@ -100,6 +132,16 @@ router.get('/history', authenticateToken, attachDbContext, requireTariffEmailSen
   } catch (err) {
     console.error('Erreur GET /api/customer-price-lists/email/history :', err);
     res.status(err.status || 500).json({ error: err.message || 'Erreur serveur historique emails mercuriales' });
+  }
+});
+
+router.get('/history/:batchId', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
+  try {
+    const detail = await fetchCustomerTariffEmailBatchDetail(req.dbPool, req.user.store_id, req.params.batchId);
+    res.json(detail);
+  } catch (err) {
+    console.error('Erreur GET /api/customer-price-lists/email/history/:batchId :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur serveur detail historique emails mercuriales' });
   }
 });
 

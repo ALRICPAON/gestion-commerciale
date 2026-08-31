@@ -357,6 +357,93 @@
   font-weight: 800;
 }
 
+.merc-email-history {
+  margin: 18px 0;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+
+.merc-email-history-header,
+.merc-email-history-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.merc-email-history-header h3 {
+  margin: 0 0 4px;
+  color: #111827;
+  font-size: 18px;
+}
+
+.merc-email-history-header p,
+.merc-email-open-note {
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.merc-email-history-toolbar > div {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.merc-email-history-toolbar .active {
+  border-color: #005baa;
+  color: #005baa;
+  background: #eff6ff;
+}
+
+.merc-email-open-note {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fffdf3;
+}
+
+.merc-email-history-table {
+  min-width: 920px;
+}
+
+.merc-email-history-table small {
+  display: block;
+  margin-top: 4px;
+  color: #6b7280;
+}
+
+.merc-email-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.merc-email-status.sent,
+.merc-email-status.opened {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.merc-email-status.error {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.merc-email-status.unopened {
+  background: #f3f4f6;
+  color: #4b5563;
+}
+
 .cpl-print-document {
   max-width: 980px;
   margin: 0 auto 22px;
