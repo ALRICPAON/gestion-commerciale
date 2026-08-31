@@ -59,7 +59,6 @@ const articleSearchBtn = document.getElementById('article-search-btn');
 const articleResults = document.getElementById('article-results');
 
 const DEFAULT_PRODUCT_COLUMNS = 10;
-const MAX_PRODUCT_COLUMNS = 18;
 const DRAFT_STORAGE_KEY = `alta-maree:quick-order-sheet:v3:${sessionUser.store_id || sessionUser.client_key || sessionUser.email || 'default'}`;
 
 let clients = [];
@@ -230,7 +229,7 @@ function loadDraft() {
   }
 
   if (Array.isArray(draft.productColumns) && draft.productColumns.length > 0) {
-    productColumns = draft.productColumns.slice(0, MAX_PRODUCT_COLUMNS).map((column) => ({
+    productColumns = draft.productColumns.map((column) => ({
       ...emptyProductColumn(),
       ...column,
       uid: column.uid || columnUid(),
@@ -832,7 +831,7 @@ function renderProductColumns() {
       </label>
     </article>`;
   }).join('');
-  addProductColumnBtn.disabled = productColumns.length >= MAX_PRODUCT_COLUMNS;
+  addProductColumnBtn.disabled = false;
   updatePreview();
 }
 
@@ -970,7 +969,6 @@ function applyArticleResult(index) {
 }
 
 function duplicateProduct(index) {
-  if (productColumns.length >= MAX_PRODUCT_COLUMNS) return;
   productColumns.splice(index + 1, 0, { ...productColumns[index], uid: columnUid() });
   renderProductColumns();
 }
@@ -1316,7 +1314,7 @@ function initEvents() {
     saveSheetToServerDebounced();
   });
   addProductColumnBtn?.addEventListener('click', () => {
-    if (productColumns.length < MAX_PRODUCT_COLUMNS) productColumns.push(emptyProductColumn());
+    productColumns.push(emptyProductColumn());
     renderProductColumns();
     invalidateEmailPreview();
     saveDraft();

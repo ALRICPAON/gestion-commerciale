@@ -981,8 +981,14 @@ async function testPricingFrontendImportWorkflowContracts() {
   assert(html.includes('id="create-revision-btn"'), 'frontend exposes explicit revision button on published sessions');
   assert(js.includes('function isoDate(value)'), 'frontend has a strict API date helper');
   assert(js.includes('pricing_date: isoDate(session.pricing_date)'), 'revision payload uses backend ISO pricing_date, not display text');
+  assert(js.includes("formData.append('import_date', importDate)"), 'file supplier imports carry the selected pricing date');
+  assert(js.includes('import_date: importDate'), 'text supplier imports carry the selected pricing date');
   assert(js.includes('createDraftRevision'), 'frontend centralizes published-session revision creation');
   assert(js.includes('ensureEditableSession'), 'frontend gates natural mutations through revision workflow');
+  assert(js.includes('if (!lastImportId) return;'), 'supplier import apply no longer requires a pre-existing session');
+  assert(!js.includes('if (!lastImportId || !session) return;'), 'supplier import apply does not abort when the day has no session yet');
+  assert(js.includes('await createSession({ showFeedback: false })'), 'supplier import apply creates a draft session automatically on empty days');
+  assert(js.includes('applyImportBtn.disabled = !lastImportId || !summary.ready;'), 'apply import button only depends on an import with ready lines');
   assert(js.includes('La tarification du jour est deja publiee. Une nouvelle revision va etre creee pour ajouter ce cours fournisseur.'), 'frontend confirms revision creation before supplier import');
   assert(js.includes('create_revision_if_published = true'), 'frontend sends explicit revision intent for published sessions');
   assert(js.includes('revision_reused') && js.includes('ouverte'), 'frontend explains reused draft revisions');

@@ -358,13 +358,14 @@ async function loadSession(showMessage = true) {
   if (showMessage) showFeedback('Session chargee.', 'success');
 }
 
-async function createSession() {
+async function createSession(options = {}) {
   const result = await apiJson('/api/pricing/sessions', { pricing_date: isoDate(pricingDateInput.value) || todayIso() });
   session = result.session;
   lines = result.lines || [];
   dirty.clear();
   renderLines();
-  showFeedback('Session creee.', 'success');
+  if (options.showFeedback !== false) showFeedback('Session creee.', 'success');
+  return session;
 }
 
 async function duplicateSession() {
@@ -481,16 +482,19 @@ async function runImport() {
   if (!importSupplierSelect.value) throw new Error('Choisir un fournisseur');
   const file = importFileInput.files?.[0] || null;
   const rawText = importTextarea.value.trim();
+  const importDate = isoDate(pricingDateInput.value) || todayIso();
   let result;
   if (file) {
     const formData = new FormData();
     formData.append('supplier_id', importSupplierSelect.value);
+    formData.append('import_date', importDate);
     formData.append('file', file);
     if (rawText) formData.append('raw_text', rawText);
     result = await apiForm('/api/pricing/supplier-imports', formData);
   } else {
     result = await apiJson('/api/pricing/supplier-imports', {
       supplier_id: importSupplierSelect.value,
+      import_date: importDate,
       raw_text: rawText,
       source_type: 'text',
     });
@@ -499,7 +503,9 @@ async function runImport() {
 }
 
 async function applyImport() {
-  if (!lastImportId || !session) return;
+  if (!lastImportId) return;
+  if (!session) await createSession({ showFeedback: false });
+  if (!session) return;
   const payload = { pricing_session_id: session.id };
   if (session.status === 'published') {
     const editable = await createDraftRevision('La tarification du jour est deja publiee. Une nouvelle revision va etre creee pour ajouter ce cours fournisseur.');
@@ -561,7 +567,7 @@ function updateImportSummary() {
   const linesForImport = currentImport?.lines || [];
   const summary = importSummaryFromLines(linesForImport);
   if (currentImport) currentImport.summary = summary;
-  applyImportBtn.disabled = !lastImportId || !session || !summary.ready;
+  applyImportBtn.disabled = !lastImportId || !summary.ready;
   confirmKnownBtn.disabled = !linesForImport.some((line) => line.match_method === 'known_mapping' && line.user_decision === 'pending');
   importSummary.innerHTML = lastImportId ? `
     <strong>${summary.total || 0}</strong> lignes detectees

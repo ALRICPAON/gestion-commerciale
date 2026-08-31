@@ -128,7 +128,7 @@ function normalizeDailyPricingPayload(body = {}) {
     default_margin_level_3: margin(body.default_margin_level_3, 0.20),
     selected_client_ids: Array.isArray(body.selected_client_ids) ? body.selected_client_ids.filter(isUuid) : [],
     order_entries: body.entries && typeof body.entries === 'object' ? body.entries : {},
-    products: products.slice(0, 60).map((product, index) => {
+    products: products.map((product, index) => {
       const purchasePrice = nullablePositive(product.purchase_price_ht);
       const transportCost = pos(product.transport_cost_ht, 0);
       const explicitCostRendered = nullablePositive(product.cost_rendered_ht);
