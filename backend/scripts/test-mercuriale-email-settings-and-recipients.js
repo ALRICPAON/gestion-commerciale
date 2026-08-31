@@ -424,16 +424,29 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
   assert.match(tenantKey, /^[A-Za-z0-9_-]{32}$/, 'cle de routage tenant opaque');
   assert.deepEqual(openTrackingStatus({}), {
     open_tracking_configured: false,
-    open_tracking_missing: ['PUBLIC_API_BASE_URL'],
-  }, 'diagnostic tracking signale PUBLIC_API_BASE_URL manquant');
-  assert.deepEqual(openTrackingStatus({ PUBLIC_API_BASE_URL: 'https://api.altamaree.fr' }), {
+    open_tracking_missing: ['PUBLIC_API_BASE_URL', 'OPEN_TRACKING_SECRET or JWT_SECRET'],
+  }, 'diagnostic tracking signale URL et secret manquants');
+  assert.deepEqual(openTrackingStatus({ PUBLIC_API_BASE_URL: 'https://api.altamaree.fr', OPEN_TRACKING_SECRET: 'secret-test' }), {
     open_tracking_configured: true,
     open_tracking_missing: [],
-  }, 'diagnostic tracking confirme PUBLIC_API_BASE_URL configure');
-  assert.deepEqual(openTrackingStatus({ API_BASE_URL: 'https://api-interne.local' }), {
+  }, 'diagnostic tracking confirme URL publique et secret dedie configures');
+  assert.deepEqual(openTrackingStatus({ PUBLIC_API_BASE_URL: 'https://api.altamaree.fr', JWT_SECRET: 'secret-test' }), {
+    open_tracking_configured: true,
+    open_tracking_missing: [],
+  }, 'diagnostic tracking accepte JWT_SECRET comme fallback');
+  assert.deepEqual(openTrackingStatus({ PUBLIC_API_BASE_URL: 'https://api.altamaree.fr' }), {
+    open_tracking_configured: false,
+    open_tracking_missing: ['OPEN_TRACKING_SECRET or JWT_SECRET'],
+  }, 'diagnostic tracking refuse URL sans secret');
+  assert.deepEqual(openTrackingStatus({ JWT_SECRET: 'secret-test' }), {
     open_tracking_configured: false,
     open_tracking_missing: ['PUBLIC_API_BASE_URL'],
+  }, 'diagnostic tracking refuse secret sans URL publique');
+  assert.deepEqual(openTrackingStatus({ API_BASE_URL: 'https://api-interne.local' }), {
+    open_tracking_configured: false,
+    open_tracking_missing: ['PUBLIC_API_BASE_URL', 'OPEN_TRACKING_SECRET or JWT_SECRET'],
   }, 'tracking ne considere pas API_BASE_URL comme URL publique garantie');
+  assert.equal(trackingTenantKey('scorpa', {}), null, 'aucun secret de routage par defaut code en dur');
   assert.equal(
     trackingPixelUrl(trackingToken, { publicApiBaseUrl: 'https://api.altamaree.fr/', tenantKey }),
     `https://api.altamaree.fr/api/customer-price-lists/email/open/${tenantKey}/${trackingToken}`,
@@ -452,7 +465,7 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
       clientKey: 'scorpa',
     }).html.includes(`/open/${trackingToken}`),
     false,
-    'email envoye ne publie pas de token sans cle tenant compatible'
+    'email envoye ne publie pas de token sans secret de routage'
   );
   assert.equal(
     buildMercurialeEmailMessage({

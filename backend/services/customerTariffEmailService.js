@@ -74,17 +74,19 @@ function resolvePublicApiBaseUrl(env = process.env) {
 }
 
 function openTrackingStatus(env = process.env) {
-  const configured = Boolean(resolvePublicApiBaseUrl(env));
+  const missing = [];
+  if (!resolvePublicApiBaseUrl(env)) missing.push('PUBLIC_API_BASE_URL');
+  if (!clean(env.OPEN_TRACKING_SECRET) && !clean(env.JWT_SECRET)) missing.push('OPEN_TRACKING_SECRET or JWT_SECRET');
   return {
-    open_tracking_configured: configured,
-    open_tracking_missing: configured ? [] : ['PUBLIC_API_BASE_URL'],
+    open_tracking_configured: missing.length === 0,
+    open_tracking_missing: missing,
   };
 }
 
 function trackingTenantKey(clientKey, env = process.env) {
   const key = clean(clientKey);
-  const secret = clean(env.OPEN_TRACKING_SECRET) || clean(env.JWT_SECRET) || 'alta-maree-open-tracking-dev';
-  if (!key) return null;
+  const secret = clean(env.OPEN_TRACKING_SECRET) || clean(env.JWT_SECRET);
+  if (!key || !secret) return null;
   return crypto
     .createHmac('sha256', secret)
     .update(`customer-price-list-email:${key}`)
