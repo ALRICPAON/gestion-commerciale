@@ -114,6 +114,10 @@
       lines.push(`SMTP incomplet : ${(smtp.missing || []).join(', ') || 'configuration manquante'}`);
     }
 
+    if (smtp.open_tracking_configured === false) {
+      lines.push('Suivi des ouvertures non configuré — les emails seront envoyés normalement.');
+    }
+
     if (!summary.eligible) {
       lines.push('Aucun client eligible : il faut au moins un destinataire, un tarif 1/2/3 et un produit dans la fiche d appel du jour.');
     }

@@ -70,13 +70,33 @@ function generateEmailTrackingToken() {
 }
 
 function resolvePublicApiBaseUrl(env = process.env) {
-  return clean(env.PUBLIC_API_BASE_URL) || clean(env.API_BASE_URL) || '';
+  return clean(env.PUBLIC_API_BASE_URL) || '';
+}
+
+function openTrackingStatus(env = process.env) {
+  const configured = Boolean(resolvePublicApiBaseUrl(env));
+  return {
+    open_tracking_configured: configured,
+    open_tracking_missing: configured ? [] : ['PUBLIC_API_BASE_URL'],
+  };
+}
+
+function trackingTenantKey(clientKey, env = process.env) {
+  const key = clean(clientKey);
+  const secret = clean(env.OPEN_TRACKING_SECRET) || clean(env.JWT_SECRET) || 'alta-maree-open-tracking-dev';
+  if (!key) return null;
+  return crypto
+    .createHmac('sha256', secret)
+    .update(`customer-price-list-email:${key}`)
+    .digest('base64url')
+    .slice(0, 32);
 }
 
 function trackingPixelUrl(trackingToken, options = {}) {
   const baseUrl = (clean(options.publicApiBaseUrl) || resolvePublicApiBaseUrl(options.env)).replace(/\/+$/, '');
-  if (!baseUrl || !clean(trackingToken)) return null;
-  return `${baseUrl}/api/customer-price-lists/email/open/${encodeURIComponent(trackingToken)}`;
+  const tenantKey = clean(options.tenantKey) || trackingTenantKey(options.clientKey, options.env);
+  if (!baseUrl || !tenantKey || !clean(trackingToken)) return null;
+  return `${baseUrl}/api/customer-price-lists/email/open/${encodeURIComponent(tenantKey)}/${encodeURIComponent(trackingToken)}`;
 }
 
 function appendEmailOpenTrackingPixel(html, trackingToken, options = {}) {
@@ -532,7 +552,10 @@ async function buildCustomerTariffEmailPreview(db, storeId, options = {}) {
     });
 
   return {
-    smtp: getSmtpStatus(),
+    smtp: {
+      ...getSmtpStatus(),
+      ...openTrackingStatus(),
+    },
     sender: resolveReplyTo(storeSettings),
     test_recipient: resolveCompanyEmail(storeSettings),
     attachment_filename: filename,
@@ -598,6 +621,8 @@ function buildMercurialeEmailMessage({
   pdfFilename,
   trackingToken,
   publicApiBaseUrl,
+  clientKey,
+  tenantKey,
 } = {}) {
   const settings = companySettings || storeSettings || {};
   const resolvedContactName = clean(contactName) || resolveFirstContactName(recipientResolution);
@@ -607,7 +632,7 @@ function buildMercurialeEmailMessage({
   const html = appendEmailOpenTrackingPixel(
     buildEmailHtml(settings, salutation, message),
     trackingToken,
-    { publicApiBaseUrl }
+    { publicApiBaseUrl, clientKey, tenantKey }
   );
   const replyTo = resolveReplyTo(settings);
 
@@ -960,6 +985,12 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
   const smtpErrors = [];
   const filename = buildPdfFilename(context.mercuriale_date);
   const sendEmailFn = options.sendEmail || sendEmail;
+  const trackingConfig = openTrackingStatus();
+  if (!trackingConfig.open_tracking_configured) {
+    console.warn('Suivi des ouvertures mercuriales non configure', {
+      missing: trackingConfig.open_tracking_missing,
+    });
+  }
   const buildPdfFn = options.buildPdf || (async (args) => {
     if (args.priceListId) {
       const generated = await generateCustomerPriceListPdf({
@@ -1025,6 +1056,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
       clientTariffLevel: pricingLevel,
       pdfFilename: filename,
       trackingToken,
+      clientKey: options.client_key,
     });
 
     try {
@@ -1203,11 +1235,13 @@ module.exports = {
   fetchCustomerTariffEmailHistory,
   generateEmailTrackingToken,
   isMercurialEmailSendReady,
+  openTrackingStatus,
   recordCustomerTariffEmailOpen,
   resolveClientPricingLevel,
   resolveClientPricingLevelSource,
   resolveMercurialeTargetTariff,
   trackingPixelUrl,
+  trackingTenantKey,
   resolveEmailSalutation,
   sendCustomerTariffEmails,
   sendCustomerTariffTestEmail,

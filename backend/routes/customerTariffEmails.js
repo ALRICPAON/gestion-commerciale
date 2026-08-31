@@ -10,6 +10,7 @@ const {
   recordCustomerTariffEmailOpen,
   sendCustomerTariffEmails,
   sendCustomerTariffTestEmail,
+  trackingTenantKey,
 } = require('../services/customerTariffEmailService');
 
 const router = express.Router();
@@ -33,15 +34,18 @@ function sendTransparentPixel(res) {
   return res.status(200).send(TRANSPARENT_GIF);
 }
 
-router.get('/open/:token', async (req, res) => {
-  const databases = [...new Set(Object.values(DB_CLIENTS).filter(Boolean))];
-  for (const databaseName of databases) {
-    try {
-      const result = await recordCustomerTariffEmailOpen(getPoolByDatabase(databaseName), req.params.token);
-      if (result.found) break;
-    } catch (err) {
-      console.warn('Erreur tracking ouverture mercuriale', { database: databaseName, message: err.message });
-    }
+function poolForTrackingTenantKey(tenantKey) {
+  const match = Object.entries(DB_CLIENTS).find(([clientKey]) => trackingTenantKey(clientKey) === tenantKey);
+  const databaseName = match && match[1];
+  return databaseName ? getPoolByDatabase(databaseName) : null;
+}
+
+router.get('/open/:tenantKey/:token', async (req, res) => {
+  try {
+    const pool = poolForTrackingTenantKey(req.params.tenantKey);
+    if (pool) await recordCustomerTariffEmailOpen(pool, req.params.token);
+  } catch (err) {
+    console.warn('Erreur tracking ouverture mercuriale', { message: err.message });
   }
   return sendTransparentPixel(res);
 });
@@ -92,6 +96,7 @@ router.post('/send', authenticateToken, attachDbContext, requireTariffEmailSende
       mercuriale_date: req.body?.mercuriale_date,
       common_message: req.body?.common_message,
       selected_client_ids: selectedClientIds,
+      client_key: req.user.client_key,
     });
 
     res.json(result);

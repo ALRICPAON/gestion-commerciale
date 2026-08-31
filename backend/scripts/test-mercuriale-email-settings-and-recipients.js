@@ -16,6 +16,7 @@ const {
   fetchCustomerTariffEmailHistory,
   generateEmailTrackingToken,
   isMercurialEmailSendReady,
+  openTrackingStatus,
   recordCustomerTariffEmailOpen,
   resolveClientPricingLevel,
   resolveClientPricingLevelSource,
@@ -24,6 +25,7 @@ const {
   sendCustomerTariffEmails,
   sendCustomerTariffTestEmail,
   trackingPixelUrl,
+  trackingTenantKey,
 } = require('../services/customerTariffEmailService');
 const { resolveCompanyEmail } = require('../services/pdf/pdfLayout');
 const {
@@ -417,14 +419,28 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
   assert.equal(renderedMail.client_tariff_level, 2, 'preview expose le niveau tarifaire client');
   assert.equal(renderedMail.attachment_filename, 'Mercuriale_ALTA_MAREE_2026-07-17.pdf', 'nom PDF expose dans preview');
   const trackingToken = generateEmailTrackingToken();
+  const tenantKey = trackingTenantKey('scorpa', { JWT_SECRET: 'secret-test' });
   assert.match(trackingToken, /^[0-9a-f-]{36}$/i, 'token tracking email non devinable au format UUID');
+  assert.match(tenantKey, /^[A-Za-z0-9_-]{32}$/, 'cle de routage tenant opaque');
+  assert.deepEqual(openTrackingStatus({}), {
+    open_tracking_configured: false,
+    open_tracking_missing: ['PUBLIC_API_BASE_URL'],
+  }, 'diagnostic tracking signale PUBLIC_API_BASE_URL manquant');
+  assert.deepEqual(openTrackingStatus({ PUBLIC_API_BASE_URL: 'https://api.altamaree.fr' }), {
+    open_tracking_configured: true,
+    open_tracking_missing: [],
+  }, 'diagnostic tracking confirme PUBLIC_API_BASE_URL configure');
+  assert.deepEqual(openTrackingStatus({ API_BASE_URL: 'https://api-interne.local' }), {
+    open_tracking_configured: false,
+    open_tracking_missing: ['PUBLIC_API_BASE_URL'],
+  }, 'tracking ne considere pas API_BASE_URL comme URL publique garantie');
   assert.equal(
-    trackingPixelUrl(trackingToken, { publicApiBaseUrl: 'https://api.altamaree.fr/' }),
-    `https://api.altamaree.fr/api/customer-price-lists/email/open/${trackingToken}`,
-    'URL pixel utilise la base API publique'
+    trackingPixelUrl(trackingToken, { publicApiBaseUrl: 'https://api.altamaree.fr/', tenantKey }),
+    `https://api.altamaree.fr/api/customer-price-lists/email/open/${tenantKey}/${trackingToken}`,
+    'URL pixel utilise la base API publique et la cle tenant opaque'
   );
   assert.ok(
-    appendEmailOpenTrackingPixel('<p>Bonjour</p>', trackingToken, { publicApiBaseUrl: 'https://api.altamaree.fr' }).includes(`/open/${trackingToken}`),
+    appendEmailOpenTrackingPixel('<p>Bonjour</p>', trackingToken, { publicApiBaseUrl: 'https://api.altamaree.fr', tenantKey }).includes(`/open/${tenantKey}/${trackingToken}`),
     'pixel de tracking ajoute au HTML avec le token'
   );
   assert.equal(
@@ -433,7 +449,19 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
       mercurialeDate: '2026-07-20',
       trackingToken,
       publicApiBaseUrl: 'https://api.altamaree.fr',
+      clientKey: 'scorpa',
     }).html.includes(`/open/${trackingToken}`),
+    false,
+    'email envoye ne publie pas de token sans cle tenant compatible'
+  );
+  assert.equal(
+    buildMercurialeEmailMessage({
+      storeSettings: { contact_email: 'contact@altamaree.fr' },
+      mercurialeDate: '2026-07-20',
+      trackingToken,
+      publicApiBaseUrl: 'https://api.altamaree.fr',
+      tenantKey,
+    }).html.includes(`/open/${tenantKey}/${trackingToken}`),
     true,
     'email envoye peut recevoir un pixel de tracking'
   );
@@ -524,13 +552,16 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
   assert.equal(emptySelectionResponse.body.error, 'Aucun client sélectionné pour l’envoi', 'route envoi retourne une erreur claire selection vide');
 
   const originalPublicApiBaseUrl = process.env.PUBLIC_API_BASE_URL;
+  const originalJwtSecret = process.env.JWT_SECRET;
   process.env.PUBLIC_API_BASE_URL = 'https://api.altamaree.fr';
+  process.env.JWT_SECRET = 'secret-test';
   const sentMessages = [];
   const emailPdfInputs = [];
   const resultInserts = [];
   const selectedSend = await sendCustomerTariffEmails(selectedSendDb({ resultInserts }), 'store-1', {
     price_list_id: TEST_UUID,
     selected_client_ids: ['client-a', 'client-b'],
+    client_key: 'scorpa',
     common_message: 'Message commun modifie.',
     buildPdf: async (input) => {
       emailPdfInputs.push(input);
@@ -543,20 +574,51 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
   });
   if (originalPublicApiBaseUrl === undefined) delete process.env.PUBLIC_API_BASE_URL;
   else process.env.PUBLIC_API_BASE_URL = originalPublicApiBaseUrl;
+  if (originalJwtSecret === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = originalJwtSecret;
   assert.equal(selectedSend.summary.sent, 2, 'deux clients selectionnes envoyes');
   assert.equal(sentMessages.length, 2, 'un email envoye par client selectionne');
   assert.deepEqual(sentMessages[0].to, ['merc1@test.fr', 'merc2@test.fr'], 'tous les contacts mercuriale transmis au SMTP');
   const sentTrackingTokens = sentMessages.map((message) => {
-    const match = String(message.html || '').match(/\/api\/customer-price-lists\/email\/open\/([0-9a-f-]{36})/i);
-    return match && match[1];
+    const match = String(message.html || '').match(/\/api\/customer-price-lists\/email\/open\/([A-Za-z0-9_-]{32})\/([0-9a-f-]{36})/i);
+    return match && { tenant_key: match[1], token: match[2] };
   });
   assert.ok(sentTrackingTokens[0], 'premier email envoye contient un pixel avec token');
   assert.ok(sentTrackingTokens[1], 'deuxieme email envoye contient un pixel avec token');
-  assert.notEqual(sentTrackingTokens[0], sentTrackingTokens[1], 'deux emails envoyes recoivent deux tokens differents');
-  assert.deepEqual(resultInserts.map((params) => params[9]), sentTrackingTokens, 'tokens envoyes enregistres avec les resultats email');
+  assert.equal(sentTrackingTokens[0].tenant_key, trackingTenantKey('scorpa', { JWT_SECRET: 'secret-test' }), 'pixel route vers la cle tenant attendue');
+  assert.equal(sentTrackingTokens[1].tenant_key, sentTrackingTokens[0].tenant_key, 'meme tenant pour les deux emails du batch');
+  assert.notEqual(sentTrackingTokens[0].token, sentTrackingTokens[1].token, 'deux emails envoyes recoivent deux tokens differents');
+  assert.deepEqual(resultInserts.map((params) => params[9]), sentTrackingTokens.map((entry) => entry.token), 'tokens envoyes enregistres avec les resultats email');
   assert.ok(selectedSend.results.every((row) => row.status === 'sent' && !row.tracking_token), 'API envoi ne renvoie pas les tracking_token');
   assert.equal(emailPdfInputs[0].products[0].designation_snapshot, 'Produit courant enregistre', 'PDF email recoit les produits courants');
   assert.equal(emailPdfInputs[0].products[0].price_ht, 11, 'PDF email recoit le prix courant du tarif client');
+
+  const missingUrlMessages = [];
+  const originalWarn = console.warn;
+  const originalMissingPublicApiBaseUrl = process.env.PUBLIC_API_BASE_URL;
+  delete process.env.PUBLIC_API_BASE_URL;
+  console.warn = (...args) => { missingUrlMessages.push(args); };
+  const messagesWithoutTracking = [];
+  const missingTrackingSend = await sendCustomerTariffEmails(selectedSendDb(), 'store-1', {
+    price_list_id: TEST_UUID,
+    selected_client_ids: ['client-a'],
+    client_key: 'scorpa',
+    common_message: 'Message commun modifie.',
+    buildPdf: async () => Buffer.from('PDF tarif sans tracking'),
+    sendEmail: async (message) => {
+      messagesWithoutTracking.push(message);
+      return { message_id: 'message-sans-tracking' };
+    },
+  });
+  console.warn = originalWarn;
+  if (originalMissingPublicApiBaseUrl === undefined) delete process.env.PUBLIC_API_BASE_URL;
+  else process.env.PUBLIC_API_BASE_URL = originalMissingPublicApiBaseUrl;
+  assert.equal(missingTrackingSend.summary.sent, 1, 'absence PUBLIC_API_BASE_URL ne bloque pas l envoi');
+  assert.equal(String(messagesWithoutTracking[0].html || '').includes('/api/customer-price-lists/email/open/'), false, 'absence PUBLIC_API_BASE_URL envoie sans pixel');
+  assert.ok(
+    missingUrlMessages.some((entry) => String(entry[0]).includes('Suivi des ouvertures mercuriales non configure')),
+    'absence PUBLIC_API_BASE_URL emet un warning serveur'
+  );
 
   const testMessages = [];
   await sendCustomerTariffTestEmail(selectedSendDb({ withCompanyEmail: false }), 'store-1', {
@@ -705,11 +767,14 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
   assert.deepEqual(detailQueries[0].params, ['batch-1', 'store-1'], 'detail batch verifie le store_id sur la campagne');
   assert.deepEqual(detailQueries[1].params, ['batch-1', 'store-1'], 'detail batch verifie le store_id sur les resultats');
 
-  const openRouteHandler = findRouteHandler(customerTariffEmailsRouter, '/open/:token', 'get');
+  const openRouteHandler = findRouteHandler(customerTariffEmailsRouter, '/open/:tenantKey/:token', 'get');
   const savedDbClients = { ...DB_CLIENTS };
   Object.keys(DB_CLIENTS).forEach((key) => { delete DB_CLIENTS[key]; });
+  DB_CLIENTS.tenant_a = 'db_a';
+  DB_CLIENTS.tenant_b = 'db_b';
   const openRouteRes = mockRes();
-  await openRouteHandler({ params: { token: 'token-inconnu' } }, openRouteRes);
+  await openRouteHandler({ params: { tenantKey: 'tenant-inconnu', token: 'token-inconnu' } }, openRouteRes);
+  Object.keys(DB_CLIENTS).forEach((key) => { delete DB_CLIENTS[key]; });
   Object.assign(DB_CLIENTS, savedDbClients);
   assert.equal(openRouteRes.statusCode, 200, 'route pixel retourne 200 meme avec token inconnu');
   assert.equal(openRouteRes.headers['Content-Type'], 'image/gif', 'route pixel retourne une image');
@@ -768,6 +833,7 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
   assert.ok(frontendEmail.includes('Historique des envois'), 'frontend affiche l historique des envois');
   assert.ok(frontendEmail.includes('Ouverture détectée'), 'frontend utilise le libelle ouverture detectee');
   assert.ok(frontendEmail.includes('Aucune ouverture détectée'), 'frontend utilise le libelle absence ouverture detectee');
+  assert.ok(frontendEmail.includes('Suivi des ouvertures non configuré'), 'frontend affiche le warning tracking non configure');
   assert.ok(!frontendEmail.includes('Non lu'), 'frontend ne presente pas absence ouverture comme non lu');
   const confirmationFunction = frontendEmail.slice(
     frontendEmail.indexOf('function buildConfirmationMessage'),
@@ -780,9 +846,11 @@ function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
     path.resolve(__dirname, '../../backend/routes/customerTariffEmails.js'),
     'utf8'
   );
-  assert.ok(emailRoute.includes("router.get('/open/:token'"), 'route publique pixel ouverture ajoutee');
+  assert.ok(emailRoute.includes("router.get('/open/:tenantKey/:token'"), 'route publique pixel ouverture ajoutee');
   assert.ok(emailRoute.includes("'Content-Type': 'image/gif'"), 'route pixel retourne une image');
   assert.ok(emailRoute.includes("'Cache-Control': 'no-store, no-cache, must-revalidate, private'"), 'route pixel desactive le cache');
+  assert.ok(!emailRoute.includes('Object.values(DB_CLIENTS)'), 'route pixel ne parcourt pas toutes les bases configurees');
+  assert.ok(emailRoute.includes('poolForTrackingTenantKey'), 'route pixel resout une base ciblee par cle opaque');
   assert.ok(emailRoute.includes("router.get('/history/:batchId'"), 'route detail historique batch ajoutee');
 
   const trackingMigration = fs.readFileSync(
