@@ -2,14 +2,18 @@ const express = require('express');
 
 const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
+const { DB_CLIENTS, getPoolByDatabase } = require('../dbRegistry');
 const {
   buildCustomerTariffEmailPreview,
+  fetchCustomerTariffEmailBatchDetail,
   fetchCustomerTariffEmailHistory,
+  recordCustomerTariffEmailOpen,
   sendCustomerTariffEmails,
   sendCustomerTariffTestEmail,
 } = require('../services/customerTariffEmailService');
 
 const router = express.Router();
+const TRANSPARENT_GIF = Buffer.from('R0lGODlhAQABAPAAAP///wAAACH5BAAAAAAALAAAAAABAAEAAAICRAEAOw==', 'base64');
 
 function requireTariffEmailSender(req, res, next) {
   const allowedRoles = ['admin', 'responsable', 'commercial'];
@@ -18,6 +22,29 @@ function requireTariffEmailSender(req, res, next) {
   }
   return next();
 }
+
+function sendTransparentPixel(res) {
+  res.set({
+    'Content-Type': 'image/gif',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    Pragma: 'no-cache',
+    Expires: '0',
+  });
+  return res.status(200).send(TRANSPARENT_GIF);
+}
+
+router.get('/open/:token', async (req, res) => {
+  const databases = [...new Set(Object.values(DB_CLIENTS).filter(Boolean))];
+  for (const databaseName of databases) {
+    try {
+      const result = await recordCustomerTariffEmailOpen(getPoolByDatabase(databaseName), req.params.token);
+      if (result.found) break;
+    } catch (err) {
+      console.warn('Erreur tracking ouverture mercuriale', { database: databaseName, message: err.message });
+    }
+  }
+  return sendTransparentPixel(res);
+});
 
 router.get('/preview', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
   try {
@@ -100,6 +127,16 @@ router.get('/history', authenticateToken, attachDbContext, requireTariffEmailSen
   } catch (err) {
     console.error('Erreur GET /api/customer-price-lists/email/history :', err);
     res.status(err.status || 500).json({ error: err.message || 'Erreur serveur historique emails mercuriales' });
+  }
+});
+
+router.get('/history/:batchId', authenticateToken, attachDbContext, requireTariffEmailSender, async (req, res) => {
+  try {
+    const detail = await fetchCustomerTariffEmailBatchDetail(req.dbPool, req.user.store_id, req.params.batchId);
+    res.json(detail);
+  } catch (err) {
+    console.error('Erreur GET /api/customer-price-lists/email/history/:batchId :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur serveur detail historique emails mercuriales' });
   }
 });
 

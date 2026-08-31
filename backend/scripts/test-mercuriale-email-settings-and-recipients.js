@@ -7,17 +7,23 @@ const {
   recipientsToEmailList,
 } = require('../services/documentRecipientService');
 const {
+  appendEmailOpenTrackingPixel,
   buildMercurialeEmailMessage,
   buildCustomerTariffEmailPreview,
   buildSummary,
   customerMercurialPdfPriceList,
+  fetchCustomerTariffEmailBatchDetail,
+  fetchCustomerTariffEmailHistory,
+  generateEmailTrackingToken,
   isMercurialEmailSendReady,
+  recordCustomerTariffEmailOpen,
   resolveClientPricingLevel,
   resolveClientPricingLevelSource,
   resolveEmailSalutation,
   resolveMercurialeTargetTariff,
   sendCustomerTariffEmails,
   sendCustomerTariffTestEmail,
+  trackingPixelUrl,
 } = require('../services/customerTariffEmailService');
 const { resolveCompanyEmail } = require('../services/pdf/pdfLayout');
 const {
@@ -31,6 +37,7 @@ const {
 const customerPriceListsRouter = require('../routes/customerPriceLists');
 const customerTariffEmailsRouter = require('../routes/customerTariffEmails');
 const pdfDocumentsRouter = require('../routes/pdfDocuments');
+const { DB_CLIENTS } = require('../dbRegistry');
 
 const TEST_UUID = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -65,6 +72,7 @@ function mockRes() {
   return {
     statusCode: 200,
     body: null,
+    headers: {},
     status(code) {
       this.statusCode = code;
       return this;
@@ -75,6 +83,10 @@ function mockRes() {
     },
     send(payload) {
       this.body = payload;
+      return this;
+    },
+    set(headers) {
+      this.headers = { ...this.headers, ...headers };
       return this;
     },
     setHeader() {
@@ -275,7 +287,7 @@ function deselectedSendDb() {
   };
 }
 
-function selectedSendDb({ withCompanyEmail = true } = {}) {
+function selectedSendDb({ withCompanyEmail = true, resultInserts = [] } = {}) {
   return {
     async query(sql, params = []) {
       const text = String(sql);
@@ -309,7 +321,10 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
       if (text.includes('INSERT INTO customer_price_list_email_batches')) {
         return { rows: [{ id: 'batch-1', created_at: '2026-07-20T00:00:00Z' }] };
       }
-      if (text.includes('INSERT INTO customer_price_list_email_results')) return { rows: [] };
+      if (text.includes('INSERT INTO customer_price_list_email_results')) {
+        resultInserts.push(params);
+        return { rows: [] };
+      }
       if (text.includes('UPDATE customer_price_list_email_batches')) return { rows: [] };
       throw new Error(`Requete envoi selection inattendue: ${text.slice(0, 100)} | ${JSON.stringify(params)}`);
     },
@@ -401,6 +416,35 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
   assert.ok(renderedMail.body.includes('Message commun modifie.'), 'message commun modifie dans le corps');
   assert.equal(renderedMail.client_tariff_level, 2, 'preview expose le niveau tarifaire client');
   assert.equal(renderedMail.attachment_filename, 'Mercuriale_ALTA_MAREE_2026-07-17.pdf', 'nom PDF expose dans preview');
+  const trackingToken = generateEmailTrackingToken();
+  assert.match(trackingToken, /^[0-9a-f-]{36}$/i, 'token tracking email non devinable au format UUID');
+  assert.equal(
+    trackingPixelUrl(trackingToken, { publicApiBaseUrl: 'https://api.altamaree.fr/' }),
+    `https://api.altamaree.fr/api/customer-price-lists/email/open/${trackingToken}`,
+    'URL pixel utilise la base API publique'
+  );
+  assert.ok(
+    appendEmailOpenTrackingPixel('<p>Bonjour</p>', trackingToken, { publicApiBaseUrl: 'https://api.altamaree.fr' }).includes(`/open/${trackingToken}`),
+    'pixel de tracking ajoute au HTML avec le token'
+  );
+  assert.equal(
+    buildMercurialeEmailMessage({
+      storeSettings: { contact_email: 'contact@altamaree.fr' },
+      mercurialeDate: '2026-07-20',
+      trackingToken,
+      publicApiBaseUrl: 'https://api.altamaree.fr',
+    }).html.includes(`/open/${trackingToken}`),
+    true,
+    'email envoye peut recevoir un pixel de tracking'
+  );
+  assert.equal(
+    buildMercurialeEmailMessage({
+      storeSettings: { contact_email: 'contact@altamaree.fr' },
+      mercurialeDate: '2026-07-20',
+    }).html.includes('/api/customer-price-lists/email/open/'),
+    false,
+    'preview email sans token ne contient pas de pixel'
+  );
   assert.equal(
     resolveClientPricingLevel({
       is_royale_maree_member: true,
@@ -479,11 +523,14 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
   assert.equal(emptySelectionResponse.statusCode, 400, 'route envoi refuse une selection vide');
   assert.equal(emptySelectionResponse.body.error, 'Aucun client sélectionné pour l’envoi', 'route envoi retourne une erreur claire selection vide');
 
+  const originalPublicApiBaseUrl = process.env.PUBLIC_API_BASE_URL;
+  process.env.PUBLIC_API_BASE_URL = 'https://api.altamaree.fr';
   const sentMessages = [];
   const emailPdfInputs = [];
-  const selectedSend = await sendCustomerTariffEmails(selectedSendDb(), 'store-1', {
+  const resultInserts = [];
+  const selectedSend = await sendCustomerTariffEmails(selectedSendDb({ resultInserts }), 'store-1', {
     price_list_id: TEST_UUID,
-    selected_client_ids: ['client-a'],
+    selected_client_ids: ['client-a', 'client-b'],
     common_message: 'Message commun modifie.',
     buildPdf: async (input) => {
       emailPdfInputs.push(input);
@@ -494,9 +541,20 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
       return { message_id: `message-${sentMessages.length}` };
     },
   });
-  assert.equal(selectedSend.summary.sent, 1, 'un seul client selectionne envoye');
-  assert.equal(sentMessages.length, 1, 'aucun envoi aux autres clients actifs');
+  if (originalPublicApiBaseUrl === undefined) delete process.env.PUBLIC_API_BASE_URL;
+  else process.env.PUBLIC_API_BASE_URL = originalPublicApiBaseUrl;
+  assert.equal(selectedSend.summary.sent, 2, 'deux clients selectionnes envoyes');
+  assert.equal(sentMessages.length, 2, 'un email envoye par client selectionne');
   assert.deepEqual(sentMessages[0].to, ['merc1@test.fr', 'merc2@test.fr'], 'tous les contacts mercuriale transmis au SMTP');
+  const sentTrackingTokens = sentMessages.map((message) => {
+    const match = String(message.html || '').match(/\/api\/customer-price-lists\/email\/open\/([0-9a-f-]{36})/i);
+    return match && match[1];
+  });
+  assert.ok(sentTrackingTokens[0], 'premier email envoye contient un pixel avec token');
+  assert.ok(sentTrackingTokens[1], 'deuxieme email envoye contient un pixel avec token');
+  assert.notEqual(sentTrackingTokens[0], sentTrackingTokens[1], 'deux emails envoyes recoivent deux tokens differents');
+  assert.deepEqual(resultInserts.map((params) => params[9]), sentTrackingTokens, 'tokens envoyes enregistres avec les resultats email');
+  assert.ok(selectedSend.results.every((row) => row.status === 'sent' && !row.tracking_token), 'API envoi ne renvoie pas les tracking_token');
   assert.equal(emailPdfInputs[0].products[0].designation_snapshot, 'Produit courant enregistre', 'PDF email recoit les produits courants');
   assert.equal(emailPdfInputs[0].products[0].price_ht, 11, 'PDF email recoit le prix courant du tarif client');
 
@@ -513,6 +571,7 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
   });
   assert.equal(testMessages.length, 1, 'email test envoye une seule fois');
   assert.equal(testMessages[0].to, 'test-destinataire@altamaree.fr', 'email test envoye uniquement a l adresse test');
+  assert.equal(String(testMessages[0].html || '').includes('/api/customer-price-lists/email/open/'), false, 'email test sans pixel de tracking');
 
   const savedProductsByLevel = await fetchSavedPriceListProductsByPricingLevel(
     pdfRouteDb(),
@@ -578,6 +637,85 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
   assert.equal(summary.parent_tariff, 1, 'tarifs herites parent comptes');
   assert.equal(summary.billed_tariff, 1, 'tarifs herites facture comptes');
 
+  const openToken = '123e4567-e89b-42d3-a456-426614174000';
+  let openCount = 0;
+  let firstOpenedAt = null;
+  let lastOpenedAt = null;
+  const openDb = {
+    async query(sql, params) {
+      assert.ok(String(sql).includes('first_opened_at = COALESCE(first_opened_at, now())'), 'premiere ouverture preservee');
+      assert.ok(String(sql).includes('open_count = COALESCE(open_count, 0) + 1'), 'compteur ouverture incremente');
+      assert.equal(params[0], openToken, 'tracking par token uniquement');
+      openCount += 1;
+      firstOpenedAt = firstOpenedAt || '2026-08-31T06:17:00.000Z';
+      lastOpenedAt = `2026-08-31T06:${16 + openCount}:00.000Z`;
+      return { rows: [{ id: 'result-1', first_opened_at: firstOpenedAt, last_opened_at: lastOpenedAt, open_count: openCount }] };
+    },
+  };
+  assert.deepEqual(await recordCustomerTariffEmailOpen(openDb, 'token-invalide'), { found: false }, 'token inconnu ou invalide ignore sans planter');
+  assert.deepEqual(await recordCustomerTariffEmailOpen(openDb, openToken), { found: true }, 'premiere ouverture enregistree');
+  assert.equal(openCount, 1, 'premier appel incremente open_count');
+  const firstOpenSnapshot = firstOpenedAt;
+  assert.deepEqual(await recordCustomerTariffEmailOpen(openDb, openToken), { found: true }, 'deuxieme ouverture enregistree');
+  assert.equal(firstOpenedAt, firstOpenSnapshot, 'deuxieme appel ne change pas first_opened_at');
+  assert.equal(openCount, 2, 'deuxieme appel incremente open_count');
+
+  const historyQueries = [];
+  const historyDb = {
+    async query(sql, params) {
+      historyQueries.push({ sql: String(sql), params });
+      return { rows: [{
+        id: 'batch-1',
+        sent_at: '2026-08-31T06:02:00.000Z',
+        emails_sent: 2,
+        errors: 1,
+        opened_count: 1,
+        unopened_count: 1,
+      }] };
+    },
+  };
+  const history = await fetchCustomerTariffEmailHistory(historyDb, 'store-1', 10);
+  assert.equal(history[0].opened_count, 1, 'historique batch compte les ouvertures detectees');
+  assert.equal(history[0].unopened_count, 1, 'historique batch compte les emails sans ouverture detectee');
+  assert.deepEqual(historyQueries[0].params, ['store-1', 10], 'historique batch filtre par store_id');
+
+  const detailQueries = [];
+  const detailDb = {
+    async query(sql, params) {
+      detailQueries.push({ sql: String(sql), params });
+      if (detailQueries.length === 1) {
+        return { rows: [{
+          id: 'batch-1',
+          sent_at: '2026-08-31T06:02:00.000Z',
+          emails_sent: 2,
+          errors: 1,
+          opened_count: 1,
+          unopened_count: 1,
+        }] };
+      }
+      return { rows: [
+        { client_id: 'client-a', client_name: 'Client A', email: 'a@test.fr', status: 'sent', opening_detected: true, open_count: 2 },
+        { client_id: 'client-b', client_name: 'Client B', email: 'b@test.fr', status: 'sent', opening_detected: false, open_count: 0 },
+        { client_id: 'client-c', client_name: 'Client C', email: 'c@test.fr', status: 'error', opening_detected: false, open_count: 0 },
+      ] };
+    },
+  };
+  const detail = await fetchCustomerTariffEmailBatchDetail(detailDb, 'store-1', 'batch-1');
+  assert.equal(detail.results.length, 3, 'detail batch retourne les resultats individuels');
+  assert.deepEqual(detailQueries[0].params, ['batch-1', 'store-1'], 'detail batch verifie le store_id sur la campagne');
+  assert.deepEqual(detailQueries[1].params, ['batch-1', 'store-1'], 'detail batch verifie le store_id sur les resultats');
+
+  const openRouteHandler = findRouteHandler(customerTariffEmailsRouter, '/open/:token', 'get');
+  const savedDbClients = { ...DB_CLIENTS };
+  Object.keys(DB_CLIENTS).forEach((key) => { delete DB_CLIENTS[key]; });
+  const openRouteRes = mockRes();
+  await openRouteHandler({ params: { token: 'token-inconnu' } }, openRouteRes);
+  Object.assign(DB_CLIENTS, savedDbClients);
+  assert.equal(openRouteRes.statusCode, 200, 'route pixel retourne 200 meme avec token inconnu');
+  assert.equal(openRouteRes.headers['Content-Type'], 'image/gif', 'route pixel retourne une image');
+  assert.equal(openRouteRes.headers['Cache-Control'], 'no-store, no-cache, must-revalidate, private', 'route pixel desactive le cache');
+  assert.ok(Buffer.isBuffer(openRouteRes.body), 'route pixel renvoie un buffer image');
+
   assert.equal(
     isMercurialEmailSendReady({ smtp: { configured: true }, summary: { eligible: 1 } }),
     true,
@@ -627,12 +765,36 @@ function selectedSendDb({ withCompanyEmail = true } = {}) {
   assert.ok(frontendEmail.includes('selected_client_ids'), 'frontend envoie la selection visible');
   assert.ok(frontendEmail.includes('selectedReadyRecipients(preview)'), 'frontend calcule la selection courante');
   assert.ok(frontendEmail.includes('Clients selectionnes'), 'confirmation utilise les clients selectionnes');
+  assert.ok(frontendEmail.includes('Historique des envois'), 'frontend affiche l historique des envois');
+  assert.ok(frontendEmail.includes('Ouverture détectée'), 'frontend utilise le libelle ouverture detectee');
+  assert.ok(frontendEmail.includes('Aucune ouverture détectée'), 'frontend utilise le libelle absence ouverture detectee');
+  assert.ok(!frontendEmail.includes('Non lu'), 'frontend ne presente pas absence ouverture comme non lu');
   const confirmationFunction = frontendEmail.slice(
     frontendEmail.indexOf('function buildConfirmationMessage'),
     frontendEmail.indexOf('async function sendMercurialEmails')
   );
   assert.ok(!confirmationFunction.includes('summary.total_clients'), 'confirmation n utilise plus le total global');
   assert.ok(frontendEmail.includes('Message commun'), 'frontend affiche le message commun');
+
+  const emailRoute = fs.readFileSync(
+    path.resolve(__dirname, '../../backend/routes/customerTariffEmails.js'),
+    'utf8'
+  );
+  assert.ok(emailRoute.includes("router.get('/open/:token'"), 'route publique pixel ouverture ajoutee');
+  assert.ok(emailRoute.includes("'Content-Type': 'image/gif'"), 'route pixel retourne une image');
+  assert.ok(emailRoute.includes("'Cache-Control': 'no-store, no-cache, must-revalidate, private'"), 'route pixel desactive le cache');
+  assert.ok(emailRoute.includes("router.get('/history/:batchId'"), 'route detail historique batch ajoutee');
+
+  const trackingMigration = fs.readFileSync(
+    path.resolve(__dirname, '../../backend/db/gestion-commerciale/110_customer_price_list_email_open_tracking.sql'),
+    'utf8'
+  );
+  assert.ok(trackingMigration.includes('ADD COLUMN IF NOT EXISTS tracking_token uuid NULL'), 'migration ajoute tracking_token');
+  assert.ok(trackingMigration.includes('ADD COLUMN IF NOT EXISTS sent_at timestamptz NULL'), 'migration ajoute sent_at individuel');
+  assert.ok(trackingMigration.includes('ADD COLUMN IF NOT EXISTS first_opened_at timestamptz NULL'), 'migration ajoute first_opened_at');
+  assert.ok(trackingMigration.includes('ADD COLUMN IF NOT EXISTS last_opened_at timestamptz NULL'), 'migration ajoute last_opened_at');
+  assert.ok(trackingMigration.includes('ADD COLUMN IF NOT EXISTS open_count integer NOT NULL DEFAULT 0'), 'migration ajoute open_count');
+  assert.ok(trackingMigration.includes('CREATE UNIQUE INDEX IF NOT EXISTS idx_customer_price_list_email_results_tracking_token'), 'migration ajoute index unique tracking_token');
 
   const frontendController = fs.readFileSync(
     path.resolve(__dirname, '../../frontend/js/customer-price-list.js'),

@@ -1,5 +1,15 @@
 (function () {
   const apiBase = window.APP_CONFIG && window.APP_CONFIG.API_BASE_URL ? window.APP_CONFIG.API_BASE_URL : '';
+  const historyFilters = [
+    ['all', 'Tous'],
+    ['sent', 'Envoyés'],
+    ['opened', 'Ouverture détectée'],
+    ['unopened', 'Aucune ouverture détectée'],
+    ['error', 'Erreurs'],
+  ];
+  let emailHistory = [];
+  let emailHistoryDetail = null;
+  let emailHistoryFilter = 'all';
 
   function getToken() {
     return localStorage.getItem('gc_token') || localStorage.getItem('grv2_token') || localStorage.getItem('authToken') || localStorage.getItem('token') || '';
@@ -299,6 +309,124 @@
     showMessage(summary.errors ? 'error' : 'success', message);
   }
 
+  function formatDateTime(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '-';
+    return new Intl.DateTimeFormat('fr-FR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(date);
+  }
+
+  function statusText(status) {
+    if (status === 'sent') return 'Envoyé';
+    if (status === 'error') return 'Erreur';
+    if (status === 'skipped_no_email') return 'Ignoré sans email';
+    if (status === 'skipped_not_sendable') return 'Ignoré non envoyable';
+    if (status === 'skipped_no_products') return 'Ignoré sans produits';
+    return status || '-';
+  }
+
+  function openingText(row) {
+    if (row.status !== 'sent') return '-';
+    if (!row.opening_detected) return 'Aucune ouverture détectée';
+    const first = formatDateTime(row.first_opened_at);
+    const last = row.open_count > 1 ? `, dernière ${formatDateTime(row.last_opened_at)}` : '';
+    const count = row.open_count > 1 ? ` (${row.open_count} ouvertures)` : '';
+    return `Ouverture détectée ${first}${last}${count}`;
+  }
+
+  function filterHistoryResults(rows) {
+    return (rows || []).filter((row) => {
+      if (emailHistoryFilter === 'sent') return row.status === 'sent';
+      if (emailHistoryFilter === 'opened') return row.status === 'sent' && row.opening_detected;
+      if (emailHistoryFilter === 'unopened') return row.status === 'sent' && !row.opening_detected;
+      if (emailHistoryFilter === 'error') return row.status === 'error';
+      return true;
+    });
+  }
+
+  function renderEmailHistory() {
+    const panel = getEl('email-history-panel');
+    if (!panel) return;
+
+    const batches = emailHistory.map((batch) => `
+      <tr>
+        <td>${escapeHtml(formatDateTime(batch.sent_at))}</td>
+        <td>${escapeHtml(batch.emails_sent || 0)}</td>
+        <td>${escapeHtml(batch.errors || 0)}</td>
+        <td>${escapeHtml(batch.opened_count || 0)}</td>
+        <td>${escapeHtml(batch.unopened_count || 0)}</td>
+        <td><button class="btn btn-secondary btn-sm" type="button" data-email-history-batch="${escapeHtml(batch.id)}">Voir détail</button></td>
+      </tr>
+    `).join('');
+    const detailRows = filterHistoryResults(emailHistoryDetail?.results || []);
+    const detail = emailHistoryDetail ? `
+      <div class="merc-email-history-detail">
+        <div class="merc-email-history-toolbar">
+          <strong>Détail campagne ${escapeHtml(formatDateTime(emailHistoryDetail.batch?.sent_at))}</strong>
+          <div>
+            ${historyFilters.map(([key, label]) => (
+              `<button class="btn btn-secondary btn-sm ${emailHistoryFilter === key ? 'active' : ''}" type="button" data-email-history-filter="${key}">${escapeHtml(label)}</button>`
+            )).join('')}
+          </div>
+        </div>
+        <div class="merc-email-open-note">Les ouvertures détectées sont un indicateur commercial : certains clients email bloquent ou préchargent les images.</div>
+        <div class="table-wrap">
+          <table class="data-table merc-email-history-table">
+            <thead><tr><th>Client</th><th>Destinataire</th><th>Envoi</th><th>Ouverture</th></tr></thead>
+            <tbody>
+              ${detailRows.map((row) => `
+                <tr>
+                  <td>${escapeHtml(row.client_name || row.client_id || '-')}</td>
+                  <td>${escapeHtml(row.email || '-')}</td>
+                  <td><span class="merc-email-status ${row.status === 'error' ? 'error' : 'sent'}">${escapeHtml(statusText(row.status))}</span>${row.error ? `<small>${escapeHtml(row.error)}</small>` : `<small>${escapeHtml(formatDateTime(row.sent_at))}</small>`}</td>
+                  <td><span class="merc-email-status ${row.opening_detected ? 'opened' : 'unopened'}">${escapeHtml(openingText(row))}</span></td>
+                </tr>
+              `).join('') || '<tr><td colspan="4">Aucun résultat pour ce filtre.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ` : '';
+
+    panel.innerHTML = `
+      <div class="merc-email-history-header">
+        <div>
+          <h3>Historique des envois</h3>
+          <p>Ouvertures détectées : indicateur commercial uniquement.</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" type="button" data-email-history-refresh>Rafraîchir</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table merc-email-history-table">
+          <thead><tr><th>Date</th><th>Envoyés</th><th>Erreurs</th><th>Ouvertures détectées</th><th>Sans ouverture détectée</th><th>Action</th></tr></thead>
+          <tbody>${batches || '<tr><td colspan="6">Aucune campagne email enregistrée.</td></tr>'}</tbody>
+        </table>
+      </div>
+      ${detail}
+    `;
+  }
+
+  async function loadEmailHistory() {
+    const data = await requestJson('/api/customer-price-lists/email/history?limit=20');
+    emailHistory = data.history || [];
+    if (emailHistoryDetail && !emailHistory.some((batch) => String(batch.id) === String(emailHistoryDetail.batch?.id))) {
+      emailHistoryDetail = null;
+    }
+    renderEmailHistory();
+  }
+
+  async function loadEmailHistoryDetail(batchId) {
+    emailHistoryDetail = await requestJson(`/api/customer-price-lists/email/history/${encodeURIComponent(batchId)}`);
+    emailHistoryFilter = 'all';
+    renderEmailHistory();
+  }
+
   async function requestJson(path, options) {
     const response = await fetch(`${apiBase}${path}`, {
       ...options,
@@ -400,6 +528,7 @@
 
     window.__customerMercurialEmailPreview = null;
     renderSendResult(result);
+    loadEmailHistory().catch((err) => console.error('Erreur historique emails mercuriales :', err));
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -418,6 +547,24 @@
       sendBtn.addEventListener('click', () => {
         sendMercurialEmails().catch((err) => showMessage('error', err.message || 'Erreur envoi email'));
       });
+    }
+
+    const historyPanel = getEl('email-history-panel');
+    if (historyPanel) {
+      historyPanel.addEventListener('click', (event) => {
+        const batchBtn = event.target.closest('[data-email-history-batch]');
+        const filterBtn = event.target.closest('[data-email-history-filter]');
+        const refreshBtn = event.target.closest('[data-email-history-refresh]');
+        if (batchBtn) {
+          loadEmailHistoryDetail(batchBtn.dataset.emailHistoryBatch).catch((err) => showMessage('error', err.message || 'Erreur historique emails'));
+        } else if (filterBtn) {
+          emailHistoryFilter = filterBtn.dataset.emailHistoryFilter || 'all';
+          renderEmailHistory();
+        } else if (refreshBtn) {
+          loadEmailHistory().catch((err) => showMessage('error', err.message || 'Erreur historique emails'));
+        }
+      });
+      loadEmailHistory().catch((err) => console.error('Erreur historique emails mercuriales :', err));
     }
   });
 
