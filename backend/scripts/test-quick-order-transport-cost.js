@@ -27,14 +27,32 @@ assert.equal(byUid.get('explicit').cost_rendered_ht, 12.15, 'explicit transport 
 assert.equal(byUid.get('no-purchase').transport_cost_ht, 0, 'transport is still non-null without purchase price');
 assert.equal(byUid.get('no-purchase').cost_rendered_ht, null, 'rendered cost remains null when purchase price is unavailable');
 
+const manyProductsPayload = normalize({
+  date: '2026-08-27',
+  products: Array.from({ length: 25 }, (_, index) => ({
+    uid: `product-${index + 1}`,
+    designation: `Produit ${index + 1}`,
+    purchase_price_ht: String(index + 1),
+  })),
+});
+assert.equal(manyProductsPayload.products.length, 25, 'quick order sheet backend keeps more than 18 products');
+assert.equal(manyProductsPayload.products[24].column_uid, 'product-25', 'quick order sheet backend does not truncate product 25');
+
 const root = path.join(__dirname, '..', '..');
 const pricingService = fs.readFileSync(path.join(root, 'backend/services/pricingService.js'), 'utf8');
 const agentCallSheet = fs.readFileSync(path.join(root, 'backend/services/agentCallSheetService.js'), 'utf8');
 const quickOrderSheets = fs.readFileSync(path.join(root, 'backend/routes/quickOrderSheets.js'), 'utf8');
+const quickOrderSheetJs = fs.readFileSync(path.join(root, 'frontend/js/quick-order-sheet.js'), 'utf8');
 
 assert(pricingService.includes('line.transport_cost_ht || 0'), 'pricing publication sync writes non-null transport');
 assert(quickOrderSheets.includes('product.transport_cost_ht') && quickOrderSheets.includes('const transportCost = pos(product.transport_cost_ht, 0)'), 'manual sheet save writes normalized transport');
+assert(!quickOrderSheets.includes('products.slice(0, 60)'), 'manual sheet save has no backend product limit');
 assert(!agentCallSheet.includes('transport_cost_ht, cost_rendered_ht'), 'agent call sheet tools leave transport columns to database defaults instead of writing NULL');
+assert(quickOrderSheetJs.includes('const DEFAULT_PRODUCT_COLUMNS = 10;'), 'new quick order sheets still start with 10 product columns');
+assert(!quickOrderSheetJs.includes('MAX_PRODUCT_COLUMNS'), 'quick order sheet frontend has no maximum product column limit');
+assert(!quickOrderSheetJs.includes('slice(0, MAX_PRODUCT_COLUMNS)'), 'local drafts are not truncated to 18 products');
+assert(quickOrderSheetJs.includes('productColumns = draft.productColumns.map'), 'local drafts reload all saved product columns');
+assert(quickOrderSheetJs.includes('productColumns.push(emptyProductColumn())'), 'add product always appends a new product column');
 
 console.log(JSON.stringify({
   ok: true,
@@ -44,5 +62,6 @@ console.log(JSON.stringify({
     'transport 0.15 -> 0.15',
     'cost_rendered_ht recalcule depuis achat + transport',
     'audit ecritures quick_order_sheet_products: sauvegarde manuelle, sync pricing, agent call sheet',
+    'fiche appel 25 produits sans troncature',
   ],
 }, null, 2));
