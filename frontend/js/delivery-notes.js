@@ -99,15 +99,29 @@ function validateInvoiceDateValue(value) {
   return null;
 }
 
+function invoiceDateDefault(note) {
+  const deliveryDate = isoDate(note?.document_date);
+  return isValidIsoDate(deliveryDate) ? deliveryDate : todayIsoDate();
+}
+
+function invoiceDateSubtitleText(note) {
+  const reference = note?.reference_number || (note?.id ? note.id.slice(0, 8) : '-');
+  const deliveryDate = invoiceDateDefault(note);
+  const billedClient = note?.billed_client_name || note?.billed_client_name_snapshot || null;
+  return [
+    `BL : ${reference}`,
+    `Date du BL : ${fmtDate(deliveryDate)}`,
+    billedClient ? `Client facturé : ${billedClient}` : null,
+  ].filter(Boolean).join(' - ');
+}
+
 function openInvoiceDateModal() {
   if (!selectedDeliveryNote || !invoiceDateModal || !invoiceDateInput) return;
   clearInvoiceDateError();
-  invoiceDateInput.value = isoDate(selectedDeliveryNote.document_date) || todayIsoDate();
+  invoiceDateInput.value = invoiceDateDefault(selectedDeliveryNote);
   invoiceDateInput.max = todayIsoDate();
   if (invoiceDateSubtitle) {
-    invoiceDateSubtitle.textContent = selectedDeliveryNote.reference_number
-      ? `BL ${selectedDeliveryNote.reference_number}`
-      : '';
+    invoiceDateSubtitle.textContent = invoiceDateSubtitleText(selectedDeliveryNote);
   }
   invoiceDateModal.classList.remove('hidden');
   invoiceDateInput.focus();
