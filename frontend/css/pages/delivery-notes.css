@@ -138,6 +138,26 @@
   display: none;
 }
 
+.invoice-date-modal-card {
+  width: min(440px, 100%);
+}
+
+.invoice-date-form {
+  display: grid;
+  gap: 14px;
+}
+
+.invoice-date-form .page-feedback {
+  margin: 0;
+}
+
+.invoice-date-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 4px;
+}
+
 @media (max-width: 840px) {
   .page-actions {
     align-items: stretch;
@@ -150,6 +170,10 @@
 
   .summary-grid {
     grid-template-columns: 1fr;
+  }
+
+  .invoice-date-actions {
+    flex-direction: column-reverse;
   }
 }
 

@@ -18,8 +18,31 @@
     <section class="delivery-panel detail-panel"><div class="page-actions"><div><h2 id="detail-title">Sélectionner un BL</h2><p id="detail-subtitle">Les informations d’impression apparaîtront ici.</p></div><div class="page-actions-right"><button type="button" id="validate-btn" class="btn btn-primary" disabled>Valider BL</button><button type="button" id="invoice-btn" class="btn btn-primary" disabled>Valider en facture</button><button type="button" id="print-btn" class="btn btn-secondary" disabled>Imprimer BL</button><button type="button" id="labels-btn" class="btn btn-secondary" disabled>Étiquettes</button></div></div><div id="detail-content" class="detail-content empty-state">Aucun BL sélectionné.</div></section>
     <section id="print-area" class="print-area"></section>
   </main>
+
+  <div id="invoice-date-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="invoice-date-modal-title">
+    <div class="modal-card invoice-date-modal-card">
+      <div class="modal-header">
+        <div>
+          <h3 id="invoice-date-modal-title">Créer la facture</h3>
+          <p id="invoice-date-modal-subtitle"></p>
+        </div>
+      </div>
+      <form id="invoice-date-form" class="invoice-date-form" novalidate>
+        <div id="invoice-date-error" class="page-feedback error hidden"></div>
+        <div class="form-group">
+          <label for="invoice-date-input">Date de facture</label>
+          <input type="date" id="invoice-date-input" name="document_date" required />
+        </div>
+        <div class="modal-actions invoice-date-actions">
+          <button type="button" id="cancel-invoice-date-btn" class="btn btn-secondary">Annuler</button>
+          <button type="submit" id="confirm-invoice-date-btn" class="btn btn-primary">Créer la facture</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="./js/config.js"></script>
   <script src="./js/health-labels.js?v=4"></script>
-  <script src="./js/delivery-notes.js?v=8"></script>
+  <script src="./js/delivery-notes.js?v=9"></script>
 </body>
 </html>
