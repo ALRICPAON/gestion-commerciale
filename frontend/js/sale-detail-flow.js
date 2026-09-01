@@ -19,6 +19,13 @@
     creditNoteNotes: document.getElementById('credit-note-notes-input'),
     creditNoteLinesBody: document.getElementById('credit-note-lines-table-body'),
     confirmCreditNote: document.getElementById('confirm-credit-note-btn'),
+    invoiceDateModal: document.getElementById('invoice-date-flow-modal'),
+    invoiceDateForm: document.getElementById('invoice-date-flow-form'),
+    invoiceDateInput: document.getElementById('invoice-date-flow-input'),
+    invoiceDateError: document.getElementById('invoice-date-flow-error'),
+    invoiceDateSubtitle: document.getElementById('invoice-date-flow-modal-subtitle'),
+    cancelInvoiceDate: document.getElementById('cancel-invoice-date-flow-btn'),
+    confirmInvoiceDate: document.getElementById('confirm-invoice-date-flow-btn'),
     mail: document.getElementById('send-mail-btn'),
     whatsapp: document.getElementById('send-whatsapp-btn'),
     printArea: document.getElementById('print-area'),
@@ -105,6 +112,28 @@
     return number(value).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
   }
 
+  function isoDate(value) {
+    return value ? String(value).slice(0, 10) : '';
+  }
+
+  function todayIsoDate() {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60000;
+    return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+  }
+
+  function isValidIsoDate(value) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+    const date = new Date(`${value}T00:00:00.000Z`);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+  }
+
+  function formatDate(value) {
+    const date = isoDate(value);
+    if (!isValidIsoDate(date)) return '-';
+    return new Intl.DateTimeFormat('fr-FR').format(new Date(`${date}T00:00:00.000Z`));
+  }
+
   function escapeHtml(value) {
     return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
       '&': '&amp;',
@@ -152,6 +181,56 @@
   function show(el, visible) {
     if (!el) return;
     el.classList.toggle('hidden', !visible);
+  }
+
+  function invoiceDateDefault(document) {
+    const deliveryDate = isoDate(document?.document_date);
+    return isValidIsoDate(deliveryDate) ? deliveryDate : todayIsoDate();
+  }
+
+  function invoiceDateSubtitleText(document) {
+    const reference = document?.reference_number || (document?.id ? document.id.slice(0, 8) : '-');
+    const deliveryDate = invoiceDateDefault(document);
+    const billedClient = document?.billed_client_name || document?.billed_client_name_snapshot || document?.client_name || null;
+    return [
+      `BL : ${reference}`,
+      `Date du BL : ${formatDate(deliveryDate)}`,
+      billedClient ? `Client facturé : ${billedClient}` : null,
+    ].filter(Boolean).join(' - ');
+  }
+
+  function showInvoiceDateError(message) {
+    if (!flowEls.invoiceDateError) return;
+    flowEls.invoiceDateError.textContent = message;
+    flowEls.invoiceDateError.className = 'page-feedback error';
+  }
+
+  function clearInvoiceDateError() {
+    if (!flowEls.invoiceDateError) return;
+    flowEls.invoiceDateError.textContent = '';
+    flowEls.invoiceDateError.className = 'page-feedback error hidden';
+  }
+
+  function validateInvoiceDateValue(value) {
+    if (!value) return 'La date de facture est obligatoire.';
+    if (!isValidIsoDate(value)) return 'La date de facture doit etre au format AAAA-MM-JJ.';
+    if (value > todayIsoDate()) return 'La date de facture ne peut pas etre dans le futur.';
+    return null;
+  }
+
+  function openInvoiceDateModal() {
+    if (!isDeliveryNote() || isFactured() || !flowEls.invoiceDateModal || !flowEls.invoiceDateInput) return;
+    clearInvoiceDateError();
+    flowEls.invoiceDateInput.value = invoiceDateDefault(currentSale);
+    flowEls.invoiceDateInput.max = todayIsoDate();
+    if (flowEls.invoiceDateSubtitle) flowEls.invoiceDateSubtitle.textContent = invoiceDateSubtitleText(currentSale);
+    flowEls.invoiceDateModal.classList.remove('hidden');
+    flowEls.invoiceDateInput.focus();
+  }
+
+  function closeInvoiceDateModal() {
+    flowEls.invoiceDateModal?.classList.add('hidden');
+    clearInvoiceDateError();
   }
 
   async function refreshState() {
@@ -411,12 +490,14 @@
     labelPrinter.print(labels, flowEls.printArea);
   }
 
-  async function validateInvoiceFromBl() {
+  async function validateInvoiceFromBl(documentDate) {
     await refreshState();
     if (!isDeliveryNote() || isFactured()) return;
-    if (!confirm('Valider ce BL en facture ?')) return;
-    const data = await request(`/api/delivery-notes/${currentSale.id}/validate-invoice`, { method: 'POST', body: JSON.stringify({}) });
+    if (flowEls.confirmInvoiceDate) flowEls.confirmInvoiceDate.disabled = true;
+    const data = await request(`/api/delivery-notes/${currentSale.id}/validate-invoice`, { method: 'POST', body: JSON.stringify({ document_date: documentDate }) });
+    closeInvoiceDateModal();
     feedback(data.existing ? 'Facture déjà préparée' : `Facture préparée : ${data.invoice_reference || data.invoice_id || ''}`);
+    if (flowEls.confirmInvoiceDate) flowEls.confirmInvoiceDate.disabled = false;
     await refreshState();
   }
 
@@ -466,7 +547,26 @@
   flowEls.validateBl?.addEventListener('click', () => validateBlFromSale().catch((error) => feedback(error.message, true)));
   flowEls.printBl?.addEventListener('click', () => printDeliveryNote().catch((error) => feedback(error.message, true)));
   flowEls.labels?.addEventListener('click', () => printHealthLabels().catch((error) => feedback(error.message, true)));
-  flowEls.invoice?.addEventListener('click', () => validateInvoiceFromBl().catch((error) => feedback(error.message, true)));
+  flowEls.invoice?.addEventListener('click', () => {
+    refreshState().then(openInvoiceDateModal).catch((error) => feedback(error.message, true));
+  });
+  flowEls.cancelInvoiceDate?.addEventListener('click', closeInvoiceDateModal);
+  flowEls.invoiceDateModal?.addEventListener('click', (event) => { if (event.target === flowEls.invoiceDateModal) closeInvoiceDateModal(); });
+  flowEls.invoiceDateInput?.addEventListener('input', clearInvoiceDateError);
+  flowEls.invoiceDateForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const documentDate = flowEls.invoiceDateInput?.value || '';
+    const error = validateInvoiceDateValue(documentDate);
+    if (error) {
+      showInvoiceDateError(error);
+      flowEls.invoiceDateInput?.focus();
+      return;
+    }
+    validateInvoiceFromBl(documentDate).catch((apiError) => {
+      if (flowEls.confirmInvoiceDate) flowEls.confirmInvoiceDate.disabled = false;
+      showInvoiceDateError(apiError.message || 'Erreur validation facture');
+    });
+  });
   flowEls.creditNote?.addEventListener('click', () => openCreditNoteModal().catch((error) => feedback(error.message, true)));
   flowEls.closeCreditNoteModal?.addEventListener('click', () => flowEls.creditNoteModal?.classList.add('hidden'));
   flowEls.creditNoteType?.addEventListener('change', renderCreditNoteLines);

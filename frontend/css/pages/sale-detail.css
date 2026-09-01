@@ -40,6 +40,14 @@ body.app-page.sale-detail-page .sale-lines-table th:nth-child(12), body.app-page
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(13), body.app-page.sale-detail-page .sale-lines-table td:nth-child(13) { width: 250px !important; }
 body.app-page.sale-detail-page .selectable-table tbody tr { cursor: pointer; }
 body.app-page.sale-detail-page .selectable-table tbody tr:hover td { background: #f3f8ff; }
+body.app-page.sale-detail-page .invoice-date-flow-modal-card { width: min(440px, 100%); }
+body.app-page.sale-detail-page .invoice-date-flow-form { display: grid; gap: 14px; }
+body.app-page.sale-detail-page .invoice-date-flow-form .page-feedback { margin: 0; }
+body.app-page.sale-detail-page .invoice-date-flow-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px; }
+
+@media (max-width: 840px) {
+  body.app-page.sale-detail-page .invoice-date-flow-actions { flex-direction: column-reverse; }
+}
 
 @media print {
   @page { margin: 10mm; }
