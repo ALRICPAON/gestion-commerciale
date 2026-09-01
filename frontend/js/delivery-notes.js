@@ -17,6 +17,13 @@ const printBtn = $('print-btn');
 const downloadPdfBtn = $('download-pdf-btn');
 const labelsBtn = $('labels-btn');
 const printArea = $('print-area');
+const invoiceDateModal = $('invoice-date-modal');
+const invoiceDateForm = $('invoice-date-form');
+const invoiceDateInput = $('invoice-date-input');
+const invoiceDateError = $('invoice-date-error');
+const invoiceDateSubtitle = $('invoice-date-modal-subtitle');
+const cancelInvoiceDateBtn = $('cancel-invoice-date-btn');
+const confirmInvoiceDateBtn = $('confirm-invoice-date-btn');
 let selectedDeliveryNote = null;
 
 function logoutAndRedirect() { ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key)); window.location.href = './login.html'; }
@@ -57,8 +64,60 @@ async function downloadPdf(url, fallbackName) { const response = await apiFetch(
 const money = (value) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(Number(value || 0));
 const qty = (value) => Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 const fmtDate = (value) => (value ? new Intl.DateTimeFormat('fr-FR').format(new Date(value)) : '-');
+const isoDate = (value) => (value ? String(value).slice(0, 10) : '');
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const statusLabel = (status) => ({ draft: 'Brouillon', validated: 'Validé BL', delivered: 'Livré', invoiced: 'Facturé' }[status] || status || '-');
+
+function todayIsoDate() {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function isValidIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function showInvoiceDateError(message) {
+  if (!invoiceDateError) return;
+  invoiceDateError.textContent = message;
+  invoiceDateError.className = 'page-feedback error';
+}
+
+function clearInvoiceDateError() {
+  if (!invoiceDateError) return;
+  invoiceDateError.textContent = '';
+  invoiceDateError.className = 'page-feedback error hidden';
+}
+
+function validateInvoiceDateValue(value) {
+  if (!value) return 'La date de facture est obligatoire.';
+  if (!isValidIsoDate(value)) return 'La date de facture doit etre au format AAAA-MM-JJ.';
+  if (value > todayIsoDate()) return 'La date de facture ne peut pas etre dans le futur.';
+  return null;
+}
+
+function openInvoiceDateModal() {
+  if (!selectedDeliveryNote || !invoiceDateModal || !invoiceDateInput) return;
+  clearInvoiceDateError();
+  invoiceDateInput.value = isoDate(selectedDeliveryNote.document_date) || todayIsoDate();
+  invoiceDateInput.max = todayIsoDate();
+  if (invoiceDateSubtitle) {
+    invoiceDateSubtitle.textContent = selectedDeliveryNote.reference_number
+      ? `BL ${selectedDeliveryNote.reference_number}`
+      : '';
+  }
+  invoiceDateModal.classList.remove('hidden');
+  invoiceDateInput.focus();
+}
+
+function closeInvoiceDateModal() {
+  if (!invoiceDateModal) return;
+  invoiceDateModal.classList.add('hidden');
+  clearInvoiceDateError();
+}
 
 function renderOrders(orders) {
   const candidates = orders.filter((order) => order.document_type === 'ORDER' && order.status === 'validated');
@@ -100,7 +159,7 @@ async function refreshAll() { try { await Promise.all([loadOrders(), loadDeliver
 async function generateDeliveryNote(orderId) { try { const data = await postWithStockConfirmation(`${API_BASE_URL}/api/sales/${orderId}/validate-delivery-note`, {}); if (!data) return; showFeedback(data.forced_stock_exit ? 'Commande validée en BL avec sortie forcée tracée.' : 'Commande validée en BL et stock déstocké.'); await refreshAll(); if (data.delivery_note_id) await openDeliveryNote(data.delivery_note_id); } catch (err) { console.error('Erreur validation en BL :', err); showFeedback(err.message || 'Erreur validation en BL', 'error'); } }
 async function openDeliveryNote(id) { try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${id}`); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Impossible de charger le BL'); renderDetail(data); } catch (err) { console.error('Erreur ouverture BL :', err); showFeedback(err.message || 'Erreur ouverture BL', 'error'); } }
 async function validateDeliveryNote() { if (!selectedDeliveryNote) return; try { const data = await postWithStockConfirmation(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate`, {}); if (!data) return; showFeedback(data.forced_stock_exit ? 'BL validé avec sortie forcée tracée.' : 'BL validé et stock déstocké.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation BL :', err); showFeedback(err.message || 'Erreur validation BL', 'error'); } }
-async function validateInvoice() { if (!selectedDeliveryNote) return; try { const response = await apiFetch(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate-invoice`, { method: 'POST' }); if (!response) return; const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Erreur validation facture'); showFeedback(data.existing ? 'Facture déjà préparée.' : 'Facture préparée depuis le BL.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation facture :', err); showFeedback(err.message || 'Erreur validation facture', 'error'); } }
+async function validateInvoice(documentDate) { if (!selectedDeliveryNote) return; try { if (confirmInvoiceDateBtn) confirmInvoiceDateBtn.disabled = true; const data = await apiJson(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/validate-invoice`, { method: 'POST', body: JSON.stringify({ document_date: documentDate }) }); if (!data) return; closeInvoiceDateModal(); showFeedback(data.existing ? 'Facture déjà préparée.' : 'Facture préparée depuis le BL.'); await refreshAll(); await openDeliveryNote(selectedDeliveryNote.id); } catch (err) { console.error('Erreur validation facture :', err); showInvoiceDateError(err.message || 'Erreur validation facture'); } finally { if (confirmInvoiceDateBtn) confirmInvoiceDateBtn.disabled = false; } }
 async function downloadDeliveryNotePdf() { if (!selectedDeliveryNote || !downloadPdfBtn) return; downloadPdfBtn.disabled = true; try { await downloadPdf(`${API_BASE_URL}/api/delivery-notes/${selectedDeliveryNote.id}/pdf`, 'bon-de-livraison.pdf'); showFeedback('PDF bon de livraison généré.'); } catch (err) { console.error('Erreur PDF BL :', err); showFeedback(err.message || 'Erreur PDF BL', 'error'); } finally { downloadPdfBtn.disabled = false; } }
 
 function lineLots(line) {
@@ -198,7 +257,21 @@ function bindEvents() {
   $('sales-btn')?.addEventListener('click', () => { window.location.href = './sales.html'; });
   $('refresh-btn')?.addEventListener('click', refreshAll);
   validateBtn?.addEventListener('click', validateDeliveryNote);
-  invoiceBtn?.addEventListener('click', validateInvoice);
+  invoiceBtn?.addEventListener('click', openInvoiceDateModal);
+  cancelInvoiceDateBtn?.addEventListener('click', closeInvoiceDateModal);
+  invoiceDateModal?.addEventListener('click', (event) => { if (event.target === invoiceDateModal) closeInvoiceDateModal(); });
+  invoiceDateInput?.addEventListener('input', clearInvoiceDateError);
+  invoiceDateForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const documentDate = invoiceDateInput?.value || '';
+    const error = validateInvoiceDateValue(documentDate);
+    if (error) {
+      showInvoiceDateError(error);
+      invoiceDateInput?.focus();
+      return;
+    }
+    validateInvoice(documentDate);
+  });
   printBtn?.addEventListener('click', printDeliveryNote);
   downloadPdfBtn?.addEventListener('click', downloadDeliveryNotePdf);
   labelsBtn?.addEventListener('click', loadLabels);

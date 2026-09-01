@@ -25,6 +25,28 @@ function badId(res) {
   return res.status(400).json({ error: 'ID document invalide' });
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function isValidIsoDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
+function validateInvoiceDocumentDate(value) {
+  const documentDate = clean(value);
+  if (!documentDate) return { ok: true, documentDate: null };
+  if (!isValidIsoDate(documentDate)) {
+    return { ok: false, error: 'La date de facture doit etre au format YYYY-MM-DD' };
+  }
+  if (documentDate > todayIsoDate()) {
+    return { ok: false, error: 'La date de facture ne peut pas etre dans le futur' };
+  }
+  return { ok: true, documentDate };
+}
+
 async function nextInvoiceReference(db, storeId, invoiceDate = new Date()) {
   const year = new Date(invoiceDate).getFullYear();
   const prefix = `FAC-${year}-`;
@@ -208,7 +230,13 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
       return res.json({ ok: true, invoice_id: existing.rows[0].id, invoice_reference: existing.rows[0].reference_number, existing: true });
     }
 
-    const invoiceDate = clean(body.document_date) || new Date().toISOString().slice(0, 10);
+    const requestedInvoiceDate = validateInvoiceDocumentDate(body.document_date);
+    if (!requestedInvoiceDate.ok) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: requestedInvoiceDate.error });
+    }
+
+    const invoiceDate = requestedInvoiceDate.documentDate || todayIsoDate();
     const invoiceRef = clean(body.reference_number) || await nextInvoiceReference(db, req.user.store_id, invoiceDate);
     const deliveredClientId = note.client_id || null;
     const billedClientId = note.billed_client_id || note.client_id || null;
@@ -364,5 +392,9 @@ router.get('/invoices/:id/pdf', authenticateToken, attachDbContext, async (req, 
     return res.status(500).json({ error: 'Erreur generation PDF facture client' });
   }
 });
+
+router._private = {
+  validateInvoiceDocumentDate,
+};
 
 module.exports = router;
