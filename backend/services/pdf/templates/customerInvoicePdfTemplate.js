@@ -18,6 +18,20 @@ function infoBlock(title, entries) {
   return content ? `<h3>${escapeHtml(title)}</h3>${content}` : '';
 }
 
+function clientLegalBlock(doc) {
+  return [
+    doc.billed_client_code ? `<p>Code client : <strong>${escapeHtml(doc.billed_client_code)}</strong></p>` : '',
+    doc.billed_client_siret ? `<p>SIRET : <strong>${escapeHtml(doc.billed_client_siret)}</strong></p>` : '',
+    doc.billed_client_vat_number ? `<p>TVA intracommunautaire : <strong>${escapeHtml(doc.billed_client_vat_number)}</strong></p>` : '',
+    addressBlock([
+      doc.billed_client_address_line1,
+      doc.billed_client_address_line2,
+      [doc.billed_client_postal_code, doc.billed_client_city].filter(Boolean).join(' '),
+      doc.billed_client_country,
+    ]),
+  ].filter(Boolean).join('');
+}
+
 function lotTraceDetails(lot) {
   return [
     lot.lot_code || lot.supplier_lot_number ? `Lot ${lot.lot_code || lot.supplier_lot_number}` : null,
@@ -129,9 +143,9 @@ function renderCustomerInvoicePdf({ invoice, lines, storeSettings }) {
     </section>
     <section class="parties">
       <div class="party-card">
-        <h3>Client facture</h3>
+        <h3>Client facturé</h3>
         <p class="party-name">${escapeHtml(doc.billed_client_name || doc.billed_client_name_snapshot || doc.client_name || '-')}</p>
-        ${doc.billed_client_code ? `<p>Code client : <strong>${escapeHtml(doc.billed_client_code)}</strong></p>` : ''}
+        ${clientLegalBlock(doc)}
       </div>
       <div class="party-card">
         <h3>Client livre</h3>
