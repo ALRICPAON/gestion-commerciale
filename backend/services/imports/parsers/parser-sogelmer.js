@@ -289,6 +289,11 @@ function validationLineSnapshot(line, index, source) {
     supplier_lot_number: line.lot || null,
     prix_kg: line.prixKg || null,
     montant_ht: line.montantHT || null,
+    latin_name: line.nomLatin || null,
+    fao: line.fao || null,
+    fao_zone: line.zone || null,
+    sous_zone: line.sousZone || null,
+    fishing_gear: line.engin || null,
   };
 }
 
@@ -398,6 +403,56 @@ function sameOcrLine(raw, parsed) {
   return Boolean(rawText && parsedDesignation && rawText.includes(parsedDesignation));
 }
 
+function cleanOcrTraceValue(value) {
+  if (value === undefined || value === null) return "";
+  return normalizeText(value);
+}
+
+function firstOcrTraceValue(...values) {
+  for (const value of values) {
+    const cleaned = cleanOcrTraceValue(value);
+    if (cleaned) return cleaned;
+  }
+  return "";
+}
+
+function faoZoneFromFao(fao) {
+  const match = cleanOcrTraceValue(fao).match(/\bFAO\s*[0-9]{1,3}\b/i);
+  return match ? normalizeText(match[0].replace(/\s+/g, " ").toUpperCase()) : "";
+}
+
+function sousZoneFromFao(fao) {
+  const cleaned = cleanOcrTraceValue(fao);
+  const match = cleaned.match(/\bFAO\s*[0-9]{1,3}\s*(.*)$/i);
+  return match ? normalizeText(match[1]) : "";
+}
+
+function applyOcrTraceability(parsedRows, rawLines) {
+  if (!Array.isArray(rawLines) || !rawLines.length) return parsedRows;
+
+  return parsedRows.map((row) => {
+    const raw = rawLines.find((item) => sameOcrLine(item, {
+      supplier_reference: row.refFournisseur,
+      supplier_lot_number: row.lot,
+      designation: row.designation,
+    }));
+    if (!raw) return row;
+
+    const fao = firstOcrTraceValue(raw.fao);
+    const faoZone = firstOcrTraceValue(raw.fao_zone, faoZoneFromFao(fao));
+    const sousZone = firstOcrTraceValue(raw.sous_zone, sousZoneFromFao(fao));
+
+    return {
+      ...row,
+      nomLatin: firstOcrTraceValue(raw.latin_name) || row.nomLatin || "",
+      fao: fao || row.fao || "",
+      zone: faoZone || row.zone || "",
+      sousZone: sousZone || row.sousZone || "",
+      engin: firstOcrTraceValue(raw.fishing_gear) || row.engin || "",
+    };
+  });
+}
+
 function addUnparsedOcrDiagnostics(diagnostics, warnings) {
   if (!diagnostics?.ocr_raw_lines?.length) return;
 
@@ -419,6 +474,11 @@ function addUnparsedOcrDiagnostics(diagnostics, warnings) {
       supplier_lot_number: raw.supplier_lot_number || raw.lot || null,
       prix_kg: raw.prix_kg || null,
       montant_ht: raw.montant_ht || null,
+      latin_name: raw.latin_name || null,
+      fao: raw.fao || null,
+      fao_zone: raw.fao_zone || null,
+      sous_zone: raw.sous_zone || null,
+      fishing_gear: raw.fishing_gear || null,
       source_text: raw.source_text || null,
       reason,
     };
@@ -448,7 +508,7 @@ function parseSogelmerText(text) {
     applyBioData(parsed, bio);
 
     // Securite : si la ligne suivante n'est pas une bio, on n'ecrase pas tout.
-    if (!bio || /^(\d+\s*X\s*\d+)/i.test(bio) || parseArticleLine(bio) || isArticleCode(bio)) {
+    if (!bio || /^(?:TOTAL|SOUS|MONTANT|NBRE)\b/i.test(bio) || /^(\d+\s*X\s*\d+)/i.test(bio) || parseArticleLine(bio) || isArticleCode(bio)) {
       clearBioData(parsed);
       rows.push(parsed);
       i = block.nextIndex;
@@ -656,7 +716,8 @@ const parser = {
           documentDate = extractDocumentDate(ocrText) || documentDate;
           diagnostics.accepted_lines = [];
           diagnostics.rejected_lines = [];
-          parsedRows = validateParsedRows(parseSogelmerText(ocrText), "OCR SOGELMER", warnings, diagnostics);
+          const ocrRows = applyOcrTraceability(parseSogelmerText(ocrText), diagnostics.ocr_raw_lines);
+          parsedRows = validateParsedRows(ocrRows, "OCR SOGELMER", warnings, diagnostics);
           addUnparsedOcrDiagnostics(diagnostics, warnings);
         } else {
           warnings.push("OCR SOGELMER: aucun texte exploitable extrait");

@@ -12,6 +12,7 @@ function normalizeLine(line) {
     article_plu: line.article_plu || null,
     designation: line.designation || null,
     latin_name: line.latin_name || null,
+    fao: line.fao || null,
     fao_zone: line.fao_zone || null,
     sous_zone: line.sous_zone || null,
     fishing_gear: line.fishing_gear || null,
