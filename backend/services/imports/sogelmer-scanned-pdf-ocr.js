@@ -28,6 +28,11 @@ function normalizeOcrPayload(payload) {
   if (payload.date) textLines.push(`DATE ${payload.date}`);
 
   for (const [index, line] of lines.entries()) {
+    const latinName = String(line.latin_name ?? line.nom_latin ?? "").trim();
+    const fao = String(line.fao ?? "").trim();
+    const faoZone = String(line.fao_zone ?? "").trim();
+    const sousZone = String(line.sous_zone ?? line.fao_subzone ?? "").trim();
+    const fishingGear = String(line.fishing_gear ?? line.engin ?? "").trim();
     const values = [
       line.supplier_reference,
       line.designation,
@@ -53,6 +58,11 @@ function normalizeOcrPayload(payload) {
       supplier_lot_number: values[6] || null,
       prix_kg: values[7] || null,
       montant_ht: values[9] || null,
+      latin_name: latinName || null,
+      fao: fao || null,
+      fao_zone: faoZone || null,
+      sous_zone: sousZone || null,
+      fishing_gear: fishingGear || null,
       source_text: values.join(" "),
     });
 
@@ -132,9 +142,11 @@ async function extractSogelmerTextFromImages(images, options = {}) {
         "N'invente jamais une donnee absente ou illisible.",
         "Si une ligne article est ambigue ou incomplete, mets-la dans warnings au lieu de la fabriquer.",
         "Schema JSON attendu:",
-        '{"bl_number":"511-00081150","date":"02/09/2026","totals":{"colis":"26","poids_total_kg":"93,30","montant_ht":"930,12"},"lines":[{"supplier_reference":"FILJUL58","designation":"FILET JULIENNE 5/800 GR 3 KG","colis":"5","poids_colis_kg":"3,00","poids_total_kg":"15,00","uv":"KG","supplier_lot_number":"05050102501","prix_kg":"11,40","montant_ht":"171,00"}],"warnings":[]}',
+        '{"bl_number":"511-00081150","date":"02/09/2026","totals":{"colis":"26","poids_total_kg":"93,30","montant_ht":"930,12"},"lines":[{"supplier_reference":"FILJUL58","designation":"FILET JULIENNE 5/800 GR 3 KG","latin_name":"Molva molva","fao":"FAO 27 VII","fao_zone":"FAO 27","sous_zone":"VII","fishing_gear":"Ligne","colis":"5","poids_colis_kg":"3,00","poids_total_kg":"15,00","uv":"KG","supplier_lot_number":"05050102501","prix_kg":"11,40","montant_ht":"171,00"}],"warnings":[]}',
         "Lis les colonnes article: reference, designation, colis, poids colis, poids total/quantite, UV, lot fournisseur, prix/kg, montant HT.",
+        "Lis aussi sous chaque designation article les donnees de tracabilite visibles: nom latin, FAO, zone, sous-zone, engin de peche.",
         "Lis aussi les totaux imprimes du document: nombre total de colis, poids total, montant HT.",
+        "Si une donnee de tracabilite est absente ou illisible, retourne null ou une chaine vide. Ne deduis jamais l'espece, la zone ou l'engin depuis la designation commerciale.",
       ].join("\n"),
     },
   ];

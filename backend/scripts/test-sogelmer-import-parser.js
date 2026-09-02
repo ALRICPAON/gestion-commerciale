@@ -5,7 +5,7 @@ const path = require("path");
 const { PDFDocument, rgb } = require("pdf-lib");
 
 const importDocument = require("../services/imports/import-document");
-const { renderPdfPagesToPngBase64 } = require("../services/imports/sogelmer-scanned-pdf-ocr");
+const { normalizeOcrPayload, renderPdfPagesToPngBase64 } = require("../services/imports/sogelmer-scanned-pdf-ocr");
 const sogelmer = require("../services/imports/parsers/parser-sogelmer");
 
 const recentSogelmerText = `
@@ -43,14 +43,14 @@ Molva dypterygia - FAO 27 VIII - Chalut
 
 function sogelmerRawOcrLines(lastAmount = "98,40") {
   return [
-    { index: 1, supplier_reference: "FILJUL58", designation: "FILET JULIENNE 5/800 GR 3 KG", colis: 5, poids_total_kg: "15,00", prix_kg: "11,40", montant_ht: "171,00", supplier_lot_number: "05050102501" },
-    { index: 2, supplier_reference: "FILLINB5", designation: "FILET LINGUE BLEUE 500/1000 3 KG", colis: 5, poids_total_kg: "15,00", prix_kg: "11,20", montant_ht: "168,00", supplier_lot_number: "05050102502" },
-    { index: 3, supplier_reference: "FILMOST7", designation: "FILET MOSTELLE DE FOND 2400 GR 3KG", colis: 3, poids_total_kg: "9,00", prix_kg: "7,40", montant_ht: "66,60", supplier_lot_number: "05050102503" },
-    { index: 4, supplier_reference: "RAI25001", designation: "AILE RAIE 2/500 GR PELE 1F 3 KG", colis: 3, poids_total_kg: "9,00", prix_kg: "9,40", montant_ht: "84,60", supplier_lot_number: "05050102504" },
-    { index: 5, supplier_reference: "QLO2500/", designation: "QUEUE LOTTE 200/500 GR 3 KG", colis: 3, poids_total_kg: "9,00", prix_kg: "13,40", montant_ht: "120,60", supplier_lot_number: "05050102505" },
-    { index: 6, supplier_reference: "FILEG120", designation: "FILET EGLEFIN 100/200 GR 3 KG", colis: 3, poids_total_kg: "9,00", prix_kg: "9,40", montant_ht: "84,60", supplier_lot_number: "05050102506" },
-    { index: 7, supplier_reference: "MERLU12", designation: "MERLU 1/2 KG 10KG", colis: 2, poids_total_kg: "21,30", prix_kg: "6,40", montant_ht: "136,32", supplier_lot_number: "05050102507" },
-    { index: 8, supplier_reference: "JOUEL0", designation: "JOUE LOTTE 3 KG", colis: 2, poids_total_kg: "6,00", prix_kg: "16,40", montant_ht: lastAmount, supplier_lot_number: "05050102508" },
+    { index: 1, supplier_reference: "FILJUL58", designation: "FILET JULIENNE 5/800 GR 3 KG", latin_name: "Molva molva", fao: "FAO 27 VII", fao_zone: "FAO 27", sous_zone: "VII", fishing_gear: "Ligne", colis: 5, poids_total_kg: "15,00", prix_kg: "11,40", montant_ht: "171,00", supplier_lot_number: "05050102501" },
+    { index: 2, supplier_reference: "FILLINB5", designation: "FILET LINGUE BLEUE 500/1000 3 KG", latin_name: "Molva dypterygia", fao: "FAO 27 VIII", fao_zone: "FAO 27", sous_zone: "VIII", fishing_gear: "Ligne", colis: 5, poids_total_kg: "15,00", prix_kg: "11,20", montant_ht: "168,00", supplier_lot_number: "05050102502" },
+    { index: 3, supplier_reference: "FILMOST7", designation: "FILET MOSTELLE DE FOND 2400 GR 3KG", latin_name: "Phycis blennoides", fao: "FAO 27", fao_zone: "FAO 27", sous_zone: "", fishing_gear: "Chalut", colis: 3, poids_total_kg: "9,00", prix_kg: "7,40", montant_ht: "66,60", supplier_lot_number: "05050102503" },
+    { index: 4, supplier_reference: "RAI25001", designation: "AILE RAIE 2/500 GR PELE 1F 3 KG", latin_name: "Raja naevus / Leucoraja", fao: "FAO 27 VII & autres zones", fao_zone: "FAO 27", sous_zone: "VII & autres zones", fishing_gear: "Chalut", colis: 3, poids_total_kg: "9,00", prix_kg: "9,40", montant_ht: "84,60", supplier_lot_number: "05050102504" },
+    { index: 5, supplier_reference: "QLO2500/", designation: "QUEUE LOTTE 200/500 GR 3 KG", latin_name: "Lophius piscatorius / Lophius budegassa", fao: "FAO 27 VIII", fao_zone: "FAO 27", sous_zone: "VIII", fishing_gear: "Chalut", colis: 3, poids_total_kg: "9,00", prix_kg: "13,40", montant_ht: "120,60", supplier_lot_number: "05050102505" },
+    { index: 6, supplier_reference: "FILEG120", designation: "FILET EGLEFIN 100/200 GR 3 KG", latin_name: "Melanogrammus aeglefinus", fao: "", fao_zone: "", sous_zone: "", fishing_gear: "", colis: 3, poids_total_kg: "9,00", prix_kg: "9,40", montant_ht: "84,60", supplier_lot_number: "05050102506" },
+    { index: 7, supplier_reference: "MERLU12", designation: "MERLU 1/2 KG 10KG", latin_name: "Merluccius merluccius", fao: "FAO 27 VII", fao_zone: "FAO 27", sous_zone: "VII", fishing_gear: "Ligne", colis: 2, poids_total_kg: "21,30", prix_kg: "6,40", montant_ht: "136,32", supplier_lot_number: "05050102507" },
+    { index: 8, supplier_reference: "JOUEL0", designation: "JOUE LOTTE 3 KG", latin_name: null, fao: null, fao_zone: null, sous_zone: null, fishing_gear: null, colis: 2, poids_total_kg: "6,00", prix_kg: "16,40", montant_ht: lastAmount, supplier_lot_number: "05050102508" },
   ];
 }
 
@@ -167,6 +167,101 @@ async function testOcrTotalsMatchSucceedsComplete() {
     assert.strictEqual(result.result.lines.length, 8);
     assert.strictEqual(result.result.meta.import_complete, true);
     assert.strictEqual(result.result.meta.diagnostics.totals_check.ok, true);
+  } finally {
+    fs.unlinkSync(tmpPath);
+  }
+}
+
+async function testNormalizeOcrPayloadKeepsTraceabilityFields() {
+  const normalized = normalizeOcrPayload({
+    bl_number: "511-00081150",
+    date: "02/09/2026",
+    totals: sogelmerDocumentTotals,
+    lines: [{
+      supplier_reference: "FILLINB5",
+      designation: "FILET LINGUE BLEUE 500/1000 3 KG",
+      latin_name: "Molva dypterygia",
+      fao: "FAO 27 VIII",
+      fao_zone: "FAO 27",
+      sous_zone: "VIII",
+      fishing_gear: "Ligne",
+      colis: "5",
+      poids_colis_kg: "3,00",
+      poids_total_kg: "15,00",
+      uv: "KG",
+      supplier_lot_number: "05050102502",
+      prix_kg: "11,20",
+      montant_ht: "168,00",
+    }],
+    warnings: [],
+  });
+
+  assert.strictEqual(normalized.raw_lines.length, 1);
+  assert.strictEqual(normalized.raw_lines[0].latin_name, "Molva dypterygia");
+  assert.strictEqual(normalized.raw_lines[0].fao, "FAO 27 VIII");
+  assert.strictEqual(normalized.raw_lines[0].fao_zone, "FAO 27");
+  assert.strictEqual(normalized.raw_lines[0].sous_zone, "VIII");
+  assert.strictEqual(normalized.raw_lines[0].fishing_gear, "Ligne");
+  assert.deepStrictEqual(normalized.document_totals, sogelmerDocumentTotals);
+}
+
+async function testOcrTraceabilityReachesImportLines() {
+  const tmpPath = path.join(os.tmpdir(), `sogelmer-image-trace-${Date.now()}.pdf`);
+  await createImageOnlyPdf(tmpPath);
+
+  try {
+    const result = await importDocument(
+      { path: tmpPath, originalname: "alta maree.pdf" },
+      {
+        import_parser_id: "SOGELMER",
+        sogelmerOcrExtractor: async () => ({
+          text: recentSogelmerText,
+          warnings: [],
+          raw_lines: sogelmerRawOcrLines(),
+          document_totals: sogelmerDocumentTotals,
+          page_count: 1,
+          provider: "test-ocr",
+        }),
+      }
+    );
+
+    assert.strictEqual(result.ok, true);
+
+    const lingue = result.result.lines.find((line) => line.supplier_reference === "FILLINB5");
+    assert.strictEqual(lingue.latin_name, "Molva dypterygia");
+    assert.strictEqual(lingue.fao, "FAO 27 VIII");
+    assert.strictEqual(lingue.fao_zone, "FAO 27");
+    assert.strictEqual(lingue.sous_zone, "VIII");
+    assert.strictEqual(lingue.fishing_gear, "Ligne");
+
+    const mostelle = result.result.lines.find((line) => line.supplier_reference === "FILMOST7");
+    assert.strictEqual(mostelle.latin_name, "Phycis blennoides");
+    assert.strictEqual(mostelle.fao_zone, "FAO 27");
+    assert.strictEqual(mostelle.sous_zone, null);
+    assert.strictEqual(mostelle.fishing_gear, "Chalut");
+
+    const raie = result.result.lines.find((line) => line.supplier_reference === "RAI25001");
+    assert.strictEqual(raie.fao, "FAO 27 VII & autres zones");
+    assert.strictEqual(raie.fao_zone, "FAO 27");
+    assert.strictEqual(raie.sous_zone, "VII & autres zones");
+
+    const eglefin = result.result.lines.find((line) => line.supplier_reference === "FILEG120");
+    assert.strictEqual(eglefin.latin_name, "Melanogrammus aeglefinus");
+    assert.strictEqual(eglefin.fao, null);
+    assert.strictEqual(eglefin.fao_zone, null);
+    assert.strictEqual(eglefin.sous_zone, null);
+    assert.strictEqual(eglefin.fishing_gear, null);
+
+    const joue = result.result.lines.find((line) => line.supplier_reference === "JOUEL0");
+    assert.strictEqual(joue.latin_name, null);
+    assert.strictEqual(joue.fao_zone, null);
+    assert.strictEqual(joue.sous_zone, null);
+    assert.strictEqual(joue.fishing_gear, null);
+
+    const rawLingue = result.result.meta.diagnostics.ocr_raw_lines.find((line) => line.supplier_reference === "FILLINB5");
+    assert.strictEqual(rawLingue.latin_name, "Molva dypterygia");
+    const acceptedLingue = result.result.meta.diagnostics.accepted_lines.find((line) => line.supplier_reference === "FILLINB5");
+    assert.strictEqual(acceptedLingue.fishing_gear, "Ligne");
   } finally {
     fs.unlinkSync(tmpPath);
   }
@@ -289,7 +384,15 @@ async function parseRealPdfFromCli() {
     total_amount_ex_vat: Number(totalAmount.toFixed(2)),
     warnings: result.result?.warnings || result.warnings || [],
     diagnostics: result.result?.meta?.diagnostics || {},
-    references: lines.map((line) => line.supplier_reference),
+    traceability: lines.map((line) => ({
+      supplier_reference: line.supplier_reference,
+      designation: line.designation,
+      latin_name: line.latin_name,
+      fao: line.fao,
+      fao_zone: line.fao_zone,
+      sous_zone: line.sous_zone,
+      fishing_gear: line.fishing_gear,
+    })),
   }, null, 2));
 }
 
@@ -297,6 +400,8 @@ async function parseRealPdfFromCli() {
   await testRecentLayout();
   await testImagePdfUsesOcrFallback();
   await testOcrTotalsMatchSucceedsComplete();
+  await testNormalizeOcrPayloadKeepsTraceabilityFields();
+  await testOcrTraceabilityReachesImportLines();
   await testOcrTotalsMismatchSucceedsWithWarning();
   await testLegacyLayout();
   await testDuplicateLineIsIgnored();
