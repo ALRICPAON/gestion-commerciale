@@ -11,72 +11,65 @@ if (!sessionToken || !sessionUserRaw) {
 
 const sessionUser = JSON.parse(sessionUserRaw);
 
-const userNameEl = document.getElementById('user-name');
-const backHomeBtn = document.getElementById('back-home-btn');
-const logoutBtn = document.getElementById('logout-btn');
-const refreshDataBtn = document.getElementById('refresh-data-btn');
-const printSheetBtn = document.getElementById('print-sheet-btn');
-const printSheetBtnSecondary = document.getElementById('print-sheet-btn-secondary');
-const downloadPdfBtn = document.getElementById('download-pdf-btn');
-const downloadPdfBtnSecondary = document.getElementById('download-pdf-btn-secondary');
-const clearEntriesBtn = document.getElementById('clear-entries-btn');
-const newSheetBtn = document.getElementById('new-sheet-btn');
-const pageFeedback = document.getElementById('page-feedback');
-const sheetTitleInput = document.getElementById('sheet-title-input');
-const sheetDateInput = document.getElementById('sheet-date-input');
-const sheetNoteInput = document.getElementById('sheet-note-input');
-const supplierSelect = document.getElementById('supplier-select');
-const supplierEmailOutput = document.getElementById('supplier-email-output');
-const marginLevel1Input = document.getElementById('margin-level-1-input');
-const marginLevel2Input = document.getElementById('margin-level-2-input');
-const marginLevel3Input = document.getElementById('margin-level-3-input');
-const recalculateAllPricesBtn = document.getElementById('recalculate-all-prices-btn');
-const clientSearchInput = document.getElementById('client-search-input');
-const selectAllClientsBtn = document.getElementById('select-all-clients-btn');
-const clearClientsBtn = document.getElementById('clear-clients-btn');
-const clientCountLabel = document.getElementById('client-count-label');
-const clientsList = document.getElementById('clients-list');
-const productColumnsEl = document.getElementById('product-columns');
-const addProductColumnBtn = document.getElementById('add-product-column-btn');
-const emailPreviewBtn = document.getElementById('email-preview-btn');
-const sendSupplierEmailBtn = document.getElementById('send-supplier-email-btn');
-const generateOrdersBtn = document.getElementById('generate-orders-btn');
-const actionPreviewPanel = document.getElementById('action-preview-panel');
-const sheetReferenceLabel = document.getElementById('sheet-reference-label');
-const printTitle = document.getElementById('print-title');
-const printNote = document.getElementById('print-note');
-const printDate = document.getElementById('print-date');
-const printTableWrap = document.getElementById('print-table-wrap');
+const els = {
+  userName: document.getElementById('user-name'),
+  backHome: document.getElementById('back-home-btn'),
+  logout: document.getElementById('logout-btn'),
+  refresh: document.getElementById('refresh-data-btn'),
+  print: document.getElementById('print-sheet-btn'),
+  pdf: document.getElementById('download-pdf-btn'),
+  generate: document.getElementById('generate-orders-btn'),
+  feedback: document.getElementById('page-feedback'),
+  date: document.getElementById('sheet-date-input'),
+  note: document.getElementById('sheet-note-input'),
+  reference: document.getElementById('sheet-reference-label'),
+  saveStatus: document.getElementById('autosave-status'),
+  clientView: document.getElementById('client-view-btn'),
+  articleView: document.getElementById('article-view-btn'),
+  summary: document.getElementById('quick-summary'),
+  selectorTitle: document.getElementById('selector-title'),
+  selectorCount: document.getElementById('selector-count'),
+  primarySearch: document.getElementById('primary-search-input'),
+  secondarySearch: document.getElementById('secondary-search-input'),
+  primaryFilters: document.getElementById('primary-filter-tabs'),
+  secondaryFilters: document.getElementById('secondary-filter-tabs'),
+  primaryList: document.getElementById('primary-list'),
+  entryTitle: document.getElementById('entry-title'),
+  entrySubtitle: document.getElementById('entry-subtitle'),
+  entryTable: document.getElementById('entry-table-wrap'),
+  actionPreview: document.getElementById('action-preview-panel'),
+  printTitle: document.getElementById('print-title'),
+  printNote: document.getElementById('print-note'),
+  printDate: document.getElementById('print-date'),
+  printTable: document.getElementById('print-table-wrap'),
+  addOutOfTariff: document.getElementById('add-out-of-tariff-btn'),
+  articleModal: document.getElementById('article-modal'),
+  closeArticleModal: document.getElementById('close-article-modal-btn'),
+  articleSearch: document.getElementById('article-search-input'),
+  articleSearchBtn: document.getElementById('article-search-btn'),
+  articleResults: document.getElementById('article-results'),
+};
 
-const PRINT_PRODUCT_COLUMN_WIDTH_MM = 46;
-const PRINT_CLIENT_COLUMN_WIDTH_MM = 22;
-const PRINT_A4_LANDSCAPE_WIDTH_MM = 297;
-const PRINT_PAGE_MARGIN_MM = 7;
-const articleModal = document.getElementById('article-modal');
-const closeArticleModalBtn = document.getElementById('close-article-modal-btn');
-const articleSearchInput = document.getElementById('article-search-input');
-const articleSearchBtn = document.getElementById('article-search-btn');
-const articleResults = document.getElementById('article-results');
+const DRAFT_STORAGE_KEY = `alta-maree:quick-order-sheet:v4:${sessionUser.store_id || sessionUser.client_key || sessionUser.email || 'default'}`;
+const AUTOSAVE_DELAY_MS = 650;
 
-const DEFAULT_PRODUCT_COLUMNS = 10;
-const DRAFT_STORAGE_KEY = `alta-maree:quick-order-sheet:v3:${sessionUser.store_id || sessionUser.client_key || sessionUser.email || 'default'}`;
-
-let clients = [];
-let suppliers = [];
-let selectedClientIds = new Set();
-let productColumns = [];
-let activeProductIndex = null;
-let articleSearchResults = [];
-let orderEntries = {};
-let draftLoaded = false;
-let draftHasClientSelection = false;
-let sheetId = '';
-let emailPreviewReady = false;
-let generatedOrderIds = [];
-let generatedOrders = [];
-let draftSupplierId = '';
-let serverSaveTimer = null;
-let isLoadingServerSheet = false;
+let state = {
+  sheet: null,
+  clients: [],
+  products: [],
+  entries: {},
+  view: 'client',
+  activeClientId: null,
+  activeProductUid: null,
+  primarySearch: '',
+  secondarySearch: '',
+  primaryFilter: 'all',
+  secondaryFilter: 'all',
+  saveTimer: null,
+  isLoading: false,
+  isDirtySinceGeneration: false,
+  articleSearchResults: [],
+};
 
 function authHeaders() {
   return { Authorization: `Bearer ${sessionToken}` };
@@ -91,37 +84,15 @@ function escapeHtml(value) {
     .replace(/'/g, '&#039;');
 }
 
-function showFeedback(message = '', type = '') {
-  if (!pageFeedback) return;
-  pageFeedback.textContent = message;
-  pageFeedback.className = 'page-feedback';
-  if (!message) pageFeedback.classList.add('hidden');
-  if (type) pageFeedback.classList.add(type);
-}
-
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
 }
 
 function formatDateFr(value) {
   if (!value) return '';
-  const date = new Date(`${value}T00:00:00`);
-  if (Number.isNaN(date.getTime())) return value;
+  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleDateString('fr-FR');
-}
-
-function compactNumber(value, digits = 2) {
-  if (value === null || value === undefined || value === '') return '';
-  const number = Number(value);
-  if (!Number.isFinite(number)) return String(value);
-  return number.toLocaleString('fr-FR', { maximumFractionDigits: digits });
-}
-
-function moneyInputValue(value) {
-  if (value === null || value === undefined || value === '') return '';
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '';
-  return number.toFixed(2);
 }
 
 function parseDecimal(value) {
@@ -130,226 +101,39 @@ function parseDecimal(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function parsePercent(value, fallback = 0) {
-  const parsed = Number(String(value ?? '').replace(',', '.'));
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.min(Math.max(parsed, 0), 99.99) / 100;
+function compactNumber(value, digits = 3) {
+  if (value === null || value === undefined || value === '') return '';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return String(value);
+  return number.toLocaleString('fr-FR', { maximumFractionDigits: digits });
 }
 
-function moneyNumber(value) {
-  const parsed = parseDecimal(value);
-  return parsed > 0 ? parsed : 0;
+function money(value) {
+  if (value === null || value === undefined || value === '') return '';
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  return number.toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-function salePriceFromMargin(purchasePrice, marginRate) {
-  const purchase = moneyNumber(purchasePrice);
-  if (purchase <= 0 || marginRate < 0 || marginRate >= 1) return '';
-  return (purchase / (1 - marginRate)).toFixed(2);
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
 }
 
-function realMargin(purchasePrice, salePrice) {
-  const purchase = moneyNumber(purchasePrice);
-  const sale = moneyNumber(salePrice);
-  if (purchase <= 0 || sale <= 0) return '';
-  return `${(((sale - purchase) / sale) * 100).toFixed(1)}%`;
+function showFeedback(message = '', type = '') {
+  if (!els.feedback) return;
+  els.feedback.textContent = message;
+  els.feedback.className = 'page-feedback';
+  if (!message) els.feedback.classList.add('hidden');
+  if (type) els.feedback.classList.add(type);
 }
 
-function realMarginRate(purchasePrice, salePrice) {
-  const purchase = moneyNumber(purchasePrice);
-  const sale = moneyNumber(salePrice);
-  if (purchase <= 0 || sale <= 0) return null;
-  return Number(((sale - purchase) / sale).toFixed(4));
-}
-
-function defaultMargins() {
-  return {
-    1: parsePercent(marginLevel1Input?.value, 0.10),
-    2: parsePercent(marginLevel2Input?.value, 0.15),
-    3: parsePercent(marginLevel3Input?.value, 0.20),
-  };
-}
-
-function isValidUuid(value) {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
-}
-
-function generateUuidV4() {
-  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  if (window.crypto?.getRandomValues) {
-    window.crypto.getRandomValues(bytes);
-  } else {
-    for (let index = 0; index < bytes.length; index += 1) {
-      bytes[index] = Math.floor(Math.random() * 256);
-    }
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0'));
-  return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10, 16).join('')}`;
-}
-
-function ensureValidSheetId() {
-  if (isValidUuid(sheetId)) return sheetId;
-  sheetId = generateUuidV4();
-  return sheetId;
-}
-
-function updateSheetReferenceLabel() {
-  if (!sheetReferenceLabel) return;
-  ensureValidSheetId();
-  sheetReferenceLabel.textContent = sheetId.slice(0, 8).toUpperCase();
-}
-
-function columnUid() {
-  return `col-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function safeJsonParse(value, fallback = null) {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-}
-
-function loadDraft() {
-  const draft = safeJsonParse(localStorage.getItem(DRAFT_STORAGE_KEY));
-  if (!draft || typeof draft !== 'object') return false;
-
-  if (draft.title !== undefined) sheetTitleInput.value = draft.title || "Fiche d'appel clients";
-  if (draft.date !== undefined) sheetDateInput.value = draft.date || todayIso();
-  if (draft.note !== undefined) sheetNoteInput.value = draft.note || '';
-  if (isValidUuid(draft.sheetId)) sheetId = draft.sheetId;
-  if (draft.supplierId !== undefined) draftSupplierId = draft.supplierId || '';
-
-  if (Array.isArray(draft.selectedClientIds)) {
-    selectedClientIds = new Set(draft.selectedClientIds.map(String));
-    draftHasClientSelection = true;
-  }
-
-  if (Array.isArray(draft.productColumns) && draft.productColumns.length > 0) {
-    productColumns = draft.productColumns.map((column) => ({
-      ...emptyProductColumn(),
-      ...column,
-      uid: column.uid || columnUid(),
-    }));
-  }
-
-  orderEntries = draft.orderEntries && typeof draft.orderEntries === 'object' ? draft.orderEntries : {};
-  generatedOrderIds = Array.isArray(draft.generatedOrderIds) ? draft.generatedOrderIds : [];
-  generatedOrders = Array.isArray(draft.generatedOrders) ? draft.generatedOrders : [];
-  draftLoaded = true;
-  return true;
-}
-
-function saveDraft() {
-  ensureValidSheetId();
-  const draft = {
-    title: sheetTitleInput.value,
-    sheetId,
-    date: sheetDateInput.value,
-    note: sheetNoteInput.value,
-    supplierId: supplierSelect.value || draftSupplierId || '',
-    selectedClientIds: Array.from(selectedClientIds),
-    productColumns,
-    orderEntries,
-    generatedOrderIds,
-    generatedOrders,
-    savedAt: new Date().toISOString(),
-  };
-  localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
-  updateSheetReferenceLabel();
-}
-
-function serverPayload() {
-  return {
-    ...buildSheetPayload(),
-    default_margin_level_1: defaultMargins()[1],
-    default_margin_level_2: defaultMargins()[2],
-    default_margin_level_3: defaultMargins()[3],
-    selected_client_ids: Array.from(selectedClientIds),
-  };
-}
-
-async function saveSheetToServer() {
-  if (isLoadingServerSheet) return;
-  await apiSend('/api/quick-order-sheets/by-date', serverPayload(), 'PUT');
-}
-
-function saveSheetToServerDebounced() {
-  if (isLoadingServerSheet) return;
-  window.clearTimeout(serverSaveTimer);
-  serverSaveTimer = window.setTimeout(() => {
-    saveSheetToServer().catch((error) => {
-      console.error('Erreur sauvegarde fiche appel :', error);
-      showFeedback(error.message || 'Erreur sauvegarde fiche appel', 'error');
-    });
-  }, 700);
-}
-
-function applyServerSheet(sheet) {
-  if (!sheet) return false;
-  isLoadingServerSheet = true;
-  sheetTitleInput.value = sheet.title || "Fiche d'appel clients";
-  sheetDateInput.value = String(sheet.sheet_date || todayIso()).slice(0, 10);
-  sheetNoteInput.value = sheet.notes || '';
-  supplierSelect.value = sheet.supplier_id || '';
-  marginLevel1Input.value = (Number(sheet.default_margin_level_1 ?? 0.10) * 100).toFixed(2);
-  marginLevel2Input.value = (Number(sheet.default_margin_level_2 ?? 0.15) * 100).toFixed(2);
-  marginLevel3Input.value = (Number(sheet.default_margin_level_3 ?? 0.20) * 100).toFixed(2);
-  selectedClientIds = new Set((Array.isArray(sheet.selected_client_ids) ? sheet.selected_client_ids : []).map(String));
-  draftHasClientSelection = selectedClientIds.size > 0;
-  orderEntries = sheet.order_entries && typeof sheet.order_entries === 'object' ? sheet.order_entries : {};
-  productColumns = (Array.isArray(sheet.products) ? sheet.products : []).map((product) => ({
-    ...emptyProductColumn(),
-    uid: product.column_uid || columnUid(),
-    article_id: product.article_id,
-    plu: product.plu || '',
-    designation: product.designation_snapshot || '',
-    purchase_price_ht: moneyInputValue(product.purchase_price_ht),
-    stock: product.supplier_available_quantity ?? '',
-    unit: product.price_unit || product.sale_unit || 'kg',
-    sale_unit: product.sale_unit || product.price_unit || 'kg',
-    sale_price_level_1_ht: moneyInputValue(product.sale_price_level_1_ht),
-    sale_price_level_2_ht: moneyInputValue(product.sale_price_level_2_ht),
-    sale_price_level_3_ht: moneyInputValue(product.sale_price_level_3_ht),
-    manual_price_level_1: Boolean(product.manual_price_level_1),
-    manual_price_level_2: Boolean(product.manual_price_level_2),
-    manual_price_level_3: Boolean(product.manual_price_level_3),
-    family_code: product.family_code || '',
-    family_name: product.family_name || '',
-  }));
-  ensureProductColumns();
-  updateSupplierEmailOutput();
-  renderClients();
-  renderProductColumns();
-  updatePreview();
-  saveDraft();
-  isLoadingServerSheet = false;
-  return true;
-}
-
-async function loadSheetFromServer() {
-  const date = sheetDateInput.value || todayIso();
-  const data = await apiGet(`/api/quick-order-sheets/by-date?date=${encodeURIComponent(date)}`);
-  if (data.exists && data.sheet) {
-    applyServerSheet(data.sheet);
-    showFeedback(`Fiche du ${formatDateFr(date)} rechargee.`, 'success');
-    return true;
-  }
-  return false;
-}
-
-function persistSheetIdInDraft() {
-  ensureValidSheetId();
-  const draft = safeJsonParse(localStorage.getItem(DRAFT_STORAGE_KEY), {});
-  localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
-    ...(draft && typeof draft === 'object' ? draft : {}),
-    sheetId,
-    savedAt: new Date().toISOString(),
-  }));
-  updateSheetReferenceLabel();
+function setSaveStatus(label, tone = '') {
+  if (!els.saveStatus) return;
+  els.saveStatus.textContent = label;
+  els.saveStatus.dataset.tone = tone;
 }
 
 async function apiGet(path) {
@@ -389,632 +173,534 @@ async function apiDownload(path, payload) {
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    const error = new Error(data.error || 'Erreur telechargement PDF');
-    error.status = response.status;
-    throw error;
+    throw new Error(data.error || 'Erreur telechargement PDF');
   }
   return response.blob();
 }
 
-function clientLabel(client) {
-  const code = client.code ? `${client.code} - ` : '';
-  const city = client.city ? ` (${client.city})` : '';
-  return `${code}${client.name || client.legal_name || 'Client'}${city}`;
+function safeJsonParse(value, fallback = null) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
 }
 
-function productLabel(product) {
-  return product.display_name || product.designation || product.label || '';
+function productUid(product) {
+  return String(product.column_uid || product.uid || product.id || product.pricing_line_id || product.article_id);
 }
 
-function emptyProductColumn() {
+function normalizeProduct(product = {}) {
   return {
-    uid: columnUid(),
-    article_id: null,
-    plu: '',
-    designation: '',
-    purchase_price_ht: '',
-    sale_price_level_1_ht: '',
-    sale_price_level_2_ht: '',
-    sale_price_level_3_ht: '',
-    manual_price_level_1: false,
-    manual_price_level_2: false,
-    manual_price_level_3: false,
-    stock: '',
-    unit: '',
-    family_code: '',
-    family_name: '',
-    sale_unit: '',
+    uid: productUid(product),
+    column_uid: product.column_uid || productUid(product),
+    article_id: product.article_id || null,
+    plu: product.plu || product.plu_snapshot || '',
+    designation: product.designation_snapshot || product.designation || product.article_designation || 'Article',
+    family_code: product.family_code || '',
+    family_name: product.family_name || '',
+    sale_unit: product.sale_unit || product.price_unit || 'kg',
+    price_unit: product.price_unit || product.sale_unit || 'kg',
+    stock: product.supplier_available_quantity ?? product.stock ?? '',
+    sale_price_level_1_ht: product.sale_price_level_1_ht ?? '',
+    sale_price_level_2_ht: product.sale_price_level_2_ht ?? '',
+    sale_price_level_3_ht: product.sale_price_level_3_ht ?? '',
+    pricing_session_id: product.pricing_session_id || null,
+    pricing_line_id: product.pricing_line_id || null,
+    tariff_prices: Array.isArray(product.tariff_prices) ? product.tariff_prices : [],
+    removed_from_current_pricing: product.removed_from_current_pricing === true,
+    out_of_tariff: product.out_of_tariff === true || product.removed_from_current_pricing === true || !product.pricing_line_id,
+    price: product.price ?? product.sale_price_level_1_ht ?? '',
+    display_order: Number(product.display_order || 0),
   };
 }
 
-function ensureProductColumns() {
-  if (productColumns.length > 0) return;
-  productColumns = Array.from({ length: DEFAULT_PRODUCT_COLUMNS }, emptyProductColumn);
+function clientLabel(client) {
+  return [client.code, client.name || client.legal_name, client.city || client.store_identifier]
+    .filter(Boolean)
+    .join(' - ');
 }
 
-function recalculateColumnPrices(column, resetManual = false) {
-  const margins = defaultMargins();
-  [1, 2, 3].forEach((level) => {
-    const manualKey = `manual_price_level_${level}`;
-    const priceKey = `sale_price_level_${level}_ht`;
-    if (resetManual || !column[manualKey]) {
-      column[priceKey] = salePriceFromMargin(column.purchase_price_ht, margins[level]);
-      column[manualKey] = false;
-    }
-  });
+function productLabel(product) {
+  return [product.plu, product.designation].filter(Boolean).join(' - ');
 }
 
-function recalculateAllPrices(resetManual = false) {
-  productColumns.forEach((column) => recalculateColumnPrices(column, resetManual));
-  renderProductColumns();
-  invalidateEmailPreview();
-  saveDraft();
-  saveSheetToServerDebounced();
+function priceForClient(product, client) {
+  if (product.out_of_tariff) return product.price || product.sale_price_level_1_ht || '';
+  const level = [1, 2, 3].includes(Number(client?.tariff_level)) ? Number(client.tariff_level) : 1;
+  return product[`sale_price_level_${level}_ht`] || '';
 }
 
-function selectedClients() {
-  return clients.filter((client) => selectedClientIds.has(String(client.id)));
+function entryFor(clientId, productId) {
+  return state.entries[String(clientId)]?.[String(productId)] || {};
 }
 
-function visibleClients() {
-  const search = String(clientSearchInput?.value || '').trim().toLowerCase();
-  if (!search) return clients;
-  return clients.filter((client) => clientLabel(client).toLowerCase().includes(search));
-}
-
-function usableProductColumns() {
-  return productColumns.filter((column) => column.article_id || column.designation || column.price || column.stock);
-}
-
-function entryFor(clientId, columnUidValue) {
-  return orderEntries[String(clientId)]?.[String(columnUidValue)] || {};
+function setEntryValue(clientId, productId, field, value) {
+  const safeClient = String(clientId);
+  const safeProduct = String(productId);
+  if (!state.entries[safeClient]) state.entries[safeClient] = {};
+  if (!state.entries[safeClient][safeProduct]) state.entries[safeClient][safeProduct] = {};
+  state.entries[safeClient][safeProduct][field] = value;
 }
 
 function entryQuantity(entry = {}) {
   const colis = parseDecimal(entry.colis);
   const kg = parseDecimal(entry.kg);
-  return Number((colis * kg).toFixed(3));
+  const pieces = parseDecimal(entry.pieces);
+  if (colis > 0 && kg > 0) return Number((colis * kg).toFixed(3));
+  return Number((kg || pieces || 0).toFixed(3));
 }
 
-function setEntryValue(clientId, columnUidValue, field, value) {
-  const safeClientId = String(clientId);
-  const safeColumnUid = String(columnUidValue);
-  if (!orderEntries[safeClientId]) orderEntries[safeClientId] = {};
-  if (!orderEntries[safeClientId][safeColumnUid]) orderEntries[safeClientId][safeColumnUid] = {};
-  orderEntries[safeClientId][safeColumnUid][field] = value;
+function productHasOrders(product) {
+  return state.clients.some((client) => entryQuantity(entryFor(client.id, product.uid)) > 0);
 }
 
-function selectedSupplier() {
-  return suppliers.find((supplier) => String(supplier.id) === String(supplierSelect.value)) || null;
+function clientHasOrders(client) {
+  return state.products.some((product) => entryQuantity(entryFor(client.id, product.uid)) > 0);
 }
 
-function selectedProductTotals() {
-  const rows = selectedClients();
-  return usableProductColumns().map((column) => {
-    const sold = rows.reduce((sum, client) => sum + entryQuantity(entryFor(client.id, column.uid)), 0);
-    const stock = parseDecimal(column.stock);
-    return {
-      ...column,
-      stock,
-      sold: Number(sold.toFixed(3)),
-      remaining: Number((stock - sold).toFixed(3)),
-      overstock: stock > 0 && sold > stock,
-    };
-  });
+function enteredOrderLines() {
+  const lines = [];
+  for (const client of state.clients) {
+    for (const product of state.products) {
+      const entry = entryFor(client.id, product.uid);
+      const quantity = entryQuantity(entry);
+      if (quantity <= 0 || !product.article_id) continue;
+      lines.push({ client, product, entry, quantity });
+    }
+  }
+  return lines;
 }
 
-function updateSupplierEmailOutput() {
-  const supplier = selectedSupplier();
-  supplierEmailOutput.textContent = supplier?.email || '-';
-  supplierEmailOutput.classList.toggle('missing-email', Boolean(supplier && !supplier.email));
-  emailPreviewReady = false;
-  sendSupplierEmailBtn.disabled = true;
+function saveDraft() {
+  const draft = {
+    date: els.date?.value || todayIso(),
+    note: els.note?.value || '',
+    view: state.view,
+    activeClientId: state.activeClientId,
+    activeProductUid: state.activeProductUid,
+    entries: state.entries,
+    products: state.products.filter((product) => product.out_of_tariff),
+    savedAt: new Date().toISOString(),
+  };
+  localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
 }
 
-function invalidateEmailPreview() {
-  emailPreviewReady = false;
-  sendSupplierEmailBtn.disabled = true;
-}
-
-function resetGenerationState() {
-  generatedOrderIds = [];
-  generatedOrders = [];
-  invalidateEmailPreview();
+function loadDraftForDate(date) {
+  const draft = safeJsonParse(localStorage.getItem(DRAFT_STORAGE_KEY), {});
+  if (!draft || draft.date !== date) return;
+  state.entries = draft.entries && typeof draft.entries === 'object' ? draft.entries : state.entries;
+  state.view = draft.view === 'article' ? 'article' : 'client';
+  state.activeClientId = draft.activeClientId || state.activeClientId;
+  state.activeProductUid = draft.activeProductUid || state.activeProductUid;
+  if (Array.isArray(draft.products)) {
+    const existing = new Set(state.products.map((product) => String(product.uid)));
+    const extra = draft.products.map(normalizeProduct).filter((product) => !existing.has(String(product.uid)));
+    state.products = [...state.products, ...extra];
+  }
 }
 
 function buildSheetPayload() {
-  ensureValidSheetId();
-  const selectedIds = new Set(selectedClients().map((client) => String(client.id)));
-  const products = usableProductColumns();
   return {
-    sheet_id: sheetId,
-    title: sheetTitleInput.value.trim() || "Fiche d'appel clients",
-    date: sheetDateInput.value || todayIso(),
-    notes: sheetNoteInput.value.trim(),
-    supplier_id: supplierSelect.value || null,
-    clients: clients
-      .filter((client) => selectedIds.has(String(client.id)))
-      .map((client) => ({
-        id: client.id,
-        code: client.code,
-        name: client.name || client.legal_name,
-        legal_name: client.legal_name,
-        city: client.city,
-        parent_client_id: client.parent_client_id,
-        billed_client_id: client.billed_client_id,
-        tariff_level: client.tariff_level,
-        is_royale_maree_member: client.is_royale_maree_member,
-        store_identifier: client.store_identifier,
-        affiliate_label: client.affiliate_label,
-        affiliate_store_number: client.affiliate_store_number,
-      })),
-    products: products.map((product) => ({
+    sheet_id: state.sheet?.id,
+    title: state.sheet?.title || "Fiche d'appel clients",
+    date: els.date?.value || todayIso(),
+    notes: els.note?.value || '',
+    clients: state.clients.map((client) => ({
+      id: client.id,
+      code: client.code,
+      name: client.name || client.legal_name,
+      legal_name: client.legal_name,
+      city: client.city,
+      parent_client_id: client.parent_client_id,
+      billed_client_id: client.billed_client_id,
+      tariff_level: client.tariff_level,
+      is_royale_maree_member: client.is_royale_maree_member,
+      store_identifier: client.store_identifier,
+      affiliate_label: client.affiliate_label,
+      affiliate_store_number: client.affiliate_store_number,
+    })),
+    products: state.products.map((product, index) => ({
       uid: product.uid,
+      column_uid: product.column_uid || product.uid,
       article_id: product.article_id,
       plu: product.plu,
       designation: product.designation,
-      price: product.sale_price_level_1_ht || product.price,
-      purchase_price_ht: product.purchase_price_ht,
+      price: product.out_of_tariff ? product.price : priceForClient(product, { tariff_level: 1 }),
       supplier_available_quantity: product.stock,
       stock: product.stock,
       sale_price_level_1_ht: product.sale_price_level_1_ht,
       sale_price_level_2_ht: product.sale_price_level_2_ht,
       sale_price_level_3_ht: product.sale_price_level_3_ht,
-      manual_price_level_1: Boolean(product.manual_price_level_1),
-      manual_price_level_2: Boolean(product.manual_price_level_2),
-      manual_price_level_3: Boolean(product.manual_price_level_3),
-      real_margin_level_1: realMarginRate(product.purchase_price_ht, product.sale_price_level_1_ht),
-      real_margin_level_2: realMarginRate(product.purchase_price_ht, product.sale_price_level_2_ht),
-      real_margin_level_3: realMarginRate(product.purchase_price_ht, product.sale_price_level_3_ht),
       family_code: product.family_code,
       family_name: product.family_name,
-      sale_unit: product.sale_unit || product.unit,
-      unit: product.unit || 'kg',
+      sale_unit: product.sale_unit,
+      unit: product.price_unit || product.sale_unit || 'kg',
+      pricing_session_id: product.pricing_session_id,
+      pricing_line_id: product.pricing_line_id,
+      tariff_prices: product.tariff_prices,
+      out_of_tariff: product.out_of_tariff === true,
+      removed_from_current_pricing: product.removed_from_current_pricing === true,
+      display_order: product.display_order || index + 1,
     })),
-    entries: orderEntries,
+    entries: state.entries,
   };
 }
 
-function enteredOrderLines() {
-  const productsByUid = new Map(usableProductColumns().map((product) => [String(product.uid), product]));
-  const rows = [];
-  selectedClients().forEach((client) => {
-    const clientEntries = orderEntries[String(client.id)] || {};
-    Object.entries(clientEntries).forEach(([uid, entry]) => {
-      const product = productsByUid.get(String(uid));
-      if (!product?.article_id) return;
-      const colis = parseDecimal(entry.colis);
-      const kg = parseDecimal(entry.kg);
-      const quantity = Number((colis * kg).toFixed(3));
-      if (quantity <= 0) return;
-      rows.push({ client, product, colis, kg, quantity });
-    });
-  });
-  return rows;
-}
-
-function orderCellHtml(client, column) {
-  const entry = entryFor(client.id, column.uid);
-  const clientId = escapeHtml(client.id);
-  const columnId = escapeHtml(column.uid);
-  const price = priceForClient(column, client);
-  return `<td>
-    <div class="order-cell-grid">
-      <label>
-        <span>Colis</span>
-        <input class="order-cell-input" type="text" inputmode="decimal" data-client-id="${clientId}" data-column-id="${columnId}" data-order-field="colis" value="${escapeHtml(entry.colis || '')}" aria-label="Colis ${escapeHtml(client.name || '')} ${escapeHtml(productLabel(column) || '')}" />
-      </label>
-      <label>
-        <span>Kg</span>
-        <input class="order-cell-input" type="text" inputmode="decimal" data-client-id="${clientId}" data-column-id="${columnId}" data-order-field="kg" value="${escapeHtml(entry.kg || '')}" aria-label="Kg ${escapeHtml(client.name || '')} ${escapeHtml(productLabel(column) || '')}" />
-      </label>
-    </div>
-    <small class="order-cell-price">Prix: ${escapeHtml(moneyInputValue(price) || '-')} EUR</small>
-  </td>`;
-}
-
-function priceForClient(column, client) {
-  const level = [1, 2, 3].includes(Number(client?.tariff_level)) ? Number(client.tariff_level) : 1;
-  return column[`sale_price_level_${level}_ht`] || column.price || '';
-}
-
-function updateProductTotalsInPlace() {
-  selectedProductTotals().forEach((column) => {
-    const heads = printTableWrap.querySelectorAll(`[data-total-column-id="${CSS.escape(String(column.uid))}"]`);
-    heads.forEach((head) => {
-      head.classList.toggle('product-overstock', column.overstock);
-      const stockEl = head.querySelector('[data-total-field="stock"]');
-      const soldEl = head.querySelector('[data-total-field="sold"]');
-      const remainingEl = head.querySelector('[data-total-field="remaining"]');
-      const remainingLine = head.querySelector('[data-total-line="remaining"]');
-      if (stockEl) stockEl.textContent = compactNumber(column.stock);
-      if (soldEl) soldEl.textContent = compactNumber(column.sold);
-      if (remainingEl) remainingEl.textContent = compactNumber(column.remaining);
-      remainingLine?.classList.toggle('stock-alert', column.overstock);
-    });
-  });
-}
-
-function maxPrintableClientColumns() {
-  const printableWidth = PRINT_A4_LANDSCAPE_WIDTH_MM - (PRINT_PAGE_MARGIN_MM * 2);
-  const availableClientWidth = printableWidth - PRINT_PRODUCT_COLUMN_WIDTH_MM;
-  return Math.max(1, Math.floor(availableClientWidth / PRINT_CLIENT_COLUMN_WIDTH_MM));
-}
-
-function chunkArray(items, size) {
-  const chunks = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
+async function saveSheetToServer() {
+  if (state.isLoading || !state.sheet?.id) return;
+  setSaveStatus('Enregistrement', 'saving');
+  const result = await apiSend('/api/quick-order-sheets/by-date', buildSheetPayload(), 'PUT');
+  if (result.sheet) {
+    state.sheet = result.sheet;
+    state.entries = result.sheet.order_entries || state.entries;
   }
-  return chunks;
+  setSaveStatus('Enregistre', 'saved');
 }
 
-function printBlockHeaderHtml({ title, note, date, pageIndex, pageTotal, startClient, endClient }) {
-  return `<div class="print-sheet-header print-block-header">
-    <div>
-      <h1>${escapeHtml(title)}</h1>
-      <p>${escapeHtml(note || 'Arrivage du jour')}</p>
-      <p class="print-page-counter">Page ${pageIndex}/${pageTotal} - Clients ${startClient} a ${endClient}</p>
-    </div>
-    <div class="print-date-block">
-      <span>Date</span>
-      <strong>${escapeHtml(formatDateFr(date))}</strong>
-    </div>
-  </div>`;
-}
-
-function printRepeatHeaderHtml({ title, note, date, pageIndex, pageTotal, startClient, endClient, colspan }) {
-  return `<tr class="print-repeat-title-row">
-    <th colspan="${colspan}">
-      <div class="print-repeat-title">
-        <div>
-          <strong>${escapeHtml(title)}</strong>
-          <span>${escapeHtml(note || 'Arrivage du jour')}</span>
-          <span>Page ${pageIndex}/${pageTotal} - Clients ${startClient} a ${endClient}</span>
-        </div>
-        <div>
-          <span>Date</span>
-          <strong>${escapeHtml(formatDateFr(date))}</strong>
-        </div>
-      </div>
-    </th>
-  </tr>`;
-}
-
-function clientColumnHeadHtml(client) {
-  return `<th class="client-head">
-    <strong>${escapeHtml(client.name || client.legal_name || 'Client')}</strong>
-    <span>${escapeHtml([client.code, client.city].filter(Boolean).join(' - '))}</span>
-  </th>`;
-}
-
-function productRowHeadHtml(column) {
-  const name = productLabel(column) || 'Produit';
-  return `<th scope="row" data-total-column-id="${escapeHtml(column.uid)}" class="product-row-head ${column.overstock ? 'product-overstock' : ''}">
-    <div class="product-head-name">${escapeHtml(name)}</div>
-    <div class="product-head-meta">T1 ${escapeHtml(moneyInputValue(column.sale_price_level_1_ht) || '-')} / T2 ${escapeHtml(moneyInputValue(column.sale_price_level_2_ht) || '-')} / T3 ${escapeHtml(moneyInputValue(column.sale_price_level_3_ht) || '-')}</div>
-    <div class="product-head-meta">Dispo fournisseur: <span data-total-field="stock">${escapeHtml(compactNumber(column.stock))}</span> ${escapeHtml(column.unit || 'kg')}</div>
-    <div class="product-head-meta">Vendu: <span data-total-field="sold">${escapeHtml(compactNumber(column.sold))}</span> kg</div>
-    <div class="product-head-meta ${column.overstock ? 'stock-alert' : ''}" data-total-line="remaining">Reste: <span data-total-field="remaining">${escapeHtml(compactNumber(column.remaining))}</span> kg</div>
-  </th>`;
-}
-
-function orderTableHtml({ clients: tableClients, columns, pageIndex, pageTotal, title, note, date, startClient, endClient }) {
-  const headerArgs = { title, note, date, pageIndex, pageTotal, startClient, endClient };
-  const colgroup = [
-    '<col class="product-label-col" />',
-    ...tableClients.map(() => '<col class="client-order-col" />'),
-  ].join('');
-  const head = tableClients.map(clientColumnHeadHtml).join('');
-  const body = columns.map((column) => `<tr>
-    ${productRowHeadHtml(column)}
-    ${tableClients.map((client) => orderCellHtml(client, column)).join('')}
-  </tr>`).join('');
-
-  return `<section class="print-table-page" aria-label="Page ${pageIndex} sur ${pageTotal}">
-    ${printBlockHeaderHtml(headerArgs)}
-    <table class="quick-print-table">
-      <colgroup>${colgroup}</colgroup>
-      <thead>
-        ${printRepeatHeaderHtml({ ...headerArgs, colspan: tableClients.length + 1 })}
-        <tr><th class="product-corner-head">Produit</th>${head}</tr>
-      </thead>
-      <tbody>${body}</tbody>
-    </table>
-  </section>`;
-}
-
-function updatePreview() {
-  const title = sheetTitleInput.value.trim() || "Fiche d'appel clients";
-  const note = sheetNoteInput.value.trim();
-  const date = sheetDateInput.value || todayIso();
-  const rows = selectedClients();
-  const columns = selectedProductTotals();
-
-  printTitle.textContent = title;
-  printNote.textContent = note || 'Arrivage du jour';
-  printDate.textContent = formatDateFr(date);
-
-  if (!rows.length || !columns.length) {
-    printTableWrap.innerHTML = `<div class="print-empty-state">Selectionner au moins un client et un produit pour generer la fiche.</div>`;
-    return;
-  }
-
-  const clientChunks = chunkArray(rows, maxPrintableClientColumns());
-  const pageTotal = clientChunks.length;
-  printTableWrap.innerHTML = clientChunks.map((tableClients, index) => orderTableHtml({
-    clients: tableClients,
-    columns,
-    pageIndex: index + 1,
-    pageTotal,
-    title,
-    note,
-    date,
-    startClient: (index * maxPrintableClientColumns()) + 1,
-    endClient: (index * maxPrintableClientColumns()) + tableClients.length,
-  })).join('');
-}
-
-function renderClients() {
-  const rows = visibleClients();
-  const selectedCount = selectedClients().length;
-  clientCountLabel.textContent = `${selectedCount}/${clients.length} client${clients.length > 1 ? 's' : ''} selectionne${selectedCount > 1 ? 's' : ''}`;
-
-  if (!rows.length) {
-    clientsList.innerHTML = '<div class="empty-list">Aucun client actif trouve.</div>';
-    updatePreview();
-    return;
-  }
-
-  clientsList.innerHTML = rows.map((client) => {
-    const checked = selectedClientIds.has(String(client.id));
-    return `<label class="client-check-row">
-      <input type="checkbox" data-client-id="${escapeHtml(client.id)}" ${checked ? 'checked' : ''} />
-      <span>
-        <strong>${escapeHtml(client.name || client.legal_name || 'Client')}</strong>
-        <small>${escapeHtml([client.code, client.city, client.phone || client.mobile].filter(Boolean).join(' - '))}</small>
-      </span>
-    </label>`;
-  }).join('');
-
-  updatePreview();
+function queueSave(markDirty = true) {
+  if (markDirty) state.isDirtySinceGeneration = true;
   saveDraft();
-}
-
-function renderProductColumns() {
-  ensureProductColumns();
-  const margins = defaultMargins();
-  productColumnsEl.innerHTML = productColumns.map((column, index) => {
-    const label = productLabel(column) || 'Article non choisi';
-    const margin1 = realMargin(column.purchase_price_ht, column.sale_price_level_1_ht);
-    const margin2 = realMargin(column.purchase_price_ht, column.sale_price_level_2_ht);
-    const margin3 = realMargin(column.purchase_price_ht, column.sale_price_level_3_ht);
-    return `<article class="product-column-editor" data-product-index="${index}">
-      <div class="product-editor-title">
-        <span>Colonne ${index + 1}</span>
-        <div>
-          <button class="btn btn-secondary btn-sm" type="button" data-action="duplicate-product" title="Dupliquer cette colonne">Copier</button>
-          <button class="btn btn-secondary btn-sm" type="button" data-action="remove-product" title="Retirer cette colonne">X</button>
-        </div>
-      </div>
-      <button class="product-pick-btn" type="button" data-action="pick-product">
-        <strong>${escapeHtml(label)}</strong>
-        <small>${escapeHtml(column.plu || 'F9 / rechercher article')}</small>
-      </button>
-      <label>
-        Prix achat HT du jour
-        <input type="text" inputmode="decimal" value="${escapeHtml(column.purchase_price_ht || '')}" data-field="purchase_price_ht" placeholder="ex. 9.00" />
-      </label>
-      <div class="price-grid">
-        <label>
-          PV T1
-          <input type="text" inputmode="decimal" value="${escapeHtml(column.sale_price_level_1_ht || '')}" data-field="sale_price_level_1_ht" data-price-level="1" placeholder="${escapeHtml(salePriceFromMargin(column.purchase_price_ht, margins[1]))}" />
-          <small>${escapeHtml(margin1 || '-')} ${column.manual_price_level_1 ? '<span class="manual-price-badge">manuel</span>' : ''}</small>
-        </label>
-        <label>
-          PV T2
-          <input type="text" inputmode="decimal" value="${escapeHtml(column.sale_price_level_2_ht || '')}" data-field="sale_price_level_2_ht" data-price-level="2" placeholder="${escapeHtml(salePriceFromMargin(column.purchase_price_ht, margins[2]))}" />
-          <small>${escapeHtml(margin2 || '-')} ${column.manual_price_level_2 ? '<span class="manual-price-badge">manuel</span>' : ''}</small>
-        </label>
-        <label>
-          PV T3
-          <input type="text" inputmode="decimal" value="${escapeHtml(column.sale_price_level_3_ht || '')}" data-field="sale_price_level_3_ht" data-price-level="3" placeholder="${escapeHtml(salePriceFromMargin(column.purchase_price_ht, margins[3]))}" />
-          <small>${escapeHtml(margin3 || '-')} ${column.manual_price_level_3 ? '<span class="manual-price-badge">manuel</span>' : ''}</small>
-        </label>
-      </div>
-      <div class="product-editor-actions">
-        <button class="btn btn-secondary btn-sm" type="button" data-action="recalculate-product">Recalculer la colonne</button>
-      </div>
-      <label>
-        Disponible fournisseur
-        <input type="text" inputmode="decimal" value="${escapeHtml(column.stock)}" data-field="stock" placeholder="ex. 18 kg" />
-      </label>
-    </article>`;
-  }).join('');
-  addProductColumnBtn.disabled = false;
-  updatePreview();
+  window.clearTimeout(state.saveTimer);
+  setSaveStatus('A enregistrer', 'pending');
+  state.saveTimer = window.setTimeout(() => {
+    saveSheetToServer().catch((error) => {
+      console.error('Erreur autosave fiche appel:', error);
+      setSaveStatus('Erreur sauvegarde', 'error');
+      showFeedback(error.message || 'Erreur sauvegarde fiche appel', 'error');
+    });
+  }, AUTOSAVE_DELAY_MS);
 }
 
 async function loadClients() {
   const data = await apiGet('/api/clients?status=active');
-  clients = Array.isArray(data) ? data : [];
-  clients.sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'fr'));
-  if (!draftHasClientSelection) {
-    selectedClientIds = new Set(clients.map((client) => String(client.id)));
+  state.clients = (Array.isArray(data) ? data : []).sort((a, b) => clientLabel(a).localeCompare(clientLabel(b), 'fr'));
+}
+
+async function loadSheet() {
+  const date = els.date?.value || todayIso();
+  const data = await apiGet(`/api/quick-order-sheets/by-date?date=${encodeURIComponent(date)}`);
+  state.sheet = data.sheet;
+  state.products = (Array.isArray(data.sheet?.products) ? data.sheet.products : [])
+    .map(normalizeProduct)
+    .sort((a, b) => (a.display_order - b.display_order) || productLabel(a).localeCompare(productLabel(b), 'fr'));
+  state.entries = data.sheet?.order_entries && typeof data.sheet.order_entries === 'object' ? data.sheet.order_entries : {};
+  state.isDirtySinceGeneration = false;
+  if (els.note) els.note.value = data.sheet?.notes || '';
+  if (els.reference) els.reference.textContent = String(data.sheet?.id || '-').slice(0, 8).toUpperCase();
+  loadDraftForDate(date);
+  if (!state.activeClientId || !state.clients.some((client) => String(client.id) === String(state.activeClientId))) {
+    state.activeClientId = state.clients[0]?.id || null;
   }
-  renderClients();
+  if (!state.activeProductUid || !state.products.some((product) => String(product.uid) === String(state.activeProductUid))) {
+    state.activeProductUid = state.products[0]?.uid || null;
+  }
+  setSaveStatus('Enregistre', 'saved');
 }
 
-async function loadSuppliers() {
-  const data = await apiGet('/api/suppliers?status=active');
-  suppliers = Array.isArray(data) ? data : [];
-  supplierSelect.innerHTML = '<option value="">Choisir fournisseur</option>';
-  suppliers.forEach((supplier) => {
-    const option = document.createElement('option');
-    option.value = supplier.id;
-    option.textContent = `${supplier.code ? `${supplier.code} - ` : ''}${supplier.name || 'Fournisseur'}`;
-    supplierSelect.appendChild(option);
+function itemMatchesSearch(item, search, type) {
+  const haystack = type === 'client'
+    ? [item.name, item.legal_name, item.code, item.city, item.store_identifier].join(' ')
+    : [item.designation, item.plu, item.family_code, item.family_name].join(' ');
+  return normalizeText(haystack).includes(normalizeText(search));
+}
+
+function filteredPrimaryItems() {
+  const items = state.view === 'client' ? state.clients : state.products;
+  const search = state.primarySearch;
+  return items.filter((item) => {
+    const has = state.view === 'client' ? clientHasOrders(item) : productHasOrders(item);
+    if (state.primaryFilter === 'with' && !has) return false;
+    if (state.primaryFilter === 'without' && has) return false;
+    return itemMatchesSearch(item, search, state.view);
   });
-  if (draftSupplierId) supplierSelect.value = draftSupplierId;
-  draftSupplierId = supplierSelect.value || '';
-  updateSupplierEmailOutput();
 }
 
-async function stockByArticleIds(articleIds, searchTerm = '') {
-  if (!articleIds.length) return new Map();
-  const query = new URLSearchParams({
-    available_only: 'false',
-    limit: '1000',
+function filteredSecondaryItems() {
+  const items = state.view === 'client' ? state.products : state.clients;
+  const search = state.secondarySearch;
+  return items.filter((item) => {
+    const has = state.view === 'client'
+      ? entryQuantity(entryFor(state.activeClientId, item.uid)) > 0
+      : entryQuantity(entryFor(item.id, state.activeProductUid)) > 0;
+    if (state.secondaryFilter === 'with' && !has) return false;
+    if (state.secondaryFilter === 'without' && has) return false;
+    return itemMatchesSearch(item, search, state.view === 'client' ? 'article' : 'client');
   });
-  if (searchTerm.trim()) query.set('search', searchTerm.trim());
-  const stockRows = await apiGet(`/api/stock?${query.toString()}`);
-  const wanted = new Set(articleIds.map(String));
-  return new Map((Array.isArray(stockRows) ? stockRows : [])
-    .filter((row) => wanted.has(String(row.article_id)))
-    .map((row) => [String(row.article_id), row]));
 }
 
-async function searchArticles(term) {
-  const query = new URLSearchParams({
-    search: term,
-    active: 'true',
-    article_category: 'product',
-    limit: '50',
-  });
-  if (activeDepartment?.id) query.set('department_id', activeDepartment.id);
-  const articleRows = await apiGet(`/api/articles?${query.toString()}`);
-  const articles = Array.isArray(articleRows) ? articleRows : [];
-  const stocks = await stockByArticleIds(articles.map((article) => article.id), term);
-  return articles.map((article) => ({ ...article, stock_row: stocks.get(String(article.id)) || null }));
+function renderSummary() {
+  const lines = enteredOrderLines();
+  const clientsWithOrders = state.clients.filter(clientHasOrders).length;
+  const productsWithOrders = state.products.filter(productHasOrders).length;
+  const generated = Array.isArray(state.sheet?.generated_order_ids) && state.sheet.generated_order_ids.length > 0;
+  els.summary.innerHTML = `
+    <span>${state.products.length} article(s) du jour</span>
+    <span>${state.clients.length} client(s) actif(s)</span>
+    <span>${lines.length} ligne(s) saisie(s)</span>
+    <span>${clientsWithOrders} client(s) avec commande</span>
+    <span>${productsWithOrders} article(s) commandes</span>
+    <span class="${generated ? (state.isDirtySinceGeneration ? 'generation-dirty' : 'generation-done') : ''}">
+      ${generated ? (state.isDirtySinceGeneration ? 'Modifie apres generation' : 'Commandes generees') : 'Non genere'}
+    </span>
+  `;
 }
 
-function renderArticleResults() {
-  if (!articleSearchResults.length) {
-    articleResults.innerHTML = '<div class="empty-list">Aucun article trouve.</div>';
+function renderModeButtons() {
+  els.clientView?.classList.toggle('active', state.view === 'client');
+  els.articleView?.classList.toggle('active', state.view === 'article');
+  els.selectorTitle.textContent = state.view === 'client' ? 'Clients' : 'Articles';
+  els.primarySearch.placeholder = state.view === 'client' ? 'Nom, code, ville' : 'Designation, code, PLU';
+  els.secondarySearch.placeholder = state.view === 'client' ? 'Rechercher un article' : 'Rechercher un client';
+}
+
+function renderPrimaryList() {
+  const items = filteredPrimaryItems();
+  els.selectorCount.textContent = String(items.length);
+  if (!items.length) {
+    els.primaryList.innerHTML = '<div class="empty-list">Aucun resultat.</div>';
     return;
   }
-
-  articleResults.innerHTML = articleSearchResults.map((article, index) => {
-    const stock = article.stock_row;
-    const stockText = stock ? `${compactNumber(stock.stock_quantity)} ${stock.unit || article.stock_unit || article.unit || ''}` : '-';
-    const price = article.sale_price_ex_vat ?? stock?.sale_price_level_1_ht ?? stock?.sale_price_level_2_ht ?? stock?.sale_price_level_3_ht;
-    return `<button class="article-result-row" type="button" data-result-index="${index}">
-      <span>
-        <strong>${escapeHtml(article.display_name || article.designation)}</strong>
-        <small>${escapeHtml([article.plu, article.family_name].filter(Boolean).join(' - '))}</small>
-      </span>
-      <span class="article-result-meta">Stock ${escapeHtml(stockText)}<br>Prix ${escapeHtml(moneyInputValue(price) || '-')}</span>
-    </button>`;
+  els.primaryList.innerHTML = items.map((item) => {
+    const id = state.view === 'client' ? item.id : item.uid;
+    const active = state.view === 'client'
+      ? String(id) === String(state.activeClientId)
+      : String(id) === String(state.activeProductUid);
+    const has = state.view === 'client' ? clientHasOrders(item) : productHasOrders(item);
+    const title = state.view === 'client' ? (item.name || item.legal_name || 'Client') : item.designation;
+    const meta = state.view === 'client'
+      ? [item.code, item.city, item.store_identifier].filter(Boolean).join(' - ')
+      : [
+          item.plu,
+          item.removed_from_current_pricing ? 'retire de la tarification actuelle' : (item.out_of_tariff ? 'hors tarif' : 'tarification'),
+          item.family_name,
+        ].filter(Boolean).join(' - ');
+    return `
+      <button class="selector-row ${active ? 'active' : ''}" type="button" data-id="${escapeHtml(id)}">
+        <span>
+          <strong>${escapeHtml(title)}</strong>
+          <small>${escapeHtml(meta || '-')}</small>
+        </span>
+        <em class="${has ? 'has-order' : ''}">${has ? 'Saisi' : '-'}</em>
+      </button>
+    `;
   }).join('');
 }
 
-async function runArticleSearch() {
-  const term = articleSearchInput.value.trim();
-  if (term.length < 2) {
-    articleResults.innerHTML = '<div class="empty-list">Saisir au moins 2 caracteres.</div>';
+function quantityInput(clientId, productUidValue, field, label) {
+  const entry = entryFor(clientId, productUidValue);
+  return `
+    <label class="qty-field">
+      <span>${label}</span>
+      <input class="qos-input" type="text" inputmode="decimal"
+        data-client-id="${escapeHtml(clientId)}"
+        data-product-uid="${escapeHtml(productUidValue)}"
+        data-field="${field}"
+        value="${escapeHtml(entry[field] || '')}" />
+    </label>
+  `;
+}
+
+function renderClientViewTable(client) {
+  const products = filteredSecondaryItems();
+  if (!client) {
+    els.entryTable.innerHTML = '<div class="empty-list">Aucun client actif.</div>';
     return;
   }
-  articleResults.innerHTML = '<div class="empty-list">Recherche...</div>';
+  els.entryTitle.textContent = client.name || client.legal_name || 'Client';
+  els.entrySubtitle.textContent = [client.code, client.city, `Tarif ${client.tariff_level || 1}`].filter(Boolean).join(' - ');
+  if (!products.length) {
+    els.entryTable.innerHTML = '<div class="empty-list">Aucun article pour cette recherche.</div>';
+    return;
+  }
+  els.entryTable.innerHTML = `
+    <table class="entry-table">
+      <thead>
+        <tr>
+          <th>Article</th>
+          <th>Prix client</th>
+          <th>Dispo</th>
+          <th>Colis</th>
+          <th>Pieces</th>
+          <th>Poids</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${products.map((product) => {
+          const entry = entryFor(client.id, product.uid);
+          return `
+            <tr class="${entryQuantity(entry) > 0 ? 'row-has-order' : ''}">
+              <th>
+                <strong>${escapeHtml(product.designation)}</strong>
+                <small>${escapeHtml([product.plu, product.removed_from_current_pricing ? 'retire de la tarification actuelle' : (product.out_of_tariff ? 'hors tarif' : 'tarif publie')].filter(Boolean).join(' - '))}</small>
+              </th>
+              <td class="num">${escapeHtml(money(priceForClient(product, client)) || '-')}</td>
+              <td class="num">${escapeHtml(compactNumber(product.stock))}</td>
+              <td>${quantityInput(client.id, product.uid, 'colis', 'Colis')}</td>
+              <td>${quantityInput(client.id, product.uid, 'pieces', 'Pieces')}</td>
+              <td>${quantityInput(client.id, product.uid, 'kg', 'Kg')}</td>
+              <td class="num strong">${escapeHtml(compactNumber(entryQuantity(entry)))}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderArticleViewTable(product) {
+  const clients = filteredSecondaryItems();
+  if (!product) {
+    els.entryTable.innerHTML = '<div class="empty-list">Aucun article tarifie pour cette date.</div>';
+    return;
+  }
+  els.entryTitle.textContent = product.designation;
+  els.entrySubtitle.textContent = [
+    product.plu,
+    product.removed_from_current_pricing ? 'Retire de la tarification actuelle' : (product.out_of_tariff ? 'Article hors tarif' : 'Tarification publiee'),
+    product.family_name,
+  ].filter(Boolean).join(' - ');
+  if (!clients.length) {
+    els.entryTable.innerHTML = '<div class="empty-list">Aucun client pour cette recherche.</div>';
+    return;
+  }
+  els.entryTable.innerHTML = `
+    <table class="entry-table">
+      <thead>
+        <tr>
+          <th>Client</th>
+          <th>Prix client</th>
+          <th>Colis</th>
+          <th>Pieces</th>
+          <th>Poids</th>
+          <th>Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${clients.map((client) => {
+          const entry = entryFor(client.id, product.uid);
+          return `
+            <tr class="${entryQuantity(entry) > 0 ? 'row-has-order' : ''}">
+              <th>
+                <strong>${escapeHtml(client.name || client.legal_name || 'Client')}</strong>
+                <small>${escapeHtml([client.code, client.city, client.store_identifier].filter(Boolean).join(' - '))}</small>
+              </th>
+              <td class="num">${escapeHtml(money(priceForClient(product, client)) || '-')}</td>
+              <td>${quantityInput(client.id, product.uid, 'colis', 'Colis')}</td>
+              <td>${quantityInput(client.id, product.uid, 'pieces', 'Pieces')}</td>
+              <td>${quantityInput(client.id, product.uid, 'kg', 'Kg')}</td>
+              <td class="num strong">${escapeHtml(compactNumber(entryQuantity(entry)))}</td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderEntryTable() {
+  if (state.view === 'client') {
+    const client = state.clients.find((row) => String(row.id) === String(state.activeClientId));
+    renderClientViewTable(client);
+  } else {
+    const product = state.products.find((row) => String(row.uid) === String(state.activeProductUid));
+    renderArticleViewTable(product);
+  }
+}
+
+function renderPrintableSheet() {
+  const lines = enteredOrderLines();
+  els.printTitle.textContent = "Fiche d'appel clients";
+  els.printNote.textContent = els.note?.value || 'Arrivage du jour';
+  els.printDate.textContent = formatDateFr(els.date?.value || todayIso());
+  els.printTable.innerHTML = `
+    <table class="print-lines-table">
+      <thead><tr><th>Client</th><th>Article</th><th>Colis</th><th>Pieces</th><th>Kg</th><th>Total</th><th>Prix</th></tr></thead>
+      <tbody>
+        ${lines.map((line) => `
+          <tr>
+            <td>${escapeHtml(clientLabel(line.client))}</td>
+            <td>${escapeHtml(productLabel(line.product))}</td>
+            <td>${escapeHtml(line.entry.colis || '')}</td>
+            <td>${escapeHtml(line.entry.pieces || '')}</td>
+            <td>${escapeHtml(line.entry.kg || '')}</td>
+            <td>${escapeHtml(compactNumber(line.quantity))}</td>
+            <td>${escapeHtml(money(priceForClient(line.product, line.client)) || '-')}</td>
+          </tr>
+        `).join('') || '<tr><td colspan="7">Aucune commande saisie.</td></tr>'}
+      </tbody>
+    </table>
+  `;
+}
+
+function render() {
+  renderModeButtons();
+  renderSummary();
+  renderPrimaryList();
+  renderEntryTable();
+  renderPrintableSheet();
+}
+
+async function refreshData() {
+  state.isLoading = true;
+  setSaveStatus('Chargement', 'saving');
+  showFeedback('Chargement de la fiche...', '');
   try {
-    articleSearchResults = await searchArticles(term);
-    renderArticleResults();
+    await loadClients();
+    await loadSheet();
+    render();
+    showFeedback(`Fiche du ${formatDateFr(els.date.value)} prete.`, 'success');
   } catch (error) {
-    console.error('Erreur recherche article fiche appel :', error);
-    articleResults.innerHTML = '<div class="empty-list">Erreur recherche article.</div>';
+    console.error('Erreur chargement fiche appel:', error);
+    showFeedback(error.message || 'Erreur chargement fiche appel', 'error');
+    setSaveStatus('Erreur chargement', 'error');
+  } finally {
+    state.isLoading = false;
   }
 }
 
-function openArticleModal(index) {
-  activeProductIndex = index;
-  articleSearchResults = [];
-  articleSearchInput.value = productColumns[index]?.designation || '';
-  articleResults.innerHTML = '<div class="empty-list">Rechercher un article par PLU ou designation.</div>';
-  articleModal.classList.remove('hidden');
-  articleSearchInput.focus();
-  if (articleSearchInput.value.trim().length >= 2) runArticleSearch();
-}
-
-function closeArticleModal() {
-  articleModal.classList.add('hidden');
-  activeProductIndex = null;
-  articleSearchResults = [];
-}
-
-function applyArticleResult(index) {
-  const article = articleSearchResults[index];
-  if (!article || activeProductIndex === null) return;
-  const stock = article.stock_row;
-  const purchasePrice = stock?.pma || article.purchase_price_ht || article.unit_cost_ex_vat || '';
-  const nextColumn = {
-    ...emptyProductColumn(),
-    ...productColumns[activeProductIndex],
-  };
-  nextColumn.article_id = article.id;
-  nextColumn.plu = article.plu || '';
-  nextColumn.designation = article.display_name || article.designation || '';
-  nextColumn.purchase_price_ht = nextColumn.purchase_price_ht || moneyInputValue(purchasePrice);
-  nextColumn.stock = nextColumn.stock || '';
-  nextColumn.unit = stock?.unit || article.stock_unit || article.sale_unit || article.unit || '';
-  nextColumn.sale_unit = article.sale_unit || article.unit || nextColumn.unit;
-  nextColumn.family_code = article.family_code || '';
-  nextColumn.family_name = article.family_name || '';
-  recalculateColumnPrices(nextColumn, false);
-  productColumns[activeProductIndex] = {
-    ...nextColumn,
-    uid: productColumns[activeProductIndex].uid || columnUid(),
-  };
-  closeArticleModal();
-  renderProductColumns();
+function setView(view) {
+  state.view = view === 'article' ? 'article' : 'client';
+  state.primarySearch = '';
+  state.secondarySearch = '';
+  els.primarySearch.value = '';
+  els.secondarySearch.value = '';
+  render();
   saveDraft();
 }
 
-function duplicateProduct(index) {
-  productColumns.splice(index + 1, 0, { ...productColumns[index], uid: columnUid() });
-  renderProductColumns();
-}
-
-function removeProduct(index) {
-  const removed = productColumns[index];
-  productColumns.splice(index, 1);
-  if (removed?.uid) {
-    Object.values(orderEntries).forEach((clientEntries) => {
-      if (clientEntries && typeof clientEntries === 'object') delete clientEntries[removed.uid];
-    });
-  }
-  ensureProductColumns();
-  renderProductColumns();
-}
-
-function clearEntries() {
-  orderEntries = {};
-  updatePreview();
-  invalidateEmailPreview();
+function selectPrimary(id) {
+  if (state.view === 'client') state.activeClientId = id;
+  else state.activeProductUid = id;
+  render();
   saveDraft();
-  showFeedback('Quantites Colis / Kg videes pour cette fiche.', 'success');
 }
 
-function newSheet() {
-  const confirmed = window.confirm('Cette action va effacer les saisies actuelles et creer une nouvelle fiche. Les commandes deja generees ne seront pas supprimees.');
-  if (!confirmed) return;
-  orderEntries = {};
-  resetGenerationState();
-  sheetId = generateUuidV4();
-  sheetDateInput.value = todayIso();
-  actionPreviewPanel.classList.add('hidden');
-  actionPreviewPanel.innerHTML = '';
-  updateSheetReferenceLabel();
-  updatePreview();
-  saveDraft();
-  showFeedback(`Nouvelle fiche creee (${sheetId.slice(0, 8).toUpperCase()}). Produits, clients et fournisseur conserves.`, 'success');
+function setFilter(container, value, primary = true) {
+  if (primary) state.primaryFilter = value;
+  else state.secondaryFilter = value;
+  container.querySelectorAll('.filter-chip').forEach((button) => {
+    button.classList.toggle('active', button.dataset.filter === value);
+  });
+  render();
+}
+
+function moveToNextInput(current) {
+  const inputs = Array.from(els.entryTable.querySelectorAll('.qos-input'));
+  const index = inputs.indexOf(current);
+  const next = inputs[index + 1] || inputs[0];
+  next?.focus();
+  next?.select();
 }
 
 function renderActionPreview(title, html) {
-  actionPreviewPanel.classList.remove('hidden');
-  actionPreviewPanel.innerHTML = `<h3>${escapeHtml(title)}</h3>${html}`;
+  els.actionPreview.classList.remove('hidden');
+  els.actionPreview.innerHTML = `<h3>${escapeHtml(title)}</h3>${html}`;
 }
 
 function orderLinksHtml(orders = []) {
-  if (!orders.length && !generatedOrderIds.length) return '';
+  if (!orders.length) return '';
   return `
     <div class="generated-orders-list">
       ${orders.map((order) => `
@@ -1027,402 +713,252 @@ function orderLinksHtml(orders = []) {
   `;
 }
 
-async function previewSupplierEmail() {
-  const supplier = selectedSupplier();
-  if (!supplier) {
-    showFeedback('Choisis un fournisseur avant de preparer l email.', 'error');
-    return;
-  }
-  try {
-    const preview = await apiSend('/api/quick-order-sheets/email-preview', buildSheetPayload());
-    const totalsHtml = (preview.totals || []).map((product) => `
-      <tr class="${product.remaining < 0 ? 'danger-row' : ''}">
-        <td>${escapeHtml(product.designation || product.plu || 'Produit')}</td>
-        <td>${escapeHtml(compactNumber(product.stock))}</td>
-        <td>${escapeHtml(compactNumber(product.sold))}</td>
-        <td>${escapeHtml(compactNumber(product.remaining))}</td>
-      </tr>
-    `).join('');
-    renderActionPreview('Apercu email fournisseur', `
-      <p><strong>A :</strong> ${escapeHtml(preview.to || 'Email fournisseur manquant')}</p>
-      <p><strong>Objet :</strong> ${escapeHtml(preview.subject || '')}</p>
-      <table class="action-preview-table">
-        <thead><tr><th>Produit</th><th>Stock</th><th>Vendu</th><th>Reste</th></tr></thead>
-        <tbody>${totalsHtml}</tbody>
-      </table>
-    `);
-    emailPreviewReady = true;
-    sendSupplierEmailBtn.disabled = preview.missing_email === true;
-    showFeedback(preview.missing_email ? 'Apercu genere, mais le fournisseur n a pas d email.' : 'Apercu email pret.', preview.missing_email ? 'error' : 'success');
-  } catch (error) {
-    console.error('Erreur apercu email fournisseur :', error);
-    showFeedback(error.message || 'Erreur apercu email', 'error');
-  }
-}
-
-async function sendSupplierEmail() {
-  if (!emailPreviewReady) {
-    showFeedback('Genere un apercu avant envoi.', 'error');
-    return;
-  }
-  const supplier = selectedSupplier();
-  const confirmed = window.confirm(`Envoyer la fiche d'appel au fournisseur ${supplier?.name || ''} (${supplier?.email || 'email manquant'}) ?`);
-  if (!confirmed) return;
-
-  try {
-    const result = await apiSend('/api/quick-order-sheets/send-supplier-email', {
-      ...buildSheetPayload(),
-      preview_confirmed: true,
-      confirm_send: true,
-    });
-    showFeedback(`Email envoye a ${result.to}.`, 'success');
-  } catch (error) {
-    console.error('Erreur envoi fournisseur :', error);
-    showFeedback(error.message || 'Erreur envoi fournisseur', 'error');
-  }
-}
-
-function orderSummaryHtml(lines) {
-  const totalKg = lines.reduce((sum, line) => sum + line.quantity, 0);
-  const totalAmount = lines.reduce((sum, line) => sum + line.quantity * parseDecimal(line.product.price), 0);
-  const rows = lines.slice(0, 12).map((line) => `
-    <tr>
-      <td>${escapeHtml(line.client.name || line.client.legal_name || 'Client')}</td>
-      <td>${escapeHtml(productLabel(line.product) || 'Produit')}</td>
-      <td>${escapeHtml(compactNumber(line.colis))}</td>
-      <td>${escapeHtml(compactNumber(line.kg))}</td>
-      <td>${escapeHtml(compactNumber(line.quantity))}</td>
-      <td>${escapeHtml(moneyInputValue(line.product.price) || '0.00')}</td>
-    </tr>
-  `).join('');
-  const extra = lines.length > 12 ? `<p>+ ${lines.length - 12} ligne(s) supplementaire(s)</p>` : '';
-  return `
-    <p>${lines.length} ligne(s), ${escapeHtml(compactNumber(totalKg))} kg, environ ${escapeHtml(moneyInputValue(totalAmount))} EUR HT.</p>
-    ${extra}
-    <table class="action-preview-table">
-      <thead><tr><th>Client</th><th>Produit</th><th>Colis</th><th>Kg/colis</th><th>Total kg</th><th>Prix HT</th></tr></thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div class="action-preview-actions">
-      <button class="btn btn-primary" type="button" data-action="confirm-generate-orders">Confirmer et creer les commandes</button>
-    </div>
-  `;
-}
-
 function renderGeneratedOrders(result) {
   const orders = Array.isArray(result.orders) ? result.orders : [];
-  const count = orders.length || generatedOrderIds.length;
+  const count = orders.length || result.order_ids?.length || 0;
   renderActionPreview(result.existing ? 'Commandes deja generees' : 'Commandes creees', `
-    <p>${result.existing ? 'Cette fiche avait deja genere ces commandes.' : `${count} commande(s) creee(s).`}</p>
+    <p>${result.existing ? 'Aucun doublon cree : la generation existante est reutilisee.' : `${count} commande(s) creee(s).`}</p>
     ${orderLinksHtml(orders)}
-    ${result.existing ? '<div class="action-preview-actions"><button class="btn btn-secondary" type="button" data-action="confirm-generate-orders">Verifier le regroupement cote serveur</button></div>' : ''}
   `);
 }
 
-function generateOrders() {
-  if (generatedOrderIds.length) {
-    renderGeneratedOrders({ existing: true, orders: generatedOrders });
-    showFeedback(`Commandes deja generees pour cette fiche : ${generatedOrderIds.length}.`, 'error');
-    return;
-  }
+async function generateOrders() {
   const lines = enteredOrderLines();
   if (!lines.length) {
-    showFeedback('Aucune saisie Colis x Kg a transformer en commande.', 'error');
+    showFeedback('Aucune quantite a transformer en commande.', 'error');
     return;
   }
-  renderActionPreview('Recapitulatif generation commandes', orderSummaryHtml(lines));
-}
-
-function renderRegeneratePrompt(errorData = {}) {
-  const orders = Array.isArray(errorData.orders) ? errorData.orders : [];
-  renderActionPreview('Regeneration requise', `
-    <p>${escapeHtml(errorData.error || 'Cette fiche a deja genere des commandes avec un ancien regroupement.')}</p>
-    ${orderLinksHtml(orders)}
-    <div class="action-preview-actions">
-      <button class="btn btn-primary" type="button" data-action="force-regenerate-orders">Recreer proprement les commandes brouillon</button>
-    </div>
-  `);
-}
-
-async function confirmGenerateOrders(forceRegenerate = false) {
+  const missingPrice = lines.find((line) => parseDecimal(priceForClient(line.product, line.client)) <= 0);
+  if (missingPrice) {
+    showFeedback(`Prix strictement positif requis pour ${productLabel(missingPrice.product)} / ${clientLabel(missingPrice.client)}.`, 'error');
+    return;
+  }
+  if (state.sheet?.generated_order_ids?.length && !state.isDirtySinceGeneration) {
+    renderGeneratedOrders({ existing: true, order_ids: state.sheet.generated_order_ids, orders: [] });
+    showFeedback('Commandes deja generees pour cette fiche.', 'success');
+    return;
+  }
+  const confirmed = window.confirm(`${lines.length} ligne(s) seront generees en commandes. Continuer ?`);
+  if (!confirmed) return;
   try {
+    await saveSheetToServer();
     const result = await apiSend('/api/quick-order-sheets/generate-orders', {
       ...buildSheetPayload(),
       confirm_generate: true,
-      force_regenerate: forceRegenerate,
     });
-    generatedOrderIds = Array.isArray(result.order_ids) ? result.order_ids : [];
-    generatedOrders = Array.isArray(result.orders) ? result.orders : [];
+    state.sheet.generated_order_ids = result.order_ids || [];
+    state.sheet.generated_at = new Date().toISOString();
+    state.isDirtySinceGeneration = false;
     saveDraft();
+    render();
     renderGeneratedOrders(result);
-    showFeedback(result.existing ? 'Ces commandes avaient deja ete generees pour cette fiche.' : `${generatedOrderIds.length} commande(s) generee(s).`, 'success');
+    showFeedback(result.existing ? 'Generation existante reutilisee.' : 'Commandes generees.', 'success');
   } catch (error) {
-    console.error('Erreur generation commandes :', error);
+    console.error('Erreur generation commandes:', error);
     if (error.status === 409 && error.data?.can_regenerate) {
-      renderRegeneratePrompt(error.data);
+      renderActionPreview('Generation deja existante', `
+        <p>${escapeHtml(error.data.error || 'Cette fiche a deja genere des commandes.')}</p>
+        ${orderLinksHtml(error.data.orders || [])}
+      `);
     }
     showFeedback(error.message || 'Erreur generation commandes', 'error');
   }
 }
 
-async function refreshData() {
-  showFeedback('Chargement clients...', '');
-  try {
-    await Promise.all([loadClients(), loadSuppliers()]);
-    await loadSheetFromServer();
-    showFeedback('Clients actifs charges.', 'success');
-  } catch (error) {
-    console.error('Erreur chargement fiche appel :', error);
-    showFeedback(error.message || 'Erreur chargement', 'error');
-  }
-}
-
-function printSheet() {
-  updatePreview();
-  window.print();
-}
-
-function pdfFileName() {
-  const date = sheetDateInput.value || todayIso();
-  return `Fiche_appel_ALTA_MAREE_${date}.pdf`;
-}
-
-function setPdfButtonsLoading(isLoading) {
-  [downloadPdfBtn, downloadPdfBtnSecondary].forEach((button) => {
-    if (!button) return;
-    button.disabled = isLoading;
-    if (isLoading) {
-      button.dataset.defaultLabel = button.textContent;
-      button.textContent = 'Generation du PDF...';
-    } else {
-      button.textContent = button.dataset.defaultLabel || 'Telecharger en PDF';
-      delete button.dataset.defaultLabel;
-    }
-  });
-}
-
 async function downloadSheetPdf() {
-  setPdfButtonsLoading(true);
   try {
-    updatePreview();
+    await saveSheetToServer();
     const blob = await apiDownload('/api/quick-order-sheets/pdf', buildSheetPayload());
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = pdfFileName();
+    link.download = `Fiche_appel_ALTA_MAREE_${els.date.value || todayIso()}.pdf`;
     document.body.appendChild(link);
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
     showFeedback('PDF genere.', 'success');
   } catch (error) {
-    console.error('Erreur telechargement PDF fiche appel :', { message: error.message, status: error.status });
-    showFeedback(error.message || 'Erreur generation PDF fiche appel', 'error');
-  } finally {
-    setPdfButtonsLoading(false);
+    showFeedback(error.message || 'Erreur generation PDF', 'error');
   }
 }
 
+async function searchArticles(term) {
+  const query = new URLSearchParams({
+    search: term,
+    active: 'true',
+    article_category: 'product',
+    limit: '100',
+  });
+  if (activeDepartment?.id) query.set('department_id', activeDepartment.id);
+  const data = await apiGet(`/api/articles?${query.toString()}`);
+  return Array.isArray(data) ? data : [];
+}
+
+function openArticleModal() {
+  els.articleModal.classList.remove('hidden');
+  els.articleSearch.value = '';
+  els.articleResults.innerHTML = '<div class="empty-list">Rechercher un article a ajouter hors tarif.</div>';
+  els.articleSearch.focus();
+}
+
+function closeArticleModal() {
+  els.articleModal.classList.add('hidden');
+  state.articleSearchResults = [];
+}
+
+function renderArticleResults() {
+  if (!state.articleSearchResults.length) {
+    els.articleResults.innerHTML = '<div class="empty-list">Aucun article trouve.</div>';
+    return;
+  }
+  els.articleResults.innerHTML = state.articleSearchResults.map((article, index) => `
+    <button class="article-result-row" type="button" data-result-index="${index}">
+      <span>
+        <strong>${escapeHtml(article.designation || article.display_name || 'Article')}</strong>
+        <small>${escapeHtml([article.plu, article.family_name].filter(Boolean).join(' - '))}</small>
+      </span>
+      <span class="article-result-meta">Hors tarif</span>
+    </button>
+  `).join('');
+}
+
+async function runArticleSearch() {
+  const term = els.articleSearch.value.trim();
+  if (term.length < 2) {
+    els.articleResults.innerHTML = '<div class="empty-list">Saisir au moins 2 caracteres.</div>';
+    return;
+  }
+  els.articleResults.innerHTML = '<div class="empty-list">Recherche...</div>';
+  try {
+    state.articleSearchResults = await searchArticles(term);
+    renderArticleResults();
+  } catch (error) {
+    els.articleResults.innerHTML = `<div class="empty-list">${escapeHtml(error.message || 'Erreur recherche')}</div>`;
+  }
+}
+
+function addOutOfTariffArticle(index) {
+  const article = state.articleSearchResults[index];
+  if (!article) return;
+  const price = window.prompt(`Prix HT obligatoire pour ${article.designation || article.display_name || article.plu || 'article'} ?`);
+  if (parseDecimal(price) <= 0) {
+    showFeedback('Article hors tarif non ajoute : prix strictement positif obligatoire.', 'error');
+    return;
+  }
+  const uid = `manual-${article.id}-${Date.now().toString(36)}`;
+  state.products.push(normalizeProduct({
+    uid,
+    column_uid: uid,
+    article_id: article.id,
+    plu: article.plu || '',
+    designation: article.designation || article.display_name || 'Article hors tarif',
+    sale_unit: article.sale_unit || article.unit || 'kg',
+    price_unit: article.unit || article.sale_unit || 'kg',
+    sale_price_level_1_ht: price,
+    sale_price_level_2_ht: price,
+    sale_price_level_3_ht: price,
+    price,
+    out_of_tariff: true,
+    display_order: state.products.length + 1,
+  }));
+  state.activeProductUid = uid;
+  closeArticleModal();
+  render();
+  queueSave(true);
+  showFeedback('Article hors tarif ajoute.', 'success');
+}
+
 function initEvents() {
-  backHomeBtn?.addEventListener('click', () => { window.location.href = './home.html'; });
-  logoutBtn?.addEventListener('click', () => {
-    localStorage.removeItem('gc_token');
-    localStorage.removeItem('gc_user');
-    localStorage.removeItem('gc_active_department');
-    localStorage.removeItem('grv2_token');
-    localStorage.removeItem('grv2_user');
-    localStorage.removeItem('grv2_active_department');
+  els.backHome?.addEventListener('click', () => { window.location.href = './home.html'; });
+  els.logout?.addEventListener('click', () => {
+    ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key));
     window.location.href = './login.html';
   });
-  refreshDataBtn?.addEventListener('click', refreshData);
-  printSheetBtn?.addEventListener('click', printSheet);
-  printSheetBtnSecondary?.addEventListener('click', printSheet);
-  downloadPdfBtn?.addEventListener('click', downloadSheetPdf);
-  downloadPdfBtnSecondary?.addEventListener('click', downloadSheetPdf);
-  clearEntriesBtn?.addEventListener('click', clearEntries);
-  newSheetBtn?.addEventListener('click', newSheet);
-  emailPreviewBtn?.addEventListener('click', previewSupplierEmail);
-  sendSupplierEmailBtn?.addEventListener('click', sendSupplierEmail);
-  generateOrdersBtn?.addEventListener('click', generateOrders);
-  actionPreviewPanel?.addEventListener('click', (event) => {
-    const action = event.target.closest('[data-action]')?.dataset.action;
-    if (action === 'confirm-generate-orders') confirmGenerateOrders();
-    if (action === 'force-regenerate-orders') {
-      const confirmed = window.confirm('Supprimer les anciennes commandes brouillon de cette fiche et les recreer proprement ?');
-      if (confirmed) confirmGenerateOrders(true);
-    }
-    if (action === 'open-sales-orders') {
+  els.refresh?.addEventListener('click', refreshData);
+  els.print?.addEventListener('click', () => {
+    renderPrintableSheet();
+    window.print();
+  });
+  els.pdf?.addEventListener('click', downloadSheetPdf);
+  els.generate?.addEventListener('click', generateOrders);
+  els.clientView?.addEventListener('click', () => setView('client'));
+  els.articleView?.addEventListener('click', () => setView('article'));
+  els.date?.addEventListener('change', async () => {
+    state.entries = {};
+    state.products = [];
+    state.activeClientId = null;
+    state.activeProductUid = null;
+    await refreshData();
+  });
+  els.note?.addEventListener('input', () => {
+    renderPrintableSheet();
+    queueSave(false);
+  });
+  els.primarySearch?.addEventListener('input', () => {
+    state.primarySearch = els.primarySearch.value;
+    renderPrimaryList();
+  });
+  els.secondarySearch?.addEventListener('input', () => {
+    state.secondarySearch = els.secondarySearch.value;
+    renderEntryTable();
+  });
+  els.primaryFilters?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-filter]');
+    if (button) setFilter(els.primaryFilters, button.dataset.filter, true);
+  });
+  els.secondaryFilters?.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-filter]');
+    if (button) setFilter(els.secondaryFilters, button.dataset.filter, false);
+  });
+  els.primaryList?.addEventListener('click', (event) => {
+    const row = event.target.closest('[data-id]');
+    if (row) selectPrimary(row.dataset.id);
+  });
+  els.entryTable?.addEventListener('input', (event) => {
+    const input = event.target.closest('[data-field]');
+    if (!input) return;
+    setEntryValue(input.dataset.clientId, input.dataset.productUid, input.dataset.field, input.value);
+    renderSummary();
+    renderPrintableSheet();
+    queueSave(true);
+  });
+  els.entryTable?.addEventListener('keydown', (event) => {
+    const input = event.target.closest('[data-field]');
+    if (!input || event.key !== 'Enter') return;
+    event.preventDefault();
+    moveToNextInput(input);
+  });
+  els.actionPreview?.addEventListener('click', (event) => {
+    if (event.target.closest('[data-action="open-sales-orders"]')) {
       localStorage.setItem('gc_sales_section', 'orders');
       window.location.href = './sales.html';
     }
   });
-  supplierSelect?.addEventListener('change', () => {
-    draftSupplierId = supplierSelect.value || '';
-    updateSupplierEmailOutput();
-    saveDraft();
-    saveSheetToServerDebounced();
+  els.addOutOfTariff?.addEventListener('click', openArticleModal);
+  els.closeArticleModal?.addEventListener('click', closeArticleModal);
+  els.articleModal?.addEventListener('click', (event) => {
+    if (event.target === els.articleModal) closeArticleModal();
   });
-  [sheetTitleInput, sheetNoteInput].forEach((input) => input?.addEventListener('input', () => {
-    updatePreview();
-    invalidateEmailPreview();
-    saveDraft();
-    saveSheetToServerDebounced();
-  }));
-  sheetDateInput?.addEventListener('change', async () => {
-    resetGenerationState();
-    const loaded = await loadSheetFromServer().catch((error) => {
-      console.error('Erreur chargement fiche date :', error);
-      showFeedback(error.message || 'Erreur chargement fiche date', 'error');
-      return false;
-    });
-    if (!loaded) {
-      orderEntries = {};
-      productColumns = Array.from({ length: DEFAULT_PRODUCT_COLUMNS }, emptyProductColumn);
-      renderProductColumns();
-      updatePreview();
-      saveDraft();
-      saveSheetToServerDebounced();
-    }
-  });
-  [marginLevel1Input, marginLevel2Input, marginLevel3Input].forEach((input) => input?.addEventListener('change', () => {
-    recalculateAllPrices(false);
-  }));
-  recalculateAllPricesBtn?.addEventListener('click', () => recalculateAllPrices(true));
-  clientSearchInput?.addEventListener('input', renderClients);
-  selectAllClientsBtn?.addEventListener('click', () => {
-    selectedClientIds = new Set(clients.map((client) => String(client.id)));
-    renderClients();
-    invalidateEmailPreview();
-    saveDraft();
-    saveSheetToServerDebounced();
-  });
-  clearClientsBtn?.addEventListener('click', () => {
-    selectedClientIds = new Set();
-    renderClients();
-    invalidateEmailPreview();
-    saveDraft();
-    saveSheetToServerDebounced();
-  });
-  clientsList?.addEventListener('change', (event) => {
-    const checkbox = event.target.closest('[data-client-id]');
-    if (!checkbox) return;
-    if (checkbox.checked) selectedClientIds.add(String(checkbox.dataset.clientId));
-    else selectedClientIds.delete(String(checkbox.dataset.clientId));
-    renderClients();
-    invalidateEmailPreview();
-    saveDraft();
-    saveSheetToServerDebounced();
-  });
-  addProductColumnBtn?.addEventListener('click', () => {
-    productColumns.push(emptyProductColumn());
-    renderProductColumns();
-    invalidateEmailPreview();
-    saveDraft();
-    saveSheetToServerDebounced();
-  });
-  productColumnsEl?.addEventListener('click', (event) => {
-    const editor = event.target.closest('[data-product-index]');
-    if (!editor) return;
-    const index = Number(editor.dataset.productIndex);
-    const action = event.target.closest('[data-action]')?.dataset.action;
-    if (action === 'pick-product') openArticleModal(index);
-    if (action === 'duplicate-product') duplicateProduct(index);
-    if (action === 'remove-product') removeProduct(index);
-    if (action === 'recalculate-product') {
-      recalculateColumnPrices(productColumns[index], true);
-      renderProductColumns();
-    }
-    if (action === 'duplicate-product' || action === 'remove-product') invalidateEmailPreview();
-    if (['duplicate-product', 'remove-product', 'recalculate-product'].includes(action)) {
-      saveDraft();
-      saveSheetToServerDebounced();
-    }
-  });
-  productColumnsEl?.addEventListener('input', (event) => {
-    const input = event.target.closest('[data-field]');
-    const editor = event.target.closest('[data-product-index]');
-    if (!input || !editor) return;
-    const index = Number(editor.dataset.productIndex);
-    productColumns[index][input.dataset.field] = input.value;
-    if (input.dataset.field === 'purchase_price_ht') {
-      recalculateColumnPrices(productColumns[index], false);
-    }
-    if (input.dataset.priceLevel) {
-      productColumns[index][`manual_price_level_${input.dataset.priceLevel}`] = true;
-    }
-    updatePreview();
-    invalidateEmailPreview();
-    saveDraft();
-    saveSheetToServerDebounced();
-  });
-  productColumnsEl?.addEventListener('change', (event) => {
-    const input = event.target.closest('[data-field]');
-    if (!input) return;
-    renderProductColumns();
-  });
-  productColumnsEl?.addEventListener('keydown', (event) => {
-    const input = event.target.closest('[data-field]');
-    if (!input || event.key !== 'Enter') return;
-    event.preventDefault();
-    input.blur();
-  });
-  printTableWrap?.addEventListener('input', (event) => {
-    const input = event.target.closest('[data-order-field]');
-    if (!input) return;
-    setEntryValue(input.dataset.clientId, input.dataset.columnId, input.dataset.orderField, input.value);
-    updateProductTotalsInPlace();
-    invalidateEmailPreview();
-    saveDraft();
-    saveSheetToServerDebounced();
-  });
-  printTableWrap?.addEventListener('keydown', (event) => {
-    const input = event.target.closest('[data-order-field]');
-    if (!input || event.key !== 'Enter') return;
-    event.preventDefault();
-    const inputs = Array.from(printTableWrap.querySelectorAll('.order-cell-input'));
-    const currentIndex = inputs.indexOf(input);
-    const next = inputs[currentIndex + 1] || inputs[0];
-    next?.focus();
-    next?.select();
-  });
-  closeArticleModalBtn?.addEventListener('click', closeArticleModal);
-  articleModal?.addEventListener('click', (event) => {
-    if (event.target === articleModal) closeArticleModal();
-  });
-  articleSearchBtn?.addEventListener('click', runArticleSearch);
-  articleSearchInput?.addEventListener('keydown', (event) => {
+  els.articleSearchBtn?.addEventListener('click', runArticleSearch);
+  els.articleSearch?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') {
       event.preventDefault();
       runArticleSearch();
     }
     if (event.key === 'Escape') closeArticleModal();
   });
-  articleResults?.addEventListener('click', (event) => {
+  els.articleResults?.addEventListener('click', (event) => {
     const row = event.target.closest('[data-result-index]');
-    if (!row) return;
-    applyArticleResult(Number(row.dataset.resultIndex));
-    saveSheetToServerDebounced();
-  });
-  document.addEventListener('keydown', (event) => {
-    if (event.key === 'F9') {
-      event.preventDefault();
-      const firstEmpty = productColumns.findIndex((column) => !column.article_id);
-      openArticleModal(firstEmpty >= 0 ? firstEmpty : 0);
-    }
+    if (row) addOutOfTariffArticle(Number(row.dataset.resultIndex));
   });
 }
 
 function init() {
-  if (userNameEl) userNameEl.textContent = sessionUser.email || 'Utilisateur';
-  sheetDateInput.value = todayIso();
-  sheetNoteInput.value = 'Arrivage du jour';
-  loadDraft();
-  ensureValidSheetId();
-  persistSheetIdInDraft();
-  updateSheetReferenceLabel();
-  ensureProductColumns();
+  if (els.userName) els.userName.textContent = sessionUser.email || 'Utilisateur';
+  if (els.date) els.date.value = todayIso();
+  if (els.note) els.note.value = 'Arrivage du jour';
   initEvents();
-  renderProductColumns();
   refreshData();
 }
 

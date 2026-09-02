@@ -98,6 +98,82 @@ function safeDate(value) {
   return text.slice(0, 10);
 }
 
+function positiveOrError(value, message) {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    const error = new Error(message);
+    error.status = 400;
+    error.code = 'SALE_PRICE_NON_POSITIVE';
+    throw error;
+  }
+  return parsed;
+}
+
+function entryHasQuantity(entry = {}) {
+  return pos(entry.colis) > 0 || pos(entry.kg) > 0 || pos(entry.pieces) > 0;
+}
+
+function columnHasOrderEntries(orderEntries = {}, columnUid) {
+  const key = String(columnUid || '');
+  if (!key) return false;
+  return Object.values(orderEntries || {}).some((clientEntries) => entryHasQuantity(clientEntries?.[key]));
+}
+
+function moveOrderEntriesColumn(orderEntries = {}, fromUid, toUid) {
+  const fromKey = String(fromUid || '');
+  const toKey = String(toUid || '');
+  if (!fromKey || !toKey || fromKey === toKey) return { entries: orderEntries, moved: false };
+  const next = JSON.parse(JSON.stringify(orderEntries || {}));
+  let moved = false;
+  for (const clientEntries of Object.values(next)) {
+    if (!clientEntries || typeof clientEntries !== 'object' || !clientEntries[fromKey]) continue;
+    clientEntries[toKey] = { ...(clientEntries[toKey] || {}), ...clientEntries[fromKey] };
+    delete clientEntries[fromKey];
+    moved = true;
+  }
+  return { entries: next, moved };
+}
+
+function stablePricingColumnUid(articleId) {
+  return `pricing-${articleId}`;
+}
+
+function planDailySheetProductSync(existingProducts = [], orderEntries = {}, pricingLines = []) {
+  let nextEntries = orderEntries && typeof orderEntries === 'object' ? orderEntries : {};
+  let entriesMoved = false;
+  const existingByArticle = new Map();
+  for (const product of existingProducts) {
+    if (product.article_id && !existingByArticle.has(String(product.article_id))) {
+      existingByArticle.set(String(product.article_id), product);
+    }
+  }
+  const activeArticleIds = new Set(pricingLines.map((line) => String(line.article_id)).filter(Boolean));
+  const upserts = pricingLines.map((line) => {
+    const stableUid = stablePricingColumnUid(line.article_id);
+    const existing = existingByArticle.get(String(line.article_id));
+    if (existing?.column_uid && existing.column_uid !== stableUid) {
+      const moved = moveOrderEntriesColumn(nextEntries, existing.column_uid, stableUid);
+      nextEntries = moved.entries;
+      entriesMoved = entriesMoved || moved.moved;
+    }
+    return { line, column_uid: stableUid };
+  });
+  const deletes = existingProducts.filter((product) => {
+    if (!product.pricing_line_id || !product.article_id) return false;
+    const activeArticle = activeArticleIds.has(String(product.article_id));
+    const oldActiveColumn = activeArticle && product.column_uid !== stablePricingColumnUid(product.article_id);
+    const removedUnusedColumn = !activeArticle && !columnHasOrderEntries(nextEntries, product.column_uid);
+    return oldActiveColumn || removedUnusedColumn;
+  });
+  const preservedRetired = existingProducts.filter((product) => (
+    product.pricing_line_id
+    && product.article_id
+    && !activeArticleIds.has(String(product.article_id))
+    && columnHasOrderEntries(nextEntries, product.column_uid)
+  ));
+  return { order_entries: nextEntries, entries_moved: entriesMoved, upserts, deletes, preservedRetired };
+}
+
 async function ensureGenerationTable(db) {
   await db.query(`
     CREATE TABLE IF NOT EXISTS quick_order_sheet_generations (
@@ -180,24 +256,207 @@ async function getDailySheet(db, storeId, sheetDate) {
   );
   if (!header.rows.length) return null;
   const products = await db.query(
+    `SELECT qsp.*,
+            CASE
+              WHEN qsp.pricing_line_id IS NULL THEN false
+              WHEN EXISTS (
+                SELECT 1
+                FROM pricing_sessions ps
+                JOIN pricing_lines pl ON pl.pricing_session_id = ps.id AND pl.store_id = ps.store_id
+                WHERE ps.store_id = qsp.store_id
+                  AND ps.pricing_date = $3::date
+                  AND ps.status = 'published'
+                  AND ps.is_active_publication = true
+                  AND pl.article_id = qsp.article_id
+              ) THEN false
+              ELSE true
+            END AS removed_from_current_pricing
+     FROM quick_order_sheet_products qsp
+     WHERE qsp.store_id = $1 AND qsp.sheet_id = $2
+     ORDER BY display_order ASC, created_at ASC`,
+    [storeId, header.rows[0].id, header.rows[0].sheet_date]
+  );
+  const generations = await db.query(
+    `SELECT generated_order_ids, created_at
+     FROM quick_order_sheet_generations
+     WHERE store_id = $1 AND sheet_id = $2
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [storeId, header.rows[0].id]
+  ).catch((error) => {
+    if (error.code === '42P01') return { rows: [] };
+    throw error;
+  });
+  const generation = generations.rows[0] || null;
+  return {
+    ...header.rows[0],
+    products: products.rows,
+    generated_order_ids: generation?.generated_order_ids || [],
+    generated_at: generation?.created_at || null,
+  };
+}
+
+async function publishedPricingForDate(db, storeId, sheetDate) {
+  const session = await db.query(
+    `SELECT id, pricing_date, title
+     FROM pricing_sessions
+     WHERE store_id = $1
+       AND pricing_date = $2::date
+       AND status = 'published'
+       AND is_active_publication = true
+     ORDER BY published_at DESC NULLS LAST, created_at DESC
+     LIMIT 1`,
+    [storeId, sheetDate]
+  );
+  if (!session.rows.length) return { session: null, lines: [] };
+  const lines = await db.query(
+    `SELECT pl.id, pl.article_id, pl.supplier_id, pl.plu_snapshot,
+            pl.designation_snapshot, pl.family_code, pl.family_name,
+            pl.sale_unit, pl.price_unit, pl.purchase_price_ht,
+            pl.transport_cost_ht, pl.cost_rendered_ht, pl.display_order,
+            MAX(plt.price_ht) FILTER (WHERE tl.legacy_level = 1) AS sale_price_level_1_ht,
+            MAX(plt.price_ht) FILTER (WHERE tl.legacy_level = 2) AS sale_price_level_2_ht,
+            MAX(plt.price_ht) FILTER (WHERE tl.legacy_level = 3) AS sale_price_level_3_ht,
+            COALESCE(jsonb_agg(jsonb_build_object(
+              'tariff_level_id', tl.id,
+              'legacy_level', tl.legacy_level,
+              'code', tl.code,
+              'name', tl.name,
+              'price_ht', plt.price_ht,
+              'source', plt.source
+            ) ORDER BY tl.display_order ASC) FILTER (WHERE tl.id IS NOT NULL), '[]'::jsonb) AS tariffs
+     FROM pricing_lines pl
+     LEFT JOIN pricing_line_tariffs plt ON plt.pricing_line_id = pl.id AND plt.store_id = pl.store_id
+     LEFT JOIN tariff_levels tl ON tl.id = plt.tariff_level_id AND tl.store_id = pl.store_id
+     WHERE pl.store_id = $1
+       AND pl.pricing_session_id = $2
+       AND pl.article_id IS NOT NULL
+     GROUP BY pl.id
+     ORDER BY pl.display_order ASC, pl.designation_snapshot ASC`,
+    [storeId, session.rows[0].id]
+  );
+  return { session: session.rows[0], lines: lines.rows };
+}
+
+async function ensureDailySheetForDate(db, storeId, sheetDate, userId) {
+  const pricing = await publishedPricingForDate(db, storeId, sheetDate);
+  const header = await db.query(
+    `INSERT INTO quick_order_sheets (store_id, sheet_date, title, notes, created_by, updated_by)
+     VALUES ($1, $2::date, $3, $4, $5, $5)
+     ON CONFLICT (store_id, sheet_date)
+     DO UPDATE SET updated_by = EXCLUDED.updated_by, updated_at = now()
+     RETURNING id`,
+    [
+      storeId,
+      sheetDate,
+      pricing.session?.title || `Fiche d'appel clients ${sheetDate}`,
+      pricing.session ? 'Articles issus de la tarification publiee' : 'Aucune tarification publiee pour cette date',
+      userId || null,
+    ]
+  );
+  const sheetId = header.rows[0].id;
+  if (!pricing.session) return { sheetId, pricing_session_id: null, published_product_count: 0 };
+
+  const existingProducts = await db.query(
     `SELECT *
      FROM quick_order_sheet_products
      WHERE store_id = $1 AND sheet_id = $2
-     ORDER BY display_order ASC, created_at ASC`,
-    [storeId, header.rows[0].id]
+     FOR UPDATE`,
+    [storeId, sheetId]
   );
-  return { ...header.rows[0], products: products.rows };
+  const currentHeader = await db.query(
+    `SELECT order_entries
+     FROM quick_order_sheets
+     WHERE store_id = $1 AND id = $2
+     FOR UPDATE`,
+    [storeId, sheetId]
+  );
+  const plan = planDailySheetProductSync(existingProducts.rows, currentHeader.rows[0]?.order_entries || {}, pricing.lines);
+
+  if (plan.entries_moved) {
+    await db.query(
+      `UPDATE quick_order_sheets
+       SET order_entries = $3::jsonb, updated_by = COALESCE($4, updated_by), updated_at = NOW()
+       WHERE store_id = $1 AND id = $2`,
+      [storeId, sheetId, JSON.stringify(plan.order_entries), userId || null]
+    );
+  }
+
+  for (const product of plan.deletes) {
+    await db.query(
+      'DELETE FROM quick_order_sheet_products WHERE store_id = $1 AND sheet_id = $2 AND id = $3',
+      [storeId, sheetId, product.id]
+    );
+  }
+
+  for (const item of plan.upserts) {
+    const { line, column_uid: columnUid } = item;
+    await db.query(
+      `INSERT INTO quick_order_sheet_products (
+        store_id, sheet_id, column_uid, article_id, supplier_id, plu, designation_snapshot,
+        display_order, purchase_price_ht, price_unit,
+        sale_price_level_1_ht, sale_price_level_2_ht, sale_price_level_3_ht,
+        manual_price_level_1, manual_price_level_2, manual_price_level_3,
+        family_code, family_name, sale_unit, pricing_session_id, pricing_line_id,
+        tariff_prices, transport_cost_ht, cost_rendered_ht
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,true,true,$14,$15,$16,$17,$18,$19::jsonb,$20,$21
+      )
+      ON CONFLICT (sheet_id, column_uid)
+      DO UPDATE SET
+        article_id = EXCLUDED.article_id,
+        supplier_id = EXCLUDED.supplier_id,
+        plu = EXCLUDED.plu,
+        designation_snapshot = EXCLUDED.designation_snapshot,
+        display_order = EXCLUDED.display_order,
+        purchase_price_ht = EXCLUDED.purchase_price_ht,
+        price_unit = EXCLUDED.price_unit,
+        sale_price_level_1_ht = EXCLUDED.sale_price_level_1_ht,
+        sale_price_level_2_ht = EXCLUDED.sale_price_level_2_ht,
+        sale_price_level_3_ht = EXCLUDED.sale_price_level_3_ht,
+        family_code = EXCLUDED.family_code,
+        family_name = EXCLUDED.family_name,
+        sale_unit = EXCLUDED.sale_unit,
+        pricing_session_id = EXCLUDED.pricing_session_id,
+        pricing_line_id = EXCLUDED.pricing_line_id,
+        tariff_prices = EXCLUDED.tariff_prices,
+        transport_cost_ht = EXCLUDED.transport_cost_ht,
+        cost_rendered_ht = EXCLUDED.cost_rendered_ht,
+        updated_at = NOW()`,
+      [
+        storeId, sheetId, columnUid, line.article_id, line.supplier_id, line.plu_snapshot,
+        line.designation_snapshot, line.display_order, line.purchase_price_ht, line.price_unit,
+        line.sale_price_level_1_ht, line.sale_price_level_2_ht, line.sale_price_level_3_ht,
+        line.family_code, line.family_name, line.sale_unit, pricing.session.id, line.id,
+        JSON.stringify(line.tariffs || []), line.transport_cost_ht || 0, line.cost_rendered_ht || 0,
+      ]
+    );
+  }
+  return {
+    sheetId,
+    pricing_session_id: pricing.session.id,
+    published_product_count: pricing.lines.length,
+    deleted_unused_product_count: plan.deletes.length,
+    preserved_retired_product_count: plan.preservedRetired.length,
+    migrated_entry_keys: plan.entries_moved,
+  };
 }
 
 router.get('/quick-order-sheets/by-date', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
   try {
     const sheetDate = safeDate(req.query.date);
+    await db.query('BEGIN');
+    const sync = await ensureDailySheetForDate(db, req.user.store_id, sheetDate, req.user.id);
+    await db.query('COMMIT');
     const sheet = await getDailySheet(req.dbPool, req.user.store_id, sheetDate);
-    if (!sheet) return res.json({ exists: false, sheet_date: sheetDate });
-    return res.json({ exists: true, sheet });
+    return res.json({ exists: true, auto_created: true, sheet, pricing: sync });
   } catch (err) {
+    await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur GET fiche appel par date :', err);
     res.status(err.status || 500).json({ error: err.message || 'Erreur chargement fiche appel' });
+  } finally {
+    db.release();
   }
 });
 
@@ -336,8 +595,9 @@ function normalizeSheetPayload(body = {}) {
 function lineQuantity(entry = {}) {
   const packageCount = pos(entry.colis);
   const weightPerPackage = pos(entry.kg);
-  const quantity = Number((packageCount * weightPerPackage).toFixed(3));
-  return { packageCount, weightPerPackage, quantity };
+  const pieces = pos(entry.pieces);
+  const quantity = Number(((packageCount > 0 && weightPerPackage > 0) ? packageCount * weightPerPackage : (weightPerPackage || pieces)).toFixed(3));
+  return { packageCount, weightPerPackage, pieces, quantity };
 }
 
 function sheetLines(sheet) {
@@ -750,6 +1010,14 @@ function salePriceForClient(product = {}, client = {}) {
   return pos(product[`sale_price_level_${level}_ht`] ?? product[`price_level_${level}_ht`] ?? product.price);
 }
 
+function manualSheetPriceForClient(product = {}, client = {}) {
+  const level = [1, 2, 3].includes(Number(client.tariff_level)) ? Number(client.tariff_level) : 1;
+  return product[`sale_price_level_${level}_ht`]
+    ?? product[`price_level_${level}_ht`]
+    ?? product.price
+    ?? product.unit_price_ht;
+}
+
 function deliveredSnapshotForLine(line, documentClientId, forceSourceClient = false) {
   if (!forceSourceClient && String(line.client.id) === String(documentClientId)) {
     return {
@@ -1007,15 +1275,27 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
 
       let lineNumber = 1;
       for (const line of group.lines) {
-        const priceResolution = await salesPriceResolver.resolveSalesLinePrice(db, req.user.store_id, {
-          client_id: line.client.id,
-          article: line.article,
-          article_id: line.article.id,
-          document_date: sheet.sheet_date,
-          tariff_level: line.client.tariff_level,
-          preserve_existing: false,
-          context_label: line.product.designation || line.article.designation,
-        });
+        const outOfPricing = line.product.out_of_tariff === true || !clean(line.product.pricing_line_id);
+        const manualPrice = manualSheetPriceForClient(line.product, line.client);
+        const priceResolution = outOfPricing
+          ? {
+              source: 'manual_out_of_pricing',
+              unit_price_ht: positiveOrError(
+                manualPrice,
+                `Prix hors tarif obligatoire et strictement positif pour ${line.product.designation || line.article.designation}`
+              ),
+              tariff_level: line.client.tariff_level,
+              final_unit_price_ht: manualPrice,
+            }
+          : await salesPriceResolver.resolveSalesLinePrice(db, req.user.store_id, {
+              client_id: line.client.id,
+              article: line.article,
+              article_id: line.article.id,
+              document_date: sheet.sheet_date,
+              tariff_level: line.client.tariff_level,
+              preserve_existing: false,
+              context_label: line.product.designation || line.article.designation,
+            });
         const unitPrice = priceResolution.unit_price_ht;
         const pricingTrace = salesPriceResolver.pricingTraceForResolution(priceResolution);
         const sourceTrace = salesPriceResolver.inventoryPriceTrace(priceResolution);
@@ -1160,3 +1440,5 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
 
 module.exports = router;
 module.exports._normalizeDailyPricingPayloadForTest = normalizeDailyPricingPayload;
+module.exports._planDailySheetProductSyncForTest = planDailySheetProductSync;
+module.exports._stablePricingColumnUidForTest = stablePricingColumnUid;

@@ -48,11 +48,11 @@ assert(pricingService.includes('line.transport_cost_ht || 0'), 'pricing publicat
 assert(quickOrderSheets.includes('product.transport_cost_ht') && quickOrderSheets.includes('const transportCost = pos(product.transport_cost_ht, 0)'), 'manual sheet save writes normalized transport');
 assert(!quickOrderSheets.includes('products.slice(0, 60)'), 'manual sheet save has no backend product limit');
 assert(!agentCallSheet.includes('transport_cost_ht, cost_rendered_ht'), 'agent call sheet tools leave transport columns to database defaults instead of writing NULL');
-assert(quickOrderSheetJs.includes('const DEFAULT_PRODUCT_COLUMNS = 10;'), 'new quick order sheets still start with 10 product columns');
+assert(!quickOrderSheetJs.includes('const DEFAULT_PRODUCT_COLUMNS'), 'new quick order sheets no longer start from fixed product columns');
 assert(!quickOrderSheetJs.includes('MAX_PRODUCT_COLUMNS'), 'quick order sheet frontend has no maximum product column limit');
 assert(!quickOrderSheetJs.includes('slice(0, MAX_PRODUCT_COLUMNS)'), 'local drafts are not truncated to 18 products');
-assert(quickOrderSheetJs.includes('productColumns = draft.productColumns.map'), 'local drafts reload all saved product columns');
-assert(quickOrderSheetJs.includes('productColumns.push(emptyProductColumn())'), 'add product always appends a new product column');
+assert(quickOrderSheetJs.includes("apiGet(`/api/quick-order-sheets/by-date?date=${encodeURIComponent(date)}`)"), 'quick order sheet loads the server-owned daily sheet');
+assert(quickOrderSheetJs.includes('Ajouter un article hors tarif') || quickOrderSheetJs.includes('out_of_tariff'), 'quick order sheet keeps explicit out-of-tariff additions');
 
 console.log(JSON.stringify({
   ok: true,
