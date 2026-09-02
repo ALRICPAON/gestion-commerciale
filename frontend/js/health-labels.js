@@ -67,6 +67,10 @@
     return safe(value) ? `<div${className ? ` class="${escapeHtml(className)}"` : ''}><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>` : '';
   }
 
+  function methodInfo(value) {
+    return `<div class="health-label-method-main"><span>Methode</span>${safe(value) ? `<strong>${escapeHtml(value)}</strong>` : ''}</div>`;
+  }
+
   function labelTrace(label) {
     const trace = label.traceability || {};
     const lots = Array.isArray(label.lots) ? label.lots : [];
@@ -103,7 +107,7 @@
     const fixedTopLeft = [
       info('Produit', label.article_label || 'Article', 'health-label-product-main'),
       info('Nom scientifique', trace.latin_name),
-      info('Methode', trace.production_method, 'health-label-method-main'),
+      methodInfo(trace.production_method),
     ].join('');
     const fixedTopMiddle = [
       info('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone),
@@ -418,7 +422,7 @@
       width: ${PRINT_SAFE_WIDTH_MM}mm;
     }
     .health-label-fixed-bottom-lower {
-      transform: translateY(8mm);
+      transform: translateY(6mm);
     }
     .health-label-fixed-bottom-mention {
       grid-column: 2 / span 2;
@@ -438,6 +442,14 @@
     .health-label-footer span:first-child {
       flex: 0 0 35mm;
       overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .health-label-footer span:last-child {
+      flex: 0 0 28mm;
+      margin-left: auto;
+      overflow: hidden;
+      text-align: right;
       text-overflow: ellipsis;
       white-space: nowrap;
     }

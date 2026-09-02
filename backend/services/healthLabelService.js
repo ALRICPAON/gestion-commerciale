@@ -479,7 +479,8 @@ function renderHealthLabelZpl(label) {
 
   lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(0.5), mm(76), 24, label.article_label || '-', 2));
   lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(8.5), mm(76), 11, trace.latin_name, 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(11.5), mm(76), 13, field('Methode', trace.production_method), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(10.6), mm(18), 13, 'METHODE', 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(12.4), mm(76), 13, trace.production_method, 1));
   lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(81), mm(4), mm(35), 12, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
   lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(81), mm(12), mm(16), 11, field('Sous-zone', trace.sous_zone), 1));
   lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(99), mm(12), mm(17), 11, field('Engin', trace.fishing_gear), 1));
@@ -507,14 +508,14 @@ function renderHealthLabelZpl(label) {
   if (trace.defrosted) lines.push(zplZoneBlock(tab, tabCol3, mm(14.5), mm(28), 12, 'DECONGELE', 1));
 
   lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(1), mm(1), mm(28), 13, field('Lot', lot), 2));
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(42), mm(9), mm(42), 13, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(42), mm(7), mm(42), 13, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
   lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(84), mm(1), mm(28), 13, field('DLC/DDM', formatDate(trace.dlc)), 1));
   lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(116), mm(1), mm(28), 13, field('ALLERGENE', label.allergen_label), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(1), mm(13), mm(42), 13, field('CONSERVATION', label.storage_temperature_label), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(47), mm(13), mm(65), 12, field('MENTION', label.storage_instruction_label), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(1), mm(11), mm(42), 13, field('CONSERVATION', label.storage_temperature_label), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(47), mm(11), mm(65), 12, field('MENTION', label.storage_instruction_label), 1));
   if (trace.defrosted) lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(116), mm(5), mm(28), 13, 'DECONGELE', 1));
   lines.push(zplZoneBlock(FOOTER_ZONE, mm(1), mm(0), mm(35), 11, `BL ${label.delivery_note_reference || ''} - L${label.line_number || ''}`, 1));
-  lines.push(zplZoneBlock(FOOTER_ZONE, mm(86), mm(0), mm(58), 11, `Colis ${label.copy_index}/${label.copy_count}`, 1));
+  lines.push(zplZoneBlock(FOOTER_ZONE, mm(116), mm(0), mm(28), 11, `Colis ${label.copy_index}/${label.copy_count}`, 1));
   lines.push('^XZ');
 
   return lines.join('\n').replace(/\n{2,}/g, '\n');

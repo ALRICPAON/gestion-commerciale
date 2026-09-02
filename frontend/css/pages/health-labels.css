@@ -223,6 +223,10 @@
   font-weight: 800;
 }
 
+.health-label-method-main span {
+  font-size: 6px;
+}
+
 .health-label-fixed-zone-main {
   transform: translateY(3mm);
 }
@@ -238,7 +242,7 @@
 }
 
 .health-label-fixed-bottom-lower {
-  transform: translateY(8mm);
+  transform: translateY(6mm);
 }
 
 .health-label-fixed-bottom-mention {
@@ -319,6 +323,15 @@
 .health-label-footer span:first-child {
   flex: 0 0 35mm;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.health-label-footer span:last-child {
+  flex: 0 0 28mm;
+  margin-left: auto;
+  overflow: hidden;
+  text-align: right;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
