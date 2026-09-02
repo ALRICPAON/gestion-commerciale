@@ -2,6 +2,7 @@ const {
   getCustomerDisplayedPrice,
   royaleMareeCommissionAmount,
 } = require('./royaleMareeCommission');
+const supplierArticleMappings = require('./supplierArticleMappingService');
 
 function expose(status, message) {
   const error = new Error(message);
@@ -866,129 +867,31 @@ async function getArticlePricingHistory(db, storeId, input = {}) {
 }
 
 async function searchSupplierArticleMappings(db, storeId, input = {}) {
-  const params = [storeId];
-  const where = ['sam.store_id = $1'];
-  if (clean(input.supplier_id)) {
-    params.push(clean(input.supplier_id));
-    where.push(`sam.supplier_id = $${params.length}`);
-  }
-  if (input.include_inactive !== true) where.push('COALESCE(sam.is_active, true) = true');
-  if (clean(input.query)) {
-    params.push(`%${clean(input.query)}%`);
-    where.push(`(sam.supplier_ref ILIKE $${params.length} OR sam.supplier_label ILIKE $${params.length} OR sam.supplier_designation_normalized ILIKE $${params.length} OR a.designation ILIKE $${params.length})`);
-  }
-  params.push(Math.min(Math.max(Number(input.limit) || 200, 1), 1000));
-  const result = await db.query(
-    `SELECT sam.*, s.name AS supplier_name, a.plu AS article_plu, a.designation AS article_designation
-     FROM supplier_article_mappings sam
-     LEFT JOIN suppliers s ON s.id = sam.supplier_id AND s.store_id = sam.store_id
-     LEFT JOIN articles a ON a.id = sam.article_id AND a.store_id = sam.store_id
-     WHERE ${where.join(' AND ')}
-     ORDER BY s.name ASC, sam.supplier_ref ASC
-     LIMIT $${params.length}`,
-    params
-  );
-  return { results: result.rows };
+  return supplierArticleMappings.searchSupplierArticleMappings(db, storeId, input);
 }
 
 async function upsertSupplierArticleMapping(db, storeId, input = {}, context = {}) {
-  return inTransaction(db, async (client) => {
-    const supplierId = clean(input.supplier_id);
-    const articleId = clean(input.article_id);
-    const original = clean(input.supplier_designation_original || input.supplier_ref || input.supplier_label);
-    if (!supplierId || !articleId || !original) throw expose(400, 'supplier_id, article_id et designation fournisseur requis');
-    const supplier = await assertStoreSupplier(client, storeId, supplierId);
-    const article = await fetchArticle(client, storeId, articleId);
-    if (!article) throw expose(404, 'Article introuvable');
-    const normalized = normalizeSupplierDesignation(input.supplier_designation_normalized || original);
-    const existing = await client.query(
-      `SELECT id
-       FROM supplier_article_mappings
-       WHERE store_id = $1 AND supplier_id = $2 AND COALESCE(is_active, true) = true
-         AND (supplier_designation_normalized = $3 OR supplier_ref = $4)
-       ORDER BY CASE WHEN supplier_designation_normalized = $3 THEN 0 ELSE 1 END, updated_at DESC NULLS LAST, created_at DESC NULLS LAST
-       LIMIT 1
-       FOR UPDATE`,
-      [storeId, supplier.id, normalized, original]
-    );
-    const params = [
-      storeId, supplier.id, article.id, original, clean(input.supplier_label) || original,
-      original, normalized, clean(input.mapping_source) || 'manual',
-      num(input.confidence_score, 100), context.user_id || null,
-    ];
-    await client.query(
-      `UPDATE supplier_article_mappings
-       SET is_active = false, updated_by = $5, updated_at = now()
-       WHERE store_id = $1 AND supplier_id = $2
-         AND ($3::uuid IS NULL OR id <> $3::uuid)
-         AND COALESCE(is_active, true) = true
-         AND (supplier_designation_normalized = $4 OR supplier_ref = $6)`,
-      [storeId, supplier.id, existing.rows[0]?.id || null, normalized, context.user_id || null, original]
-    );
-    const result = existing.rows[0]
-      ? await client.query(
-        `UPDATE supplier_article_mappings
-         SET article_id = $3,
-             supplier_ref = $4,
-             supplier_label = $5,
-             supplier_designation_original = $6,
-             supplier_designation_normalized = $7,
-             mapping_source = $8,
-             confidence_score = $9,
-             is_active = true,
-             updated_by = $10,
-             updated_at = now()
-         WHERE id = $11 AND store_id = $1 AND supplier_id = $2
-         RETURNING id`,
-        [...params, existing.rows[0].id]
-      )
-      : await client.query(
-        `INSERT INTO supplier_article_mappings (
-          store_id, supplier_id, article_id, supplier_ref, supplier_label,
-          supplier_designation_original, supplier_designation_normalized,
-          mapping_source, confidence_score, is_active, created_by, updated_by
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,$10,$10)
-        RETURNING id`,
-        params
-      );
-    await client.query(
-      `UPDATE supplier_article_mappings
-       SET is_active = false, updated_by = $5, updated_at = now()
-       WHERE store_id = $1 AND supplier_id = $2 AND id <> $3
-         AND COALESCE(is_active, true) = true
-         AND (supplier_designation_normalized = $4 OR supplier_ref = $6)`,
-      [
-        storeId, supplier.id, result.rows[0].id, normalized, context.user_id || null, original,
-      ]
-    );
-    const found = await searchSupplierArticleMappings(client, storeId, { query: original, supplier_id: supplier.id, limit: 1 });
-    return found.results.find((row) => row.id === result.rows[0].id) || found.results[0];
-  });
+  return supplierArticleMappings.upsertSupplierArticleMapping(db, storeId, input, context);
 }
 
 async function matchSupplierLine(db, storeId, supplierId, designation) {
   const normalized = normalizeSupplierDesignation(designation);
-  const known = await db.query(
-    `SELECT sam.*, a.plu AS article_plu, a.designation AS article_designation
-     FROM supplier_article_mappings sam
-     JOIN articles a ON a.id = sam.article_id AND a.store_id = sam.store_id
-     WHERE sam.store_id = $1 AND sam.supplier_id = $2
-       AND sam.supplier_designation_normalized = $3
-       AND COALESCE(sam.is_active, true) = true
-     LIMIT 1`,
-    [storeId, supplierId, normalized]
-  );
-  if (known.rows[0]) {
+  const known = await supplierArticleMappings.lookupSupplierArticleMapping(db, storeId, {
+    supplier_id: supplierId,
+    supplier_designation_normalized: normalized,
+    supplier_designation_original: designation,
+  });
+  if (known) {
     return {
       status: 'certain',
       method: 'known_mapping',
       confidence: 100,
       article: {
-        id: known.rows[0].article_id,
-        article_plu: known.rows[0].article_plu,
-        article_designation: known.rows[0].article_designation,
+        id: known.article_id,
+        article_plu: known.article_plu,
+        article_designation: known.article_designation,
       },
-      mapping_id: known.rows[0].id,
+      mapping_id: known.id,
       normalized,
     };
   }

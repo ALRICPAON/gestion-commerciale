@@ -8,6 +8,7 @@ const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const importDocument = require('../services/imports/import-document');
 const { recomputeArticleStock } = require('../services/stockService');
+const supplierArticleMappings = require('../services/supplierArticleMappingService');
 const {
   createReceptionQualityEvidence,
   normalizeReceptionQualityControl,
@@ -201,10 +202,10 @@ async function resolveSupplierArticleMapping(client, storeId, supplier, supplier
 
   const supplierCode = String(supplier?.code || '').trim();
   const crieeCodes = crieeMappingSupplierCodes(supplierCode);
-  const mapRef = normalizedSupplierRefSql('m.supplier_ref');
-  const inputRef = normalizedSupplierRefSql('$2');
 
   if (supplierCode === '81268' || supplierCode === '81269') {
+    const mapRef = normalizedSupplierRefSql('m.supplier_ref');
+    const inputRef = normalizedSupplierRefSql('$2');
     const result = await client.query(
       `WITH candidates(code, priority) AS (
          SELECT * FROM unnest($3::text[]) WITH ORDINALITY AS c(code, priority)
@@ -222,15 +223,11 @@ async function resolveSupplierArticleMapping(client, storeId, supplier, supplier
     return result.rows[0] || null;
   }
 
-  const result = await client.query(
-    `SELECT a.*
-     FROM supplier_article_mappings m
-     JOIN articles a ON a.id = m.article_id AND a.store_id = $3
-     WHERE m.supplier_id = $1 AND ${mapRef} = ${inputRef} AND COALESCE(m.is_active, true) = true
-     LIMIT 1`,
-    [supplier.id, ref, storeId]
-  ).catch(() => ({ rows: [] }));
-  return result.rows[0] || null;
+  const mapping = await supplierArticleMappings.lookupSupplierArticleMapping(client, storeId, {
+    supplier_id: supplier.id,
+    supplier_ref: ref,
+  }).catch(() => null);
+  return mapping ? { id: mapping.article_id, plu: mapping.article_plu, designation: mapping.article_designation || mapping.article_name } : null;
 }
 
 function publicPurchaseDocumentUrl(purchaseId) {
