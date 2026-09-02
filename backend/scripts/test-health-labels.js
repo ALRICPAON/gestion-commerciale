@@ -93,6 +93,10 @@ const labels = buildHealthLabelModels({
   lines: [baseLine],
   storeSettings,
 });
+const DOTS_PER_MM_300_DPI = 300 / 25.4;
+function dots(value) {
+  return Math.round(value * DOTS_PER_MM_300_DPI);
+}
 
 assert.strictEqual(LABEL_WIDTH_MM, 70);
 assert.strictEqual(LABEL_HEIGHT_MM, 150);
@@ -207,6 +211,19 @@ function textBoxContaining(zpl, text) {
 function textBoxInZone(zpl, text, zone) {
   return zplTextBoxes(zpl).find((box) => box.text.includes(text) && isInsideZone(box, zone));
 }
+function assertBoxOffset(zpl, text, zone, xMm, yMm, message) {
+  const box = textBoxInZone(zpl, text, zone);
+  assert(box, message || `champ attendu: ${text}`);
+  assert.strictEqual(box.x, zone.x + dots(xMm), `${text} x attendu a ${xMm} mm`);
+  assert.strictEqual(box.y, zone.y + dots(yMm), `${text} y attendu a ${yMm} mm`);
+  return box;
+}
+function assertFontInZone(zpl, text, zone, fontHeight, message) {
+  const box = textBoxInZone(zpl, text, zone);
+  assert(box, message || `champ attendu: ${text}`);
+  assert.strictEqual(box.fontHeight, fontHeight, `${text} taille attendue ${fontHeight}`);
+  return box;
+}
 function textBoxesContaining(zpl, text) {
   return zplTextBoxes(zpl).filter((box) => box.text.includes(text));
 }
@@ -231,6 +248,28 @@ assert(fontHeightsContaining(labels[0].zpl, 'LANGOUSTINE VIVANTE').includes(24),
 assert(fontHeightsContaining(labels[0].zpl, '3,000 kg').includes(32), 'poids net principal doit passer de 14 a 32 dots');
 assert(textBoxInZone(labels[0].zpl, 'LANGOUSTINE VIVANTE', FIXED_TRACE_TOP_ZONE), 'designation principale doit rester dans la zone fixe haute');
 assert(textBoxInZone(labels[0].zpl, '3,000 kg', FIXED_TRACE_TOP_ZONE), 'poids net principal doit rester dans la zone fixe haute');
+assertBoxOffset(labels[0].zpl, 'LANGOUSTINE VIVANTE', FIXED_TRACE_TOP_ZONE, 1, 0.5, 'designation principale fixe ne doit pas bouger');
+assertBoxOffset(labels[0].zpl, 'ZONE DE PECHE', FIXED_TRACE_TOP_ZONE, 81, 4, 'bloc zone de peche fixe doit descendre de 3 mm');
+assertBoxOffset(labels[0].zpl, 'Sous-zone: VIII', FIXED_TRACE_TOP_ZONE, 81, 12, 'sous-zone fixe doit descendre avec le bloc zone');
+assertBoxOffset(labels[0].zpl, 'Engin: Casiers', FIXED_TRACE_TOP_ZONE, 99, 12, 'engin fixe doit descendre avec le bloc zone');
+assertFontInZone(labels[0].zpl, 'Nephrops norvegicus', FIXED_TRACE_TOP_ZONE, 11, 'nom scientifique fixe doit etre legerement agrandi');
+assertFontInZone(labels[0].zpl, 'Methode: Peche', FIXED_TRACE_TOP_ZONE, 12, 'methode fixe doit etre plus lisible');
+assertFontInZone(labels[0].zpl, 'ZONE DE PECHE', FIXED_TRACE_TOP_ZONE, 12, 'zone de peche fixe doit etre legerement agrandie');
+assertFontInZone(labels[0].zpl, 'Sous-zone: VIII', FIXED_TRACE_TOP_ZONE, 11, 'sous-zone fixe doit etre legerement agrandie');
+assertFontInZone(labels[0].zpl, 'Engin: Casiers', FIXED_TRACE_TOP_ZONE, 11, 'engin fixe doit etre legerement agrandi');
+assertBoxOffset(labels[0].zpl, 'LANGOUSTINE VIVANTE', DETACHABLE_TAB, 1, 1.5, 'produit languette doit descendre de 1 mm');
+assertBoxOffset(labels[0].zpl, 'ZONE DE PECHE', DETACHABLE_TAB, 40, 1.5, 'zone de peche languette doit descendre de 1 mm');
+assertBoxOffset(labels[0].zpl, 'Lot: LOT-A', DETACHABLE_TAB, 78, 1.5, 'lot languette doit descendre de 1 mm');
+assertBoxOffset(labels[0].zpl, 'DATE DE CONDITIONNEMENT', DETACHABLE_TAB, 78, 4, 'date languette ne doit pas descendre');
+assertBoxOffset(labels[0].zpl, 'DLC/DDM', DETACHABLE_TAB, 40, 11.5, 'DLC languette doit rester a sa position');
+assertFontInZone(labels[0].zpl, 'LANGOUSTINE VIVANTE', DETACHABLE_TAB, 13, 'produit languette doit etre legerement agrandi mais compact');
+assertFontInZone(labels[0].zpl, 'Nephrops norvegicus', DETACHABLE_TAB, 12, 'nom scientifique languette doit etre legerement agrandi');
+assertFontInZone(labels[0].zpl, 'Methode: Peche', DETACHABLE_TAB, 12, 'methode languette doit etre legerement agrandie');
+assertFontInZone(labels[0].zpl, 'ZONE DE PECHE', DETACHABLE_TAB, 12, 'zone de peche languette doit etre legerement agrandie');
+assertFontInZone(labels[0].zpl, 'Lot: LOT-A', DETACHABLE_TAB, 12, 'lot languette doit etre legerement agrandi');
+assertFontInZone(labels[0].zpl, 'DATE DE CONDITIONNEMENT', DETACHABLE_TAB, 12, 'date languette doit etre legerement agrandie sans deplacement');
+assertFontInZone(labels[0].zpl, 'Lot: LOT-A', FIXED_TRACE_BOTTOM_ZONE, 13, 'lot fixe bas doit etre legerement agrandi');
+assertFontInZone(labels[0].zpl, 'DATE DE CONDITIONNEMENT', FIXED_TRACE_BOTTOM_ZONE, 13, 'date fixe bas doit etre legerement agrandie');
 zplTextBoxes(labels[0].zpl).forEach((box) => {
   const insideKnownZone = [
     FIXED_TOP_ZONE,
@@ -411,6 +450,12 @@ assert.strictEqual(storageLabels[0].storage_temperature_label, '3 à 5 °C');
 assert.strictEqual(storageLabels[0].storage_instruction_label, 'Conserver entre 3 et 5 degres');
 assert(storageLabels[0].zpl.includes('CONSERVATION: 3 a 5  C'), 'ZPL doit afficher la plage structuree');
 assert(storageLabels[0].zpl.includes('MENTION: Conserver entre 3 et 5 degres'), 'ZPL doit afficher l instruction structuree');
+assertBoxOffset(storageLabels[0].zpl, 'CONSERVATION: 3 a 5  C', DETACHABLE_TAB, 78, 7.5, 'conservation languette ne doit pas descendre');
+assertBoxOffset(storageLabels[0].zpl, 'MENTION: Conserver entre 3 et 5 degres', DETACHABLE_TAB, 78, 11, 'mention languette ne doit pas descendre');
+assertFontInZone(storageLabels[0].zpl, 'CONSERVATION: 3 a 5  C', DETACHABLE_TAB, 12, 'conservation languette doit etre legerement agrandie');
+assertFontInZone(storageLabels[0].zpl, 'MENTION: Conserver entre 3 et 5 degres', DETACHABLE_TAB, 11, 'mention languette doit etre legerement agrandie');
+assertFontInZone(storageLabels[0].zpl, 'CONSERVATION: 3 a 5  C', FIXED_TRACE_BOTTOM_ZONE, 13, 'conservation fixe bas doit etre legerement agrandie');
+assertFontInZone(storageLabels[0].zpl, 'MENTION: Conserver entre 3 et 5 degres', FIXED_TRACE_BOTTOM_ZONE, 12, 'mention fixe bas doit etre legerement agrandie');
 ['CONSERVATION: 3 a 5  C', 'MENTION: Conserver entre 3 et 5 degres'].forEach((text) => {
   const box = textBoxInZone(storageLabels[0].zpl, text, DETACHABLE_TAB);
   assert(box, `champ conservation attendu dans la languette: ${text}`);
@@ -486,6 +531,8 @@ const htmlPreview = frontendSandbox.window.HealthLabels.renderPreview([{
 assert(htmlPreview.includes('src="http://localhost:3002/uploads/store-logos/alta.png"'), 'logo_url relatif doit etre resolu sur le backend');
 assert(htmlPreview.includes('health-label-product-main'), 'HTML doit distinguer la designation principale agrandie');
 assert(htmlPreview.includes('health-label-weight-main'), 'HTML doit distinguer le poids principal agrandi');
+assert(htmlPreview.includes('health-label-fixed-zone-main'), 'HTML doit descendre seulement le bloc zone fixe');
+assert(htmlPreview.includes('health-label-tab-shift-down'), 'HTML doit descendre seulement les blocs de languette demandes');
 assert(htmlPreview.includes('ZONE DE PECHE'), 'la zone de peche doit etre libellee dans le HTML');
 assert(htmlPreview.includes('Atlantique Nord-Est - FAO 27'), 'FAO 27 doit garder le code et afficher son libelle');
 assert(htmlPreview.includes('Sous-zone'), 'la sous-zone doit rester affichee');
@@ -529,6 +576,8 @@ assert(isolatedPrintHtml.includes('left: 30mm'), 'document print doit placer la 
 assert(isolatedPrintHtml.includes('top: 35mm'), 'document print doit placer la languette dans la safe area');
 assert(isolatedPrintHtml.includes('width: 118mm'), 'document print doit utiliser la largeur reelle de languette');
 assert(isolatedPrintHtml.includes('height: 18mm'), 'document print doit utiliser la hauteur sure de languette');
+assert(isolatedPrintHtml.includes('transform: translateY(1mm)'), 'document print doit descendre les blocs de languette demandes de 1 mm');
+assert(isolatedPrintHtml.includes('transform: translateY(3mm)'), 'document print doit descendre le bloc zone fixe de 3 mm');
 assert(isolatedPrintHtml.includes('health-label-fixed-trace-top'), 'document print doit garder la traceabilite en zone fixe haute');
 assert(isolatedPrintHtml.includes('health-label-fixed-trace-bottom'), 'document print doit garder la traceabilite en zone fixe basse');
 assert(isolatedPrintHtml.includes('top: 64mm'), 'footer HTML print doit rester dans la zone sure basse');
@@ -554,6 +603,10 @@ assert(healthLabelsCssSource.includes('.health-label-product-main'), 'CSS previe
 assert(healthLabelsCssSource.includes('font-size: 13px'), 'CSS preview doit rendre le produit plus visible');
 assert(healthLabelsCssSource.includes('.health-label-weight-main'), 'CSS preview doit agrandir le poids principal');
 assert(healthLabelsCssSource.includes('font-size: 17px'), 'CSS preview doit rendre la valeur poids beaucoup plus visible');
+assert(healthLabelsCssSource.includes('transform: translateY(1mm)'), 'CSS preview doit descendre les blocs de languette demandes de 1 mm');
+assert(healthLabelsCssSource.includes('transform: translateY(3mm)'), 'CSS preview doit descendre le bloc zone fixe de 3 mm');
+assert(healthLabelsCssSource.includes('font-size: 5.5px'), 'CSS preview doit agrandir legerement les libelles de languette');
+assert(healthLabelsCssSource.includes('font-size: 8px'), 'CSS preview doit agrandir legerement les petits champs fixes');
 assert(healthLabelsCssSource.includes('.health-label-fixed-trace-top'), 'CSS preview doit afficher la traceabilite fixe haute');
 assert(healthLabelsCssSource.includes('.health-label-fixed-trace-bottom'), 'CSS preview doit afficher la traceabilite fixe basse');
 assert(!healthLabelsCssSource.includes('border-top: 2px dashed'), 'CSS preview ne doit pas dessiner une fausse refente');

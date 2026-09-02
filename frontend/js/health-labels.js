@@ -103,7 +103,7 @@
     const fixedTopLeft = [
       info('Produit', label.article_label || 'Article', 'health-label-product-main'),
       info('Nom scientifique', trace.latin_name),
-      info('Methode', trace.production_method),
+      info('Methode', trace.production_method, 'health-label-method-main'),
     ].join('');
     const fixedTopMiddle = [
       info('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone),
@@ -124,19 +124,19 @@
       info('ETAT', trace.defrosted ? 'DECONGELE' : ''),
     ].join('');
     const tabLeft = [
-      info('Produit', label.article_label || 'Article'),
-      info('Nom scientifique', trace.latin_name),
-      info('Methode', trace.production_method),
-      info('ALLERGENE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
+      info('Produit', label.article_label || 'Article', 'health-label-tab-shift-down'),
+      info('Nom scientifique', trace.latin_name, 'health-label-tab-shift-down'),
+      info('Methode', trace.production_method, 'health-label-tab-shift-down'),
+      info('ALLERGENE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen health-label-tab-shift-down'),
     ].join('');
     const tabMiddle = [
-      info('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone),
-      info('Sous-zone', trace.sous_zone),
-      info('Engin', trace.fishing_gear),
+      info('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone, 'health-label-tab-shift-down'),
+      info('Sous-zone', trace.sous_zone, 'health-label-tab-shift-down'),
+      info('Engin', trace.fishing_gear, 'health-label-tab-shift-down'),
       info('DLC/DDM', trace.dlc ? formatDate(trace.dlc) : ''),
     ].join('');
     const tabRight = [
-      info('Lot', labelTrace(label)),
+      info('Lot', labelTrace(label), 'health-label-tab-shift-down'),
       info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
       info('CONSERVATION', label.storage_temperature_label),
       info('MENTION', label.storage_instruction_label),
@@ -160,7 +160,7 @@
       </section>
       <section class="health-label-fixed-trace-top">
         <div>${fixedTopLeft}</div>
-        <div>${fixedTopMiddle}</div>
+        <div class="health-label-fixed-zone-main">${fixedTopMiddle}</div>
         <div>${fixedTopRight}</div>
       </section>
       <section class="health-label-tab">
@@ -325,7 +325,7 @@
     .health-label-fixed-trace-bottom span {
       color: #45515c;
       display: block;
-      font-size: 5px;
+      font-size: 6px;
       font-weight: 800;
       line-height: 1;
       text-transform: uppercase;
@@ -333,7 +333,7 @@
     .health-label-fixed-trace-top strong,
     .health-label-fixed-trace-bottom strong {
       display: block;
-      font-size: 7px;
+      font-size: 8px;
       line-height: 1.05;
       overflow-wrap: anywhere;
     }
@@ -354,6 +354,13 @@
       font-weight: 900;
       line-height: 0.95;
       white-space: nowrap;
+    }
+    .health-label-method-main strong {
+      font-size: 9px;
+      font-weight: 800;
+    }
+    .health-label-fixed-zone-main {
+      transform: translateY(3mm);
     }
     .health-label-tab {
       display: grid;
@@ -379,16 +386,19 @@
     .health-label-tab span {
       color: #45515c;
       display: block;
-      font-size: 4.5px;
+      font-size: 5.5px;
       font-weight: 800;
       line-height: 1;
       text-transform: uppercase;
     }
     .health-label-tab div strong {
       display: block;
-      font-size: 6px;
+      font-size: 7px;
       line-height: 1.05;
       overflow-wrap: anywhere;
+    }
+    .health-label-tab-shift-down {
+      transform: translateY(1mm);
     }
     .health-label-fixed-trace-bottom {
       align-content: start;

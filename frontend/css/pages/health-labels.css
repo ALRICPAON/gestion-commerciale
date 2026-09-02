@@ -183,7 +183,7 @@
 .health-label-fixed-trace-bottom span {
   color: #45515c;
   display: block;
-  font-size: 5px;
+  font-size: 6px;
   font-weight: 800;
   line-height: 1;
   text-transform: uppercase;
@@ -192,7 +192,7 @@
 .health-label-fixed-trace-top strong,
 .health-label-fixed-trace-bottom strong {
   display: block;
-  font-size: 7px;
+  font-size: 8px;
   line-height: 1.05;
   overflow-wrap: anywhere;
 }
@@ -218,13 +218,22 @@
   white-space: nowrap;
 }
 
+.health-label-method-main strong {
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.health-label-fixed-zone-main {
+  transform: translateY(3mm);
+}
+
 .health-label-fixed-trace-bottom .health-label-allergen {
   border: 1px solid #111820;
   padding: 1px 3px;
 }
 
 .health-label-fixed-trace-bottom .health-label-allergen strong {
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 900;
 }
 
@@ -255,7 +264,7 @@
 .health-label-tab span {
   color: #45515c;
   display: block;
-  font-size: 4.5px;
+  font-size: 5.5px;
   font-weight: 800;
   line-height: 1;
   text-transform: uppercase;
@@ -263,9 +272,13 @@
 
 .health-label-tab div strong {
   display: block;
-  font-size: 6px;
+  font-size: 7px;
   line-height: 1.05;
   overflow-wrap: anywhere;
+}
+
+.health-label-tab-shift-down {
+  transform: translateY(1mm);
 }
 
 .health-label-warning {
