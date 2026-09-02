@@ -56,7 +56,7 @@ const FIXED_TRACE_BOTTOM_ZONE = {
   x: mm(2),
   y: mm(54),
   width: mm(146),
-  height: mm(10),
+  height: mm(14.5),
 };
 const FOOTER_ZONE = {
   x: mm(2),
@@ -477,43 +477,45 @@ function renderHealthLabelZpl(label) {
   lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(48), mm(1), mm(14), 18, 'POUR', 1));
   lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(63), mm(1), mm(52), 34, label.delivered_client_display || label.delivered_client_name || '-', 1));
 
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(1), mm(46), 13, label.article_label || '-', 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(5), mm(46), 12, trace.latin_name, 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(9), mm(46), 12, field('Methode', trace.production_method), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(51), mm(1), mm(45), 12, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(51), mm(9), mm(21), 12, field('Sous-zone', trace.sous_zone), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(76), mm(9), mm(22), 12, field('Engin', trace.fishing_gear), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(102), mm(1), mm(42), 12, field('Calibre', label.caliber), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(102), mm(5), mm(42), 14, `POIDS NET: ${label.net_weight_label}`, 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(0.5), mm(76), 24, label.article_label || '-', 2));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(8.5), mm(76), 11, trace.latin_name, 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(10.6), mm(18), 13, 'METHODE', 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(12.4), mm(76), 13, trace.production_method, 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(81), mm(4), mm(35), 12, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(81), mm(12), mm(16), 11, field('Sous-zone', trace.sous_zone), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(99), mm(12), mm(17), 11, field('Engin', trace.fishing_gear), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(119), mm(1), mm(25), 11, field('Calibre', label.caliber), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(119), mm(4), mm(25), 11, 'POIDS NET', 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(119), mm(7), mm(25), 32, label.net_weight_label, 1));
 
   const tab = DETACHABLE_TAB;
   const tabX = TAB_INSET;
   const tabCol1 = tabX;
   const tabCol2 = mm(40);
   const tabCol3 = mm(78);
-  lines.push(zplZoneBlock(tab, tabCol1, mm(0.5), mm(36), 12, label.article_label || '-', 1));
-  lines.push(zplZoneBlock(tab, tabCol1, mm(4), mm(36), 11, trace.latin_name, 1));
-  lines.push(zplZoneBlock(tab, tabCol1, mm(7.5), mm(36), 11, field('Methode', trace.production_method), 1));
-  lines.push(zplZoneBlock(tab, tabCol1, mm(11), mm(36), 11, field('ALLERGENE', label.allergen_label), 1));
-  lines.push(zplZoneBlock(tab, tabCol2, mm(0.5), mm(36), 11, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
-  lines.push(zplZoneBlock(tab, tabCol2, mm(8), mm(17), 11, field('Sous-zone', trace.sous_zone), 1));
-  lines.push(zplZoneBlock(tab, mm(59), mm(8), mm(18), 11, field('Engin', trace.fishing_gear), 1));
-  lines.push(zplZoneBlock(tab, tabCol2, mm(11.5), mm(36), 11, field('DLC/DDM', formatDate(trace.dlc)), 1));
-  lines.push(zplZoneBlock(tab, tabCol3, mm(0.5), mm(38), 11, field('Lot', lot), 1));
-  lines.push(zplZoneBlock(tab, tabCol3, mm(4), mm(38), 11, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
-  lines.push(zplZoneBlock(tab, tabCol3, mm(7.5), mm(38), 11, field('CONSERVATION', label.storage_temperature_label), 1));
-  lines.push(zplZoneBlock(tab, tabCol3, mm(11), mm(38), 10, field('MENTION', label.storage_instruction_label), 1));
-  if (trace.defrosted) lines.push(zplZoneBlock(tab, tabCol3, mm(14.5), mm(28), 11, 'DECONGELE', 1));
+  lines.push(zplZoneBlock(tab, tabCol1, mm(4.5), mm(36), 13, label.article_label || '-', 1));
+  lines.push(zplZoneBlock(tab, tabCol1, mm(8), mm(36), 12, trace.latin_name, 1));
+  lines.push(zplZoneBlock(tab, tabCol1, mm(11.5), mm(36), 12, field('Methode', trace.production_method), 1));
+  lines.push(zplZoneBlock(tab, tabCol1, mm(15), mm(36), 12, field('ALLERGENE', label.allergen_label), 1));
+  lines.push(zplZoneBlock(tab, tabCol2, mm(4.5), mm(36), 12, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
+  lines.push(zplZoneBlock(tab, tabCol2, mm(12), mm(17), 12, field('Sous-zone', trace.sous_zone), 1));
+  lines.push(zplZoneBlock(tab, mm(59), mm(12), mm(18), 12, field('Engin', trace.fishing_gear), 1));
+  lines.push(zplZoneBlock(tab, tabCol2, mm(11.5), mm(36), 12, field('DLC/DDM', formatDate(trace.dlc)), 1));
+  lines.push(zplZoneBlock(tab, mm(62), mm(4.5), mm(14), 12, field('Lot', lot), 1));
+  lines.push(zplZoneBlock(tab, tabCol3, mm(4), mm(38), 12, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
+  lines.push(zplZoneBlock(tab, tabCol3, mm(7.5), mm(38), 12, field('CONSERVATION', label.storage_temperature_label), 1));
+  lines.push(zplZoneBlock(tab, tabCol3, mm(11), mm(38), 11, field('MENTION', label.storage_instruction_label), 1));
+  if (trace.defrosted) lines.push(zplZoneBlock(tab, tabCol3, mm(14.5), mm(28), 12, 'DECONGELE', 1));
 
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(1), mm(1), mm(34), 12, field('Lot', lot), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(38), mm(1), mm(42), 12, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(84), mm(1), mm(28), 12, field('DLC/DDM', formatDate(trace.dlc)), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(116), mm(1), mm(28), 12, field('ALLERGENE', label.allergen_label), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(1), mm(5), mm(42), 12, field('CONSERVATION', label.storage_temperature_label), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(47), mm(5), mm(65), 11, field('MENTION', label.storage_instruction_label), 1));
-  if (trace.defrosted) lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(116), mm(5), mm(28), 12, 'DECONGELE', 1));
-  lines.push(zplZoneBlock(FOOTER_ZONE, mm(1), mm(0), mm(62), 11, `BL ${label.delivery_note_reference || ''} - L${label.line_number || ''}`, 1));
-  lines.push(zplZoneBlock(FOOTER_ZONE, mm(86), mm(0), mm(58), 11, `Colis ${label.copy_index}/${label.copy_count}`, 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(1), mm(1), mm(28), 13, field('Lot', lot), 2));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(42), mm(7), mm(42), 13, field('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.document_date)), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(84), mm(1), mm(28), 13, field('DLC/DDM', formatDate(trace.dlc)), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(116), mm(1), mm(28), 13, field('ALLERGENE', label.allergen_label), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(1), mm(11), mm(42), 13, field('CONSERVATION', label.storage_temperature_label), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(47), mm(11), mm(65), 12, field('MENTION', label.storage_instruction_label), 1));
+  if (trace.defrosted) lines.push(zplZoneBlock(FIXED_TRACE_BOTTOM_ZONE, mm(116), mm(5), mm(28), 13, 'DECONGELE', 1));
+  lines.push(zplZoneBlock(FOOTER_ZONE, mm(1), mm(0), mm(35), 11, `BL ${label.delivery_note_reference || ''} - L${label.line_number || ''}`, 1));
+  lines.push(zplZoneBlock(FOOTER_ZONE, mm(116), mm(0), mm(28), 11, `Colis ${label.copy_index}/${label.copy_count}`, 1));
   lines.push('^XZ');
 
   return lines.join('\n').replace(/\n{2,}/g, '\n');
