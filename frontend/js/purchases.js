@@ -109,17 +109,19 @@ function applyDepartmentTheme(department) {
 
 function showFeedback(el, message, isError = false) {
   if (!el) return;
+  const level = isError === "warning" ? "warning" : (isError ? "error" : "success");
   el.textContent = message;
   el.classList.remove("hidden");
-  el.classList.toggle("error", isError);
-  el.classList.toggle("success", !isError);
+  el.classList.toggle("error", level === "error");
+  el.classList.toggle("success", level === "success");
+  el.classList.toggle("warning", level === "warning");
 }
 
 function clearFeedback(el) {
   if (!el) return;
   el.textContent = "";
   el.classList.add("hidden");
-  el.classList.remove("error", "success");
+  el.classList.remove("error", "success", "warning");
 }
 
 function isSupplierActive(supplier) {
@@ -617,9 +619,16 @@ async function testImportDocument(event) {
       throw new Error(data.error || data.message || "Erreur import document");
     }
 
+    const importWarnings = [
+      ...(Array.isArray(data.warnings) ? data.warnings : []),
+      ...(Array.isArray(data.result?.warnings) ? data.result.warnings : []),
+    ].filter(Boolean);
+    const uniqueWarnings = [...new Set(importWarnings)];
+    const completionMessage = `Import terminé : ${data.imported_lines || 0} ligne(s) • ${data.detected_label || data.detected_type || "format détecté"}`;
     showFeedback(
       importDocumentFeedback,
-      `Import terminé : ${data.imported_lines || 0} ligne(s) • ${data.detected_label || data.detected_type || "format détecté"}`
+      uniqueWarnings.length ? `${completionMessage}\n${uniqueWarnings.join("\n")}` : completionMessage,
+      uniqueWarnings.length ? "warning" : false
     );
 
     if (importDocumentResult) {

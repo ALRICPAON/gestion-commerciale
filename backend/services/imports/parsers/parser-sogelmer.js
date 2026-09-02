@@ -376,7 +376,7 @@ function compareTotals(documentTotals, parsedRows, warnings) {
   if (expected.montant_ht && Math.abs(diff.montant_ht) > 0.06) mismatches.push(`HT ${actual.montant_ht}/${expected.montant_ht}`);
 
   if (mismatches.length) {
-    warnings.push(`Import SOGELMER potentiellement incomplet: totaux lignes differents du document (${mismatches.join(", ")})`);
+    warnings.push(`Import SOGELMER potentiellement incomplet : les lignes détectées ne correspondent pas aux totaux du document. Vérifiez les lignes importées et complétez manuellement si nécessaire. (${mismatches.join(", ")})`);
   }
 
   return { expected, actual, diff, ok: mismatches.length === 0 };

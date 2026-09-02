@@ -428,6 +428,7 @@ select:focus {
   border: 1px solid #B8E7E7;
   background: #EFFBFB;
   color: #0F5F68;
+  white-space: pre-line;
 }
 
 .page-feedback.error {
