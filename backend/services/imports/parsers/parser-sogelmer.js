@@ -1,5 +1,9 @@
 const { PDFParse } = require("pdf-parse");
 
+const MONEY_TOKEN = "(?:EUR|€|â‚¬)?";
+const NUMBER_TOKEN = "\\d+(?:[,.]\\d+)?";
+const LOT_TOKEN = "[A-Z0-9][A-Z0-9\\-/.]{5,24}";
+
 function normalizeText(raw) {
   return String(raw || "")
     .replace(/[\u00A0\u202F\u2009\u2002\u2003]/g, " ")
@@ -33,16 +37,14 @@ function parseNumber(raw) {
 
 function normalizeRef(ref) {
   if (!ref) return "";
-  let r = String(ref).trim().replace("/", "_");
-  r = r.replace(/^(\D+)(\d)$/, "$10$2");
-  return r.toUpperCase();
+  return String(ref).trim().toUpperCase();
 }
 
 function isArticleCode(s) {
   const v = normalizeText(s);
   return (
     /^[A-Z]{3,10}[A-Z0-9/]{0,10}$/i.test(v) &&
-    !/CLIENT|SOGELMER|PAGE|DATE|FR|CE|TARIF|POIDS|STEF|BL|FACTURE|LIVRE|TRANSPORTEUR|TOURNEE|SOUS|NBRE|MONTANT/i.test(v)
+    !/CLIENT|SOGELMER|PAGE|DATE|FR|CE|TARIF|POIDS|STEF|BL|FACTURE|LIVRE|TRANSPORTEUR|TOURNEE|SOUS|NBRE|MONTANT|CODE|DESIGNATION|COLIS/i.test(v)
   );
 }
 
@@ -134,20 +136,20 @@ function splitLines(text) {
 function parseArticleLine(line) {
   const raw = normalizeText(line);
 
-  // Format observe :
-  // FILLINB/3 FILET LINGUE BLEUE 3 KG 3 3,00 9,00 KG 05050102514 16,50 € 148,50 € 1
-  const regex =
-    /^([A-Z0-9/]{4,16})\s+(.+?)\s+(\d+(?:,\d+)?)\s+(\d+(?:,\d+)?)\s+(\d+(?:,\d+)?)\s+([A-Z]{2,5})\s+([A-Z0-9]{8,20})\s+(\d+(?:,\d+)?)\s*€\s+(\d+(?:,\d+)?)\s*€(?:\s+\d+)?$/i;
+  const regex = new RegExp(
+    "^([A-Z0-9/]{4,16})\\s+(.+?)\\s+" +
+      `(${NUMBER_TOKEN})\\s+(${NUMBER_TOKEN})\\s+(${NUMBER_TOKEN})\\s+([A-Z]{1,5})\\s+(${LOT_TOKEN})\\s+` +
+      `(${NUMBER_TOKEN})\\s*${MONEY_TOKEN}\\s+(${NUMBER_TOKEN})\\s*${MONEY_TOKEN}(?:\\s+\\d+)?$`,
+    "i"
+  );
 
   const m = raw.match(regex);
   if (!m) return null;
 
-  const refFournisseur = normalizeRef(m[1]);
-
   if (!isArticleCode(m[1])) return null;
 
   return {
-    refFournisseur,
+    refFournisseur: normalizeRef(m[1]),
     designation: normalizeText(m[2]),
     colis: parseNumber(m[3]),
     poidsColisKg: parseNumber(m[4]),
@@ -165,71 +167,165 @@ function parseArticleLine(line) {
   };
 }
 
+function parseArticleBlock(blockLines) {
+  const joined = normalizeText(blockLines.join(" "));
+  const direct = parseArticleLine(joined);
+  if (direct) return direct;
+
+  const tokens = joined
+    .split(/\s+/)
+    .filter(Boolean)
+    .filter((token) => !/^(?:€|â‚¬|EUR)$/i.test(token));
+
+  if (tokens.length < 9 || !isArticleCode(tokens[0])) return null;
+
+  const tailEnd = /^\d+$/.test(tokens[tokens.length - 1]) ? tokens.length - 1 : tokens.length;
+  const tail = tokens.slice(Math.max(1, tailEnd - 7), tailEnd);
+  if (tail.length < 7) return null;
+
+  const [colis, poidsColisKg, poidsTotalKg, uv, lot, prixKg, montantHT] = tail;
+  const numberRegex = new RegExp(`^${NUMBER_TOKEN}$`);
+  if (
+    !numberRegex.test(colis) ||
+    !numberRegex.test(poidsColisKg) ||
+    !numberRegex.test(poidsTotalKg) ||
+    !/^[A-Z]{1,5}$/i.test(uv) ||
+    !new RegExp(`^${LOT_TOKEN}$`, "i").test(lot) ||
+    !numberRegex.test(prixKg) ||
+    !numberRegex.test(montantHT)
+  ) {
+    return null;
+  }
+
+  const designation = normalizeText(tokens.slice(1, tailEnd - 7).join(" "));
+  if (!designation) return null;
+
+  return {
+    refFournisseur: normalizeRef(tokens[0]),
+    designation,
+    colis: parseNumber(colis),
+    poidsColisKg: parseNumber(poidsColisKg),
+    poidsTotalKg: parseNumber(poidsTotalKg),
+    uv: normalizeText(uv),
+    lot: normalizeText(lot),
+    prixKg: parseNumber(prixKg),
+    montantHT: parseNumber(montantHT),
+    nomLatin: "",
+    fao: "",
+    autresFAO: [],
+    zone: "",
+    sousZone: "",
+    engin: "",
+  };
+}
+
+function collectArticleBlock(lines, startIndex) {
+  const block = [];
+
+  for (let i = startIndex; i < lines.length && block.length < 16; i += 1) {
+    const line = lines[i];
+    if (i > startIndex && isArticleCode(line)) break;
+    if (/^(?:N[°º]?|DATE|CLIENT|PAGE|TOTAL|SOUS|MONTANT|NBRE)\b/i.test(line)) break;
+
+    block.push(line);
+    const parsed = parseArticleBlock(block);
+    if (parsed) return { parsed, nextIndex: i + 1 };
+  }
+
+  return { parsed: null, nextIndex: startIndex + 1 };
+}
+
+function applyBioData(parsed, bio) {
+  const nomLatin = extractLatinName(bio);
+  const faoList = extractFAOs(bio);
+  const fao = faoList[0] || "";
+  const autresFAO = faoList.slice(1);
+
+  let zone = "";
+  let sousZone = "";
+
+  if (fao) {
+    const parts = fao.split(" ");
+    zone = `${parts[0] || ""} ${parts[1] || ""}`.trim();
+    sousZone = parts.slice(2).join(" ").trim();
+  }
+
+  parsed.nomLatin = nomLatin;
+  parsed.fao = fao;
+  parsed.autresFAO = autresFAO;
+  parsed.zone = zone;
+  parsed.sousZone = sousZone;
+  parsed.engin = extractFishingGear(bio);
+}
+
+function clearBioData(parsed) {
+  parsed.nomLatin = "";
+  parsed.fao = "";
+  parsed.autresFAO = [];
+  parsed.zone = "";
+  parsed.sousZone = "";
+  parsed.engin = "";
+}
+
 function parseSogelmerText(text) {
   const lines = splitLines(text);
   const rows = [];
   let i = 0;
 
   while (i < lines.length) {
-    const current = lines[i];
-    const parsed = parseArticleLine(current);
+    const block = collectArticleBlock(lines, i);
+    const parsed = block.parsed;
 
     if (!parsed) {
       i += 1;
       continue;
     }
 
-    const bio = normalizeText(lines[i + 1] || "");
-    const packLine = normalizeText(lines[i + 2] || "");
+    const bioIndex = block.nextIndex;
+    const bio = normalizeText(lines[bioIndex] || "");
+    const packLine = normalizeText(lines[bioIndex + 1] || "");
 
-    const nomLatin = extractLatinName(bio);
-    const faoList = extractFAOs(bio);
-    const fao = faoList[0] || "";
-    const autresFAO = faoList.slice(1);
+    applyBioData(parsed, bio);
 
-    let zone = "";
-    let sousZone = "";
-
-    if (fao) {
-      const parts = fao.split(" ");
-      zone = `${parts[0] || ""} ${parts[1] || ""}`.trim();
-      sousZone = parts.slice(2).join(" ").trim();
-    }
-
-    parsed.nomLatin = nomLatin;
-    parsed.fao = fao;
-    parsed.autresFAO = autresFAO;
-    parsed.zone = zone;
-    parsed.sousZone = sousZone;
-    parsed.engin = extractFishingGear(bio);
-
-    // securite : si la ligne suivante n'est pas une bio, on n'ecrase pas tout
-    if (!bio || /^(\d+\s*X\s*\d+)/i.test(bio) || parseArticleLine(bio)) {
-      parsed.nomLatin = "";
-      parsed.fao = "";
-      parsed.autresFAO = [];
-      parsed.zone = "";
-      parsed.sousZone = "";
-      parsed.engin = "";
+    // Securite : si la ligne suivante n'est pas une bio, on n'ecrase pas tout.
+    if (!bio || /^(\d+\s*X\s*\d+)/i.test(bio) || parseArticleLine(bio) || isArticleCode(bio)) {
+      clearBioData(parsed);
       rows.push(parsed);
-      i += 1;
+      i = block.nextIndex;
       continue;
     }
 
-    // packLine du style "3 X 3KG" : on l'ignore, mais on saute bien la ligne
+    // packLine du style "3 X 3KG" : on l'ignore, mais on saute bien la ligne.
     rows.push(parsed);
 
     if (packLine && /^\d+\s*X\s*[\d.,]+/i.test(packLine)) {
-      i += 3;
+      i = bioIndex + 2;
     } else {
-      i += 2;
+      i = bioIndex + 1;
     }
   }
 
   return rows;
 }
 
-module.exports = {
+function emptySogelmerResult(context, blNumber, warnings) {
+  return {
+    supplier_code: "10003",
+    supplier_name: "SOGELMER",
+    purchase_type: "order",
+    document_type: "supplier_bl",
+    bl_number: blNumber,
+    lines: [],
+    warnings,
+    meta: {
+      bl_number: blNumber,
+      detected_from_filename: context.originalname || null,
+      parsed_line_count: 0,
+    },
+  };
+}
+
+const parser = {
   id: "SOGELMER",
   label: "Sogelmer",
   supportedExtensions: [".pdf"],
@@ -254,36 +350,18 @@ module.exports = {
       text = await extractPdfText(context);
     } catch (error) {
       const blNumber = extractBlNumber("", context);
-      return {
-        supplier_code: "10003",
-        supplier_name: "SOGELMER",
-        purchase_type: "order",
-        document_type: "supplier_bl",
-        bl_number: blNumber,
-        lines: [],
-        warnings: [`Impossible de lire le PDF SOGELMER: ${error.message}`],
-        meta: {
-          bl_number: blNumber,
-          detected_from_filename: context.originalname || null,
-        },
-      };
+      return emptySogelmerResult(context, blNumber, [
+        `Aucune ligne article detectee dans le document SOGELMER`,
+        `Impossible de lire le PDF SOGELMER: ${error.message}`,
+      ]);
     }
 
     if (!text) {
       const blNumber = extractBlNumber("", context);
-      return {
-        supplier_code: "10003",
-        supplier_name: "SOGELMER",
-        purchase_type: "order",
-        document_type: "supplier_bl",
-        bl_number: blNumber,
-        lines: [],
-        warnings: ["Texte PDF vide ou non extrait"],
-        meta: {
-          bl_number: blNumber,
-          detected_from_filename: context.originalname || null,
-        },
-      };
+      return emptySogelmerResult(context, blNumber, [
+        "Aucune ligne article detectee dans le document SOGELMER",
+        "Texte PDF vide ou non extrait",
+      ]);
     }
 
     const blNumber = extractBlNumber(text, context);
@@ -343,7 +421,7 @@ module.exports = {
 
     const warnings = [];
     if (!lines.length) {
-      warnings.push("Aucune ligne exploitable detectee dans le PDF SOGELMER");
+      warnings.push("Aucune ligne article detectee dans le document SOGELMER");
     }
 
     return {
@@ -364,3 +442,12 @@ module.exports = {
     };
   },
 };
+
+parser._private = {
+  normalizeRef,
+  parseArticleLine,
+  parseArticleBlock,
+  parseSogelmerText,
+};
+
+module.exports = parser;
