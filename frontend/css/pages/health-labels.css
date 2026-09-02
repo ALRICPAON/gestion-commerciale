@@ -165,7 +165,7 @@
   box-sizing: border-box;
   display: grid;
   gap: 1px 4mm;
-  height: 10mm;
+  height: 14.5mm;
   grid-template-columns: 30mm 42mm 28mm 28mm;
   left: 2mm;
   min-height: 0;
@@ -219,7 +219,7 @@
 }
 
 .health-label-method-main strong {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 800;
 }
 
@@ -235,6 +235,14 @@
 .health-label-fixed-trace-bottom .health-label-allergen strong {
   font-size: 8px;
   font-weight: 900;
+}
+
+.health-label-fixed-bottom-lower {
+  transform: translateY(8mm);
+}
+
+.health-label-fixed-bottom-mention {
+  grid-column: 2 / span 2;
 }
 
 .health-label-tab {
@@ -306,6 +314,13 @@
   position: absolute;
   top: 64mm;
   width: 146mm;
+}
+
+.health-label-footer span:first-child {
+  flex: 0 0 35mm;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 @media print {

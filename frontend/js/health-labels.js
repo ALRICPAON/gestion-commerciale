@@ -115,12 +115,12 @@
       info('POIDS NET', label.net_weight_label, 'health-label-weight-main'),
     ].join('');
     const fixedBottom = [
-      info('Lot', labelTrace(label)),
-      info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
+      info('Lot', labelTrace(label), 'health-label-fixed-bottom-lot'),
+      info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date), 'health-label-fixed-bottom-lower'),
       info('DLC/DDM', trace.dlc ? formatDate(trace.dlc) : ''),
       info('ALLERGENE', label.allergen_label || formatAllergen(trace.allergens), 'health-label-allergen'),
-      info('CONSERVATION', label.storage_temperature_label),
-      info('MENTION', label.storage_instruction_label),
+      info('CONSERVATION', label.storage_temperature_label, 'health-label-fixed-bottom-lower'),
+      info('MENTION', label.storage_instruction_label, 'health-label-fixed-bottom-lower health-label-fixed-bottom-mention'),
       info('ETAT', trace.defrosted ? 'DECONGELE' : ''),
     ].join('');
     const tabLeft = [
@@ -356,7 +356,7 @@
       white-space: nowrap;
     }
     .health-label-method-main strong {
-      font-size: 9px;
+      font-size: 10px;
       font-weight: 800;
     }
     .health-label-fixed-zone-main {
@@ -409,13 +409,19 @@
       display: grid;
       gap: 1px 4mm;
       grid-template-columns: 30mm 42mm 28mm 28mm;
-      height: 10mm;
+      height: 14.5mm;
       left: 2mm;
       min-height: 0;
       overflow: hidden;
       position: absolute;
       top: 54mm;
       width: ${PRINT_SAFE_WIDTH_MM}mm;
+    }
+    .health-label-fixed-bottom-lower {
+      transform: translateY(8mm);
+    }
+    .health-label-fixed-bottom-mention {
+      grid-column: 2 / span 2;
     }
     .health-label-footer {
       color: #45515c;
@@ -428,6 +434,12 @@
       position: absolute;
       top: 64mm;
       width: ${PRINT_SAFE_WIDTH_MM}mm;
+    }
+    .health-label-footer span:first-child {
+      flex: 0 0 35mm;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
   </style>
 </head>
