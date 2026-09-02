@@ -13,6 +13,7 @@ const {
   buildHealthLabelModels,
   combineZpl,
 } = require('../services/healthLabelService');
+const salesPriceResolver = require('../services/salesPriceResolver');
 
 const router = express.Router();
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
@@ -82,6 +83,7 @@ async function validateOrderWithoutStock(db, { orderId, storeId, userId }) {
     error.status = 400;
     throw error;
   }
+  await salesPriceResolver.assertDocumentLinePricesPositive(db, storeId, order.id);
 
   if (order.status === 'draft') {
     await db.query(
@@ -126,6 +128,7 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
     error.status = 400;
     throw error;
   }
+  await salesPriceResolver.assertDocumentLinePricesPositive(db, storeId, order.id);
 
   const client = await getClientSnapshot(db, storeId, order.client_id);
   const reference = clean(referenceNumber) || `BL-${new Date().toISOString().slice(0, 10)}-${String(order.id).slice(0, 8)}`;
@@ -164,11 +167,14 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
         unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot,
         delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot,
         delivered_client_store_identifier_snapshot,
+        pricing_session_id, pricing_line_id, tariff_level_id, source_tariff_price_ht,
+        royale_maree_commission_ht, final_unit_price_ht, source_inventory_line,
         line_status, created_by, updated_by
       ) VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27, 'pending', $28, $28
+        $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27,
+        $28, $29, $30, $31, $32, $33, $34::jsonb, 'pending', $35, $35
       )`,
       [
         storeId, line.client_key || order.client_key || clientKey || null, deliveryNoteId, line.line_number,
@@ -178,7 +184,10 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
         line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id,
         JSON.stringify(line.traceability_snapshot || {}), line.delivered_client_id,
         line.delivered_client_name_snapshot, line.delivered_client_code_snapshot,
-        line.delivered_client_store_identifier_snapshot, userId,
+        line.delivered_client_store_identifier_snapshot, line.pricing_session_id || null,
+        line.pricing_line_id || null, line.tariff_level_id || null, line.source_tariff_price_ht ?? null,
+        line.royale_maree_commission_ht ?? null, line.final_unit_price_ht ?? line.unit_sale_price_ht,
+        JSON.stringify(line.source_inventory_line || {}), userId,
       ]
     );
   }
@@ -204,6 +213,7 @@ async function validateDeliveryNoteStock(db, { deliveryNoteId, storeId, clientKe
     error.status = 400;
     throw error;
   }
+  await salesPriceResolver.assertDocumentLinePricesPositive(db, storeId, deliveryNote.id);
 
   let allocated = 0;
   const articles = new Set();
@@ -331,6 +341,12 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
     const soldQuantity = totalWeight > 0 ? totalWeight : pos(req.body?.sold_quantity, line.sold_quantity || 0);
     const vatRate = line.is_vat_exempt_snapshot ? 0 : pos(req.body?.vat_rate, num(line.vat_rate_snapshot, 5.5));
     const unitPriceHt = pos(req.body?.unit_sale_price_ht, line.unit_sale_price_ht || 0);
+    salesPriceResolver.assertPositiveUnitPrice(unitPriceHt, {
+      source: 'negoce_free_line',
+      line_id: line.id,
+      line_number: line.line_number,
+      document_id: line.sales_document_id,
+    });
     const lineAmountHt = Number((soldQuantity * unitPriceHt).toFixed(2));
     const lineVatAmount = Number((lineAmountHt * vatRate / 100).toFixed(2));
     const lineAmountTtc = Number((lineAmountHt + lineVatAmount).toFixed(2));
@@ -362,7 +378,7 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur maj ligne negoce :', err);
-    res.status(500).json({ error: err.message || 'Erreur maj ligne negoce' });
+    res.status(err.status || 500).json({ error: err.message || 'Erreur maj ligne negoce', code: err.code, details: err.details });
   } finally {
     db.release();
   }
@@ -477,6 +493,7 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
     if (!noteResult.rows.length) { await db.query('ROLLBACK'); return res.status(404).json({ error: 'BL introuvable' }); }
     const note = noteResult.rows[0];
     if (!['validated', 'invoiced'].includes(note.status)) { await db.query('ROLLBACK'); return res.status(400).json({ error: 'Le BL doit etre valide avant facturation' }); }
+    await salesPriceResolver.assertDocumentLinePricesPositive(db, req.user.store_id, note.id);
     const existing = await db.query(`SELECT id FROM sales_documents WHERE store_id = $1 AND source_delivery_note_id = $2 AND document_type = 'INVOICE' LIMIT 1`, [req.user.store_id, note.id]);
     if (existing.rows.length) { await db.query('COMMIT'); return res.json({ ok: true, invoice_id: existing.rows[0].id, existing: true }); }
     const invoiceRef = clean(body.reference_number) || `FAC-${new Date().toISOString().slice(0, 10)}-${String(note.id).slice(0, 8)}`;
@@ -487,7 +504,7 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
     );
     const lines = await db.query(`SELECT * FROM sales_lines WHERE sales_document_id = $1 ORDER BY line_number`, [note.id]);
     for (const line of lines.rows) {
-      await db.query(`INSERT INTO sales_lines (id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label, package_count, weight_per_package, total_weight, sold_quantity, sale_unit, unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc, unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot, delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot, delivered_client_store_identifier_snapshot, line_status, created_by, updated_by) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27, 'invoiced', $28, $28)`, [req.user.store_id, line.client_key || note.client_key || req.user.client_key || null, invoice.rows[0].id, line.line_number, line.article_id, line.article_plu, line.article_label, line.package_count, line.weight_per_package, line.total_weight, line.sold_quantity, line.sale_unit, line.unit_sale_price_ht, line.unit_sale_price_ttc, line.vat_rate, line.line_amount_ht, line.line_vat_amount, line.line_amount_ttc, line.unit_cost_ex_vat, line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id, JSON.stringify(line.traceability_snapshot || {}), line.delivered_client_id, line.delivered_client_name_snapshot, line.delivered_client_code_snapshot, line.delivered_client_store_identifier_snapshot, req.user.id]);
+      await db.query(`INSERT INTO sales_lines (id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label, package_count, weight_per_package, total_weight, sold_quantity, sale_unit, unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc, unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot, delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot, delivered_client_store_identifier_snapshot, pricing_session_id, pricing_line_id, tariff_level_id, source_tariff_price_ht, royale_maree_commission_ht, final_unit_price_ht, source_inventory_line, line_status, created_by, updated_by) VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34::jsonb, 'invoiced', $35, $35)`, [req.user.store_id, line.client_key || note.client_key || req.user.client_key || null, invoice.rows[0].id, line.line_number, line.article_id, line.article_plu, line.article_label, line.package_count, line.weight_per_package, line.total_weight, line.sold_quantity, line.sale_unit, line.unit_sale_price_ht, line.unit_sale_price_ttc, line.vat_rate, line.line_amount_ht, line.line_vat_amount, line.line_amount_ttc, line.unit_cost_ex_vat, line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id, JSON.stringify(line.traceability_snapshot || {}), line.delivered_client_id, line.delivered_client_name_snapshot, line.delivered_client_code_snapshot, line.delivered_client_store_identifier_snapshot, line.pricing_session_id || null, line.pricing_line_id || null, line.tariff_level_id || null, line.source_tariff_price_ht ?? null, line.royale_maree_commission_ht ?? null, line.final_unit_price_ht ?? line.unit_sale_price_ht, JSON.stringify(line.source_inventory_line || {}), req.user.id]);
     }
     await db.query(`UPDATE sales_documents SET status = 'invoiced', invoiced_at = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2`, [req.user.id, note.id]);
     await db.query('COMMIT');
@@ -495,7 +512,7 @@ router.post('/delivery-notes/:id/validate-invoice', authenticateToken, attachDbC
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur validation facture BL :', err);
-    res.status(500).json({ error: err.message || 'Erreur validation facture' });
+    res.status(err.status || 500).json({ error: err.message || 'Erreur validation facture', code: err.code, details: err.details });
   } finally {
     db.release();
   }

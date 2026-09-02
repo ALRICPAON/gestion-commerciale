@@ -9,6 +9,7 @@ const {
   recipientsToEmailList,
 } = require('../services/documentRecipientService');
 const { renderHtmlToPdf, sendPdf } = require('../services/pdf/pdfRenderer');
+const salesPriceResolver = require('../services/salesPriceResolver');
 
 const router = express.Router();
 
@@ -768,7 +769,9 @@ function deliveredSnapshotForLine(line, documentClientId, forceSourceClient = fa
 
 async function fetchArticles(db, storeId, ids) {
   const result = await db.query(
-    `SELECT a.id, a.plu, a.designation, a.sale_unit, a.unit, a.vat_rate, COALESCE(ss.pma, 0) pma
+    `SELECT a.id, a.plu, a.designation, a.sale_unit, a.unit, a.vat_rate,
+            a.sale_price_ex_vat, a.sale_price_level_1_ht, a.sale_price_level_2_ht, a.sale_price_level_3_ht,
+            COALESCE(ss.pma, 0) pma
      FROM articles a
      LEFT JOIN stock_summary ss ON ss.article_id = a.id AND ss.store_id = a.store_id
      WHERE a.store_id = $1 AND a.id = ANY($2::uuid[]) AND a.is_active = true`,
@@ -1004,7 +1007,18 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
 
       let lineNumber = 1;
       for (const line of group.lines) {
-        const unitPrice = salePriceForClient(line.product, line.client);
+        const priceResolution = await salesPriceResolver.resolveSalesLinePrice(db, req.user.store_id, {
+          client_id: line.client.id,
+          article: line.article,
+          article_id: line.article.id,
+          document_date: sheet.sheet_date,
+          tariff_level: line.client.tariff_level,
+          preserve_existing: false,
+          context_label: line.product.designation || line.article.designation,
+        });
+        const unitPrice = priceResolution.unit_price_ht;
+        const pricingTrace = salesPriceResolver.pricingTraceForResolution(priceResolution);
+        const sourceTrace = salesPriceResolver.inventoryPriceTrace(priceResolution);
         const lineVatRate = vatExempt ? 0 : num(line.article.vat_rate, vatRate);
         const amountHt = Number((line.quantity * unitPrice).toFixed(2));
         const vatAmount = Number((amountHt * lineVatRate / 100).toFixed(2));
@@ -1062,12 +1076,12 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
             delivered.name,
             delivered.code,
             delivered.store_identifier,
-            line.product.pricing_session_id || null,
-            line.product.pricing_line_id || null,
-            null,
-            unitPrice,
-            0,
-            unitPrice,
+            pricingTrace.pricing_session_id,
+            pricingTrace.pricing_line_id,
+            pricingTrace.tariff_level_id,
+            pricingTrace.source_tariff_price_ht,
+            pricingTrace.royale_maree_commission_ht,
+            pricingTrace.final_unit_price_ht,
             JSON.stringify({
               quick_order_sheet_id: sheet.sheet_id,
               column_uid: line.product.uid,
@@ -1076,6 +1090,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
               source_client_code: line.client.code || null,
               source_client_store_identifier: line.client.store_identifier || null,
               flow: group.flow,
+              ...sourceTrace,
             }),
             req.user.id,
           ]
@@ -1137,7 +1152,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       status: err.status || 500,
       stack: err.stack,
     });
-    res.status(err.status || 500).json({ error: err.message || 'Erreur generation commandes' });
+    res.status(err.status || 500).json({ error: err.message || 'Erreur generation commandes', code: err.code, details: err.details });
   } finally {
     db.release();
   }

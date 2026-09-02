@@ -8,6 +8,7 @@ const {
   assertLotUsable,
   availableLotCondition,
 } = require('../services/quality/lotBlocking');
+const salesPriceResolver = require('../services/salesPriceResolver');
 
 const router = express.Router();
 
@@ -94,6 +95,7 @@ async function validateOrderWithoutStock(db, { orderId, storeId, userId }) {
     error.status = 400;
     throw error;
   }
+  await salesPriceResolver.assertDocumentLinePricesPositive(db, storeId, order.id);
 
   if (order.status === 'draft') {
     await db.query(
@@ -138,6 +140,7 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
     error.status = 400;
     throw error;
   }
+  await salesPriceResolver.assertDocumentLinePricesPositive(db, storeId, order.id);
 
   const client = await getClientSnapshot(db, storeId, order.client_id);
   const reference = clean(referenceNumber) || `BL-${new Date().toISOString().slice(0, 10)}-${String(order.id).slice(0, 8)}`;
@@ -176,11 +179,14 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
         unit_cost_ex_vat, line_margin_ex_vat, selected_lot_id, suggested_lot_id, traceability_snapshot,
         delivered_client_id, delivered_client_name_snapshot, delivered_client_code_snapshot,
         delivered_client_store_identifier_snapshot,
+        pricing_session_id, pricing_line_id, tariff_level_id, source_tariff_price_ht,
+        royale_maree_commission_ht, final_unit_price_ht, source_inventory_line,
         line_status, created_by, updated_by
       ) VALUES (
         gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
         $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18,
-        $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27, 'pending', $28, $28
+        $19, $20, $21, $22, $23::jsonb, $24, $25, $26, $27,
+        $28, $29, $30, $31, $32, $33, $34::jsonb, 'pending', $35, $35
       )`,
       [
         storeId, line.client_key || order.client_key || clientKey || null, deliveryNoteId, line.line_number,
@@ -190,7 +196,10 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
         line.line_margin_ex_vat, line.selected_lot_id, line.suggested_lot_id,
         JSON.stringify(line.traceability_snapshot || {}), line.delivered_client_id,
         line.delivered_client_name_snapshot, line.delivered_client_code_snapshot,
-        line.delivered_client_store_identifier_snapshot, userId,
+        line.delivered_client_store_identifier_snapshot, line.pricing_session_id || null,
+        line.pricing_line_id || null, line.tariff_level_id || null, line.source_tariff_price_ht ?? null,
+        line.royale_maree_commission_ht ?? null, line.final_unit_price_ht ?? line.unit_sale_price_ht,
+        JSON.stringify(line.source_inventory_line || {}), userId,
       ]
     );
   }
@@ -301,6 +310,7 @@ async function validateDeliveryNoteStock(db, { deliveryNoteId, storeId, clientKe
     error.status = 400;
     throw error;
   }
+  await salesPriceResolver.assertDocumentLinePricesPositive(db, storeId, deliveryNote.id);
 
   let allocated = 0;
   const articles = new Set();
