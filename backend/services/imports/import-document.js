@@ -83,27 +83,13 @@ async function importDocument(file, options = {}) {
     };
   }
 
-  if (detectedParser.id === "SOGELMER" && normalized.meta?.import_complete === false) {
-    const error = "Import SOGELMER incomplet: les lignes detectees ne correspondent pas aux totaux du document";
-    return {
-      ok: false,
-      error,
-      detected_type: detectedParser.id,
-      detected_label: detectedParser.label,
-      candidates: [],
-      result: normalized,
-      warnings,
-      preview_rows: context.previewRows,
-      sheet_names: context.sheetNames,
-    };
-  }
-
   return {
     ok: true,
     detected_type: detectedParser.id,
     detected_label: detectedParser.label,
     candidates: [],
     result: normalized,
+    warnings,
     preview_rows: context.previewRows,
     sheet_names: context.sheetNames,
   };
