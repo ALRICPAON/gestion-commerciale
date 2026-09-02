@@ -52,7 +52,7 @@ const purchaseInvoiceNumberInput = document.getElementById("purchase-invoice-num
 const purchaseNotesInput = document.getElementById("purchase-notes");
 const purchaseTotalHTEl = document.getElementById("purchase-total-ht");
 const MANUAL_HEADER_STATUSES = ["ordered", "cancelled"];
-const SYSTEM_STATUSES = ["received", "closed"];
+const SYSTEM_STATUSES = ["received", "received_pending_invoice", "closed"];
 
 const purchaseLinesTableBody = document.getElementById("purchase-lines-table-body");
 const linesModeLabel = document.getElementById("lines-mode-label");
@@ -359,6 +359,10 @@ function getDisplayedHeaderStatus(realStatus) {
 }
 
 function isPurchaseLocked() {
+  if (purchase?.has_supplier_invoice_link || purchase?.has_pennylane_supplier_invoice_link) {
+    return true;
+  }
+
   return [
     "invoice_matched",
     "invoice_difference",
@@ -370,11 +374,15 @@ function isPurchaseLocked() {
   ].includes(purchase?.status);
 }
 
+function isPurchaseEditable() {
+  return !isPurchaseLocked();
+}
+
 function syncHeaderStatusUi() {
   const realStatus = purchase?.status || "ordered";
   purchaseStatusInput.value = getDisplayedHeaderStatus(realStatus);
 
-  const locked = isPurchaseLocked();
+  const locked = !isPurchaseEditable();
 
   purchaseStatusInput.disabled = realStatus !== "ordered";
   purchaseTypeInput.disabled = locked;
@@ -458,7 +466,7 @@ async function loadSuppliers() {
 }
 
 function openSupplierModal() {
-  if (isPurchaseLocked()) {
+  if (!isPurchaseEditable()) {
     showFeedback(purchaseHeaderFeedback, "Achat verrouille : fournisseur non modifiable", true);
     return;
   }
@@ -649,9 +657,9 @@ function renderLinesTable() {
     return;
   }
 
-  const locked = isPurchaseLocked();
-const receivedView = isReceivedPurchaseStatus(purchase?.status);
-const metadataReadonly = purchase?.status === "closed" || purchase?.status === "cancelled";
+  const locked = !isPurchaseEditable();
+  const receivedView = isReceivedPurchaseStatus(purchase?.status);
+  const metadataReadonly = locked;
 
   purchaseLinesTableBody.innerHTML = lines.map((line) => {
     const qtyColis = getDisplayValue(line, "ordered_colis", "received_colis");
@@ -763,7 +771,7 @@ const payload = {
 async function addLine() {
   clearFeedback(purchaseLinesFeedback);
 
-  if (isPurchaseLocked()) {
+  if (!isPurchaseEditable()) {
   showFeedback(purchaseLinesFeedback, "Ajout impossible sur cet achat", true);
   return;
 }
@@ -1146,7 +1154,7 @@ function refreshDisplayedPurchaseTotal() {
 async function saveLine(lineId) {
   clearFeedback(purchaseLinesFeedback);
 
-  if (isPurchaseLocked()) {
+  if (!isPurchaseEditable()) {
     showFeedback(purchaseLinesFeedback, "Achat verrouillé", true);
     return;
   }
@@ -1229,7 +1237,7 @@ async function saveLine(lineId) {
 async function deleteLine(lineId) {
   clearFeedback(purchaseLinesFeedback);
 
-  if (isPurchaseLocked()) {
+  if (!isPurchaseEditable()) {
   showFeedback(purchaseLinesFeedback, "Suppression impossible sur cet achat", true);
   return;
 }
@@ -1245,7 +1253,7 @@ async function deleteLine(lineId) {
 }
 
 async function saveLineAndCreateNext(lineId) {
-  if (isPurchaseLocked()) {
+  if (!isPurchaseEditable()) {
   showFeedback(purchaseLinesFeedback, "Action impossible sur cet achat", true);
   return;
 }
@@ -1577,7 +1585,7 @@ if (purchaseStatusInput) {
   purchaseStatusInput.addEventListener("change", () => {
     const selectedStatus = purchaseStatusInput.value;
 
-    if (selectedStatus === "cancelled" && purchase?.status === "received") {
+    if (selectedStatus === "cancelled" && isReceivedPurchaseStatus(purchase?.status)) {
       purchaseStatusInput.value = "ordered";
       showFeedback(
         purchaseHeaderFeedback,

@@ -1,7 +1,24 @@
 const STOCK_BACKED_PURCHASE_STATUSES = new Set(['received', 'received_pending_invoice']);
+const ACCOUNTING_LOCKED_PURCHASE_STATUSES = new Set([
+  'invoice_matched',
+  'invoice_difference',
+  'invoice_validated',
+  'cost_adjusted',
+  'sent_pennylane',
+  'closed',
+]);
+const NON_EDITABLE_PURCHASE_STATUSES = new Set([...ACCOUNTING_LOCKED_PURCHASE_STATUSES, 'cancelled']);
 
 function isStockBackedPurchaseStatus(status) {
   return STOCK_BACKED_PURCHASE_STATUSES.has(String(status || ''));
+}
+
+function isAccountingLockedPurchaseStatus(status) {
+  return ACCOUNTING_LOCKED_PURCHASE_STATUSES.has(String(status || ''));
+}
+
+function isEditablePurchaseStatus(status) {
+  return !NON_EDITABLE_PURCHASE_STATUSES.has(String(status || ''));
 }
 
 function normalizePriceUnit(value) {
@@ -41,7 +58,10 @@ function calculateReceivedStockQuantity(line = {}) {
 
 module.exports = {
   STOCK_BACKED_PURCHASE_STATUSES,
+  ACCOUNTING_LOCKED_PURCHASE_STATUSES,
   calculateReceivedStockQuantity,
+  isAccountingLockedPurchaseStatus,
+  isEditablePurchaseStatus,
   isStockBackedPurchaseStatus,
   purchaseLineUpdateValues,
 };

@@ -111,21 +111,12 @@ function sanitizePurchaseLine(line) {
   };
 }
 
-const ACCOUNTING_LOCKED_PURCHASE_STATUSES = new Set([
-  'invoice_matched',
-  'invoice_difference',
-  'invoice_validated',
-  'cost_adjusted',
-  'sent_pennylane',
-  'closed',
-]);
-
 function isStockBackedPurchase(status) {
   return purchaseReceiptStockSync.isStockBackedPurchaseStatus(status);
 }
 
 function isAccountingLockedPurchase(status) {
-  return ACCOUNTING_LOCKED_PURCHASE_STATUSES.has(String(status || ''));
+  return purchaseReceiptStockSync.isAccountingLockedPurchaseStatus(status);
 }
 
 function businessError(message, status = 400) {
@@ -420,7 +411,29 @@ router.post('/purchases', authenticateToken, attachDbContext, requireAdminOrMana
 
 router.get('/purchases/:id', authenticateToken, attachDbContext, async (req,res)=>{
   try{
-    const p=await req.dbPool.query('SELECT p.*, s.name supplier_name FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id WHERE p.id=$1 AND p.store_id=$2 LIMIT 1',[req.params.id,req.user.store_id]);
+    const p=await req.dbPool.query(`
+      SELECT p.*, s.name supplier_name,
+        EXISTS (
+          SELECT 1
+          FROM supplier_invoice_matches sim
+          JOIN supplier_invoices si ON si.id = sim.supplier_invoice_id AND si.store_id = sim.store_id
+          WHERE sim.store_id = p.store_id
+            AND sim.purchase_id = p.id
+            AND COALESCE(si.status, '') <> 'cancelled'
+        ) AS has_supplier_invoice_link,
+        EXISTS (
+          SELECT 1
+          FROM pennylane_supplier_invoice_match_results mr
+          JOIN pennylane_supplier_invoices psi ON psi.id = mr.supplier_invoice_id AND psi.store_id = mr.store_id
+          WHERE mr.store_id = p.store_id
+            AND mr.purchase_id = p.id
+            AND psi.pennylane_deleted_at IS NULL
+        ) AS has_pennylane_supplier_invoice_link
+      FROM purchases p
+      LEFT JOIN suppliers s ON s.id=p.supplier_id
+      WHERE p.id=$1 AND p.store_id=$2
+      LIMIT 1
+    `,[req.params.id,req.user.store_id]);
     if(!p.rows.length) return res.status(404).json({error:'Achat introuvable'});
     const l=await req.dbPool.query(`SELECT pl.*, a.plu article_plu, a.designation article_name, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number, plm.sanitary_photo_url, CASE WHEN jsonb_typeof(plm.sanitary_photo_urls) = 'array' THEN plm.sanitary_photo_urls WHEN plm.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(plm.sanitary_photo_url) ELSE '[]'::jsonb END AS sanitary_photo_urls, plm.notes metadata_notes FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' WHERE pl.purchase_id=$1 AND pl.store_id=$2 ORDER BY pl.line_number`,[req.params.id,req.user.store_id]);
     res.json({purchase:p.rows[0], lines:l.rows.map(sanitizePurchaseLine)});
