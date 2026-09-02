@@ -2,8 +2,10 @@ const assert = require("assert");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+const { PDFDocument, rgb } = require("pdf-lib");
 
 const importDocument = require("../services/imports/import-document");
+const { renderPdfPagesToPngBase64 } = require("../services/imports/sogelmer-scanned-pdf-ocr");
 const sogelmer = require("../services/imports/parsers/parser-sogelmer");
 
 const recentSogelmerText = `
@@ -48,9 +50,11 @@ async function testRecentLayout() {
 
   assert.strictEqual(result.supplier_name, "SOGELMER");
   assert.strictEqual(result.bl_number, "511-00081150");
+  assert.strictEqual(result.meta.document_date, "02/09/2026");
   assert.strictEqual(result.lines.length, 8);
   assert.strictEqual(result.meta.total_weight, 93.3);
   assert.strictEqual(result.meta.total_amount_ex_vat, 930.12);
+  assert.strictEqual(result.meta.diagnostics.ocr_fallback_used, false);
 
   const expected = [
     ["FILJUL58", "FILET JULIENNE 5/800 GR 3 KG", 5, 15, 11.4, 171],
@@ -75,6 +79,55 @@ async function testRecentLayout() {
   });
 }
 
+async function createImageOnlyPdf(filePath) {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595, 842]);
+  page.drawRectangle({
+    x: 40,
+    y: 120,
+    width: 515,
+    height: 640,
+    color: rgb(0.96, 0.96, 0.96),
+    borderColor: rgb(0, 0, 0),
+    borderWidth: 1,
+  });
+  page.drawRectangle({
+    x: 60,
+    y: 650,
+    width: 475,
+    height: 24,
+    color: rgb(0.75, 0.75, 0.75),
+  });
+  fs.writeFileSync(filePath, await pdf.save());
+}
+
+async function testImagePdfUsesOcrFallback() {
+  const tmpPath = path.join(os.tmpdir(), `sogelmer-image-${Date.now()}.pdf`);
+  await createImageOnlyPdf(tmpPath);
+
+  try {
+    const images = await renderPdfPagesToPngBase64(fs.readFileSync(tmpPath), { maxPages: 1, scale: 1 });
+    assert.strictEqual(images.length, 1);
+    assert.ok(images[0].base64.length > 1000, "PDF image page should render to PNG");
+
+    const result = await importDocument(
+      { path: tmpPath, originalname: "alta maree.pdf" },
+      { import_parser_id: "SOGELMER", sogelmerOcrText: recentSogelmerText }
+    );
+
+    assert.strictEqual(result.ok, true);
+    assert.strictEqual(result.result.bl_number, "511-00081150");
+    assert.strictEqual(result.result.meta.document_date, "02/09/2026");
+    assert.strictEqual(result.result.lines.length, 8);
+    assert.strictEqual(result.result.meta.total_weight, 93.3);
+    assert.strictEqual(result.result.meta.total_amount_ex_vat, 930.12);
+    assert.strictEqual(result.result.meta.diagnostics.ocr_fallback_used, true);
+    assert.strictEqual(result.result.meta.diagnostics.ocr_provider, "test-injected");
+  } finally {
+    fs.unlinkSync(tmpPath);
+  }
+}
+
 async function testLegacyLayout() {
   const result = await sogelmer.parse({
     text: legacySogelmerText,
@@ -88,6 +141,20 @@ async function testLegacyLayout() {
   assert.strictEqual(result.lines[0].fao_zone, "FAO 27");
   assert.strictEqual(result.lines[0].sous_zone, "VIII");
   assert.strictEqual(result.lines[0].fishing_gear, "CHALUT");
+}
+
+async function testDuplicateLineIsIgnored() {
+  const duplicateText = `${recentSogelmerText}
+FILJUL58 FILET JULIENNE 5/800 GR 3 KG 5 3,00 15,00 KG 05050102501 11,40 â‚¬ 171,00 â‚¬
+`;
+  const result = await sogelmer.parse({
+    text: duplicateText,
+    originalname: "sogelmer-duplicate.pdf",
+    ext: ".pdf",
+  });
+
+  assert.strictEqual(result.lines.length, 8);
+  assert.ok(result.warnings.some((warning) => warning.includes("doublon probable")));
 }
 
 async function testUnreadablePdfDoesNotSucceed() {
@@ -108,10 +175,44 @@ async function testUnreadablePdfDoesNotSucceed() {
   }
 }
 
+async function parseRealPdfFromCli() {
+  const pdfIndex = process.argv.indexOf("--pdf");
+  const pdfPath = pdfIndex >= 0 ? process.argv[pdfIndex + 1] : null;
+  if (!pdfPath) return;
+
+  const result = await importDocument(
+    { path: pdfPath, originalname: path.basename(pdfPath), mimetype: "application/pdf" },
+    { import_parser_id: "SOGELMER" }
+  );
+
+  const lines = result.result?.lines || [];
+  const totalWeight = lines.reduce((sum, line) => sum + Number(line.total_weight_kg || 0), 0);
+  const totalAmount = lines.reduce((sum, line) => sum + Number(line.line_amount_ex_vat || 0), 0);
+  const totalColis = lines.reduce((sum, line) => sum + Number(line.ordered_colis || 0), 0);
+
+  console.log(JSON.stringify({
+    ok: result.ok,
+    error: result.error || null,
+    detected_type: result.detected_type,
+    bl_number: result.result?.bl_number || result.result?.meta?.bl_number || null,
+    document_date: result.result?.meta?.document_date || null,
+    line_count: lines.length,
+    total_colis: totalColis,
+    total_weight: Number(totalWeight.toFixed(2)),
+    total_amount_ex_vat: Number(totalAmount.toFixed(2)),
+    warnings: result.result?.warnings || result.warnings || [],
+    diagnostics: result.result?.meta?.diagnostics || {},
+    references: lines.map((line) => line.supplier_reference),
+  }, null, 2));
+}
+
 (async () => {
   await testRecentLayout();
+  await testImagePdfUsesOcrFallback();
   await testLegacyLayout();
+  await testDuplicateLineIsIgnored();
   await testUnreadablePdfDoesNotSucceed();
+  await parseRealPdfFromCli();
   console.log("OK test-sogelmer-import-parser");
 })().catch((error) => {
   console.error(error);

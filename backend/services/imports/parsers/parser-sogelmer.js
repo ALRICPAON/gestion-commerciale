@@ -1,4 +1,5 @@
 const { PDFParse } = require("pdf-parse");
+const { extractScannedSogelmerPdfText } = require("../sogelmer-scanned-pdf-ocr");
 
 const MONEY_TOKEN = "(?:EUR|€|â‚¬)?";
 const NUMBER_TOKEN = "\\d+(?:[,.]\\d+)?";
@@ -71,6 +72,14 @@ function extractBlNumber(text, context = {}) {
 
   const fileMatch = String(context.originalname || context.filename || "").match(/([0-9]{3}-[0-9]{8})/);
   return fileMatch ? fileMatch[1] : null;
+}
+
+function extractDocumentDate(text) {
+  const normalized = normalizeText(text);
+  const match =
+    normalized.match(/\bDATE\s+([0-3]?\d[/-][01]?\d[/-]\d{4})\b/i) ||
+    normalized.match(/\b([0-3]?\d[/-][01]?\d[/-]\d{4})\b/);
+  return match ? match[1].replace(/-/g, "/") : null;
 }
 
 function extractFAOs(bio) {
@@ -267,6 +276,49 @@ function clearBioData(parsed) {
   parsed.engin = "";
 }
 
+function validateParsedRows(rows, source, warnings) {
+  const seen = new Set();
+
+  return rows.filter((line, index) => {
+    const label = `${source} ligne ${index + 1}`;
+    const required = [
+      ["reference", line.refFournisseur],
+      ["designation", line.designation],
+      ["colis", line.colis],
+      ["poids total", line.poidsTotalKg],
+      ["lot", line.lot],
+      ["prix", line.prixKg],
+      ["montant", line.montantHT],
+    ];
+    const missing = required.filter(([, value]) => !value).map(([name]) => name);
+    if (missing.length) {
+      warnings.push(`${label} ignoree: donnees manquantes (${missing.join(", ")})`);
+      return false;
+    }
+
+    const expectedAmount = Number((Number(line.poidsTotalKg || 0) * Number(line.prixKg || 0)).toFixed(2));
+    const actualAmount = Number(Number(line.montantHT || 0).toFixed(2));
+    if (Math.abs(expectedAmount - actualAmount) > 0.06) {
+      warnings.push(`${label} ignoree: montant incoherent (${actualAmount} pour ${line.poidsTotalKg} kg x ${line.prixKg})`);
+      return false;
+    }
+
+    const duplicateKey = [
+      line.refFournisseur,
+      line.lot,
+      Number(line.poidsTotalKg || 0).toFixed(3),
+      Number(line.montantHT || 0).toFixed(2),
+    ].join("|");
+    if (seen.has(duplicateKey)) {
+      warnings.push(`${label} ignoree: doublon probable (${line.refFournisseur} / ${line.lot})`);
+      return false;
+    }
+    seen.add(duplicateKey);
+
+    return true;
+  });
+}
+
 function parseSogelmerText(text) {
   const lines = splitLines(text);
   const rows = [];
@@ -309,6 +361,11 @@ function parseSogelmerText(text) {
 }
 
 function emptySogelmerResult(context, blNumber, warnings) {
+  const finalWarnings = [...new Set([
+    "Aucune ligne article detectee dans le document SOGELMER",
+    ...(warnings || []),
+  ].filter(Boolean))];
+
   return {
     supplier_code: "10003",
     supplier_name: "SOGELMER",
@@ -316,11 +373,90 @@ function emptySogelmerResult(context, blNumber, warnings) {
     document_type: "supplier_bl",
     bl_number: blNumber,
     lines: [],
-    warnings,
+    warnings: finalWarnings,
     meta: {
       bl_number: blNumber,
       detected_from_filename: context.originalname || null,
       parsed_line_count: 0,
+      diagnostics: context.diagnostics || {},
+    },
+  };
+}
+
+function buildSogelmerResult(context, blNumber, documentDate, parsedRows, warnings = [], diagnostics = {}) {
+  const lines = parsedRows.map((L) => {
+    const poidsParColisKg = weightPerColisKg(L.poidsTotalKg, L.colis, L.poidsColisKg);
+
+    return {
+      supplier_reference: L.refFournisseur || null,
+      supplier_label: L.designation || null,
+
+      article_plu: null,
+      designation: L.designation || null,
+      internal_designation: L.designation || null,
+      latin_name: L.nomLatin || null,
+
+      fao_zone: L.zone || null,
+      sous_zone: L.sousZone || null,
+      fao: L.fao || null,
+      fishing_gear: L.engin || null,
+
+      origin_label: "SOGELMER",
+      allergens: null,
+
+      ordered_colis: L.colis || null,
+      ordered_pieces: null,
+      ordered_quantity: poidsParColisKg,
+
+      received_colis: 0,
+      received_pieces: 0,
+      received_quantity: 0,
+
+      unit_price_ex_vat: L.prixKg || null,
+      supplier_unit_price_ex_vat: L.prixKg || null,
+      price_unit: "kg",
+      line_amount_ex_vat: L.montantHT || null,
+
+      supplier_lot_number: L.lot || null,
+      dlc: null,
+
+      line_kind: "TRAD",
+      needs_mapping: true,
+      total_weight_kg: L.poidsTotalKg || null,
+    };
+  });
+
+  const totalWeight = parsedRows.reduce(
+    (sum, line) => sum + Number(line.poidsTotalKg || 0),
+    0
+  );
+
+  const totalAmount = lines.reduce(
+    (sum, line) => sum + Number(line.line_amount_ex_vat || 0),
+    0
+  );
+
+  const finalWarnings = [...new Set(warnings.filter(Boolean))];
+  if (!lines.length) {
+    finalWarnings.unshift("Aucune ligne article detectee dans le document SOGELMER");
+  }
+
+  return {
+    supplier_code: "10003",
+    supplier_name: "SOGELMER",
+    purchase_type: "order",
+    document_type: "supplier_bl",
+    bl_number: blNumber,
+    lines,
+    warnings: finalWarnings,
+    meta: {
+      bl_number: blNumber,
+      document_date: documentDate,
+      detected_from_filename: context.originalname || null,
+      parsed_line_count: lines.length,
+      total_weight: Number(totalWeight.toFixed(3)),
+      total_amount_ex_vat: Number(totalAmount.toFixed(2)),
+      diagnostics,
     },
   };
 }
@@ -345,106 +481,89 @@ const parser = {
 
   async parse(context) {
     let text = "";
+    const warnings = [];
+    const diagnostics = {
+      pdf_text_extraction: "not_run",
+      pdf_text_length: 0,
+      text_lines_detected: 0,
+      ocr_fallback_used: false,
+      ocr_provider: null,
+      ocr_pages: 0,
+      parsed_line_count: 0,
+    };
 
     try {
       text = await extractPdfText(context);
+      diagnostics.pdf_text_extraction = text.trim() ? "ok" : "empty";
+      diagnostics.pdf_text_length = text.length;
     } catch (error) {
-      const blNumber = extractBlNumber("", context);
-      return emptySogelmerResult(context, blNumber, [
-        `Aucune ligne article detectee dans le document SOGELMER`,
-        `Impossible de lire le PDF SOGELMER: ${error.message}`,
-      ]);
+      diagnostics.pdf_text_extraction = "error";
+      warnings.push(`Impossible de lire le texte PDF SOGELMER: ${error.message}`);
     }
+
+    let blNumber = extractBlNumber(text, context);
+    let documentDate = extractDocumentDate(text);
+    let parsedRows = text ? parseSogelmerText(text) : [];
+    diagnostics.text_lines_detected = parsedRows.length;
 
     if (!text) {
-      const blNumber = extractBlNumber("", context);
-      return emptySogelmerResult(context, blNumber, [
-        "Aucune ligne article detectee dans le document SOGELMER",
-        "Texte PDF vide ou non extrait",
-      ]);
+      warnings.push("Texte PDF vide ou non extrait");
     }
 
-    const blNumber = extractBlNumber(text, context);
-    const parsedRows = parseSogelmerText(text);
+    const textValidationWarnings = [];
+    const validatedTextRows = validateParsedRows(parsedRows, "PDF texte SOGELMER", textValidationWarnings);
+    if (validatedTextRows.length) {
+      parsedRows = validatedTextRows;
+      warnings.push(...textValidationWarnings);
+    } else {
+      parsedRows = [];
+    }
 
-    const lines = parsedRows.map((L) => {
-      const poidsParColisKg = weightPerColisKg(L.poidsTotalKg, L.colis, L.poidsColisKg);
+    if (!parsedRows.length) {
+      warnings.push(...textValidationWarnings);
+      try {
+        console.info("[SOGELMER IMPORT] OCR fallback start", {
+          originalname: context.originalname || null,
+          pdf_text_extraction: diagnostics.pdf_text_extraction,
+          pdf_text_length: diagnostics.pdf_text_length,
+        });
+        const ocr = await extractScannedSogelmerPdfText(context);
+        diagnostics.ocr_fallback_used = true;
+        diagnostics.ocr_provider = ocr.provider || "unknown";
+        diagnostics.ocr_pages = ocr.page_count || 0;
+        warnings.push(...(ocr.warnings || []));
 
-      return {
-        supplier_reference: L.refFournisseur || null,
-        supplier_label: L.designation || null,
+        const ocrText = String(ocr.text || "");
+        if (ocrText.trim()) {
+          blNumber = extractBlNumber(ocrText, context) || blNumber;
+          documentDate = extractDocumentDate(ocrText) || documentDate;
+          parsedRows = validateParsedRows(parseSogelmerText(ocrText), "OCR SOGELMER", warnings);
+        } else {
+          warnings.push("OCR SOGELMER: aucun texte exploitable extrait");
+        }
+      } catch (error) {
+        warnings.push(`OCR SOGELMER indisponible: ${error.message}`);
+      }
+    }
 
-        article_plu: null,
-        designation: L.designation || null,
-        internal_designation: L.designation || null,
-        latin_name: L.nomLatin || null,
+    diagnostics.parsed_line_count = parsedRows.length;
 
-        fao_zone: L.zone || null,
-        sous_zone: L.sousZone || null,
-        fao: L.fao || null,
-        fishing_gear: L.engin || null,
-
-        origin_label: "SOGELMER",
-        allergens: null,
-
-        ordered_colis: L.colis || null,
-        ordered_pieces: null,
-        ordered_quantity: poidsParColisKg,
-
-        received_colis: 0,
-        received_pieces: 0,
-        received_quantity: 0,
-
-        unit_price_ex_vat: L.prixKg || null,
-        supplier_unit_price_ex_vat: L.prixKg || null,
-        price_unit: "kg",
-        line_amount_ex_vat: L.montantHT || null,
-
-        supplier_lot_number: L.lot || null,
-        dlc: null,
-
-        line_kind: "TRAD",
-        needs_mapping: true,
-        total_weight_kg: L.poidsTotalKg || null,
-      };
+    console.info("[SOGELMER IMPORT] parse result", {
+      originalname: context.originalname || null,
+      pdf_text_extraction: diagnostics.pdf_text_extraction,
+      ocr_fallback_used: diagnostics.ocr_fallback_used,
+      parsed_line_count: diagnostics.parsed_line_count,
     });
 
-    const totalWeight = parsedRows.reduce(
-      (sum, line) => sum + Number(line.poidsTotalKg || 0),
-      0
-    );
-
-    const totalAmount = lines.reduce(
-      (sum, line) => sum + Number(line.line_amount_ex_vat || 0),
-      0
-    );
-
-    const warnings = [];
-    if (!lines.length) {
-      warnings.push("Aucune ligne article detectee dans le document SOGELMER");
-    }
-
-    return {
-      supplier_code: "10003",
-      supplier_name: "SOGELMER",
-      purchase_type: "order",
-      document_type: "supplier_bl",
-      bl_number: blNumber,
-      lines,
-      warnings,
-      meta: {
-        bl_number: blNumber,
-        detected_from_filename: context.originalname || null,
-        parsed_line_count: lines.length,
-        total_weight: Number(totalWeight.toFixed(3)),
-        total_amount_ex_vat: Number(totalAmount.toFixed(2)),
-      },
-    };
+    context.diagnostics = diagnostics;
+    if (!parsedRows.length) return emptySogelmerResult(context, blNumber, warnings);
+    return buildSogelmerResult(context, blNumber, documentDate, parsedRows, warnings, diagnostics);
   },
 };
 
 parser._private = {
   normalizeRef,
+  extractDocumentDate,
   parseArticleLine,
   parseArticleBlock,
   parseSogelmerText,
