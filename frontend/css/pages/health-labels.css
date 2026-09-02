@@ -164,9 +164,9 @@
   align-content: start;
   box-sizing: border-box;
   display: grid;
-  gap: 1px 3mm;
+  gap: 1px 4mm;
   height: 10mm;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: 30mm 42mm 28mm 28mm;
   left: 2mm;
   min-height: 0;
   overflow: hidden;
@@ -278,7 +278,12 @@
 }
 
 .health-label-tab-shift-down {
-  transform: translateY(1mm);
+  transform: translateY(4mm);
+}
+
+.health-label-tab-lot {
+  max-width: 14mm;
+  transform: translate(-16mm, 4mm);
 }
 
 .health-label-warning {

@@ -136,7 +136,7 @@
       info('DLC/DDM', trace.dlc ? formatDate(trace.dlc) : ''),
     ].join('');
     const tabRight = [
-      info('Lot', labelTrace(label), 'health-label-tab-shift-down'),
+      info('Lot', labelTrace(label), 'health-label-tab-shift-down health-label-tab-lot'),
       info('DATE DE CONDITIONNEMENT', label.conditioning_date_label || formatDate(label.conditioning_date || label.document_date)),
       info('CONSERVATION', label.storage_temperature_label),
       info('MENTION', label.storage_instruction_label),
@@ -398,13 +398,17 @@
       overflow-wrap: anywhere;
     }
     .health-label-tab-shift-down {
-      transform: translateY(1mm);
+      transform: translateY(4mm);
+    }
+    .health-label-tab-lot {
+      max-width: 14mm;
+      transform: translate(-16mm, 4mm);
     }
     .health-label-fixed-trace-bottom {
       align-content: start;
       display: grid;
-      gap: 1px 3mm;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 1px 4mm;
+      grid-template-columns: 30mm 42mm 28mm 28mm;
       height: 10mm;
       left: 2mm;
       min-height: 0;

@@ -233,6 +233,12 @@ function fontHeightsContaining(zpl, text) {
 function hasBoxOutsideZone(zpl, text, zone) {
   return textBoxesContaining(zpl, text).some((box) => !isInsideZone(box, zone));
 }
+function boxesOverlap(a, b) {
+  return a.x < b.x + b.width
+    && a.x + a.width > b.x
+    && a.y < b.y + b.height
+    && a.y + a.height > b.y;
+}
 function boxOriginInZone(box, zone) {
   return box.x >= zone.x
     && box.y >= zone.y
@@ -257,10 +263,12 @@ assertFontInZone(labels[0].zpl, 'Methode: Peche', FIXED_TRACE_TOP_ZONE, 12, 'met
 assertFontInZone(labels[0].zpl, 'ZONE DE PECHE', FIXED_TRACE_TOP_ZONE, 12, 'zone de peche fixe doit etre legerement agrandie');
 assertFontInZone(labels[0].zpl, 'Sous-zone: VIII', FIXED_TRACE_TOP_ZONE, 11, 'sous-zone fixe doit etre legerement agrandie');
 assertFontInZone(labels[0].zpl, 'Engin: Casiers', FIXED_TRACE_TOP_ZONE, 11, 'engin fixe doit etre legerement agrandi');
-assertBoxOffset(labels[0].zpl, 'LANGOUSTINE VIVANTE', DETACHABLE_TAB, 1, 1.5, 'produit languette doit descendre de 1 mm');
-assertBoxOffset(labels[0].zpl, 'ZONE DE PECHE', DETACHABLE_TAB, 40, 1.5, 'zone de peche languette doit descendre de 1 mm');
-assertBoxOffset(labels[0].zpl, 'Lot: LOT-A', DETACHABLE_TAB, 78, 1.5, 'lot languette doit descendre de 1 mm');
-assertBoxOffset(labels[0].zpl, 'DATE DE CONDITIONNEMENT', DETACHABLE_TAB, 78, 4, 'date languette ne doit pas descendre');
+assertBoxOffset(labels[0].zpl, 'LANGOUSTINE VIVANTE', DETACHABLE_TAB, 1, 4.5, 'produit languette doit descendre de 3 mm supplementaires');
+assertBoxOffset(labels[0].zpl, 'ZONE DE PECHE', DETACHABLE_TAB, 40, 4.5, 'zone de peche languette doit descendre de 3 mm supplementaires');
+const tabLotBox = assertBoxOffset(labels[0].zpl, 'Lot: LOT-A', DETACHABLE_TAB, 62, 4.5, 'lot languette doit descendre de 3 mm supplementaires');
+const tabDateBox = assertBoxOffset(labels[0].zpl, 'DATE DE CONDITIONNEMENT', DETACHABLE_TAB, 78, 4, 'date languette ne doit pas descendre');
+assert.strictEqual(tabLotBox.width, dots(14), 'lot languette doit rester dans une zone separee de la date');
+assert(!boxesOverlap(tabLotBox, tabDateBox), 'lot languette descendu ne doit pas chevaucher la date');
 assertBoxOffset(labels[0].zpl, 'DLC/DDM', DETACHABLE_TAB, 40, 11.5, 'DLC languette doit rester a sa position');
 assertFontInZone(labels[0].zpl, 'LANGOUSTINE VIVANTE', DETACHABLE_TAB, 13, 'produit languette doit etre legerement agrandi mais compact');
 assertFontInZone(labels[0].zpl, 'Nephrops norvegicus', DETACHABLE_TAB, 12, 'nom scientifique languette doit etre legerement agrandi');
@@ -270,6 +278,11 @@ assertFontInZone(labels[0].zpl, 'Lot: LOT-A', DETACHABLE_TAB, 12, 'lot languette
 assertFontInZone(labels[0].zpl, 'DATE DE CONDITIONNEMENT', DETACHABLE_TAB, 12, 'date languette doit etre legerement agrandie sans deplacement');
 assertFontInZone(labels[0].zpl, 'Lot: LOT-A', FIXED_TRACE_BOTTOM_ZONE, 13, 'lot fixe bas doit etre legerement agrandi');
 assertFontInZone(labels[0].zpl, 'DATE DE CONDITIONNEMENT', FIXED_TRACE_BOTTOM_ZONE, 13, 'date fixe bas doit etre legerement agrandie');
+const fixedLotBox = assertBoxOffset(labels[0].zpl, 'Lot: LOT-A', FIXED_TRACE_BOTTOM_ZONE, 1, 1, 'lot fixe doit rester a gauche');
+const fixedDateBox = assertBoxOffset(labels[0].zpl, 'DATE DE CONDITIONNEMENT', FIXED_TRACE_BOTTOM_ZONE, 42, 1, 'date fixe doit etre separee au centre');
+assert.strictEqual(fixedLotBox.width, dots(28), 'zone lot fixe doit etre reduite pour garder une marge');
+assert.strictEqual(fixedLotBox.height, 34, 'zone lot fixe doit autoriser 2 lignes sans changer la taille');
+assert(!boxesOverlap(fixedLotBox, fixedDateBox), 'lot fixe et date fixe ne doivent pas avoir de zones chevauchantes');
 zplTextBoxes(labels[0].zpl).forEach((box) => {
   const insideKnownZone = [
     FIXED_TOP_ZONE,
@@ -462,6 +475,27 @@ assertFontInZone(storageLabels[0].zpl, 'MENTION: Conserver entre 3 et 5 degres',
   assert(hasBoxOutsideZone(storageLabels[0].zpl, text, DETACHABLE_TAB), `champ conservation attendu sur la partie fixe: ${text}`);
 });
 
+const longLotLabels = buildHealthLabelModels({
+  document,
+  lines: [{
+    ...baseLine,
+    lots: [{
+      ...baseLine.lots[0],
+      lot_code: 'LOT-INTERFAS-TEST-PHYSIQUE-2026-000000123456',
+      quantity: 30,
+    }],
+  }],
+  storeSettings,
+  copies: 1,
+});
+const longLotBox = textBoxInZone(longLotLabels[0].zpl, 'Lot: LOT-INTERFAS-TEST-PHYSIQUE-2026-000000123456', FIXED_TRACE_BOTTOM_ZONE);
+const longDateBox = textBoxInZone(longLotLabels[0].zpl, 'DATE DE CONDITIONNEMENT', FIXED_TRACE_BOTTOM_ZONE);
+assert(longLotBox, 'lot long attendu dans la zone fixe basse');
+assert(longDateBox, 'date attendue dans la zone fixe basse avec lot long');
+assert.strictEqual(longLotBox.width, dots(28), 'lot long doit rester contraint dans sa zone dediee');
+assert.strictEqual(longLotBox.height, 34, 'lot long doit pouvoir tenir sur 2 lignes dans sa zone');
+assert(!boxesOverlap(longLotBox, longDateBox), 'lot long ne doit pas empiéter sur DATE DE CONDITIONNEMENT');
+
 const singleBoundStorageLabels = buildHealthLabelModels({
   document,
   lines: [{ ...baseLine, storage_temperature_min: 0 }],
@@ -533,6 +567,7 @@ assert(htmlPreview.includes('health-label-product-main'), 'HTML doit distinguer 
 assert(htmlPreview.includes('health-label-weight-main'), 'HTML doit distinguer le poids principal agrandi');
 assert(htmlPreview.includes('health-label-fixed-zone-main'), 'HTML doit descendre seulement le bloc zone fixe');
 assert(htmlPreview.includes('health-label-tab-shift-down'), 'HTML doit descendre seulement les blocs de languette demandes');
+assert(htmlPreview.includes('health-label-tab-lot'), 'HTML doit isoler le lot de languette pour eviter la date');
 assert(htmlPreview.includes('ZONE DE PECHE'), 'la zone de peche doit etre libellee dans le HTML');
 assert(htmlPreview.includes('Atlantique Nord-Est - FAO 27'), 'FAO 27 doit garder le code et afficher son libelle');
 assert(htmlPreview.includes('Sous-zone'), 'la sous-zone doit rester affichee');
@@ -576,7 +611,7 @@ assert(isolatedPrintHtml.includes('left: 30mm'), 'document print doit placer la 
 assert(isolatedPrintHtml.includes('top: 35mm'), 'document print doit placer la languette dans la safe area');
 assert(isolatedPrintHtml.includes('width: 118mm'), 'document print doit utiliser la largeur reelle de languette');
 assert(isolatedPrintHtml.includes('height: 18mm'), 'document print doit utiliser la hauteur sure de languette');
-assert(isolatedPrintHtml.includes('transform: translateY(1mm)'), 'document print doit descendre les blocs de languette demandes de 1 mm');
+assert(isolatedPrintHtml.includes('transform: translateY(4mm)'), 'document print doit descendre les blocs de languette demandes de 3 mm supplementaires');
 assert(isolatedPrintHtml.includes('transform: translateY(3mm)'), 'document print doit descendre le bloc zone fixe de 3 mm');
 assert(isolatedPrintHtml.includes('health-label-fixed-trace-top'), 'document print doit garder la traceabilite en zone fixe haute');
 assert(isolatedPrintHtml.includes('health-label-fixed-trace-bottom'), 'document print doit garder la traceabilite en zone fixe basse');
@@ -603,7 +638,7 @@ assert(healthLabelsCssSource.includes('.health-label-product-main'), 'CSS previe
 assert(healthLabelsCssSource.includes('font-size: 13px'), 'CSS preview doit rendre le produit plus visible');
 assert(healthLabelsCssSource.includes('.health-label-weight-main'), 'CSS preview doit agrandir le poids principal');
 assert(healthLabelsCssSource.includes('font-size: 17px'), 'CSS preview doit rendre la valeur poids beaucoup plus visible');
-assert(healthLabelsCssSource.includes('transform: translateY(1mm)'), 'CSS preview doit descendre les blocs de languette demandes de 1 mm');
+assert(healthLabelsCssSource.includes('transform: translateY(4mm)'), 'CSS preview doit descendre les blocs de languette demandes de 3 mm supplementaires');
 assert(healthLabelsCssSource.includes('transform: translateY(3mm)'), 'CSS preview doit descendre le bloc zone fixe de 3 mm');
 assert(healthLabelsCssSource.includes('font-size: 5.5px'), 'CSS preview doit agrandir legerement les libelles de languette');
 assert(healthLabelsCssSource.includes('font-size: 8px'), 'CSS preview doit agrandir legerement les petits champs fixes');
