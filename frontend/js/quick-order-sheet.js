@@ -11,6 +11,105 @@ if (!sessionToken || !sessionUserRaw) {
 
 const sessionUser = JSON.parse(sessionUserRaw);
 
+function ensureQuickOrderDomShell() {
+  if (document.getElementById('selector-title')) return;
+
+  const main = document.querySelector('main');
+  if (!main) {
+    throw new Error("Fiche d'appel clients: conteneur principal introuvable.");
+  }
+
+  main.className = 'main-content quick-order-layout';
+  main.innerHTML = `
+    <section class="quick-topbar no-print" aria-label="Pilotage fiche d'appel">
+      <div class="quick-date-block">
+        <label for="sheet-date-input">Date</label>
+        <input id="sheet-date-input" type="date" />
+      </div>
+      <div class="quick-title-block">
+        <label for="sheet-note-input">Note</label>
+        <input id="sheet-note-input" type="text" placeholder="Arrivage du jour" />
+      </div>
+      <div class="quick-ref-block">
+        <span>Fiche</span>
+        <strong id="sheet-reference-label">-</strong>
+      </div>
+      <div class="quick-save-state" id="autosave-status">Chargement</div>
+      <div class="page-actions-right">
+        <button id="refresh-data-btn" class="btn btn-secondary" type="button">Actualiser</button>
+        <button id="download-pdf-btn" class="btn btn-secondary" type="button">PDF</button>
+        <button id="print-sheet-btn" class="btn btn-secondary" type="button">Imprimer</button>
+        <button id="generate-orders-btn" class="btn btn-primary" type="button">Generer les commandes</button>
+      </div>
+    </section>
+
+    <div id="page-feedback" class="page-feedback hidden no-print"></div>
+
+    <section class="quick-mode-bar no-print" aria-label="Mode de saisie">
+      <div class="segmented-control" role="tablist" aria-label="Vue fiche d'appel">
+        <button id="client-view-btn" class="segment-button active" type="button" data-view="client">Vue Clients</button>
+        <button id="article-view-btn" class="segment-button" type="button" data-view="article">Vue Articles</button>
+      </div>
+      <div id="quick-summary" class="quick-summary"></div>
+    </section>
+
+    <section class="quick-workspace no-print" aria-label="Saisie des commandes">
+      <aside class="quick-selector-panel">
+        <div class="selector-header">
+          <h2 id="selector-title">Clients</h2>
+          <span id="selector-count">0</span>
+        </div>
+        <input id="primary-search-input" type="search" placeholder="Rechercher" />
+        <div class="quick-filter-tabs" id="primary-filter-tabs">
+          <button class="filter-chip active" type="button" data-filter="all">Tous</button>
+          <button class="filter-chip" type="button" data-filter="with">Avec commande</button>
+          <button class="filter-chip" type="button" data-filter="without">Sans commande</button>
+        </div>
+        <div id="primary-list" class="quick-selector-list" aria-live="polite"></div>
+      </aside>
+
+      <section class="quick-entry-panel">
+        <div class="entry-header">
+          <div>
+            <h2 id="entry-title">Selection</h2>
+            <p id="entry-subtitle">Tous les articles tarifes du jour sont disponibles.</p>
+          </div>
+          <div class="entry-actions">
+            <button id="add-out-of-tariff-btn" class="btn btn-secondary" type="button">Ajouter un article hors tarif</button>
+          </div>
+        </div>
+        <div class="entry-tools">
+          <input id="secondary-search-input" type="search" placeholder="Rechercher" />
+          <div class="quick-filter-tabs" id="secondary-filter-tabs">
+            <button class="filter-chip active" type="button" data-filter="all">Tous</button>
+            <button class="filter-chip" type="button" data-filter="with">Commandes</button>
+            <button class="filter-chip" type="button" data-filter="without">Non commandes</button>
+          </div>
+        </div>
+        <div id="entry-table-wrap" class="entry-table-wrap"></div>
+      </section>
+    </section>
+
+    <section id="action-preview-panel" class="action-preview-panel hidden no-print"></section>
+
+    <section class="print-only print-sheet" id="print-sheet" aria-label="Apercu imprimable">
+      <div class="print-sheet-header">
+        <div>
+          <h1 id="print-title">Fiche d'appel clients</h1>
+          <p id="print-note">Arrivage du jour</p>
+        </div>
+        <div class="print-date-block">
+          <span>Date</span>
+          <strong id="print-date"></strong>
+        </div>
+      </div>
+      <div id="print-table-wrap" class="print-table-wrap"></div>
+    </section>
+  `;
+}
+
+ensureQuickOrderDomShell();
+
 const els = {
   userName: document.getElementById('user-name'),
   backHome: document.getElementById('back-home-btn'),
@@ -202,6 +301,10 @@ function normalizeProduct(product = {}) {
     sale_unit: product.sale_unit || product.price_unit || 'kg',
     price_unit: product.price_unit || product.sale_unit || 'kg',
     stock: product.supplier_available_quantity ?? product.stock ?? '',
+    supplier_id: product.supplier_id || null,
+    purchase_price_ht: product.purchase_price_ht ?? '',
+    transport_cost_ht: product.transport_cost_ht ?? 0,
+    cost_rendered_ht: product.cost_rendered_ht ?? '',
     sale_price_level_1_ht: product.sale_price_level_1_ht ?? '',
     sale_price_level_2_ht: product.sale_price_level_2_ht ?? '',
     sale_price_level_3_ht: product.sale_price_level_3_ht ?? '',
@@ -286,9 +389,12 @@ function saveDraft() {
   localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
 }
 
-function loadDraftForDate(date) {
+function loadDraftForDate(date, serverUpdatedAt = null) {
   const draft = safeJsonParse(localStorage.getItem(DRAFT_STORAGE_KEY), {});
   if (!draft || draft.date !== date) return;
+  const draftSavedAt = Date.parse(draft.savedAt || '');
+  const serverSavedAt = Date.parse(serverUpdatedAt || '');
+  if (Number.isFinite(draftSavedAt) && Number.isFinite(serverSavedAt) && draftSavedAt <= serverSavedAt) return;
   state.entries = draft.entries && typeof draft.entries === 'object' ? draft.entries : state.entries;
   state.view = draft.view === 'article' ? 'article' : 'client';
   state.activeClientId = draft.activeClientId || state.activeClientId;
@@ -327,6 +433,10 @@ function buildSheetPayload() {
       plu: product.plu,
       designation: product.designation,
       price: product.out_of_tariff ? product.price : priceForClient(product, { tariff_level: 1 }),
+      supplier_id: product.supplier_id,
+      purchase_price_ht: product.purchase_price_ht,
+      transport_cost_ht: product.transport_cost_ht,
+      cost_rendered_ht: product.cost_rendered_ht,
       supplier_available_quantity: product.stock,
       stock: product.stock,
       sale_price_level_1_ht: product.sale_price_level_1_ht,
@@ -388,7 +498,7 @@ async function loadSheet() {
   state.isDirtySinceGeneration = false;
   if (els.note) els.note.value = data.sheet?.notes || '';
   if (els.reference) els.reference.textContent = String(data.sheet?.id || '-').slice(0, 8).toUpperCase();
-  loadDraftForDate(date);
+  loadDraftForDate(date, data.sheet?.updated_at);
   if (!state.activeClientId || !state.clients.some((client) => String(client.id) === String(state.activeClientId))) {
     state.activeClientId = state.clients[0]?.id || null;
   }
@@ -722,7 +832,7 @@ function renderGeneratedOrders(result) {
   `);
 }
 
-async function generateOrders() {
+async function generateOrders(forceRegenerate = false) {
   const lines = enteredOrderLines();
   if (!lines.length) {
     showFeedback('Aucune quantite a transformer en commande.', 'error');
@@ -745,6 +855,7 @@ async function generateOrders() {
     const result = await apiSend('/api/quick-order-sheets/generate-orders', {
       ...buildSheetPayload(),
       confirm_generate: true,
+      force_regenerate: forceRegenerate,
     });
     state.sheet.generated_order_ids = result.order_ids || [];
     state.sheet.generated_at = new Date().toISOString();
@@ -759,6 +870,9 @@ async function generateOrders() {
       renderActionPreview('Generation deja existante', `
         <p>${escapeHtml(error.data.error || 'Cette fiche a deja genere des commandes.')}</p>
         ${orderLinksHtml(error.data.orders || [])}
+        <div class="action-preview-actions">
+          <button class="btn btn-primary btn-sm" type="button" data-action="force-regenerate-orders">Recreer les commandes brouillon</button>
+        </div>
       `);
     }
     showFeedback(error.message || 'Erreur generation commandes', 'error');
@@ -930,6 +1044,10 @@ function initEvents() {
     moveToNextInput(input);
   });
   els.actionPreview?.addEventListener('click', (event) => {
+    if (event.target.closest('[data-action="force-regenerate-orders"]')) {
+      const confirmed = window.confirm('Supprimer les commandes brouillon de cette fiche et regenerer avec les saisies actuelles ?');
+      if (confirmed) generateOrders(true);
+    }
     if (event.target.closest('[data-action="open-sales-orders"]')) {
       localStorage.setItem('gc_sales_section', 'orders');
       window.location.href = './sales.html';

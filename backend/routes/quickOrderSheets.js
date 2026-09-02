@@ -610,7 +610,7 @@ function sheetLines(sheet) {
       const product = productByUid.get(String(columnUid));
       if (!product?.article_id) continue;
       const quantity = lineQuantity(entry);
-      if (quantity.packageCount <= 0 && quantity.weightPerPackage <= 0) continue;
+      if (quantity.packageCount <= 0 && quantity.weightPerPackage <= 0 && quantity.pieces <= 0) continue;
       if (quantity.quantity <= 0) continue;
       lines.push({ client, product, entry, ...quantity });
     }
@@ -1069,8 +1069,10 @@ async function fetchGeneratedOrderLineSnapshots(db, storeId, orderIds) {
   const ids = (Array.isArray(orderIds) ? orderIds : []).filter(isUuid);
   if (!ids.length) return [];
   const result = await db.query(
-    `SELECT sales_document_id, delivered_client_id, delivered_client_name_snapshot,
+    `SELECT sales_document_id, article_id, package_count, weight_per_package, total_weight, sold_quantity,
+            delivered_client_id, delivered_client_name_snapshot,
             delivered_client_code_snapshot, delivered_client_store_identifier_snapshot,
+            source_inventory_line ->> 'column_uid' AS column_uid,
             source_inventory_line ->> 'source_client_id' AS source_client_id
      FROM sales_lines
      WHERE store_id = $1 AND sales_document_id = ANY($2::uuid[])
@@ -1091,8 +1093,25 @@ function existingGenerationMatchesGroups(existingOrders, groups, existingLines =
 }
 
 function existingOrderLinesMatchGroup(order, group, existingLines) {
-  if (group.flow !== 'royale_maree') return true;
   const rows = existingLines.filter((line) => String(line.sales_document_id) === String(order.id));
+  if (rows.length !== group.lines.length) return false;
+  const remaining = rows.map((row) => ({ ...row, matched: false }));
+  const numericEquals = (left, right) => Number(left || 0).toFixed(3) === Number(right || 0).toFixed(3);
+  for (const line of group.lines) {
+    const match = remaining.find((row) => (
+      !row.matched
+      && String(row.article_id) === String(line.article.id)
+      && numericEquals(row.package_count, line.packageCount)
+      && numericEquals(row.weight_per_package, line.weightPerPackage)
+      && numericEquals(row.total_weight ?? row.sold_quantity, line.quantity)
+      && (!row.column_uid || String(row.column_uid) === String(line.product.uid))
+      && (!row.source_client_id || String(row.source_client_id) === String(line.client.id))
+    ));
+    if (!match) return false;
+    match.matched = true;
+  }
+
+  if (group.flow !== 'royale_maree') return true;
   const expectedByClient = new Map();
   for (const line of group.lines) {
     const sourceClientId = String(line.client.id);
