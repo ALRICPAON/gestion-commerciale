@@ -208,7 +208,8 @@ function normalizeProduct(product = {}) {
     pricing_session_id: product.pricing_session_id || null,
     pricing_line_id: product.pricing_line_id || null,
     tariff_prices: Array.isArray(product.tariff_prices) ? product.tariff_prices : [],
-    out_of_tariff: product.out_of_tariff === true || !product.pricing_line_id,
+    removed_from_current_pricing: product.removed_from_current_pricing === true,
+    out_of_tariff: product.out_of_tariff === true || product.removed_from_current_pricing === true || !product.pricing_line_id,
     price: product.price ?? product.sale_price_level_1_ht ?? '',
     display_order: Number(product.display_order || 0),
   };
@@ -339,6 +340,7 @@ function buildSheetPayload() {
       pricing_line_id: product.pricing_line_id,
       tariff_prices: product.tariff_prices,
       out_of_tariff: product.out_of_tariff === true,
+      removed_from_current_pricing: product.removed_from_current_pricing === true,
       display_order: product.display_order || index + 1,
     })),
     entries: state.entries,
@@ -468,7 +470,11 @@ function renderPrimaryList() {
     const title = state.view === 'client' ? (item.name || item.legal_name || 'Client') : item.designation;
     const meta = state.view === 'client'
       ? [item.code, item.city, item.store_identifier].filter(Boolean).join(' - ')
-      : [item.plu, item.out_of_tariff ? 'hors tarif' : 'tarification', item.family_name].filter(Boolean).join(' - ');
+      : [
+          item.plu,
+          item.removed_from_current_pricing ? 'retire de la tarification actuelle' : (item.out_of_tariff ? 'hors tarif' : 'tarification'),
+          item.family_name,
+        ].filter(Boolean).join(' - ');
     return `
       <button class="selector-row ${active ? 'active' : ''}" type="button" data-id="${escapeHtml(id)}">
         <span>
@@ -527,7 +533,7 @@ function renderClientViewTable(client) {
             <tr class="${entryQuantity(entry) > 0 ? 'row-has-order' : ''}">
               <th>
                 <strong>${escapeHtml(product.designation)}</strong>
-                <small>${escapeHtml([product.plu, product.out_of_tariff ? 'hors tarif' : 'tarif publie'].filter(Boolean).join(' - '))}</small>
+                <small>${escapeHtml([product.plu, product.removed_from_current_pricing ? 'retire de la tarification actuelle' : (product.out_of_tariff ? 'hors tarif' : 'tarif publie')].filter(Boolean).join(' - '))}</small>
               </th>
               <td class="num">${escapeHtml(money(priceForClient(product, client)) || '-')}</td>
               <td class="num">${escapeHtml(compactNumber(product.stock))}</td>
@@ -550,7 +556,11 @@ function renderArticleViewTable(product) {
     return;
   }
   els.entryTitle.textContent = product.designation;
-  els.entrySubtitle.textContent = [product.plu, product.out_of_tariff ? 'Article hors tarif' : 'Tarification publiee', product.family_name].filter(Boolean).join(' - ');
+  els.entrySubtitle.textContent = [
+    product.plu,
+    product.removed_from_current_pricing ? 'Retire de la tarification actuelle' : (product.out_of_tariff ? 'Article hors tarif' : 'Tarification publiee'),
+    product.family_name,
+  ].filter(Boolean).join(' - ');
   if (!clients.length) {
     els.entryTable.innerHTML = '<div class="empty-list">Aucun client pour cette recherche.</div>';
     return;
