@@ -47,6 +47,7 @@ async function generateToolCall({ messages, tools, toolChoice }) {
 }
 
 module.exports = {
+  getOpenAIClient,
   generateAnswer,
   generateToolCall,
 };
