@@ -62,6 +62,26 @@ async function importDocument(file, options = {}) {
 
   const parsed = await detectedParser.parse(context);
   const normalized = normalizeImportOutput(parsed);
+  const warnings = Array.isArray(normalized.warnings) ? normalized.warnings : [];
+
+  if (!normalized.lines.length) {
+    const error =
+      detectedParser.id === "SOGELMER"
+        ? "Aucune ligne article détectée dans le document SOGELMER"
+        : "Aucune ligne article détectée dans le document";
+
+    return {
+      ok: false,
+      error,
+      detected_type: detectedParser.id,
+      detected_label: detectedParser.label,
+      candidates: [],
+      result: normalized,
+      warnings,
+      preview_rows: context.previewRows,
+      sheet_names: context.sheetNames,
+    };
+  }
 
   return {
     ok: true,

@@ -35,6 +35,7 @@ function normalizeImportOutput(raw) {
   return {
     supplier_code: raw?.supplier_code || null,
     supplier_name: raw?.supplier_name || null,
+    bl_number: raw?.bl_number || raw?.meta?.bl_number || null,
     purchase_type: raw?.purchase_type || "direct_bl",
     document_type: raw?.document_type || "supplier_bl",
     lines: Array.isArray(raw?.lines) ? raw.lines.map(normalizeLine) : [],
