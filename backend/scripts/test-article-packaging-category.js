@@ -106,7 +106,7 @@ function main() {
   includes('frontend/js/sale-stock-negative-flow.js', 'article_category=product', 'flux vente stock negatif doit demander les produits');
   includes('frontend/sale-detail.html', './js/sale-stock-negative-flow.js?v=4', 'cache-buster flux stock negatif attendu');
   includes('frontend/js/quick-order-sheet.js', "article_category: 'product'", 'commande rapide doit demander les produits');
-  includes('frontend/quick-order-sheet.html', './js/quick-order-sheet.js?v=8', 'cache-buster commande rapide attendu');
+  includes('frontend/quick-order-sheet.html', './js/quick-order-sheet.js?v=9', 'cache-buster commande rapide attendu');
 
   includes('backend/routes/transformations.js', "COALESCE(a.article_category, 'product') = 'product'", 'transformation doit filtrer les produits');
   includes('backend/routes/transformationUpdate.js', "COALESCE(article_category, 'product') = 'product'", 'update transformation doit filtrer les produits');
