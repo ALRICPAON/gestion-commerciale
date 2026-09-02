@@ -128,6 +128,54 @@ async function testImagePdfUsesOcrFallback() {
   }
 }
 
+async function testOcrTotalsMismatchDoesNotSucceed() {
+  const tmpPath = path.join(os.tmpdir(), `sogelmer-image-mismatch-${Date.now()}.pdf`);
+  await createImageOnlyPdf(tmpPath);
+
+  const ocrTextWithBadLastAmount = recentSogelmerText.replace(
+    /(JOUEL0 JOUE LOTTE 3 KG 2 3,00 6,00 KG 05050102508 16,40\s+\S+\s+)98,40(\s+\S+)/,
+    "$199,99$2"
+  );
+
+  try {
+    const result = await importDocument(
+      { path: tmpPath, originalname: "alta maree.pdf" },
+      {
+        import_parser_id: "SOGELMER",
+        sogelmerOcrExtractor: async () => ({
+          text: ocrTextWithBadLastAmount,
+          warnings: [],
+          raw_lines: [
+            { index: 1, supplier_reference: "FILJUL58", designation: "FILET JULIENNE 5/800 GR 3 KG", colis: 5, poids_total_kg: "15,00", prix_kg: "11,40", montant_ht: "171,00", supplier_lot_number: "05050102501" },
+            { index: 2, supplier_reference: "FILLINB5", designation: "FILET LINGUE BLEUE 500/1000 3 KG", colis: 5, poids_total_kg: "15,00", prix_kg: "11,20", montant_ht: "168,00", supplier_lot_number: "05050102502" },
+            { index: 3, supplier_reference: "FILMOST7", designation: "FILET MOSTELLE DE FOND 2400 GR 3KG", colis: 3, poids_total_kg: "9,00", prix_kg: "7,40", montant_ht: "66,60", supplier_lot_number: "05050102503" },
+            { index: 4, supplier_reference: "RAI25001", designation: "AILE RAIE 2/500 GR PELE 1F 3 KG", colis: 3, poids_total_kg: "9,00", prix_kg: "9,40", montant_ht: "84,60", supplier_lot_number: "05050102504" },
+            { index: 5, supplier_reference: "QLO2500/", designation: "QUEUE LOTTE 200/500 GR 3 KG", colis: 3, poids_total_kg: "9,00", prix_kg: "13,40", montant_ht: "120,60", supplier_lot_number: "05050102505" },
+            { index: 6, supplier_reference: "FILEG120", designation: "FILET EGLEFIN 100/200 GR 3 KG", colis: 3, poids_total_kg: "9,00", prix_kg: "9,40", montant_ht: "84,60", supplier_lot_number: "05050102506" },
+            { index: 7, supplier_reference: "MERLU12", designation: "MERLU 1/2 KG 10KG", colis: 2, poids_total_kg: "21,30", prix_kg: "6,40", montant_ht: "136,32", supplier_lot_number: "05050102507" },
+            { index: 8, supplier_reference: "JOUEL0", designation: "JOUE LOTTE 3 KG", colis: 2, poids_total_kg: "6,00", prix_kg: "16,40", montant_ht: "99,99", supplier_lot_number: "05050102508" },
+          ],
+          document_totals: { colis: "26", poids_total_kg: "93,30", montant_ht: "930,12" },
+          page_count: 1,
+          provider: "test-ocr",
+        }),
+      }
+    );
+
+    assert.strictEqual(result.ok, false);
+    assert.strictEqual(result.result.lines.length, 7);
+    assert.strictEqual(result.result.meta.import_complete, false);
+    assert.strictEqual(result.result.meta.diagnostics.totals_check.ok, false);
+    assert.strictEqual(result.result.meta.diagnostics.ocr_raw_lines.length, 8);
+    assert.ok(result.result.meta.diagnostics.rejected_lines.some((line) => (
+      line.supplier_reference === "JOUEL0" && line.reason.includes("montant incoherent")
+    )));
+    assert.ok(result.error.includes("Import SOGELMER incomplet"));
+  } finally {
+    fs.unlinkSync(tmpPath);
+  }
+}
+
 async function testLegacyLayout() {
   const result = await sogelmer.parse({
     text: legacySogelmerText,
@@ -209,6 +257,7 @@ async function parseRealPdfFromCli() {
 (async () => {
   await testRecentLayout();
   await testImagePdfUsesOcrFallback();
+  await testOcrTotalsMismatchDoesNotSucceed();
   await testLegacyLayout();
   await testDuplicateLineIsIgnored();
   await testUnreadablePdfDoesNotSucceed();

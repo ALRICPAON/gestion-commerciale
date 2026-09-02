@@ -276,11 +276,28 @@ function clearBioData(parsed) {
   parsed.engin = "";
 }
 
-function validateParsedRows(rows, source, warnings) {
+function validationLineSnapshot(line, index, source) {
+  return {
+    source,
+    index: index + 1,
+    supplier_reference: line.refFournisseur || null,
+    designation: line.designation || null,
+    colis: line.colis || null,
+    poids_colis_kg: line.poidsColisKg || null,
+    poids_total_kg: line.poidsTotalKg || null,
+    uv: line.uv || null,
+    supplier_lot_number: line.lot || null,
+    prix_kg: line.prixKg || null,
+    montant_ht: line.montantHT || null,
+  };
+}
+
+function validateParsedRows(rows, source, warnings, diagnostics = null) {
   const seen = new Set();
 
   return rows.filter((line, index) => {
     const label = `${source} ligne ${index + 1}`;
+    const snapshot = validationLineSnapshot(line, index, source);
     const required = [
       ["reference", line.refFournisseur],
       ["designation", line.designation],
@@ -292,14 +309,18 @@ function validateParsedRows(rows, source, warnings) {
     ];
     const missing = required.filter(([, value]) => !value).map(([name]) => name);
     if (missing.length) {
-      warnings.push(`${label} ignoree: donnees manquantes (${missing.join(", ")})`);
+      const reason = `donnees manquantes (${missing.join(", ")})`;
+      warnings.push(`${label} ignoree: ${reason}`);
+      diagnostics?.rejected_lines?.push({ ...snapshot, reason });
       return false;
     }
 
     const expectedAmount = Number((Number(line.poidsTotalKg || 0) * Number(line.prixKg || 0)).toFixed(2));
     const actualAmount = Number(Number(line.montantHT || 0).toFixed(2));
     if (Math.abs(expectedAmount - actualAmount) > 0.06) {
-      warnings.push(`${label} ignoree: montant incoherent (${actualAmount} pour ${line.poidsTotalKg} kg x ${line.prixKg})`);
+      const reason = `montant incoherent (${actualAmount} pour ${line.poidsTotalKg} kg x ${line.prixKg})`;
+      warnings.push(`${label} ignoree: ${reason}`);
+      diagnostics?.rejected_lines?.push({ ...snapshot, reason, expected_amount: expectedAmount, actual_amount: actualAmount });
       return false;
     }
 
@@ -310,12 +331,99 @@ function validateParsedRows(rows, source, warnings) {
       Number(line.montantHT || 0).toFixed(2),
     ].join("|");
     if (seen.has(duplicateKey)) {
-      warnings.push(`${label} ignoree: doublon probable (${line.refFournisseur} / ${line.lot})`);
+      const reason = `doublon probable (${line.refFournisseur} / ${line.lot})`;
+      warnings.push(`${label} ignoree: ${reason}`);
+      diagnostics?.rejected_lines?.push({ ...snapshot, reason });
       return false;
     }
     seen.add(duplicateKey);
+    diagnostics?.accepted_lines?.push(snapshot);
 
     return true;
+  });
+}
+
+function ocrTotalNumber(value) {
+  return parseNumber(value);
+}
+
+function summarizeParsedRows(rows) {
+  return {
+    colis: Number(rows.reduce((sum, line) => sum + Number(line.colis || 0), 0).toFixed(3)),
+    poids_total_kg: Number(rows.reduce((sum, line) => sum + Number(line.poidsTotalKg || 0), 0).toFixed(3)),
+    montant_ht: Number(rows.reduce((sum, line) => sum + Number(line.montantHT || 0), 0).toFixed(2)),
+  };
+}
+
+function compareTotals(documentTotals, parsedRows, warnings) {
+  if (!documentTotals || typeof documentTotals !== "object") return null;
+
+  const expected = {
+    colis: ocrTotalNumber(documentTotals.colis || documentTotals.total_colis),
+    poids_total_kg: ocrTotalNumber(documentTotals.poids_total_kg || documentTotals.total_weight_kg || documentTotals.poids),
+    montant_ht: ocrTotalNumber(documentTotals.montant_ht || documentTotals.total_amount_ex_vat || documentTotals.total_ht),
+  };
+  const actual = summarizeParsedRows(parsedRows);
+  const diff = {
+    colis: Number((actual.colis - expected.colis).toFixed(3)),
+    poids_total_kg: Number((actual.poids_total_kg - expected.poids_total_kg).toFixed(3)),
+    montant_ht: Number((actual.montant_ht - expected.montant_ht).toFixed(2)),
+  };
+
+  const mismatches = [];
+  if (expected.colis && Math.abs(diff.colis) > 0.001) mismatches.push(`colis ${actual.colis}/${expected.colis}`);
+  if (expected.poids_total_kg && Math.abs(diff.poids_total_kg) > 0.02) mismatches.push(`poids ${actual.poids_total_kg}/${expected.poids_total_kg}`);
+  if (expected.montant_ht && Math.abs(diff.montant_ht) > 0.06) mismatches.push(`HT ${actual.montant_ht}/${expected.montant_ht}`);
+
+  if (mismatches.length) {
+    warnings.push(`Import SOGELMER potentiellement incomplet: totaux lignes differents du document (${mismatches.join(", ")})`);
+  }
+
+  return { expected, actual, diff, ok: mismatches.length === 0 };
+}
+
+function sameOcrLine(raw, parsed) {
+  if (!raw || !parsed) return false;
+  const rawRef = normalizeRef(raw.supplier_reference);
+  const parsedRef = normalizeRef(parsed.supplier_reference);
+  const rawLot = normalizeText(raw.supplier_lot_number || raw.lot);
+  const parsedLot = normalizeText(parsed.supplier_lot_number || parsed.lot);
+
+  if (rawRef && parsedRef && rawRef === parsedRef) {
+    return !rawLot || !parsedLot || rawLot === parsedLot;
+  }
+
+  const rawText = normalizeText(raw.source_text || raw.designation);
+  const parsedDesignation = normalizeText(parsed.designation);
+  return Boolean(rawText && parsedDesignation && rawText.includes(parsedDesignation));
+}
+
+function addUnparsedOcrDiagnostics(diagnostics, warnings) {
+  if (!diagnostics?.ocr_raw_lines?.length) return;
+
+  diagnostics.ocr_raw_lines.forEach((raw, index) => {
+    const known = [...(diagnostics.accepted_lines || []), ...(diagnostics.rejected_lines || [])]
+      .some((line) => sameOcrLine(raw, line));
+    if (known) return;
+
+    const reason = "ligne OCR incomplete ou non parseable";
+    const snapshot = {
+      source: "OCR SOGELMER",
+      index: raw.index || index + 1,
+      supplier_reference: raw.supplier_reference || null,
+      designation: raw.designation || null,
+      colis: raw.colis || null,
+      poids_colis_kg: raw.poids_colis_kg || null,
+      poids_total_kg: raw.poids_total_kg || null,
+      uv: raw.uv || null,
+      supplier_lot_number: raw.supplier_lot_number || raw.lot || null,
+      prix_kg: raw.prix_kg || null,
+      montant_ht: raw.montant_ht || null,
+      source_text: raw.source_text || null,
+      reason,
+    };
+    diagnostics.rejected_lines.push(snapshot);
+    warnings.push(`OCR SOGELMER ligne ${snapshot.index} ignoree: ${reason}`);
   });
 }
 
@@ -378,6 +486,7 @@ function emptySogelmerResult(context, blNumber, warnings) {
       bl_number: blNumber,
       detected_from_filename: context.originalname || null,
       parsed_line_count: 0,
+      import_complete: false,
       diagnostics: context.diagnostics || {},
     },
   };
@@ -454,6 +563,7 @@ function buildSogelmerResult(context, blNumber, documentDate, parsedRows, warnin
       document_date: documentDate,
       detected_from_filename: context.originalname || null,
       parsed_line_count: lines.length,
+      import_complete: diagnostics.totals_check ? diagnostics.totals_check.ok === true : true,
       total_weight: Number(totalWeight.toFixed(3)),
       total_amount_ex_vat: Number(totalAmount.toFixed(2)),
       diagnostics,
@@ -490,6 +600,11 @@ const parser = {
       ocr_provider: null,
       ocr_pages: 0,
       parsed_line_count: 0,
+      ocr_raw_lines: [],
+      accepted_lines: [],
+      rejected_lines: [],
+      document_totals: null,
+      totals_check: null,
     };
 
     try {
@@ -511,7 +626,7 @@ const parser = {
     }
 
     const textValidationWarnings = [];
-    const validatedTextRows = validateParsedRows(parsedRows, "PDF texte SOGELMER", textValidationWarnings);
+    const validatedTextRows = validateParsedRows(parsedRows, "PDF texte SOGELMER", textValidationWarnings, diagnostics);
     if (validatedTextRows.length) {
       parsedRows = validatedTextRows;
       warnings.push(...textValidationWarnings);
@@ -531,15 +646,21 @@ const parser = {
         diagnostics.ocr_fallback_used = true;
         diagnostics.ocr_provider = ocr.provider || "unknown";
         diagnostics.ocr_pages = ocr.page_count || 0;
+        diagnostics.ocr_raw_lines = ocr.raw_lines || [];
+        diagnostics.document_totals = ocr.document_totals || null;
         warnings.push(...(ocr.warnings || []));
 
         const ocrText = String(ocr.text || "");
         if (ocrText.trim()) {
           blNumber = extractBlNumber(ocrText, context) || blNumber;
           documentDate = extractDocumentDate(ocrText) || documentDate;
-          parsedRows = validateParsedRows(parseSogelmerText(ocrText), "OCR SOGELMER", warnings);
+          diagnostics.accepted_lines = [];
+          diagnostics.rejected_lines = [];
+          parsedRows = validateParsedRows(parseSogelmerText(ocrText), "OCR SOGELMER", warnings, diagnostics);
+          addUnparsedOcrDiagnostics(diagnostics, warnings);
         } else {
           warnings.push("OCR SOGELMER: aucun texte exploitable extrait");
+          addUnparsedOcrDiagnostics(diagnostics, warnings);
         }
       } catch (error) {
         warnings.push(`OCR SOGELMER indisponible: ${error.message}`);
@@ -547,6 +668,7 @@ const parser = {
     }
 
     diagnostics.parsed_line_count = parsedRows.length;
+    diagnostics.totals_check = compareTotals(diagnostics.document_totals, parsedRows, warnings);
 
     console.info("[SOGELMER IMPORT] parse result", {
       originalname: context.originalname || null,

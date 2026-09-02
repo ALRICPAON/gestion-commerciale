@@ -12,6 +12,7 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.3.1",
@@ -23,6 +24,7 @@
     "nodemailer": "^6.9.16",
     "openai": "^4.104.0",
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.296",
     "pdf-parse": "^2.4.5",
     "pg": "^8.20.0",
     "puppeteer": "^24.31.0",
