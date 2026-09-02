@@ -316,9 +316,13 @@ function numOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function isReceivedPurchaseStatus(status) {
+  return ["received", "received_pending_invoice", "closed"].includes(status);
+}
+
 function apiQuantityFieldBase() {
   const realStatus = purchase?.status || "ordered";
-  if (realStatus === "received" || realStatus === "closed") {
+  if (isReceivedPurchaseStatus(realStatus)) {
     return "received";
   }
   return "ordered";
@@ -327,7 +331,7 @@ function apiQuantityFieldBase() {
 function getModeLabel() {
   const realStatus = purchase?.status || "ordered";
 
-  if (realStatus === "received") {
+  if (realStatus === "received" || realStatus === "received_pending_invoice") {
   return "Achat réceptionné : correction encore autorisée tant que l'achat n'est pas clôturé.";
 }
 
@@ -343,7 +347,7 @@ function getModeLabel() {
 }
 
 function getDisplayedHeaderStatus(realStatus) {
-  if (realStatus === "received" || realStatus === "closed") {
+  if (isReceivedPurchaseStatus(realStatus)) {
     return "ordered";
   }
 
@@ -385,7 +389,7 @@ function syncHeaderStatusUi() {
   addLineBtn.disabled = locked;
   validateReceptionBtn.disabled = realStatus !== "ordered";
 
-  if (realStatus === "received") {
+  if (realStatus === "received" || realStatus === "received_pending_invoice") {
   linesModeLabel.textContent = "Achat réceptionné : correction encore autorisée tant que l'achat n'est pas clôturé.";
 }else if (realStatus === "closed") {
     linesModeLabel.textContent = "Achat clôturé : aucune modification autorisée.";
@@ -646,7 +650,7 @@ function renderLinesTable() {
   }
 
   const locked = isPurchaseLocked();
-const receivedView = purchase?.status === "closed";
+const receivedView = isReceivedPurchaseStatus(purchase?.status);
 const metadataReadonly = purchase?.status === "closed" || purchase?.status === "cancelled";
 
   purchaseLinesTableBody.innerHTML = lines.map((line) => {

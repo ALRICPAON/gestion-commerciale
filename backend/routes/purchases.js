@@ -8,6 +8,7 @@ const { requireAdminOrManager } = require('../middleware/authorization');
 const importDocument = require('../services/imports/import-document');
 const { recomputeArticleStock } = require('../services/stockService');
 const supplierArticleMappings = require('../services/supplierArticleMappingService');
+const purchaseReceiptStockSync = require('../services/purchaseReceiptStockSync');
 
 const router = express.Router();
 const IMPORTS_ROOT = path.join(__dirname, '..', 'uploads', 'imports');
@@ -110,7 +111,6 @@ function sanitizePurchaseLine(line) {
   };
 }
 
-const STOCK_BACKED_PURCHASE_STATUSES = new Set(['received', 'received_pending_invoice']);
 const ACCOUNTING_LOCKED_PURCHASE_STATUSES = new Set([
   'invoice_matched',
   'invoice_difference',
@@ -121,7 +121,7 @@ const ACCOUNTING_LOCKED_PURCHASE_STATUSES = new Set([
 ]);
 
 function isStockBackedPurchase(status) {
-  return STOCK_BACKED_PURCHASE_STATUSES.has(String(status || ''));
+  return purchaseReceiptStockSync.isStockBackedPurchaseStatus(status);
 }
 
 function isAccountingLockedPurchase(status) {
@@ -528,8 +528,10 @@ router.patch('/purchase-lines/:id', authenticateToken, attachDbContext, requireA
     const article=await resolveArticle(client, req.user.store_id, req.body) || (chk.rows[0].article_id ? {id:chk.rows[0].article_id}: null);
     if(!article?.id){await client.query('ROLLBACK'); return res.status(400).json({error:'Article introuvable'});}
     const merged={...chk.rows[0],...req.body, price_unit:normalizePriceUnit(req.body.price_unit||chk.rows[0].price_unit)};
-    const amount=lineAmount(merged, isStockBackedPurchase(chk.rows[0].purchase_status));
-    const r=await client.query(`UPDATE purchase_lines SET article_id=$1, ordered_colis=$2, ordered_pieces=$3, ordered_quantity=$4, received_colis=$5, received_pieces=$6, received_quantity=$7, unit_price_ex_vat=$8, price_unit=$9, line_amount_ex_vat=$10, updated_at=NOW() WHERE id=$11 RETURNING *`,[article.id,req.body.ordered_colis??chk.rows[0].ordered_colis,req.body.ordered_pieces??chk.rows[0].ordered_pieces,req.body.ordered_quantity??chk.rows[0].ordered_quantity,req.body.received_colis??chk.rows[0].received_colis,req.body.received_pieces??chk.rows[0].received_pieces,req.body.received_quantity??chk.rows[0].received_quantity,req.body.unit_price_ex_vat??chk.rows[0].unit_price_ex_vat,merged.price_unit,amount,req.params.id]);
+    const stockBacked=isStockBackedPurchase(chk.rows[0].purchase_status);
+    const quantities=purchaseReceiptStockSync.purchaseLineUpdateValues(req.body,chk.rows[0],stockBacked);
+    const amount=lineAmount({...merged,...quantities}, stockBacked);
+    const r=await client.query(`UPDATE purchase_lines SET article_id=$1, ordered_colis=$2, ordered_pieces=$3, ordered_quantity=$4, received_colis=$5, received_pieces=$6, received_quantity=$7, unit_price_ex_vat=$8, price_unit=$9, line_amount_ex_vat=$10, updated_at=NOW() WHERE id=$11 RETURNING *`,[article.id,quantities.ordered_colis,quantities.ordered_pieces,quantities.ordered_quantity,quantities.received_colis,quantities.received_pieces,quantities.received_quantity,req.body.unit_price_ex_vat??chk.rows[0].unit_price_ex_vat,merged.price_unit,amount,req.params.id]);
     const hasPhotoUrls = Object.prototype.hasOwnProperty.call(req.body, 'sanitary_photo_urls');
     const hasPrimaryPhoto = Boolean(toNullableString(req.body.sanitary_photo_url));
     const normalizedPhotoUrls = hasPhotoUrls || hasPrimaryPhoto ? normalizeSanitaryPhotoUrls(req.body.sanitary_photo_urls, req.body.sanitary_photo_url, { purchase_line_id: req.params.id }) : null;
@@ -549,8 +551,10 @@ router.patch('/purchase-lines/:id', authenticateToken, attachDbContext, requireA
     const article=await resolveArticle(client, req.user.store_id, req.body) || (chk.rows[0].article_id ? {id:chk.rows[0].article_id}: null);
     if(!article?.id){await client.query('ROLLBACK'); return res.status(400).json({error:'Article introuvable'});}
     const merged={...chk.rows[0],...req.body, price_unit:normalizePriceUnit(req.body.price_unit||chk.rows[0].price_unit)};
-    const amount=lineAmount(merged, chk.rows[0].purchase_status==='received');
-    const r=await client.query(`UPDATE purchase_lines SET article_id=$1, ordered_colis=$2, ordered_pieces=$3, ordered_quantity=$4, received_colis=$5, received_pieces=$6, received_quantity=$7, unit_price_ex_vat=$8, price_unit=$9, line_amount_ex_vat=$10, updated_at=NOW() WHERE id=$11 RETURNING *`,[article.id,req.body.ordered_colis??chk.rows[0].ordered_colis,req.body.ordered_pieces??chk.rows[0].ordered_pieces,req.body.ordered_quantity??chk.rows[0].ordered_quantity,req.body.received_colis??chk.rows[0].received_colis,req.body.received_pieces??chk.rows[0].received_pieces,req.body.received_quantity??chk.rows[0].received_quantity,req.body.unit_price_ex_vat??chk.rows[0].unit_price_ex_vat,merged.price_unit,amount,req.params.id]);
+    const stockBacked=isStockBackedPurchase(chk.rows[0].purchase_status);
+    const quantities=purchaseReceiptStockSync.purchaseLineUpdateValues(req.body,chk.rows[0],stockBacked);
+    const amount=lineAmount({...merged,...quantities}, stockBacked);
+    const r=await client.query(`UPDATE purchase_lines SET article_id=$1, ordered_colis=$2, ordered_pieces=$3, ordered_quantity=$4, received_colis=$5, received_pieces=$6, received_quantity=$7, unit_price_ex_vat=$8, price_unit=$9, line_amount_ex_vat=$10, updated_at=NOW() WHERE id=$11 RETURNING *`,[article.id,quantities.ordered_colis,quantities.ordered_pieces,quantities.ordered_quantity,quantities.received_colis,quantities.received_pieces,quantities.received_quantity,req.body.unit_price_ex_vat??chk.rows[0].unit_price_ex_vat,merged.price_unit,amount,req.params.id]);
     const hasPhotoUrls = Object.prototype.hasOwnProperty.call(req.body, 'sanitary_photo_urls');
     const hasPrimaryPhoto = Boolean(toNullableString(req.body.sanitary_photo_url));
     const normalizedPhotoUrls = hasPhotoUrls || hasPrimaryPhoto ? normalizeSanitaryPhotoUrls(req.body.sanitary_photo_urls, req.body.sanitary_photo_url, { purchase_line_id: req.params.id }) : null;
