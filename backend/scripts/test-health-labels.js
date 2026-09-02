@@ -11,6 +11,7 @@ const {
   FIXED_TRACE_TOP_ZONE,
   FOOTER_ZONE,
   LABEL_DOTS,
+  FIXED_TOP_ZONE,
   LABEL_HEIGHT_DOTS,
   LABEL_HEIGHT_MM,
   LABEL_VISUAL_HEIGHT_DOTS,
@@ -60,7 +61,7 @@ const storeSettings = {
 const baseLine = {
   id: 'line-1',
   line_number: 1,
-  article_label: 'LANGOUSTINE VIVANTE',
+  article_label: 'LANGOUSTINE VIVANTE 25/35-N3',
   article_plu: '1234',
   package_count: 10,
   weight_per_package: 3,
@@ -149,7 +150,8 @@ assert(labels[0].zpl.includes('^PW827'));
 assert(labels[0].zpl.includes('^LL1772'));
 assert(labels[0].zpl.includes('^A0R'), 'le contenu doit etre imprime dans le sens horizontal apres pose');
 assert(labels[0].zpl.includes('LECLERC CHALLANS - N  88'));
-assert(labels[0].zpl.includes('POIDS NET: 3,000 kg'));
+assert(labels[0].zpl.includes('POIDS NET'));
+assert(labels[0].zpl.includes('3,000 kg'));
 assert(labels[0].zpl.includes('85.000.001'));
 assert(labels[0].zpl.includes('ZONE DE PECHE: Atlantique Nord-Est - FAO 27'));
 assert(labels[0].zpl.includes('Sous-zone: VIII'));
@@ -188,6 +190,7 @@ function zplTextBoxes(zpl) {
       x: Number(match[2]),
       y: Number(match[1]),
       width: Number(match[4]),
+      fontHeight,
       height: lines * (fontHeight + 4),
     };
   });
@@ -207,6 +210,9 @@ function textBoxInZone(zpl, text, zone) {
 function textBoxesContaining(zpl, text) {
   return zplTextBoxes(zpl).filter((box) => box.text.includes(text));
 }
+function fontHeightsContaining(zpl, text) {
+  return zplTextBoxes(zpl).filter((box) => box.text.includes(text)).map((box) => box.fontHeight);
+}
 function hasBoxOutsideZone(zpl, text, zone) {
   return textBoxesContaining(zpl, text).some((box) => !isInsideZone(box, zone));
 }
@@ -220,6 +226,21 @@ assert(zplOrigins.length > 20, 'le ZPL doit contenir des champs positionnes');
 assert(zplOrigins.every((origin) => origin.x >= 0 && origin.x <= LABEL_WIDTH_DOTS), 'aucune origine X ne doit depasser la largeur imprimable');
 assert(zplOrigins.every((origin) => origin.y >= 0 && origin.y <= LABEL_HEIGHT_DOTS), 'aucune origine Y ne doit depasser la longueur imprimable');
 assert(zplOrigins.some((origin) => origin.x >= DETACHABLE_TAB.y && origin.y >= DETACHABLE_TAB.x), 'la languette doit recevoir des champs ZPL');
+assert.deepStrictEqual(fontHeightsContaining(labels[0].zpl, 'LECLERC CHALLANS - N  88'), [34], 'taille ZPL client doit rester tres lisible');
+assert(fontHeightsContaining(labels[0].zpl, 'LANGOUSTINE VIVANTE').includes(24), 'designation principale doit passer de 13 a 24 dots');
+assert(fontHeightsContaining(labels[0].zpl, '3,000 kg').includes(32), 'poids net principal doit passer de 14 a 32 dots');
+assert(textBoxInZone(labels[0].zpl, 'LANGOUSTINE VIVANTE', FIXED_TRACE_TOP_ZONE), 'designation principale doit rester dans la zone fixe haute');
+assert(textBoxInZone(labels[0].zpl, '3,000 kg', FIXED_TRACE_TOP_ZONE), 'poids net principal doit rester dans la zone fixe haute');
+zplTextBoxes(labels[0].zpl).forEach((box) => {
+  const insideKnownZone = [
+    FIXED_TOP_ZONE,
+    FIXED_TRACE_TOP_ZONE,
+    DETACHABLE_TAB,
+    FIXED_TRACE_BOTTOM_ZONE,
+    FOOTER_ZONE,
+  ].some((zone) => isInsideZone(box, zone));
+  assert(insideKnownZone, `champ hors limites de zone: ${box.text}`);
+});
 zplTextBoxes(labels[0].zpl)
   .filter((box) => boxOriginInZone(box, DETACHABLE_TAB_PHYSICAL))
   .forEach((box) => {
@@ -463,6 +484,8 @@ const htmlPreview = frontendSandbox.window.HealthLabels.renderPreview([{
   traceability: { ...labels[0].traceability, origin: 'DISTRIMER' },
 }], labels[0].zpl, []);
 assert(htmlPreview.includes('src="http://localhost:3002/uploads/store-logos/alta.png"'), 'logo_url relatif doit etre resolu sur le backend');
+assert(htmlPreview.includes('health-label-product-main'), 'HTML doit distinguer la designation principale agrandie');
+assert(htmlPreview.includes('health-label-weight-main'), 'HTML doit distinguer le poids principal agrandi');
 assert(htmlPreview.includes('ZONE DE PECHE'), 'la zone de peche doit etre libellee dans le HTML');
 assert(htmlPreview.includes('Atlantique Nord-Est - FAO 27'), 'FAO 27 doit garder le code et afficher son libelle');
 assert(htmlPreview.includes('Sous-zone'), 'la sous-zone doit rester affichee');
@@ -527,6 +550,10 @@ assert(healthLabelsCssSource.includes('left: 30mm'), 'CSS preview doit placer la
 assert(healthLabelsCssSource.includes('top: 35mm'), 'CSS preview doit placer la languette dans la safe area');
 assert(healthLabelsCssSource.includes('width: 118mm'), 'CSS preview doit utiliser la largeur reelle de languette');
 assert(healthLabelsCssSource.includes('height: 18mm'), 'CSS preview doit donner 18 mm a la safe area languette');
+assert(healthLabelsCssSource.includes('.health-label-product-main'), 'CSS preview doit agrandir la designation principale');
+assert(healthLabelsCssSource.includes('font-size: 13px'), 'CSS preview doit rendre le produit plus visible');
+assert(healthLabelsCssSource.includes('.health-label-weight-main'), 'CSS preview doit agrandir le poids principal');
+assert(healthLabelsCssSource.includes('font-size: 17px'), 'CSS preview doit rendre la valeur poids beaucoup plus visible');
 assert(healthLabelsCssSource.includes('.health-label-fixed-trace-top'), 'CSS preview doit afficher la traceabilite fixe haute');
 assert(healthLabelsCssSource.includes('.health-label-fixed-trace-bottom'), 'CSS preview doit afficher la traceabilite fixe basse');
 assert(!healthLabelsCssSource.includes('border-top: 2px dashed'), 'CSS preview ne doit pas dessiner une fausse refente');

@@ -101,7 +101,7 @@
       label.delivered_client_store_identifier ? `N° ${label.delivered_client_store_identifier}` : '',
     ]).join(' - ');
     const fixedTopLeft = [
-      info('Produit', label.article_label || 'Article'),
+      info('Produit', label.article_label || 'Article', 'health-label-product-main'),
       info('Nom scientifique', trace.latin_name),
       info('Methode', trace.production_method),
     ].join('');
@@ -112,7 +112,7 @@
     ].join('');
     const fixedTopRight = [
       info('Calibre', label.caliber),
-      info('POIDS NET', label.net_weight_label),
+      info('POIDS NET', label.net_weight_label, 'health-label-weight-main'),
     ].join('');
     const fixedBottom = [
       info('Lot', labelTrace(label)),
@@ -305,7 +305,7 @@
     .health-label-fixed-trace-top {
       display: grid;
       gap: 0 3mm;
-      grid-template-columns: 1fr 1fr 42mm;
+      grid-template-columns: minmax(0, 78mm) minmax(0, 36mm) 26mm;
       height: 14mm;
       left: 2mm;
       min-height: 0;
@@ -336,6 +336,24 @@
       font-size: 7px;
       line-height: 1.05;
       overflow-wrap: anywhere;
+    }
+    .health-label-product-main strong {
+      display: -webkit-box;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1.03;
+      overflow: hidden;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+    }
+    .health-label-weight-main span {
+      font-size: 5px;
+    }
+    .health-label-weight-main strong {
+      font-size: 17px;
+      font-weight: 900;
+      line-height: 0.95;
+      white-space: nowrap;
     }
     .health-label-tab {
       display: grid;

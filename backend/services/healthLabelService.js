@@ -477,14 +477,15 @@ function renderHealthLabelZpl(label) {
   lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(48), mm(1), mm(14), 18, 'POUR', 1));
   lines.push(zplZoneBlock(FIXED_TOP_ZONE, mm(63), mm(1), mm(52), 34, label.delivered_client_display || label.delivered_client_name || '-', 1));
 
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(1), mm(46), 13, label.article_label || '-', 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(5), mm(46), 12, trace.latin_name, 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(9), mm(46), 12, field('Methode', trace.production_method), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(51), mm(1), mm(45), 12, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(51), mm(9), mm(21), 12, field('Sous-zone', trace.sous_zone), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(76), mm(9), mm(22), 12, field('Engin', trace.fishing_gear), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(102), mm(1), mm(42), 12, field('Calibre', label.caliber), 1));
-  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(102), mm(5), mm(42), 14, `POIDS NET: ${label.net_weight_label}`, 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(0.5), mm(76), 24, label.article_label || '-', 2));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(8.5), mm(76), 10, trace.latin_name, 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(1), mm(11.5), mm(76), 10, field('Methode', trace.production_method), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(81), mm(1), mm(35), 11, field('ZONE DE PECHE', label.fishing_area_label || trace.fao_zone), 2));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(81), mm(9), mm(16), 10, field('Sous-zone', trace.sous_zone), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(99), mm(9), mm(17), 10, field('Engin', trace.fishing_gear), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(119), mm(1), mm(25), 10, field('Calibre', label.caliber), 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(119), mm(4), mm(25), 11, 'POIDS NET', 1));
+  lines.push(zplZoneBlock(FIXED_TRACE_TOP_ZONE, mm(119), mm(7), mm(25), 32, label.net_weight_label, 1));
 
   const tab = DETACHABLE_TAB;
   const tabX = TAB_INSET;
