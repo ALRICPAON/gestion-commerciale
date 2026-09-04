@@ -38,9 +38,36 @@ const lotModalTitle = document.getElementById('lot-modal-title');
 const lotModalSubtitle = document.getElementById('lot-modal-subtitle');
 const lotFeedback = document.getElementById('lot-feedback');
 const lotsTbody = document.getElementById('lots-tbody');
+const manualOutHistoryTbody = document.getElementById('manual-out-history-tbody');
+
+const manualOutModal = document.getElementById('manual-stock-out-modal');
+const closeManualOutModalBtn = document.getElementById('close-manual-stock-out-modal-btn');
+const manualOutForm = document.getElementById('manual-stock-out-form');
+const manualOutArticle = document.getElementById('manual-stock-out-article');
+const manualOutLotSelect = document.getElementById('manual-stock-out-lot');
+const manualOutAvailable = document.getElementById('manual-stock-out-available');
+const manualOutQuantity = document.getElementById('manual-stock-out-quantity');
+const manualOutUnit = document.getElementById('manual-stock-out-unit');
+const manualOutReason = document.getElementById('manual-stock-out-reason');
+const manualOutDate = document.getElementById('manual-stock-out-date');
+const manualOutComment = document.getElementById('manual-stock-out-comment');
+const manualOutFeedback = document.getElementById('manual-stock-out-feedback');
+const submitManualOutBtn = document.getElementById('submit-manual-stock-out-btn');
 
 let stockRows = [];
 let activeStockCategory = 'product';
+let activeLotsArticleId = null;
+let manualOutLots = [];
+let manualOutArticleRow = null;
+let manualOutReasons = [
+  { code: 'waste', label: 'Casse / perte' },
+  { code: 'unfit', label: 'Produit impropre' },
+  { code: 'destruction', label: 'Destruction' },
+  { code: 'inventory_adjustment', label: 'Ecart inventaire' },
+  { code: 'internal_use', label: 'Consommation interne' },
+  { code: 'supplier_return', label: 'Retour fournisseur' },
+  { code: 'other', label: 'Autre' },
+];
 
 function authHeaders(json = false) {
   const headers = {
@@ -129,6 +156,10 @@ function formatDate(value) {
   return date.toLocaleDateString('fr-FR');
 }
 
+function todayInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function parseDecimal(value) {
   const raw = String(value ?? '').trim().replace(',', '.');
   if (!raw) return null;
@@ -189,6 +220,18 @@ async function apiPatch(path, payload) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erreur sauvegarde tarifs');
+  return data;
+}
+
+async function apiPost(path, payload) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'POST',
+    headers: authHeaders(true),
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erreur action stock');
   return data;
 }
 
@@ -255,6 +298,7 @@ function renderStock(rows) {
         <td>
           <div class="stock-actions">
             <button class="btn btn-secondary btn-sm" data-action="lots" data-article-id="${escapeHtml(cleanArticleId)}" ${actionsDisabled}>Lots</button>
+            <button class="btn btn-danger btn-sm" data-action="manual-out" data-article-id="${escapeHtml(cleanArticleId)}" ${actionsDisabled}>Sortie</button>
             <button class="btn btn-primary btn-sm" data-action="save-prices" data-article-id="${escapeHtml(cleanArticleId)}" ${actionsDisabled}>Enregistrer</button>
           </div>
         </td>
@@ -273,6 +317,137 @@ function updateRowMargins(rowEl) {
     marginEl.textContent = Number.isNaN(price) ? 'Prix invalide' : marginText(price, pma);
     marginEl.classList.toggle('error-text', Number.isNaN(price));
   });
+}
+
+function parseMovementNotes(notes) {
+  try {
+    const parsed = JSON.parse(notes || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (error) {
+    return { comment: notes || '' };
+  }
+}
+
+function manualOutReasonLabel(codeOrType) {
+  const reason = manualOutReasons.find((entry) => entry.code === codeOrType || entry.movement_type === codeOrType);
+  if (reason) return reason.label;
+  if (window.stockMovementLabel) return window.stockMovementLabel(codeOrType);
+  return codeOrType || '-';
+}
+
+function renderManualOutReasons() {
+  manualOutReason.innerHTML = manualOutReasons.map((reason) => `
+    <option value="${escapeHtml(reason.code)}">${escapeHtml(reason.label)}</option>
+  `).join('');
+}
+
+async function loadManualOutReasons() {
+  try {
+    const data = await apiGet('/api/stock/manual-outs/reasons');
+    if (Array.isArray(data.reasons) && data.reasons.length) {
+      manualOutReasons = data.reasons;
+      renderManualOutReasons();
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function setManualOutLotDetails() {
+  const lot = manualOutLots.find((entry) => String(entry.id) === String(manualOutLotSelect.value));
+  const unit = lot?.unit || manualOutArticleRow?.unit || '';
+  manualOutUnit.value = unit;
+  manualOutAvailable.textContent = lot
+    ? `Disponible : ${formatNumber(lot.qty_remaining)} ${unit} - lot ${lot.lot_code || '-'}`
+    : 'Disponible : -';
+  if (lot) manualOutQuantity.max = String(lot.qty_remaining);
+}
+
+async function openManualOutModal(articleId, selectedLotId = null) {
+  const cleanArticleId = normalizeArticleId(articleId);
+  if (!validateArticleId(cleanArticleId, 'openManualOutModal', { selectedLotId })) return;
+
+  manualOutArticleRow = stockRows.find((row) => String(row.article_id) === String(cleanArticleId)) || null;
+  showFeedback(manualOutFeedback, '');
+  manualOutForm.reset();
+  manualOutDate.value = todayInputValue();
+  manualOutQuantity.value = '';
+  manualOutArticle.textContent = manualOutArticleRow
+    ? `${manualOutArticleRow.plu || ''} - ${manualOutArticleRow.designation || 'Article'}`
+    : 'Article';
+  manualOutLotSelect.innerHTML = '<option value="">Chargement des lots...</option>';
+  manualOutModal.classList.remove('hidden');
+
+  try {
+    manualOutLots = await apiGet(`/api/stock/articles/${encodeURIComponent(cleanArticleId)}/lots?available_only=true`);
+    if (!manualOutLots.length) {
+      manualOutLotSelect.innerHTML = '<option value="">Aucun lot disponible</option>';
+      showFeedback(manualOutFeedback, 'Aucun lot disponible pour cet article.', 'error');
+      return;
+    }
+    manualOutLotSelect.innerHTML = manualOutLots.map((lot) => `
+      <option value="${escapeHtml(lot.id)}">
+        ${escapeHtml(lot.lot_code || lot.id)} - ${formatNumber(lot.qty_remaining)} ${escapeHtml(lot.unit || manualOutArticleRow?.unit || '')}
+      </option>
+    `).join('');
+    manualOutLotSelect.value = selectedLotId && manualOutLots.some((lot) => String(lot.id) === String(selectedLotId))
+      ? String(selectedLotId)
+      : String(manualOutLots[0].id);
+    setManualOutLotDetails();
+  } catch (error) {
+    console.error(error);
+    showFeedback(manualOutFeedback, error.message, 'error');
+    manualOutLotSelect.innerHTML = '<option value="">Erreur lots</option>';
+  }
+}
+
+function closeManualOutModal() {
+  manualOutModal.classList.add('hidden');
+  showFeedback(manualOutFeedback, '');
+}
+
+async function submitManualStockOut(event) {
+  event.preventDefault();
+  const lot = manualOutLots.find((entry) => String(entry.id) === String(manualOutLotSelect.value));
+  if (!lot || !manualOutArticleRow) {
+    showFeedback(manualOutFeedback, 'Selectionne un lot disponible.', 'error');
+    return;
+  }
+
+  const quantity = parseDecimal(manualOutQuantity.value);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    showFeedback(manualOutFeedback, 'La quantite doit etre strictement positive.', 'error');
+    return;
+  }
+  if (quantity > Number(lot.qty_remaining || 0)) {
+    showFeedback(manualOutFeedback, `Quantite superieure au disponible du lot (${formatNumber(lot.qty_remaining)} ${lot.unit || ''}).`, 'error');
+    return;
+  }
+
+  submitManualOutBtn.disabled = true;
+  showFeedback(manualOutFeedback, 'Validation de la sortie...');
+  try {
+    const requestId = window.crypto?.randomUUID ? window.crypto.randomUUID() : null;
+    const result = await apiPost('/api/stock/manual-outs', {
+      request_id: requestId,
+      article_id: manualOutArticleRow.article_id,
+      lot_id: lot.id,
+      quantity,
+      reason: manualOutReason.value,
+      date: manualOutDate.value,
+      comment: manualOutComment.value,
+    });
+    const newQty = Number(result.lot?.qty_remaining ?? (Number(lot.qty_remaining || 0) - quantity));
+    showFeedback(manualOutFeedback, `${formatNumber(quantity)} ${lot.unit || ''} sortis du stock. Nouveau stock disponible : ${formatNumber(newQty)} ${lot.unit || ''}.`, 'success');
+    if (result.warning) showFeedback(stockFeedback, result.warning, 'warning');
+    await loadStock();
+    if (activeLotsArticleId) await openLotsModal(activeLotsArticleId, { refreshOnly: true });
+  } catch (error) {
+    console.error(error);
+    showFeedback(manualOutFeedback, error.message, 'error');
+  } finally {
+    submitManualOutBtn.disabled = false;
+  }
 }
 
 async function savePrices(rowEl, options = {}) {
@@ -433,9 +608,59 @@ async function loadStock() {
   }
 }
 
+async function loadManualOutHistory(articleId) {
+  if (!manualOutHistoryTbody) return;
+  manualOutHistoryTbody.innerHTML = '<tr><td colspan="7">Chargement...</td></tr>';
+  try {
+    const movements = await apiGet(`/api/stock/manual-outs?article_id=${encodeURIComponent(articleId)}&limit=20`);
+    if (!movements.length) {
+      manualOutHistoryTbody.innerHTML = '<tr><td colspan="7">Aucune sortie manuelle recente.</td></tr>';
+      return;
+    }
+    manualOutHistoryTbody.innerHTML = movements.map((movement) => {
+      const notes = parseMovementNotes(movement.notes);
+      const cancelled = Boolean(movement.cancellation_movement_id);
+      return `
+        <tr data-movement-id="${escapeHtml(movement.id)}">
+          <td>${formatDate(movement.created_at)}</td>
+          <td>${escapeHtml(movement.lot_code || movement.supplier_lot_number || '-')}</td>
+          <td>${escapeHtml(notes.reason_label || manualOutReasonLabel(notes.reason_code || movement.movement_type))}</td>
+          <td>${formatNumber(Math.abs(Number(movement.quantity || 0)))} ${escapeHtml(movement.unit || '')}</td>
+          <td>${escapeHtml(notes.comment || '')}</td>
+          <td>${escapeHtml(movement.created_by_email || movement.created_by || '-')}</td>
+          <td>
+            ${cancelled
+              ? '<span class="stock-muted">Annulee</span>'
+              : '<button class="btn btn-secondary btn-sm" type="button" data-action="cancel-manual-out">Annuler</button>'}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  } catch (error) {
+    console.error(error);
+    manualOutHistoryTbody.innerHTML = '<tr><td colspan="7">Erreur historique sorties.</td></tr>';
+  }
+}
+
+async function cancelManualOut(movementId) {
+  const confirmed = window.confirm('Annuler cette sortie de stock et creer un mouvement inverse ?');
+  if (!confirmed) return;
+  try {
+    await apiPost(`/api/stock/manual-outs/${encodeURIComponent(movementId)}/cancel`, {
+      comment: 'Annulation depuis module stock',
+    });
+    showFeedback(lotFeedback, 'Sortie annulee, stock restaure.', 'success');
+    await loadStock();
+    if (activeLotsArticleId) await openLotsModal(activeLotsArticleId, { refreshOnly: true });
+  } catch (error) {
+    console.error(error);
+    showFeedback(lotFeedback, error.message, 'error');
+  }
+}
+
 function renderLots(lots) {
   if (!lots.length) {
-    lotsTbody.innerHTML = '<tr><td colspan="12">Aucun lot disponible.</td></tr>';
+    lotsTbody.innerHTML = `<tr><td colspan="${isPackagingView() ? 6 : 13}">Aucun lot disponible.</td></tr>`;
     return;
   }
 
@@ -458,6 +683,7 @@ function renderLots(lots) {
         <td class="lot-sanitary-column">${escapeHtml(lot.production_method || '-')}</td>
         <td class="lot-sanitary-column">${escapeHtml(lot.allergens || '-')}</td>
       `}
+      <td><button class="btn btn-danger btn-sm" type="button" data-action="manual-out-lot" data-lot-id="${escapeHtml(lot.id)}" data-article-id="${escapeHtml(lot.article_id)}">Sortie</button></td>
     </tr>
   `).join('');
 }
@@ -468,28 +694,32 @@ async function openLotsModal(articleId, details = {}) {
     return;
   }
 
+  activeLotsArticleId = cleanArticleId;
   const article = stockRows.find((row) => String(row.article_id) === String(cleanArticleId));
   lotModal.classList.remove('hidden');
   lotModalTitle.textContent = article ? `${article.plu || ''} - ${article.designation || 'Lots'}` : 'Lots disponibles';
   lotModalSubtitle.textContent = isPackagingView()
     ? 'Lots emballage disponibles tries par date de creation.'
     : 'Lots disponibles tries par FIFO : DLC la plus proche, puis date de creation.';
-  lotsTbody.innerHTML = `<tr><td colspan="${isPackagingView() ? 5 : 12}">Chargement des lots...</td></tr>`;
-  showFeedback(lotFeedback, '');
+  lotsTbody.innerHTML = `<tr><td colspan="${isPackagingView() ? 6 : 13}">Chargement des lots...</td></tr>`;
+  if (!details.refreshOnly) showFeedback(lotFeedback, '');
 
   try {
     const lots = await apiGet(`/api/stock/articles/${encodeURIComponent(cleanArticleId)}/lots?available_only=true`);
     renderLots(lots);
+    await loadManualOutHistory(cleanArticleId);
   } catch (error) {
     console.error(error);
     showFeedback(lotFeedback, error.message, 'error');
-    lotsTbody.innerHTML = '<tr><td colspan="12">Erreur de chargement des lots.</td></tr>';
+    lotsTbody.innerHTML = `<tr><td colspan="${isPackagingView() ? 6 : 13}">Erreur de chargement des lots.</td></tr>`;
   }
 }
 
 function closeLotsModal() {
+  activeLotsArticleId = null;
   lotModal.classList.add('hidden');
-  lotsTbody.innerHTML = `<tr><td colspan="${isPackagingView() ? 5 : 12}">Selectionne un article.</td></tr>`;
+  lotsTbody.innerHTML = `<tr><td colspan="${isPackagingView() ? 6 : 13}">Selectionne un article.</td></tr>`;
+  manualOutHistoryTbody.innerHTML = '<tr><td colspan="7">Selectionne un article.</td></tr>';
   showFeedback(lotFeedback, '');
 }
 
@@ -537,9 +767,27 @@ stockTbody.addEventListener('click', async (event) => {
     return;
   }
 
+  if (button.dataset.action === 'manual-out') {
+    openManualOutModal(articleId);
+    return;
+  }
+
   if (button.dataset.action === 'save-prices' && rowEl) {
     await savePrices(rowEl, { button });
   }
+});
+
+lotsTbody.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-action="manual-out-lot"]');
+  if (!button) return;
+  openManualOutModal(button.dataset.articleId, button.dataset.lotId);
+});
+
+manualOutHistoryTbody.addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-action="cancel-manual-out"]');
+  if (!button) return;
+  const row = button.closest('tr[data-movement-id]');
+  if (row) cancelManualOut(row.dataset.movementId);
 });
 
 stockSearchInput.addEventListener('keydown', (event) => {
@@ -559,6 +807,12 @@ closeLotModalBtn.addEventListener('click', closeLotsModal);
 lotModal.addEventListener('click', (event) => {
   if (event.target === lotModal) closeLotsModal();
 });
+closeManualOutModalBtn.addEventListener('click', closeManualOutModal);
+manualOutModal.addEventListener('click', (event) => {
+  if (event.target === manualOutModal) closeManualOutModal();
+});
+manualOutLotSelect.addEventListener('change', setManualOutLotDetails);
+manualOutForm.addEventListener('submit', submitManualStockOut);
 
 backHomeBtn.addEventListener('click', () => {
   window.location.href = './home.html';
@@ -576,6 +830,8 @@ logoutBtn.addEventListener('click', () => {
 
 function init() {
   userNameEl.textContent = sessionUser.email || 'Utilisateur';
+  renderManualOutReasons();
+  loadManualOutReasons();
   loadStock();
 }
 

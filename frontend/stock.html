@@ -173,18 +173,93 @@
               <th class="lot-sanitary-column">Engin</th>
               <th class="lot-sanitary-column">Methode</th>
               <th class="lot-sanitary-column">Allergenes</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody id="lots-tbody">
-            <tr><td colspan="12">Selectionne un article.</td></tr>
+            <tr><td colspan="13">Selectionne un article.</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="manual-out-history">
+        <h4>Dernieres sorties de stock</h4>
+        <div class="table-wrap">
+          <table class="data-table manual-out-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Lot</th>
+                <th>Motif</th>
+                <th>Quantite</th>
+                <th>Commentaire</th>
+                <th>Utilisateur</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="manual-out-history-tbody">
+              <tr><td colspan="7">Selectionne un article.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </div>
 
+  <div id="manual-stock-out-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3>Sortie de stock</h3>
+          <p id="manual-stock-out-article">Article</p>
+        </div>
+        <button id="close-manual-stock-out-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="manual-stock-out-feedback" class="page-feedback hidden"></div>
+
+      <form id="manual-stock-out-form" class="manual-stock-out-form">
+        <div class="form-group">
+          <label for="manual-stock-out-lot">Lot</label>
+          <select id="manual-stock-out-lot" required></select>
+        </div>
+
+        <div class="manual-stock-out-available" id="manual-stock-out-available">Disponible : -</div>
+
+        <div class="form-group">
+          <label for="manual-stock-out-quantity">Quantite a sortir</label>
+          <input id="manual-stock-out-quantity" type="number" min="0" step="0.001" required />
+        </div>
+
+        <div class="form-group">
+          <label for="manual-stock-out-unit">Unite</label>
+          <input id="manual-stock-out-unit" type="text" readonly />
+        </div>
+
+        <div class="form-group">
+          <label for="manual-stock-out-reason">Motif</label>
+          <select id="manual-stock-out-reason" required></select>
+        </div>
+
+        <div class="form-group">
+          <label for="manual-stock-out-date">Date</label>
+          <input id="manual-stock-out-date" type="date" required />
+        </div>
+
+        <div class="form-group manual-stock-out-comment">
+          <label for="manual-stock-out-comment">Commentaire</label>
+          <textarea id="manual-stock-out-comment" rows="3" placeholder="Precision facultative"></textarea>
+        </div>
+
+        <div class="modal-actions">
+          <button id="submit-manual-stock-out-btn" class="btn btn-danger" type="submit">Valider la sortie</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script src="./js/config.js"></script>
-  <script src="./js/stock-movement-labels.js?v=1"></script>
-  <script src="./js/stock.js?v=6"></script>
+  <script src="./js/stock-movement-labels.js?v=2"></script>
+  <script src="./js/stock.js?v=7"></script>
 </body>
 </html>
