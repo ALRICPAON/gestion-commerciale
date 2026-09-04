@@ -78,6 +78,14 @@ async function getManualStockOutByRequestId(client, { storeId, requestId }) {
   return existing.rows[0] || null;
 }
 
+async function lockManualStockOutRequestId(client, { storeId, requestId }) {
+  if (!isUuid(requestId)) return;
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtextextended($1, 0))',
+    [`manual_stock_out:${storeId}:${requestId}`]
+  );
+}
+
 async function createManualStockOut(client, {
   storeId,
   clientKey = null,
@@ -102,6 +110,7 @@ async function createManualStockOut(client, {
 
   const idempotencyKey = isUuid(requestId) ? requestId : null;
   if (idempotencyKey) {
+    await lockManualStockOutRequestId(client, { storeId, requestId: idempotencyKey });
     const existing = await getManualStockOutByRequestId(client, { storeId, requestId: idempotencyKey });
     if (existing) {
       return {

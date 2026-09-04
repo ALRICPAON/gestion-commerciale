@@ -32,6 +32,8 @@ class FakeDb {
     this.summary = new Map();
     this.nextMovement = 1;
     this.queryLog = [];
+    this.lockedKeys = new Set();
+    this.lockWaiters = new Map();
   }
 
   addLot(lot) {
@@ -54,8 +56,14 @@ class FakeDb {
   async query(sql, params = []) {
     this.queryLog.push({ sql, params });
 
+    if (sql.includes('pg_advisory_xact_lock')) {
+      await this.acquireRequestLock(params[0]);
+      return { rows: [] };
+    }
+
     if (sql.includes("sm.source_table = 'manual_stock_out'") && sql.includes('sm.source_id = $2')) {
       const movement = this.movements.find((entry) => entry.store_id === params[0] && entry.source_id === params[1] && entry.quantity < 0);
+      if (movement) this.releaseRequestLock(`manual_stock_out:${params[0]}:${params[1]}`);
       return { rows: movement ? [{ ...movement, lot_qty_remaining: this.lots.get(movement.lot_id)?.qty_remaining || 0 }] : [] };
     }
 
@@ -114,6 +122,9 @@ class FakeDb {
           created_at: params[10] || new Date().toISOString(),
         };
       this.movements.push(movement);
+      if (movement.source_table === 'manual_stock_out' && movement.source_id) {
+        this.releaseRequestLock(`manual_stock_out:${movement.store_id}:${movement.source_id}`);
+      }
       return { rows: [movement] };
     }
 
@@ -146,6 +157,31 @@ class FakeDb {
     }
 
     throw new Error(`Unhandled fake SQL: ${sql}`);
+  }
+
+  async acquireRequestLock(key) {
+    if (!this.lockedKeys.has(key)) {
+      this.lockedKeys.add(key);
+      return;
+    }
+
+    await new Promise((resolve) => {
+      const waiters = this.lockWaiters.get(key) || [];
+      waiters.push(resolve);
+      this.lockWaiters.set(key, waiters);
+    });
+    this.lockedKeys.add(key);
+  }
+
+  releaseRequestLock(key) {
+    const waiters = this.lockWaiters.get(key) || [];
+    if (waiters.length) {
+      const next = waiters.shift();
+      this.lockWaiters.set(key, waiters);
+      next();
+      return;
+    }
+    this.lockedKeys.delete(key);
   }
 }
 
@@ -212,11 +248,30 @@ async function manualOut(db, overrides = {}) {
 
   const db7 = new FakeDb();
   db7.addLot({ id: LOT_A, qty_remaining: 5 });
-  await manualOut(db7, { requestId: REQUEST_ID });
+  const [firstConcurrent, secondConcurrent] = await Promise.all([
+    manualOut(db7, { requestId: REQUEST_ID }),
+    manualOut(db7, { requestId: REQUEST_ID }),
+  ]);
+  assert.strictEqual(firstConcurrent.duplicate, false, 'Test 7.1: premiere requete cree la sortie');
+  assert.strictEqual(secondConcurrent.duplicate, true, 'Test 7.1: requete concurrente reutilise la sortie');
+  assert.strictEqual(db7.lots.get(LOT_A).qty_remaining, 3, 'Test 7.1: un seul destockage concurrent');
+  assert.strictEqual(db7.movements.filter((movement) => movement.source_table === 'manual_stock_out').length, 1, 'Test 7.1: un seul mouvement concurrent');
+
   const duplicate = await manualOut(db7, { requestId: REQUEST_ID });
   assert.strictEqual(duplicate.duplicate, true, 'Test 7: double requete idempotente');
-  assert.strictEqual(db7.lots.get(LOT_A).qty_remaining, 3, 'Test 7: pas de double destockage');
-  assert.strictEqual(db7.movements.filter((movement) => movement.source_table === 'manual_stock_out').length, 1);
+  assert.strictEqual(db7.lots.get(LOT_A).qty_remaining, 3, 'Test 7.2: replay apres succes sans double destockage');
+  assert.strictEqual(db7.movements.filter((movement) => movement.source_table === 'manual_stock_out').length, 1, 'Test 7.2: aucun nouveau mouvement');
+
+  await cancelManualStockOut(db7, {
+    storeId: STORE_ID,
+    movementId: firstConcurrent.movement.id,
+    comment: 'Annulation apres sortie idempotente',
+    userId: USER_ID,
+  });
+  const replayAfterCancel = await manualOut(db7, { requestId: REQUEST_ID });
+  assert.strictEqual(replayAfterCancel.duplicate, true, 'Test 8.1: annulation ne rend pas le request_id reutilisable');
+  assert.strictEqual(db7.lots.get(LOT_A).qty_remaining, 5, 'Test 8.1: pas de nouveau destockage apres annulation');
+  assert.strictEqual(db7.movements.filter((movement) => movement.source_table === 'manual_stock_out_cancel').length, 1, 'Test 8.1: un mouvement inverse conserve');
 
   const db8 = new FakeDb();
   db8.addLot({ id: LOT_A, qty_remaining: 5 });

@@ -17,7 +17,13 @@ async function main() {
     page.on('pageerror', (error) => pageErrors.push(error.stack || error.message));
     page.on('console', (message) => {
       const text = message.text();
-      if (message.type() === 'error' && !text.startsWith('Failed to load resource:')) consoleErrors.push(text);
+      if (
+        message.type() === 'error'
+        && !text.startsWith('Failed to load resource:')
+        && !text.includes('Simulated lost response')
+      ) {
+        consoleErrors.push(text);
+      }
     });
 
     await page.evaluateOnNewDocument((articleId, lotId) => {
@@ -25,6 +31,18 @@ async function main() {
       localStorage.setItem('gc_user', JSON.stringify({ email: 'stock@example.test', store_id: '11111111-1111-4111-8111-111111111111' }));
       window.confirm = () => true;
       window.__manualOutCalls = [];
+      window.__postMode = 'normal';
+      const uuids = [
+        '90000000-0000-4000-8000-000000000001',
+        '90000000-0000-4000-8000-000000000002',
+        '90000000-0000-4000-8000-000000000003',
+      ];
+      let uuidIndex = 0;
+      Object.defineProperty(window, 'crypto', {
+        value: {
+          randomUUID: () => uuids[uuidIndex++] || `90000000-0000-4000-8000-${String(uuidIndex).padStart(12, '0')}`,
+        },
+      });
       window.fetch = async (url, options = {}) => {
         const rawUrl = String(url);
         const method = options.method || 'GET';
@@ -43,6 +61,10 @@ async function main() {
         }
         if (rawUrl.includes('/api/stock/manual-outs') && method === 'POST') {
           window.__manualOutCalls.push(body);
+          if (window.__postMode === 'fail-once') {
+            window.__postMode = 'normal';
+            throw new TypeError('Simulated lost response');
+          }
           return new Response(JSON.stringify({
             ok: true,
             movement: { id: '10000000-0000-4000-8000-000000000001', quantity: -2 },
@@ -91,15 +113,53 @@ async function main() {
     });
     await page.select('#manual-stock-out-reason', 'waste');
     await page.type('#manual-stock-out-comment', 'Casse test');
+    await page.evaluate(() => {
+      window.__postMode = 'fail-once';
+    });
     await page.click('#submit-manual-stock-out-btn');
     await page.waitForFunction(() => window.__manualOutCalls.length === 1, { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('submit-manual-stock-out-btn').disabled === false, { timeout: 5000 });
+    await page.click('#submit-manual-stock-out-btn');
+    await page.waitForFunction(() => window.__manualOutCalls.length === 2, { timeout: 5000 });
 
-    const payload = await page.evaluate(() => window.__manualOutCalls[0]);
+    const payload = await page.evaluate(() => window.__manualOutCalls[1]);
     assert.strictEqual(payload.article_id, ARTICLE_ID);
     assert.strictEqual(payload.lot_id, LOT_ID);
     assert.strictEqual(payload.quantity, 2);
     assert.strictEqual(payload.reason, 'waste');
+    const retryIds = await page.evaluate(() => window.__manualOutCalls.slice(0, 2).map((call) => call.request_id));
+    assert.strictEqual(retryIds[0], retryIds[1], 'Retry after lost response must reuse the same request_id');
     assert.match(await page.$eval('#manual-stock-out-feedback', (node) => node.textContent), /Nouveau stock disponible : 3/);
+
+    await page.$eval('#manual-stock-out-quantity', (input) => {
+      input.value = '1';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.click('#submit-manual-stock-out-btn');
+    await page.waitForFunction(() => window.__manualOutCalls.length === 3, { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('submit-manual-stock-out-btn').disabled === false, { timeout: 5000 });
+    const newOperationIds = await page.evaluate(() => window.__manualOutCalls.slice(1, 3).map((call) => call.request_id));
+    assert.notStrictEqual(newOperationIds[0], newOperationIds[1], 'New operation after success must use a new request_id');
+
+    await page.click('#close-manual-stock-out-modal-btn');
+    await page.waitForSelector('#manual-stock-out-modal.hidden', { timeout: 5000 });
+    await page.click(`button[data-action="manual-out"][data-article-id="${ARTICLE_ID}"]`);
+    await page.waitForSelector('#manual-stock-out-modal:not(.hidden)', { timeout: 5000 });
+    await page.waitForFunction(() => document.getElementById('manual-stock-out-lot').value, { timeout: 5000 });
+    await page.$eval('#manual-stock-out-quantity', (input) => {
+      input.value = '1';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.evaluate(() => {
+      const form = document.getElementById('manual-stock-out-form');
+      const eventA = new Event('submit', { bubbles: true, cancelable: true });
+      const eventB = new Event('submit', { bubbles: true, cancelable: true });
+      form.dispatchEvent(eventA);
+      form.dispatchEvent(eventB);
+    });
+    await page.waitForFunction(() => window.__manualOutCalls.length === 4, { timeout: 5000 });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.strictEqual(await page.evaluate(() => window.__manualOutCalls.length), 4, 'Fast double submit must create one POST');
 
     if (pageErrors.length || consoleErrors.length) {
       throw new Error(JSON.stringify({ pageErrors, consoleErrors }, null, 2));

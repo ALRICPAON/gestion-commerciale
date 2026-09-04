@@ -59,6 +59,8 @@ let activeStockCategory = 'product';
 let activeLotsArticleId = null;
 let manualOutLots = [];
 let manualOutArticleRow = null;
+let manualOutRequestId = null;
+let manualOutSubmitting = false;
 let manualOutReasons = [
   { code: 'waste', label: 'Casse / perte' },
   { code: 'unfit', label: 'Produit impropre' },
@@ -158,6 +160,13 @@ function formatDate(value) {
 
 function todayInputValue() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function createRequestId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return '10000000-1000-4000-8000-'.replace(/[018]/g, (char) => (
+    Number(char) ^ Math.random() * 16 >> Number(char) / 4
+  ).toString(16)) + String(Date.now()).slice(-12).padStart(12, '0');
 }
 
 function parseDecimal(value) {
@@ -403,11 +412,14 @@ async function openManualOutModal(articleId, selectedLotId = null) {
 
 function closeManualOutModal() {
   manualOutModal.classList.add('hidden');
+  manualOutRequestId = null;
+  manualOutSubmitting = false;
   showFeedback(manualOutFeedback, '');
 }
 
 async function submitManualStockOut(event) {
   event.preventDefault();
+  if (manualOutSubmitting) return;
   const lot = manualOutLots.find((entry) => String(entry.id) === String(manualOutLotSelect.value));
   if (!lot || !manualOutArticleRow) {
     showFeedback(manualOutFeedback, 'Selectionne un lot disponible.', 'error');
@@ -424,12 +436,15 @@ async function submitManualStockOut(event) {
     return;
   }
 
+  manualOutSubmitting = true;
   submitManualOutBtn.disabled = true;
   showFeedback(manualOutFeedback, 'Validation de la sortie...');
   try {
-    const requestId = window.crypto?.randomUUID ? window.crypto.randomUUID() : null;
+    if (!manualOutRequestId) {
+      manualOutRequestId = createRequestId();
+    }
     const result = await apiPost('/api/stock/manual-outs', {
-      request_id: requestId,
+      request_id: manualOutRequestId,
       article_id: manualOutArticleRow.article_id,
       lot_id: lot.id,
       quantity,
@@ -439,6 +454,7 @@ async function submitManualStockOut(event) {
     });
     const newQty = Number(result.lot?.qty_remaining ?? (Number(lot.qty_remaining || 0) - quantity));
     showFeedback(manualOutFeedback, `${formatNumber(quantity)} ${lot.unit || ''} sortis du stock. Nouveau stock disponible : ${formatNumber(newQty)} ${lot.unit || ''}.`, 'success');
+    manualOutRequestId = null;
     if (result.warning) showFeedback(stockFeedback, result.warning, 'warning');
     await loadStock();
     if (activeLotsArticleId) await openLotsModal(activeLotsArticleId, { refreshOnly: true });
@@ -446,6 +462,7 @@ async function submitManualStockOut(event) {
     console.error(error);
     showFeedback(manualOutFeedback, error.message, 'error');
   } finally {
+    manualOutSubmitting = false;
     submitManualOutBtn.disabled = false;
   }
 }
