@@ -6,6 +6,12 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const { assertArticleCategory } = require('../services/articleCategory');
+const {
+  MANUAL_STOCK_OUT_REASONS,
+  MANUAL_STOCK_OUT_MOVEMENT_TYPES,
+  cancelManualStockOut,
+  createManualStockOut,
+} = require('../services/manualStockOutService');
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -423,6 +429,123 @@ router.get('/movements', authenticateToken, attachDbContext, async (req, res) =>
   } catch (err) {
     console.error('Erreur GET /api/stock/movements :', err);
     res.status(500).json({ error: 'Erreur serveur mouvements stock' });
+  }
+});
+
+router.get('/manual-outs/reasons', authenticateToken, attachDbContext, async (req, res) => {
+  res.json({ reasons: MANUAL_STOCK_OUT_REASONS });
+});
+
+router.get('/manual-outs', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const params = [req.user.store_id, Array.from(MANUAL_STOCK_OUT_MOVEMENT_TYPES)];
+    let where = `WHERE sm.store_id = $1
+      AND sm.movement_type = ANY($2::text[])
+      AND sm.source_table = 'manual_stock_out'`;
+
+    if (clean(req.query.article_id)) {
+      const articleId = clean(req.query.article_id);
+      if (!isUuid(articleId)) return res.status(400).json({ error: 'article_id invalide' });
+      params.push(articleId);
+      where += ` AND sm.article_id = $${params.length}`;
+    }
+
+    if (clean(req.query.lot_id)) {
+      const lotId = clean(req.query.lot_id);
+      if (!isUuid(lotId)) return res.status(400).json({ error: 'lot_id invalide' });
+      params.push(lotId);
+      where += ` AND sm.lot_id = $${params.length}`;
+    }
+
+    params.push(safeLimit(req.query.limit, 50, 200));
+
+    const result = await req.dbPool.query(
+      `SELECT
+         sm.*,
+         a.plu,
+         a.designation,
+         a.unit,
+         l.lot_code,
+         l.supplier_lot_number,
+         u.email AS created_by_email,
+         cancel_move.id AS cancellation_movement_id,
+         cancel_move.created_at AS cancelled_at
+       FROM stock_movements sm
+       JOIN articles a ON a.id = sm.article_id AND a.store_id = sm.store_id
+       LEFT JOIN lots l ON l.id = sm.lot_id
+       LEFT JOIN users u ON u.id = sm.created_by
+       LEFT JOIN stock_movements cancel_move
+         ON cancel_move.store_id = sm.store_id
+        AND cancel_move.source_table = 'manual_stock_out_cancel'
+        AND cancel_move.source_id = sm.id
+       ${where}
+       ORDER BY sm.created_at DESC, sm.id DESC
+       LIMIT $${params.length}`,
+      params
+    );
+
+    return res.json(result.rows);
+  } catch (err) {
+    console.error('Erreur GET /api/stock/manual-outs :', err);
+    return res.status(500).json({ error: 'Erreur serveur historique sorties stock' });
+  }
+});
+
+router.post('/manual-outs', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await createManualStockOut(client, {
+      storeId: req.user.store_id,
+      clientKey: req.user.client_key || null,
+      articleId: clean(req.body.article_id),
+      lotId: clean(req.body.lot_id),
+      quantity: req.body.quantity,
+      reasonCode: clean(req.body.reason),
+      comment: clean(req.body.comment),
+      movementDate: clean(req.body.date),
+      userId: req.user.id,
+      requestId: clean(req.body.request_id),
+    });
+    await client.query('COMMIT');
+    return res.status(result.duplicate ? 200 : 201).json({
+      ok: true,
+      duplicate: result.duplicate,
+      movement: result.movement,
+      lot: result.lot,
+      reason: result.reason,
+      warning: result.warning,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Erreur POST /api/stock/manual-outs :', err);
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur sortie manuelle stock' });
+  } finally {
+    client.release();
+  }
+});
+
+router.post('/manual-outs/:movementId/cancel', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const client = await req.dbPool.connect();
+  try {
+    const movementId = clean(req.params.movementId);
+    await client.query('BEGIN');
+    const result = await cancelManualStockOut(client, {
+      storeId: req.user.store_id,
+      movementId,
+      comment: clean(req.body.comment),
+      userId: req.user.id,
+    });
+    await client.query('COMMIT');
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Erreur POST /api/stock/manual-outs/:movementId/cancel :', err);
+    if (err.status) return res.status(err.status).json({ error: err.message });
+    return res.status(500).json({ error: 'Erreur annulation sortie stock' });
+  } finally {
+    client.release();
   }
 });
 
