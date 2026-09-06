@@ -48,16 +48,24 @@ async function resolve(input, published) {
   const frontendOldPriceIgnored = await resolve({ suggested_unit_sale_price_ht: 4 }, publishedLevel2);
   assert.strictEqual(frontendOldPriceIgnored.unit_price_ht, 12);
 
-  const publishedBeatsManual = await resolve(
-    { allow_manual_input: true, manual_unit_price_ht: 29 },
+  const manualBeatsPublished = await resolve(
+    { allow_manual_input: true, manual_price_override: true, manual_unit_price_ht: 22.9 },
     { ...publishedLevel2, final_unit_price_ht: 32, source_tariff_price_ht: 32 }
   );
-  assert.strictEqual(publishedBeatsManual.source, 'published_pricing');
-  assert.strictEqual(publishedBeatsManual.unit_price_ht, 32);
+  assert.strictEqual(manualBeatsPublished.source, 'manual_direct_entry');
+  assert.strictEqual(manualBeatsPublished.unit_price_ht, 22.9);
+
+  const publishedWithoutManualOverride = await resolve(
+    { allow_manual_input: true, manual_price_override: false, manual_unit_price_ht: 22.9 },
+    { ...publishedLevel2, final_unit_price_ht: 21.9, source_tariff_price_ht: 21.9 }
+  );
+  assert.strictEqual(publishedWithoutManualOverride.source, 'published_pricing');
+  assert.strictEqual(publishedWithoutManualOverride.unit_price_ht, 21.9);
 
   const manualWithoutPublished = await resolve(
     {
       allow_manual_input: true,
+      manual_price_override: true,
       manual_unit_price_ht: 29,
       article: { id: 'article-manual', designation: 'Homard', sale_price_level_1_ht: 0, sale_price_ex_vat: 0 },
       article_id: 'article-manual',
@@ -71,6 +79,7 @@ async function resolve(input, published) {
   const manualBeatsArticleFallback = await resolve(
     {
       allow_manual_input: true,
+      manual_price_override: true,
       manual_unit_price_ht: 29,
       article: { id: 'article-manual-fallback', designation: 'Homard', sale_price_level_1_ht: 31, sale_price_ex_vat: 0 },
       article_id: 'article-manual-fallback',
@@ -83,6 +92,7 @@ async function resolve(input, published) {
   const zeroManualFallsBackToArticle = await resolve(
     {
       allow_manual_input: true,
+      manual_price_override: true,
       manual_unit_price_ht: 0,
       article: { id: 'article-fallback', designation: 'Homard', sale_price_level_1_ht: 31, sale_price_ex_vat: 0 },
       article_id: 'article-fallback',
@@ -96,6 +106,7 @@ async function resolve(input, published) {
     () => resolve(
       {
         allow_manual_input: true,
+        manual_price_override: true,
         manual_unit_price_ht: 0,
         article: { id: 'article-no-price', designation: 'Homard', sale_price_level_1_ht: 0, sale_price_ex_vat: 0 },
         article_id: 'article-no-price',
@@ -108,6 +119,7 @@ async function resolve(input, published) {
   const arbitraryPriceIgnoredWithoutManualContext = await resolve(
     {
       allow_manual_input: false,
+      manual_price_override: true,
       manual_unit_price_ht: 29,
       article: { id: 'article-no-manual', designation: 'Homard', sale_price_level_1_ht: 31, sale_price_ex_vat: 0 },
       article_id: 'article-no-manual',
@@ -146,11 +158,24 @@ async function resolve(input, published) {
   assert.strictEqual(frozen.source, 'existing_line');
   assert.strictEqual(frozen.unit_price_ht, 6.5);
 
+  const explicitOverrideBeatsFrozenExistingLine = await resolver.resolveSalesLinePrice({}, storeId, {
+    client_id: 'client-1',
+    article,
+    article_id: article.id,
+    manual_unit_price_ht: 22.9,
+    manual_price_override: true,
+    allow_manual_input: true,
+    existing_line: { id: 'line-1', article_id: article.id, unit_sale_price_ht: 21.9 },
+  }, depsWith(publishedLevel2));
+  assert.strictEqual(explicitOverrideBeatsFrozenExistingLine.source, 'manual_direct_entry');
+  assert.strictEqual(explicitOverrideBeatsFrozenExistingLine.unit_price_ht, 22.9);
+
   const changedArticleReprices = await resolver.resolveSalesLinePrice({}, storeId, {
     client_id: 'client-1',
     article: { id: 'article-2', designation: 'Sole', sale_price_level_1_ht: 0, sale_price_ex_vat: 0 },
     article_id: 'article-2',
     manual_unit_price_ht: 29,
+    manual_price_override: false,
     allow_manual_input: true,
     existing_line: { id: 'line-1', article_id: article.id, unit_sale_price_ht: 6.5 },
   }, depsWith({ ...publishedLevel2, final_unit_price_ht: 35, source_tariff_price_ht: 35 }));
@@ -175,6 +200,7 @@ async function resolve(input, published) {
   const editable = fs.readFileSync(path.join(root, 'routes', 'deliveryNotesEditable.js'), 'utf8');
   const quickOrder = fs.readFileSync(path.join(root, 'routes', 'quickOrderSheets.js'), 'utf8');
   const sales = fs.readFileSync(path.join(root, 'routes', 'sales.js'), 'utf8');
+  const saleDetail = fs.readFileSync(path.join(root, '..', 'frontend', 'js', 'sale-detail.js'), 'utf8');
 
   assert(deliveryNotes.includes('pricing_session_id, pricing_line_id, tariff_level_id'), 'commande -> BL doit copier la provenance prix');
   assert(forced.includes('pricing_session_id, pricing_line_id, tariff_level_id'), 'commande -> BL force doit copier la provenance prix');
@@ -182,9 +208,13 @@ async function resolve(input, published) {
   assert(quickOrder.includes('resolveSalesLinePrice'), 'generation fiche appel doit utiliser le resolver');
   assert(quickOrder.includes('sale_price_level_3_ht'), 'fiche appel doit charger les niveaux tarifaires article pour fallback');
   assert(sales.includes('allow_manual_input:allowsDirectManualPrice(line)'), 'commande directe doit autoriser explicitement le prix manuel');
+  assert(sales.includes('manual_price_override:body.manual_price_override===true'), 'commande directe doit exiger un override manuel explicite');
   assert(sales.includes('manual_unit_price_ht:body.unit_sale_price_ht'), 'commande directe doit passer le prix manuel saisi au resolver');
   assert(!quickOrder.includes('allow_manual_input:true'), 'fiche appel ne doit pas autoriser le prix manuel arbitraire');
   assert(!editable.includes('allow_manual_input:true'), 'BL editable ne doit pas autoriser le prix manuel arbitraire');
+  assert(saleDetail.includes("row.dataset.manualPriceOverride = 'false'"), 'selection article doit remettre override prix a false');
+  assert(saleDetail.includes("manual_price_override: row.dataset.manualPriceOverride === 'true'"), 'saveLine doit envoyer le marqueur override explicite');
+  assert(saleDetail.includes("e.target.classList.contains('line-unit-price-ht')) row.dataset.manualPriceOverride = 'true'"), 'saisie prix utilisateur doit activer override');
 
   console.log('OK sales price resolver PR1');
 })();
