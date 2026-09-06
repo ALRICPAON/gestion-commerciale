@@ -110,18 +110,30 @@ async function resolveSalesLinePrice(db, storeId, input = {}, deps = {}) {
   const oldArticleId = clean(existingLine?.article_id);
   const sameArticle = existingLine && oldArticleId && articleId && oldArticleId === articleId;
   const existingPrice = positivePrice(existingLine?.unit_sale_price_ht);
+  const manualOverride = input.allow_manual_input === true && input.manual_price_override === true;
+  const manualPrice = manualOverride ? positivePrice(input.manual_unit_price_ht) : null;
+  const requestedTariffLevel = legacyTariffLevel(input.tariff_level || existingLine?.tariff_level_snapshot || 1);
 
-  if (input.preserve_existing !== false && sameArticle && existingPrice !== null && input.force_reprice !== true) {
+  if (input.preserve_existing !== false && sameArticle && existingPrice !== null && input.force_reprice !== true && !manualOverride) {
     return {
       source: 'existing_line',
       unit_price_ht: existingPrice,
-      tariff_level: legacyTariffLevel(input.tariff_level || existingLine.tariff_level_snapshot || 1),
+      tariff_level: requestedTariffLevel,
       pricing_session_id: existingLine.pricing_session_id || null,
       pricing_line_id: existingLine.pricing_line_id || null,
       tariff_level_id: existingLine.tariff_level_id || null,
       source_tariff_price_ht: existingLine.source_tariff_price_ht ?? null,
       royale_maree_commission_ht: existingLine.royale_maree_commission_ht ?? null,
       final_unit_price_ht: existingLine.final_unit_price_ht ?? existingPrice,
+    };
+  }
+
+  if (manualPrice !== null) {
+    return {
+      source: 'manual_direct_entry',
+      unit_price_ht: manualPrice,
+      tariff_level: requestedTariffLevel,
+      final_unit_price_ht: manualPrice,
     };
   }
 

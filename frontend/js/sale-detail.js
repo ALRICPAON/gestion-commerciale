@@ -290,6 +290,7 @@ function applyArticle(item) {
   if (!row) return;
   row.dataset.articleId = item.article_id;
   row.dataset.saleUnit = item.sale_unit || item.unit || 'kg';
+  row.dataset.manualPriceOverride = 'false';
   row.querySelector('.line-plu').value = item.plu || '';
   row.querySelector('.line-article-label').value = item.designation || '';
   row.querySelector('.line-unit-price-ht').value = priceFor(item).toFixed(4);
@@ -356,7 +357,6 @@ async function saveHeader(reload = true) {
       document_date: els.date.value || null,
       document_type: sale?.document_type || 'ORDER',
       status: sale?.status || 'draft',
-      origin: isNegoce() ? 'negoce' : (sale?.origin || 'manual'),
       reference_number: clean(els.ref.value) || null,
       notes: clean(els.notes.value) || null,
     }),
@@ -374,7 +374,7 @@ async function saveLine(lineId) {
   if (!row.dataset.articleId) { fb(els.lf, 'Sélectionne un article', true); return; }
   const label = clean(row.querySelector('.line-article-label').value);
   if (isNegoce() && !label) { fb(els.lf, 'Saisis la désignation du produit négoce', true); return; }
-  const payload = { article_id: row.dataset.articleId, article_plu: clean(row.querySelector('.line-plu').value), article_label: label, selected_lot_id: row.dataset.selectedLotId || null, delivered_client_id: row.querySelector('.line-delivered-client')?.value || null, package_count: n(row.querySelector('.line-package-count').value), weight_per_package: n(row.querySelector('.line-weight-per-package').value), total_weight: n(row.querySelector('.line-total-weight').value), sale_unit: row.dataset.saleUnit || 'kg', unit_sale_price_ht: n(row.querySelector('.line-unit-price-ht').value), vat_rate: n(row.querySelector('.line-vat-rate').value, vatRate()) };
+  const payload = { article_id: row.dataset.articleId, article_plu: clean(row.querySelector('.line-plu').value), article_label: label, selected_lot_id: row.dataset.selectedLotId || null, delivered_client_id: row.querySelector('.line-delivered-client')?.value || null, package_count: n(row.querySelector('.line-package-count').value), weight_per_package: n(row.querySelector('.line-weight-per-package').value), total_weight: n(row.querySelector('.line-total-weight').value), sale_unit: row.dataset.saleUnit || 'kg', unit_sale_price_ht: n(row.querySelector('.line-unit-price-ht').value), manual_price_override: row.dataset.manualPriceOverride === 'true', vat_rate: n(row.querySelector('.line-vat-rate').value, vatRate()) };
   await api(`/api/sales/lines/${lineId}`, { method: 'PATCH', body: JSON.stringify(payload) });
   fb(els.lf, isDeliveryNote() && sale?.status === 'validated' ? 'Ligne enregistrée et stock réajusté' : 'Ligne enregistrée');
   await loadSale();
@@ -423,6 +423,6 @@ els.body?.addEventListener('keydown', async (e) => {
 });
 els.body?.addEventListener('blur', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row) return; await (isNegoce() ? searchNegocePlu(row, { applyFirst: true }) : resolvePlu(row)).catch((err) => fb(els.lf, err.message, true)); }, true);
 els.body?.addEventListener('change', async (e) => { if (!e.target.classList.contains('line-plu')) return; const row = e.target.closest('tr[data-line-id]'); if (!row || !isNegoce()) return; await searchNegocePlu(row, { applyFirst: true }).catch((err) => fb(els.lf, err.message, true)); });
-els.body?.addEventListener('input', (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.target.classList.contains('line-plu') && isNegoce()) { row.dataset.articleId = ''; row.dataset.selectedLotId = ''; scheduleNegocePluSearch(row); return; } if (['line-package-count', 'line-weight-per-package', 'line-total-weight', 'line-unit-price-ht', 'line-vat-rate'].some((c) => e.target.classList.contains(c))) computeRow(row); });
+els.body?.addEventListener('input', (e) => { const row = e.target.closest('tr[data-line-id]'); if (!row) return; if (e.target.classList.contains('line-plu') && isNegoce()) { row.dataset.articleId = ''; row.dataset.selectedLotId = ''; row.dataset.manualPriceOverride = 'false'; scheduleNegocePluSearch(row); return; } if (e.target.classList.contains('line-unit-price-ht')) row.dataset.manualPriceOverride = 'true'; if (['line-package-count', 'line-weight-per-package', 'line-total-weight', 'line-unit-price-ht', 'line-vat-rate'].some((c) => e.target.classList.contains(c))) computeRow(row); });
 async function init() { try { renderTopbar(); ensureStockSearchToggle(); ensureAffiliateLineHeader(); await loadClients(); await loadSale(); } catch (e) { console.error('Erreur init détail vente :', e); fb(els.lf, e.message || 'Erreur chargement vente', true); } }
 init();
