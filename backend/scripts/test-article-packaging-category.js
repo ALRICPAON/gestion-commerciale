@@ -102,11 +102,11 @@ function main() {
 
   includes('backend/routes/sales.js', "COALESCE(a.article_category,'product')='product'", 'vente doit refuser les emballages');
   includes('frontend/js/sale-detail.js', 'article_category=product', 'front vente doit demander les produits');
-  includes('frontend/sale-detail.html', './js/sale-detail.js?v=18', 'cache-buster vente attendu');
+  includes('frontend/sale-detail.html', './js/sale-detail.js?v=19', 'cache-buster vente attendu');
   includes('frontend/js/sale-stock-negative-flow.js', 'article_category=product', 'flux vente stock negatif doit demander les produits');
   includes('frontend/sale-detail.html', './js/sale-stock-negative-flow.js?v=4', 'cache-buster flux stock negatif attendu');
   includes('frontend/js/quick-order-sheet.js', "article_category: 'product'", 'commande rapide doit demander les produits');
-  includes('frontend/quick-order-sheet.html', './js/quick-order-sheet.js?v=9', 'cache-buster commande rapide attendu');
+  includes('frontend/quick-order-sheet.html', './js/quick-order-sheet.js?v=10', 'cache-buster commande rapide attendu');
 
   includes('backend/routes/transformations.js', "COALESCE(a.article_category, 'product') = 'product'", 'transformation doit filtrer les produits');
   includes('backend/routes/transformationUpdate.js', "COALESCE(article_category, 'product') = 'product'", 'update transformation doit filtrer les produits');
