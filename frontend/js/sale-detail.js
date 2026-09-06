@@ -357,7 +357,6 @@ async function saveHeader(reload = true) {
       document_date: els.date.value || null,
       document_type: sale?.document_type || 'ORDER',
       status: sale?.status || 'draft',
-      origin: isNegoce() ? 'negoce' : (sale?.origin || 'manual'),
       reference_number: clean(els.ref.value) || null,
       notes: clean(els.notes.value) || null,
     }),

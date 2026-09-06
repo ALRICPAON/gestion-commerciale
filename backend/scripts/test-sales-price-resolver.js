@@ -55,6 +55,13 @@ async function resolve(input, published) {
   assert.strictEqual(manualBeatsPublished.source, 'manual_direct_entry');
   assert.strictEqual(manualBeatsPublished.unit_price_ht, 22.9);
 
+  const negoceManualOverride = await resolve(
+    { allow_manual_input: true, manual_price_override: true, manual_unit_price_ht: 24.5 },
+    { ...publishedLevel2, final_unit_price_ht: 21.9, source_tariff_price_ht: 21.9 }
+  );
+  assert.strictEqual(negoceManualOverride.source, 'manual_direct_entry');
+  assert.strictEqual(negoceManualOverride.unit_price_ht, 24.5);
+
   const publishedWithoutManualOverride = await resolve(
     { allow_manual_input: true, manual_price_override: false, manual_unit_price_ht: 22.9 },
     { ...publishedLevel2, final_unit_price_ht: 21.9, source_tariff_price_ht: 21.9 }
@@ -128,6 +135,17 @@ async function resolve(input, published) {
   );
   assert.strictEqual(arbitraryPriceIgnoredWithoutManualContext.source, 'article_fallback');
   assert.strictEqual(arbitraryPriceIgnoredWithoutManualContext.unit_price_ht, 31);
+
+  const quickOrderArbitraryPriceCannotBypassPublished = await resolve(
+    {
+      allow_manual_input: false,
+      manual_price_override: true,
+      manual_unit_price_ht: 99,
+    },
+    { ...publishedLevel2, final_unit_price_ht: 21.9, source_tariff_price_ht: 21.9 }
+  );
+  assert.strictEqual(quickOrderArbitraryPriceCannotBypassPublished.source, 'published_pricing');
+  assert.strictEqual(quickOrderArbitraryPriceCannotBypassPublished.unit_price_ht, 21.9);
 
   const fallback = await resolve({}, { found: false, tariff_level: { legacy_level: 3 } });
   assert.strictEqual(fallback.source, 'article_fallback');
@@ -208,13 +226,17 @@ async function resolve(input, published) {
   assert(quickOrder.includes('resolveSalesLinePrice'), 'generation fiche appel doit utiliser le resolver');
   assert(quickOrder.includes('sale_price_level_3_ht'), 'fiche appel doit charger les niveaux tarifaires article pour fallback');
   assert(sales.includes('allow_manual_input:allowsDirectManualPrice(line)'), 'commande directe doit autoriser explicitement le prix manuel');
+  assert(sales.includes("line?.document_type==='ORDER'&&['manual','negoce'].includes(clean(line?.document_origin)||'manual')"), 'autorisation prix manuel doit dependre de la provenance document conservee');
   assert(sales.includes('manual_price_override:body.manual_price_override===true'), 'commande directe doit exiger un override manuel explicite');
   assert(sales.includes('manual_unit_price_ht:body.unit_sale_price_ht'), 'commande directe doit passer le prix manuel saisi au resolver');
+  assert(sales.includes("Modification origine interdite"), 'PATCH document doit refuser un changement de provenance');
+  assert(!sales.includes('origin=COALESCE'), 'PATCH document ne doit plus modifier sales_documents.origin');
   assert(!quickOrder.includes('allow_manual_input:true'), 'fiche appel ne doit pas autoriser le prix manuel arbitraire');
   assert(!editable.includes('allow_manual_input:true'), 'BL editable ne doit pas autoriser le prix manuel arbitraire');
   assert(saleDetail.includes("row.dataset.manualPriceOverride = 'false'"), 'selection article doit remettre override prix a false');
   assert(saleDetail.includes("manual_price_override: row.dataset.manualPriceOverride === 'true'"), 'saveLine doit envoyer le marqueur override explicite');
   assert(saleDetail.includes("e.target.classList.contains('line-unit-price-ht')) row.dataset.manualPriceOverride = 'true'"), 'saisie prix utilisateur doit activer override');
+  assert(!saleDetail.includes("origin: isNegoce() ? 'negoce' : (sale?.origin || 'manual')"), 'sauvegarde entete front ne doit pas reecrire origin');
 
   console.log('OK sales price resolver PR1');
 })();
