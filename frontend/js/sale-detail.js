@@ -15,6 +15,7 @@ let stockItems = [];
 let lotItems = [];
 let editingLineId = null;
 const pluSearchTimers = new Map();
+const lotAutosavingLineIds = new Set();
 const stockOnlyToggleId = 'stock-article-available-only-toggle';
 
 function n(v, f = 0) { const x = Number(String(v ?? '').replace(',', '.')); return Number.isFinite(x) ? x : f; }
@@ -135,6 +136,31 @@ function lastDeliveredClientId() {
   return null;
 }
 
+function lineQuantity(row) {
+  const totalWeight = n(row.querySelector('.line-total-weight')?.value);
+  if (totalWeight > 0) return totalWeight;
+  return n(row.querySelector('.line-package-count')?.value) * n(row.querySelector('.line-weight-per-package')?.value);
+}
+
+function lineReadyForAutosave(row) {
+  if (!row) return false;
+  if (!els.client?.value) return false;
+  if (!row.dataset.articleId) return false;
+  if (lineQuantity(row) <= 0) return false;
+  if (n(row.querySelector('.line-unit-price-ht')?.value) <= 0) return false;
+  if (isNegoce() && !clean(row.querySelector('.line-article-label')?.value)) return false;
+  return true;
+}
+
+function focusAfterLineSave(savedLineId, nextLineId = null) {
+  const nextRow = nextLineId ? els.body.querySelector(`tr[data-line-id="${nextLineId}"]`) : null;
+  const currentRow = els.body.querySelector(`tr[data-line-id="${savedLineId}"]`);
+  const target = nextRow?.querySelector('.line-plu:not([disabled])')
+    || currentRow?.querySelector('.line-package-count:not([disabled])')
+    || currentRow?.querySelector('[data-action="save-line"]:not([disabled])');
+  target?.focus();
+}
+
 function ensureStockSearchToggle() {
   if (!els.stockSearch || els.stockOnly) return;
   const existing = document.getElementById(stockOnlyToggleId);
@@ -228,11 +254,12 @@ function renderLines() {
     const t = trace(line);
     const locked = !editable();
     const negoce = isNegoce();
+    const traceLabel = traceText(t) !== '-' ? traceText(t) : (negoce ? 'NÃ©goce hors stock' : '-');
     return `<tr data-line-id="${line.id}" data-article-id="${line.article_id || ''}" data-selected-lot-id="${line.selected_lot_id || ''}" data-sale-unit="${esc(line.sale_unit || 'kg')}">
       <td><select class="line-input line-delivered-client" ${locked ? 'disabled' : ''}>${affiliateOptions(line)}</select></td>
       <td><input class="line-input line-plu" value="${esc(line.article_plu || '')}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-article-label" value="${esc(line.article_label || '')}" ${locked ? 'disabled' : ''}></td>
-      <td><button type="button" class="btn btn-secondary" data-action="choose-lot" data-id="${line.id}" ${locked || !line.article_id || negoce ? 'disabled' : ''}>${esc(t.lot_code || t.supplier_lot_number || (negoce ? 'Négoce' : 'Lot'))}</button></td>
+      <td><button type="button" class="btn btn-secondary line-lot-btn" data-action="choose-lot" data-id="${line.id}" ${locked || !line.article_id || negoce ? 'disabled' : ''}>${esc(t.lot_code || t.supplier_lot_number || (negoce ? 'Négoce' : 'Lot'))}</button></td>
       <td><input class="line-input line-package-count" type="number" step="0.001" value="${n(line.package_count)}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-weight-per-package" type="number" step="0.001" value="${n(line.weight_per_package)}" ${locked ? 'disabled' : ''}></td>
       <td><input class="line-input line-total-weight" type="number" step="0.001" value="${n(line.total_weight || line.sold_quantity)}" ${locked ? 'disabled' : ''}></td>
@@ -240,7 +267,7 @@ function renderLines() {
       <td class="line-total-ht">${money(line.line_amount_ht)}</td>
       <td><input class="line-input line-vat-rate" type="number" step="0.01" value="${n(line.vat_rate, vatRate())}" ${locked ? 'disabled' : ''}></td>
       <td class="line-total-ttc">${money(line.line_amount_ttc)}</td>
-      <td class="trace-cell">${esc(traceText(t) !== '-' ? traceText(t) : (negoce ? 'Négoce hors stock' : '-'))}</td>
+      <td class="trace-cell" title="${esc(traceLabel)}">${esc(traceLabel)}</td>
       <td>${esc(line.line_status || '-')}</td>
       <td><button type="button" class="btn btn-primary" data-action="save-line" data-id="${line.id}" ${locked ? 'disabled' : ''}>OK</button><button type="button" class="btn btn-secondary" data-action="delete-line" data-id="${line.id}" ${locked ? 'disabled' : ''}>Suppr.</button></td>
     </tr>`;
@@ -296,7 +323,9 @@ function applyArticle(item) {
   row.querySelector('.line-unit-price-ht').value = priceFor(item).toFixed(4);
   row.querySelector('.line-vat-rate').value = vatRate().toFixed(2);
   row.querySelector('[data-action="choose-lot"]').disabled = isNegoce();
-  row.querySelector('.trace-cell').textContent = traceText(item);
+  const traceLabel = traceText(item);
+  row.querySelector('.trace-cell').textContent = traceLabel;
+  row.querySelector('.trace-cell').title = traceLabel;
   els.stockModal.classList.add('hidden');
   computeRow(row);
 }
@@ -309,13 +338,34 @@ async function openLots(lineId) {
   els.lotBody.innerHTML = lotItems.map((l) => `<tr data-lot-id="${l.id}"><td>${esc(l.lot_code || '')}</td><td>${esc(l.supplier_lot_number || '')}</td><td>${qty(l.qty_remaining)}</td><td>${sdate(l.dlc)}</td><td>${esc(l.latin_name || '')}</td><td>${esc(l.fao_zone || '')}</td><td>${esc(l.sous_zone || '')}</td><td>${esc(l.fishing_gear || '')}</td><td>${esc(l.production_method || '')}</td><td>${esc(l.allergens || '')}</td></tr>`).join('') || '<tr><td colspan="10">Aucun lot.</td></tr>';
   els.lotModal.classList.remove('hidden');
 }
-function applyLot(lot) {
+async function applyLot(lot) {
   const row = els.body.querySelector(`tr[data-line-id="${editingLineId}"]`);
   if (!row) return;
+  const lineId = row.dataset.lineId;
+  if (lotAutosavingLineIds.has(lineId)) return;
   row.dataset.selectedLotId = lot.id;
   row.querySelector('[data-action="choose-lot"]').textContent = lot.lot_code || lot.supplier_lot_number || 'Lot';
-  row.querySelector('.trace-cell').textContent = traceText(lot);
+  const traceLabel = traceText(lot);
+  row.querySelector('.trace-cell').textContent = traceLabel;
+  row.querySelector('.trace-cell').title = traceLabel;
   els.lotModal.classList.add('hidden');
+  if (!lineReadyForAutosave(row)) {
+    fb(els.lf, "Lot sélectionné. Complétez la ligne pour l'enregistrer.", false);
+    focusAfterLineSave(lineId);
+    return;
+  }
+  const rowIds = Array.from(els.body.querySelectorAll('tr[data-line-id]')).map((item) => item.dataset.lineId);
+  const nextLineId = rowIds[rowIds.indexOf(lineId) + 1] || null;
+  const lotButton = row.querySelector('[data-action="choose-lot"]');
+  lotAutosavingLineIds.add(lineId);
+  if (lotButton) lotButton.disabled = true;
+  try {
+    await saveLine(lineId, { focusLineId: lineId, focusNextLineId: nextLineId });
+  } catch (error) {
+    fb(els.lf, error.message || 'Erreur sauvegarde lot', true);
+  } finally {
+    lotAutosavingLineIds.delete(lineId);
+  }
 }
 async function resolvePlu(row) {
   const plu = clean(row.querySelector('.line-plu')?.value);
@@ -365,7 +415,7 @@ async function saveHeader(reload = true) {
 }
 async function ensureHeader() { if ((sale?.client_id || '') === (els.client.value || '')) return; await saveHeader(false); const data = await api(`/api/sales/${saleId}`); sale = data.sale; lines = Array.isArray(data.lines) ? data.lines : []; await loadAffiliates(); }
 async function addLine() { clear(els.lf); if (!editable()) return; if (!els.client.value) { fb(els.lf, "Sélectionne un client avant d'ajouter une ligne", true); return; } const deliveredClientId = affiliates.length ? lastDeliveredClientId() : null; await ensureHeader(); await api(`/api/sales/${saleId}/lines`, { method: 'POST', body: JSON.stringify({ delivered_client_id: deliveredClientId }) }); await loadSale(); els.body.querySelector('tr[data-line-id]:last-child .line-plu')?.focus(); }
-async function saveLine(lineId) {
+async function saveLine(lineId, options = {}) {
   clear(els.lf);
   await ensureHeader();
   const row = els.body.querySelector(`tr[data-line-id="${lineId}"]`);
@@ -378,6 +428,7 @@ async function saveLine(lineId) {
   await api(`/api/sales/lines/${lineId}`, { method: 'PATCH', body: JSON.stringify(payload) });
   fb(els.lf, isDeliveryNote() && sale?.status === 'validated' ? 'Ligne enregistrée et stock réajusté' : 'Ligne enregistrée');
   await loadSale();
+  if (options.focusLineId || options.focusNextLineId) focusAfterLineSave(options.focusLineId || lineId, options.focusNextLineId);
 }
 async function deleteLine(lineId) { clear(els.lf); if (!confirm('Supprimer cette ligne ?')) return; await api(`/api/sales/lines/${lineId}`, { method: 'DELETE' }); fb(els.lf, isDeliveryNote() && sale?.status === 'validated' ? 'Ligne supprimée et stock réajusté' : 'Ligne supprimée'); await loadSale(); }
 async function validateInBl() { clear(els.lf); if (!canValidateInBl()) return; const text = isNegoce() ? 'Valider en BL négoce ? Les lots réceptionnés seront déstockés.' : 'Valider en BL ? Cette action génère le BL et déstocke les lots.'; if (!confirm(text)) return; await api(`/api/sales/${saleId}/validate-delivery-note`, { method: 'POST', body: JSON.stringify({}) }); fb(els.lf, isNegoce() ? 'Commande négoce validée en BL' : 'Commande validée en BL et stock déstocké'); await loadSale(); }
@@ -404,7 +455,8 @@ els.closeStock?.addEventListener('click', () => els.stockModal.classList.add('hi
 els.closeLot?.addEventListener('click', () => els.lotModal.classList.add('hidden'));
 els.stockSearch?.addEventListener('input', () => stockSearch(clean(els.stockSearch.value)).catch((e) => fb(els.lf, e.message, true)));
 els.stockBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-article-id]'); const item = stockItems.find((a) => String(a.article_id) === String(row?.dataset.articleId)); if (item) applyArticle(item); });
-els.lotBody?.addEventListener('dblclick', (e) => { const row = e.target.closest('tr[data-lot-id]'); const lot = lotItems.find((l) => l.id === row?.dataset.lotId); if (lot) applyLot(lot); });
+els.lotBody?.addEventListener('click', async (e) => { const row = e.target.closest('tr[data-lot-id]'); const lot = lotItems.find((l) => l.id === row?.dataset.lotId); if (lot) await applyLot(lot); });
+els.lotBody?.addEventListener('dblclick', async (e) => { const row = e.target.closest('tr[data-lot-id]'); const lot = lotItems.find((l) => l.id === row?.dataset.lotId); if (lot) await applyLot(lot); });
 els.body?.addEventListener('click', async (e) => { const b = e.target.closest('[data-action]'); if (!b) return; if (b.dataset.action === 'save-line') await saveLine(b.dataset.id); if (b.dataset.action === 'delete-line') await deleteLine(b.dataset.id); if (b.dataset.action === 'choose-lot') await openLots(b.dataset.id); });
 els.body?.addEventListener('keydown', async (e) => {
   const row = e.target.closest('tr[data-line-id]');
