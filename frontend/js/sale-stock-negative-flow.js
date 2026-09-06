@@ -15,6 +15,7 @@
 
   let saleSnapshot = null;
   let lotItems = [];
+  const lotAutosavingLineIds = new Set();
 
   function number(value, fallback = 0) {
     const parsed = Number(String(value ?? '').replace(',', '.'));
@@ -167,6 +168,55 @@
     ].filter(Boolean).join(' | ') || '-';
   }
 
+  function lineQuantity(row) {
+    const totalWeight = number(row?.querySelector('.line-total-weight')?.value);
+    if (totalWeight > 0) return totalWeight;
+    return number(row?.querySelector('.line-package-count')?.value) * number(row?.querySelector('.line-weight-per-package')?.value);
+  }
+
+  function lineReadyForAutosave(row) {
+    if (!row) return false;
+    const clientId = document.getElementById('sale-client-id')?.value;
+    if (!clientId) return false;
+    if (!row.dataset.articleId) return false;
+    if (lineQuantity(row) <= 0) return false;
+    if (number(row.querySelector('.line-unit-price-ht')?.value) <= 0) return false;
+    return true;
+  }
+
+  function focusAfterLotSave(lineId, nextLineId = null) {
+    const nextRow = nextLineId ? lineBody?.querySelector(`tr[data-line-id="${CSS.escape(String(nextLineId))}"]`) : null;
+    const currentRow = lineBody?.querySelector(`tr[data-line-id="${CSS.escape(String(lineId))}"]`);
+    const target = nextRow?.querySelector('.line-plu:not([disabled])')
+      || currentRow?.querySelector('.line-package-count:not([disabled])')
+      || currentRow?.querySelector('[data-action="save-line"]:not([disabled])');
+    target?.focus();
+  }
+
+  async function autosaveLotSelection(lineId) {
+    const row = lineBody?.querySelector(`tr[data-line-id="${CSS.escape(String(lineId))}"]`);
+    if (!row) return;
+    if (!lineReadyForAutosave(row)) {
+      feedback("Lot sélectionné. Complétez la ligne pour l'enregistrer.");
+      focusAfterLotSave(lineId);
+      return;
+    }
+    if (lotAutosavingLineIds.has(lineId)) return;
+    const rowIds = [...lineBody.querySelectorAll('tr[data-line-id]')].map((item) => item.dataset.lineId);
+    const nextLineId = rowIds[rowIds.indexOf(String(lineId)) + 1] || null;
+    const lotButton = row.querySelector('[data-action="choose-lot"]');
+    lotAutosavingLineIds.add(lineId);
+    if (lotButton) lotButton.disabled = true;
+    try {
+      if (typeof saveLine === 'function') await saveLine(lineId, { focusLineId: lineId, focusNextLineId: nextLineId });
+      else feedback('Lot sélectionné. Cliquez sur OK pour enregistrer.');
+    } catch (error) {
+      feedback(error.message || 'Erreur sauvegarde lot', true);
+    } finally {
+      lotAutosavingLineIds.delete(lineId);
+    }
+  }
+
   async function openLotChooser(lineId) {
     const row = lineBody?.querySelector(`tr[data-line-id="${CSS.escape(String(lineId))}"]`);
     const articleId = row?.dataset.articleId;
@@ -187,15 +237,21 @@
     lotModal?.classList.remove('hidden');
   }
 
-  function applySelectedLot(lot) {
-    const row = lineBody?.querySelector(`tr[data-line-id="${CSS.escape(String(window.__saleStockNegativeLineId || ''))}"]`);
+  async function applySelectedLot(lot) {
+    const lineId = String(window.__saleStockNegativeLineId || '');
+    if (lotAutosavingLineIds.has(lineId)) return;
+    const row = lineBody?.querySelector(`tr[data-line-id="${CSS.escape(lineId)}"]`);
     if (!row || !lot) return;
     row.dataset.selectedLotId = lot.id;
     const button = row.querySelector('[data-action="choose-lot"]');
     if (button) button.textContent = lot.lot_code || lot.supplier_lot_number || 'Lot';
     const traceCell = row.querySelector('.trace-cell');
-    if (traceCell) traceCell.textContent = traceText(lot);
+    if (traceCell) {
+      traceCell.textContent = traceText(lot);
+      traceCell.title = traceText(lot);
+    }
     lotModal?.classList.add('hidden');
+    await autosaveLotSelection(lineId);
   }
 
   if (typeof isNegoce !== 'undefined') {
@@ -271,6 +327,12 @@
     event.stopImmediatePropagation();
     window.__saleStockNegativeLineId = button.dataset.id;
     openLotChooser(button.dataset.id).catch((error) => feedback(error.message || 'Erreur chargement lots', true));
+  }, true);
+
+  lotBody?.addEventListener('click', (event) => {
+    const row = event.target.closest('tr[data-lot-id]');
+    const lot = lotItems.find((item) => String(item.id) === String(row?.dataset.lotId));
+    if (lot) applySelectedLot(lot);
   }, true);
 
   lotBody?.addEventListener('dblclick', (event) => {
