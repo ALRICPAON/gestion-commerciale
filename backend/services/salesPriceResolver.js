@@ -154,6 +154,16 @@ async function resolveSalesLinePrice(db, storeId, input = {}, deps = {}) {
     };
   }
 
+  const manualPrice = input.allow_manual_input === true ? positivePrice(input.manual_unit_price_ht) : null;
+  if (manualPrice !== null) {
+    return {
+      source: 'manual_direct_entry',
+      unit_price_ht: manualPrice,
+      tariff_level: tariffLevel,
+      final_unit_price_ht: manualPrice,
+    };
+  }
+
   const fallback = articleFallbackPrice(article, tariffLevel);
   if (fallback.price !== null) {
     return {
