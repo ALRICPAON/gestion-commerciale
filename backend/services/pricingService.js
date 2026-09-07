@@ -148,10 +148,14 @@ async function resolveClientTariffLevel(db, storeId, clientId) {
   const result = await db.query(
     `SELECT c.id, c.code, c.name, c.tariff_level, c.tariff_level_id,
             COALESCE(c.is_royale_maree_member, false) AS is_royale_maree_member,
-            COALESCE(parent.tariff_level_id, billed.tariff_level_id, c.tariff_level_id) AS resolved_tariff_level_id,
-            COALESCE(parent.tariff_level, billed.tariff_level, c.tariff_level, 1) AS resolved_legacy_level
+            c.parent_client_id,
+            COALESCE(c.billed_client_id, c.id) AS billed_client_id,
+            billed.code AS billed_client_code,
+            billed.name AS billed_client_name,
+            COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member,
+            COALESCE(billed.tariff_level_id, c.tariff_level_id) AS resolved_tariff_level_id,
+            COALESCE(billed.tariff_level, c.tariff_level, 1) AS resolved_legacy_level
      FROM clients c
-     LEFT JOIN clients parent ON parent.id = c.parent_client_id AND parent.store_id = c.store_id
      LEFT JOIN clients billed ON billed.id = COALESCE(c.billed_client_id, c.id) AND billed.store_id = c.store_id
      WHERE c.store_id = $1 AND c.id = $2 AND COALESCE(c.status, 'active') <> 'inactive'
      LIMIT 1`,
@@ -159,6 +163,13 @@ async function resolveClientTariffLevel(db, storeId, clientId) {
   );
   const client = result.rows[0];
   if (!client) throw expose(404, 'Client introuvable pour ce magasin');
+  const billingClient = {
+    id: client.billed_client_id || client.id,
+    code: client.billed_client_code || client.code,
+    name: client.billed_client_name || client.name,
+    is_royale_maree_member: client.billed_is_royale_maree_member === true,
+  };
+  client.billing_client = billingClient;
   let tariffLevel = null;
   if (client.resolved_tariff_level_id) tariffLevel = await getTariffLevel(db, storeId, { id: client.resolved_tariff_level_id });
   if (!tariffLevel) tariffLevel = await getTariffLevel(db, storeId, { legacy_level: client.resolved_legacy_level || 1 });
@@ -770,7 +781,7 @@ async function resolvePublishedPrice(db, storeId, input = {}) {
   const finalPrice = getCustomerDisplayedPrice({
     price: row.source_tariff_price_ht,
     pricingLevel: level.legacy_level,
-    client,
+    client: client.billing_client || client,
     storeSettings: row,
   });
   const commission = Number((Number(finalPrice || 0) - Number(row.source_tariff_price_ht || 0)).toFixed(4));

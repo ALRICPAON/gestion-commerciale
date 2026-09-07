@@ -6,7 +6,8 @@ const {
 } = require('../services/royaleMareeCommission');
 
 const settings = { royale_maree_commission_eur_per_kg: '0.50' };
-const leclercClient = { name: 'LECLERC TEST', is_royale_maree_member: true };
+const leclercClient = { code: '88', name: 'LECLERC TEST', is_royale_maree_member: false };
+const royaleMareeClient = { code: 'RM-88', name: 'E.LECLERC SODIVARDIERE', is_royale_maree_member: true };
 const standardClient = { name: 'CLIENT STANDARD', is_royale_maree_member: false };
 
 function displayed(price, pricingLevel, client, storeSettings = settings, context = {}) {
@@ -19,11 +20,12 @@ function displayed(price, pricingLevel, client, storeSettings = settings, contex
   });
 }
 
-assert.equal(displayed(20, 1, null), 20.5, 'Tarif 1 sans client ajoute la commission');
-assert.equal(displayed(20, 1, leclercClient), 20.5, 'Tarif 1 avec client Leclerc ajoute la commission');
-assert.equal(displayed(20, 1, standardClient), 20.5, 'Tarif 1 client non marque RM ajoute la commission');
+assert.equal(displayed(20, 1, null), 20, 'Tarif 1 sans client ne suffit pas pour ajouter la commission');
+assert.equal(displayed(20, 1, leclercClient), 20, 'Client direct Leclerc 88 ne prend pas la commission RM');
+assert.equal(displayed(20, 1, royaleMareeClient), 20.5, 'Client RM-88 prend la commission RM');
+assert.equal(displayed(20, 1, standardClient), 20, 'Tarif 1 client non marque RM ne prend pas la commission');
 assert.equal(displayed(20, 1, standardClient, { royale_maree_commission_eur_per_kg: 0 }), 20, 'Commission nulle conserve le tarif 1');
-assert.equal(displayed(21.2, 1, standardClient), 21.7, 'Tarif 1 manuel ajoute la commission');
+assert.equal(displayed(21.2, 1, royaleMareeClient), 21.7, 'Tarif 1 RM manuel ajoute la commission');
 assert.equal(displayed(22, 2, leclercClient), 22, 'Tarif 2 ne prend pas la commission');
 assert.equal(displayed(23, 3, leclercClient), 23, 'Tarif 3 ne prend pas la commission');
 
@@ -34,7 +36,7 @@ const decorated = decorateLineWithDisplayedPrices({
   price_level_3_ht: 23,
   tariff_level: 1,
 }, {
-  client: standardClient,
+  client: royaleMareeClient,
   storeSettings: settings,
   context: { targetTariffLevel: 1 },
 });
