@@ -281,6 +281,34 @@ function testIncrementalGenerationCellIdentity() {
   ]));
   assert.strictEqual(lockedChange.conflicts.length, 1, 'commande deja engagee ne doit pas etre modifiee silencieusement');
 
+  const partialWithLockedChange = buildDelta(new Map([
+    ['client-a::pricing-homard', { group, line: { article: { id: 'article-homard' }, product: { uid: 'pricing-homard' }, packageCount: 2, weightPerPackage: 6, quantity: 12 } }],
+    ['client-b::pricing-sole', { group: { documentClientId: 'client-b' }, line: { article: { id: 'article-sole' }, product: { uid: 'pricing-sole' }, packageCount: 1, weightPerPackage: 5, quantity: 5 } }],
+    ['client-c::pricing-langoustine', { group: { documentClientId: 'client-c' }, line: { article: { id: 'article-langoustine' }, product: { uid: 'pricing-langoustine' }, packageCount: 2, weightPerPackage: 4, quantity: 8 } }],
+    ['client-d::pricing-tourteau', { group: { documentClientId: 'client-d' }, line: { article: { id: 'article-tourteau' }, product: { uid: 'pricing-tourteau' }, packageCount: 3, weightPerPackage: 3, quantity: 9 } }],
+  ]), new Map([
+    ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_status: 'validated' }],
+  ]));
+  assert.strictEqual(partialWithLockedChange.conflicts.length, 1, 'ancienne cellule engagee modifiee doit remonter en warning');
+  assert.strictEqual(partialWithLockedChange.created.length, 3, 'les trois nouvelles cellules doivent rester generables');
+
+  const sameClientNewCell = buildDelta(new Map([
+    ['client-a::pricing-homard', { group, line: { article: { id: 'article-homard' }, product: { uid: 'pricing-homard' }, packageCount: 2, weightPerPackage: 5, quantity: 10 } }],
+    ['client-a::pricing-sole', { group, line: { article: { id: 'article-sole' }, product: { uid: 'pricing-sole' }, packageCount: 1, weightPerPackage: 5, quantity: 5 } }],
+  ]), new Map([
+    ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_status: 'validated' }],
+  ]));
+  assert.strictEqual(sameClientNewCell.unchanged.length, 1, 'ancienne cellule engagee inchangee ne doit pas etre touchee');
+  assert.strictEqual(sameClientNewCell.created.length, 1, 'nouvelle cellule meme client doit creer une nouvelle operation sure');
+
+  const partialWithLockedDelete = buildDelta(new Map([
+    ['client-b::pricing-sole', { group: { documentClientId: 'client-b' }, line: { article: { id: 'article-sole' }, product: { uid: 'pricing-sole' }, packageCount: 1, weightPerPackage: 5, quantity: 5 } }],
+  ]), new Map([
+    ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_status: 'validated' }],
+  ]));
+  assert.strictEqual(partialWithLockedDelete.conflicts.length, 1, 'suppression engagee doit remonter en warning');
+  assert.strictEqual(partialWithLockedDelete.created.length, 1, 'nouvelle cellule doit rester generable malgre suppression engagee');
+
   const billedChanged = buildDelta(new Map([
     ['client-a::pricing-homard', { group: { documentClientId: 'rm-client-a' }, line: { article: { id: 'article-homard' }, product: { uid: 'pricing-homard' }, packageCount: 2, weightPerPackage: 5, quantity: 10 } }],
   ]), new Map([
@@ -293,7 +321,7 @@ function testIncrementalGenerationCellIdentity() {
     ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_client_id: 'rm-client-a', document_status: 'validated' }],
   ]));
   assert.strictEqual(billedChangedLocked.conflicts.length, 1, 'RM -> direct sur commande non draft doit bloquer');
-  assert.strictEqual(billedChangedLocked.conflicts[0].type, 'document_target_changed_locked_order');
+  assert.strictEqual(billedChangedLocked.conflicts[0].type, 'locked_existing_order');
 
   const unresolvedArticle = buildDelta(new Map([
     ['client-a::pricing-homard', { line: { client: { id: 'client-a' }, product: { uid: 'pricing-homard' } }, unresolved: 'article_not_found_or_inactive' }],
@@ -343,13 +371,15 @@ function testIncrementalGenerationCellIdentity() {
   assert(!Object.prototype.hasOwnProperty.call(nextPayload, 'order_entries'));
   assert(!Object.prototype.hasOwnProperty.call(nextPayload, 'entries'));
 
-  assert(html.includes('./js/quick-order-sheet.js?v=13'), 'cache-buster quick-order-sheet attendu en v13');
+  assert(html.includes('./js/quick-order-sheet.js?v=14'), 'cache-buster quick-order-sheet attendu en v14');
   assert(js.includes('flushPendingAutosave'), 'generateOrders doit flusher les autosaves');
   assert(js.includes("Impossible de generer les commandes : certaines saisies ne sont pas encore enregistrees."), 'message blocage flush attendu');
   assert(js.includes("sheet_id: state.sheet?.id"), 'generateOrders doit envoyer sheet_id');
   assert(js.includes("els.generate?.addEventListener('click', () => generateOrders(false))"), 'le clic generation ne doit pas passer l evenement comme force_regenerate');
   assert(!js.includes("state.sheet?.generated_order_ids?.length && !state.isDirtySinceGeneration"), 'le front ne doit plus bloquer une generation delta deja sauvegardee');
   assert(js.includes('if (!lines.length && !generatedCount)'), 'le front doit autoriser la synchronisation d une fiche vide deja generee');
+  assert(js.includes('Generation partielle'), 'le front doit afficher une generation partielle sans erreur globale');
+  assert(js.includes('ancienne(s) saisie(s)'), 'le front doit afficher les conflits non appliques');
   assert(!js.includes('...buildSheetPayload()'), 'generateOrders ne doit plus envoyer le payload complet');
   assert(route.includes('getSheetForGeneration'), 'route generate-orders doit charger la fiche serveur');
   assert(route.includes("to_char(sheet_date, 'YYYY-MM-DD') AS sheet_date"), 'la date fiche DB doit etre lue en YYYY-MM-DD');
@@ -359,11 +389,14 @@ function testIncrementalGenerationCellIdentity() {
   assert(route.includes('quick_order_sheet_generations'), 'protection anti-doublon conservee');
   assert(route.includes('DROP CONSTRAINT IF EXISTS quick_order_sheet_generations_store_id_sheet_id_key'), 'la generation doit autoriser plusieurs batches par fiche');
   assert(route.includes("source: 'delta'"), 'payload_snapshot doit tracer le delta genere');
+  assert(route.includes('conflicts: delta.conflicts'), 'payload_snapshot doit conserver les conflits ignores du batch');
   assert(route.includes('fetchGeneratedSheetLines'), 'la generation delta doit relire les lignes deja generees');
-  assert(route.includes('quantity_changed_locked_order'), 'les commandes engagees modifiees doivent etre bloquees');
-  assert(route.includes('document_target_changed_locked_order'), 'un changement de client facture doit etre detecte');
-  assert(route.includes('source_lookup_failed_existing_cell'), 'un lookup master inactif ne doit pas etre interprete comme suppression');
+  assert(route.includes('locked_existing_order'), 'les commandes engagees modifiees doivent etre signalees sans modification');
+  assert(route.includes('document_client_id'), 'un changement de client facture doit etre detecte');
+  assert(route.includes('lookup_conflict_existing_cell'), 'un lookup master inactif ne doit pas etre interprete comme suppression');
   assert(route.includes('can_regenerate: false'), 'les commandes engagees ne doivent pas proposer une regeneration destructive normale');
+  assert(route.includes('partial: hasConflicts'), 'les conflits verrouilles ne doivent pas bloquer les operations sures');
+  assert(route.includes('res.status(hasConflicts ? 200 : 201)'), 'une generation partielle doit repondre HTTP 200');
   assert(route.includes('noop: true'), 'un nouveau clic sans delta doit etre idempotent sans doublon');
   assert(route.includes('positiveOrError'), 'blocage prix strictement positif conserve');
   assert(route.includes('SELECT DISTINCT ON (sd.client_id) sd.id, sd.client_id, sd.reference_number, sd.created_at'), 'requete draft orders doit etre valide avec ORDER BY');

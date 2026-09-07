@@ -1109,6 +1109,7 @@ function renderGeneratedOrders(result) {
   const orders = Array.isArray(result.orders) ? result.orders : [];
   const count = orders.length || result.order_ids?.length || 0;
   const delta = result.delta || {};
+  const conflicts = Array.isArray(result.conflicts) ? result.conflicts : [];
   const deltaText = result.noop
     ? 'Tout est deja genere.'
     : [
@@ -1117,8 +1118,12 @@ function renderGeneratedOrders(result) {
         delta.moved ? `${delta.moved} ligne(s) deplacee(s)` : null,
         delta.deleted ? `${delta.deleted} ligne(s) supprimee(s)` : null,
       ].filter(Boolean).join(' - ');
-  renderActionPreview(result.existing || result.noop ? 'Commandes deja generees' : 'Commandes mises a jour', `
+  const conflictText = conflicts.length
+    ? `<p>${conflicts.length} ancienne(s) saisie(s) n'ont pas ete modifiees car leur commande est deja engagee ou leur reference est indisponible.</p>`
+    : '';
+  renderActionPreview(result.existing || result.noop ? 'Commandes deja generees' : (result.partial ? 'Generation partielle' : 'Commandes mises a jour'), `
     <p>${deltaText || `${count} commande(s) concernee(s).`}</p>
+    ${conflictText}
     ${orderLinksHtml(orders)}
   `);
 }
@@ -1159,7 +1164,7 @@ async function generateOrders(forceRegenerate = false) {
     saveDraft();
     render();
     renderGeneratedOrders(result);
-    showFeedback(result.noop ? 'Tout est deja genere.' : 'Commandes generees ou mises a jour.', 'success');
+    showFeedback(result.noop ? 'Tout est deja genere.' : (result.partial ? 'Generation partielle effectuee avec avertissements.' : 'Commandes generees ou mises a jour.'), 'success');
   } catch (error) {
     console.error('Erreur generation commandes:', error);
     if (error.status === 409 && error.data?.can_regenerate) {

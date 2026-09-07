@@ -1576,7 +1576,7 @@ function buildGenerationDelta(currentByCell, generatedByCell) {
     const existingLine = generatedByCell.get(key);
     if (item.unresolved) {
       delta.conflicts.push({
-        type: existingLine ? 'source_lookup_failed_existing_cell' : 'source_lookup_failed_new_cell',
+        type: existingLine ? 'lookup_conflict_existing_cell' : 'lookup_conflict_new_cell',
         source_client_id: item.line?.client?.id || null,
         column_uid: item.line?.product?.uid || null,
         reason: item.unresolved,
@@ -1594,7 +1594,7 @@ function buildGenerationDelta(currentByCell, generatedByCell) {
       if (existingLine.document_status === 'draft') {
         delta.moved.push({ ...item, existingLine });
       } else {
-        delta.conflicts.push(generatedLineConflict('document_target_changed_locked_order', existingLine, item.line));
+        delta.conflicts.push(generatedLineConflict('locked_existing_order', existingLine, item.line));
       }
       continue;
     }
@@ -1605,7 +1605,7 @@ function buildGenerationDelta(currentByCell, generatedByCell) {
     if (existingLine.document_status === 'draft') {
       delta.updated.push({ ...item, existingLine });
     } else {
-      delta.conflicts.push(generatedLineConflict('quantity_changed_locked_order', existingLine, item.line));
+      delta.conflicts.push(generatedLineConflict('locked_existing_order', existingLine, item.line));
     }
   }
   for (const [key, existingLine] of generatedByCell.entries()) {
@@ -1613,7 +1613,7 @@ function buildGenerationDelta(currentByCell, generatedByCell) {
     if (existingLine.document_status === 'draft') {
       delta.deleted.push({ existingLine });
     } else {
-      delta.conflicts.push(generatedLineConflict('deleted_cell_locked_order', existingLine));
+      delta.conflicts.push(generatedLineConflict('locked_existing_order', existingLine));
     }
   }
   return delta;
@@ -1880,8 +1880,9 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       if (!generatedByCell.has(key)) generatedByCell.set(key, line);
     }
     const delta = buildGenerationDelta(currentByCell, generatedByCell);
-
-    if (delta.conflicts.length) {
+    const safeOperationCount = delta.created.length + delta.updated.length + delta.moved.length + delta.deleted.length;
+    const hasConflicts = delta.conflicts.length > 0;
+    if (hasConflicts && safeOperationCount === 0) {
       await db.query('ROLLBACK');
       return res.status(409).json({
         error: 'Certaines saisies deja generees concernent des commandes engagees. Aucune modification automatique effectuee.',
@@ -1893,6 +1894,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
     }
 
     const touchedOrderIds = new Set();
+    const createdOrderIds = new Set();
     const createdOrders = [];
     const draftOrdersByClient = await fetchDraftGeneratedOrdersByClient(db, req.user.store_id, sheet.sheet_id);
     const getOrCreateDraftOrder = async (item) => {
@@ -1908,6 +1910,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         });
         order.client_id = item.group.documentClientId;
         draftOrdersByClient.set(clientKey, order);
+        createdOrderIds.add(order.id);
         createdOrders.push({
           id: order.id,
           reference_number: order.reference_number,
@@ -1985,8 +1988,14 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         ok: true,
         existing: true,
         noop: true,
+        partial: false,
         order_ids: allOrderIds,
         orders: existingOrders,
+        created_order_ids: [],
+        updated_lines: [],
+        moved_lines: [],
+        deleted_lines: [],
+        conflicts: [],
         delta: {
           created: 0,
           updated: 0,
@@ -2041,6 +2050,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
             sales_line_id: item.existingLine.id,
             previous_quantity: quantitySignatureFromGeneratedLine(item.existingLine),
           })),
+          conflicts: delta.conflicts,
           unchanged_count: delta.unchanged.length,
         }),
         req.user.id,
@@ -2057,12 +2067,19 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       delta_updated: delta.updated.length,
       delta_moved: delta.moved.length,
       delta_deleted: delta.deleted.length,
+      conflict_count: delta.conflicts.length,
     });
-    res.status(201).json({
+    res.status(hasConflicts ? 200 : 201).json({
       ok: true,
+      partial: hasConflicts,
       existing: false,
       order_ids: allOrderIds,
       batch_order_ids: orderIds,
+      created_order_ids: Array.from(createdOrderIds),
+      updated_lines: delta.updated.map((item) => item.existingLine.id),
+      moved_lines: delta.moved.map((item) => item.sales_line_id || null).filter(Boolean),
+      deleted_lines: delta.deleted.map((item) => item.existingLine.id),
+      conflicts: delta.conflicts,
       orders: orders.length ? orders : createdOrders,
       delta: {
         created: delta.created.length,
