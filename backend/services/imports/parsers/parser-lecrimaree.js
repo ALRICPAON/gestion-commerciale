@@ -1,5 +1,7 @@
 const { PDFParse } = require("pdf-parse");
 
+const LECRI_MAREE_SUPPLIER_CODE = "LECRIMAREE";
+
 function normalizeText(raw) {
   return String(raw || "")
     .replace(/[\u00A0\u202F\u2009\u2002\u2003]/g, " ")
@@ -253,7 +255,7 @@ module.exports = {
       text = await extractPdfText(context);
     } catch (error) {
       return {
-        supplier_code: "10013",
+        supplier_code: LECRI_MAREE_SUPPLIER_CODE,
         supplier_name: "Lecri Marée",
         purchase_type: "order",
         document_type: "supplier_bl",
@@ -267,7 +269,7 @@ module.exports = {
 
     if (!text) {
       return {
-        supplier_code: "10013",
+        supplier_code: LECRI_MAREE_SUPPLIER_CODE,
         supplier_name: "Lecri Marée",
         purchase_type: "order",
         document_type: "supplier_bl",
@@ -339,7 +341,7 @@ module.exports = {
     }
 
     return {
-      supplier_code: "10013",
+      supplier_code: LECRI_MAREE_SUPPLIER_CODE,
       supplier_name: "Lecri Marée",
       purchase_type: "order",
       document_type: "supplier_bl",
