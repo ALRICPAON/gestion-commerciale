@@ -259,6 +259,44 @@
   max-width: 360px;
 }
 
+.supplier-total-table td,
+.supplier-total-table th {
+  vertical-align: top;
+}
+
+.supplier-detail summary {
+  cursor: pointer;
+  color: #245c73;
+  font-weight: 800;
+}
+
+.supplier-detail-list {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+  min-width: 220px;
+}
+
+.supplier-detail-list div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid #e5ecef;
+}
+
+.supplier-detail-list strong,
+.supplier-detail-list span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.supplier-detail-list span {
+  color: #596872;
+  font-weight: 800;
+}
+
 .entry-table-wrap {
   min-height: 0;
   overflow: auto;
