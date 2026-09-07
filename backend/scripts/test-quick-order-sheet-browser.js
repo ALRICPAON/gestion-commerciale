@@ -185,6 +185,7 @@ async function main() {
           return new Response(JSON.stringify(mockArticles), { status: 200, headers: { 'Content-Type': 'application/json' } });
         }
         if (rawUrl.includes('/api/quick-order-sheets/generate-orders')) {
+          window.__lastGenerateRequest = { body, bytes: options.body ? byteLength(body) : 0 };
           return new Response(JSON.stringify({ order_ids: ['order-1'], orders: [{ id: 'order-1', reference_number: 'CMD-1' }] }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
@@ -205,6 +206,10 @@ async function main() {
     assert.match(await page.$eval('#entry-title', (node) => node.textContent), /Client/);
 
     await page.type('#secondary-search-input', 'Homard');
+    await page.evaluate(() => {
+      window.__apiCalls = [];
+      window.__lastGenerateRequest = null;
+    });
     await page.$eval('input[data-product-uid="product-1"][data-field="colis"]', (input) => {
       input.value = '2';
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -213,15 +218,29 @@ async function main() {
       input.value = '3.5';
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await sleep(900);
+    await page.click('#generate-orders-btn');
+    await sleep(300);
 
     let calls = await page.evaluate(() => window.__apiCalls);
     let entryPatches = calls.filter((call) => call.url.includes('/entries') && call.method === 'PATCH');
     assert(entryPatches.length >= 1, 'Autosave PATCH entries not observed');
     assert(entryPatches[0].bytes < 1024, `One-cell autosave too large: ${entryPatches[0].bytes}`);
+    assert(entryPatches[0].body.entries.some((entry) => entry.column_uid === 'product-1' && entry.kg === '3.5'), 'Generate flush must save latest dirty quantity');
     assert(!('clients' in entryPatches[0].body), 'Incremental autosave must not send clients');
     assert(!('products' in entryPatches[0].body), 'Incremental autosave must not send products');
     assert(!calls.some((call) => call.url.includes('/api/quick-order-sheets/by-date') && call.method === 'PUT'), 'Autosave must not use full PUT');
+    const generateCallIndex = calls.findIndex((call) => call.url.includes('/generate-orders') && call.method === 'POST');
+    const patchCallIndex = calls.findIndex((call) => call.url.includes('/entries') && call.method === 'PATCH');
+    assert(generateCallIndex > patchCallIndex, 'Generate must run after dirty entries flush');
+    const generateCall = calls[generateCallIndex];
+    assert(generateCall.bytes < 200, `Generate payload too large: ${generateCall.bytes}`);
+    assert.strictEqual(generateCall.body.sheet_id, sheet.id);
+    assert.strictEqual(generateCall.body.confirm_generate, true);
+    assert.strictEqual(generateCall.body.force_regenerate, false);
+    assert(!('clients' in generateCall.body), 'Generate must not send clients');
+    assert(!('products' in generateCall.body), 'Generate must not send products');
+    assert(!('order_entries' in generateCall.body), 'Generate must not send order_entries');
+    assert(!('entries' in generateCall.body), 'Generate must not send entries');
 
     await page.click('#article-view-btn');
     await page.waitForSelector('#primary-list [data-id="product-1"]', { timeout: 5000 });
@@ -242,9 +261,12 @@ async function main() {
       input.value = '12';
       input.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    await sleep(900);
+    await page.click('#generate-orders-btn');
+    await sleep(300);
     calls = await page.evaluate(() => window.__apiCalls);
     assert(calls.some((call) => call.url.includes('/entries') && call.method === 'PATCH'), 'Failed PATCH should be attempted');
+    assert(!calls.some((call) => call.url.includes('/generate-orders') && call.method === 'POST'), 'Generate must be blocked when flush fails');
+    assert.match(await page.$eval('#page-feedback', (node) => node.textContent), /certaines saisies ne sont pas encore enregistrees/);
     await page.$eval('input[data-client-id="c0000000-0000-4000-8000-000000000003"][data-product-uid="product-1"][data-field="kg"]', (input) => {
       input.value = '16';
       input.dispatchEvent(new Event('input', { bubbles: true }));
