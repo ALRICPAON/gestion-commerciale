@@ -170,6 +170,7 @@ let state = {
   dirtyEntries: {},
   dirtyMetadata: false,
   isSaving: false,
+  savePromise: null,
   saveTimer: null,
   isLoading: false,
   isDirtySinceGeneration: false,
@@ -558,53 +559,60 @@ function buildSheetPayload() {
 }
 
 async function saveSheetToServer() {
-  if (state.isLoading || !state.sheet?.id || state.isSaving) return;
+  if (state.isLoading || !state.sheet?.id) return;
+  if (state.isSaving && state.savePromise) return state.savePromise;
   const dirtyEntryKeys = Object.keys(state.dirtyEntries || {});
   const metadataDirty = state.dirtyMetadata === true;
   if (!dirtyEntryKeys.length && !metadataDirty) {
     setSaveStatus('Enregistre', 'saved');
     return;
   }
-  setSaveStatus('Enregistrement', 'saving');
-  state.isSaving = true;
-  const snapshotEntries = dirtyEntryKeys.map((key) => ({ key, entry: { ...state.dirtyEntries[key] } }));
-  const snapshotNotes = els.note?.value || '';
-  try {
-    if (metadataDirty) {
-      const result = await apiSend(`/api/quick-order-sheets/${encodeURIComponent(state.sheet.id)}/metadata`, {
-        notes: snapshotNotes,
-      }, 'PATCH');
-      if (result.sheet) {
-        state.sheet = { ...state.sheet, ...result.sheet };
-      }
-      if ((els.note?.value || '') === snapshotNotes) state.dirtyMetadata = false;
-    }
 
-    if (snapshotEntries.length) {
-      const result = await apiSend(`/api/quick-order-sheets/${encodeURIComponent(state.sheet.id)}/entries`, {
-        entries: snapshotEntries.map((item) => item.entry),
-      }, 'PATCH');
-      if (result.order_entries) state.entries = result.order_entries;
-      for (const { key, entry } of snapshotEntries) {
-        if (JSON.stringify(state.dirtyEntries[key]) === JSON.stringify(entry)) {
-          delete state.dirtyEntries[key];
+  state.savePromise = (async () => {
+    setSaveStatus('Enregistrement', 'saving');
+    state.isSaving = true;
+    const snapshotEntries = dirtyEntryKeys.map((key) => ({ key, entry: { ...state.dirtyEntries[key] } }));
+    const snapshotNotes = els.note?.value || '';
+    try {
+      if (metadataDirty) {
+        const result = await apiSend(`/api/quick-order-sheets/${encodeURIComponent(state.sheet.id)}/metadata`, {
+          notes: snapshotNotes,
+        }, 'PATCH');
+        if (result.sheet) {
+          state.sheet = { ...state.sheet, ...result.sheet };
+        }
+        if ((els.note?.value || '') === snapshotNotes) state.dirtyMetadata = false;
+      }
+
+      if (snapshotEntries.length) {
+        const result = await apiSend(`/api/quick-order-sheets/${encodeURIComponent(state.sheet.id)}/entries`, {
+          entries: snapshotEntries.map((item) => item.entry),
+        }, 'PATCH');
+        if (result.order_entries) state.entries = result.order_entries;
+        for (const { key, entry } of snapshotEntries) {
+          if (JSON.stringify(state.dirtyEntries[key]) === JSON.stringify(entry)) {
+            delete state.dirtyEntries[key];
+          }
         }
       }
+      setSaveStatus('Enregistre', 'saved');
+    } finally {
+      state.isSaving = false;
+      state.savePromise = null;
+      if (Object.keys(state.dirtyEntries || {}).length || state.dirtyMetadata) {
+        window.clearTimeout(state.saveTimer);
+        state.saveTimer = window.setTimeout(() => {
+          saveSheetToServer().catch((error) => {
+            console.error('Erreur autosave fiche appel:', error);
+            setSaveStatus('Erreur sauvegarde', 'error');
+            showFeedback(error.message || 'Erreur sauvegarde fiche appel', 'error');
+          });
+        }, AUTOSAVE_DELAY_MS);
+      }
     }
-    setSaveStatus('Enregistre', 'saved');
-  } finally {
-    state.isSaving = false;
-    if (Object.keys(state.dirtyEntries || {}).length || state.dirtyMetadata) {
-      window.clearTimeout(state.saveTimer);
-      state.saveTimer = window.setTimeout(() => {
-        saveSheetToServer().catch((error) => {
-          console.error('Erreur autosave fiche appel:', error);
-          setSaveStatus('Erreur sauvegarde', 'error');
-          showFeedback(error.message || 'Erreur sauvegarde fiche appel', 'error');
-        });
-      }, AUTOSAVE_DELAY_MS);
-    }
-  }
+  })();
+
+  return state.savePromise;
 }
 
 function queueSave(markDirty = true) {
@@ -619,6 +627,17 @@ function queueSave(markDirty = true) {
       showFeedback(error.message || 'Erreur sauvegarde fiche appel', 'error');
     });
   }, AUTOSAVE_DELAY_MS);
+}
+
+async function flushPendingAutosave() {
+  window.clearTimeout(state.saveTimer);
+  if (state.savePromise) await state.savePromise;
+  if (Object.keys(state.dirtyEntries || {}).length || state.dirtyMetadata) {
+    await saveSheetToServer();
+  }
+  if (Object.keys(state.dirtyEntries || {}).length || state.dirtyMetadata) {
+    throw new Error('Certaines saisies ne sont pas encore enregistrees');
+  }
 }
 
 async function loadClients() {
@@ -1114,9 +1133,15 @@ async function generateOrders(forceRegenerate = false) {
   const confirmed = window.confirm(`${lines.length} ligne(s) seront generees en commandes. Continuer ?`);
   if (!confirmed) return;
   try {
-    await saveSheetToServer();
+    try {
+      await flushPendingAutosave();
+    } catch (saveError) {
+      console.error('Flush autosave impossible avant generation:', saveError);
+      showFeedback('Impossible de generer les commandes : certaines saisies ne sont pas encore enregistrees.', 'error');
+      return;
+    }
     const result = await apiSend('/api/quick-order-sheets/generate-orders', {
-      ...buildSheetPayload(),
+      sheet_id: state.sheet?.id,
       confirm_generate: true,
       force_regenerate: forceRegenerate,
     });
@@ -1278,7 +1303,7 @@ function initEvents() {
     window.print();
   });
   els.pdf?.addEventListener('click', downloadSheetPdf);
-  els.generate?.addEventListener('click', generateOrders);
+  els.generate?.addEventListener('click', () => generateOrders(false));
   els.clientView?.addEventListener('click', () => setView('client'));
   els.articleView?.addEventListener('click', () => setView('article'));
   els.supplierView?.addEventListener('click', () => setView('supplier'));

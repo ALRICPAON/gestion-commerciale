@@ -11,7 +11,7 @@ const route = fs.readFileSync(path.join(root, 'backend/routes/quickOrderSheets.j
 assert(html.includes('Vue Clients'), 'la vue client doit etre exposee');
 assert(html.includes('Vue Articles'), 'la vue article doit etre exposee');
 assert(html.includes('Vue Fournisseurs'), 'la vue fournisseur doit etre exposee');
-assert(html.includes('./js/quick-order-sheet.js?v=11'), 'cache-buster JS fiche appel attendu');
+assert(html.includes('./js/quick-order-sheet.js?v=12'), 'cache-buster JS fiche appel attendu');
 assert(html.includes('./css/pages/quick-order-sheet.css?v=8'), 'cache-buster CSS fiche appel attendu');
 assert(!html.includes('new-sheet-btn'), 'le bouton Nouvelle fiche doit etre supprime');
 assert(!html.includes('supplier-select'), 'le filtre fournisseur ne doit plus etre dans la prise de commande principale');
@@ -26,6 +26,9 @@ assert(js.includes("dirtyEntries"), 'autosave incrementale doit suivre les cellu
 assert(js.includes("/entries"), 'autosave incrementale doit utiliser le PATCH cellules');
 assert(js.includes("/metadata"), 'la note doit utiliser le PATCH metadata');
 assert(!js.includes("apiSend('/api/quick-order-sheets/by-date', buildSheetPayload(), 'PUT')"), 'l autosave ne doit plus utiliser le PUT complet');
+assert(js.includes('flushPendingAutosave'), 'la generation doit forcer la sauvegarde incrementale avant POST');
+assert(js.includes("sheet_id: state.sheet?.id"), 'la generation doit envoyer un petit payload sheet_id');
+assert(!js.includes('...buildSheetPayload()'), 'la generation ne doit plus envoyer toute la fiche');
 assert(js.includes('priceForClient(product, client)'), 'le prix affiche doit dependre du client');
 assert(js.includes('out_of_tariff'), 'le flux hors tarif doit etre trace');
 assert(js.includes("/products/out-of-tariff"), 'l ajout hors tarif doit avoir son endpoint leger');
@@ -45,6 +48,8 @@ assert(route.includes('ON CONFLICT (sheet_id, column_uid)'), 'la synchro tarific
 assert(route.includes('manual_out_of_pricing'), 'la generation doit gerer explicitement le hors tarif');
 assert(route.includes('positiveOrError'), 'la generation doit bloquer les prix non positifs');
 assert(route.includes('quick_order_sheet_generations'), 'la generation doit rester protegee contre les doublons');
+assert(route.includes('getSheetForGeneration'), 'la generation doit charger la fiche depuis la base');
+assert(route.includes("source: 'database'"), 'la generation doit tracer la source serveur canonique');
 
 assert(css.includes('grid-template-columns: minmax(260px, 340px) minmax(0, 1fr)'), 'layout desktop compact attendu');
 assert(css.includes('position: sticky'), 'en-tetes/identifiants fixes attendus');

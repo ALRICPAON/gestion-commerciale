@@ -371,6 +371,53 @@ async function getDailySheet(db, storeId, sheetDate) {
   };
 }
 
+async function getSheetForGeneration(db, storeId, sheetId) {
+  const header = await db.query(
+    `SELECT id, store_id, sheet_date, title, notes, supplier_id,
+            selected_client_ids, order_entries, created_at, updated_at
+     FROM quick_order_sheets
+     WHERE store_id = $1 AND id = $2
+     LIMIT 1
+     FOR UPDATE`,
+    [storeId, sheetId]
+  );
+  if (!header.rows.length) return null;
+
+  const products = await db.query(
+    `SELECT qsp.*,
+            s.code AS supplier_code,
+            s.name AS supplier_name
+     FROM quick_order_sheet_products qsp
+     LEFT JOIN suppliers s ON s.id = qsp.supplier_id AND s.store_id = qsp.store_id
+     WHERE qsp.store_id = $1 AND qsp.sheet_id = $2
+     ORDER BY qsp.display_order ASC, qsp.created_at ASC`,
+    [storeId, sheetId]
+  );
+
+  const orderEntries = header.rows[0].order_entries && typeof header.rows[0].order_entries === 'object'
+    ? header.rows[0].order_entries
+    : {};
+  const clientIds = Object.keys(orderEntries).filter(isUuid);
+
+  return {
+    sheet_id: header.rows[0].id,
+    title: clean(header.rows[0].title) || "Fiche d'appel clients",
+    sheet_date: safeDate(header.rows[0].sheet_date),
+    notes: clean(header.rows[0].notes),
+    supplier_id: clean(header.rows[0].supplier_id),
+    clients: clientIds.map((id) => ({ id })),
+    products: products.rows.map((product) => ({
+      ...product,
+      uid: product.column_uid,
+      designation: product.designation_snapshot,
+      price: product.sale_price_level_1_ht,
+      stock: product.supplier_available_quantity,
+      out_of_tariff: !clean(product.pricing_line_id),
+    })),
+    entries: orderEntries,
+  };
+}
+
 async function publishedPricingForDate(db, storeId, sheetDate) {
   const session = await db.query(
     `SELECT id, pricing_date, title
@@ -1392,19 +1439,40 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
     if (req.body?.confirm_generate !== true) {
       return res.status(400).json({ error: 'Confirmation obligatoire avant generation des commandes' });
     }
-    const sheet = normalizeSheetPayload(req.body);
-    const sourceLines = sheetLines(sheet);
+    const sheetId = clean(req.body?.sheet_id);
+    if (!sheetId || !isUuid(sheetId)) {
+      return res.status(400).json({ error: 'sheet_id UUID obligatoire' });
+    }
     console.info('quick_order_sheet.generate_orders.start', {
       ...logContext,
-      sheet_id: sheet.sheet_id,
-      received_lines: sourceLines.length,
-      received_clients: sheet.clients.length,
-      received_products: sheet.products.length,
+      sheet_id: sheetId,
+      source: 'request',
+      request_bytes_hint: Number(req.headers['content-length'] || 0),
+      received_clients: Array.isArray(req.body?.clients) ? req.body.clients.length : 0,
+      received_products: Array.isArray(req.body?.products) ? req.body.products.length : 0,
+      received_order_entries: req.body?.order_entries ? Object.keys(req.body.order_entries).length : 0,
     });
-    if (!sourceLines.length) return res.status(400).json({ error: 'Aucune ligne saisie a transformer en commande' });
 
     await db.query('BEGIN');
     await ensureGenerationTable(db);
+    const sheet = await getSheetForGeneration(db, req.user.store_id, sheetId);
+    if (!sheet) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Fiche introuvable' });
+    }
+    const sourceLines = sheetLines(sheet);
+    console.info('quick_order_sheet.generate_orders.source_loaded', {
+      ...logContext,
+      sheet_id: sheet.sheet_id,
+      source: 'database',
+      source_lines: sourceLines.length,
+      source_clients: sheet.clients.length,
+      source_products: sheet.products.length,
+    });
+    if (!sourceLines.length) {
+      await db.query('ROLLBACK');
+      return res.status(400).json({ error: 'Aucune ligne saisie a transformer en commande' });
+    }
 
     const clients = await fetchClients(db, req.user.store_id, [...new Set(sourceLines.map((line) => line.client.id).filter(isUuid))]);
     const articles = await fetchArticles(db, req.user.store_id, [...new Set(sourceLines.map((line) => line.product.article_id).filter(isUuid))]);
@@ -1683,3 +1751,5 @@ module.exports = router;
 module.exports._normalizeDailyPricingPayloadForTest = normalizeDailyPricingPayload;
 module.exports._planDailySheetProductSyncForTest = planDailySheetProductSync;
 module.exports._stablePricingColumnUidForTest = stablePricingColumnUid;
+module.exports._getSheetForGenerationForTest = getSheetForGeneration;
+module.exports._sheetLinesForTest = sheetLines;
