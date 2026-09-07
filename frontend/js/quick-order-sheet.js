@@ -1108,16 +1108,26 @@ function orderLinksHtml(orders = []) {
 function renderGeneratedOrders(result) {
   const orders = Array.isArray(result.orders) ? result.orders : [];
   const count = orders.length || result.order_ids?.length || 0;
-  renderActionPreview(result.existing ? 'Commandes deja generees' : 'Commandes creees', `
-    <p>${result.existing ? 'Aucun doublon cree : la generation existante est reutilisee.' : `${count} commande(s) creee(s).`}</p>
+  const delta = result.delta || {};
+  const deltaText = result.noop
+    ? 'Tout est deja genere.'
+    : [
+        delta.created ? `${delta.created} ligne(s) creee(s)` : null,
+        delta.updated ? `${delta.updated} ligne(s) mise(s) a jour` : null,
+        delta.moved ? `${delta.moved} ligne(s) deplacee(s)` : null,
+        delta.deleted ? `${delta.deleted} ligne(s) supprimee(s)` : null,
+      ].filter(Boolean).join(' - ');
+  renderActionPreview(result.existing || result.noop ? 'Commandes deja generees' : 'Commandes mises a jour', `
+    <p>${deltaText || `${count} commande(s) concernee(s).`}</p>
     ${orderLinksHtml(orders)}
   `);
 }
 
 async function generateOrders(forceRegenerate = false) {
   const lines = enteredOrderLines();
-  if (!lines.length) {
-    showFeedback('Aucune quantite a transformer en commande.', 'error');
+  const generatedCount = Array.isArray(state.sheet?.generated_order_ids) ? state.sheet.generated_order_ids.length : 0;
+  if (!lines.length && !generatedCount) {
+    showFeedback('Aucune quantite a transformer en commande.', 'success');
     return;
   }
   const missingPrice = lines.find((line) => parseDecimal(priceForClient(line.product, line.client)) <= 0);
@@ -1125,12 +1135,10 @@ async function generateOrders(forceRegenerate = false) {
     showFeedback(`Prix strictement positif requis pour ${productLabel(missingPrice.product)} / ${clientLabel(missingPrice.client)}.`, 'error');
     return;
   }
-  if (state.sheet?.generated_order_ids?.length && !state.isDirtySinceGeneration) {
-    renderGeneratedOrders({ existing: true, order_ids: state.sheet.generated_order_ids, orders: [] });
-    showFeedback('Commandes deja generees pour cette fiche.', 'success');
-    return;
-  }
-  const confirmed = window.confirm(`${lines.length} ligne(s) seront generees en commandes. Continuer ?`);
+  const confirmLabel = generatedCount
+    ? `${lines.length} ligne(s) seront comparees avec les commandes deja generees. Synchroniser le delta ?`
+    : `${lines.length} ligne(s) seront generees en commandes. Continuer ?`;
+  const confirmed = window.confirm(confirmLabel);
   if (!confirmed) return;
   try {
     try {
@@ -1151,7 +1159,7 @@ async function generateOrders(forceRegenerate = false) {
     saveDraft();
     render();
     renderGeneratedOrders(result);
-    showFeedback(result.existing ? 'Generation existante reutilisee.' : 'Commandes generees.', 'success');
+    showFeedback(result.noop ? 'Tout est deja genere.' : 'Commandes generees ou mises a jour.', 'success');
   } catch (error) {
     console.error('Erreur generation commandes:', error);
     if (error.status === 409 && error.data?.can_regenerate) {
@@ -1161,6 +1169,11 @@ async function generateOrders(forceRegenerate = false) {
         <div class="action-preview-actions">
           <button class="btn btn-primary btn-sm" type="button" data-action="force-regenerate-orders">Recreer les commandes brouillon</button>
         </div>
+      `);
+    } else if (error.status === 409 && Array.isArray(error.data?.conflicts)) {
+      renderActionPreview('Commandes deja engagees', `
+        <p>${escapeHtml(error.data.error || 'Certaines commandes ne peuvent pas etre modifiees automatiquement.')}</p>
+        ${orderLinksHtml(error.data.orders || [])}
       `);
     }
     showFeedback(error.message || 'Erreur generation commandes', 'error');
