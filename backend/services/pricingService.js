@@ -20,10 +20,18 @@ function clean(value) {
 function isoDate(value) {
   if (value instanceof Date) {
     if (Number.isNaN(value.getTime())) throw expose(400, 'Date invalide');
-    return value.toISOString().slice(0, 10);
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
   const text = clean(value);
-  if (!text) return new Date().toISOString().slice(0, 10);
+  if (!text) {
+    const now = new Date();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${now.getFullYear()}-${month}-${day}`;
+  }
   const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
   if (!match) throw expose(400, 'Date invalide');
   return match[1];
@@ -670,6 +678,7 @@ async function getPricingLine(db, storeId, input = {}) {
 async function syncPublishedSessionToCallSheet(db, storeId, sessionId, context = {}) {
   const detail = await getPricingSession(db, storeId, { id: sessionId, limit: 2000 });
   const session = detail.session;
+  const sessionDate = isoDate(session.pricing_date);
   const legacyLevels = await listTariffLevels(db, storeId, {});
   const byLegacy = new Map(legacyLevels.results.filter((l) => l.legacy_level).map((l) => [Number(l.legacy_level), l.id]));
   const header = await db.query(
@@ -678,7 +687,7 @@ async function syncPublishedSessionToCallSheet(db, storeId, sessionId, context =
      ON CONFLICT (store_id, sheet_date)
      DO UPDATE SET title = EXCLUDED.title, notes = EXCLUDED.notes, updated_by = EXCLUDED.updated_by, updated_at = now()
      RETURNING id`,
-    [storeId, session.pricing_date, session.title || `Tarification du ${session.pricing_date}`, 'Miroir genere depuis le module Tarification', context.user_id || null]
+    [storeId, sessionDate, session.title || `Tarification du ${sessionDate}`, 'Miroir genere depuis le module Tarification', context.user_id || null]
   );
   const sheetId = header.rows[0].id;
   await db.query('DELETE FROM quick_order_sheet_products WHERE store_id = $1 AND sheet_id = $2', [storeId, sheetId]);

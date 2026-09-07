@@ -62,14 +62,38 @@ let activeImportLineId = null;
 let revisionInProgress = null;
 
 function todayIso() {
-  return new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
 }
 
 function isoDate(value) {
-  if (value instanceof Date && Number.isFinite(value.getTime())) return value.toISOString().slice(0, 10);
+  if (value instanceof Date && Number.isFinite(value.getTime())) {
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${value.getFullYear()}-${month}-${day}`;
+  }
   const text = String(value || '').trim();
   const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
   return match ? match[1] : '';
+}
+
+function selectedPricingDate() {
+  return isoDate(pricingDateInput.value) || todayIso();
+}
+
+function initialPricingDate() {
+  return isoDate(new URLSearchParams(window.location.search).get('date')) || todayIso();
+}
+
+function rememberPricingDate(date) {
+  const normalized = isoDate(date);
+  if (!normalized) return;
+  pricingDateInput.value = normalized;
+  const url = new URL(window.location.href);
+  url.searchParams.set('date', normalized);
+  window.history.replaceState({}, '', url);
 }
 
 function authHeaders() {
@@ -341,7 +365,8 @@ async function loadReferenceData() {
 }
 
 async function loadSession(showMessage = true) {
-  const date = isoDate(pricingDateInput.value) || todayIso();
+  const date = selectedPricingDate();
+  rememberPricingDate(date);
   const current = await api(`/api/pricing/sessions?date=${encodeURIComponent(date)}&limit=1`);
   if (!current.results?.length) {
     session = null;
@@ -359,7 +384,9 @@ async function loadSession(showMessage = true) {
 }
 
 async function createSession(options = {}) {
-  const result = await apiJson('/api/pricing/sessions', { pricing_date: isoDate(pricingDateInput.value) || todayIso() });
+  const date = selectedPricingDate();
+  rememberPricingDate(date);
+  const result = await apiJson('/api/pricing/sessions', { pricing_date: date });
   session = result.session;
   lines = result.lines || [];
   dirty.clear();
@@ -369,9 +396,12 @@ async function createSession(options = {}) {
 }
 
 async function duplicateSession() {
-  const result = await apiJson('/api/pricing/sessions/duplicate', { pricing_date: isoDate(pricingDateInput.value) || todayIso() });
+  const date = selectedPricingDate();
+  rememberPricingDate(date);
+  const result = await apiJson('/api/pricing/sessions/duplicate', { pricing_date: date });
   session = result.session;
   lines = result.lines || [];
+  rememberPricingDate(isoDate(session.pricing_date) || date);
   dirty.clear();
   renderLines();
   showFeedback('Tarification precedente reprise.', 'success');
@@ -482,7 +512,8 @@ async function runImport() {
   if (!importSupplierSelect.value) throw new Error('Choisir un fournisseur');
   const file = importFileInput.files?.[0] || null;
   const rawText = importTextarea.value.trim();
-  const importDate = isoDate(pricingDateInput.value) || todayIso();
+  const importDate = selectedPricingDate();
+  rememberPricingDate(importDate);
   let result;
   if (file) {
     const formData = new FormData();
@@ -709,6 +740,14 @@ function bindEvents() {
   loadSessionBtn.addEventListener('click', () => loadSession());
   newSessionBtn.addEventListener('click', createSession);
   duplicateSessionBtn.addEventListener('click', duplicateSession);
+  pricingDateInput.addEventListener('change', () => {
+    session = null;
+    lines = [];
+    dirty.clear();
+    rememberPricingDate(selectedPricingDate());
+    renderLines();
+    loadSession(false).catch((error) => showFeedback(error.message, 'error'));
+  });
   createRevisionBtn.addEventListener('click', () => createDraftRevision('Cette tarification est publiee. Creer une revision modifiable ?').catch((error) => showFeedback(error.message, 'error')));
   saveNowBtn.addEventListener('click', saveDirtyLines);
   publishBtn.addEventListener('click', publishSession);
@@ -781,7 +820,7 @@ function bindEvents() {
 }
 
 async function init() {
-  pricingDateInput.value = todayIso();
+  rememberPricingDate(initialPricingDate());
   bindEvents();
   await loadReferenceData();
   await loadSession(false);

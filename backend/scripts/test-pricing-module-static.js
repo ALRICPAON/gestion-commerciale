@@ -29,7 +29,8 @@ async function testPricingSqlPlaceholdersAreContiguous() {
   for (const [index, match] of queryTemplates.entries()) {
     assertContiguousPostgresPlaceholders(match[1], `pricingService query template #${index + 1}`);
   }
-  assert(service.includes('WHERE id = $11 AND store_id = $1 AND supplier_id = $2'), 'existing supplier mapping update scopes supplier_id and types $2');
+  const mappingService = read('backend/services/supplierArticleMappingService.js');
+  assert(mappingService.includes('store_id = $1') && mappingService.includes('supplier_id = $2'), 'existing supplier mapping update scopes supplier_id and store_id');
 }
 
 async function testMigrationContract() {
@@ -357,9 +358,21 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
         events.push(sql);
         return { rows: [] };
       }
+      if (sql.includes('CREATE TABLE IF NOT EXISTS supplier_article_mappings')
+        || sql.includes('ALTER TABLE supplier_article_mappings')
+        || (sql.includes('UPDATE supplier_article_mappings') && !sql.includes('RETURNING') && !sql.includes('SET article_id = $3'))
+        || sql.includes('DROP CONSTRAINT supplier_article_mappings_supplier_id_supplier_ref_key')
+        || sql.includes('CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_article_mappings')
+        || sql.includes('CREATE INDEX IF NOT EXISTS idx_supplier_article_mappings')) {
+        return { rows: [] };
+      }
       if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: params[0], name: 'Sogelmer' }] };
+      if (sql.includes('SELECT id, code, name FROM suppliers WHERE id = $1 AND store_id = $2')) return { rows: [{ id: params[0], code: 'SOG', name: 'Sogelmer' }] };
       if (sql.includes('INSERT INTO supplier_price_imports')) return { rows: [{ id: 'import-1', supplier_id: 'supplier-1', status: 'parsed' }] };
       if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('sam.supplier_designation_normalized = $3')) {
+        return { rows: [{ id: 'mapping-1', article_id: 'article-1', article_plu: '3013', article_designation: 'Filet julienne' }] };
+      }
+      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('sam.supplier_id = $2') && sql.includes('$4::text')) {
         return { rows: [{ id: 'mapping-1', article_id: 'article-1', article_plu: '3013', article_designation: 'Filet julienne' }] };
       }
       if (sql.includes('FROM supplier_article_mappings') && sql.includes('FOR UPDATE')) {
@@ -407,8 +420,14 @@ async function testKnownSupplierMappingRequiresImportConfirmation() {
         events.push('mapping_update');
         return { rows: [{ id: 'mapping-1' }] };
       }
+      if (sql.includes('UPDATE supplier_article_mappings') && sql.includes('SET article_id = $3')) {
+        assertContiguousPostgresPlaceholders(sql, 'existing supplier mapping confirm update');
+        assert(sql.includes('AND supplier_id = $2'), 'existing supplier mapping confirm update uses supplier_id placeholder');
+        events.push('mapping_update');
+        return { rows: [] };
+      }
       if (sql.includes('INSERT INTO supplier_article_mappings')) return { rows: [{ id: 'mapping-1' }] };
-      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('LEFT JOIN suppliers')) {
+      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('JOIN suppliers')) {
         return { rows: [{ id: 'mapping-1', article_id: 'article-1', article_plu: '3013', article_designation: 'Filet julienne' }] };
       }
       if (sql.includes("SET matched_article_id = $3, mapping_id = $4, user_decision = 'confirmed'")) {
@@ -623,6 +642,7 @@ function pricingRevisionWorkflowFakeDb() {
         return { rows: [{ id: params[0], supplier_id: 'supplier-1', status: 'parsed' }] };
       }
       if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: 'supplier-1', name: 'Sogelmer' }] };
+      if (sql.includes('SELECT id, code, name FROM suppliers WHERE id = $1 AND store_id = $2')) return { rows: [{ id: params[0], code: 'SOG', name: 'Sogelmer' }] };
       if (sql.includes('FROM supplier_price_import_lines spil') && sql.includes('LEFT JOIN articles')) return { rows: importLines };
       if (sql.includes('SELECT id FROM pricing_lines WHERE store_id = $1 AND pricing_session_id = $2 AND article_id = $3')) {
         const found = lines.find((line) => line.store_id === params[0] && line.pricing_session_id === params[1] && line.article_id === params[2]);
@@ -800,11 +820,20 @@ function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, ma
         events.push(sql);
         return { rows: [] };
       }
+      if (sql.includes('CREATE TABLE IF NOT EXISTS supplier_article_mappings')
+        || sql.includes('ALTER TABLE supplier_article_mappings')
+        || (sql.includes('UPDATE supplier_article_mappings') && !sql.includes('RETURNING') && !sql.includes('SET article_id = $3'))
+        || sql.includes('DROP CONSTRAINT supplier_article_mappings_supplier_id_supplier_ref_key')
+        || sql.includes('CREATE UNIQUE INDEX IF NOT EXISTS uq_supplier_article_mappings')
+        || sql.includes('CREATE INDEX IF NOT EXISTS idx_supplier_article_mappings')) {
+        return { rows: [] };
+      }
       if (sql.includes('JOIN supplier_price_imports spi') && sql.includes('FOR UPDATE OF spil')) return { rows: [importLine] };
       if (sql.includes('FROM articles') && sql.includes('WHERE id = $1')) {
         return { rows: articleFound ? [{ id: params[0], plu: '3013', designation: 'Filet julienne 200/400', sale_unit: 'kg', unit: 'kg' }] : [] };
       }
       if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: 'supplier-1', name: 'Sogelmer' }] };
+      if (sql.includes('SELECT id, code, name FROM suppliers WHERE id = $1 AND store_id = $2')) return { rows: [{ id: params[0], code: 'SOG', name: 'Sogelmer' }] };
       if (sql.includes('FROM supplier_article_mappings') && sql.includes('FOR UPDATE')) return { rows: existingMapping ? [{ id: 'mapping-1' }] : [] };
       if (sql.includes('UPDATE supplier_article_mappings') && sql.includes('RETURNING id')) {
         assertContiguousPostgresPlaceholders(sql, 'existing supplier mapping override update');
@@ -817,6 +846,18 @@ function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, ma
         }
         events.push('mapping_update');
         return { rows: [{ id: 'mapping-1' }] };
+      }
+      if (sql.includes('UPDATE supplier_article_mappings') && sql.includes('SET article_id = $3')) {
+        assertContiguousPostgresPlaceholders(sql, 'existing supplier mapping override update');
+        assert(sql.includes('AND supplier_id = $2'), 'existing supplier mapping override update uses supplier_id placeholder');
+        if (mappingFails) {
+          const error = new Error('duplicate key value violates unique constraint');
+          error.code = '23505';
+          error.constraint = 'uq_supplier_article_mappings_store_supplier_normalized_active';
+          throw error;
+        }
+        events.push('mapping_update');
+        return { rows: [] };
       }
       if (sql.includes('INSERT INTO supplier_article_mappings')) {
         if (mappingFails) {
@@ -831,7 +872,7 @@ function pricingOverrideFakeDb({ articleFound = true, existingMapping = true, ma
         events.push('mapping_dedupe');
         return { rows: [] };
       }
-      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('LEFT JOIN suppliers')) {
+      if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('JOIN suppliers')) {
         return { rows: [{ id: existingMapping ? 'mapping-1' : 'mapping-new', article_id: 'article-2', article_plu: '3013', article_designation: 'Filet julienne 200/400' }] };
       }
       if (sql.includes("SET matched_article_id = $3, mapping_id = $4, user_decision = 'overridden'")) {
@@ -930,6 +971,7 @@ async function testSupplierImportTextParserSkipsNonProductLines() {
     async query(sql, params = []) {
       if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [] };
       if (sql.includes('FROM suppliers') && sql.includes('COALESCE(status')) return { rows: [{ id: 'supplier-1', name: 'Sogelmer' }] };
+      if (sql.includes('SELECT id, code, name FROM suppliers WHERE id = $1 AND store_id = $2')) return { rows: [{ id: params[0], code: 'SOG', name: 'Sogelmer' }] };
       if (sql.includes('INSERT INTO supplier_price_imports')) return { rows: [{ id: 'import-1', supplier_id: 'supplier-1', status: 'parsed' }] };
       if (sql.includes('FROM supplier_article_mappings sam') && sql.includes('sam.supplier_designation_normalized = $3')) return { rows: [] };
       if (sql.includes('FROM articles') && sql.includes('regexp_replace')) return { rows: [] };
@@ -975,11 +1017,15 @@ async function testPricingFrontendImportWorkflowContracts() {
   assert(js.includes('/supplier-import-lines/articles/search'), 'frontend searches ALTA articles in matching workflow');
   assert(html.includes('pricing-import-modal-content'), 'supplier import modal has dedicated wide workspace');
   assert(html.includes('id="import-article-panel"'), 'frontend uses a wide article picker panel');
-  assert(html.includes('pricing.css?v=3') && html.includes('pricing.js?v=3'), 'pricing assets are cache-busted');
+  assert(html.includes('pricing.css?v=3') && html.includes('pricing.js?v=4'), 'pricing assets are cache-busted');
   assert(js.includes('matchLabel'), 'frontend translates technical matching labels');
   assert(js.includes('updateImportLine(updated)'), 'frontend updates selected import line after override');
   assert(html.includes('id="create-revision-btn"'), 'frontend exposes explicit revision button on published sessions');
   assert(js.includes('function isoDate(value)'), 'frontend has a strict API date helper');
+  assert(js.includes('function selectedPricingDate()'), 'frontend centralizes the selected business date');
+  assert(js.includes('function rememberPricingDate(date)'), 'frontend keeps the selected pricing date across refreshes');
+  assert(js.includes("pricingDateInput.addEventListener('change'"), 'frontend reloads when the business date changes');
+  assert(!js.slice(js.indexOf('function todayIso()'), js.indexOf('function authHeaders()')).includes('toISOString()'), 'frontend business date helpers avoid UTC date shifts');
   assert(js.includes('pricing_date: isoDate(session.pricing_date)'), 'revision payload uses backend ISO pricing_date, not display text');
   assert(js.includes("formData.append('import_date', importDate)"), 'file supplier imports carry the selected pricing date');
   assert(js.includes('import_date: importDate'), 'text supplier imports carry the selected pricing date');
@@ -1023,9 +1069,9 @@ async function testIntegrationFilesReferencePricing() {
   assert(customerPriceLists.includes('quick_order_sheet_legacy_fallback'), 'mercuriale documents legacy fallback');
 
   const sales = read('backend/routes/sales.js');
-  assert(sales.includes('resolvePublishedPrice'), 'sales lines resolve published pricing');
-  assert(sales.includes('shouldResolveSalesLinePricing'), 'sales line patch avoids implicit repricing of snapshotted lines');
-  assert(sales.includes('buildSalesLinePricingTrace'), 'sales line patch writes explicit pricing trace decisions');
+  assert(sales.includes('resolveSalesLinePrice'), 'sales lines resolve published pricing through the canonical sales resolver');
+  assert(sales.includes('existing_line:line'), 'sales line patch avoids implicit repricing of snapshotted lines');
+  assert(sales.includes('pricingTraceForResolution'), 'sales line patch writes explicit pricing trace decisions');
   assert(sales.includes('final_unit_price_ht'), 'sales lines write final_unit_price_ht trace');
 
   const quickOrderSheets = read('backend/routes/quickOrderSheets.js');
@@ -1044,6 +1090,8 @@ async function testIntegrationFilesReferencePricing() {
 
   const pricingService = read('backend/services/pricingService.js');
   assert(pricingService.includes('value instanceof Date'), 'pricing backend ISO date helper handles PostgreSQL Date objects');
+  assert(!pricingService.slice(pricingService.indexOf('function isoDate(value)'), pricingService.indexOf('function num(value')).includes('toISOString()'), 'pricing backend business date helper avoids UTC date shifts');
+  assert(pricingService.includes('const sessionDate = isoDate(session.pricing_date)'), 'call sheet mirror uses normalized session business date');
   assert(pricingService.includes('const sourceDate = isoDate(source.pricing_date)'), 'revision workflow normalizes source pricing_date before reuse');
   assert(!pricingService.includes('source.pricing_date, source.id]'), 'revision query never sends raw Date display strings back to PostgreSQL');
 }
