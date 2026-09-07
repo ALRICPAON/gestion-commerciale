@@ -93,8 +93,23 @@ function isRoyaleMareeClient(client = {}) {
 }
 
 function safeDate(value) {
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
   const text = clean(value);
   if (!text) return new Date().toISOString().slice(0, 10);
+  const isoDate = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoDate) return isoDate[1];
+  const parsed = new Date(text);
+  if (!Number.isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, '0');
+    const day = String(parsed.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
   return text.slice(0, 10);
 }
 
@@ -318,7 +333,7 @@ function normalizeOutOfTariffProduct(body = {}) {
 
 async function getDailySheet(db, storeId, sheetDate) {
   const header = await db.query(
-    `SELECT id, store_id, sheet_date, title, notes, supplier_id,
+    `SELECT id, store_id, to_char(sheet_date, 'YYYY-MM-DD') AS sheet_date, title, notes, supplier_id,
             default_margin_level_1, default_margin_level_2, default_margin_level_3,
             selected_client_ids, order_entries, created_at, updated_at
      FROM quick_order_sheets
@@ -373,7 +388,7 @@ async function getDailySheet(db, storeId, sheetDate) {
 
 async function getSheetForGeneration(db, storeId, sheetId) {
   const header = await db.query(
-    `SELECT id, store_id, sheet_date, title, notes, supplier_id,
+    `SELECT id, store_id, to_char(sheet_date, 'YYYY-MM-DD') AS sheet_date, title, notes, supplier_id,
             selected_client_ids, order_entries, created_at, updated_at
      FROM quick_order_sheets
      WHERE store_id = $1 AND id = $2
@@ -1753,3 +1768,4 @@ module.exports._planDailySheetProductSyncForTest = planDailySheetProductSync;
 module.exports._stablePricingColumnUidForTest = stablePricingColumnUid;
 module.exports._getSheetForGenerationForTest = getSheetForGeneration;
 module.exports._sheetLinesForTest = sheetLines;
+module.exports._safeDateForTest = safeDate;
