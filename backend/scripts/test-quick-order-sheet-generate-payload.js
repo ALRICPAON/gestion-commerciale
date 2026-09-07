@@ -80,7 +80,7 @@ function buildLegacyPayload() {
   };
 }
 
-async function testServerGenerationSheetFromDatabase() {
+async function testServerGenerationSheetFromDatabase(sheetDate, expectedDate) {
   const sheetId = uuid('s', 1);
   const storeId = uuid('t', 1);
   const articleId = uuid('a', 1);
@@ -94,7 +94,7 @@ async function testServerGenerationSheetFromDatabase() {
           rows: [{
             id: sheetId,
             store_id: storeId,
-            sheet_date: '2026-09-07',
+            sheet_date: sheetDate,
             title: "Fiche d'appel clients",
             notes: 'Serveur canonique',
             supplier_id: null,
@@ -135,6 +135,7 @@ async function testServerGenerationSheetFromDatabase() {
   const lines = quickOrderSheetsRoute._sheetLinesForTest(sheet);
 
   assert.strictEqual(sheet.sheet_id, sheetId);
+  assert.strictEqual(sheet.sheet_date, expectedDate);
   assert.strictEqual(sheet.clients.length, 1);
   assert.strictEqual(sheet.products.length, 1);
   assert.strictEqual(sheet.products[0].uid, `pricing-${articleId}`);
@@ -143,6 +144,19 @@ async function testServerGenerationSheetFromDatabase() {
   assert.strictEqual(queries[0].params[0], storeId);
   assert.strictEqual(queries[0].params[1], sheetId);
   assert.match(queries[0].sql, /WHERE store_id = \$1 AND id = \$2/);
+  assert.match(queries[0].sql, /to_char\(sheet_date, 'YYYY-MM-DD'\) AS sheet_date/);
+}
+
+function testBusinessDateNormalization() {
+  const safeDate = quickOrderSheetsRoute._safeDateForTest;
+
+  assert.strictEqual(safeDate('2026-09-07'), '2026-09-07');
+  assert.strictEqual(safeDate('2026-09-08'), '2026-09-08');
+  assert.strictEqual(safeDate('2026-09-08T00:00:00.000Z'), '2026-09-08');
+  assert.strictEqual(safeDate(new Date(2026, 8, 7)), '2026-09-07');
+  assert.strictEqual(safeDate(new Date(2026, 8, 8)), '2026-09-08');
+  assert.notStrictEqual(safeDate(new Date(2026, 8, 8)), '2026-09-07');
+  assert.notStrictEqual(safeDate(new Date(2026, 8, 7)), 'Mon Sep 07');
 }
 
 (async () => {
@@ -169,12 +183,19 @@ async function testServerGenerationSheetFromDatabase() {
   assert(js.includes("els.generate?.addEventListener('click', () => generateOrders(false))"), 'le clic generation ne doit pas passer l evenement comme force_regenerate');
   assert(!js.includes('...buildSheetPayload()'), 'generateOrders ne doit plus envoyer le payload complet');
   assert(route.includes('getSheetForGeneration'), 'route generate-orders doit charger la fiche serveur');
+  assert(route.includes("to_char(sheet_date, 'YYYY-MM-DD') AS sheet_date"), 'la date fiche DB doit etre lue en YYYY-MM-DD');
   assert(route.includes("source: 'database'"), 'route generate-orders doit tracer la source database');
+  assert(route.includes('document_date: sheet.sheet_date'), 'la resolution tarifaire doit recevoir la date exacte de la fiche');
+  assert(route.includes('sheet.sheet_date,'), 'l insertion commande doit utiliser la date exacte de la fiche');
   assert(route.includes('quick_order_sheet_generations'), 'protection anti-doublon conservee');
   assert(route.includes('can_regenerate: true'), 'regeneration controlee conservee');
   assert(route.includes('positiveOrError'), 'blocage prix strictement positif conserve');
 
-  await testServerGenerationSheetFromDatabase();
+  testBusinessDateNormalization();
+  await testServerGenerationSheetFromDatabase('2026-09-07', '2026-09-07');
+  await testServerGenerationSheetFromDatabase(new Date(2026, 8, 7), '2026-09-07');
+  await testServerGenerationSheetFromDatabase('2026-09-08', '2026-09-08');
+  await testServerGenerationSheetFromDatabase(new Date(2026, 8, 8), '2026-09-08');
 
   console.log(JSON.stringify({
     ok: true,
