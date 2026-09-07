@@ -205,10 +205,11 @@ async function ensureGenerationTable(db) {
       generated_order_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
       payload_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
       created_by uuid,
-      created_at timestamptz NOT NULL DEFAULT now(),
-      UNIQUE(store_id, sheet_id)
+      created_at timestamptz NOT NULL DEFAULT now()
     )
   `);
+  await db.query('ALTER TABLE quick_order_sheet_generations DROP CONSTRAINT IF EXISTS quick_order_sheet_generations_store_id_sheet_id_key');
+  await db.query('CREATE INDEX IF NOT EXISTS idx_quick_order_sheet_generations_store_sheet_created ON quick_order_sheet_generations(store_id, sheet_id, created_at DESC)');
 }
 
 function normalizeDailyPricingPayload(body = {}) {
@@ -373,19 +374,22 @@ async function getDailySheet(db, storeId, sheetDate) {
     `SELECT generated_order_ids, created_at
      FROM quick_order_sheet_generations
      WHERE store_id = $1 AND sheet_id = $2
-     ORDER BY created_at DESC
-     LIMIT 1`,
+     ORDER BY created_at DESC`,
     [storeId, header.rows[0].id]
   ).catch((error) => {
     if (error.code === '42P01') return { rows: [] };
     throw error;
   });
+  const generatedOrderIds = Array.from(new Set(generations.rows.flatMap((generation) => (
+    Array.isArray(generation.generated_order_ids) ? generation.generated_order_ids : []
+  )).filter(Boolean)));
   const generation = generations.rows[0] || null;
   return {
     ...header.rows[0],
     products: products.rows,
-    generated_order_ids: generation?.generated_order_ids || [],
+    generated_order_ids: generatedOrderIds,
     generated_at: generation?.created_at || null,
+    generation_batch_count: generations.rows.length,
   };
 }
 
@@ -1430,6 +1434,330 @@ async function resetGeneratedOrders(db, storeId, orderIds) {
   return { deleted: documents.rows.length };
 }
 
+function sheetCellKey(sourceClientId, columnUid) {
+  return `${String(sourceClientId || '')}::${String(columnUid || '')}`;
+}
+
+function sheetLineCellKey(line) {
+  return sheetCellKey(line.client?.id, line.product?.uid);
+}
+
+function generatedLineCellKey(line) {
+  return sheetCellKey(line.source_client_id, line.column_uid);
+}
+
+function quantitySignatureFromSheetLine(line) {
+  return {
+    article_id: line.article?.id || line.product?.article_id || null,
+    package_count: Number(line.packageCount || 0).toFixed(3),
+    weight_per_package: Number(line.weightPerPackage || 0).toFixed(3),
+    total_weight: Number(line.quantity || 0).toFixed(3),
+    sold_quantity: Number(line.quantity || 0).toFixed(3),
+  };
+}
+
+function quantitySignatureFromGeneratedLine(line) {
+  return {
+    article_id: line.article_id || null,
+    package_count: Number(line.package_count || 0).toFixed(3),
+    weight_per_package: Number(line.weight_per_package || 0).toFixed(3),
+    total_weight: Number(line.total_weight ?? line.sold_quantity ?? 0).toFixed(3),
+    sold_quantity: Number(line.sold_quantity ?? line.total_weight ?? 0).toFixed(3),
+  };
+}
+
+function sameQuantitySignature(left, right) {
+  return left.article_id === right.article_id
+    && left.package_count === right.package_count
+    && left.weight_per_package === right.weight_per_package
+    && left.total_weight === right.total_weight
+    && left.sold_quantity === right.sold_quantity;
+}
+
+async function fetchSheetGenerations(db, storeId, sheetId) {
+  const result = await db.query(
+    `SELECT id, generated_order_ids, payload_snapshot, created_at
+     FROM quick_order_sheet_generations
+     WHERE store_id = $1 AND sheet_id = $2
+     ORDER BY created_at ASC
+     FOR UPDATE`,
+    [storeId, sheetId]
+  );
+  return result.rows;
+}
+
+function generatedOrderIdsFromBatches(batches = []) {
+  return Array.from(new Set(batches.flatMap((batch) => (
+    Array.isArray(batch.generated_order_ids) ? batch.generated_order_ids : []
+  )).filter(Boolean)));
+}
+
+async function fetchGeneratedSheetLines(db, storeId, sheetId) {
+  const result = await db.query(
+    `SELECT sl.id, sl.sales_document_id, sl.article_id, sl.article_plu, sl.article_label,
+            sl.line_number, sl.package_count, sl.weight_per_package, sl.total_weight, sl.sold_quantity,
+            sl.sale_unit, sl.unit_sale_price_ht, sl.unit_cost_ex_vat, sl.vat_rate,
+            sl.delivered_client_id, sl.source_inventory_line,
+            sl.source_inventory_line ->> 'column_uid' AS column_uid,
+            sl.source_inventory_line ->> 'source_client_id' AS source_client_id,
+            sd.client_id AS document_client_id, sd.status AS document_status,
+            sd.document_type, sd.origin, sd.reference_number
+     FROM sales_lines sl
+     JOIN sales_documents sd ON sd.id = sl.sales_document_id AND sd.store_id = sl.store_id
+     WHERE sl.store_id = $1
+       AND sd.origin = 'quick_order_sheet'
+       AND sd.document_type = 'ORDER'
+       AND sl.source_inventory_line ->> 'quick_order_sheet_id' = $2
+     ORDER BY sd.created_at ASC, sl.line_number ASC
+     FOR UPDATE OF sl, sd`,
+    [storeId, sheetId]
+  );
+  return result.rows.filter((row) => clean(row.source_client_id) && clean(row.column_uid));
+}
+
+async function updateSalesDocumentTotals(db, documentId) {
+  await db.query(
+    `UPDATE sales_documents sd SET total_amount_ex_vat = x.ht, total_vat_amount = x.vat,
+            total_amount_inc_vat = x.ttc, updated_at = NOW()
+     FROM (
+       SELECT COALESCE(SUM(line_amount_ht), 0) ht,
+              COALESCE(SUM(line_vat_amount), 0) vat,
+              COALESCE(SUM(line_amount_ttc), 0) ttc
+       FROM sales_lines
+       WHERE sales_document_id = $1
+     ) x
+     WHERE sd.id = $1`,
+    [documentId]
+  );
+}
+
+async function fetchDraftGeneratedOrdersByClient(db, storeId, sheetId) {
+  const result = await db.query(
+    `SELECT DISTINCT sd.id, sd.client_id, sd.reference_number
+     FROM sales_documents sd
+     JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
+     WHERE sd.store_id = $1
+       AND sd.origin = 'quick_order_sheet'
+       AND sd.document_type = 'ORDER'
+       AND sd.status = 'draft'
+       AND sl.source_inventory_line ->> 'quick_order_sheet_id' = $2
+     ORDER BY sd.created_at ASC`,
+    [storeId, sheetId]
+  );
+  const byClient = new Map();
+  for (const order of result.rows) {
+    if (!byClient.has(String(order.client_id))) byClient.set(String(order.client_id), order);
+  }
+  return byClient;
+}
+
+async function nextSalesLineNumber(db, documentId) {
+  const result = await db.query('SELECT COALESCE(MAX(line_number), 0) + 1 n FROM sales_lines WHERE sales_document_id = $1', [documentId]);
+  return Number(result.rows[0]?.n || 1);
+}
+
+function generatedLineConflict(type, line, currentLine = null) {
+  return {
+    type,
+    sales_line_id: line.id,
+    sales_document_id: line.sales_document_id,
+    reference_number: line.reference_number,
+    document_status: line.document_status,
+    source_client_id: line.source_client_id,
+    column_uid: line.column_uid,
+    previous_quantity: Number(line.total_weight ?? line.sold_quantity ?? 0),
+    requested_quantity: currentLine ? Number(currentLine.quantity || 0) : 0,
+  };
+}
+
+function buildGenerationDelta(currentByCell, generatedByCell) {
+  const delta = { created: [], updated: [], deleted: [], unchanged: [], conflicts: [] };
+  for (const [key, item] of currentByCell.entries()) {
+    const existingLine = generatedByCell.get(key);
+    if (!existingLine) {
+      delta.created.push(item);
+      continue;
+    }
+    if (sameQuantitySignature(quantitySignatureFromGeneratedLine(existingLine), quantitySignatureFromSheetLine(item.line))) {
+      delta.unchanged.push({ ...item, existingLine });
+      continue;
+    }
+    if (existingLine.document_status === 'draft') {
+      delta.updated.push({ ...item, existingLine });
+    } else {
+      delta.conflicts.push(generatedLineConflict('quantity_changed_locked_order', existingLine, item.line));
+    }
+  }
+  for (const [key, existingLine] of generatedByCell.entries()) {
+    if (currentByCell.has(key)) continue;
+    if (existingLine.document_status === 'draft') {
+      delta.deleted.push({ existingLine });
+    } else {
+      delta.conflicts.push(generatedLineConflict('deleted_cell_locked_order', existingLine));
+    }
+  }
+  return delta;
+}
+
+async function createQuickOrderSalesDocument(db, { storeId, clientKey, userId, sheet, group }) {
+  const docClientId = group.documentClientId;
+  const tariffLevel = Number(group.tariffLevel || 1);
+  const vatRate = Number(group.vatRate ?? 5.5);
+  const vatExempt = Boolean(group.vatExempt);
+  const order = await db.query(
+    `INSERT INTO sales_documents(
+      id, store_id, client_key, client_id, billed_client_id, document_date, status, document_type, origin,
+      reference_number, notes, tariff_level_snapshot, vat_rate_snapshot, is_vat_exempt_snapshot, created_by, updated_by
+    ) VALUES(
+      gen_random_uuid(), $1, $2, $3, $3, $4::date, 'draft', 'ORDER', 'quick_order_sheet',
+      NULL, $5, $6, $7, $8, $9, $9
+    ) RETURNING id, reference_number`,
+    [
+      storeId,
+      clientKey || null,
+      docClientId,
+      sheet.sheet_date,
+      [sheet.title, sheet.notes, `Fiche source: ${sheet.sheet_id}`].filter(Boolean).join('\n'),
+      tariffLevel,
+      vatRate,
+      vatExempt,
+      userId,
+    ]
+  );
+  return order.rows[0];
+}
+
+async function insertQuickOrderSalesLine(db, { storeId, clientKey, userId, sheet, group, line, orderId, lineNumber }) {
+  const vatRate = Number(group.vatRate ?? 5.5);
+  const vatExempt = Boolean(group.vatExempt);
+  const outOfPricing = line.product.out_of_tariff === true || !clean(line.product.pricing_line_id);
+  const manualPrice = manualSheetPriceForClient(line.product, line.client);
+  const priceResolution = outOfPricing
+    ? {
+        source: 'manual_out_of_pricing',
+        unit_price_ht: positiveOrError(
+          manualPrice,
+          `Prix hors tarif obligatoire et strictement positif pour ${line.product.designation || line.article.designation}`
+        ),
+        tariff_level: line.client.tariff_level,
+        final_unit_price_ht: manualPrice,
+      }
+    : await salesPriceResolver.resolveSalesLinePrice(db, storeId, {
+        client_id: line.client.id,
+        article: line.article,
+        article_id: line.article.id,
+        document_date: sheet.sheet_date,
+        tariff_level: line.client.tariff_level,
+        preserve_existing: false,
+        context_label: line.product.designation || line.article.designation,
+      });
+  const unitPrice = priceResolution.unit_price_ht;
+  const pricingTrace = salesPriceResolver.pricingTraceForResolution(priceResolution);
+  const sourceTrace = salesPriceResolver.inventoryPriceTrace(priceResolution);
+  const lineVatRate = vatExempt ? 0 : num(line.article.vat_rate, vatRate);
+  const amountHt = Number((line.quantity * unitPrice).toFixed(2));
+  const vatAmount = Number((amountHt * lineVatRate / 100).toFixed(2));
+  const amountTtc = Number((amountHt + vatAmount).toFixed(2));
+  const unitTtc = line.quantity > 0 ? Number((amountTtc / line.quantity).toFixed(4)) : Number((unitPrice * (1 + lineVatRate / 100)).toFixed(4));
+  const delivered = deliveredSnapshotForLine(line, group.documentClientId, group.flow === 'royale_maree');
+  const result = await db.query(
+    `INSERT INTO sales_lines(
+      id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label,
+      package_count, weight_per_package, total_weight, sold_quantity, sale_unit,
+      unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc,
+      unit_cost_ex_vat, line_margin_ex_vat, delivered_client_id, delivered_client_name_snapshot,
+      delivered_client_code_snapshot, delivered_client_store_identifier_snapshot,
+      pricing_session_id, pricing_line_id, tariff_level_id, source_tariff_price_ht,
+      royale_maree_commission_ht, final_unit_price_ht,
+      line_status, source_inventory_line, created_by, updated_by
+    ) VALUES(
+      gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
+      $8, $9, $10, $10, 'kg', $11, $12, $13, $14, $15, $16,
+      $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'pending', $29::jsonb, $30, $30
+    ) RETURNING id`,
+    [
+      storeId,
+      clientKey || null,
+      orderId,
+      lineNumber,
+      line.article.id,
+      line.article.plu || line.product.plu || null,
+      line.product.designation || line.article.designation,
+      line.packageCount,
+      line.weightPerPackage,
+      line.quantity,
+      unitPrice,
+      unitTtc,
+      lineVatRate,
+      amountHt,
+      vatAmount,
+      amountTtc,
+      num(line.article.pma, 0),
+      Number((amountHt - line.quantity * num(line.article.pma, 0)).toFixed(2)),
+      delivered.id,
+      delivered.name,
+      delivered.code,
+      delivered.store_identifier,
+      pricingTrace.pricing_session_id,
+      pricingTrace.pricing_line_id,
+      pricingTrace.tariff_level_id,
+      pricingTrace.source_tariff_price_ht,
+      pricingTrace.royale_maree_commission_ht,
+      pricingTrace.final_unit_price_ht,
+      JSON.stringify({
+        quick_order_sheet_id: sheet.sheet_id,
+        column_uid: line.product.uid,
+        source_client_id: line.client.id,
+        source_client_name: line.client.name || line.client.legal_name || null,
+        source_client_code: line.client.code || null,
+        source_client_store_identifier: line.client.store_identifier || null,
+        flow: group.flow,
+        ...sourceTrace,
+      }),
+      userId,
+    ]
+  );
+  return { id: result.rows[0].id, priceResolution };
+}
+
+async function updateQuickOrderDraftLineQuantity(db, { line, currentLine }) {
+  const unitPrice = num(line.unit_sale_price_ht, 0);
+  const vatRate = num(line.vat_rate, 0);
+  const cost = num(line.unit_cost_ex_vat, 0);
+  const amountHt = Number((currentLine.quantity * unitPrice).toFixed(2));
+  const vatAmount = Number((amountHt * vatRate / 100).toFixed(2));
+  const amountTtc = Number((amountHt + vatAmount).toFixed(2));
+  const unitTtc = currentLine.quantity > 0 ? Number((amountTtc / currentLine.quantity).toFixed(4)) : Number((unitPrice * (1 + vatRate / 100)).toFixed(4));
+  await db.query(
+    `UPDATE sales_lines
+     SET package_count = $1, weight_per_package = $2, total_weight = $3, sold_quantity = $3,
+         unit_sale_price_ttc = $4, line_amount_ht = $5, line_vat_amount = $6, line_amount_ttc = $7,
+         line_margin_ex_vat = $8,
+         source_inventory_line = COALESCE(source_inventory_line, '{}'::jsonb) || $9::jsonb,
+         updated_at = NOW()
+     WHERE id = $10`,
+    [
+      currentLine.packageCount,
+      currentLine.weightPerPackage,
+      currentLine.quantity,
+      unitTtc,
+      amountHt,
+      vatAmount,
+      amountTtc,
+      Number((amountHt - currentLine.quantity * cost).toFixed(2)),
+      JSON.stringify({
+        quick_order_sheet_last_delta: {
+          action: 'updated_quantity',
+          previous_quantity: Number(line.total_weight ?? line.sold_quantity ?? 0),
+          next_quantity: currentLine.quantity,
+          updated_at: new Date().toISOString(),
+        },
+      }),
+      line.id,
+    ]
+  );
+}
+
 router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   const db = await req.dbPool.connect();
   const logContext = {
@@ -1508,207 +1836,123 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       throw error;
     }
 
-    const existing = await db.query(
-      'SELECT generated_order_ids FROM quick_order_sheet_generations WHERE store_id = $1 AND sheet_id = $2 LIMIT 1 FOR UPDATE',
-      [req.user.store_id, sheet.sheet_id]
-    );
-    if (existing.rows.length) {
-      const existingOrderIds = existing.rows[0].generated_order_ids || [];
-      const existingOrders = await fetchGeneratedOrders(db, req.user.store_id, existingOrderIds);
-      const existingLineSnapshots = await fetchGeneratedOrderLineSnapshots(db, req.user.store_id, existingOrderIds);
-      const compatible = existingGenerationMatchesGroups(existingOrders, groups, existingLineSnapshots);
-      if (compatible && req.body?.force_regenerate !== true) {
-        await db.query('COMMIT');
-        console.info('quick_order_sheet.generate_orders.idempotent', {
-          ...logContext,
-          sheet_id: sheet.sheet_id,
-          order_ids: existingOrderIds,
-        });
-        return res.json({ ok: true, existing: true, order_ids: existingOrderIds, orders: existingOrders });
-      }
-      if (req.body?.force_regenerate !== true) {
-        await db.query('ROLLBACK');
-        return res.status(409).json({
-          error: 'Cette fiche a deja genere des commandes avec un ancien regroupement. Regeneration controlee requise.',
-          can_regenerate: true,
-          order_ids: existingOrderIds,
-          orders: existingOrders,
-        });
-      }
-      const reset = await resetGeneratedOrders(db, req.user.store_id, existingOrderIds);
+    const generationBatches = await fetchSheetGenerations(db, req.user.store_id, sheet.sheet_id);
+    let previousOrderIds = generatedOrderIdsFromBatches(generationBatches);
+    if (generationBatches.length && req.body?.force_regenerate === true) {
+      const reset = await resetGeneratedOrders(db, req.user.store_id, previousOrderIds);
       await db.query('DELETE FROM quick_order_sheet_generations WHERE store_id = $1 AND sheet_id = $2', [req.user.store_id, sheet.sheet_id]);
+      previousOrderIds = [];
       console.info('quick_order_sheet.generate_orders.regenerate_reset', {
         ...logContext,
         sheet_id: sheet.sheet_id,
         deleted_orders: reset.deleted,
-        previous_order_ids: existingOrderIds,
+        previous_order_ids: previousOrderIds,
       });
     }
 
-    const orderIds = [];
-    const createdOrders = [];
+    const generatedLines = req.body?.force_regenerate === true ? [] : await fetchGeneratedSheetLines(db, req.user.store_id, sheet.sheet_id);
+    const generatedByCell = new Map();
+    for (const line of generatedLines) {
+      const key = generatedLineCellKey(line);
+      if (!generatedByCell.has(key)) generatedByCell.set(key, line);
+    }
+    const currentByCell = new Map();
     for (const group of groups.values()) {
-      const docClientId = group.documentClientId;
-      const tariffLevel = Number(group.tariffLevel || 1);
-      const vatRate = Number(group.vatRate ?? 5.5);
-      const vatExempt = Boolean(group.vatExempt);
-      const order = await db.query(
-        `INSERT INTO sales_documents(
-          id, store_id, client_key, client_id, billed_client_id, document_date, status, document_type, origin,
-          reference_number, notes, tariff_level_snapshot, vat_rate_snapshot, is_vat_exempt_snapshot, created_by, updated_by
-        ) VALUES(
-          gen_random_uuid(), $1, $2, $3, $3, $4::date, 'draft', 'ORDER', 'quick_order_sheet',
-          NULL, $5, $6, $7, $8, $9, $9
-        ) RETURNING id, reference_number`,
-        [
-          req.user.store_id,
-          req.user.client_key || null,
-          docClientId,
-          sheet.sheet_date,
-          [sheet.title, sheet.notes, `Fiche source: ${sheet.sheet_id}`].filter(Boolean).join('\n'),
-          tariffLevel,
-          vatRate,
-          vatExempt,
-          req.user.id,
-        ]
-      );
-      const orderId = order.rows[0].id;
-      orderIds.push(orderId);
-      createdOrders.push({
-        id: orderId,
-        reference_number: order.rows[0].reference_number,
-        client_id: docClientId,
-        client_name: group.documentClientName,
-        status: 'draft',
-        document_type: 'ORDER',
-        line_count: group.lines.length,
-      });
+      for (const line of group.lines) currentByCell.set(sheetLineCellKey(line), { group, line });
+    }
 
-      let lineNumber = 1;
-      for (const line of group.lines) {
-        const outOfPricing = line.product.out_of_tariff === true || !clean(line.product.pricing_line_id);
-        const manualPrice = manualSheetPriceForClient(line.product, line.client);
-        const priceResolution = outOfPricing
-          ? {
-              source: 'manual_out_of_pricing',
-              unit_price_ht: positiveOrError(
-                manualPrice,
-                `Prix hors tarif obligatoire et strictement positif pour ${line.product.designation || line.article.designation}`
-              ),
-              tariff_level: line.client.tariff_level,
-              final_unit_price_ht: manualPrice,
-            }
-          : await salesPriceResolver.resolveSalesLinePrice(db, req.user.store_id, {
-              client_id: line.client.id,
-              article: line.article,
-              article_id: line.article.id,
-              document_date: sheet.sheet_date,
-              tariff_level: line.client.tariff_level,
-              preserve_existing: false,
-              context_label: line.product.designation || line.article.designation,
-            });
-        const unitPrice = priceResolution.unit_price_ht;
-        const pricingTrace = salesPriceResolver.pricingTraceForResolution(priceResolution);
-        const sourceTrace = salesPriceResolver.inventoryPriceTrace(priceResolution);
-        const lineVatRate = vatExempt ? 0 : num(line.article.vat_rate, vatRate);
-        const amountHt = Number((line.quantity * unitPrice).toFixed(2));
-        const vatAmount = Number((amountHt * lineVatRate / 100).toFixed(2));
-        const amountTtc = Number((amountHt + vatAmount).toFixed(2));
-        const unitTtc = line.quantity > 0 ? Number((amountTtc / line.quantity).toFixed(4)) : Number((unitPrice * (1 + lineVatRate / 100)).toFixed(4));
-        const delivered = deliveredSnapshotForLine(line, docClientId, group.flow === 'royale_maree');
-        console.info('quick_order_sheet.generate_orders.line_before_insert', {
-          ...logContext,
-          sheet_id: sheet.sheet_id,
-          flow: group.flow,
-          order_id: orderId,
-          source_client_id: line.client.id,
-          source_client_name: line.client.name || line.client.legal_name || null,
-          doc_client_id: docClientId,
-          delivered_client_id: delivered.id,
-          delivered_client_name_snapshot: delivered.name,
-          delivered_client_code_snapshot: delivered.code,
-          delivered_client_store_identifier_snapshot: delivered.store_identifier,
+    const delta = buildGenerationDelta(currentByCell, generatedByCell);
+
+    if (delta.conflicts.length) {
+      await db.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'Certaines saisies deja generees concernent des commandes engagees. Aucune modification automatique effectuee.',
+        can_regenerate: false,
+        conflicts: delta.conflicts,
+        order_ids: previousOrderIds,
+        orders: await fetchGeneratedOrders(db, req.user.store_id, previousOrderIds),
+      });
+    }
+
+    const touchedOrderIds = new Set();
+    const createdOrders = [];
+    const draftOrdersByClient = await fetchDraftGeneratedOrdersByClient(db, req.user.store_id, sheet.sheet_id);
+    for (const item of delta.created) {
+      const clientKey = String(item.group.documentClientId);
+      let order = draftOrdersByClient.get(clientKey);
+      if (!order) {
+        order = await createQuickOrderSalesDocument(db, {
+          storeId: req.user.store_id,
+          clientKey: req.user.client_key,
+          userId: req.user.id,
+          sheet,
+          group: item.group,
         });
-        await db.query(
-          `INSERT INTO sales_lines(
-            id, store_id, client_key, sales_document_id, line_number, article_id, article_plu, article_label,
-            package_count, weight_per_package, total_weight, sold_quantity, sale_unit,
-            unit_sale_price_ht, unit_sale_price_ttc, vat_rate, line_amount_ht, line_vat_amount, line_amount_ttc,
-            unit_cost_ex_vat, line_margin_ex_vat, delivered_client_id, delivered_client_name_snapshot,
-            delivered_client_code_snapshot, delivered_client_store_identifier_snapshot,
-            pricing_session_id, pricing_line_id, tariff_level_id, source_tariff_price_ht,
-            royale_maree_commission_ht, final_unit_price_ht,
-            line_status, source_inventory_line, created_by, updated_by
-          ) VALUES(
-            gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
-            $8, $9, $10, $10, 'kg', $11, $12, $13, $14, $15, $16,
-            $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, 'pending', $29::jsonb, $30, $30
-          )`,
-          [
-            req.user.store_id,
-            req.user.client_key || null,
-            orderId,
-            lineNumber++,
-            line.article.id,
-            line.article.plu || line.product.plu || null,
-            line.product.designation || line.article.designation,
-            line.packageCount,
-            line.weightPerPackage,
-            line.quantity,
-            unitPrice,
-            unitTtc,
-            lineVatRate,
-            amountHt,
-            vatAmount,
-            amountTtc,
-            num(line.article.pma, 0),
-            Number((amountHt - line.quantity * num(line.article.pma, 0)).toFixed(2)),
-            delivered.id,
-            delivered.name,
-            delivered.code,
-            delivered.store_identifier,
-            pricingTrace.pricing_session_id,
-            pricingTrace.pricing_line_id,
-            pricingTrace.tariff_level_id,
-            pricingTrace.source_tariff_price_ht,
-            pricingTrace.royale_maree_commission_ht,
-            pricingTrace.final_unit_price_ht,
-            JSON.stringify({
-              quick_order_sheet_id: sheet.sheet_id,
-              column_uid: line.product.uid,
-              source_client_id: line.client.id,
-              source_client_name: line.client.name || line.client.legal_name || null,
-              source_client_code: line.client.code || null,
-              source_client_store_identifier: line.client.store_identifier || null,
-              flow: group.flow,
-              ...sourceTrace,
-            }),
-            req.user.id,
-          ]
-        );
+        order.client_id = item.group.documentClientId;
+        draftOrdersByClient.set(clientKey, order);
+        createdOrders.push({
+          id: order.id,
+          reference_number: order.reference_number,
+          client_id: item.group.documentClientId,
+          client_name: item.group.documentClientName,
+          status: 'draft',
+          document_type: 'ORDER',
+          line_count: 0,
+        });
       }
-      console.info('quick_order_sheet.generate_orders.order_created', {
+      const inserted = await insertQuickOrderSalesLine(db, {
+        storeId: req.user.store_id,
+        clientKey: req.user.client_key,
+        userId: req.user.id,
+        sheet,
+        group: item.group,
+        line: item.line,
+        orderId: order.id,
+        lineNumber: await nextSalesLineNumber(db, order.id),
+      });
+      touchedOrderIds.add(order.id);
+      item.sales_line_id = inserted.id;
+    }
+
+    for (const item of delta.updated) {
+      await updateQuickOrderDraftLineQuantity(db, { line: item.existingLine, currentLine: item.line });
+      touchedOrderIds.add(item.existingLine.sales_document_id);
+    }
+
+    for (const item of delta.deleted) {
+      await db.query('DELETE FROM sales_lines WHERE id = $1 AND store_id = $2', [item.existingLine.id, req.user.store_id]);
+      touchedOrderIds.add(item.existingLine.sales_document_id);
+    }
+
+    for (const orderId of touchedOrderIds) {
+      await updateSalesDocumentTotals(db, orderId);
+    }
+
+    const orderIds = Array.from(touchedOrderIds);
+    const allOrderIds = Array.from(new Set([...previousOrderIds, ...orderIds]));
+
+    if (!orderIds.length) {
+      const existingOrders = await fetchGeneratedOrders(db, req.user.store_id, allOrderIds);
+      await db.query('COMMIT');
+      console.info('quick_order_sheet.generate_orders.delta_noop', {
         ...logContext,
         sheet_id: sheet.sheet_id,
-        flow: group.flow,
-        order_id: orderId,
-        reference_number: order.rows[0].reference_number,
-        billed_client_id: docClientId,
-        billed_client_name: group.documentClientName,
-        delivered_clients: group.lines.map((line) => ({
-          id: line.client.id,
-          name: line.client.name,
-          code: line.client.code,
-          store_identifier: line.client.store_identifier,
-        })),
-        line_count: group.lines.length,
+        existing_order_ids: allOrderIds,
+        unchanged_lines: delta.unchanged.length,
       });
-      await db.query(
-        `UPDATE sales_documents sd SET total_amount_ex_vat = x.ht, total_vat_amount = x.vat, total_amount_inc_vat = x.ttc, updated_at = NOW()
-         FROM (SELECT COALESCE(SUM(line_amount_ht), 0) ht, COALESCE(SUM(line_vat_amount), 0) vat, COALESCE(SUM(line_amount_ttc), 0) ttc FROM sales_lines WHERE sales_document_id = $1) x
-         WHERE sd.id = $1`,
-        [orderId]
-      );
+      return res.json({
+        ok: true,
+        existing: true,
+        noop: true,
+        order_ids: allOrderIds,
+        orders: existingOrders,
+        delta: {
+          created: 0,
+          updated: 0,
+          deleted: 0,
+          unchanged: delta.unchanged.length,
+        },
+      });
     }
 
     await db.query(
@@ -1722,7 +1966,31 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         sheet.sheet_date,
         sheet.notes,
         JSON.stringify(orderIds),
-        JSON.stringify(sheet),
+        JSON.stringify({
+          source: 'delta',
+          sheet_id: sheet.sheet_id,
+          sheet_date: sheet.sheet_date,
+          created_cells: delta.created.map((item) => ({
+            source_client_id: item.line.client.id,
+            column_uid: item.line.product.uid,
+            sales_line_id: item.sales_line_id || null,
+            quantity: quantitySignatureFromSheetLine(item.line),
+          })),
+          updated_cells: delta.updated.map((item) => ({
+            source_client_id: item.line.client.id,
+            column_uid: item.line.product.uid,
+            sales_line_id: item.existingLine.id,
+            previous_quantity: quantitySignatureFromGeneratedLine(item.existingLine),
+            quantity: quantitySignatureFromSheetLine(item.line),
+          })),
+          deleted_cells: delta.deleted.map((item) => ({
+            source_client_id: item.existingLine.source_client_id,
+            column_uid: item.existingLine.column_uid,
+            sales_line_id: item.existingLine.id,
+            previous_quantity: quantitySignatureFromGeneratedLine(item.existingLine),
+          })),
+          unchanged_count: delta.unchanged.length,
+        }),
         req.user.id,
       ]
     );
@@ -1733,8 +2001,23 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       sheet_id: sheet.sheet_id,
       order_ids: orderIds,
       order_count: orderIds.length,
+      delta_created: delta.created.length,
+      delta_updated: delta.updated.length,
+      delta_deleted: delta.deleted.length,
     });
-    res.status(201).json({ ok: true, existing: false, order_ids: orderIds, orders: orders.length ? orders : createdOrders });
+    res.status(201).json({
+      ok: true,
+      existing: false,
+      order_ids: allOrderIds,
+      batch_order_ids: orderIds,
+      orders: orders.length ? orders : createdOrders,
+      delta: {
+        created: delta.created.length,
+        updated: delta.updated.length,
+        deleted: delta.deleted.length,
+        unchanged: delta.unchanged.length,
+      },
+    });
   } catch (err) {
     await db.query('ROLLBACK').catch(() => {});
     console.error('quick_order_sheet.generate_orders.rollback', {
@@ -1757,3 +2040,9 @@ module.exports._getSheetForGenerationForTest = getSheetForGeneration;
 module.exports._sheetLinesForTest = sheetLines;
 module.exports._safeDateForTest = safeDate;
 module.exports._orderTargetForClientForTest = orderTargetForClient;
+module.exports._sheetCellKeyForTest = sheetCellKey;
+module.exports._quantitySignatureFromSheetLineForTest = quantitySignatureFromSheetLine;
+module.exports._quantitySignatureFromGeneratedLineForTest = quantitySignatureFromGeneratedLine;
+module.exports._sameQuantitySignatureForTest = sameQuantitySignature;
+module.exports._buildGenerationDeltaForTest = buildGenerationDelta;
+module.exports._generatedOrderIdsFromBatchesForTest = generatedOrderIdsFromBatches;

@@ -199,6 +199,78 @@ function testRoyaleMareeOrderTargetRequiresBilledClient() {
   assert.strictEqual(billedRoyale.tariffLevel, 1);
 }
 
+function testIncrementalGenerationCellIdentity() {
+  const cellKey = quickOrderSheetsRoute._sheetCellKeyForTest;
+  const fromSheet = quickOrderSheetsRoute._quantitySignatureFromSheetLineForTest;
+  const fromGenerated = quickOrderSheetsRoute._quantitySignatureFromGeneratedLineForTest;
+  const same = quickOrderSheetsRoute._sameQuantitySignatureForTest;
+  const buildDelta = quickOrderSheetsRoute._buildGenerationDeltaForTest;
+  const batchOrderIds = quickOrderSheetsRoute._generatedOrderIdsFromBatchesForTest;
+
+  assert.strictEqual(cellKey('client-a', 'pricing-homard'), 'client-a::pricing-homard');
+  assert.notStrictEqual(cellKey('client-a', 'pricing-homard'), cellKey('client-b', 'pricing-homard'));
+  assert.notStrictEqual(cellKey('client-a', 'pricing-homard'), cellKey('client-a', 'pricing-sole'));
+
+  const generatedTenKg = fromGenerated({
+    article_id: 'article-homard',
+    package_count: 2,
+    weight_per_package: 5,
+    total_weight: 10,
+    sold_quantity: 10,
+  });
+  const currentTenKg = fromSheet({
+    article: { id: 'article-homard' },
+    packageCount: 2,
+    weightPerPackage: 5,
+    quantity: 10,
+  });
+  const currentTwelveKg = fromSheet({
+    article: { id: 'article-homard' },
+    packageCount: 2,
+    weightPerPackage: 6,
+    quantity: 12,
+  });
+
+  assert.strictEqual(same(generatedTenKg, currentTenKg), true, 'troisieme clic identique doit etre noop');
+  assert.strictEqual(same(generatedTenKg, currentTwelveKg), false, 'quantite augmentee doit etre detectee');
+
+  const group = { documentClientId: 'client-a' };
+  const current = new Map([
+    ['client-a::pricing-homard', { group, line: { article: { id: 'article-homard' }, product: { uid: 'pricing-homard' }, packageCount: 2, weightPerPackage: 5, quantity: 10 } }],
+    ['client-c::pricing-sole', { group, line: { article: { id: 'article-sole' }, product: { uid: 'pricing-sole' }, packageCount: 1, weightPerPackage: 5, quantity: 5 } }],
+  ]);
+  const generated = new Map([
+    ['client-a::pricing-homard', { id: 'line-a', sales_document_id: 'order-a', article_id: 'article-homard', package_count: 2, weight_per_package: 5, total_weight: 10, sold_quantity: 10, document_status: 'draft', source_client_id: 'client-a', column_uid: 'pricing-homard' }],
+  ]);
+  const firstDelta = buildDelta(current, generated);
+  assert.strictEqual(firstDelta.created.length, 1, 'nouvelle cellule C doit etre creee');
+  assert.strictEqual(firstDelta.unchanged.length, 1, 'cellule A inchangee doit rester intacte');
+  assert.strictEqual(firstDelta.updated.length, 0);
+  assert.strictEqual(firstDelta.conflicts.length, 0);
+
+  const changedCurrent = new Map([
+    ['client-a::pricing-homard', { group, line: { article: { id: 'article-homard' }, product: { uid: 'pricing-homard' }, packageCount: 2, weightPerPackage: 6, quantity: 12 } }],
+  ]);
+  const draftChange = buildDelta(changedCurrent, generated);
+  assert.strictEqual(draftChange.updated.length, 1, 'quantite augmentee sur draft doit etre mise a jour');
+  const lockedChange = buildDelta(changedCurrent, new Map([
+    ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_status: 'validated' }],
+  ]));
+  assert.strictEqual(lockedChange.conflicts.length, 1, 'commande deja engagee ne doit pas etre modifiee silencieusement');
+
+  const deletedDraft = buildDelta(new Map(), generated);
+  assert.strictEqual(deletedDraft.deleted.length, 1, 'cellule supprimee sur draft doit etre supprimee');
+  const deletedLocked = buildDelta(new Map(), new Map([
+    ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_status: 'validated' }],
+  ]));
+  assert.strictEqual(deletedLocked.conflicts.length, 1, 'cellule supprimee sur commande engagee doit bloquer');
+
+  assert.deepStrictEqual(batchOrderIds([
+    { generated_order_ids: ['order-a', 'order-b'] },
+    { generated_order_ids: ['order-b', 'order-c'] },
+  ]), ['order-a', 'order-b', 'order-c']);
+}
+
 (async () => {
   const legacyPayload = buildLegacyPayload();
   const nextPayload = {
@@ -216,11 +288,12 @@ function testRoyaleMareeOrderTargetRequiresBilledClient() {
   assert(!Object.prototype.hasOwnProperty.call(nextPayload, 'order_entries'));
   assert(!Object.prototype.hasOwnProperty.call(nextPayload, 'entries'));
 
-  assert(html.includes('./js/quick-order-sheet.js?v=12'), 'cache-buster quick-order-sheet attendu en v12');
+  assert(html.includes('./js/quick-order-sheet.js?v=13'), 'cache-buster quick-order-sheet attendu en v13');
   assert(js.includes('flushPendingAutosave'), 'generateOrders doit flusher les autosaves');
   assert(js.includes("Impossible de generer les commandes : certaines saisies ne sont pas encore enregistrees."), 'message blocage flush attendu');
   assert(js.includes("sheet_id: state.sheet?.id"), 'generateOrders doit envoyer sheet_id');
   assert(js.includes("els.generate?.addEventListener('click', () => generateOrders(false))"), 'le clic generation ne doit pas passer l evenement comme force_regenerate');
+  assert(!js.includes("state.sheet?.generated_order_ids?.length && !state.isDirtySinceGeneration"), 'le front ne doit plus bloquer une generation delta deja sauvegardee');
   assert(!js.includes('...buildSheetPayload()'), 'generateOrders ne doit plus envoyer le payload complet');
   assert(route.includes('getSheetForGeneration'), 'route generate-orders doit charger la fiche serveur');
   assert(route.includes("to_char(sheet_date, 'YYYY-MM-DD') AS sheet_date"), 'la date fiche DB doit etre lue en YYYY-MM-DD');
@@ -228,11 +301,17 @@ function testRoyaleMareeOrderTargetRequiresBilledClient() {
   assert(route.includes('document_date: sheet.sheet_date'), 'la resolution tarifaire doit recevoir la date exacte de la fiche');
   assert(route.includes('sheet.sheet_date,'), 'l insertion commande doit utiliser la date exacte de la fiche');
   assert(route.includes('quick_order_sheet_generations'), 'protection anti-doublon conservee');
-  assert(route.includes('can_regenerate: true'), 'regeneration controlee conservee');
+  assert(route.includes('DROP CONSTRAINT IF EXISTS quick_order_sheet_generations_store_id_sheet_id_key'), 'la generation doit autoriser plusieurs batches par fiche');
+  assert(route.includes("source: 'delta'"), 'payload_snapshot doit tracer le delta genere');
+  assert(route.includes('fetchGeneratedSheetLines'), 'la generation delta doit relire les lignes deja generees');
+  assert(route.includes('quantity_changed_locked_order'), 'les commandes engagees modifiees doivent etre bloquees');
+  assert(route.includes('can_regenerate: false'), 'les commandes engagees ne doivent pas proposer une regeneration destructive normale');
+  assert(route.includes('noop: true'), 'un nouveau clic sans delta doit etre idempotent sans doublon');
   assert(route.includes('positiveOrError'), 'blocage prix strictement positif conserve');
 
   testBusinessDateNormalization();
   testRoyaleMareeOrderTargetRequiresBilledClient();
+  testIncrementalGenerationCellIdentity();
   await testServerGenerationSheetFromDatabase('2026-09-07', '2026-09-07');
   await testServerGenerationSheetFromDatabase(new Date(2026, 8, 7), '2026-09-07');
   await testServerGenerationSheetFromDatabase('2026-09-08', '2026-09-08');
