@@ -10,6 +10,9 @@ const route = fs.readFileSync(path.join(root, 'backend/routes/quickOrderSheets.j
 
 assert(html.includes('Vue Clients'), 'la vue client doit etre exposee');
 assert(html.includes('Vue Articles'), 'la vue article doit etre exposee');
+assert(html.includes('Vue Fournisseurs'), 'la vue fournisseur doit etre exposee');
+assert(html.includes('./js/quick-order-sheet.js?v=11'), 'cache-buster JS fiche appel attendu');
+assert(html.includes('./css/pages/quick-order-sheet.css?v=8'), 'cache-buster CSS fiche appel attendu');
 assert(!html.includes('new-sheet-btn'), 'le bouton Nouvelle fiche doit etre supprime');
 assert(!html.includes('supplier-select'), 'le filtre fournisseur ne doit plus etre dans la prise de commande principale');
 assert(!html.includes('margin-level-1-input'), 'les marges/prix ne doivent plus etre modifiables dans la fiche appel');
@@ -17,10 +20,15 @@ assert(html.includes('Ajouter un article hors tarif'), 'l ajout hors tarif doit 
 
 assert(js.includes("view: 'client'"), 'l etat doit connaitre le mode client');
 assert(js.includes("state.view === 'article'"), 'l etat doit connaitre le mode article');
+assert(js.includes("state.view === 'supplier'"), 'l etat doit connaitre le mode fournisseur');
 assert(js.includes('AUTOSAVE_DELAY_MS'), 'autosave debounce attendu');
-assert(js.includes("apiSend('/api/quick-order-sheets/by-date', buildSheetPayload(), 'PUT')"), 'autosave serveur attendu');
+assert(js.includes("dirtyEntries"), 'autosave incrementale doit suivre les cellules modifiees');
+assert(js.includes("/entries"), 'autosave incrementale doit utiliser le PATCH cellules');
+assert(js.includes("/metadata"), 'la note doit utiliser le PATCH metadata');
+assert(!js.includes("apiSend('/api/quick-order-sheets/by-date', buildSheetPayload(), 'PUT')"), 'l autosave ne doit plus utiliser le PUT complet');
 assert(js.includes('priceForClient(product, client)'), 'le prix affiche doit dependre du client');
 assert(js.includes('out_of_tariff'), 'le flux hors tarif doit etre trace');
+assert(js.includes("/products/out-of-tariff"), 'l ajout hors tarif doit avoir son endpoint leger');
 assert(js.includes("Prix HT obligatoire"), 'le prix hors tarif doit etre obligatoire cote UI');
 assert(js.includes('parseDecimal(priceForClient(line.product, line.client)) <= 0'), 'la generation front bloque les prix non positifs');
 assert(!js.includes('DEFAULT_PRODUCT_COLUMNS'), 'aucune colonne produit fixe ne doit rester');
@@ -28,6 +36,10 @@ assert(!js.includes('product-column-editor'), 'les grosses cartes produit doiven
 
 assert(route.includes('ensureDailySheetForDate'), 'le GET par date doit auto-creer la fiche');
 assert(route.includes('publishedPricingForDate'), 'les articles doivent venir de la tarification publiee');
+assert(route.includes("router.patch('/quick-order-sheets/:id/entries'"), 'endpoint incrementale entries attendu');
+assert(route.includes("router.patch('/quick-order-sheets/:id/metadata'"), 'endpoint metadata attendu');
+assert(route.includes("router.post('/quick-order-sheets/:id/products/out-of-tariff'"), 'endpoint hors tarif attendu');
+assert(route.includes('s.name AS supplier_name'), 'le GET fiche doit exposer le fournisseur');
 assert(!route.includes('AND COALESCE(pl.exclude_from_mercuriale, false) = false'), 'la fiche appel ne doit pas masquer les lignes publiees de la tarification du jour');
 assert(route.includes('ON CONFLICT (sheet_id, column_uid)'), 'la synchro tarification doit etre idempotente');
 assert(route.includes('manual_out_of_pricing'), 'la generation doit gerer explicitement le hors tarif');
@@ -36,6 +48,7 @@ assert(route.includes('quick_order_sheet_generations'), 'la generation doit rest
 
 assert(css.includes('grid-template-columns: minmax(260px, 340px) minmax(0, 1fr)'), 'layout desktop compact attendu');
 assert(css.includes('position: sticky'), 'en-tetes/identifiants fixes attendus');
+assert(css.includes('supplier-detail'), 'la vue fournisseur doit avoir un detail client depliable');
 assert(css.includes('@media (max-width: 980px)'), 'fallback tablette attendu');
 
 const clients = Array.from({ length: 200 }, (_, index) => ({ id: `client-${index}`, name: `Client ${index}` }));

@@ -244,6 +244,78 @@ function normalizeDailyPricingPayload(body = {}) {
   };
 }
 
+function normalizeEntryPatch(entry = {}) {
+  const clientId = clean(entry.client_id);
+  const columnUid = clean(entry.column_uid || entry.product_uid);
+  if (!isUuid(clientId)) {
+    const error = new Error('client_id UUID obligatoire');
+    error.status = 400;
+    throw error;
+  }
+  if (!columnUid) {
+    const error = new Error('column_uid obligatoire');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    client_id: clientId,
+    column_uid: columnUid,
+    colis: entry.colis === undefined || entry.colis === null ? '' : String(entry.colis).trim(),
+    kg: entry.kg === undefined || entry.kg === null ? '' : String(entry.kg).trim(),
+    pieces: entry.pieces === undefined || entry.pieces === null ? '' : String(entry.pieces).trim(),
+  };
+}
+
+function normalizeEntriesPatchPayload(body = {}) {
+  const entries = Array.isArray(body.entries) ? body.entries : [];
+  if (!entries.length) {
+    const error = new Error('entries obligatoire');
+    error.status = 400;
+    throw error;
+  }
+  return entries.map(normalizeEntryPatch);
+}
+
+function entryPatchHasValue(entry = {}) {
+  return pos(entry.colis) > 0 || pos(entry.kg) > 0 || pos(entry.pieces) > 0;
+}
+
+function applyEntryPatches(orderEntries = {}, patches = []) {
+  const next = JSON.parse(JSON.stringify(orderEntries || {}));
+  for (const entry of patches) {
+    if (!next[entry.client_id]) next[entry.client_id] = {};
+    if (entryPatchHasValue(entry)) {
+      next[entry.client_id][entry.column_uid] = {
+        colis: entry.colis,
+        kg: entry.kg,
+        pieces: entry.pieces,
+      };
+    } else {
+      delete next[entry.client_id][entry.column_uid];
+    }
+    if (!Object.keys(next[entry.client_id]).length) delete next[entry.client_id];
+  }
+  return next;
+}
+
+function normalizeOutOfTariffProduct(body = {}) {
+  const product = normalizeDailyPricingPayload({ products: [body.product || body] }).products[0];
+  if (!product.article_id) {
+    const error = new Error('article_id UUID obligatoire');
+    error.status = 400;
+    throw error;
+  }
+  positiveOrError(product.sale_price_level_1_ht || product.sale_price_level_2_ht || product.sale_price_level_3_ht, 'Prix hors tarif obligatoire et strictement positif');
+  return {
+    ...product,
+    pricing_session_id: null,
+    pricing_line_id: null,
+    manual_price_level_1: true,
+    manual_price_level_2: true,
+    manual_price_level_3: true,
+  };
+}
+
 async function getDailySheet(db, storeId, sheetDate) {
   const header = await db.query(
     `SELECT id, store_id, sheet_date, title, notes, supplier_id,
@@ -257,6 +329,8 @@ async function getDailySheet(db, storeId, sheetDate) {
   if (!header.rows.length) return null;
   const products = await db.query(
     `SELECT qsp.*,
+            s.code AS supplier_code,
+            s.name AS supplier_name,
             CASE
               WHEN qsp.pricing_line_id IS NULL THEN false
               WHEN EXISTS (
@@ -272,6 +346,7 @@ async function getDailySheet(db, storeId, sheetDate) {
               ELSE true
             END AS removed_from_current_pricing
      FROM quick_order_sheet_products qsp
+     LEFT JOIN suppliers s ON s.id = qsp.supplier_id AND s.store_id = qsp.store_id
      WHERE qsp.store_id = $1 AND qsp.sheet_id = $2
      ORDER BY display_order ASC, created_at ASC`,
     [storeId, header.rows[0].id, header.rows[0].sheet_date]
@@ -563,6 +638,153 @@ router.put('/quick-order-sheets/by-date', authenticateToken, attachDbContext, re
     await db.query('ROLLBACK').catch(() => {});
     console.error('Erreur PUT fiche appel par date :', err);
     res.status(err.status || 500).json({ error: err.message || 'Erreur sauvegarde fiche appel' });
+  } finally {
+    db.release();
+  }
+});
+
+router.patch('/quick-order-sheets/:id/entries', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    const sheetId = clean(req.params.id);
+    if (!isUuid(sheetId)) return res.status(400).json({ error: 'sheet_id UUID obligatoire' });
+    const patches = normalizeEntriesPatchPayload(req.body);
+    await db.query('BEGIN');
+    const current = await db.query(
+      `SELECT id, sheet_date, order_entries
+       FROM quick_order_sheets
+       WHERE id = $1 AND store_id = $2
+       FOR UPDATE`,
+      [sheetId, req.user.store_id]
+    );
+    if (!current.rows.length) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Fiche introuvable' });
+    }
+    const nextEntries = applyEntryPatches(current.rows[0].order_entries || {}, patches);
+    await db.query(
+      `UPDATE quick_order_sheets
+       SET order_entries = $3::jsonb, updated_by = $4, updated_at = NOW()
+       WHERE id = $1 AND store_id = $2`,
+      [sheetId, req.user.store_id, JSON.stringify(nextEntries), req.user.id]
+    );
+    await db.query('COMMIT');
+    res.json({ ok: true, sheet_id: sheetId, updated_entries: patches.length, order_entries: nextEntries });
+  } catch (err) {
+    await db.query('ROLLBACK').catch(() => {});
+    console.error('Erreur PATCH entries fiche appel :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur sauvegarde cellules fiche appel' });
+  } finally {
+    db.release();
+  }
+});
+
+router.patch('/quick-order-sheets/:id/metadata', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    const sheetId = clean(req.params.id);
+    if (!isUuid(sheetId)) return res.status(400).json({ error: 'sheet_id UUID obligatoire' });
+    const title = req.body.title !== undefined ? clean(req.body.title) : undefined;
+    const notes = req.body.notes !== undefined ? clean(req.body.notes) : undefined;
+    const sheetDate = req.body.date !== undefined || req.body.sheet_date !== undefined ? safeDate(req.body.date || req.body.sheet_date) : undefined;
+    const result = await db.query(
+      `UPDATE quick_order_sheets
+       SET title = CASE WHEN $3::boolean THEN $4 ELSE title END,
+           notes = CASE WHEN $5::boolean THEN $6 ELSE notes END,
+           sheet_date = CASE WHEN $7::boolean THEN $8::date ELSE sheet_date END,
+           updated_by = $9,
+           updated_at = NOW()
+       WHERE id = $1 AND store_id = $2
+       RETURNING id, sheet_date, title, notes, updated_at`,
+      [
+        sheetId,
+        req.user.store_id,
+        title !== undefined,
+        title,
+        notes !== undefined,
+        notes,
+        sheetDate !== undefined,
+        sheetDate,
+        req.user.id,
+      ]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Fiche introuvable' });
+    res.json({ ok: true, sheet: result.rows[0] });
+  } catch (err) {
+    console.error('Erreur PATCH metadata fiche appel :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur sauvegarde metadata fiche appel' });
+  } finally {
+    db.release();
+  }
+});
+
+router.post('/quick-order-sheets/:id/products/out-of-tariff', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    const sheetId = clean(req.params.id);
+    if (!isUuid(sheetId)) return res.status(400).json({ error: 'sheet_id UUID obligatoire' });
+    const product = normalizeOutOfTariffProduct(req.body);
+    await db.query('BEGIN');
+    const sheet = await db.query('SELECT id, sheet_date FROM quick_order_sheets WHERE id = $1 AND store_id = $2 FOR UPDATE', [sheetId, req.user.store_id]);
+    if (!sheet.rows.length) {
+      await db.query('ROLLBACK');
+      return res.status(404).json({ error: 'Fiche introuvable' });
+    }
+    const result = await db.query(
+      `INSERT INTO quick_order_sheet_products (
+        store_id, sheet_id, column_uid, article_id, supplier_id, plu, designation_snapshot,
+        display_order, purchase_price_ht, price_unit, supplier_available_quantity,
+        sale_price_level_1_ht, sale_price_level_2_ht, sale_price_level_3_ht,
+        real_margin_level_1, real_margin_level_2, real_margin_level_3,
+        manual_price_level_1, manual_price_level_2, manual_price_level_3,
+        family_code, family_name, sale_unit, pricing_session_id, pricing_line_id,
+        tariff_prices, transport_cost_ht, cost_rendered_ht
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11,
+        $12, $13, $14,
+        $15, $16, $17,
+        $18, $19, $20,
+        $21, $22, $23, NULL, NULL,
+        $24::jsonb, $25, $26
+      )
+      ON CONFLICT (sheet_id, column_uid)
+      DO UPDATE SET
+        article_id = EXCLUDED.article_id,
+        supplier_id = EXCLUDED.supplier_id,
+        plu = EXCLUDED.plu,
+        designation_snapshot = EXCLUDED.designation_snapshot,
+        purchase_price_ht = EXCLUDED.purchase_price_ht,
+        price_unit = EXCLUDED.price_unit,
+        supplier_available_quantity = EXCLUDED.supplier_available_quantity,
+        sale_price_level_1_ht = EXCLUDED.sale_price_level_1_ht,
+        sale_price_level_2_ht = EXCLUDED.sale_price_level_2_ht,
+        sale_price_level_3_ht = EXCLUDED.sale_price_level_3_ht,
+        family_code = EXCLUDED.family_code,
+        family_name = EXCLUDED.family_name,
+        sale_unit = EXCLUDED.sale_unit,
+        tariff_prices = EXCLUDED.tariff_prices,
+        transport_cost_ht = EXCLUDED.transport_cost_ht,
+        cost_rendered_ht = EXCLUDED.cost_rendered_ht,
+        updated_at = NOW()
+      RETURNING *`,
+      [
+        req.user.store_id, sheetId, product.column_uid, product.article_id, product.supplier_id,
+        product.plu, product.designation_snapshot, product.display_order, product.purchase_price_ht,
+        product.price_unit, product.supplier_available_quantity, product.sale_price_level_1_ht,
+        product.sale_price_level_2_ht, product.sale_price_level_3_ht, product.real_margin_level_1,
+        product.real_margin_level_2, product.real_margin_level_3, true, true, true,
+        product.family_code, product.family_name, product.sale_unit, JSON.stringify(product.tariff_prices || []),
+        product.transport_cost_ht, product.cost_rendered_ht,
+      ]
+    );
+    await db.query('COMMIT');
+    const fullSheet = await getDailySheet(req.dbPool, req.user.store_id, sheet.rows[0].sheet_date);
+    res.status(201).json({ ok: true, product: result.rows[0], sheet: fullSheet });
+  } catch (err) {
+    await db.query('ROLLBACK').catch(() => {});
+    console.error('Erreur POST produit hors tarif fiche appel :', err);
+    res.status(err.status || 500).json({ error: err.message || 'Erreur ajout article hors tarif' });
   } finally {
     db.release();
   }

@@ -49,6 +49,7 @@ function ensureQuickOrderDomShell() {
       <div class="segmented-control" role="tablist" aria-label="Vue fiche d'appel">
         <button id="client-view-btn" class="segment-button active" type="button" data-view="client">Vue Clients</button>
         <button id="article-view-btn" class="segment-button" type="button" data-view="article">Vue Articles</button>
+        <button id="supplier-view-btn" class="segment-button" type="button" data-view="supplier">Vue Fournisseurs</button>
       </div>
       <div id="quick-summary" class="quick-summary"></div>
     </section>
@@ -125,6 +126,7 @@ const els = {
   saveStatus: document.getElementById('autosave-status'),
   clientView: document.getElementById('client-view-btn'),
   articleView: document.getElementById('article-view-btn'),
+  supplierView: document.getElementById('supplier-view-btn'),
   summary: document.getElementById('quick-summary'),
   selectorTitle: document.getElementById('selector-title'),
   selectorCount: document.getElementById('selector-count'),
@@ -160,10 +162,14 @@ let state = {
   view: 'client',
   activeClientId: null,
   activeProductUid: null,
+  activeSupplierKey: null,
   primarySearch: '',
   secondarySearch: '',
   primaryFilter: 'all',
   secondaryFilter: 'all',
+  dirtyEntries: {},
+  dirtyMetadata: false,
+  isSaving: false,
   saveTimer: null,
   isLoading: false,
   isDirtySinceGeneration: false,
@@ -302,6 +308,8 @@ function normalizeProduct(product = {}) {
     price_unit: product.price_unit || product.sale_unit || 'kg',
     stock: product.supplier_available_quantity ?? product.stock ?? '',
     supplier_id: product.supplier_id || null,
+    supplier_code: product.supplier_code || '',
+    supplier_name: product.supplier_name || '',
     purchase_price_ht: product.purchase_price_ht ?? '',
     transport_cost_ht: product.transport_cost_ht ?? 0,
     cost_rendered_ht: product.cost_rendered_ht ?? '',
@@ -346,6 +354,21 @@ function setEntryValue(clientId, productId, field, value) {
   state.entries[safeClient][safeProduct][field] = value;
 }
 
+function dirtyEntryKey(clientId, productId) {
+  return `${String(clientId)}::${String(productId)}`;
+}
+
+function markEntryDirty(clientId, productId) {
+  const entry = entryFor(clientId, productId);
+  state.dirtyEntries[dirtyEntryKey(clientId, productId)] = {
+    client_id: String(clientId),
+    column_uid: String(productId),
+    colis: entry.colis || '',
+    kg: entry.kg || '',
+    pieces: entry.pieces || '',
+  };
+}
+
 function entryQuantity(entry = {}) {
   const colis = parseDecimal(entry.colis);
   const kg = parseDecimal(entry.kg);
@@ -375,6 +398,81 @@ function enteredOrderLines() {
   return lines;
 }
 
+function supplierKey(product = {}) {
+  return product.supplier_id ? String(product.supplier_id) : '__no_supplier__';
+}
+
+function supplierTitle(product = {}) {
+  if (product.supplier_name || product.supplier_code) {
+    return [product.supplier_code, product.supplier_name].filter(Boolean).join(' - ');
+  }
+  return 'Sans fournisseur';
+}
+
+function supplierGroups() {
+  const groups = new Map();
+  for (const product of state.products) {
+    const key = supplierKey(product);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        key,
+        supplier_id: product.supplier_id || null,
+        supplier_code: product.supplier_code || '',
+        supplier_name: product.supplier_name || '',
+        label: supplierTitle(product),
+        products: [],
+        ordered_products: 0,
+        total_quantity: 0,
+      });
+    }
+    const group = groups.get(key);
+    group.products.push(product);
+    const total = productClientTotals(product);
+    if (total.quantity > 0) group.ordered_products += 1;
+    group.total_quantity = Number((group.total_quantity + total.quantity).toFixed(3));
+  }
+  return Array.from(groups.values()).sort((a, b) => {
+    if (a.key === '__no_supplier__') return 1;
+    if (b.key === '__no_supplier__') return -1;
+    return a.label.localeCompare(b.label, 'fr');
+  });
+}
+
+function productClientTotals(product) {
+  const clients = [];
+  let quantity = 0;
+  let colis = 0;
+  let kg = 0;
+  let pieces = 0;
+  for (const client of state.clients) {
+    const entry = entryFor(client.id, product.uid);
+    const lineQuantity = entryQuantity(entry);
+    if (lineQuantity <= 0) continue;
+    const lineColis = parseDecimal(entry.colis);
+    const lineKg = parseDecimal(entry.kg);
+    const linePieces = parseDecimal(entry.pieces);
+    quantity += lineQuantity;
+    colis += lineColis;
+    pieces += linePieces;
+    kg += lineColis > 0 && lineKg > 0 ? lineColis * lineKg : lineKg;
+    clients.push({
+      client,
+      entry,
+      quantity: Number(lineQuantity.toFixed(3)),
+      colis: lineColis,
+      kg: Number((lineColis > 0 && lineKg > 0 ? lineColis * lineKg : lineKg).toFixed(3)),
+      pieces: linePieces,
+    });
+  }
+  return {
+    quantity: Number(quantity.toFixed(3)),
+    colis: Number(colis.toFixed(3)),
+    kg: Number(kg.toFixed(3)),
+    pieces: Number(pieces.toFixed(3)),
+    clients,
+  };
+}
+
 function saveDraft() {
   const draft = {
     date: els.date?.value || todayIso(),
@@ -382,6 +480,7 @@ function saveDraft() {
     view: state.view,
     activeClientId: state.activeClientId,
     activeProductUid: state.activeProductUid,
+    activeSupplierKey: state.activeSupplierKey,
     entries: state.entries,
     products: state.products.filter((product) => product.out_of_tariff),
     savedAt: new Date().toISOString(),
@@ -396,9 +495,10 @@ function loadDraftForDate(date, serverUpdatedAt = null) {
   const serverSavedAt = Date.parse(serverUpdatedAt || '');
   if (Number.isFinite(draftSavedAt) && Number.isFinite(serverSavedAt) && draftSavedAt <= serverSavedAt) return;
   state.entries = draft.entries && typeof draft.entries === 'object' ? draft.entries : state.entries;
-  state.view = draft.view === 'article' ? 'article' : 'client';
+  state.view = ['client', 'article', 'supplier'].includes(draft.view) ? draft.view : 'client';
   state.activeClientId = draft.activeClientId || state.activeClientId;
   state.activeProductUid = draft.activeProductUid || state.activeProductUid;
+  state.activeSupplierKey = draft.activeSupplierKey || state.activeSupplierKey;
   if (Array.isArray(draft.products)) {
     const existing = new Set(state.products.map((product) => String(product.uid)));
     const extra = draft.products.map(normalizeProduct).filter((product) => !existing.has(String(product.uid)));
@@ -458,14 +558,53 @@ function buildSheetPayload() {
 }
 
 async function saveSheetToServer() {
-  if (state.isLoading || !state.sheet?.id) return;
-  setSaveStatus('Enregistrement', 'saving');
-  const result = await apiSend('/api/quick-order-sheets/by-date', buildSheetPayload(), 'PUT');
-  if (result.sheet) {
-    state.sheet = result.sheet;
-    state.entries = result.sheet.order_entries || state.entries;
+  if (state.isLoading || !state.sheet?.id || state.isSaving) return;
+  const dirtyEntryKeys = Object.keys(state.dirtyEntries || {});
+  const metadataDirty = state.dirtyMetadata === true;
+  if (!dirtyEntryKeys.length && !metadataDirty) {
+    setSaveStatus('Enregistre', 'saved');
+    return;
   }
-  setSaveStatus('Enregistre', 'saved');
+  setSaveStatus('Enregistrement', 'saving');
+  state.isSaving = true;
+  const snapshotEntries = dirtyEntryKeys.map((key) => ({ key, entry: { ...state.dirtyEntries[key] } }));
+  const snapshotNotes = els.note?.value || '';
+  try {
+    if (metadataDirty) {
+      const result = await apiSend(`/api/quick-order-sheets/${encodeURIComponent(state.sheet.id)}/metadata`, {
+        notes: snapshotNotes,
+      }, 'PATCH');
+      if (result.sheet) {
+        state.sheet = { ...state.sheet, ...result.sheet };
+      }
+      if ((els.note?.value || '') === snapshotNotes) state.dirtyMetadata = false;
+    }
+
+    if (snapshotEntries.length) {
+      const result = await apiSend(`/api/quick-order-sheets/${encodeURIComponent(state.sheet.id)}/entries`, {
+        entries: snapshotEntries.map((item) => item.entry),
+      }, 'PATCH');
+      if (result.order_entries) state.entries = result.order_entries;
+      for (const { key, entry } of snapshotEntries) {
+        if (JSON.stringify(state.dirtyEntries[key]) === JSON.stringify(entry)) {
+          delete state.dirtyEntries[key];
+        }
+      }
+    }
+    setSaveStatus('Enregistre', 'saved');
+  } finally {
+    state.isSaving = false;
+    if (Object.keys(state.dirtyEntries || {}).length || state.dirtyMetadata) {
+      window.clearTimeout(state.saveTimer);
+      state.saveTimer = window.setTimeout(() => {
+        saveSheetToServer().catch((error) => {
+          console.error('Erreur autosave fiche appel:', error);
+          setSaveStatus('Erreur sauvegarde', 'error');
+          showFeedback(error.message || 'Erreur sauvegarde fiche appel', 'error');
+        });
+      }, AUTOSAVE_DELAY_MS);
+    }
+  }
 }
 
 function queueSave(markDirty = true) {
@@ -505,21 +644,32 @@ async function loadSheet() {
   if (!state.activeProductUid || !state.products.some((product) => String(product.uid) === String(state.activeProductUid))) {
     state.activeProductUid = state.products[0]?.uid || null;
   }
+  if (!state.activeSupplierKey || !supplierGroups().some((group) => String(group.key) === String(state.activeSupplierKey))) {
+    state.activeSupplierKey = supplierGroups()[0]?.key || null;
+  }
+  state.dirtyEntries = {};
+  state.dirtyMetadata = false;
   setSaveStatus('Enregistre', 'saved');
 }
 
 function itemMatchesSearch(item, search, type) {
   const haystack = type === 'client'
     ? [item.name, item.legal_name, item.code, item.city, item.store_identifier].join(' ')
+    : type === 'supplier'
+      ? [item.supplier_code, item.supplier_name, item.label].join(' ')
     : [item.designation, item.plu, item.family_code, item.family_name].join(' ');
   return normalizeText(haystack).includes(normalizeText(search));
 }
 
 function filteredPrimaryItems() {
-  const items = state.view === 'client' ? state.clients : state.products;
+  const items = state.view === 'client' ? state.clients : (state.view === 'supplier' ? supplierGroups() : state.products);
   const search = state.primarySearch;
   return items.filter((item) => {
-    const has = state.view === 'client' ? clientHasOrders(item) : productHasOrders(item);
+    const has = state.view === 'client'
+      ? clientHasOrders(item)
+      : state.view === 'supplier'
+        ? item.ordered_products > 0
+        : productHasOrders(item);
     if (state.primaryFilter === 'with' && !has) return false;
     if (state.primaryFilter === 'without' && has) return false;
     return itemMatchesSearch(item, search, state.view);
@@ -527,6 +677,18 @@ function filteredPrimaryItems() {
 }
 
 function filteredSecondaryItems() {
+  if (state.view === 'supplier') {
+    const group = supplierGroups().find((row) => String(row.key) === String(state.activeSupplierKey));
+    const products = group?.products || [];
+    return products
+      .map((product) => ({ product, totals: productClientTotals(product) }))
+      .filter((item) => {
+        const has = item.totals.quantity > 0;
+        if (state.secondaryFilter === 'with' && !has) return false;
+        if (state.secondaryFilter === 'without' && has) return false;
+        return itemMatchesSearch(item.product, state.secondarySearch, 'article');
+      });
+  }
   const items = state.view === 'client' ? state.products : state.clients;
   const search = state.secondarySearch;
   return items.filter((item) => {
@@ -543,6 +705,7 @@ function renderSummary() {
   const lines = enteredOrderLines();
   const clientsWithOrders = state.clients.filter(clientHasOrders).length;
   const productsWithOrders = state.products.filter(productHasOrders).length;
+  const suppliersWithOrders = supplierGroups().filter((group) => group.ordered_products > 0).length;
   const generated = Array.isArray(state.sheet?.generated_order_ids) && state.sheet.generated_order_ids.length > 0;
   els.summary.innerHTML = `
     <span>${state.products.length} article(s) du jour</span>
@@ -550,6 +713,7 @@ function renderSummary() {
     <span>${lines.length} ligne(s) saisie(s)</span>
     <span>${clientsWithOrders} client(s) avec commande</span>
     <span>${productsWithOrders} article(s) commandes</span>
+    <span>${suppliersWithOrders} fournisseur(s)</span>
     <span class="${generated ? (state.isDirtySinceGeneration ? 'generation-dirty' : 'generation-done') : ''}">
       ${generated ? (state.isDirtySinceGeneration ? 'Modifie apres generation' : 'Commandes generees') : 'Non genere'}
     </span>
@@ -559,9 +723,19 @@ function renderSummary() {
 function renderModeButtons() {
   els.clientView?.classList.toggle('active', state.view === 'client');
   els.articleView?.classList.toggle('active', state.view === 'article');
-  els.selectorTitle.textContent = state.view === 'client' ? 'Clients' : 'Articles';
-  els.primarySearch.placeholder = state.view === 'client' ? 'Nom, code, ville' : 'Designation, code, PLU';
-  els.secondarySearch.placeholder = state.view === 'client' ? 'Rechercher un article' : 'Rechercher un client';
+  els.supplierView?.classList.toggle('active', state.view === 'supplier');
+  els.selectorTitle.textContent = state.view === 'client' ? 'Clients' : (state.view === 'supplier' ? 'Fournisseurs' : 'Articles');
+  els.primarySearch.placeholder = state.view === 'client'
+    ? 'Nom, code, ville'
+    : state.view === 'supplier'
+      ? 'Nom ou code fournisseur'
+      : 'Designation, code, PLU';
+  els.secondarySearch.placeholder = state.view === 'client'
+    ? 'Rechercher un article'
+    : state.view === 'supplier'
+      ? 'Rechercher un article fournisseur'
+      : 'Rechercher un client';
+  els.addOutOfTariff?.classList.toggle('hidden', state.view === 'supplier');
 }
 
 function renderPrimaryList() {
@@ -572,15 +746,26 @@ function renderPrimaryList() {
     return;
   }
   els.primaryList.innerHTML = items.map((item) => {
-    const id = state.view === 'client' ? item.id : item.uid;
+    const id = state.view === 'client' ? item.id : (state.view === 'supplier' ? item.key : item.uid);
     const active = state.view === 'client'
       ? String(id) === String(state.activeClientId)
-      : String(id) === String(state.activeProductUid);
-    const has = state.view === 'client' ? clientHasOrders(item) : productHasOrders(item);
-    const title = state.view === 'client' ? (item.name || item.legal_name || 'Client') : item.designation;
+      : state.view === 'supplier'
+        ? String(id) === String(state.activeSupplierKey)
+        : String(id) === String(state.activeProductUid);
+    const has = state.view === 'client'
+      ? clientHasOrders(item)
+      : state.view === 'supplier'
+        ? item.ordered_products > 0
+        : productHasOrders(item);
+    const title = state.view === 'client' ? (item.name || item.legal_name || 'Client') : (state.view === 'supplier' ? item.label : item.designation);
     const meta = state.view === 'client'
       ? [item.code, item.city, item.store_identifier].filter(Boolean).join(' - ')
-      : [
+      : state.view === 'supplier'
+        ? [
+          `${item.products.length} article(s)`,
+          item.ordered_products ? `${item.ordered_products} commande(s)` : 'sans commande',
+        ].filter(Boolean).join(' - ')
+        : [
           item.plu,
           item.removed_from_current_pricing ? 'retire de la tarification actuelle' : (item.out_of_tariff ? 'hors tarif' : 'tarification'),
           item.family_name,
@@ -709,10 +894,79 @@ function renderArticleViewTable(product) {
   `;
 }
 
+function renderSupplierViewTable(group) {
+  if (!group) {
+    els.entryTitle.textContent = 'Fournisseur';
+    els.entrySubtitle.textContent = 'Aucun fournisseur disponible pour cette fiche.';
+    els.entryTable.innerHTML = '<div class="empty-list">Aucun fournisseur pour cette recherche.</div>';
+    return;
+  }
+  const products = filteredSecondaryItems();
+  els.entryTitle.textContent = group.label;
+  els.entrySubtitle.textContent = [
+    `${group.products.length} article(s) du jour`,
+    group.ordered_products ? `${group.ordered_products} article(s) avec commande` : 'Aucune commande saisie',
+  ].join(' - ');
+  if (!products.length) {
+    els.entryTable.innerHTML = '<div class="empty-list">Aucun article fournisseur pour cette recherche.</div>';
+    return;
+  }
+  els.entryTable.innerHTML = `
+    <table class="entry-table supplier-total-table">
+      <thead>
+        <tr>
+          <th>Article</th>
+          <th>Total clients</th>
+          <th>Colis</th>
+          <th>Pieces</th>
+          <th>Kg</th>
+          <th>Detail clients</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${products.map(({ product, totals }) => `
+          <tr class="${totals.quantity > 0 ? 'row-has-order' : ''}">
+            <th>
+              <strong>${escapeHtml(product.designation)}</strong>
+              <small>${escapeHtml([product.plu, product.family_name, product.sale_unit].filter(Boolean).join(' - '))}</small>
+            </th>
+            <td class="num strong">${escapeHtml(compactNumber(totals.quantity))}</td>
+            <td class="num">${escapeHtml(compactNumber(totals.colis) || '-')}</td>
+            <td class="num">${escapeHtml(compactNumber(totals.pieces) || '-')}</td>
+            <td class="num">${escapeHtml(compactNumber(totals.kg) || '-')}</td>
+            <td>
+              ${totals.clients.length ? `
+                <details class="supplier-detail">
+                  <summary>${totals.clients.length} client(s)</summary>
+                  <div class="supplier-detail-list">
+                    ${totals.clients.map((line) => `
+                      <div>
+                        <strong>${escapeHtml(clientLabel(line.client))}</strong>
+                        <span>${escapeHtml([
+                          line.colis ? `${compactNumber(line.colis)} colis` : '',
+                          line.pieces ? `${compactNumber(line.pieces)} pieces` : '',
+                          line.kg ? `${compactNumber(line.kg)} kg` : '',
+                        ].filter(Boolean).join(' - ') || compactNumber(line.quantity))}</span>
+                      </div>
+                    `).join('')}
+                  </div>
+                </details>
+              ` : '-'}
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
 function renderEntryTable() {
   if (state.view === 'client') {
     const client = state.clients.find((row) => String(row.id) === String(state.activeClientId));
     renderClientViewTable(client);
+  } else if (state.view === 'supplier') {
+    const group = supplierGroups().find((row) => String(row.key) === String(state.activeSupplierKey));
+    renderSupplierViewTable(group);
   } else {
     const product = state.products.find((row) => String(row.uid) === String(state.activeProductUid));
     renderArticleViewTable(product);
@@ -771,17 +1025,26 @@ async function refreshData() {
 }
 
 function setView(view) {
-  state.view = view === 'article' ? 'article' : 'client';
+  state.view = ['client', 'article', 'supplier'].includes(view) ? view : 'client';
   state.primarySearch = '';
   state.secondarySearch = '';
+  state.primaryFilter = 'all';
+  state.secondaryFilter = state.view === 'supplier' ? 'with' : 'all';
   els.primarySearch.value = '';
   els.secondarySearch.value = '';
+  els.primaryFilters?.querySelectorAll('.filter-chip').forEach((button) => {
+    button.classList.toggle('active', button.dataset.filter === state.primaryFilter);
+  });
+  els.secondaryFilters?.querySelectorAll('.filter-chip').forEach((button) => {
+    button.classList.toggle('active', button.dataset.filter === state.secondaryFilter);
+  });
   render();
   saveDraft();
 }
 
 function selectPrimary(id) {
   if (state.view === 'client') state.activeClientId = id;
+  else if (state.view === 'supplier') state.activeSupplierKey = id;
   else state.activeProductUid = id;
   render();
   saveDraft();
@@ -952,7 +1215,7 @@ async function runArticleSearch() {
   }
 }
 
-function addOutOfTariffArticle(index) {
+async function addOutOfTariffArticle(index) {
   const article = state.articleSearchResults[index];
   if (!article) return;
   const price = window.prompt(`Prix HT obligatoire pour ${article.designation || article.display_name || article.plu || 'article'} ?`);
@@ -961,7 +1224,7 @@ function addOutOfTariffArticle(index) {
     return;
   }
   const uid = `manual-${article.id}-${Date.now().toString(36)}`;
-  state.products.push(normalizeProduct({
+  const product = normalizeProduct({
     uid,
     column_uid: uid,
     article_id: article.id,
@@ -975,12 +1238,32 @@ function addOutOfTariffArticle(index) {
     price,
     out_of_tariff: true,
     display_order: state.products.length + 1,
-  }));
-  state.activeProductUid = uid;
+  });
+  state.products.push(product);
+  state.activeProductUid = product.uid;
+  state.activeSupplierKey = supplierKey(product);
   closeArticleModal();
   render();
-  queueSave(true);
-  showFeedback('Article hors tarif ajoute.', 'success');
+  saveDraft();
+  setSaveStatus('Enregistrement', 'saving');
+  try {
+    const result = await apiSend(`/api/quick-order-sheets/${encodeURIComponent(state.sheet.id)}/products/out-of-tariff`, { product }, 'POST');
+    if (result.sheet) {
+      state.sheet = result.sheet;
+      state.products = (Array.isArray(result.sheet.products) ? result.sheet.products : [])
+        .map(normalizeProduct)
+        .sort((a, b) => (a.display_order - b.display_order) || productLabel(a).localeCompare(productLabel(b), 'fr'));
+      state.entries = result.sheet.order_entries || state.entries;
+    }
+    setSaveStatus('Enregistre', 'saved');
+    render();
+    saveDraft();
+    showFeedback('Article hors tarif ajoute.', 'success');
+  } catch (error) {
+    console.error('Erreur ajout article hors tarif:', error);
+    setSaveStatus('Erreur sauvegarde', 'error');
+    showFeedback(error.message || 'Erreur ajout article hors tarif', 'error');
+  }
 }
 
 function initEvents() {
@@ -998,6 +1281,7 @@ function initEvents() {
   els.generate?.addEventListener('click', generateOrders);
   els.clientView?.addEventListener('click', () => setView('client'));
   els.articleView?.addEventListener('click', () => setView('article'));
+  els.supplierView?.addEventListener('click', () => setView('supplier'));
   els.date?.addEventListener('change', async () => {
     state.entries = {};
     state.products = [];
@@ -1006,6 +1290,7 @@ function initEvents() {
     await refreshData();
   });
   els.note?.addEventListener('input', () => {
+    state.dirtyMetadata = true;
     renderPrintableSheet();
     queueSave(false);
   });
@@ -1033,8 +1318,10 @@ function initEvents() {
     const input = event.target.closest('[data-field]');
     if (!input) return;
     setEntryValue(input.dataset.clientId, input.dataset.productUid, input.dataset.field, input.value);
+    markEntryDirty(input.dataset.clientId, input.dataset.productUid);
     renderSummary();
     renderPrintableSheet();
+    if (state.view === 'supplier') renderEntryTable();
     queueSave(true);
   });
   els.entryTable?.addEventListener('keydown', (event) => {
