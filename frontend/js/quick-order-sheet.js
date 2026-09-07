@@ -1114,6 +1114,7 @@ function renderGeneratedOrders(result) {
     : [
         delta.created ? `${delta.created} ligne(s) creee(s)` : null,
         delta.updated ? `${delta.updated} ligne(s) mise(s) a jour` : null,
+        delta.moved ? `${delta.moved} ligne(s) deplacee(s)` : null,
         delta.deleted ? `${delta.deleted} ligne(s) supprimee(s)` : null,
       ].filter(Boolean).join(' - ');
   renderActionPreview(result.existing || result.noop ? 'Commandes deja generees' : 'Commandes mises a jour', `
@@ -1124,8 +1125,9 @@ function renderGeneratedOrders(result) {
 
 async function generateOrders(forceRegenerate = false) {
   const lines = enteredOrderLines();
-  if (!lines.length) {
-    showFeedback('Aucune quantite a transformer en commande.', 'error');
+  const generatedCount = Array.isArray(state.sheet?.generated_order_ids) ? state.sheet.generated_order_ids.length : 0;
+  if (!lines.length && !generatedCount) {
+    showFeedback('Aucune quantite a transformer en commande.', 'success');
     return;
   }
   const missingPrice = lines.find((line) => parseDecimal(priceForClient(line.product, line.client)) <= 0);
@@ -1133,9 +1135,8 @@ async function generateOrders(forceRegenerate = false) {
     showFeedback(`Prix strictement positif requis pour ${productLabel(missingPrice.product)} / ${clientLabel(missingPrice.client)}.`, 'error');
     return;
   }
-  const generatedCount = Array.isArray(state.sheet?.generated_order_ids) ? state.sheet.generated_order_ids.length : 0;
   const confirmLabel = generatedCount
-    ? `${lines.length} ligne(s) seront comparees avec les commandes deja generees. Generer uniquement le delta ?`
+    ? `${lines.length} ligne(s) seront comparees avec les commandes deja generees. Synchroniser le delta ?`
     : `${lines.length} ligne(s) seront generees en commandes. Continuer ?`;
   const confirmed = window.confirm(confirmLabel);
   if (!confirmed) return;

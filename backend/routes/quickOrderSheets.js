@@ -1533,7 +1533,7 @@ async function updateSalesDocumentTotals(db, documentId) {
 
 async function fetchDraftGeneratedOrdersByClient(db, storeId, sheetId) {
   const result = await db.query(
-    `SELECT DISTINCT sd.id, sd.client_id, sd.reference_number
+    `SELECT DISTINCT ON (sd.client_id) sd.id, sd.client_id, sd.reference_number, sd.created_at
      FROM sales_documents sd
      JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
      WHERE sd.store_id = $1
@@ -1541,7 +1541,7 @@ async function fetchDraftGeneratedOrdersByClient(db, storeId, sheetId) {
        AND sd.document_type = 'ORDER'
        AND sd.status = 'draft'
        AND sl.source_inventory_line ->> 'quick_order_sheet_id' = $2
-     ORDER BY sd.created_at ASC`,
+     ORDER BY sd.client_id, sd.created_at ASC`,
     [storeId, sheetId]
   );
   const byClient = new Map();
@@ -1571,11 +1571,31 @@ function generatedLineConflict(type, line, currentLine = null) {
 }
 
 function buildGenerationDelta(currentByCell, generatedByCell) {
-  const delta = { created: [], updated: [], deleted: [], unchanged: [], conflicts: [] };
+  const delta = { created: [], updated: [], moved: [], deleted: [], unchanged: [], conflicts: [] };
   for (const [key, item] of currentByCell.entries()) {
     const existingLine = generatedByCell.get(key);
+    if (item.unresolved) {
+      delta.conflicts.push({
+        type: existingLine ? 'source_lookup_failed_existing_cell' : 'source_lookup_failed_new_cell',
+        source_client_id: item.line?.client?.id || null,
+        column_uid: item.line?.product?.uid || null,
+        reason: item.unresolved,
+        sales_line_id: existingLine?.id || null,
+        sales_document_id: existingLine?.sales_document_id || null,
+        document_status: existingLine?.document_status || null,
+      });
+      continue;
+    }
     if (!existingLine) {
       delta.created.push(item);
+      continue;
+    }
+    if (String(existingLine.document_client_id || '') !== String(item.group.documentClientId || '')) {
+      if (existingLine.document_status === 'draft') {
+        delta.moved.push({ ...item, existingLine });
+      } else {
+        delta.conflicts.push(generatedLineConflict('document_target_changed_locked_order', existingLine, item.line));
+      }
       continue;
     }
     if (sameQuantitySignature(quantitySignatureFromGeneratedLine(existingLine), quantitySignatureFromSheetLine(item.line))) {
@@ -1799,22 +1819,31 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       source_clients: sheet.clients.length,
       source_products: sheet.products.length,
     });
-    if (!sourceLines.length) {
-      await db.query('ROLLBACK');
-      return res.status(400).json({ error: 'Aucune ligne saisie a transformer en commande' });
-    }
-
-    const clients = await fetchClients(db, req.user.store_id, [...new Set(sourceLines.map((line) => line.client.id).filter(isUuid))]);
-    const articles = await fetchArticles(db, req.user.store_id, [...new Set(sourceLines.map((line) => line.product.article_id).filter(isUuid))]);
+    const clientIds = [...new Set(sourceLines.map((line) => line.client.id).filter(isUuid))];
+    const articleIds = [...new Set(sourceLines.map((line) => line.product.article_id).filter(isUuid))];
+    const clients = clientIds.length ? await fetchClients(db, req.user.store_id, clientIds) : new Map();
+    const articles = articleIds.length ? await fetchArticles(db, req.user.store_id, articleIds) : new Map();
     const groups = new Map();
+    const currentByCell = new Map();
     for (const line of sourceLines) {
       const client = clients.get(String(line.client.id));
       const article = articles.get(String(line.product.article_id));
-      if (!client || !article) continue;
+      if (!client || !article) {
+        currentByCell.set(sheetLineCellKey(line), {
+          line,
+          unresolved: !client ? 'client_not_found_or_inactive' : 'article_not_found_or_inactive',
+        });
+        continue;
+      }
       const target = orderTargetForClient(client);
       const key = String(target.documentClientId);
       if (!groups.has(key)) groups.set(key, { ...target, lines: [] });
-      groups.get(key).lines.push({ ...line, client, article });
+      const resolvedLine = { ...line, client, article };
+      groups.get(key).lines.push(resolvedLine);
+      currentByCell.set(sheetLineCellKey(resolvedLine), {
+        group: groups.get(key),
+        line: resolvedLine,
+      });
     }
     console.info('quick_order_sheet.generate_orders.matching', {
       ...logContext,
@@ -1830,12 +1859,6 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         lines: group.lines.length,
       })),
     });
-    if (!groups.size) {
-      const error = new Error('Aucune ligne valide apres rapprochement clients/articles');
-      error.status = 400;
-      throw error;
-    }
-
     const generationBatches = await fetchSheetGenerations(db, req.user.store_id, sheet.sheet_id);
     let previousOrderIds = generatedOrderIdsFromBatches(generationBatches);
     if (generationBatches.length && req.body?.force_regenerate === true) {
@@ -1856,11 +1879,6 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       const key = generatedLineCellKey(line);
       if (!generatedByCell.has(key)) generatedByCell.set(key, line);
     }
-    const currentByCell = new Map();
-    for (const group of groups.values()) {
-      for (const line of group.lines) currentByCell.set(sheetLineCellKey(line), { group, line });
-    }
-
     const delta = buildGenerationDelta(currentByCell, generatedByCell);
 
     if (delta.conflicts.length) {
@@ -1877,7 +1895,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
     const touchedOrderIds = new Set();
     const createdOrders = [];
     const draftOrdersByClient = await fetchDraftGeneratedOrdersByClient(db, req.user.store_id, sheet.sheet_id);
-    for (const item of delta.created) {
+    const getOrCreateDraftOrder = async (item) => {
       const clientKey = String(item.group.documentClientId);
       let order = draftOrdersByClient.get(clientKey);
       if (!order) {
@@ -1900,6 +1918,11 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
           line_count: 0,
         });
       }
+      return order;
+    };
+
+    for (const item of delta.created) {
+      const order = await getOrCreateDraftOrder(item);
       const inserted = await insertQuickOrderSalesLine(db, {
         storeId: req.user.store_id,
         clientKey: req.user.client_key,
@@ -1911,6 +1934,24 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         lineNumber: await nextSalesLineNumber(db, order.id),
       });
       touchedOrderIds.add(order.id);
+      item.sales_line_id = inserted.id;
+    }
+
+    for (const item of delta.moved) {
+      const order = await getOrCreateDraftOrder(item);
+      const inserted = await insertQuickOrderSalesLine(db, {
+        storeId: req.user.store_id,
+        clientKey: req.user.client_key,
+        userId: req.user.id,
+        sheet,
+        group: item.group,
+        line: item.line,
+        orderId: order.id,
+        lineNumber: await nextSalesLineNumber(db, order.id),
+      });
+      await db.query('DELETE FROM sales_lines WHERE id = $1 AND store_id = $2', [item.existingLine.id, req.user.store_id]);
+      touchedOrderIds.add(order.id);
+      touchedOrderIds.add(item.existingLine.sales_document_id);
       item.sales_line_id = inserted.id;
     }
 
@@ -1949,6 +1990,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
         delta: {
           created: 0,
           updated: 0,
+          moved: 0,
           deleted: 0,
           unchanged: delta.unchanged.length,
         },
@@ -1983,6 +2025,16 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
             previous_quantity: quantitySignatureFromGeneratedLine(item.existingLine),
             quantity: quantitySignatureFromSheetLine(item.line),
           })),
+          moved_cells: delta.moved.map((item) => ({
+            source_client_id: item.line.client.id,
+            column_uid: item.line.product.uid,
+            previous_sales_line_id: item.existingLine.id,
+            sales_line_id: item.sales_line_id || null,
+            previous_document_client_id: item.existingLine.document_client_id,
+            document_client_id: item.group.documentClientId,
+            previous_quantity: quantitySignatureFromGeneratedLine(item.existingLine),
+            quantity: quantitySignatureFromSheetLine(item.line),
+          })),
           deleted_cells: delta.deleted.map((item) => ({
             source_client_id: item.existingLine.source_client_id,
             column_uid: item.existingLine.column_uid,
@@ -2003,6 +2055,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       order_count: orderIds.length,
       delta_created: delta.created.length,
       delta_updated: delta.updated.length,
+      delta_moved: delta.moved.length,
       delta_deleted: delta.deleted.length,
     });
     res.status(201).json({
@@ -2014,6 +2067,7 @@ router.post('/quick-order-sheets/generate-orders', authenticateToken, attachDbCo
       delta: {
         created: delta.created.length,
         updated: delta.updated.length,
+        moved: delta.moved.length,
         deleted: delta.deleted.length,
         unchanged: delta.unchanged.length,
       },
@@ -2046,3 +2100,4 @@ module.exports._quantitySignatureFromGeneratedLineForTest = quantitySignatureFro
 module.exports._sameQuantitySignatureForTest = sameQuantitySignature;
 module.exports._buildGenerationDeltaForTest = buildGenerationDelta;
 module.exports._generatedOrderIdsFromBatchesForTest = generatedOrderIdsFromBatches;
+module.exports._fetchDraftGeneratedOrdersByClientForTest = fetchDraftGeneratedOrdersByClient;

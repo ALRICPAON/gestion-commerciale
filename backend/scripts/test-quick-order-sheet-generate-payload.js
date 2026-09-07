@@ -147,6 +147,29 @@ async function testServerGenerationSheetFromDatabase(sheetDate, expectedDate) {
   assert.match(queries[0].sql, /to_char\(sheet_date, 'YYYY-MM-DD'\) AS sheet_date/);
 }
 
+async function testDraftGeneratedOrderLookupSql() {
+  const queries = [];
+  const storeId = uuid('t', 1);
+  const sheetId = uuid('s', 1);
+  const db = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      return {
+        rows: [
+          { id: uuid('d', 1), client_id: uuid('c', 1), reference_number: 'CMD-1', created_at: '2026-09-07T08:00:00Z' },
+          { id: uuid('d', 2), client_id: uuid('c', 2), reference_number: 'CMD-2', created_at: '2026-09-07T09:00:00Z' },
+        ],
+      };
+    },
+  };
+  const byClient = await quickOrderSheetsRoute._fetchDraftGeneratedOrdersByClientForTest(db, storeId, sheetId);
+  assert.strictEqual(byClient.size, 2);
+  assert.strictEqual(queries.length, 1);
+  assert.deepStrictEqual(queries[0].params, [storeId, sheetId]);
+  assert.match(queries[0].sql, /SELECT DISTINCT ON \(sd\.client_id\) sd\.id, sd\.client_id, sd\.reference_number, sd\.created_at/);
+  assert.match(queries[0].sql, /ORDER BY sd\.client_id, sd\.created_at ASC/);
+}
+
 function testBusinessDateNormalization() {
   const safeDate = quickOrderSheetsRoute._safeDateForTest;
 
@@ -240,7 +263,7 @@ function testIncrementalGenerationCellIdentity() {
     ['client-c::pricing-sole', { group, line: { article: { id: 'article-sole' }, product: { uid: 'pricing-sole' }, packageCount: 1, weightPerPackage: 5, quantity: 5 } }],
   ]);
   const generated = new Map([
-    ['client-a::pricing-homard', { id: 'line-a', sales_document_id: 'order-a', article_id: 'article-homard', package_count: 2, weight_per_package: 5, total_weight: 10, sold_quantity: 10, document_status: 'draft', source_client_id: 'client-a', column_uid: 'pricing-homard' }],
+    ['client-a::pricing-homard', { id: 'line-a', sales_document_id: 'order-a', article_id: 'article-homard', package_count: 2, weight_per_package: 5, total_weight: 10, sold_quantity: 10, document_client_id: 'client-a', document_status: 'draft', source_client_id: 'client-a', column_uid: 'pricing-homard' }],
   ]);
   const firstDelta = buildDelta(current, generated);
   assert.strictEqual(firstDelta.created.length, 1, 'nouvelle cellule C doit etre creee');
@@ -258,12 +281,44 @@ function testIncrementalGenerationCellIdentity() {
   ]));
   assert.strictEqual(lockedChange.conflicts.length, 1, 'commande deja engagee ne doit pas etre modifiee silencieusement');
 
+  const billedChanged = buildDelta(new Map([
+    ['client-a::pricing-homard', { group: { documentClientId: 'rm-client-a' }, line: { article: { id: 'article-homard' }, product: { uid: 'pricing-homard' }, packageCount: 2, weightPerPackage: 5, quantity: 10 } }],
+  ]), new Map([
+    ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_client_id: 'client-a', document_status: 'draft' }],
+  ]));
+  assert.strictEqual(billedChanged.moved.length, 1, 'client direct -> billed RM doit deplacer la ligne draft');
+  const billedChangedLocked = buildDelta(new Map([
+    ['client-a::pricing-homard', { group: { documentClientId: 'client-a' }, line: { article: { id: 'article-homard' }, product: { uid: 'pricing-homard' }, packageCount: 2, weightPerPackage: 5, quantity: 10 } }],
+  ]), new Map([
+    ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_client_id: 'rm-client-a', document_status: 'validated' }],
+  ]));
+  assert.strictEqual(billedChangedLocked.conflicts.length, 1, 'RM -> direct sur commande non draft doit bloquer');
+  assert.strictEqual(billedChangedLocked.conflicts[0].type, 'document_target_changed_locked_order');
+
+  const unresolvedArticle = buildDelta(new Map([
+    ['client-a::pricing-homard', { line: { client: { id: 'client-a' }, product: { uid: 'pricing-homard' } }, unresolved: 'article_not_found_or_inactive' }],
+    ['client-c::pricing-sole', { group, line: { article: { id: 'article-sole' }, product: { uid: 'pricing-sole' }, packageCount: 1, weightPerPackage: 5, quantity: 5 } }],
+  ]), generated);
+  assert.strictEqual(unresolvedArticle.conflicts.length, 1, 'article inactif encore present ne doit pas etre supprime silencieusement');
+  assert.strictEqual(unresolvedArticle.created.length, 1, 'autre cellule valide doit rester generable');
+  assert.strictEqual(unresolvedArticle.deleted.length, 0);
+
+  const unresolvedClient = buildDelta(new Map([
+    ['client-a::pricing-homard', { line: { client: { id: 'client-a' }, product: { uid: 'pricing-homard' } }, unresolved: 'client_not_found_or_inactive' }],
+  ]), generated);
+  assert.strictEqual(unresolvedClient.conflicts.length, 1, 'client inactif encore present ne doit pas etre supprime silencieusement');
+  assert.strictEqual(unresolvedClient.deleted.length, 0);
+
   const deletedDraft = buildDelta(new Map(), generated);
   assert.strictEqual(deletedDraft.deleted.length, 1, 'cellule supprimee sur draft doit etre supprimee');
   const deletedLocked = buildDelta(new Map(), new Map([
     ['client-a::pricing-homard', { ...generated.get('client-a::pricing-homard'), document_status: 'validated' }],
   ]));
   assert.strictEqual(deletedLocked.conflicts.length, 1, 'cellule supprimee sur commande engagee doit bloquer');
+
+  const neverGeneratedEmpty = buildDelta(new Map(), new Map());
+  assert.strictEqual(neverGeneratedEmpty.deleted.length, 0, 'fiche vide jamais generee doit etre noop');
+  assert.strictEqual(neverGeneratedEmpty.conflicts.length, 0);
 
   assert.deepStrictEqual(batchOrderIds([
     { generated_order_ids: ['order-a', 'order-b'] },
@@ -294,6 +349,7 @@ function testIncrementalGenerationCellIdentity() {
   assert(js.includes("sheet_id: state.sheet?.id"), 'generateOrders doit envoyer sheet_id');
   assert(js.includes("els.generate?.addEventListener('click', () => generateOrders(false))"), 'le clic generation ne doit pas passer l evenement comme force_regenerate');
   assert(!js.includes("state.sheet?.generated_order_ids?.length && !state.isDirtySinceGeneration"), 'le front ne doit plus bloquer une generation delta deja sauvegardee');
+  assert(js.includes('if (!lines.length && !generatedCount)'), 'le front doit autoriser la synchronisation d une fiche vide deja generee');
   assert(!js.includes('...buildSheetPayload()'), 'generateOrders ne doit plus envoyer le payload complet');
   assert(route.includes('getSheetForGeneration'), 'route generate-orders doit charger la fiche serveur');
   assert(route.includes("to_char(sheet_date, 'YYYY-MM-DD') AS sheet_date"), 'la date fiche DB doit etre lue en YYYY-MM-DD');
@@ -305,13 +361,18 @@ function testIncrementalGenerationCellIdentity() {
   assert(route.includes("source: 'delta'"), 'payload_snapshot doit tracer le delta genere');
   assert(route.includes('fetchGeneratedSheetLines'), 'la generation delta doit relire les lignes deja generees');
   assert(route.includes('quantity_changed_locked_order'), 'les commandes engagees modifiees doivent etre bloquees');
+  assert(route.includes('document_target_changed_locked_order'), 'un changement de client facture doit etre detecte');
+  assert(route.includes('source_lookup_failed_existing_cell'), 'un lookup master inactif ne doit pas etre interprete comme suppression');
   assert(route.includes('can_regenerate: false'), 'les commandes engagees ne doivent pas proposer une regeneration destructive normale');
   assert(route.includes('noop: true'), 'un nouveau clic sans delta doit etre idempotent sans doublon');
   assert(route.includes('positiveOrError'), 'blocage prix strictement positif conserve');
+  assert(route.includes('SELECT DISTINCT ON (sd.client_id) sd.id, sd.client_id, sd.reference_number, sd.created_at'), 'requete draft orders doit etre valide avec ORDER BY');
+  assert(route.includes('ORDER BY sd.client_id, sd.created_at ASC'), 'DISTINCT ON doit ordonner par client puis date creation');
 
   testBusinessDateNormalization();
   testRoyaleMareeOrderTargetRequiresBilledClient();
   testIncrementalGenerationCellIdentity();
+  await testDraftGeneratedOrderLookupSql();
   await testServerGenerationSheetFromDatabase('2026-09-07', '2026-09-07');
   await testServerGenerationSheetFromDatabase(new Date(2026, 8, 7), '2026-09-07');
   await testServerGenerationSheetFromDatabase('2026-09-08', '2026-09-08');
