@@ -88,8 +88,11 @@ function normalizeSearch(value) {
 }
 
 function isRoyaleMareeClient(client = {}) {
-  const haystack = normalizeSearch([client.name, client.legal_name, client.code, client.billed_client_name, client.parent_client_name].filter(Boolean).join(' '));
-  return haystack.includes('ROYALE MAREE');
+  const code = normalizeSearch(client.code || '');
+  const name = normalizeSearch([client.name, client.legal_name].filter(Boolean).join(' '));
+  return code.startsWith('RM-')
+    || ['ROYALE_MAREE', 'ROYALE-MAREE', 'ROYALE'].includes(code)
+    || name.includes('ROYALE MAREE');
 }
 
 function safeDate(value) {
@@ -1247,22 +1250,6 @@ async function fetchClients(db, storeId, ids) {
 }
 
 function orderTargetForClient(client) {
-  const parentIsRoyaleMaree = client.parent_client_id && (
-    client.is_royale_maree_member === true
-    || isRoyaleMareeClient({ name: client.parent_client_name, code: client.parent_client_code })
-  );
-  if (parentIsRoyaleMaree) {
-    return {
-      documentClientId: client.parent_client_id,
-      documentClientName: client.parent_client_name,
-      documentClientCode: client.parent_client_code,
-      tariffLevel: client.parent_tariff_level || client.billed_tariff_level || client.tariff_level,
-      vatRate: client.parent_vat_rate ?? client.billed_vat_rate ?? client.vat_rate,
-      vatExempt: Boolean(client.parent_is_vat_exempt ?? client.billed_is_vat_exempt ?? client.is_vat_exempt),
-      flow: 'royale_maree',
-    };
-  }
-
   const billedIsRoyaleMaree = client.billed_client_id
     && String(client.billed_client_id) !== String(client.id)
     && isRoyaleMareeClient({ name: client.billed_client_name, code: client.billed_client_code });
@@ -1769,3 +1756,4 @@ module.exports._stablePricingColumnUidForTest = stablePricingColumnUid;
 module.exports._getSheetForGenerationForTest = getSheetForGeneration;
 module.exports._sheetLinesForTest = sheetLines;
 module.exports._safeDateForTest = safeDate;
+module.exports._orderTargetForClientForTest = orderTargetForClient;

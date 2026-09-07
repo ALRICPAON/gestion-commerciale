@@ -159,6 +159,46 @@ function testBusinessDateNormalization() {
   assert.notStrictEqual(safeDate(new Date(2026, 8, 7)), 'Mon Sep 07');
 }
 
+function testRoyaleMareeOrderTargetRequiresBilledClient() {
+  const orderTarget = quickOrderSheetsRoute._orderTargetForClientForTest;
+  const directLeclerc = orderTarget({
+    id: 'client-88',
+    code: '88',
+    name: '88.E.LECLERC SODIVARDIERE',
+    tariff_level: 2,
+    vat_rate: 5.5,
+    is_vat_exempt: false,
+    parent_client_id: 'rm-parent',
+    parent_client_code: 'RM-88',
+    parent_client_name: 'E.LECLERC SODIVARDIERE',
+    parent_tariff_level: 1,
+    billed_client_id: 'client-88',
+    billed_client_code: '88',
+    billed_client_name: '88.E.LECLERC SODIVARDIERE',
+  });
+  assert.strictEqual(directLeclerc.flow, 'classic');
+  assert.strictEqual(directLeclerc.documentClientId, 'client-88');
+  assert.strictEqual(directLeclerc.tariffLevel, 2);
+
+  const billedRoyale = orderTarget({
+    id: 'store-88',
+    code: '88',
+    name: '88.E.LECLERC SODIVARDIERE',
+    tariff_level: 2,
+    vat_rate: 5.5,
+    is_vat_exempt: false,
+    billed_client_id: 'rm-88',
+    billed_client_code: 'RM-88',
+    billed_client_name: 'E.LECLERC SODIVARDIERE',
+    billed_tariff_level: 1,
+    billed_vat_rate: 5.5,
+    billed_is_vat_exempt: false,
+  });
+  assert.strictEqual(billedRoyale.flow, 'royale_maree');
+  assert.strictEqual(billedRoyale.documentClientId, 'rm-88');
+  assert.strictEqual(billedRoyale.tariffLevel, 1);
+}
+
 (async () => {
   const legacyPayload = buildLegacyPayload();
   const nextPayload = {
@@ -192,6 +232,7 @@ function testBusinessDateNormalization() {
   assert(route.includes('positiveOrError'), 'blocage prix strictement positif conserve');
 
   testBusinessDateNormalization();
+  testRoyaleMareeOrderTargetRequiresBilledClient();
   await testServerGenerationSheetFromDatabase('2026-09-07', '2026-09-07');
   await testServerGenerationSheetFromDatabase(new Date(2026, 8, 7), '2026-09-07');
   await testServerGenerationSheetFromDatabase('2026-09-08', '2026-09-08');

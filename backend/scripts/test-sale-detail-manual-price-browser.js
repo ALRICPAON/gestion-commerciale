@@ -70,7 +70,7 @@ async function main() {
               document_date: '2026-09-06',
               document_type: 'ORDER',
               status: 'draft',
-              origin: 'manual',
+              origin: 'quick_order_sheet',
               reference_number: 'CMD-TEST',
               notes: '',
             },

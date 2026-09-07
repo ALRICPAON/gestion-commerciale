@@ -109,23 +109,53 @@ async function testServiceHelpers() {
 }
 
 async function testResolvePublishedPriceWithCommission() {
+  const clients = {
+    'client-1': {
+      id: 'client-1',
+      code: 'RM-88',
+      name: 'E.LECLERC SODIVARDIERE',
+      tariff_level: 1,
+      resolved_legacy_level: 1,
+      billed_client_id: 'client-1',
+      billed_client_code: 'RM-88',
+      billed_client_name: 'E.LECLERC SODIVARDIERE',
+      billed_is_royale_maree_member: true,
+      is_royale_maree_member: true,
+    },
+    'client-88': {
+      id: 'client-88',
+      code: '88',
+      name: '88.E.LECLERC SODIVARDIERE',
+      tariff_level: 2,
+      resolved_legacy_level: 2,
+      billed_client_id: 'client-88',
+      billed_client_code: '88',
+      billed_client_name: '88.E.LECLERC SODIVARDIERE',
+      billed_is_royale_maree_member: false,
+      is_royale_maree_member: false,
+      parent_client_id: 'client-1',
+    },
+  };
   const calls = [];
   const db = {
     async query(sql, params) {
       calls.push({ sql, params });
       if (sql.includes('FROM clients c')) {
-        return { rows: [{ id: params[1], tariff_level: 1, resolved_legacy_level: 1, is_royale_maree_member: true }] };
+        return { rows: [clients[params[1]]] };
       }
       if (sql.includes('FROM tariff_levels') && sql.includes('legacy_level')) {
-        return { rows: [{ id: 'tariff-1', store_id: params[0], code: 'T1', name: 'Tarif 1', legacy_level: 1 }] };
+        const legacyLevel = Number(params[1]);
+        return { rows: [{ id: `tariff-${legacyLevel}`, store_id: params[0], code: `T${legacyLevel}`, name: `Tarif ${legacyLevel}`, legacy_level: legacyLevel }] };
       }
       if (sql.includes('FROM pricing_sessions ps')) {
+        const tariffId = params[3];
+        const sourcePrice = tariffId === 'tariff-2' ? '10.00' : '8.50';
         return {
           rows: [{
             pricing_session_id: 'session-1',
             pricing_line_id: 'line-1',
-            tariff_level_id: 'tariff-1',
-            source_tariff_price_ht: '8.50',
+            tariff_level_id: tariffId,
+            source_tariff_price_ht: sourcePrice,
             royale_maree_commission_eur_per_kg: '0.75',
           }],
         };
@@ -142,7 +172,19 @@ async function testResolvePublishedPriceWithCommission() {
   assert.equal(resolved.source_tariff_price_ht, 8.5);
   assert.equal(resolved.royale_maree_commission_ht, 0.75);
   assert.equal(resolved.final_unit_price_ht, 9.25);
+
+  const directLeclerc = await pricing.resolvePublishedPrice(db, 'store-1', {
+    client_id: 'client-88',
+    article_id: 'article-1',
+    date: '2026-08-26',
+  });
+  assert.equal(directLeclerc.found, true);
+  assert.equal(directLeclerc.tariff_level.legacy_level, 2);
+  assert.equal(directLeclerc.source_tariff_price_ht, 10);
+  assert.equal(directLeclerc.royale_maree_commission_ht, 0);
+  assert.equal(directLeclerc.final_unit_price_ht, 10);
   assert(calls.length >= 3, 'service uses database lookups rather than hardcoded price');
+  assert(calls.some((call) => call.sql.includes('COALESCE(billed.tariff_level_id, c.tariff_level_id)')), 'tarif resolu doit venir du client facture, pas du parent commercial');
 }
 
 async function testDuplicatePricingSessionUsesSourceLineMap() {

@@ -96,6 +96,8 @@ function inventoryPriceTrace(resolution) {
       tariff_level_id: resolution.tariff_level_id || null,
       source_tariff_price_ht: resolution.source_tariff_price_ht ?? null,
       royale_maree_commission_ht: resolution.royale_maree_commission_ht ?? null,
+      previous_unit_price_ht: resolution.previous_unit_price_ht ?? null,
+      previous_source: resolution.previous_source || null,
       final_unit_price_ht: resolution.unit_price_ht,
     },
   };
@@ -111,6 +113,16 @@ async function resolveSalesLinePrice(db, storeId, input = {}, deps = {}) {
   const sameArticle = existingLine && oldArticleId && articleId && oldArticleId === articleId;
   const existingPrice = positivePrice(existingLine?.unit_sale_price_ht);
   const manualOverride = input.allow_manual_input === true && input.manual_price_override === true;
+  if (manualOverride) {
+    assertPositiveUnitPrice(input.manual_unit_price_ht, {
+      source: 'manual_price_override',
+      article_id: articleId,
+      client_id: clientId,
+      line_id: existingLine?.id,
+      line_number: existingLine?.line_number,
+      document_id: existingLine?.sales_document_id || input.document_id,
+    });
+  }
   const manualPrice = manualOverride ? positivePrice(input.manual_unit_price_ht) : null;
   const requestedTariffLevel = legacyTariffLevel(input.tariff_level || existingLine?.tariff_level_snapshot || 1);
 
@@ -130,9 +142,11 @@ async function resolveSalesLinePrice(db, storeId, input = {}, deps = {}) {
 
   if (manualPrice !== null) {
     return {
-      source: 'manual_direct_entry',
+      source: existingLine?.id ? 'manual_sales_edit' : 'manual_direct_entry',
       unit_price_ht: manualPrice,
       tariff_level: requestedTariffLevel,
+      previous_unit_price_ht: existingPrice,
+      previous_source: existingLine?.source_inventory_line?.price_resolution?.source || null,
       final_unit_price_ht: manualPrice,
     };
   }

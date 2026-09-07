@@ -421,6 +421,9 @@ router.patch('/sales/lines/:id', authenticateToken, attachDbContext, requireAdmi
           document_date: doc.document_date || req.body?.document_date,
           tariff_level: doc.tariff_level_snapshot,
           existing_line: line,
+          allow_manual_input: true,
+          manual_price_override: req.body?.manual_price_override === true,
+          manual_unit_price_ht: req.body?.unit_sale_price_ht,
           context_label: clean(req.body?.article_label) || article.designation,
         });
         req.body.unit_sale_price_ht = priceResolution.unit_price_ht;
