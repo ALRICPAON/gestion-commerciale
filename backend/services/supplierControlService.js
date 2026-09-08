@@ -12,6 +12,7 @@ const CANONICAL_SUPPLIER_CONTROL_STATUSES = new Set([
 const DOCUMENT_TYPES = new Set(['invoice', 'credit_note']);
 const MATCHABLE_PURCHASE_STATUSES = ['received', 'received_pending_invoice', 'invoice_difference', 'invoice_matched'];
 const FINAL_CONTROL_STATUSES = new Set(['paye', 'valide_a_payer', 'litige', 'avoir_attendu']);
+const LINK_EDIT_LOCKED_CONTROL_STATUSES = new Set(['valide_a_payer', 'paye', 'litige', 'avoir_attendu']);
 const DEFAULT_AMOUNT_TOLERANCE = 1;
 const DEFAULT_AMOUNT_RATIO_TOLERANCE = 0.005;
 
@@ -123,6 +124,17 @@ function statusFromTotals(document, totals) {
   if (totals.linked_purchase_count <= 0) return 'a_rapprocher';
   if (Math.abs(totals.difference_total) <= amountTolerance(totals.invoice_total)) return 'conforme';
   return 'ecart';
+}
+
+function assertDocumentLinksEditable(document) {
+  const status = canonicalSupplierControlStatus(document);
+  if (!LINK_EDIT_LOCKED_CONTROL_STATUSES.has(status)) return;
+
+  const error = new Error('Document fournisseur finalise: liens BL non modifiables');
+  error.status = 409;
+  error.code = 'SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED';
+  error.details = { supplier_control_status: status };
+  throw error;
 }
 
 async function loadDocument(client, { storeId, documentId, forUpdate = false }) {
@@ -250,9 +262,9 @@ async function recalculateSupplierControl(client, { storeId, documentId, userId 
   const links = await loadActiveLinks(client, { storeId, documentId });
   const totals = totalsFromDocumentAndLinks(document, links);
   const nextStatus = statusFromTotals(document, totals);
-  const currentStatus = canonicalSupplierControlStatus(document);
+  const storedStatus = clean(document.supplier_control_status)?.toLowerCase() || null;
 
-  if (nextStatus !== currentStatus) {
+  if (nextStatus !== storedStatus) {
     await client.query(
       `
       UPDATE pennylane_supplier_invoices
@@ -266,7 +278,7 @@ async function recalculateSupplierControl(client, { storeId, documentId, userId 
     document.supplier_control_status = nextStatus;
   }
 
-  const summary = buildValidationSummary(document, totals);
+  const summary = buildValidationSummary(document, totals, nextStatus);
   if (emitEvent) {
     await insertEvent(client, {
       storeId,
@@ -350,11 +362,28 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
   };
   const sortColumn = sortColumns[sortKey] || sortColumns.invoice_date;
   const { absoluteTolerance, ratioTolerance } = amountToleranceConfig();
+  const countParams = [...params];
+  const countResult = await db.query(
+    `
+    SELECT COUNT(*)::int AS total
+    FROM pennylane_supplier_invoices psi
+    LEFT JOIN suppliers s
+      ON s.id = psi.supplier_id
+     AND s.store_id = psi.store_id
+    WHERE ${where.join(' AND ')}
+    `,
+    countParams
+  );
 
-  params.push(limit);
-  const limitParam = params.length;
-  params.push(offset);
-  const offsetParam = params.length;
+  const queryParams = [...params];
+  queryParams.push(limit);
+  const limitParam = queryParams.length;
+  queryParams.push(offset);
+  const offsetParam = queryParams.length;
+  queryParams.push(absoluteTolerance);
+  const absoluteToleranceParam = queryParams.length;
+  queryParams.push(ratioTolerance);
+  const ratioToleranceParam = queryParams.length;
 
   const result = await db.query(
     `
@@ -375,8 +404,7 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
         scl.store_id,
         scl.pennylane_supplier_invoice_id,
         COUNT(DISTINCT scl.purchase_id) FILTER (WHERE scl.purchase_id IS NOT NULL)::int AS linked_purchase_count,
-        COALESCE(SUM(COALESCE(scl.amount_difference, 0)), 0) AS link_amount_difference,
-        BOOL_OR(scl.match_status = 'difference' OR ABS(COALESCE(scl.amount_difference, 0)) > 0.0001) AS has_difference
+        COALESCE(SUM(COALESCE(scl.amount_difference, 0)), 0) AS link_amount_difference
       FROM supplier_control_document_links scl
       WHERE scl.match_status <> 'removed'
       GROUP BY scl.store_id, scl.pennylane_supplier_invoice_id
@@ -417,13 +445,11 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
         COALESCE(al.linked_purchase_count, 0) AS linked_purchase_count,
         COALESCE(pt.linked_purchase_total, 0) AS linked_purchase_total,
         ROUND((ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) - COALESCE(pt.linked_purchase_total, 0))::numeric, 4) AS amount_difference,
-        COALESCE(al.has_difference, false)
-          OR ABS(ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) - COALESCE(pt.linked_purchase_total, 0))
-            > GREATEST($${params.length + 1}, ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) * $${params.length + 2}) AS has_difference,
+        ABS(ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) - COALESCE(pt.linked_purchase_total, 0))
+          > GREATEST($${absoluteToleranceParam}, ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) * $${ratioToleranceParam}) AS has_difference,
         COALESCE(le.has_expected_credit_note, false) AS has_expected_credit_note,
         psi.last_synced_at,
-        le.last_control_action_at,
-        COUNT(*) OVER()::int AS total_count
+        le.last_control_action_at
       FROM pennylane_supplier_invoices psi
       LEFT JOIN suppliers s
         ON s.id = psi.supplier_id
@@ -445,12 +471,12 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
     LIMIT $${limitParam}
     OFFSET $${offsetParam}
     `,
-    [...params, absoluteTolerance, ratioTolerance]
+    queryParams
   );
 
-  const total = result.rows[0]?.total_count || 0;
+  const total = countResult.rows[0]?.total || 0;
   return {
-    documents: result.rows.map(({ total_count: _totalCount, ...row }) => row),
+    documents: result.rows,
     pagination: {
       total,
       limit,
@@ -523,7 +549,13 @@ async function listPurchaseCandidates(db, { storeId, documentId, dateWindowDays 
           AND scl.purchase_id = p.id
           AND scl.pennylane_supplier_invoice_id <> $4
           AND scl.match_status <> 'removed'
-          AND linked_psi.supplier_control_status IN ('valide_a_payer', 'paye')
+          AND (
+            linked_psi.supplier_control_status IN ('valide_a_payer', 'paye', 'litige', 'avoir_attendu')
+            OR linked_psi.paid IS TRUE
+            OR LOWER(COALESCE(linked_psi.payment_status, '')) = 'to_be_paid'
+            OR LOWER(COALESCE(linked_psi.payment_status, '')) = 'paid'
+            OR LOWER(COALESCE(linked_psi.payment_status, '')) LIKE 'paid_%'
+          )
       ) AS linked_to_locked_document
     FROM purchases p
     WHERE p.store_id = $1
@@ -600,7 +632,13 @@ async function ensurePurchaseCanBeLinked(client, { storeId, document, purchaseId
 
   const incompatible = await client.query(
     `
-    SELECT scl.id, linked_psi.id AS linked_document_id, linked_psi.invoice_number, linked_psi.supplier_control_status
+    SELECT
+      scl.id,
+      linked_psi.id AS linked_document_id,
+      linked_psi.invoice_number,
+      linked_psi.supplier_control_status,
+      linked_psi.payment_status,
+      linked_psi.paid
     FROM supplier_control_document_links scl
     JOIN pennylane_supplier_invoices linked_psi
       ON linked_psi.id = scl.pennylane_supplier_invoice_id
@@ -609,7 +647,13 @@ async function ensurePurchaseCanBeLinked(client, { storeId, document, purchaseId
       AND scl.purchase_id = $2
       AND scl.pennylane_supplier_invoice_id <> $3
       AND scl.match_status <> 'removed'
-      AND linked_psi.supplier_control_status IN ('valide_a_payer', 'paye')
+      AND (
+        linked_psi.supplier_control_status IN ('valide_a_payer', 'paye', 'litige', 'avoir_attendu')
+        OR linked_psi.paid IS TRUE
+        OR LOWER(COALESCE(linked_psi.payment_status, '')) = 'to_be_paid'
+        OR LOWER(COALESCE(linked_psi.payment_status, '')) = 'paid'
+        OR LOWER(COALESCE(linked_psi.payment_status, '')) LIKE 'paid_%'
+      )
     LIMIT 1
     `,
     [storeId, purchaseId, document.id]
@@ -663,6 +707,7 @@ async function addPurchaseLink(db, { storeId, documentId, purchaseId, userId = n
       await client.query('ROLLBACK');
       return null;
     }
+    assertDocumentLinksEditable(document);
     const purchase = await ensurePurchaseCanBeLinked(client, { storeId, document, purchaseId });
     const amountDifference = round(documentAmount(document) - toNumber(purchase.total_amount_ex_vat), 4);
 
@@ -731,6 +776,7 @@ async function removePurchaseLink(db, { storeId, documentId, purchaseId, userId 
       await client.query('ROLLBACK');
       return null;
     }
+    assertDocumentLinksEditable(document);
 
     const updated = await client.query(
       `
@@ -773,6 +819,7 @@ module.exports = {
   MATCHABLE_PURCHASE_STATUSES,
   amountToleranceConfig,
   amountTolerance,
+  assertDocumentLinksEditable,
   canonicalSupplierControlStatus,
   clean,
   getSupplierControlDocument,

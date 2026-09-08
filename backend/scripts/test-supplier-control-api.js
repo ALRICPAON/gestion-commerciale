@@ -125,10 +125,16 @@ function createMockDb({
 
     if (/BEGIN|COMMIT|ROLLBACK/i.test(sql.trim())) return { rows: [] };
 
-    if (/COUNT\(\*\) OVER\(\)::int AS total_count/i.test(sql)) {
+    if (/SELECT COUNT\(\*\)::int AS total/i.test(sql) && /FROM pennylane_supplier_invoices psi/i.test(sql)) {
+      return { rows: [{ total: (documents || [state.doc]).filter(Boolean).length }] };
+    }
+
+    if (/WITH active_link_purchases AS/i.test(sql)) {
+      const limit = Number(params[params.length - 4]);
+      const offset = Number(params[params.length - 3]);
       const absoluteTolerance = Number(params[params.length - 2]);
       const ratioTolerance = Number(params[params.length - 1]);
-      const rows = (documents || [state.doc]).filter(Boolean).map((row) => {
+      const rows = (documents || [state.doc]).filter(Boolean).slice(offset, offset + limit).map((row) => {
         const linkedPurchaseTotal = links.reduce((sum, item) => sum + Number(item.purchase_total_ex_vat || 0), 0);
         const difference = Number(row.amount_ex_vat || 0) - linkedPurchaseTotal;
         return {
@@ -152,12 +158,10 @@ function createMockDb({
           linked_purchase_count: links.length,
           linked_purchase_total: linkedPurchaseTotal,
           amount_difference: difference,
-          has_difference: links.some((item) => item.match_status === 'difference') ||
-            Math.abs(difference) > Math.max(absoluteTolerance, Math.abs(Number(row.amount_ex_vat || 0)) * ratioTolerance),
+          has_difference: Math.abs(difference) > Math.max(absoluteTolerance, Math.abs(Number(row.amount_ex_vat || 0)) * ratioTolerance),
           has_expected_credit_note: events.some((item) => item.event_type === 'expected_credit_note'),
           last_synced_at: row.last_synced_at || null,
           last_control_action_at: events[0]?.created_at || null,
-          total_count: (documents || [state.doc]).filter(Boolean).length,
         };
       });
       return { rows };
@@ -189,7 +193,7 @@ function createMockDb({
       return { rows: purchases.map((item) => ({ ...item, purchase_id: item.id, purchase_status: item.status, total_ex_vat: item.total_amount_ex_vat })) };
     }
 
-    if (/linked_psi\.supplier_control_status IN \('valide_a_payer', 'paye'\)/i.test(sql)) {
+    if (/linked_psi\.supplier_control_status IN \('valide_a_payer', 'paye', 'litige', 'avoir_attendu'\)/i.test(sql)) {
       return { rows: incompatibleLinks };
     }
 
@@ -285,7 +289,7 @@ async function testListDocumentsAndFilters() {
   });
   assert.strictEqual(result.documents.length, 2);
   assert.strictEqual(result.pagination.limit, 25);
-  const sql = db.calls[0].sql;
+  const sql = db.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql)).sql;
   assert.match(sql, /psi\.supplier_control_status/);
   assert.match(sql, /psi\.supplier_id/);
   assert.match(sql, /psi\.document_type/);
@@ -293,6 +297,22 @@ async function testListDocumentsAndFilters() {
   assert.match(sql, /psi\.invoice_number ILIKE/);
   assert.match(sql, /ORDER BY supplier_name ASC/);
   assertNoPennylaneCalls(db);
+}
+
+async function testListPaginationKeepsTotalOnEmptyPage() {
+  const db = createMockDb({
+    documents: [
+      document({ id: ids.doc, invoice_number: 'FAC-1' }),
+      document({ id: ids.docOther, invoice_number: 'FAC-2' }),
+    ],
+  });
+  const result = await listSupplierControlDocuments(db, {
+    storeId: ids.storeA,
+    filters: { limit: 2, page: 3 },
+  });
+  assert.deepStrictEqual(result.documents, []);
+  assert.strictEqual(result.pagination.total, 2);
+  assert.strictEqual(result.pagination.has_more, false);
 }
 
 async function testDetailDocumentLinesAndPdf() {
@@ -363,10 +383,69 @@ async function testRecalculateNoBlOneBlManyBlAndFinalStatuses() {
   assert.strictEqual(summary.control_status, 'paye');
   assert.ok(summary.blocking_reasons.includes('document_deja_paye'));
 
+  db = createMockDb({ doc: document({ payment_status: 'to_be_paid', supplier_control_status: 'a_rapprocher' }), links: [link()] });
+  summary = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(summary.control_status, 'valide_a_payer');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'valide_a_payer');
+
+  db = createMockDb({ doc: document({ payment_status: 'paid', supplier_control_status: 'a_controler' }), links: [link()] });
+  summary = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(summary.control_status, 'paye');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'paye');
+
   db = createMockDb({ doc: document({ alta_business_status: 'litige', supplier_control_status: 'litige' }), links: [link()] });
   summary = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
   assert.strictEqual(summary.control_status, 'litige');
   assert.ok(summary.blocking_reasons.includes('document_en_litige'));
+}
+
+async function testRecalculateReturnsPersistedNextStatus() {
+  const db = createMockDb({
+    doc: document({ alta_business_status: 'controle_manuel', supplier_control_status: 'a_controler' }),
+    links: [link()],
+  });
+  const summary = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(db.state.doc.supplier_control_status, 'conforme');
+  assert.strictEqual(summary.control_status, 'conforme');
+  assert.strictEqual(summary.can_validate, true);
+}
+
+async function testListMultiPurchaseInvoiceUsesGlobalDifference() {
+  const db = createMockDb({
+    doc: document({ amount_ex_vat: 300 }),
+    links: [
+      link({
+        id: 'l1',
+        match_status: 'difference',
+        amount_difference: 200,
+        purchase: purchase({ id: ids.purchase1, total_amount_ex_vat: 100 }),
+      }),
+      link({
+        id: 'l2',
+        purchase_id: ids.purchase2,
+        match_status: 'difference',
+        amount_difference: 200,
+        purchase: purchase({ id: ids.purchase2, total_amount_ex_vat: 100 }),
+      }),
+      link({
+        id: 'l3',
+        purchase_id: ids.purchase3,
+        match_status: 'difference',
+        amount_difference: 200,
+        purchase: purchase({ id: ids.purchase3, total_amount_ex_vat: 100 }),
+      }),
+    ],
+  });
+  const result = await listSupplierControlDocuments(db, {
+    storeId: ids.storeA,
+    filters: { limit: 10 },
+  });
+  assert.strictEqual(result.documents[0].amount_difference, 0);
+  assert.strictEqual(result.documents[0].has_difference, false);
+
+  const summary = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(summary.control_status, 'conforme');
+  assert.strictEqual(summary.difference_total, 0);
 }
 
 async function testToleranceEnvironmentIsSharedByListDetailAndRecalculate() {
@@ -390,7 +469,7 @@ async function testToleranceEnvironmentIsSharedByListDetailAndRecalculate() {
       storeId: ids.storeA,
       filters: { limit: 10 },
     });
-    const listCall = db.calls.find((call) => /COUNT\(\*\) OVER\(\)::int AS total_count/i.test(call.sql));
+    const listCall = db.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql));
     assert.strictEqual(Number(listCall.params[listCall.params.length - 2]), 100);
     assert.strictEqual(Number(listCall.params[listCall.params.length - 1]), 0.005);
     assert.strictEqual(list.documents[0].amount_difference, 80);
@@ -502,6 +581,24 @@ async function testSupplierAndLockedPurchaseProtections() {
     documentId: ids.doc,
     purchaseId: ids.purchase1,
   }));
+
+  await assertRejectsWithCode('SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED', () => addPurchaseLink(createMockDb({
+    doc: document({ supplier_control_status: 'valide_a_payer' }),
+    purchases: [purchase()],
+  }), {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseId: ids.purchase1,
+  }));
+
+  await assertRejectsWithCode('SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED', () => removePurchaseLink(createMockDb({
+    doc: document({ payment_status: 'paid', supplier_control_status: 'a_rapprocher' }),
+    links: [link()],
+  }), {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseId: ids.purchase1,
+  }));
 }
 
 async function testCreditNoteHasNoStockEffect() {
@@ -542,9 +639,12 @@ function testPennylaneLineAuditGuard() {
 (async () => {
   assert.strictEqual(canonicalSupplierControlStatus({ payment_status: 'to_be_paid' }), 'valide_a_payer');
   await testListDocumentsAndFilters();
+  await testListPaginationKeepsTotalOnEmptyPage();
   await testDetailDocumentLinesAndPdf();
   await testOtherStoreRefused();
   await testRecalculateNoBlOneBlManyBlAndFinalStatuses();
+  await testRecalculateReturnsPersistedNextStatus();
+  await testListMultiPurchaseInvoiceUsesGlobalDifference();
   await testToleranceEnvironmentIsSharedByListDetailAndRecalculate();
   await testPurchaseCandidates();
   await testAddLinkIdempotentAndRemoveLink();
