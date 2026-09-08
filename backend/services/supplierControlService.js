@@ -24,6 +24,7 @@ const VALIDATION_FINAL_STATUSES = new Set(['valide_a_payer', 'paye']);
 const VALIDATION_BLOCKED_FINAL_STATUSES = new Set(['litige', 'avoir_attendu']);
 
 const {
+  fetchSupplierInvoicePaymentStatusFromPennylane,
   syncValidatedSupplierInvoiceStatusToPennylane,
 } = require('./pennylane/supplierInvoiceStatusSync');
 
@@ -450,6 +451,86 @@ function sanitizePennylaneValidationError(error) {
   };
 }
 
+function canonicalRemotePaymentStatus(result = {}) {
+  const status = clean(result.payment_status)?.toLowerCase();
+  if (result.paid === true || status === 'paid' || status?.startsWith('paid_')) return 'paid';
+  if (status === 'to_be_paid') return 'to_be_paid';
+  return status || null;
+}
+
+function validationRequestIsExpired(event) {
+  const createdAt = event?.created_at ? new Date(event.created_at).getTime() : NaN;
+  if (!Number.isFinite(createdAt)) return false;
+  const leaseMs = Math.max(60, Number(process.env.SUPPLIER_CONTROL_VALIDATION_LEASE_SECONDS || 300)) * 1000;
+  return Date.now() - createdAt > leaseMs;
+}
+
+async function persistRecoveredValidation(db, {
+  storeId,
+  documentId,
+  paymentStatus,
+  context,
+  userId = null,
+  comment = null,
+}) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const document = await loadDocument(client, { storeId, documentId, forUpdate: true });
+    if (!document) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    const nextPaymentStatus = paymentStatus === 'paid' ? 'paid' : 'to_be_paid';
+    const nextControlStatus = paymentStatus === 'paid' ? 'paye' : 'valide_a_payer';
+    await client.query(
+      `
+      UPDATE pennylane_supplier_invoices
+      SET payment_status = $1,
+          paid = CASE WHEN $1 = 'paid' THEN true ELSE paid END,
+          supplier_control_status = $2,
+          updated_at = now()
+      WHERE id = $3
+        AND store_id = $4
+      `,
+      [nextPaymentStatus, nextControlStatus, document.id, storeId]
+    );
+    document.payment_status = nextPaymentStatus;
+    document.supplier_control_status = nextControlStatus;
+    if (nextPaymentStatus === 'paid') document.paid = true;
+
+    await insertEvent(client, {
+      storeId,
+      documentId: document.id,
+      eventType: 'validation_already_applied',
+      eventKey: `validation_recovered:${context.currentSignature.match_signature}:${nextControlStatus}`,
+      payload: safeValidationPayload({
+        supplier_control_status: nextControlStatus,
+        payment_status: nextPaymentStatus,
+        match_signature: context.currentSignature.match_signature,
+        amount_difference: context.currentSignature.amount_difference,
+        purchase_ids: context.currentSignature.purchase_ids,
+        comment: clean(comment) || 'recovered_after_orphaned_validation_request',
+      }),
+      userId,
+    });
+    const summary = buildValidationSummary(document, context.totals, nextControlStatus, {
+      acceptedDifference: context.summary?.accepted_difference,
+    });
+    await client.query('COMMIT');
+    return {
+      document,
+      summary,
+      validation: { status: 'recovered', payment_status: nextPaymentStatus },
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function finalizeAlreadyAppliedValidation(client, {
   storeId,
   document,
@@ -504,6 +585,7 @@ async function validateSupplierControlDocument(db, {
   confirmation,
   comment = null,
   userId = null,
+  fetchPennylanePaymentStatus = fetchSupplierInvoicePaymentStatusFromPennylane,
   syncPennylaneStatus = syncValidatedSupplierInvoiceStatusToPennylane,
 } = {}) {
   if (!isUuid(documentId)) {
@@ -645,39 +727,90 @@ async function validateSupplierControlDocument(db, {
       await client.query('COMMIT');
       return already;
     }
-    if (existingRequested && !existingFailure) {
+    if (existingRequested && !existingFailure && !validationRequestIsExpired(existingRequested)) {
+      context = { recoveryOnly: true, document, links, totals, currentSignature, summary };
       await client.query('COMMIT');
-      throw supplierControlError(
-        'Validation fournisseur deja en cours',
-        409,
-        'SUPPLIER_CONTROL_VALIDATION_IN_PROGRESS',
-        { match_signature: currentSignature.match_signature }
-      );
+    } else if (existingRequested) {
+      context = { recoveryBeforeRetry: true, document, links, totals, currentSignature, summary };
+      await client.query('COMMIT');
+    } else {
+      await insertEvent(client, {
+        storeId,
+        documentId: document.id,
+        eventType: 'validation_requested',
+        eventKey: existingRequested
+          ? `validation_requested:${currentSignature.match_signature}:${Date.now()}`
+          : `validation_requested:${currentSignature.match_signature}`,
+        payload: safeValidationPayload({
+          supplier_control_status: summary.control_status,
+          payment_status: document.payment_status,
+          match_signature: currentSignature.match_signature,
+          amount_difference: currentSignature.amount_difference,
+          purchase_ids: currentSignature.purchase_ids,
+          comment,
+        }),
+        userId,
+      });
+      await client.query('COMMIT');
+
+      context = { document, links, totals, currentSignature, summary };
     }
-
-    await insertEvent(client, {
-      storeId,
-      documentId: document.id,
-      eventType: 'validation_requested',
-      eventKey: `validation_requested:${currentSignature.match_signature}`,
-      payload: safeValidationPayload({
-        supplier_control_status: summary.control_status,
-        payment_status: document.payment_status,
-        match_signature: currentSignature.match_signature,
-        amount_difference: currentSignature.amount_difference,
-        purchase_ids: currentSignature.purchase_ids,
-        comment,
-      }),
-      userId,
-    });
-    await client.query('COMMIT');
-
-    context = { document, links, totals, currentSignature, summary };
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch (_) {}
     throw error;
   } finally {
     client.release();
+  }
+
+  if (context.recoveryOnly || context.recoveryBeforeRetry) {
+    let remoteStatus;
+    try {
+      remoteStatus = await fetchPennylanePaymentStatus({
+        invoiceId: context.document.id,
+        pennylaneSupplierInvoiceId: context.document.pennylane_supplier_invoice_id,
+        storeId,
+      });
+    } catch (error) {
+      throw supplierControlError('Lecture statut Pennylane impossible', error.status || 502, 'SUPPLIER_CONTROL_PENNYLANE_STATUS_REFRESH_FAILED', {
+        pennylane_error: sanitizePennylaneValidationError(error),
+        retryable: true,
+      });
+    }
+    const paymentStatus = canonicalRemotePaymentStatus(remoteStatus);
+    if (paymentStatus === 'to_be_paid' || paymentStatus === 'paid') {
+      return persistRecoveredValidation(db, {
+        storeId,
+        documentId,
+        paymentStatus,
+        context,
+        userId,
+        comment,
+      });
+    }
+    if (context.recoveryBeforeRetry) {
+      await insertEvent(db, {
+        storeId,
+        documentId: context.document.id,
+        eventType: 'validation_requested',
+        eventKey: `validation_requested:${context.currentSignature.match_signature}:${Date.now()}`,
+        payload: safeValidationPayload({
+          supplier_control_status: context.summary.control_status,
+          payment_status: context.document.payment_status,
+          match_signature: context.currentSignature.match_signature,
+          amount_difference: context.currentSignature.amount_difference,
+          purchase_ids: context.currentSignature.purchase_ids,
+          comment,
+        }),
+        userId,
+      });
+    } else {
+      throw supplierControlError(
+        'Validation fournisseur deja en cours',
+        409,
+        'SUPPLIER_CONTROL_VALIDATION_IN_PROGRESS',
+        { match_signature: context.currentSignature.match_signature, pennylane_payment_status: paymentStatus }
+      );
+    }
   }
 
   try {

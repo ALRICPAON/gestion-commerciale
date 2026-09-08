@@ -141,6 +141,7 @@ function createMockDb({
     if (/UPDATE pennylane_supplier_invoices/i.test(sql) && /payment_status = \$1/i.test(compact)) {
       state.doc.payment_status = params[0];
       state.doc.supplier_control_status = params[1];
+      if (params[0] === 'paid') state.doc.paid = true;
       return { rows: [] };
     }
 
@@ -311,18 +312,21 @@ async function testConcurrentIntentAndRetryAfterFailure() {
   const doc = document();
   const links = [link()];
   const signature = supplierControlMatchSignature(doc, links, totalsFromDocumentAndLinks(doc, links));
+  let syncCalled = false;
   await assertRejectsWithCode('SUPPLIER_CONTROL_VALIDATION_IN_PROGRESS', () => validateSupplierControlDocument(createMockDb({
     doc,
     links,
-    events: [{ event_type: 'validation_requested', payload: { match_signature: signature.match_signature } }],
+    events: [{ event_type: 'validation_requested', created_at: new Date().toISOString(), payload: { match_signature: signature.match_signature } }],
   }), {
     storeId: ids.store,
     documentId: ids.doc,
     confirmation: true,
+    fetchPennylanePaymentStatus: async () => ({ payment_status: 'pending' }),
     syncPennylaneStatus: async () => {
-      throw new Error('must not call Pennylane');
+      syncCalled = true;
     },
   }));
+  assert.strictEqual(syncCalled, false);
 
   const db = createMockDb({
     doc,
@@ -337,9 +341,88 @@ async function testConcurrentIntentAndRetryAfterFailure() {
     storeId: ids.store,
     documentId: ids.doc,
     confirmation: true,
+    fetchPennylanePaymentStatus: async () => ({ payment_status: 'pending' }),
     syncPennylaneStatus: async () => { called = true; return { ok: true }; },
   });
   assert.strictEqual(called, true);
+}
+
+async function testOrphanedRequestedRecoveredFromRemoteToBePaid() {
+  const doc = document();
+  const links = [link()];
+  const signature = supplierControlMatchSignature(doc, links, totalsFromDocumentAndLinks(doc, links));
+  const db = createMockDb({
+    doc,
+    links,
+    events: [{ event_type: 'validation_requested', created_at: new Date().toISOString(), payload: { match_signature: signature.match_signature } }],
+  });
+  let syncCalled = false;
+  const result = await validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    fetchPennylanePaymentStatus: async () => ({ payment_status: 'to_be_paid', paid: false }),
+    syncPennylaneStatus: async () => { syncCalled = true; },
+  });
+  assert.strictEqual(syncCalled, false);
+  assert.strictEqual(result.validation.status, 'recovered');
+  assert.strictEqual(db.state.doc.payment_status, 'to_be_paid');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'valide_a_payer');
+  assert.ok(db.state.events.some((event) => event.event_type === 'validation_already_applied'));
+}
+
+async function testOrphanedRequestedRecoveredFromRemotePaidWithoutDowngrade() {
+  const doc = document();
+  const links = [link()];
+  const signature = supplierControlMatchSignature(doc, links, totalsFromDocumentAndLinks(doc, links));
+  const db = createMockDb({
+    doc,
+    links,
+    events: [{ event_type: 'validation_requested', created_at: new Date().toISOString(), payload: { match_signature: signature.match_signature } }],
+  });
+  let syncCalled = false;
+  const result = await validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    fetchPennylanePaymentStatus: async () => ({ payment_status: 'paid', paid: true }),
+    syncPennylaneStatus: async () => { syncCalled = true; },
+  });
+  assert.strictEqual(syncCalled, false);
+  assert.strictEqual(result.validation.status, 'recovered');
+  assert.strictEqual(db.state.doc.payment_status, 'paid');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'paye');
+  assert.strictEqual(db.state.doc.paid, true);
+}
+
+async function testLostResponseAfterRemoteSuccessIsRecoveredOnRetry() {
+  const db = createMockDb();
+  await assertRejectsWithCode('SUPPLIER_CONTROL_PENNYLANE_VALIDATION_FAILED', () => validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    syncPennylaneStatus: async () => {
+      const error = new Error('socket hang up after remote accepted');
+      error.status = 502;
+      throw error;
+    },
+  }));
+  assert.strictEqual(db.state.doc.payment_status, null);
+  assert.ok(db.state.events.some((event) => event.event_type === 'validation_requested'));
+  assert.ok(db.state.events.some((event) => event.event_type === 'validation_failed'));
+
+  let syncCalled = false;
+  const recovered = await validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    fetchPennylanePaymentStatus: async () => ({ payment_status: 'to_be_paid' }),
+    syncPennylaneStatus: async () => { syncCalled = true; },
+  });
+  assert.strictEqual(syncCalled, false);
+  assert.strictEqual(recovered.validation.status, 'recovered');
+  assert.strictEqual(db.state.doc.payment_status, 'to_be_paid');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'valide_a_payer');
 }
 
 async function testPennylaneFailureDoesNotValidateAlta() {
@@ -402,6 +485,9 @@ function testStaticGuards() {
   await testBusinessBlocksAndConfirmation();
   await testAlreadyToBePaidAndPaidAreIdempotent();
   await testConcurrentIntentAndRetryAfterFailure();
+  await testOrphanedRequestedRecoveredFromRemoteToBePaid();
+  await testOrphanedRequestedRecoveredFromRemotePaidWithoutDowngrade();
+  await testLostResponseAfterRemoteSuccessIsRecoveredOnRetry();
   await testPennylaneFailureDoesNotValidateAlta();
   await testPaidInboundSyncAndLocks();
   testStaticGuards();
