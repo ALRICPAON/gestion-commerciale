@@ -13,6 +13,7 @@ const {
   listSupplierControlDocuments,
   resolveSupplierControlDifference,
   removePurchaseLink,
+  validateSupplierControlDocument,
 } = require('../services/supplierControlService');
 
 const router = express.Router();
@@ -135,6 +136,27 @@ router.post('/supplier-control/documents/:id/resolve-difference', authenticateTo
     return res.json({ ok: true, ...result });
   } catch (error) {
     return sendError(res, error, 'Erreur resolution ecart controle fournisseur');
+  }
+});
+
+router.post('/supplier-control/documents/:id/validate', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant document fournisseur invalide' });
+    }
+
+    const result = await validateSupplierControlDocument(req.dbPool, {
+      storeId: req.user.store_id,
+      documentId: req.params.id,
+      confirmation: req.body?.confirmation,
+      comment: req.body?.comment,
+      userId: req.user.id,
+    });
+    if (!result) return res.status(404).json({ error: 'Document fournisseur Pennylane introuvable' });
+
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur validation controle fournisseur');
   }
 });
 
