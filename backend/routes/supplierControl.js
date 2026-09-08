@@ -5,10 +5,13 @@ const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const {
   addPurchaseLink,
+  analyzeSupplierControlMatches,
+  applySupplierControlMatch,
   getSupplierControlDocument,
   isUuid,
   listPurchaseCandidates,
   listSupplierControlDocuments,
+  resolveSupplierControlDifference,
   removePurchaseLink,
 } = require('../services/supplierControlService');
 
@@ -70,6 +73,68 @@ router.get('/supplier-control/documents/:id/purchase-candidates', authenticateTo
     return res.json(result);
   } catch (error) {
     return sendError(res, error, 'Erreur candidats BL controle fournisseur');
+  }
+});
+
+router.post('/supplier-control/documents/:id/analyze', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant document fournisseur invalide' });
+    }
+
+    const result = await analyzeSupplierControlMatches(req.dbPool, {
+      storeId: req.user.store_id,
+      documentId: req.params.id,
+      userId: req.user.id,
+      dateWindowDays: req.body?.date_window_days,
+    });
+    if (!result) return res.status(404).json({ error: 'Document fournisseur Pennylane introuvable' });
+
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur analyse controle fournisseur');
+  }
+});
+
+router.post('/supplier-control/documents/:id/apply-match', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant document fournisseur invalide' });
+    }
+
+    const result = await applySupplierControlMatch(req.dbPool, {
+      storeId: req.user.store_id,
+      documentId: req.params.id,
+      purchaseIds: req.body?.purchase_ids,
+      userId: req.user.id,
+    });
+    if (!result) return res.status(404).json({ error: 'Document fournisseur Pennylane introuvable' });
+
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur application rapprochement controle fournisseur');
+  }
+});
+
+router.post('/supplier-control/documents/:id/resolve-difference', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant document fournisseur invalide' });
+    }
+
+    const result = await resolveSupplierControlDifference(req.dbPool, {
+      storeId: req.user.store_id,
+      documentId: req.params.id,
+      resolutionType: req.body?.resolution_type,
+      comment: req.body?.comment,
+      expectedCreditNoteAmount: req.body?.expected_credit_note_amount,
+      userId: req.user.id,
+    });
+    if (!result) return res.status(404).json({ error: 'Document fournisseur Pennylane introuvable' });
+
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur resolution ecart controle fournisseur');
   }
 });
 
