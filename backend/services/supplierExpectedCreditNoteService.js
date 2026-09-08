@@ -141,6 +141,29 @@ async function loadPennylaneDocument(client, { storeId, documentId, forUpdate = 
   return result.rows[0] || null;
 }
 
+async function loadPennylaneDocumentsLinkedToPurchase(client, { storeId, purchaseId, forUpdate = false }) {
+  if (!purchaseId) return [];
+  const result = await client.query(
+    `
+    SELECT psi.*
+    FROM supplier_control_document_links scl
+    JOIN pennylane_supplier_invoices psi
+      ON psi.id = scl.pennylane_supplier_invoice_id
+     AND psi.store_id = scl.store_id
+    WHERE scl.store_id = $1
+      AND scl.purchase_id = $2
+      AND scl.match_status <> 'removed'
+      AND psi.document_type = 'invoice'
+      AND psi.pennylane_deleted_at IS NULL
+    ${forUpdate ? 'FOR UPDATE OF psi' : ''}
+    `,
+    [storeId, purchaseId]
+  );
+  const byId = new Map();
+  for (const row of result.rows) byId.set(String(row.id), row);
+  return [...byId.values()];
+}
+
 async function loadExpectedCreditNoteById(client, { storeId, expectedCreditNoteId, forUpdate = false }) {
   const result = await client.query(
     `
@@ -185,7 +208,7 @@ async function recalculateSourceInvoiceAfterCreditNote(client, { storeId, docume
   const paymentStatus = clean(document.payment_status)?.toLowerCase();
   const currentStatus = clean(document.supplier_control_status)?.toLowerCase();
   const paid = document.paid === true || paymentStatus === 'paid' || paymentStatus?.startsWith('paid_');
-  if (paid || paymentStatus === 'to_be_paid' || ['litige', 'reconciliation_required', 'valide_a_payer', 'paye'].includes(currentStatus)) {
+  if (['litige', 'reconciliation_required'].includes(currentStatus)) {
     return currentStatus;
   }
   const totals = await client.query(
@@ -231,7 +254,11 @@ async function recalculateSourceInvoiceAfterCreditNote(client, { storeId, docume
   const difference = round(invoiceTotal - appliedTotal - purchaseTotal);
   const nextStatus = remainingExpected > 0.01
     ? 'avoir_attendu'
-    : (Math.abs(difference) <= amountTolerance(invoiceTotal) ? 'conforme' : 'ecart');
+    : (paid
+      ? 'paye'
+      : (paymentStatus === 'to_be_paid'
+        ? 'valide_a_payer'
+        : (Math.abs(difference) <= amountTolerance(invoiceTotal) ? 'conforme' : 'ecart')));
   await client.query(
     `
     UPDATE pennylane_supplier_invoices
@@ -239,7 +266,7 @@ async function recalculateSourceInvoiceAfterCreditNote(client, { storeId, docume
         updated_at = now()
     WHERE id = $2
       AND store_id = $3
-      AND supplier_control_status NOT IN ('valide_a_payer', 'paye', 'litige', 'reconciliation_required')
+      AND supplier_control_status NOT IN ('litige', 'reconciliation_required')
     `,
     [nextStatus, documentId, storeId]
   );
@@ -327,17 +354,36 @@ async function createExpectedCreditNoteInTransaction(client, {
         throw expectedCreditNoteError('Ligne achat source introuvable', 404, 'SUPPLIER_EXPECTED_CREDIT_NOTE_PURCHASE_LINE_NOT_FOUND');
       }
     }
+    if (!normalized.sourcePennylaneSupplierInvoiceId) {
+      const linkedDocuments = await loadPennylaneDocumentsLinkedToPurchase(client, {
+        storeId,
+        purchaseId: purchase.id,
+        forUpdate: true,
+      });
+      if (linkedDocuments.length === 1) {
+        sourceDocument = linkedDocuments[0];
+        normalized.sourcePennylaneSupplierInvoiceId = sourceDocument.id;
+      } else if (linkedDocuments.length > 1) {
+        normalized.rawPayload = {
+          ...normalized.rawPayload,
+          source_invoice_resolution: 'ambiguous_purchase_links',
+          candidate_pennylane_supplier_invoice_ids: linkedDocuments.map((row) => row.id),
+        };
+      }
+    }
   }
 
   if (normalized.sourcePennylaneSupplierInvoiceId) {
     if (!isUuid(normalized.sourcePennylaneSupplierInvoiceId)) {
       throw expectedCreditNoteError('Facture source invalide', 400, 'SUPPLIER_EXPECTED_CREDIT_NOTE_SOURCE_DOCUMENT_INVALID');
     }
-    sourceDocument = await loadPennylaneDocument(client, {
-      storeId,
-      documentId: normalized.sourcePennylaneSupplierInvoiceId,
-      forUpdate: true,
-    });
+    sourceDocument = sourceDocument && String(sourceDocument.id) === String(normalized.sourcePennylaneSupplierInvoiceId)
+      ? sourceDocument
+      : await loadPennylaneDocument(client, {
+        storeId,
+        documentId: normalized.sourcePennylaneSupplierInvoiceId,
+        forUpdate: true,
+      });
     if (!sourceDocument) {
       throw expectedCreditNoteError('Facture source introuvable', 404, 'SUPPLIER_EXPECTED_CREDIT_NOTE_SOURCE_DOCUMENT_NOT_FOUND');
     }
@@ -406,21 +452,10 @@ async function createExpectedCreditNoteInTransaction(client, {
   });
 
   if (sourceDocument && sourceDocument.document_type !== 'credit_note') {
-    const paymentStatus = clean(sourceDocument.payment_status)?.toLowerCase();
-    const isPaid = sourceDocument.paid === true || paymentStatus === 'paid' || paymentStatus?.startsWith('paid_');
-    if (!isPaid && paymentStatus !== 'to_be_paid') {
-      await client.query(
-        `
-        UPDATE pennylane_supplier_invoices
-        SET supplier_control_status = 'avoir_attendu',
-            updated_at = now()
-        WHERE id = $1
-          AND store_id = $2
-          AND supplier_control_status NOT IN ('valide_a_payer', 'paye', 'litige', 'reconciliation_required')
-        `,
-        [sourceDocument.id, storeId]
-      );
-    }
+    await recalculateSourceInvoiceAfterCreditNote(client, {
+      storeId,
+      documentId: sourceDocument.id,
+    });
   }
 
   return { expected_credit_note: expectedCreditNote, idempotent: false };
@@ -958,6 +993,7 @@ module.exports = {
   listExpectedCreditNotes,
   listExpectedCreditNotesForPurchase,
   listExpectedCreditNotesForSourceDocument,
+  recalculateSourceInvoiceAfterCreditNote,
   removeCreditNoteLink,
   applyCreditNoteMatch,
 };

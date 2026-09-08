@@ -27,7 +27,7 @@ function testPageAssetsAndMenu() {
 
   assertContains(html, /<title>Controle fournisseurs - Gestion Commerciale<\/title>/);
   assertContains(html, /frontend\/css\/pages\/supplier-control\.css|\.\/css\/pages\/supplier-control\.css\?v=2/);
-  assertContains(html, /\.\/js\/supplier-control\.js\?v=2/);
+  assertContains(html, /\.\/js\/supplier-control\.js\?v=3/);
   assertContains(home, /href="\.\/supplier-control\.html"/);
   assertContains(home, /Controle fournisseurs/);
   assertContains(home, /pennylane-supplier-invoices\.html"[^>]*hidden/);
@@ -121,6 +121,8 @@ function testReadOnlyAndBusinessMessages() {
   assertContains(js, /doc\.document_type === "credit_note"/);
   assertContains(js, /els\.analyze\.disabled = state\.busy \|\| invoiceReadOnly \|\| doc\.document_type === "credit_note"/);
   assertContains(js, /La validation des avoirs sera geree separement/);
+  assertContains(js, /Facture deja validee a payer dans Pennylane avant la creation de l'attente d'avoir/);
+  assertContains(js, /Facture deja payee dans Pennylane avant la creation de l'attente d'avoir/);
   assertContains(js, /Une validation est deja en cours/);
   assertContains(js, /Une verification du rapprochement est necessaire/);
   assertContains(js, /Pennylane n'a pas pu etre mis a jour/);
