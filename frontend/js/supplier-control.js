@@ -293,10 +293,12 @@ async function openDocument(documentId, { autoAnalyze = false } = {}) {
     state.detail = await apiFetch(`/api/supplier-control/documents/${encodeURIComponent(documentId)}`);
     state.proposals = [];
     state.candidates = [];
+    state.creditNoteCandidates = [];
     state.selectedPurchaseIds.clear();
+    state.selectedExpectedCreditNoteIds.clear();
     renderDetail();
     const status = state.detail?.summary?.control_status || state.detail?.document?.supplier_control_status;
-    if (autoAnalyze && status === "a_rapprocher") {
+    if (autoAnalyze && status === "a_rapprocher" && state.detail?.document?.document_type !== "credit_note") {
       await analyzeDocument({ quiet: true });
     }
   } catch (error) {
@@ -312,7 +314,9 @@ function renderDetail() {
   const doc = detail.document;
   const summary = detail.summary || {};
   const status = summary.control_status || doc.supplier_control_status || "a_rapprocher";
-  const readOnly = !canMutate() || lockedStatus(status) || doc.document_type === "credit_note";
+  const documentLocked = lockedStatus(status);
+  const canEditInvoiceControl = canMutate() && !documentLocked && doc.document_type !== "credit_note";
+  const canMatchCreditNote = canMutate() && !documentLocked && doc.document_type === "credit_note";
 
   els.documentKind.textContent = doc.document_type === "credit_note" ? "AVOIR" : "FACTURE";
   els.detailTitle.textContent = doc.invoice_number || "-";
@@ -333,15 +337,15 @@ function renderDetail() {
   renderReadonlyNote(status, doc);
   renderMetrics(doc, summary);
   renderMatch(summary);
-  renderLinks(detail.links || [], readOnly);
-  renderProposals(readOnly);
-  renderCandidates(readOnly);
-  renderDifference(summary, readOnly);
+  renderLinks(detail.links || [], !canEditInvoiceControl);
+  renderProposals(!canEditInvoiceControl, doc);
+  renderCandidates(!canEditInvoiceControl, doc);
+  renderDifference(summary, !canEditInvoiceControl);
   renderExpectedCreditNotes(detail.expected_credit_notes || []);
-  renderCreditNoteMatching(doc, readOnly);
-  renderValidation(summary, doc, readOnly);
+  renderCreditNoteMatching(doc, !canMatchCreditNote);
+  renderValidation(summary, doc, !canEditInvoiceControl);
   renderEvents(detail.events || []);
-  renderActionState(readOnly);
+  renderActionState(!canEditInvoiceControl, !canMatchCreditNote, doc);
 }
 
 function renderReadonlyNote(status, doc) {
@@ -422,9 +426,10 @@ function proposalLabel(confidence) {
   return map[confidence] || confidence || "Candidat";
 }
 
-function renderProposals(readOnly) {
-  els.proposalsSection.classList.toggle("hidden", !state.proposals.length);
-  if (!state.proposals.length) {
+function renderProposals(readOnly, doc = {}) {
+  const show = doc.document_type !== "credit_note" && state.proposals.length;
+  els.proposalsSection.classList.toggle("hidden", !show);
+  if (!show) {
     els.proposalsList.innerHTML = "";
     return;
   }
@@ -445,9 +450,14 @@ function renderProposals(readOnly) {
   `).join("");
 }
 
-function renderCandidates(readOnly) {
-  els.manualSection.classList.toggle("hidden", readOnly);
-  if (readOnly) return;
+function renderCandidates(readOnly, doc = {}) {
+  const show = doc.document_type !== "credit_note" && !readOnly;
+  els.manualSection.classList.toggle("hidden", !show);
+  if (!show) {
+    els.candidatesList.innerHTML = "";
+    els.applyManual.disabled = true;
+    return;
+  }
   if (!state.candidates.length) {
     els.candidatesList.innerHTML = `<div class="supplier-control-empty">Charge les BL candidats du fournisseur.</div>`;
     els.applyManual.disabled = true;
@@ -589,12 +599,12 @@ function renderEvents(events) {
   `).join("");
 }
 
-function renderActionState(readOnly) {
-  els.analyze.disabled = state.busy;
-  els.loadCandidates.disabled = readOnly || state.busy;
-  els.applyManual.disabled = readOnly || state.busy || state.selectedPurchaseIds.size === 0;
-  if (els.loadCreditNoteCandidates) els.loadCreditNoteCandidates.disabled = readOnly || state.busy;
-  if (els.applyCreditNoteMatch) els.applyCreditNoteMatch.disabled = readOnly || state.busy || state.selectedExpectedCreditNoteIds.size === 0;
+function renderActionState(invoiceReadOnly, creditNoteReadOnly, doc = {}) {
+  els.analyze.disabled = state.busy || invoiceReadOnly || doc.document_type === "credit_note";
+  if (els.loadCandidates) els.loadCandidates.disabled = invoiceReadOnly || state.busy;
+  if (els.applyManual) els.applyManual.disabled = invoiceReadOnly || state.busy || state.selectedPurchaseIds.size === 0;
+  if (els.loadCreditNoteCandidates) els.loadCreditNoteCandidates.disabled = creditNoteReadOnly || state.busy;
+  if (els.applyCreditNoteMatch) els.applyCreditNoteMatch.disabled = creditNoteReadOnly || state.busy || state.selectedExpectedCreditNoteIds.size === 0;
 }
 
 async function analyzeDocument({ quiet = false } = {}) {

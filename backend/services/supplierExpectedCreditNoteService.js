@@ -909,6 +909,10 @@ async function removeCreditNoteLink(db, { storeId, creditNoteId, linkId, comment
       payload: { link_id: link.id, pennylane_credit_note_id: creditNoteId },
       userId,
     });
+    await recalculateSourceInvoiceAfterCreditNote(client, {
+      storeId,
+      documentId: link.source_pennylane_supplier_invoice_id,
+    });
     await client.query('COMMIT');
     return { link };
   } catch (error) {

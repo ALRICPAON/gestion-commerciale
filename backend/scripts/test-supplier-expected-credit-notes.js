@@ -7,6 +7,7 @@ const {
   EXPECTED_CREDIT_NOTE_STATUSES,
   applyCreditNoteMatch,
   createExpectedCreditNote,
+  removeCreditNoteLink,
 } = require('../services/supplierExpectedCreditNoteService');
 
 const root = path.join(__dirname, '../..');
@@ -294,8 +295,93 @@ async function testApplyCreditNoteMatchCommitsAndRecalculatesSources() {
   assert.strictEqual(db.state.rolledBack, false, 'success path must not rollback');
   assert.deepStrictEqual(db.state.recalculatedSourceDocuments, [ids.invoice]);
   assert.ok(db.state.events.some((event) => event.event_type === 'credit_note_linked'));
-  const service = read(servicePath);
-  assertNotContains(service, /documentId:\s*link\.source_pennylane_supplier_invoice_id,\s*\n\s*\}\);\s*\n\s*await client\.query\('COMMIT'\)/);
+}
+
+function createRemoveMatchMockDb() {
+  const queries = [];
+  const state = {
+    committed: false,
+    rolledBack: false,
+    events: [],
+    recalculatedSourceDocuments: [],
+    sourceStatuses: [],
+  };
+  const linkId = '99999999-9999-4999-8999-999999999999';
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      const compact = sql.replace(/\s+/g, ' ');
+      if (/^BEGIN$/i.test(sql.trim())) return { rows: [], rowCount: 0 };
+      if (/^COMMIT$/i.test(sql.trim())) {
+        state.committed = true;
+        return { rows: [], rowCount: 0 };
+      }
+      if (/^ROLLBACK$/i.test(sql.trim())) {
+        state.rolledBack = true;
+        return { rows: [], rowCount: 0 };
+      }
+      if (/UPDATE supplier_expected_credit_note_links l/i.test(sql) && /RETURNING l\.\*, ecn\.source_pennylane_supplier_invoice_id/i.test(sql)) {
+        return {
+          rows: [{
+            id: linkId,
+            store_id: ids.store,
+            expected_credit_note_id: '88888888-8888-4888-8888-888888888888',
+            pennylane_credit_note_id: ids.credit,
+            source_pennylane_supplier_invoice_id: ids.invoice,
+          }],
+          rowCount: 1,
+        };
+      }
+      if (/UPDATE supplier_expected_credit_notes ecn/i.test(sql)) return { rows: [], rowCount: 1 };
+      if (/INSERT INTO supplier_control_events/i.test(sql)) {
+        state.events.push({ event_type: params[2], event_key: params[3], payload: params[4] ? JSON.parse(params[4]) : {} });
+        return { rows: [], rowCount: 1 };
+      }
+      if (/FROM pennylane_supplier_invoices psi/i.test(sql)) {
+        return { rows: [{ id: ids.invoice, store_id: ids.store, supplier_id: ids.supplier, document_type: 'invoice', amount_ex_vat: 1100, payment_status: 'pending', paid: false, supplier_control_status: 'conforme' }] };
+      }
+      if (/WITH linked_purchases AS/i.test(sql)) {
+        state.recalculatedSourceDocuments.push(params[1]);
+        return {
+          rows: [{
+            purchase_total_ex_vat: 1000,
+            applied_credit_note_total_ex_vat: 0,
+            remaining_expected_credit_note_total_ex_vat: 100,
+          }],
+        };
+      }
+      if (/UPDATE pennylane_supplier_invoices/i.test(sql) && /supplier_control_status = \$1/i.test(compact)) {
+        state.sourceStatuses.push(params[0]);
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  return {
+    queries,
+    state,
+    linkId,
+    async connect() {
+      return client;
+    },
+  };
+}
+
+async function testRemoveCreditNoteLinkRecalculatesSourceInvoice() {
+  const db = createRemoveMatchMockDb();
+  const result = await removeCreditNoteLink(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    linkId: db.linkId,
+    userId: ids.user,
+  });
+  assert.strictEqual(result.link.id, db.linkId);
+  assert.strictEqual(db.state.committed, true, 'unlink success path must reach COMMIT');
+  assert.strictEqual(db.state.rolledBack, false, 'unlink success path must not rollback');
+  assert.deepStrictEqual(db.state.recalculatedSourceDocuments, [ids.invoice]);
+  assert.deepStrictEqual(db.state.sourceStatuses, ['avoir_attendu']);
+  assert.ok(db.state.events.some((event) => event.event_type === 'credit_note_unlinked'));
 }
 
 function testMigrationSchema() {
@@ -378,6 +464,7 @@ function testNoForbiddenSideEffects() {
   await testIdempotentRetry();
   await testValidations();
   await testApplyCreditNoteMatchCommitsAndRecalculatesSources();
+  await testRemoveCreditNoteLinkRecalculatesSourceInvoice();
   testMigrationSchema();
   testCanonicalRoutesAndPermissions();
   testSupplierControlIntegration();

@@ -91,6 +91,7 @@ function createMockDb({
   purchases = [purchase()],
   incompatibleLinks = [],
   legacyLocked = [],
+  appliedCreditNoteTotal = 0,
 } = {}) {
   const calls = [];
   const state = {
@@ -118,6 +119,10 @@ function createMockDb({
 
     if (/FROM supplier_control_events/i.test(sql) && /ORDER BY created_at/i.test(sql)) {
       return { rows: state.events.slice().reverse().map((item) => ({ ...item })) };
+    }
+
+    if (/FROM supplier_expected_credit_notes ecn/i.test(sql) && /JOIN supplier_expected_credit_note_links l/i.test(sql)) {
+      return { rows: [{ total: appliedCreditNoteTotal }] };
     }
 
     if (/FROM purchases p/i.test(sql) && /FOR UPDATE OF p/i.test(sql)) {
@@ -565,6 +570,66 @@ async function testPaidInboundSyncAndLocks() {
   }));
 }
 
+async function testValidationUsesAppliedCreditNoteTotals() {
+  const db = createMockDb({
+    doc: document({ amount_ex_vat: 1100, supplier_control_status: 'avoir_attendu' }),
+    links: [link({ purchase: purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 }) })],
+    purchases: [purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 })],
+    appliedCreditNoteTotal: 100,
+  });
+  let syncCalls = 0;
+  const result = await validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    userId: ids.user,
+    syncPennylaneStatus: async () => {
+      syncCalls += 1;
+      return { ok: true, payment_status: 'to_be_paid' };
+    },
+  });
+  assert.strictEqual(syncCalls, 1);
+  assert.strictEqual(result.validation.status, 'succeeded');
+  assert.strictEqual(result.summary.invoice_total, 1100);
+  assert.strictEqual(result.summary.applied_credit_note_total_ex_vat, 100);
+  assert.strictEqual(result.summary.net_invoice_total_ex_vat, 1000);
+  assert.strictEqual(result.summary.matched_purchase_total, 1000);
+  assert.strictEqual(result.summary.difference_total, 0);
+  assert.strictEqual(db.state.doc.supplier_control_status, 'valide_a_payer');
+}
+
+async function testPartialAppliedCreditNoteStillBlocksValidation() {
+  await assertRejectsWithCode('SUPPLIER_CONTROL_VALIDATION_BLOCKED', () => validateSupplierControlDocument(createMockDb({
+    doc: document({ amount_ex_vat: 1100, supplier_control_status: 'avoir_attendu' }),
+    links: [link({ purchase: purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 }) })],
+    purchases: [purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 })],
+    appliedCreditNoteTotal: 80,
+  }), {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    syncPennylaneStatus: async () => {
+      throw new Error('must not call Pennylane for unresolved net difference');
+    },
+  }));
+}
+
+async function testUnlinkedCreditNoteNoLongerMakesInvoiceValidable() {
+  await assertRejectsWithCode('SUPPLIER_CONTROL_VALIDATION_BLOCKED', () => validateSupplierControlDocument(createMockDb({
+    doc: document({ amount_ex_vat: 1100, supplier_control_status: 'avoir_attendu' }),
+    links: [link({ purchase: purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 }) })],
+    purchases: [purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 })],
+    appliedCreditNoteTotal: 0,
+  }), {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    syncPennylaneStatus: async () => {
+      throw new Error('must not call Pennylane without applied credit note');
+    },
+  }));
+}
+
 function testStaticGuards() {
   const route = read(routePath);
   const service = read(servicePath);
@@ -603,6 +668,9 @@ function testStaticGuards() {
   await testUnchangedSignatureStillFinalizesNormally();
   await testPaidDuringFinalizationIsNeverDowngraded();
   await testPaidInboundSyncAndLocks();
+  await testValidationUsesAppliedCreditNoteTotals();
+  await testPartialAppliedCreditNoteStillBlocksValidation();
+  await testUnlinkedCreditNoteNoLongerMakesInvoiceValidable();
   testStaticGuards();
   console.log('OK supplier control validation tests');
 })().catch((error) => {

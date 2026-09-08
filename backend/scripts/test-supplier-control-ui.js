@@ -115,7 +115,11 @@ function testReadOnlyAndBusinessMessages() {
   const js = read(jsPath);
   assertContains(js, /\["admin", "responsable"\]\.includes\(sessionUser\.role\)/);
   assertContains(js, /lockedStatus/);
-  assertContains(js, /credit_note/);
+  assertContains(js, /canEditInvoiceControl/);
+  assertContains(js, /canMatchCreditNote/);
+  assertContains(js, /doc\.document_type !== "credit_note"/);
+  assertContains(js, /doc\.document_type === "credit_note"/);
+  assertContains(js, /els\.analyze\.disabled = state\.busy \|\| invoiceReadOnly \|\| doc\.document_type === "credit_note"/);
   assertContains(js, /La validation des avoirs sera geree separement/);
   assertContains(js, /Une validation est deja en cours/);
   assertContains(js, /Une verification du rapprochement est necessaire/);
@@ -140,6 +144,19 @@ function testNoFakeLineMatching() {
   assertContains(html, /Rapprochement avec les bons de livraison/);
 }
 
+function testCreditNoteWorkflowIsNotGloballyReadOnly() {
+  const js = read(jsPath);
+  assertContains(js, /renderCreditNoteMatching\(doc, !canMatchCreditNote\)/);
+  assertContains(js, /renderValidation\(summary, doc, !canEditInvoiceControl\)/);
+  assertContains(js, /renderActionState\(!canEditInvoiceControl, !canMatchCreditNote, doc\)/);
+  assertContains(js, /renderProposals\(readOnly, doc = \{\}\)[\s\S]*doc\.document_type !== "credit_note"/);
+  assertContains(js, /renderCandidates\(readOnly, doc = \{\}\)[\s\S]*doc\.document_type !== "credit_note"/);
+  assertContains(js, /state\.detail\?\.document\?\.document_type !== "credit_note"/);
+  assertContains(js, /\/api\/supplier-control\/credit-notes\/.+\/match-candidates/);
+  assertContains(js, /\/api\/supplier-control\/credit-notes\/.+\/apply-match/);
+  assertNotContains(js, /const readOnly = [^\n]+doc\.document_type === "credit_note"/);
+}
+
 (async () => {
   testPageAssetsAndMenu();
   testRequiredDomIds();
@@ -149,6 +166,7 @@ function testNoFakeLineMatching() {
   testReadOnlyAndBusinessMessages();
   testNoDangerousSideEffects();
   testNoFakeLineMatching();
+  testCreditNoteWorkflowIsNotGloballyReadOnly();
   console.log('OK supplier control UI tests');
 })().catch((error) => {
   console.error(error);
