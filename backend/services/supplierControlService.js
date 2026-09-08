@@ -36,10 +36,15 @@ function round(value, decimals = 4) {
   return Math.round(toNumber(value) * factor) / factor;
 }
 
-function amountTolerance(amount) {
+function amountToleranceConfig() {
   const absoluteTolerance = Number(process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_TOLERANCE) || DEFAULT_AMOUNT_TOLERANCE;
   const ratioTolerance = Number(process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_RATIO_TOLERANCE) ||
     DEFAULT_AMOUNT_RATIO_TOLERANCE;
+  return { absoluteTolerance, ratioTolerance };
+}
+
+function amountTolerance(amount) {
+  const { absoluteTolerance, ratioTolerance } = amountToleranceConfig();
   return Math.max(absoluteTolerance, Math.abs(toNumber(amount)) * ratioTolerance);
 }
 
@@ -344,6 +349,7 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
     last_control_action_at: 'last_control_action_at',
   };
   const sortColumn = sortColumns[sortKey] || sortColumns.invoice_date;
+  const { absoluteTolerance, ratioTolerance } = amountToleranceConfig();
 
   params.push(limit);
   const limitParam = params.length;
@@ -439,7 +445,7 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
     LIMIT $${limitParam}
     OFFSET $${offsetParam}
     `,
-    [...params, DEFAULT_AMOUNT_TOLERANCE, DEFAULT_AMOUNT_RATIO_TOLERANCE]
+    [...params, absoluteTolerance, ratioTolerance]
   );
 
   const total = result.rows[0]?.total_count || 0;
@@ -765,6 +771,7 @@ module.exports = {
   CANONICAL_SUPPLIER_CONTROL_STATUSES,
   DOCUMENT_TYPES,
   MATCHABLE_PURCHASE_STATUSES,
+  amountToleranceConfig,
   amountTolerance,
   canonicalSupplierControlStatus,
   clean,

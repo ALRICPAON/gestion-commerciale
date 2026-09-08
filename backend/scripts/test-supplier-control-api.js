@@ -4,6 +4,7 @@ const path = require('path');
 
 const {
   addPurchaseLink,
+  amountTolerance,
   canonicalSupplierControlStatus,
   getSupplierControlDocument,
   listPurchaseCandidates,
@@ -125,33 +126,40 @@ function createMockDb({
     if (/BEGIN|COMMIT|ROLLBACK/i.test(sql.trim())) return { rows: [] };
 
     if (/COUNT\(\*\) OVER\(\)::int AS total_count/i.test(sql)) {
-      const rows = (documents || [state.doc]).filter(Boolean).map((row) => ({
-        id: row.id,
-        pennylane_supplier_invoice_id: row.pennylane_supplier_invoice_id,
-        document_type: row.document_type,
-        invoice_number: row.invoice_number,
-        external_reference: row.external_reference || null,
-        supplier_id: row.supplier_id,
-        supplier_name: row.supplier_name,
-        supplier_code: row.supplier_code,
-        invoice_date: row.invoice_date,
-        due_date: row.due_date,
-        amount_ex_vat: row.amount_ex_vat,
-        amount_vat: row.amount_vat,
-        amount_inc_vat: row.amount_inc_vat,
-        currency: row.currency,
-        payment_status: row.payment_status,
-        supplier_control_status: row.supplier_control_status,
-        paid: row.paid,
-        linked_purchase_count: links.length,
-        linked_purchase_total: links.reduce((sum, item) => sum + Number(item.purchase_total_ex_vat || 0), 0),
-        amount_difference: Number(row.amount_ex_vat || 0) - links.reduce((sum, item) => sum + Number(item.purchase_total_ex_vat || 0), 0),
-        has_difference: links.some((item) => item.match_status === 'difference'),
-        has_expected_credit_note: events.some((item) => item.event_type === 'expected_credit_note'),
-        last_synced_at: row.last_synced_at || null,
-        last_control_action_at: events[0]?.created_at || null,
-        total_count: (documents || [state.doc]).filter(Boolean).length,
-      }));
+      const absoluteTolerance = Number(params[params.length - 2]);
+      const ratioTolerance = Number(params[params.length - 1]);
+      const rows = (documents || [state.doc]).filter(Boolean).map((row) => {
+        const linkedPurchaseTotal = links.reduce((sum, item) => sum + Number(item.purchase_total_ex_vat || 0), 0);
+        const difference = Number(row.amount_ex_vat || 0) - linkedPurchaseTotal;
+        return {
+          id: row.id,
+          pennylane_supplier_invoice_id: row.pennylane_supplier_invoice_id,
+          document_type: row.document_type,
+          invoice_number: row.invoice_number,
+          external_reference: row.external_reference || null,
+          supplier_id: row.supplier_id,
+          supplier_name: row.supplier_name,
+          supplier_code: row.supplier_code,
+          invoice_date: row.invoice_date,
+          due_date: row.due_date,
+          amount_ex_vat: row.amount_ex_vat,
+          amount_vat: row.amount_vat,
+          amount_inc_vat: row.amount_inc_vat,
+          currency: row.currency,
+          payment_status: row.payment_status,
+          supplier_control_status: row.supplier_control_status,
+          paid: row.paid,
+          linked_purchase_count: links.length,
+          linked_purchase_total: linkedPurchaseTotal,
+          amount_difference: difference,
+          has_difference: links.some((item) => item.match_status === 'difference') ||
+            Math.abs(difference) > Math.max(absoluteTolerance, Math.abs(Number(row.amount_ex_vat || 0)) * ratioTolerance),
+          has_expected_credit_note: events.some((item) => item.event_type === 'expected_credit_note'),
+          last_synced_at: row.last_synced_at || null,
+          last_control_action_at: events[0]?.created_at || null,
+          total_count: (documents || [state.doc]).filter(Boolean).length,
+        };
+      });
       return { rows };
     }
 
@@ -361,6 +369,56 @@ async function testRecalculateNoBlOneBlManyBlAndFinalStatuses() {
   assert.ok(summary.blocking_reasons.includes('document_en_litige'));
 }
 
+async function testToleranceEnvironmentIsSharedByListDetailAndRecalculate() {
+  const previousAbsolute = process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_TOLERANCE;
+  const previousRatio = process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_RATIO_TOLERANCE;
+  process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_TOLERANCE = '100';
+  process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_RATIO_TOLERANCE = '0.005';
+
+  try {
+    const db = createMockDb({
+      doc: document({ amount_ex_vat: 1000 }),
+      links: [link({
+        amount_difference: 80,
+        purchase: purchase({ total_amount_ex_vat: 920 }),
+      })],
+    });
+
+    assert.strictEqual(amountTolerance(1000), 100);
+
+    const list = await listSupplierControlDocuments(db, {
+      storeId: ids.storeA,
+      filters: { limit: 10 },
+    });
+    const listCall = db.calls.find((call) => /COUNT\(\*\) OVER\(\)::int AS total_count/i.test(call.sql));
+    assert.strictEqual(Number(listCall.params[listCall.params.length - 2]), 100);
+    assert.strictEqual(Number(listCall.params[listCall.params.length - 1]), 0.005);
+    assert.strictEqual(list.documents[0].amount_difference, 80);
+    assert.strictEqual(list.documents[0].has_difference, false);
+
+    const detail = await getSupplierControlDocument(db, {
+      storeId: ids.storeA,
+      pennylaneSupplierInvoiceId: ids.doc,
+    });
+    assert.strictEqual(detail.summary.difference_total, 80);
+    assert.strictEqual(detail.summary.control_status, 'conforme');
+    assert.strictEqual(detail.summary.can_validate, true);
+
+    const recalculated = await recalculateSupplierControl(db, {
+      storeId: ids.storeA,
+      documentId: ids.doc,
+    });
+    assert.strictEqual(recalculated.difference_total, 80);
+    assert.strictEqual(recalculated.control_status, 'conforme');
+    assert.strictEqual(recalculated.can_validate, true);
+  } finally {
+    if (previousAbsolute === undefined) delete process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_TOLERANCE;
+    else process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_TOLERANCE = previousAbsolute;
+    if (previousRatio === undefined) delete process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_RATIO_TOLERANCE;
+    else process.env.PENNYLANE_SUPPLIER_GLOBAL_AMOUNT_RATIO_TOLERANCE = previousRatio;
+  }
+}
+
 async function testPurchaseCandidates() {
   const db = createMockDb({
     purchases: [
@@ -487,6 +545,7 @@ function testPennylaneLineAuditGuard() {
   await testDetailDocumentLinesAndPdf();
   await testOtherStoreRefused();
   await testRecalculateNoBlOneBlManyBlAndFinalStatuses();
+  await testToleranceEnvironmentIsSharedByListDetailAndRecalculate();
   await testPurchaseCandidates();
   await testAddLinkIdempotentAndRemoveLink();
   await testSupplierAndLockedPurchaseProtections();
