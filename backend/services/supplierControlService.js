@@ -13,6 +13,11 @@ const DOCUMENT_TYPES = new Set(['invoice', 'credit_note']);
 const MATCHABLE_PURCHASE_STATUSES = ['received', 'received_pending_invoice', 'invoice_difference', 'invoice_matched'];
 const FINAL_CONTROL_STATUSES = new Set(['paye', 'valide_a_payer', 'litige', 'avoir_attendu']);
 const LINK_EDIT_LOCKED_CONTROL_STATUSES = new Set(['valide_a_payer', 'paye', 'litige', 'avoir_attendu']);
+const DIFFERENCE_RESOLUTION_TYPES = new Set(['accepted_difference', 'supplier_credit_note_expected', 'dispute']);
+const DEFAULT_MATCH_DATE_WINDOW_DAYS = 21;
+const MAX_MATCH_CANDIDATES = 30;
+const MAX_COMBINATION_SIZE = 4;
+const MAX_COMBINATIONS = 800;
 const DEFAULT_AMOUNT_TOLERANCE = 1;
 const DEFAULT_AMOUNT_RATIO_TOLERANCE = 0.005;
 
@@ -77,6 +82,14 @@ function documentAmount(document = {}) {
   return Math.abs(toNumber(document.amount_ex_vat ?? document.currency_amount_ex_vat));
 }
 
+function documentVatAmount(document = {}) {
+  return Math.abs(toNumber(document.amount_vat ?? document.currency_amount_vat, NaN));
+}
+
+function documentIncVatAmount(document = {}) {
+  return Math.abs(toNumber(document.amount_inc_vat ?? document.currency_amount_inc_vat, NaN));
+}
+
 function dateOnly(value) {
   if (!value) return null;
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
@@ -94,16 +107,22 @@ function daysBetween(left, right) {
   return Math.abs(leftMs - rightMs) / 86400000;
 }
 
-function buildValidationSummary(document, totals, controlStatus = canonicalSupplierControlStatus(document)) {
+function hasDifferenceAccepted(events = []) {
+  return events.some((event) => event.event_type === 'difference_accepted');
+}
+
+function buildValidationSummary(document, totals, controlStatus = canonicalSupplierControlStatus(document), options = {}) {
   const status = controlStatus;
   const blockingReasons = [];
+  const acceptedDifference = Boolean(options.acceptedDifference);
 
   if (document.pennylane_deleted_at) blockingReasons.push('document_supprime_pennylane');
   if (status === 'paye') blockingReasons.push('document_deja_paye');
   if (status === 'litige') blockingReasons.push('document_en_litige');
+  if (status === 'avoir_attendu') blockingReasons.push('avoir_fournisseur_attendu');
   if (!document.supplier_id) blockingReasons.push('fournisseur_inconnu');
   if (totals.linked_purchase_count <= 0) blockingReasons.push('aucun_bl_rapproche');
-  if (Math.abs(totals.difference_total) > amountTolerance(totals.invoice_total)) {
+  if (!acceptedDifference && Math.abs(totals.difference_total) > amountTolerance(totals.invoice_total)) {
     blockingReasons.push('difference_non_resolue');
   }
 
@@ -113,7 +132,8 @@ function buildValidationSummary(document, totals, controlStatus = canonicalSuppl
     difference_total: totals.difference_total,
     linked_purchase_count: totals.linked_purchase_count,
     control_status: status,
-    can_validate: blockingReasons.length === 0 && ['conforme', 'valide_a_payer'].includes(status),
+    accepted_difference: acceptedDifference,
+    can_validate: blockingReasons.length === 0 && ['conforme', 'valide_a_payer', 'ecart'].includes(status),
     blocking_reasons: blockingReasons,
   };
 }
@@ -194,6 +214,50 @@ async function loadActiveLinks(client, { storeId, documentId }) {
   return result.rows;
 }
 
+async function loadPurchaseLinesForPurchaseIds(client, { storeId, purchaseIds }) {
+  const ids = [...new Set((purchaseIds || []).filter(Boolean))];
+  if (!ids.length) return [];
+
+  const result = await client.query(
+    `
+    SELECT
+      pl.id,
+      pl.purchase_id,
+      pl.line_number,
+      pl.article_id,
+      a.designation AS article_name,
+      a.plu AS article_plu,
+      pl.supplier_reference,
+      pl.supplier_label,
+      pl.ordered_colis,
+      pl.ordered_pieces,
+      pl.ordered_quantity,
+      pl.received_colis,
+      pl.received_pieces,
+      pl.received_quantity,
+      pl.price_unit,
+      pl.unit_price_ex_vat,
+      pl.line_amount_ex_vat,
+      pl.line_status,
+      pl.lot_id,
+      plm.supplier_lot_number,
+      plm.dlc,
+      plm.notes AS metadata_notes
+    FROM purchase_lines pl
+    LEFT JOIN articles a
+      ON a.id = pl.article_id
+    LEFT JOIN purchase_line_metadata plm
+      ON plm.purchase_line_id = pl.id
+     AND plm.meta_key = 'gc_line'
+    WHERE pl.store_id = $1
+      AND pl.purchase_id = ANY($2::uuid[])
+    ORDER BY pl.purchase_id, pl.line_number, pl.created_at
+    `,
+    [storeId, ids]
+  );
+  return result.rows;
+}
+
 async function loadEvents(client, { storeId, documentId, limit = 100 }) {
   const result = await client.query(
     `
@@ -225,6 +289,8 @@ async function loadPennylaneLines(client, { storeId, documentId }) {
 
 function totalsFromDocumentAndLinks(document, links) {
   const invoiceTotal = documentAmount(document);
+  const invoiceVat = documentVatAmount(document);
+  const invoiceIncVat = documentIncVatAmount(document);
   const byPurchase = new Map();
   for (const link of links) {
     if (!link.purchase_id) continue;
@@ -236,8 +302,17 @@ function totalsFromDocumentAndLinks(document, links) {
   const matchedPurchaseTotal = round([...byPurchase.values()].reduce((sum, value) => sum + value, 0), 4);
   return {
     invoice_total: invoiceTotal,
+    invoice_total_ex_vat: invoiceTotal,
     matched_purchase_total: matchedPurchaseTotal,
+    purchases_total_ex_vat: matchedPurchaseTotal,
     difference_total: round(invoiceTotal - matchedPurchaseTotal, 4),
+    difference_ex_vat: round(invoiceTotal - matchedPurchaseTotal, 4),
+    invoice_vat: Number.isFinite(invoiceVat) ? invoiceVat : null,
+    purchases_vat: null,
+    difference_vat: null,
+    invoice_total_inc_vat: Number.isFinite(invoiceIncVat) ? invoiceIncVat : null,
+    purchases_total_inc_vat: null,
+    difference_inc_vat: null,
     linked_purchase_count: byPurchase.size,
   };
 }
@@ -278,7 +353,10 @@ async function recalculateSupplierControl(client, { storeId, documentId, userId 
     document.supplier_control_status = nextStatus;
   }
 
-  const summary = buildValidationSummary(document, totals, nextStatus);
+  const events = await loadEvents(client, { storeId, documentId, limit: 100 });
+  const summary = buildValidationSummary(document, totals, nextStatus, {
+    acceptedDifference: hasDifferenceAccepted(events),
+  });
   if (emitEvent) {
     await insertEvent(client, {
       storeId,
@@ -498,7 +576,11 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
   ]);
 
   const totals = totalsFromDocumentAndLinks(document, links);
-  const summary = buildValidationSummary(document, totals, statusFromTotals(document, totals));
+  const purchaseIds = links.map((link) => link.purchase_id).filter(Boolean);
+  const purchaseLines = await loadPurchaseLinesForPurchaseIds(db, { storeId, purchaseIds });
+  const summary = buildValidationSummary(document, totals, statusFromTotals(document, totals), {
+    acceptedDifference: hasDifferenceAccepted(events),
+  });
 
   return {
     document: {
@@ -508,7 +590,9 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
     },
     links,
     lines_available: lines.length > 0,
+    line_matching_available: lines.length > 0,
     lines,
+    purchase_lines: purchaseLines,
     events,
     summary,
   };
@@ -594,6 +678,535 @@ async function listPurchaseCandidates(db, { storeId, documentId, dateWindowDays 
   });
 
   return { document, candidates };
+}
+
+async function loadMatchingPurchases(client, { storeId, document, dateWindowDays = DEFAULT_MATCH_DATE_WINDOW_DAYS }) {
+  if (!document.supplier_id) return [];
+
+  const windowDays = Math.max(1, Math.min(Number(dateWindowDays || DEFAULT_MATCH_DATE_WINDOW_DAYS), 90));
+  const result = await client.query(
+    `
+    SELECT
+      p.id,
+      p.bl_number,
+      p.invoice_number,
+      p.purchase_date,
+      p.order_date,
+      p.receipt_date,
+      p.status,
+      p.supplier_id,
+      p.total_amount_ex_vat,
+      COALESCE(SUM(COALESCE(pl.line_amount_ex_vat, 0)), 0) AS purchase_lines_total_ex_vat,
+      COUNT(pl.id)::int AS purchase_lines_count,
+      EXISTS (
+        SELECT 1
+        FROM supplier_control_document_links scl
+        JOIN pennylane_supplier_invoices linked_psi
+          ON linked_psi.id = scl.pennylane_supplier_invoice_id
+         AND linked_psi.store_id = scl.store_id
+        WHERE scl.store_id = p.store_id
+          AND scl.purchase_id = p.id
+          AND scl.pennylane_supplier_invoice_id <> $4
+          AND scl.match_status <> 'removed'
+          AND (
+            linked_psi.supplier_control_status IN ('valide_a_payer', 'paye', 'litige', 'avoir_attendu')
+            OR linked_psi.paid IS TRUE
+            OR LOWER(COALESCE(linked_psi.payment_status, '')) = 'to_be_paid'
+            OR LOWER(COALESCE(linked_psi.payment_status, '')) = 'paid'
+            OR LOWER(COALESCE(linked_psi.payment_status, '')) LIKE 'paid_%'
+          )
+      ) AS linked_to_locked_document
+    FROM purchases p
+    LEFT JOIN purchase_lines pl
+      ON pl.purchase_id = p.id
+     AND pl.store_id = p.store_id
+    WHERE p.store_id = $1
+      AND p.supplier_id = $2
+      AND p.status = ANY($3::text[])
+      AND (
+        $5::date IS NULL
+        OR p.receipt_date IS NULL
+        OR p.receipt_date BETWEEN ($5::date - ($6::int || ' days')::interval)
+          AND ($5::date + ($6::int || ' days')::interval)
+      )
+    GROUP BY p.id
+    ORDER BY p.receipt_date DESC NULLS LAST, p.created_at DESC
+    LIMIT $7
+    `,
+    [
+      storeId,
+      document.supplier_id,
+      MATCHABLE_PURCHASE_STATUSES,
+      document.id,
+      document.invoice_date || null,
+      windowDays,
+      MAX_MATCH_CANDIDATES,
+    ]
+  );
+
+  return result.rows.map((purchase) => ({
+    ...purchase,
+    total_amount_ex_vat: toNumber(purchase.total_amount_ex_vat) || toNumber(purchase.purchase_lines_total_ex_vat),
+  }));
+}
+
+function buildDifference(type, severity, expected, actual, message, blocking = true) {
+  const difference = Number.isFinite(toNumber(expected, NaN)) && Number.isFinite(toNumber(actual, NaN))
+    ? round(toNumber(expected) - toNumber(actual), 4)
+    : null;
+  return { type, severity, expected, actual, difference, message, blocking };
+}
+
+function buildControlDifferences(document, totals, { proposals = [], lineMatchingAvailable = false } = {}) {
+  const differences = [];
+  if (!document.supplier_id) {
+    differences.push(buildDifference('supplier_mismatch', 'error', 'supplier_id', null, 'Fournisseur Pennylane non resolu dans ALTA'));
+  }
+  if (totals.linked_purchase_count <= 0) {
+    differences.push(buildDifference('missing_purchase', 'error', 1, 0, 'Aucun BL rapproche'));
+  }
+  if (Math.abs(totals.difference_total) > amountTolerance(totals.invoice_total)) {
+    differences.push(buildDifference(
+      'amount_difference',
+      'error',
+      totals.invoice_total,
+      totals.matched_purchase_total,
+      'Ecart HT entre facture fournisseur et BL rapproches'
+    ));
+  }
+  if (Number.isFinite(toNumber(totals.difference_vat, NaN)) &&
+      Math.abs(totals.difference_vat) > amountTolerance(totals.invoice_vat || 0)) {
+    differences.push(buildDifference(
+      'vat_difference',
+      'warning',
+      totals.invoice_vat,
+      totals.purchases_vat,
+      'Ecart TVA detecte sur donnees fiables'
+    ));
+  }
+  if (proposals.length > 1 && proposals.filter((proposal) => proposal.confidence === 'exact').length > 1) {
+    differences.push(buildDifference('multiple_possible_matches', 'warning', 1, proposals.length, 'Plusieurs combinaisons exactes possibles'));
+  }
+  if (!lineMatchingAvailable) {
+    differences.push(buildDifference('manual_review', 'info', 'lignes Pennylane', 'header only', 'Rapprochement ligne facture indisponible', false));
+  }
+  return differences;
+}
+
+function scoreReferenceMatch(document, purchase) {
+  const haystack = [
+    document.invoice_number,
+    document.external_reference,
+    document.pennylane_supplier_invoice_id,
+  ].filter(Boolean).join(' ').toLowerCase();
+  const references = [purchase.bl_number, purchase.invoice_number].filter(Boolean);
+  if (!haystack || !references.length) return 0;
+  return references.some((reference) => haystack.includes(String(reference).toLowerCase())) ? 1 : 0;
+}
+
+function scorePurchase(document, purchase, dateWindowDays) {
+  const invoiceTotal = documentAmount(document);
+  const purchaseTotal = Math.abs(toNumber(purchase.total_amount_ex_vat));
+  const difference = round(invoiceTotal - purchaseTotal, 4);
+  const dateDistance = daysBetween(document.invoice_date, purchase.receipt_date || purchase.purchase_date || purchase.order_date);
+  const amountScore = invoiceTotal <= 0 ? 0 : Math.max(0, 1 - Math.abs(difference) / Math.max(invoiceTotal, purchaseTotal, 1));
+  const dateScore = dateDistance === null ? 0.5 : Math.max(0, 1 - dateDistance / Math.max(dateWindowDays, 1));
+  const referenceScore = scoreReferenceMatch(document, purchase);
+  const lockedPenalty = purchase.linked_to_locked_document ? 50 : 0;
+  return {
+    ...purchase,
+    purchase_ids: [purchase.id],
+    purchase_ids_key: String(purchase.id),
+    purchase_total_ex_vat: purchaseTotal,
+    combination_total_ex_vat: purchaseTotal,
+    difference_ex_vat: difference,
+    date_distance_days: dateDistance,
+    score: round((referenceScore * 25) + (amountScore * 55) + (dateScore * 20) - lockedPenalty, 2),
+    reasons: [
+      referenceScore ? 'reference_bl' : null,
+      Math.abs(difference) <= amountTolerance(invoiceTotal) ? 'amount_within_tolerance' : null,
+      dateDistance !== null ? 'date_window' : null,
+      purchase.linked_to_locked_document ? 'purchase_locked' : null,
+    ].filter(Boolean),
+  };
+}
+
+function classifyProposal(document, proposal, sameTotalCount) {
+  const exactAmount = Math.abs(proposal.difference_ex_vat) <= amountTolerance(documentAmount(document));
+  const hasReference = proposal.reasons.includes('reference_bl');
+  if (exactAmount && hasReference && proposal.purchase_ids.length === 1 && sameTotalCount === 1) return 'exact';
+  if (exactAmount && sameTotalCount === 1) return 'strong_candidate';
+  if (exactAmount) return 'ambiguous';
+  if (proposal.score >= 70) return 'candidate';
+  return 'candidate';
+}
+
+function buildProposal(document, purchases, dateWindowDays, sameTotalCount = 1) {
+  const scored = purchases.map((purchase) => scorePurchase(document, purchase, dateWindowDays));
+  const total = round(scored.reduce((sum, item) => sum + item.purchase_total_ex_vat, 0), 4);
+  const difference = round(documentAmount(document) - total, 4);
+  const bestDateDistance = Math.min(...scored.map((item) => item.date_distance_days ?? dateWindowDays));
+  const referenceScore = scored.some((item) => item.reasons.includes('reference_bl')) ? 1 : 0;
+  const amountScore = Math.max(0, 1 - Math.abs(difference) / Math.max(documentAmount(document), total, 1));
+  const dateScore = Math.max(0, 1 - bestDateDistance / Math.max(dateWindowDays, 1));
+  const locked = scored.some((item) => item.linked_to_locked_document);
+  const proposal = {
+    purchase_ids: scored.map((item) => item.id),
+    purchase_ids_key: scored.map((item) => item.id).sort().join(':'),
+    bl_numbers: scored.map((item) => item.bl_number).filter(Boolean),
+    purchases: scored.map((item) => ({
+      purchase_id: item.id,
+      bl_number: item.bl_number,
+      receipt_date: item.receipt_date,
+      status: item.status,
+      total_ex_vat: item.purchase_total_ex_vat,
+      linked_to_locked_document: Boolean(item.linked_to_locked_document),
+    })),
+    combination_total_ex_vat: total,
+    difference_ex_vat: difference,
+    score: round((referenceScore * 20) + (amountScore * 60) + (dateScore * 20) - (locked ? 50 : 0), 2),
+    confidence: 'candidate',
+    reasons: [
+      scored.length > 1 ? 'multi_bl_combination' : 'single_bl',
+      referenceScore ? 'reference_bl' : null,
+      Math.abs(difference) <= amountTolerance(documentAmount(document)) ? 'amount_within_tolerance' : 'amount_difference',
+      'same_supplier',
+      locked ? 'purchase_locked' : null,
+    ].filter(Boolean),
+  };
+  proposal.confidence = classifyProposal(document, proposal, sameTotalCount);
+  return proposal;
+}
+
+function findCombinationProposals(document, purchases, dateWindowDays) {
+  const sorted = purchases
+    .map((purchase) => scorePurchase(document, purchase, dateWindowDays))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, MAX_MATCH_CANDIDATES);
+  const proposals = [];
+  const seen = new Set();
+  let explored = 0;
+
+  function visit(start, selected) {
+    if (explored >= MAX_COMBINATIONS || selected.length >= MAX_COMBINATION_SIZE) return;
+    for (let index = start; index < sorted.length; index += 1) {
+      explored += 1;
+      const next = [...selected, sorted[index]];
+      const key = next.map((item) => item.id).sort().join(':');
+      if (!seen.has(key)) {
+        seen.add(key);
+        proposals.push(buildProposal(document, next, dateWindowDays));
+      }
+      if (explored >= MAX_COMBINATIONS) break;
+      visit(index + 1, next);
+    }
+  }
+
+  visit(0, []);
+  const byRoundedTotal = new Map();
+  for (const proposal of proposals) {
+    const exactKey = Math.abs(proposal.difference_ex_vat) <= amountTolerance(documentAmount(document))
+      ? 'exact'
+      : String(round(proposal.combination_total_ex_vat, 2));
+    byRoundedTotal.set(exactKey, (byRoundedTotal.get(exactKey) || 0) + 1);
+  }
+
+  return proposals.map((proposal) => ({
+    ...proposal,
+    confidence: classifyProposal(document, proposal, byRoundedTotal.get('exact') || 0),
+  })).sort((left, right) => {
+    const confidenceRank = { exact: 4, strong_candidate: 3, ambiguous: 2, candidate: 1, no_match: 0 };
+    if (confidenceRank[right.confidence] !== confidenceRank[left.confidence]) {
+      return confidenceRank[right.confidence] - confidenceRank[left.confidence];
+    }
+    return right.score - left.score;
+  }).slice(0, 10);
+}
+
+async function analyzeSupplierControlMatches(db, {
+  storeId,
+  documentId,
+  userId = null,
+  dateWindowDays = DEFAULT_MATCH_DATE_WINDOW_DAYS,
+} = {}) {
+  if (!isUuid(documentId)) {
+    const error = new Error('Identifiant document fournisseur invalide');
+    error.status = 400;
+    throw error;
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const document = await loadDocument(client, { storeId, documentId, forUpdate: true });
+    if (!document) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+
+    const currentLinks = await loadActiveLinks(client, { storeId, documentId });
+    const lines = await loadPennylaneLines(client, { storeId, documentId });
+    const purchases = await loadMatchingPurchases(client, { storeId, document, dateWindowDays });
+    const proposals = findCombinationProposals(document, purchases, dateWindowDays);
+    const totals = totalsFromDocumentAndLinks(document, currentLinks);
+    const events = await loadEvents(client, { storeId, documentId, limit: 100 });
+    const summary = buildValidationSummary(document, totals, statusFromTotals(document, totals), {
+      acceptedDifference: hasDifferenceAccepted(events),
+    });
+    const exactCount = proposals.filter((proposal) => proposal.confidence === 'exact' || proposal.confidence === 'strong_candidate').length;
+    const ambiguous = proposals.some((proposal) => proposal.confidence === 'ambiguous') || exactCount > 1;
+    const analysis = {
+      result: proposals.length ? (ambiguous ? 'ambiguous' : proposals[0].confidence) : 'no_match',
+      confidence: proposals[0]?.confidence || 'no_match',
+      reasons: proposals[0]?.reasons || ['no_candidate'],
+      candidate_count: purchases.length,
+      exact_combination_found: proposals.some((proposal) => Math.abs(proposal.difference_ex_vat) <= amountTolerance(documentAmount(document))),
+      ambiguous,
+      limits: {
+        date_window_days: Math.max(1, Math.min(Number(dateWindowDays || DEFAULT_MATCH_DATE_WINDOW_DAYS), 90)),
+        max_candidates: MAX_MATCH_CANDIDATES,
+        max_combination_size: MAX_COMBINATION_SIZE,
+        max_combinations: MAX_COMBINATIONS,
+      },
+      line_matching_available: lines.length > 0,
+    };
+    const differences = buildControlDifferences(document, totals, { proposals, lineMatchingAvailable: lines.length > 0 });
+
+    await insertEvent(client, {
+      storeId,
+      documentId,
+      eventType: 'automatic_analysis',
+      eventKey: `automatic_analysis:${documentId}:${JSON.stringify(proposals.map((proposal) => proposal.purchase_ids_key)).slice(0, 120)}`,
+      payload: { analysis, differences, proposal_count: proposals.length },
+      userId,
+    });
+    if (differences.some((difference) => difference.type === 'amount_difference' && difference.blocking)) {
+      await insertEvent(client, {
+        storeId,
+        documentId,
+        eventType: 'difference_detected',
+        eventKey: `difference_detected:${documentId}:${round(totals.difference_total, 4)}`,
+        payload: { differences, totals },
+        userId,
+      });
+    }
+    await recalculateSupplierControl(client, { storeId, documentId, userId });
+    await client.query('COMMIT');
+
+    return {
+      document,
+      current_links: currentLinks,
+      proposals,
+      summary,
+      analysis,
+      differences,
+      line_matching_available: lines.length > 0,
+    };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function applySupplierControlMatch(db, { storeId, documentId, purchaseIds = [], userId = null }) {
+  if (!isUuid(documentId)) {
+    const error = new Error('Identifiant document fournisseur invalide');
+    error.status = 400;
+    throw error;
+  }
+  const ids = [...new Set((purchaseIds || []).map((id) => clean(id)).filter(Boolean))];
+  if (!ids.length || ids.some((id) => !isUuid(id))) {
+    const error = new Error('purchase_ids invalide');
+    error.status = 400;
+    throw error;
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const document = await loadDocument(client, { storeId, documentId, forUpdate: true });
+    if (!document) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    assertDocumentLinksEditable(document);
+
+    const purchases = [];
+    for (const purchaseId of ids) {
+      purchases.push(await ensurePurchaseCanBeLinked(client, { storeId, document, purchaseId }));
+    }
+
+    const purchasesTotal = round(purchases.reduce((sum, purchase) => sum + toNumber(purchase.total_amount_ex_vat), 0), 4);
+    const amountDifference = round(documentAmount(document) - purchasesTotal, 4);
+    const matchStatus = Math.abs(amountDifference) <= amountTolerance(documentAmount(document)) ? 'matched' : 'difference';
+
+    await client.query(
+      `
+      UPDATE supplier_control_document_links
+      SET match_status = 'removed',
+          updated_at = now()
+      WHERE store_id = $1
+        AND pennylane_supplier_invoice_id = $2
+        AND link_type = 'invoice_match'
+        AND purchase_line_id IS NULL
+        AND match_status <> 'removed'
+        AND NOT (purchase_id = ANY($3::uuid[]))
+      `,
+      [storeId, document.id, ids]
+    );
+
+    const links = [];
+    for (const purchase of purchases) {
+      const inserted = await client.query(
+        `
+        INSERT INTO supplier_control_document_links(
+          id, store_id, pennylane_supplier_invoice_id, purchase_id, link_type, match_status,
+          amount_difference, source, matching_method, confidence, validated_by, validated_at, created_by, raw_payload
+        )
+        VALUES(gen_random_uuid(), $1, $2, $3, 'invoice_match', $4, $5, 'manual', 'manual_apply_match', 100, $6, now(), $6, $7::jsonb)
+        ON CONFLICT (store_id, pennylane_supplier_invoice_id, purchase_id, link_type)
+          WHERE purchase_id IS NOT NULL AND purchase_line_id IS NULL
+        DO UPDATE SET
+          match_status = EXCLUDED.match_status,
+          amount_difference = EXCLUDED.amount_difference,
+          source = 'manual',
+          matching_method = 'manual_apply_match',
+          confidence = 100,
+          validated_by = EXCLUDED.validated_by,
+          validated_at = now(),
+          updated_at = now(),
+          raw_payload = EXCLUDED.raw_payload
+        RETURNING *
+        `,
+        [
+          storeId,
+          document.id,
+          purchase.id,
+          matchStatus,
+          amountDifference,
+          userId,
+          JSON.stringify({
+            purchase_total_ex_vat: purchase.total_amount_ex_vat,
+            combination_purchase_ids: ids,
+            combination_total_ex_vat: purchasesTotal,
+            combination_difference_ex_vat: amountDifference,
+          }),
+        ]
+      );
+      links.push(inserted.rows[0]);
+    }
+
+    await insertEvent(client, {
+      storeId,
+      documentId: document.id,
+      eventType: 'match_applied',
+      eventKey: `match_applied:${document.id}:${ids.slice().sort().join(':')}`,
+      payload: {
+        purchase_ids: ids,
+        amount_difference: amountDifference,
+        purchases_total_ex_vat: purchasesTotal,
+        match_status: matchStatus,
+      },
+      userId,
+    });
+
+    const summary = await recalculateSupplierControl(client, { storeId, documentId: document.id, userId });
+    const purchaseLines = await loadPurchaseLinesForPurchaseIds(client, { storeId, purchaseIds: ids });
+    await client.query('COMMIT');
+    return { links, summary, purchase_lines: purchaseLines };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function resolveSupplierControlDifference(db, {
+  storeId,
+  documentId,
+  resolutionType,
+  comment,
+  expectedCreditNoteAmount = null,
+  userId = null,
+}) {
+  if (!isUuid(documentId)) {
+    const error = new Error('Identifiant document fournisseur invalide');
+    error.status = 400;
+    throw error;
+  }
+  const type = clean(resolutionType);
+  if (!DIFFERENCE_RESOLUTION_TYPES.has(type)) {
+    const error = new Error('resolution_type invalide');
+    error.status = 400;
+    throw error;
+  }
+  const text = clean(comment);
+  if (!text) {
+    const error = new Error('commentaire obligatoire');
+    error.status = 400;
+    error.code = 'SUPPLIER_CONTROL_RESOLUTION_COMMENT_REQUIRED';
+    throw error;
+  }
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const document = await loadDocument(client, { storeId, documentId, forUpdate: true });
+    if (!document) {
+      await client.query('ROLLBACK');
+      return null;
+    }
+    assertDocumentLinksEditable(document);
+
+    const links = await loadActiveLinks(client, { storeId, documentId });
+    const totals = totalsFromDocumentAndLinks(document, links);
+    const nextStatus = type === 'supplier_credit_note_expected'
+      ? 'avoir_attendu'
+      : (type === 'dispute' ? 'litige' : 'ecart');
+    const eventType = type === 'supplier_credit_note_expected'
+      ? 'expected_credit_note'
+      : (type === 'dispute' ? 'dispute_opened' : 'difference_accepted');
+
+    await insertEvent(client, {
+      storeId,
+      documentId: document.id,
+      eventType,
+      eventKey: `${eventType}:${document.id}:${round(totals.difference_total, 4)}`,
+      payload: {
+        resolution_type: type,
+        comment: text,
+        amount_difference: totals.difference_total,
+        expected_credit_note_amount: expectedCreditNoteAmount === null ? null : round(expectedCreditNoteAmount, 4),
+      },
+      userId,
+    });
+
+    await client.query(
+      `
+      UPDATE pennylane_supplier_invoices
+      SET supplier_control_status = $1,
+          updated_at = now()
+      WHERE id = $2
+        AND store_id = $3
+      `,
+      [nextStatus, document.id, storeId]
+    );
+    document.supplier_control_status = nextStatus;
+
+    const summary = buildValidationSummary(document, totals, nextStatus, {
+      acceptedDifference: type === 'accepted_difference',
+    });
+    await client.query('COMMIT');
+    return { document, summary };
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function ensurePurchaseCanBeLinked(client, { storeId, document, purchaseId }) {
@@ -816,9 +1429,12 @@ async function removePurchaseLink(db, { storeId, documentId, purchaseId, userId 
 module.exports = {
   CANONICAL_SUPPLIER_CONTROL_STATUSES,
   DOCUMENT_TYPES,
+  DIFFERENCE_RESOLUTION_TYPES,
   MATCHABLE_PURCHASE_STATUSES,
+  analyzeSupplierControlMatches,
   amountToleranceConfig,
   amountTolerance,
+  applySupplierControlMatch,
   assertDocumentLinksEditable,
   canonicalSupplierControlStatus,
   clean,
@@ -828,6 +1444,7 @@ module.exports = {
   listPurchaseCandidates,
   listSupplierControlDocuments,
   recalculateSupplierControl,
+  resolveSupplierControlDifference,
   addPurchaseLink,
   removePurchaseLink,
   totalsFromDocumentAndLinks,
