@@ -23,6 +23,11 @@ const DEFAULT_AMOUNT_TOLERANCE = 1;
 const DEFAULT_AMOUNT_RATIO_TOLERANCE = 0.005;
 const VALIDATION_FINAL_STATUSES = new Set(['valide_a_payer', 'paye']);
 const VALIDATION_BLOCKED_FINAL_STATUSES = new Set(['litige', 'avoir_attendu', 'reconciliation_required']);
+const SUPPLIER_CONTROL_STATUS_GROUPS = {
+  needs_action: ['a_rapprocher', 'a_controler', 'ecart', 'avoir_attendu', 'conforme', 'reconciliation_required'],
+  ready_to_validate: ['conforme', 'ecart'],
+  final: ['valide_a_payer', 'paye'],
+};
 
 const {
   fetchSupplierInvoicePaymentStatusFromPennylane,
@@ -1031,7 +1036,11 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
   const where = ['psi.store_id = $1', 'psi.pennylane_deleted_at IS NULL'];
 
   const status = clean(filters.supplier_control_status);
-  if (status && CANONICAL_SUPPLIER_CONTROL_STATUSES.has(status)) {
+  const statusGroup = clean(filters.status_group);
+  if (statusGroup && SUPPLIER_CONTROL_STATUS_GROUPS[statusGroup]) {
+    params.push(SUPPLIER_CONTROL_STATUS_GROUPS[statusGroup]);
+    where.push(`psi.supplier_control_status = ANY($${params.length}::text[])`);
+  } else if (status && CANONICAL_SUPPLIER_CONTROL_STATUSES.has(status)) {
     params.push(status);
     where.push(`psi.supplier_control_status = $${params.length}`);
   }
@@ -1075,6 +1084,17 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
       OR COALESCE(psi.external_reference, '') ILIKE $${params.length}
       OR COALESCE(s.name, '') ILIKE $${params.length}
       OR COALESCE(s.code, '') ILIKE $${params.length}
+      OR EXISTS (
+        SELECT 1
+        FROM supplier_control_document_links search_scl
+        JOIN purchases search_p
+          ON search_p.id = search_scl.purchase_id
+         AND search_p.store_id = search_scl.store_id
+        WHERE search_scl.store_id = psi.store_id
+          AND search_scl.pennylane_supplier_invoice_id = psi.id
+          AND search_scl.match_status <> 'removed'
+          AND COALESCE(search_p.bl_number, '') ILIKE $${params.length}
+      )
     )`);
   }
 
