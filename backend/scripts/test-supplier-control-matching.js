@@ -5,7 +5,9 @@ const path = require('path');
 const {
   analyzeSupplierControlMatches,
   applySupplierControlMatch,
+  recalculateSupplierControl,
   resolveSupplierControlDifference,
+  supplierControlMatchSignature,
 } = require('../services/supplierControlService');
 
 const routePath = path.join(__dirname, '../routes/supplierControl.js');
@@ -464,6 +466,119 @@ async function testResolutionsAndValidation() {
   assert.ok(db.state.events.some((event) => event.event_type === 'dispute_opened'));
 }
 
+async function testAcceptedDifferenceIsBoundToCurrentMatchSignature() {
+  const p990 = purchase({ id: ids.p1, total_amount_ex_vat: 990, bl_number: 'BL-990' });
+  const p920 = purchase({ id: ids.p2, total_amount_ex_vat: 920, bl_number: 'BL-920' });
+  const db = createMockDb({
+    doc: document({ amount_ex_vat: 1000, supplier_control_status: 'ecart' }),
+    links: [linkFor(p990)],
+    purchases: [p990, p920],
+  });
+
+  let result = await resolveSupplierControlDifference(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    resolutionType: 'accepted_difference',
+    comment: 'Ecart 10 EUR accepte',
+    userId: ids.user,
+  });
+  assert.strictEqual(result.summary.accepted_difference, true);
+  assert.strictEqual(result.summary.can_validate, true);
+  const acceptedEvent = db.state.events.find((event) => event.event_type === 'difference_accepted');
+  assert.strictEqual(acceptedEvent.payload.amount_difference, 10);
+  assert.deepStrictEqual(acceptedEvent.payload.purchase_ids, [ids.p1]);
+  assert.strictEqual(acceptedEvent.payload.match_signature, supplierControlMatchSignature(db.state.doc, db.state.links).match_signature);
+
+  result = await applySupplierControlMatch(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseIds: [ids.p2],
+    userId: ids.user,
+  });
+  assert.ok(db.state.events.some((event) => event.event_type === 'difference_accepted'));
+  assert.strictEqual(result.summary.difference_total, 80);
+  assert.strictEqual(result.summary.accepted_difference, false);
+  assert.strictEqual(result.summary.can_validate, false);
+  assert.ok(result.summary.blocking_reasons.includes('difference_non_resolue'));
+}
+
+async function testAcceptedDifferenceSurvivesIdempotentReplayAndSortedOrder() {
+  const p600 = purchase({ id: ids.p1, total_amount_ex_vat: 600, bl_number: 'BL-600' });
+  const p390 = purchase({ id: ids.p2, total_amount_ex_vat: 390, bl_number: 'BL-390' });
+  const db = createMockDb({
+    doc: document({ amount_ex_vat: 1000, supplier_control_status: 'ecart' }),
+    links: [linkFor(p600), linkFor(p390)],
+    purchases: [p600, p390],
+  });
+
+  await resolveSupplierControlDifference(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    resolutionType: 'accepted_difference',
+    comment: 'Ecart 10 EUR accepte',
+  });
+  let result = await applySupplierControlMatch(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseIds: [ids.p2, ids.p1],
+  });
+  assert.strictEqual(result.summary.difference_total, 10);
+  assert.strictEqual(result.summary.accepted_difference, true);
+  assert.strictEqual(result.summary.can_validate, true);
+
+  result = await applySupplierControlMatch(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseIds: [ids.p1, ids.p2],
+  });
+  assert.strictEqual(result.summary.accepted_difference, true);
+  assert.strictEqual(db.state.events.filter((event) => event.event_type === 'difference_accepted').length, 1);
+}
+
+async function testAcceptedDifferenceInvalidatesForDifferentPurchasesOrAmount() {
+  const p990 = purchase({ id: ids.p1, total_amount_ex_vat: 990, bl_number: 'BL-990' });
+  const p980 = purchase({ id: ids.p2, total_amount_ex_vat: 980, bl_number: 'BL-980' });
+  const p10 = purchase({ id: ids.p3, total_amount_ex_vat: 10, bl_number: 'BL-10' });
+  let db = createMockDb({
+    doc: document({ amount_ex_vat: 1000, supplier_control_status: 'ecart' }),
+    links: [linkFor(p990)],
+    purchases: [p990, p980, p10],
+  });
+
+  await resolveSupplierControlDifference(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    resolutionType: 'accepted_difference',
+    comment: 'Ecart 10 EUR accepte',
+  });
+  let result = await applySupplierControlMatch(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseIds: [ids.p2, ids.p3],
+  });
+  assert.strictEqual(result.summary.difference_total, 10);
+  assert.strictEqual(result.summary.accepted_difference, false);
+  assert.strictEqual(result.summary.can_validate, false);
+
+  db = createMockDb({
+    doc: document({ amount_ex_vat: 1000, supplier_control_status: 'ecart' }),
+    links: [linkFor(p990)],
+    purchases: [p990],
+  });
+  await resolveSupplierControlDifference(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    resolutionType: 'accepted_difference',
+    comment: 'Ecart 10 EUR accepte',
+  });
+  db.state.doc.amount_ex_vat = 1070;
+  result = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(result.difference_total, 80);
+  assert.strictEqual(result.accepted_difference, false);
+  assert.strictEqual(result.can_validate, false);
+  assert.ok(result.blocking_reasons.includes('difference_non_resolue'));
+}
+
 function testStaticContracts() {
   const route = read(routePath);
   const service = read(servicePath);
@@ -487,6 +602,9 @@ function testStaticContracts() {
   await testPurchaseLinesAndPennylaneLines();
   await testRepeatedAnalysisEventsAreIdempotent();
   await testResolutionsAndValidation();
+  await testAcceptedDifferenceIsBoundToCurrentMatchSignature();
+  await testAcceptedDifferenceSurvivesIdempotentReplayAndSortedOrder();
+  await testAcceptedDifferenceInvalidatesForDifferentPurchasesOrAmount();
   testStaticContracts();
   console.log('OK supplier control matching tests');
 })().catch((error) => {

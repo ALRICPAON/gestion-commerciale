@@ -107,8 +107,56 @@ function daysBetween(left, right) {
   return Math.abs(leftMs - rightMs) / 86400000;
 }
 
-function hasDifferenceAccepted(events = []) {
-  return events.some((event) => event.event_type === 'difference_accepted');
+function activePurchaseIdsFromLinks(links = []) {
+  return [...new Set(
+    links
+      .map((link) => clean(link.purchase_id))
+      .filter(Boolean)
+      .map(String)
+  )].sort();
+}
+
+function normalizedDifference(value) {
+  return round(value, 4).toFixed(4);
+}
+
+function supplierControlMatchSignature(document, links = [], totals = null) {
+  const currentTotals = totals || totalsFromDocumentAndLinks(document, links);
+  const purchaseIds = activePurchaseIdsFromLinks(links);
+  return {
+    purchase_ids: purchaseIds,
+    amount_difference: Number(normalizedDifference(currentTotals.difference_total)),
+    match_signature: [
+      String(document?.id || ''),
+      purchaseIds.join(','),
+      normalizedDifference(currentTotals.difference_total),
+    ].join('|'),
+  };
+}
+
+function eventPayload(event = {}) {
+  if (!event.payload) return {};
+  if (typeof event.payload === 'object') return event.payload;
+  try {
+    return JSON.parse(event.payload);
+  } catch (_) {
+    return {};
+  }
+}
+
+function hasDifferenceAccepted(events = [], document = {}, links = [], totals = null) {
+  const current = supplierControlMatchSignature(document, links, totals);
+  return events
+    .filter((event) => event.event_type === 'difference_accepted')
+    .some((event) => {
+      const payload = eventPayload(event);
+      if (payload.match_signature) return payload.match_signature === current.match_signature;
+      const payloadPurchaseIds = Array.isArray(payload.purchase_ids)
+        ? payload.purchase_ids.map(String).sort()
+        : [];
+      return payloadPurchaseIds.join(',') === current.purchase_ids.join(',') &&
+        normalizedDifference(payload.amount_difference) === normalizedDifference(current.amount_difference);
+    });
 }
 
 function buildValidationSummary(document, totals, controlStatus = canonicalSupplierControlStatus(document), options = {}) {
@@ -355,7 +403,7 @@ async function recalculateSupplierControl(client, { storeId, documentId, userId 
 
   const events = await loadEvents(client, { storeId, documentId, limit: 100 });
   const summary = buildValidationSummary(document, totals, nextStatus, {
-    acceptedDifference: hasDifferenceAccepted(events),
+    acceptedDifference: hasDifferenceAccepted(events, document, links, totals),
   });
   if (emitEvent) {
     await insertEvent(client, {
@@ -579,7 +627,7 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
   const purchaseIds = links.map((link) => link.purchase_id).filter(Boolean);
   const purchaseLines = await loadPurchaseLinesForPurchaseIds(db, { storeId, purchaseIds });
   const summary = buildValidationSummary(document, totals, statusFromTotals(document, totals), {
-    acceptedDifference: hasDifferenceAccepted(events),
+    acceptedDifference: hasDifferenceAccepted(events, document, links, totals),
   });
 
   return {
@@ -951,7 +999,7 @@ async function analyzeSupplierControlMatches(db, {
     const totals = totalsFromDocumentAndLinks(document, currentLinks);
     const events = await loadEvents(client, { storeId, documentId, limit: 100 });
     const summary = buildValidationSummary(document, totals, statusFromTotals(document, totals), {
-      acceptedDifference: hasDifferenceAccepted(events),
+      acceptedDifference: hasDifferenceAccepted(events, document, currentLinks, totals),
     });
     const exactCount = proposals.filter((proposal) => proposal.confidence === 'exact' || proposal.confidence === 'strong_candidate').length;
     const ambiguous = proposals.some((proposal) => proposal.confidence === 'ambiguous') || exactCount > 1;
@@ -1163,24 +1211,32 @@ async function resolveSupplierControlDifference(db, {
 
     const links = await loadActiveLinks(client, { storeId, documentId });
     const totals = totalsFromDocumentAndLinks(document, links);
+    const currentSignature = supplierControlMatchSignature(document, links, totals);
     const nextStatus = type === 'supplier_credit_note_expected'
       ? 'avoir_attendu'
       : (type === 'dispute' ? 'litige' : 'ecart');
     const eventType = type === 'supplier_credit_note_expected'
       ? 'expected_credit_note'
       : (type === 'dispute' ? 'dispute_opened' : 'difference_accepted');
+    const resolutionPayload = {
+      resolution_type: type,
+      comment: text,
+      amount_difference: type === 'accepted_difference' ? currentSignature.amount_difference : totals.difference_total,
+      expected_credit_note_amount: expectedCreditNoteAmount === null ? null : round(expectedCreditNoteAmount, 4),
+    };
+    if (type === 'accepted_difference') {
+      resolutionPayload.purchase_ids = currentSignature.purchase_ids;
+      resolutionPayload.match_signature = currentSignature.match_signature;
+    }
 
     await insertEvent(client, {
       storeId,
       documentId: document.id,
       eventType,
-      eventKey: `${eventType}:${document.id}:${round(totals.difference_total, 4)}`,
-      payload: {
-        resolution_type: type,
-        comment: text,
-        amount_difference: totals.difference_total,
-        expected_credit_note_amount: expectedCreditNoteAmount === null ? null : round(expectedCreditNoteAmount, 4),
-      },
+      eventKey: type === 'accepted_difference'
+        ? `${eventType}:${currentSignature.match_signature}`
+        : `${eventType}:${document.id}:${round(totals.difference_total, 4)}`,
+      payload: resolutionPayload,
       userId,
     });
 
@@ -1197,7 +1253,11 @@ async function resolveSupplierControlDifference(db, {
     document.supplier_control_status = nextStatus;
 
     const summary = buildValidationSummary(document, totals, nextStatus, {
-      acceptedDifference: type === 'accepted_difference',
+      acceptedDifference: type === 'accepted_difference' &&
+        hasDifferenceAccepted([{
+          event_type: 'difference_accepted',
+          payload: currentSignature,
+        }], document, links, totals),
     });
     await client.query('COMMIT');
     return { document, summary };
@@ -1447,5 +1507,6 @@ module.exports = {
   resolveSupplierControlDifference,
   addPurchaseLink,
   removePurchaseLink,
+  supplierControlMatchSignature,
   totalsFromDocumentAndLinks,
 };
