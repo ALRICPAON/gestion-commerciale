@@ -296,8 +296,33 @@ async function testListDocumentsAndFilters() {
   assert.match(sql, /psi\.document_type/);
   assert.match(sql, /LOWER\(COALESCE\(psi\.payment_status/);
   assert.match(sql, /psi\.invoice_number ILIKE/);
+  assert.match(sql, /search_p\.bl_number/);
   assert.match(sql, /ORDER BY supplier_name ASC/);
   assertNoPennylaneCalls(db);
+}
+
+async function testListDocumentsStatusGroups() {
+  const db = createMockDb({
+    documents: [
+      document({ supplier_control_status: 'a_rapprocher' }),
+      document({ id: ids.docOther, supplier_control_status: 'conforme' }),
+    ],
+  });
+  await listSupplierControlDocuments(db, {
+    storeId: ids.storeA,
+    filters: { status_group: 'needs_action', limit: 10 },
+  });
+  const needsActionCall = db.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql));
+  assert.match(needsActionCall.sql, /psi\.supplier_control_status = ANY/);
+  assert.ok(needsActionCall.params.some((param) => Array.isArray(param) && param.includes('reconciliation_required')));
+
+  db.calls.length = 0;
+  await listSupplierControlDocuments(db, {
+    storeId: ids.storeA,
+    filters: { status_group: 'ready_to_validate', limit: 10 },
+  });
+  const readyCall = db.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql));
+  assert.ok(readyCall.params.some((param) => Array.isArray(param) && param.includes('conforme') && param.includes('ecart')));
 }
 
 async function testListPaginationKeepsTotalOnEmptyPage() {
@@ -641,6 +666,7 @@ function testPennylaneLineAuditGuard() {
 (async () => {
   assert.strictEqual(canonicalSupplierControlStatus({ payment_status: 'to_be_paid' }), 'valide_a_payer');
   await testListDocumentsAndFilters();
+  await testListDocumentsStatusGroups();
   await testListPaginationKeepsTotalOnEmptyPage();
   await testDetailDocumentLinesAndPdf();
   await testOtherStoreRefused();

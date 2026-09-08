@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Controle fournisseurs - Gestion Commerciale</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/supplier-control.css?v=1" />
+</head>
+<body class="app-page supplier-control-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">Gestion Commerciale</h1>
+      <p class="app-subtitle">Controle fournisseurs</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content supplier-control-main">
+    <section class="supplier-control-header">
+      <div>
+        <h2>Controle fournisseurs</h2>
+        <p>Factures et avoirs fournisseurs synchronises depuis Pennylane</p>
+      </div>
+      <div class="page-actions-right">
+        <button id="refresh-btn" class="btn btn-secondary" type="button">Actualiser</button>
+      </div>
+    </section>
+
+    <div id="page-feedback" class="page-feedback hidden"></div>
+
+    <section class="supplier-control-workspace">
+      <aside class="supplier-control-list-panel" aria-label="Documents fournisseurs">
+        <div class="supplier-control-filters" role="tablist" aria-label="Filtres controle fournisseurs">
+          <button class="filter-chip is-active" type="button" data-filter="needs_action">A traiter</button>
+          <button class="filter-chip" type="button" data-filter="a_rapprocher">A rapprocher</button>
+          <button class="filter-chip" type="button" data-filter="ecart">Ecart</button>
+          <button class="filter-chip" type="button" data-filter="avoir_attendu">Avoir attendu</button>
+          <button class="filter-chip" type="button" data-filter="ready_to_validate">A valider</button>
+          <button class="filter-chip" type="button" data-filter="valide_a_payer">Valide</button>
+          <button class="filter-chip" type="button" data-filter="paye">Paye</button>
+          <button class="filter-chip" type="button" data-filter="litige">Litige</button>
+          <button class="filter-chip" type="button" data-filter="reconciliation_required">A reconcilier</button>
+          <button class="filter-chip" type="button" data-filter="all">Tous</button>
+        </div>
+
+        <div class="supplier-control-search">
+          <label for="search-input">Recherche</label>
+          <input id="search-input" type="search" placeholder="Fournisseur, facture ou BL" />
+        </div>
+
+        <div class="supplier-control-list-meta">
+          <span id="list-count">0 document</span>
+          <div class="page-actions-right">
+            <button id="prev-page-btn" class="btn btn-secondary btn-sm" type="button">Precedent</button>
+            <button id="next-page-btn" class="btn btn-secondary btn-sm" type="button">Suivant</button>
+          </div>
+        </div>
+
+        <div id="documents-list" class="supplier-control-list" aria-live="polite">
+          <div class="supplier-control-empty">Chargement...</div>
+        </div>
+      </aside>
+
+      <section class="supplier-control-detail-panel" aria-label="Detail controle fournisseur">
+        <div id="detail-empty" class="supplier-control-empty detail-empty">
+          Selectionne une facture ou un avoir pour voir son controle.
+        </div>
+
+        <article id="detail-content" class="supplier-control-detail hidden">
+          <header class="detail-header">
+            <div>
+              <span id="document-kind" class="document-kind">FACTURE</span>
+              <h2 id="detail-title">-</h2>
+              <p id="detail-subtitle">-</p>
+            </div>
+            <div class="detail-header-actions">
+              <span id="detail-status" class="status-badge">-</span>
+              <a id="pdf-link" class="btn btn-secondary btn-sm" href="#" target="_blank" rel="noopener">Voir le PDF</a>
+            </div>
+          </header>
+
+          <div id="readonly-note" class="supplier-control-note hidden"></div>
+
+          <div class="detail-metrics" id="detail-metrics"></div>
+
+          <section class="detail-section">
+            <div class="section-heading">
+              <h3>Rapprochement avec les bons de livraison</h3>
+              <button id="analyze-btn" class="btn btn-secondary btn-sm" type="button">Analyser</button>
+            </div>
+            <div id="match-summary" class="match-summary"></div>
+            <div id="links-list" class="linked-purchases"></div>
+          </section>
+
+          <section id="proposals-section" class="detail-section hidden">
+            <div class="section-heading">
+              <h3>Propositions</h3>
+            </div>
+            <div id="proposals-list" class="proposals-list"></div>
+          </section>
+
+          <section id="manual-section" class="detail-section">
+            <div class="section-heading">
+              <h3>Ajouter un BL manuellement</h3>
+              <button id="load-candidates-btn" class="btn btn-secondary btn-sm" type="button">Charger les BL</button>
+            </div>
+            <div id="candidates-list" class="candidates-list"></div>
+            <div class="page-actions-right manual-actions">
+              <button id="apply-manual-btn" class="btn btn-primary btn-sm" type="button" disabled>Confirmer la selection</button>
+            </div>
+          </section>
+
+          <section id="difference-section" class="detail-section hidden">
+            <div class="section-heading">
+              <h3>Ecart a traiter</h3>
+            </div>
+            <div id="difference-box" class="difference-box"></div>
+            <textarea id="resolution-comment" rows="3" placeholder="Commentaire obligatoire"></textarea>
+            <div class="page-actions-right">
+              <button class="btn btn-secondary btn-sm" type="button" data-resolution="accepted_difference">Accepter l'ecart</button>
+              <button class="btn btn-secondary btn-sm" type="button" data-resolution="supplier_credit_note_expected">Avoir fournisseur attendu</button>
+              <button class="btn btn-danger btn-sm" type="button" data-resolution="dispute">Mettre en litige</button>
+            </div>
+          </section>
+
+          <section class="detail-section validation-section">
+            <div id="validation-message" class="validation-message"></div>
+            <div class="page-actions-right">
+              <button id="validate-btn" class="btn btn-primary" type="button">Valider a payer</button>
+            </div>
+          </section>
+
+          <details class="detail-section history-section">
+            <summary>Historique du controle</summary>
+            <div id="events-list" class="events-list"></div>
+          </details>
+        </article>
+      </section>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/supplier-control.js?v=1"></script>
+</body>
+</html>
