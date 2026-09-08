@@ -112,6 +112,8 @@ function createMockDb({
   purchases = [],
   incompatibleLinks = [],
   legacyLocked = [],
+  expectedCreditNotes = [],
+  appliedCreditNoteTotal = 0,
 } = {}) {
   const calls = [];
   const state = {
@@ -180,6 +182,14 @@ function createMockDb({
 
     if (/FROM supplier_control_events/i.test(sql) && /ORDER BY created_at/i.test(sql)) {
       return { rows: state.events };
+    }
+
+    if (/FROM supplier_expected_credit_notes ecn/i.test(sql) && /JOIN supplier_expected_credit_note_links l/i.test(sql)) {
+      return { rows: [{ total: appliedCreditNoteTotal }] };
+    }
+
+    if (/FROM supplier_expected_credit_notes ecn/i.test(sql)) {
+      return { rows: expectedCreditNotes };
     }
 
     if (/FROM pennylane_supplier_invoice_lines/i.test(sql)) return { rows: lines };
@@ -323,6 +333,68 @@ async function testListDocumentsStatusGroups() {
   });
   const readyCall = db.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql));
   assert.ok(readyCall.params.some((param) => Array.isArray(param) && param.includes('conforme') && param.includes('ecart')));
+}
+
+async function testExpectedCreditNoteStatusVisibleAfterPennylaneValidation() {
+  assert.strictEqual(canonicalSupplierControlStatus({
+    payment_status: 'to_be_paid',
+    supplier_control_status: 'avoir_attendu',
+  }), 'avoir_attendu');
+  assert.strictEqual(canonicalSupplierControlStatus({
+    payment_status: 'paid',
+    paid: true,
+    supplier_control_status: 'avoir_attendu',
+  }), 'avoir_attendu');
+
+  const expectedCreditNote = {
+    id: 'expected-note-id',
+    store_id: ids.storeA,
+    supplier_id: ids.supplier,
+    source_purchase_id: ids.purchase1,
+    source_purchase_line_id: null,
+    source_pennylane_supplier_invoice_id: ids.doc,
+    expected_amount_ex_vat: 407.7,
+    received_amount_ex_vat: 0,
+    remaining_amount_ex_vat: 407.7,
+    reason_type: 'price_error',
+    reason_comment: '151 EUR/kg au lieu de 15,10 EUR/kg',
+    affected_quantity: 3,
+    affected_unit: 'kg',
+    status: 'pending',
+    bl_number: '511-00081293',
+    article_name: 'QUEUE DE LOTTE',
+  };
+  const db = createMockDb({
+    doc: document({
+      invoice_number: '511260004713',
+      amount_ex_vat: 949.5,
+      payment_status: 'to_be_paid',
+      supplier_control_status: 'avoir_attendu',
+    }),
+    links: [link({ purchase: purchase({ total_amount_ex_vat: 949.5, bl_number: '511-00081293' }) })],
+    expectedCreditNotes: [expectedCreditNote],
+  });
+
+  const list = await listSupplierControlDocuments(db, {
+    storeId: ids.storeA,
+    filters: { supplier_control_status: 'avoir_attendu', limit: 10 },
+  });
+  assert.strictEqual(list.documents.length, 1);
+  assert.strictEqual(list.documents[0].supplier_control_status, 'avoir_attendu');
+  assert.strictEqual(list.documents[0].payment_status, 'to_be_paid');
+
+  const detail = await getSupplierControlDocument(db, {
+    storeId: ids.storeA,
+    pennylaneSupplierInvoiceId: ids.doc,
+  });
+  assert.strictEqual(detail.document.supplier_control_status, 'avoir_attendu');
+  assert.strictEqual(detail.document.payment_status, 'to_be_paid');
+  assert.strictEqual(detail.expected_credit_notes.length, 1);
+  assert.strictEqual(detail.expected_credit_notes[0].expected_amount_ex_vat, 407.7);
+  assert.strictEqual(detail.summary.control_status, 'avoir_attendu');
+  assert.strictEqual(detail.summary.can_validate, false);
+  assert.ok(detail.summary.blocking_reasons.includes('avoir_fournisseur_attendu'));
+  assert.ok(detail.summary.blocking_reasons.includes('already_validated'));
 }
 
 async function testListPaginationKeepsTotalOnEmptyPage() {
@@ -667,6 +739,7 @@ function testPennylaneLineAuditGuard() {
   assert.strictEqual(canonicalSupplierControlStatus({ payment_status: 'to_be_paid' }), 'valide_a_payer');
   await testListDocumentsAndFilters();
   await testListDocumentsStatusGroups();
+  await testExpectedCreditNoteStatusVisibleAfterPennylaneValidation();
   await testListPaginationKeepsTotalOnEmptyPage();
   await testDetailDocumentLinesAndPdf();
   await testOtherStoreRefused();

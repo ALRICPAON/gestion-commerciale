@@ -20,6 +20,7 @@ const supplierControlHtmlPath = path.join(root, 'frontend/supplier-control.html'
 const supplierControlJsPath = path.join(root, 'frontend/js/supplier-control.js');
 const purchaseHtmlPath = path.join(root, 'frontend/purchase-detail.html');
 const purchaseJsPath = path.join(root, 'frontend/js/purchase-detail.js');
+const reconcileScriptPath = path.join(root, 'backend/scripts/reconcile-expected-credit-notes-from-purchase-links.js');
 
 function read(filePath) {
   return fs.readFileSync(filePath, 'utf8');
@@ -43,9 +44,28 @@ const ids = {
   user: '77777777-7777-4777-8777-777777777777',
 };
 
-function createMockDb({ duplicate = false, supplierMismatch = false } = {}) {
+function createMockDb({
+  duplicate = false,
+  supplierMismatch = false,
+  linkedInvoiceFromPurchase = false,
+  linkedInvoiceRows = null,
+  invoiceOverrides = {},
+  expectedOverrides = {},
+} = {}) {
   const queries = [];
-  const state = { inserted: null };
+  const state = { inserted: null, invoiceStatusUpdates: [] };
+  const invoice = {
+    id: ids.invoice,
+    store_id: ids.store,
+    supplier_id: ids.supplier,
+    document_type: 'invoice',
+    amount_ex_vat: 949.5,
+    payment_status: 'pending',
+    paid: false,
+    supplier_control_status: 'conforme',
+    invoice_number: '511260004713',
+    ...invoiceOverrides,
+  };
   const client = {
     async query(sql, params = []) {
       queries.push({ sql, params });
@@ -55,13 +75,17 @@ function createMockDb({ duplicate = false, supplierMismatch = false } = {}) {
         return duplicate ? { rows: [{ id: 'existing-note', idempotency_key: params[1] }] } : { rows: [] };
       }
       if (/FROM purchases p/i.test(sql)) {
-        return { rows: [{ id: ids.purchase, store_id: ids.store, supplier_id: supplierMismatch ? ids.credit : ids.supplier, total_amount_ex_vat: 1100, bl_number: 'BL-1' }] };
+        return { rows: [{ id: ids.purchase, store_id: ids.store, supplier_id: supplierMismatch ? ids.credit : ids.supplier, total_amount_ex_vat: 949.5, bl_number: '511-00081293' }] };
       }
       if (/FROM purchase_lines pl/i.test(sql)) {
-        return { rows: [{ id: ids.purchaseLine, purchase_id: ids.purchase, store_id: ids.store, article_id: 'article-id', article_name: 'LANGOUSTINE' }] };
+        return { rows: [{ id: ids.purchaseLine, purchase_id: ids.purchase, store_id: ids.store, article_id: 'article-id', article_name: 'QUEUE DE LOTTE' }] };
+      }
+      if (/FROM supplier_control_document_links scl/i.test(sql) && /JOIN pennylane_supplier_invoices psi/i.test(sql)) {
+        if (linkedInvoiceRows) return { rows: linkedInvoiceRows };
+        return { rows: linkedInvoiceFromPurchase ? [invoice] : [] };
       }
       if (/FROM pennylane_supplier_invoices psi/i.test(sql)) {
-        return { rows: [{ id: ids.invoice, store_id: ids.store, supplier_id: ids.supplier, document_type: 'invoice', amount_ex_vat: 1100, payment_status: 'pending', paid: false }] };
+        return { rows: [invoice] };
       }
       if (/SELECT id FROM suppliers/i.test(sql)) return { rows: [{ id: ids.supplier }] };
       if (/INSERT INTO supplier_expected_credit_notes/i.test(sql)) {
@@ -71,16 +95,31 @@ function createMockDb({ duplicate = false, supplierMismatch = false } = {}) {
           supplier_id: ids.supplier,
           source_purchase_id: ids.purchase,
           source_purchase_line_id: ids.purchaseLine,
-          source_pennylane_supplier_invoice_id: ids.invoice,
-          expected_amount_ex_vat: 100,
+          source_pennylane_supplier_invoice_id: params[4],
+          expected_amount_ex_vat: params[5],
           reason_type: 'price_error',
-          reason_comment: 'Prix facture trop eleve',
+          reason_comment: '151 EUR/kg au lieu de 15,10 EUR/kg',
+          affected_quantity: 3,
+          affected_unit: 'kg',
           status: 'pending',
+          ...expectedOverrides,
         };
         return { rows: [state.inserted], rowCount: 1 };
       }
       if (/INSERT INTO supplier_control_events/i.test(sql)) return { rows: [], rowCount: 1 };
-      if (/UPDATE pennylane_supplier_invoices/i.test(sql)) return { rows: [], rowCount: 1 };
+      if (/WITH linked_purchases AS/i.test(sql)) {
+        return {
+          rows: [{
+            purchase_total_ex_vat: 949.5,
+            applied_credit_note_total_ex_vat: 0,
+            remaining_expected_credit_note_total_ex_vat: 407.7,
+          }],
+        };
+      }
+      if (/UPDATE pennylane_supplier_invoices/i.test(sql)) {
+        if (/supplier_control_status = \$1/i.test(compact)) state.invoiceStatusUpdates.push(params[0]);
+        return { rows: [], rowCount: 1 };
+      }
       return { rows: [], rowCount: 0 };
     },
     release() {},
@@ -135,9 +174,100 @@ async function testCreateExpectedCreditNoteFromPurchase() {
   const allSql = db.queries.map((call) => call.sql).join('\n');
   assertContains(allSql, /FOR UPDATE OF p/);
   assertContains(allSql, /INSERT INTO supplier_expected_credit_notes/);
-  assertContains(allSql, /UPDATE pennylane_supplier_invoices[\s\S]*supplier_control_status = 'avoir_attendu'/);
   assertContains(allSql, /INSERT INTO supplier_control_events/);
   assertNotContains(allSql, /stock_movements|stock_lots|stock_quantity|UPDATE\s+purchase_lines/i);
+}
+
+async function testExpectedCreditNoteFromLinkedPurchaseAttachesAndRecalculatesInvoice() {
+  const db = createMockDb({ linkedInvoiceFromPurchase: true });
+  const result = await createExpectedCreditNote(db, {
+    storeId: ids.store,
+    userId: ids.user,
+    payload: {
+      source_purchase_id: ids.purchase,
+      source_purchase_line_id: ids.purchaseLine,
+      expected_amount_ex_vat: 407.7,
+      reason_type: 'price_error',
+      reason_comment: '151 EUR/kg au lieu de 15,10 EUR/kg',
+      affected_quantity: 3,
+      affected_unit: 'kg',
+      idempotency_key: 'sogelmer-linked-purchase',
+    },
+  });
+  assert.strictEqual(result.expected_credit_note.source_pennylane_supplier_invoice_id, ids.invoice);
+  assert.deepStrictEqual(db.state.invoiceStatusUpdates, ['avoir_attendu']);
+  const allSql = db.queries.map((call) => call.sql).join('\n');
+  assertContains(allSql, /FROM supplier_control_document_links scl[\s\S]*JOIN pennylane_supplier_invoices psi/);
+  assertContains(allSql, /WITH linked_purchases AS/);
+  assertNotContains(allSql, /payment_status\s*=\s*'to_be_paid'|payment_status\s*=\s*\$1/i);
+}
+
+async function testExpectedCreditNoteFromLinkedPurchaseKeepsPennylaneToBePaid() {
+  const db = createMockDb({
+    linkedInvoiceFromPurchase: true,
+    invoiceOverrides: { payment_status: 'to_be_paid', supplier_control_status: 'valide_a_payer' },
+  });
+  const result = await createExpectedCreditNote(db, {
+    storeId: ids.store,
+    userId: ids.user,
+    payload: {
+      source_purchase_id: ids.purchase,
+      expected_amount_ex_vat: 407.7,
+      reason_type: 'price_error',
+      reason_comment: '151 EUR/kg au lieu de 15,10 EUR/kg',
+      affected_quantity: 3,
+      affected_unit: 'kg',
+      idempotency_key: 'sogelmer-to-be-paid',
+    },
+  });
+  assert.strictEqual(result.expected_credit_note.source_pennylane_supplier_invoice_id, ids.invoice);
+  assert.deepStrictEqual(db.state.invoiceStatusUpdates, ['avoir_attendu']);
+  assert.ok(!db.queries.some((call) => /payment_status\s*=\s*'to_be_paid'|payment_status\s*=\s*\$1/i.test(call.sql)));
+}
+
+async function testExpectedCreditNoteFromLinkedPurchaseKeepsPaidVisible() {
+  const db = createMockDb({
+    linkedInvoiceFromPurchase: true,
+    invoiceOverrides: { payment_status: 'paid', paid: true, supplier_control_status: 'paye' },
+  });
+  const result = await createExpectedCreditNote(db, {
+    storeId: ids.store,
+    userId: ids.user,
+    payload: {
+      source_purchase_id: ids.purchase,
+      expected_amount_ex_vat: 407.7,
+      reason_type: 'price_error',
+      reason_comment: '151 EUR/kg au lieu de 15,10 EUR/kg',
+      affected_quantity: 3,
+      affected_unit: 'kg',
+      idempotency_key: 'sogelmer-paid',
+    },
+  });
+  assert.strictEqual(result.expected_credit_note.source_pennylane_supplier_invoice_id, ids.invoice);
+  assert.deepStrictEqual(db.state.invoiceStatusUpdates, ['avoir_attendu']);
+  assert.ok(!db.queries.some((call) => /payment_status\s*=/i.test(call.sql)));
+}
+
+async function testExpectedCreditNoteFromAmbiguousLinkedPurchaseDoesNotPickInvoice() {
+  const db = createMockDb({
+    linkedInvoiceRows: [
+      { id: ids.invoice, store_id: ids.store, supplier_id: ids.supplier, document_type: 'invoice', amount_ex_vat: 949.5 },
+      { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', store_id: ids.store, supplier_id: ids.supplier, document_type: 'invoice', amount_ex_vat: 949.5 },
+    ],
+  });
+  const result = await createExpectedCreditNote(db, {
+    storeId: ids.store,
+    userId: ids.user,
+    payload: {
+      source_purchase_id: ids.purchase,
+      expected_amount_ex_vat: 407.7,
+      reason_type: 'price_error',
+      reason_comment: '151 EUR/kg au lieu de 15,10 EUR/kg',
+      idempotency_key: 'sogelmer-ambiguous',
+    },
+  });
+  assert.strictEqual(result.expected_credit_note.source_pennylane_supplier_invoice_id, null);
+  assert.deepStrictEqual(db.state.invoiceStatusUpdates, []);
 }
 
 async function testIdempotentRetry() {
@@ -417,12 +547,29 @@ function testCanonicalRoutesAndPermissions() {
 
 function testSupplierControlIntegration() {
   const service = read(supplierControlServicePath);
+  const expectedService = read(servicePath);
   assertContains(service, /createExpectedCreditNoteInTransaction/);
   assertContains(service, /type === 'supplier_credit_note_expected'/);
   assertContains(service, /expected_credit_note_id/);
   assertContains(service, /applied_credit_note_total_ex_vat/);
   assertContains(service, /net_invoice_total_ex_vat/);
   assertContains(service, /currentStatus !== 'avoir_attendu'/);
+  assertContains(expectedService, /loadPennylaneDocumentsLinkedToPurchase/);
+  assertContains(expectedService, /recalculateSourceInvoiceAfterCreditNote/);
+  assertContains(expectedService, /supplier_control_status NOT IN \('litige', 'reconciliation_required'\)/);
+}
+
+function testSafeReconcileScript() {
+  const script = read(reconcileScriptPath);
+  assertContains(script, /--store-id/);
+  assertContains(script, /--apply/);
+  assertContains(script, /dry_run: !apply/);
+  assertContains(script, /existing_document_id IS NOT NULL OR document_count > 0/);
+  assertContains(script, /source_pennylane_supplier_invoice_id IS NULL/);
+  assertContains(script, /Number\(row\.document_count\) !== 1/);
+  assertContains(script, /recalculateSourceInvoiceAfterCreditNote/);
+  assertNotContains(script, /payment_status\s*=/i);
+  assertNotContains(script, /stock_movements|stock_lots|purchase_lines/i);
 }
 
 function testUiIntegration() {
@@ -432,7 +579,7 @@ function testUiIntegration() {
   const purchaseJs = read(purchaseJsPath);
   assertContains(supplierHtml, /expected-credit-note-section/);
   assertContains(supplierHtml, /credit-note-match-section/);
-  assertContains(supplierHtml, /supplier-control\.js\?v=2/);
+  assertContains(supplierHtml, /supplier-control\.js\?v=3/);
   assertContains(supplierJs, /expected_credit_notes/);
   assertContains(supplierJs, /\/api\/supplier-control\/credit-notes\/.+\/match-candidates/);
   assertContains(supplierJs, /\/api\/supplier-control\/credit-notes\/.+\/apply-match/);
@@ -461,6 +608,10 @@ function testNoForbiddenSideEffects() {
 (async () => {
   testContractConstants();
   await testCreateExpectedCreditNoteFromPurchase();
+  await testExpectedCreditNoteFromLinkedPurchaseAttachesAndRecalculatesInvoice();
+  await testExpectedCreditNoteFromLinkedPurchaseKeepsPennylaneToBePaid();
+  await testExpectedCreditNoteFromLinkedPurchaseKeepsPaidVisible();
+  await testExpectedCreditNoteFromAmbiguousLinkedPurchaseDoesNotPickInvoice();
   await testIdempotentRetry();
   await testValidations();
   await testApplyCreditNoteMatchCommitsAndRecalculatesSources();
@@ -468,6 +619,7 @@ function testNoForbiddenSideEffects() {
   testMigrationSchema();
   testCanonicalRoutesAndPermissions();
   testSupplierControlIntegration();
+  testSafeReconcileScript();
   testUiIntegration();
   testNoForbiddenSideEffects();
   console.log('OK supplier expected credit notes tests');

@@ -78,14 +78,14 @@ function isPaidStatus(paymentStatus, paid) {
 }
 
 function canonicalSupplierControlStatus(document = {}) {
-  if (isPaidStatus(document.payment_status, document.paid)) return 'paye';
-
   const paymentStatus = clean(document.payment_status)?.toLowerCase();
   const altaStatus = clean(document.alta_business_status)?.toLowerCase();
   const current = clean(document.supplier_control_status)?.toLowerCase();
 
   if (current === 'reconciliation_required') return current;
-  if (paymentStatus === 'to_be_paid') return 'valide_a_payer';
+  if (current === 'avoir_attendu') return current;
+  if (isPaidStatus(document.payment_status, document.paid)) return 'paye';
+  if (paymentStatus === 'to_be_paid') return current === 'valide_a_payer' ? current : 'valide_a_payer';
   if (current && FINAL_CONTROL_STATUSES.has(current)) return current;
   if (['litige', 'refusee'].includes(altaStatus)) return 'litige';
   if (altaStatus === 'validee_a_payer') return 'valide_a_payer';
@@ -201,8 +201,12 @@ function buildValidationSummary(document, totals, controlStatus = canonicalSuppl
   const acceptedDifference = Boolean(options.acceptedDifference);
 
   if (document.pennylane_deleted_at) blockingReasons.push('document_supprime_pennylane');
-  if (status === 'paye') blockingReasons.push('document_deja_paye', 'already_paid');
-  if (status === 'valide_a_payer') blockingReasons.push('already_validated');
+  if (status === 'paye' || isPaidStatus(document.payment_status, document.paid)) {
+    blockingReasons.push('document_deja_paye', 'already_paid');
+  }
+  if (status === 'valide_a_payer' || clean(document.payment_status)?.toLowerCase() === 'to_be_paid') {
+    blockingReasons.push('already_validated');
+  }
   if (status === 'litige') blockingReasons.push('document_en_litige');
   if (status === 'avoir_attendu') blockingReasons.push('avoir_fournisseur_attendu');
   if (status === 'reconciliation_required') blockingReasons.push('validation_reconciliation_required');

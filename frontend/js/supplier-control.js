@@ -351,6 +351,12 @@ function renderDetail() {
 function renderReadonlyNote(status, doc) {
   let message = "";
   if (!canMutate()) message = "Lecture seule : les actions de controle sont reservees aux administrateurs et responsables.";
+  if (status === "avoir_attendu" && doc.payment_status === "to_be_paid") {
+    message = "Facture deja validee a payer dans Pennylane avant la creation de l'attente d'avoir.";
+  }
+  if (status === "avoir_attendu" && (doc.paid === true || doc.payment_status === "paid")) {
+    message = "Facture deja payee dans Pennylane avant la creation de l'attente d'avoir.";
+  }
   if (status === "paye") message = "Document paye dans Pennylane. Le controle est en lecture seule.";
   if (status === "valide_a_payer") message = "Facture validee a payer dans Pennylane. Le controle est verrouille.";
   if (status === "reconciliation_required") {
