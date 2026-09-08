@@ -7,12 +7,13 @@ const CANONICAL_SUPPLIER_CONTROL_STATUSES = new Set([
   'valide_a_payer',
   'paye',
   'litige',
+  'reconciliation_required',
 ]);
 
 const DOCUMENT_TYPES = new Set(['invoice', 'credit_note']);
 const MATCHABLE_PURCHASE_STATUSES = ['received', 'received_pending_invoice', 'invoice_difference', 'invoice_matched'];
-const FINAL_CONTROL_STATUSES = new Set(['paye', 'valide_a_payer', 'litige', 'avoir_attendu']);
-const LINK_EDIT_LOCKED_CONTROL_STATUSES = new Set(['valide_a_payer', 'paye', 'litige', 'avoir_attendu']);
+const FINAL_CONTROL_STATUSES = new Set(['paye', 'valide_a_payer', 'litige', 'avoir_attendu', 'reconciliation_required']);
+const LINK_EDIT_LOCKED_CONTROL_STATUSES = new Set(['valide_a_payer', 'paye', 'litige', 'avoir_attendu', 'reconciliation_required']);
 const DIFFERENCE_RESOLUTION_TYPES = new Set(['accepted_difference', 'supplier_credit_note_expected', 'dispute']);
 const DEFAULT_MATCH_DATE_WINDOW_DAYS = 21;
 const MAX_MATCH_CANDIDATES = 30;
@@ -21,7 +22,7 @@ const MAX_COMBINATIONS = 800;
 const DEFAULT_AMOUNT_TOLERANCE = 1;
 const DEFAULT_AMOUNT_RATIO_TOLERANCE = 0.005;
 const VALIDATION_FINAL_STATUSES = new Set(['valide_a_payer', 'paye']);
-const VALIDATION_BLOCKED_FINAL_STATUSES = new Set(['litige', 'avoir_attendu']);
+const VALIDATION_BLOCKED_FINAL_STATUSES = new Set(['litige', 'avoir_attendu', 'reconciliation_required']);
 
 const {
   fetchSupplierInvoicePaymentStatusFromPennylane,
@@ -73,6 +74,7 @@ function canonicalSupplierControlStatus(document = {}) {
   const altaStatus = clean(document.alta_business_status)?.toLowerCase();
   const current = clean(document.supplier_control_status)?.toLowerCase();
 
+  if (current === 'reconciliation_required') return current;
   if (paymentStatus === 'to_be_paid') return 'valide_a_payer';
   if (current && FINAL_CONTROL_STATUSES.has(current)) return current;
   if (['litige', 'refusee'].includes(altaStatus)) return 'litige';
@@ -193,6 +195,7 @@ function buildValidationSummary(document, totals, controlStatus = canonicalSuppl
   if (status === 'valide_a_payer') blockingReasons.push('already_validated');
   if (status === 'litige') blockingReasons.push('document_en_litige');
   if (status === 'avoir_attendu') blockingReasons.push('avoir_fournisseur_attendu');
+  if (status === 'reconciliation_required') blockingReasons.push('validation_reconciliation_required');
   if (!document.supplier_id) blockingReasons.push('fournisseur_inconnu');
   if (totals.linked_purchase_count <= 0) blockingReasons.push('aucun_bl_rapproche');
   if (!acceptedDifference && Math.abs(totals.difference_total) > amountTolerance(totals.invoice_total)) {
@@ -652,7 +655,11 @@ async function validateSupplierControlDocument(db, {
         payload: safeValidationPayload({
           supplier_control_status: storedCanonicalStatus,
           payment_status: document.payment_status,
-          blocking_reasons: [storedCanonicalStatus === 'litige' ? 'document_en_litige' : 'avoir_fournisseur_attendu'],
+          blocking_reasons: [storedCanonicalStatus === 'litige'
+            ? 'document_en_litige'
+            : (storedCanonicalStatus === 'avoir_attendu'
+              ? 'avoir_fournisseur_attendu'
+              : 'validation_reconciliation_required')],
           match_signature: currentSignature.match_signature,
           amount_difference: currentSignature.amount_difference,
           purchase_ids: currentSignature.purchase_ids,
@@ -861,6 +868,78 @@ async function validateSupplierControlDocument(db, {
       await finalClient.query('ROLLBACK');
       return null;
     }
+    if (canonicalSupplierControlStatus(document) === 'paye') {
+      const currentLinks = await loadActiveLinks(finalClient, { storeId, documentId });
+      const currentTotals = totalsFromDocumentAndLinks(document, currentLinks);
+      const already = await finalizeAlreadyAppliedValidation(finalClient, {
+        storeId,
+        document,
+        links: currentLinks,
+        totals: currentTotals,
+        userId,
+        comment,
+      });
+      await finalClient.query('COMMIT');
+      return already;
+    }
+
+    const currentLinks = await loadActiveLinks(finalClient, { storeId, documentId });
+    const currentTotals = totalsFromDocumentAndLinks(document, currentLinks);
+    const currentSignature = supplierControlMatchSignature(document, currentLinks, currentTotals);
+    const currentEvents = await loadEvents(finalClient, { storeId, documentId, limit: 100 });
+    const currentAcceptedDifference = hasDifferenceAccepted(currentEvents, document, currentLinks, currentTotals);
+    const currentStatus = statusFromTotals(document, currentTotals);
+    const currentSummary = buildValidationSummary(document, currentTotals, currentStatus, {
+      acceptedDifference: currentAcceptedDifference,
+    });
+    if (currentSignature.match_signature !== context.currentSignature.match_signature || !currentSummary.can_validate) {
+      await finalClient.query(
+        `
+        UPDATE pennylane_supplier_invoices
+        SET payment_status = $1,
+            supplier_control_status = $2,
+            updated_at = now()
+        WHERE id = $3
+          AND store_id = $4
+        `,
+        ['to_be_paid', 'reconciliation_required', document.id, storeId]
+      );
+      document.payment_status = 'to_be_paid';
+      document.supplier_control_status = 'reconciliation_required';
+      const blockingReasons = currentSignature.match_signature !== context.currentSignature.match_signature
+        ? [...new Set([...currentSummary.blocking_reasons, 'validation_signature_changed'])]
+        : currentSummary.blocking_reasons;
+      await insertEvent(finalClient, {
+        storeId,
+        documentId: document.id,
+        eventType: 'validation_reconciliation_required',
+        eventKey: `validation_reconciliation_required:${context.currentSignature.match_signature}:${currentSignature.match_signature}`,
+        payload: safeValidationPayload({
+          supplier_control_status: 'reconciliation_required',
+          payment_status: 'to_be_paid',
+          blocking_reasons: blockingReasons,
+          match_signature: currentSignature.match_signature,
+          amount_difference: currentSignature.amount_difference,
+          purchase_ids: currentSignature.purchase_ids,
+          comment,
+        }),
+        userId,
+      });
+      const reconciliationSummary = buildValidationSummary(document, currentTotals, 'reconciliation_required', {
+        acceptedDifference: currentAcceptedDifference,
+      });
+      await finalClient.query('COMMIT');
+      throw supplierControlError(
+        'Validation Pennylane appliquee mais rapprochement ALTA modifie avant finalisation',
+        409,
+        'SUPPLIER_CONTROL_VALIDATION_RECONCILIATION_REQUIRED',
+        {
+          previous_match_signature: context.currentSignature.match_signature,
+          current_match_signature: currentSignature.match_signature,
+          summary: reconciliationSummary,
+        }
+      );
+    }
     await finalClient.query(
       `
       UPDATE pennylane_supplier_invoices
@@ -878,19 +957,19 @@ async function validateSupplierControlDocument(db, {
       storeId,
       documentId: document.id,
       eventType: 'validation_succeeded',
-      eventKey: `validation_succeeded:${context.currentSignature.match_signature}`,
+      eventKey: `validation_succeeded:${currentSignature.match_signature}`,
       payload: safeValidationPayload({
         supplier_control_status: 'valide_a_payer',
         payment_status: 'to_be_paid',
-        match_signature: context.currentSignature.match_signature,
-        amount_difference: context.currentSignature.amount_difference,
-        purchase_ids: context.currentSignature.purchase_ids,
+        match_signature: currentSignature.match_signature,
+        amount_difference: currentSignature.amount_difference,
+        purchase_ids: currentSignature.purchase_ids,
         comment,
       }),
       userId,
     });
-    const summary = buildValidationSummary(document, context.totals, 'valide_a_payer', {
-      acceptedDifference: context.summary.accepted_difference,
+    const summary = buildValidationSummary(document, currentTotals, 'valide_a_payer', {
+      acceptedDifference: currentAcceptedDifference,
     });
     await finalClient.query('COMMIT');
     return {

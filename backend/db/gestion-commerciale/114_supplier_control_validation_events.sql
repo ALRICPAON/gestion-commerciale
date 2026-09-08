@@ -14,6 +14,7 @@ ALTER TABLE supplier_control_events
       'validation_succeeded',
       'validation_failed',
       'validation_already_applied',
+      'validation_reconciliation_required',
       'difference',
       'difference_detected',
       'difference_accepted',

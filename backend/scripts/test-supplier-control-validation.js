@@ -16,6 +16,7 @@ const servicePath = path.join(__dirname, '../services/supplierControlService.js'
 const routePath = path.join(__dirname, '../routes/supplierControl.js');
 const pennylaneStatusSyncPath = path.join(__dirname, '../services/pennylane/supplierInvoiceStatusSync.js');
 const migrationPath = path.join(__dirname, '../db/gestion-commerciale/114_supplier_control_validation_events.sql');
+const reconciliationMigrationPath = path.join(__dirname, '../db/gestion-commerciale/115_supplier_control_reconciliation_status.sql');
 
 const ids = {
   store: '00000000-0000-4000-8000-000000000001',
@@ -172,6 +173,16 @@ async function assertRejectsWithCode(code, fn) {
     assert.strictEqual(error.code, code);
   }
   assert.strictEqual(rejected, true, `Expected rejection ${code}`);
+}
+
+async function captureRejectsWithCode(code, fn) {
+  try {
+    await fn();
+  } catch (error) {
+    assert.strictEqual(error.code, code);
+    return error;
+  }
+  assert.fail(`Expected rejection ${code}`);
 }
 
 function acceptedDifferenceEvent(doc, links) {
@@ -442,6 +453,101 @@ async function testPennylaneFailureDoesNotValidateAlta() {
   assert.ok(db.state.events.some((event) => event.event_type === 'validation_failed'));
 }
 
+async function testFinalizationDetectsLinkChangeAfterPennylaneSuccess() {
+  const db = createMockDb({
+    purchases: [
+      purchase({ id: ids.purchase1, total_amount_ex_vat: 100, purchase_lines_total_ex_vat: 100 }),
+      purchase({ id: ids.purchase2, total_amount_ex_vat: 100, purchase_lines_total_ex_vat: 100 }),
+    ],
+  });
+  let syncCalls = 0;
+  const error = await captureRejectsWithCode('SUPPLIER_CONTROL_VALIDATION_RECONCILIATION_REQUIRED', () => validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    syncPennylaneStatus: async () => {
+      syncCalls += 1;
+      db.state.links.push(link({
+        id: 'link-after-sync',
+        purchase: purchase({ id: ids.purchase2, total_amount_ex_vat: 100, purchase_lines_total_ex_vat: 100 }),
+      }));
+      return { ok: true, payment_status: 'to_be_paid' };
+    },
+  }));
+  assert.strictEqual(syncCalls, 1);
+  assert.strictEqual(db.state.doc.payment_status, 'to_be_paid');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'reconciliation_required');
+  assert.ok(error.details.summary.blocking_reasons.includes('validation_reconciliation_required'));
+  assert.ok(db.state.events.some((event) => event.event_type === 'validation_reconciliation_required'));
+}
+
+async function testFinalizationDetectsPurchaseTotalChangeAfterPennylaneSuccess() {
+  const db = createMockDb();
+  await captureRejectsWithCode('SUPPLIER_CONTROL_VALIDATION_RECONCILIATION_REQUIRED', () => validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    syncPennylaneStatus: async () => {
+      db.state.links[0].purchase_total_ex_vat = 80;
+      db.state.links[0].purchase_lines_total_ex_vat = 80;
+      db.state.purchases[0].total_amount_ex_vat = 80;
+      db.state.purchases[0].purchase_lines_total_ex_vat = 80;
+      return { ok: true, payment_status: 'to_be_paid' };
+    },
+  }));
+  assert.strictEqual(db.state.doc.payment_status, 'to_be_paid');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'reconciliation_required');
+}
+
+async function testFinalizationDetectsLinkRemovalAfterPennylaneSuccess() {
+  const db = createMockDb();
+  await captureRejectsWithCode('SUPPLIER_CONTROL_VALIDATION_RECONCILIATION_REQUIRED', () => validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    syncPennylaneStatus: async () => {
+      db.state.links[0].match_status = 'removed';
+      return { ok: true, payment_status: 'to_be_paid' };
+    },
+  }));
+  assert.strictEqual(db.state.doc.payment_status, 'to_be_paid');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'reconciliation_required');
+}
+
+async function testUnchangedSignatureStillFinalizesNormally() {
+  const db = createMockDb();
+  const result = await validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    syncPennylaneStatus: async () => ({ ok: true, payment_status: 'to_be_paid' }),
+  });
+  assert.strictEqual(result.validation.status, 'succeeded');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'valide_a_payer');
+  assert.ok(!db.state.events.some((event) => event.event_type === 'validation_reconciliation_required'));
+}
+
+async function testPaidDuringFinalizationIsNeverDowngraded() {
+  const db = createMockDb();
+  let syncCalls = 0;
+  const result = await validateSupplierControlDocument(db, {
+    storeId: ids.store,
+    documentId: ids.doc,
+    confirmation: true,
+    syncPennylaneStatus: async () => {
+      syncCalls += 1;
+      db.state.doc.payment_status = 'paid';
+      db.state.doc.paid = true;
+      db.state.doc.supplier_control_status = 'a_controler';
+      return { ok: true, payment_status: 'to_be_paid' };
+    },
+  });
+  assert.strictEqual(syncCalls, 1);
+  assert.strictEqual(result.document.supplier_control_status, 'paye');
+  assert.strictEqual(db.state.doc.payment_status, 'paid');
+  assert.strictEqual(db.state.doc.supplier_control_status, 'paye');
+}
+
 async function testPaidInboundSyncAndLocks() {
   const db = createMockDb({ doc: document({ payment_status: 'paid', supplier_control_status: 'a_controler' }) });
   const summary = await recalculateSupplierControl(db, { storeId: ids.store, documentId: ids.doc });
@@ -464,6 +570,7 @@ function testStaticGuards() {
   const service = read(servicePath);
   const statusSync = read(pennylaneStatusSyncPath);
   const migration = read(migrationPath);
+  const reconciliationMigration = read(reconciliationMigrationPath);
 
   assert.match(route, /router\.post\('\/supplier-control\/documents\/:id\/validate'/);
   assert.match(route, /validateSupplierControlDocument/);
@@ -472,9 +579,10 @@ function testStaticGuards() {
   assert.match(statusSync, /client\.put\(endpoint, \{ payment_status: VALIDATED_PAYMENT_STATUS \}\)/);
   assert.ok(!/client\.(post|delete)\(/i.test(statusSync), 'Validation status sync must not create or delete Pennylane invoices');
   assert.ok(!/invoice_lines|supplier_invoice_lines/i.test(statusSync), 'Validation status sync must not mutate invoice content');
-  for (const eventType of ['validation_requested', 'validation_succeeded', 'validation_failed', 'validation_already_applied']) {
+  for (const eventType of ['validation_requested', 'validation_succeeded', 'validation_failed', 'validation_already_applied', 'validation_reconciliation_required']) {
     assert.match(migration, new RegExp(eventType));
   }
+  assert.match(reconciliationMigration, /reconciliation_required/);
 }
 
 (async () => {
@@ -489,6 +597,11 @@ function testStaticGuards() {
   await testOrphanedRequestedRecoveredFromRemotePaidWithoutDowngrade();
   await testLostResponseAfterRemoteSuccessIsRecoveredOnRetry();
   await testPennylaneFailureDoesNotValidateAlta();
+  await testFinalizationDetectsLinkChangeAfterPennylaneSuccess();
+  await testFinalizationDetectsPurchaseTotalChangeAfterPennylaneSuccess();
+  await testFinalizationDetectsLinkRemovalAfterPennylaneSuccess();
+  await testUnchangedSignatureStillFinalizesNormally();
+  await testPaidDuringFinalizationIsNeverDowngraded();
   await testPaidInboundSyncAndLocks();
   testStaticGuards();
   console.log('OK supplier control validation tests');
