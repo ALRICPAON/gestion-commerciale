@@ -26,6 +26,7 @@ const currentDepartmentNameEl = document.getElementById("current-department-name
 const savePurchaseBtn = document.getElementById("save-purchase-btn");
 const validateReceptionBtn = document.getElementById("validate-reception-btn");
 const addLineBtn = document.getElementById("add-line-btn");
+const openExpectedCreditNoteModalBtn = document.getElementById("open-expected-credit-note-modal-btn");
 
 const openQrModalBtn = document.getElementById("open-qr-modal-btn");
 const qrModal = document.getElementById("qr-modal");
@@ -51,6 +52,8 @@ const purchaseBlNumberInput = document.getElementById("purchase-bl-number");
 const purchaseInvoiceNumberInput = document.getElementById("purchase-invoice-number");
 const purchaseNotesInput = document.getElementById("purchase-notes");
 const purchaseTotalHTEl = document.getElementById("purchase-total-ht");
+const purchaseExpectedCreditNotesCard = document.getElementById("purchase-expected-credit-notes-card");
+const purchaseExpectedCreditNotesList = document.getElementById("purchase-expected-credit-notes-list");
 const MANUAL_HEADER_STATUSES = ["ordered", "cancelled"];
 const SYSTEM_STATUSES = ["received", "received_pending_invoice", "closed"];
 
@@ -91,6 +94,18 @@ const qualityControlCorrectiveComment = document.getElementById("quality-control
 const cancelQualityControlBtn = document.getElementById("cancel-quality-control-btn");
 const confirmQualityControlBtn = document.getElementById("confirm-quality-control-btn");
 
+const expectedCreditNoteModal = document.getElementById("expected-credit-note-modal");
+const closeExpectedCreditNoteModalBtn = document.getElementById("close-expected-credit-note-modal-btn");
+const expectedCreditNoteContext = document.getElementById("expected-credit-note-context");
+const expectedCreditNoteFeedback = document.getElementById("expected-credit-note-feedback");
+const expectedCreditNoteReason = document.getElementById("expected-credit-note-reason");
+const expectedCreditNoteAmount = document.getElementById("expected-credit-note-amount");
+const expectedCreditNoteLine = document.getElementById("expected-credit-note-line");
+const expectedCreditNoteQuantity = document.getElementById("expected-credit-note-quantity");
+const expectedCreditNoteUnit = document.getElementById("expected-credit-note-unit");
+const expectedCreditNoteComment = document.getElementById("expected-credit-note-comment");
+const createExpectedCreditNoteBtn = document.getElementById("create-expected-credit-note-btn");
+
 const sheetLinePluInput = document.getElementById("sheet-line-plu");
 const sheetLineArticleInput = document.getElementById("sheet-line-article");
 const sheetLineDlcInput = document.getElementById("sheet-line-dlc");
@@ -111,12 +126,14 @@ const sheetLinePhotoGallery = document.getElementById("sheet-line-photo-gallery"
 
 let purchase = null;
 let lines = [];
+let expectedCreditNotes = [];
 let suppliers = [];
 let articleModalItems = [];
 let currentEditingLineId = null;
 let currentSheetLineId = null;
 let currentSheetLinePhotoUrlsRaw = '[]';
 let resolveQualityControlModal = null;
+let expectedCreditNoteRequestId = null;
 
 function getUserDepartments() {
   return Array.isArray(sessionUser.departments) ? sessionUser.departments : [];
@@ -506,6 +523,22 @@ function formatCurrency(value) {
   });
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function formatDateForDisplay(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return date.toLocaleDateString("fr-FR");
+}
+
 function renderTopbar() {
   if (userNameEl) {
     userNameEl.textContent = sessionUser.email || "Utilisateur";
@@ -557,11 +590,16 @@ async function loadPurchase() {
   clearFeedback(purchaseHeaderFeedback);
   clearFeedback(purchaseLinesFeedback);
 
-  const data = await apiFetch(`/api/purchases/${purchaseId}`);
+  const [data, expectedData] = await Promise.all([
+    apiFetch(`/api/purchases/${purchaseId}`),
+    apiFetch(`/api/supplier-control/purchases/${purchaseId}/expected-credit-notes`).catch(() => ({ expected_credit_notes: [] })),
+  ]);
   purchase = data.purchase;
   lines = Array.isArray(data.lines) ? data.lines : [];
+  expectedCreditNotes = Array.isArray(expectedData.expected_credit_notes) ? expectedData.expected_credit_notes : [];
 
   renderPurchaseHeader();
+  renderExpectedCreditNotes();
   renderLinesTable();
   refreshDisplayedPurchaseTotal();
 }
@@ -582,6 +620,115 @@ function renderPurchaseHeader() {
   }
 
   syncHeaderStatusUi();
+}
+
+function expectedCreditNoteReasonLabel(reason) {
+  return {
+    price_error: "Erreur de prix",
+    quality_issue: "Probleme qualite",
+    quantity_issue: "Ecart de quantite",
+    missing_goods: "Marchandise manquante",
+    supplier_return: "Retour fournisseur",
+    other: "Autre",
+  }[reason] || reason || "Avoir attendu";
+}
+
+function expectedCreditNoteStatusLabel(status) {
+  return {
+    pending: "En attente",
+    matched: "Avoir recu",
+    resolved: "Solde",
+    cancelled: "Annule",
+    disputed: "Litige",
+  }[status] || status || "En attente";
+}
+
+function renderExpectedCreditNotes() {
+  if (!purchaseExpectedCreditNotesCard || !purchaseExpectedCreditNotesList) return;
+  purchaseExpectedCreditNotesCard.classList.toggle("hidden", expectedCreditNotes.length === 0);
+  if (!expectedCreditNotes.length) {
+    purchaseExpectedCreditNotesList.innerHTML = "";
+    return;
+  }
+  const totalExpected = expectedCreditNotes
+    .filter((item) => item.status !== "cancelled")
+    .reduce((sum, item) => sum + Number(item.expected_amount_ex_vat || 0), 0);
+  const totalReceived = expectedCreditNotes
+    .filter((item) => item.status !== "cancelled")
+    .reduce((sum, item) => sum + Number(item.received_amount_ex_vat || 0), 0);
+  const grossTotal = Number(purchase?.total_amount_ex_vat || 0);
+  purchaseExpectedCreditNotesList.innerHTML = `
+    <div class="expected-credit-note-summary">
+      <span>Montant brut BL : <strong>${formatCurrency(grossTotal)}</strong></span>
+      <span>Avoirs attendus : <strong>${formatCurrency(totalExpected)}</strong></span>
+      <span>Avoirs recus : <strong>-${formatCurrency(totalReceived)}</strong></span>
+      <span>Valeur nette achat : <strong>${formatCurrency(grossTotal - totalReceived)}</strong></span>
+    </div>
+    ${expectedCreditNotes.map((item) => `
+      <div class="expected-credit-note-row">
+        <div>
+          <strong>${escapeHtml(expectedCreditNoteReasonLabel(item.reason_type))}</strong>
+          <span>${escapeHtml(expectedCreditNoteStatusLabel(item.status))} - attendu ${formatCurrency(item.expected_amount_ex_vat)} - recu ${formatCurrency(item.received_amount_ex_vat)}</span>
+        </div>
+        <p>${escapeHtml(item.reason_comment || "")}</p>
+      </div>
+    `).join("")}
+  `;
+}
+
+function openExpectedCreditNoteModal() {
+  if (!purchase?.supplier_id) {
+    showFeedback(purchaseHeaderFeedback, "Fournisseur obligatoire pour prevoir un avoir", true);
+    return;
+  }
+  expectedCreditNoteRequestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  expectedCreditNoteContext.textContent = `${purchase.supplier_name || "Fournisseur"} - BL ${purchase.bl_number || "-"} - ${formatDateForDisplay(purchase.receipt_date || purchase.purchase_date || purchase.order_date)}`;
+  expectedCreditNoteReason.value = "price_error";
+  expectedCreditNoteAmount.value = "";
+  expectedCreditNoteQuantity.value = "";
+  expectedCreditNoteUnit.value = "";
+  expectedCreditNoteComment.value = "";
+  expectedCreditNoteLine.innerHTML = `<option value="">Aucun article specifique</option>` + lines.map((line) => `
+    <option value="${escapeHtml(line.id)}">${escapeHtml(line.article_name || line.supplier_label || line.article_plu || "Ligne achat")}</option>
+  `).join("");
+  clearFeedback(expectedCreditNoteFeedback);
+  expectedCreditNoteModal?.classList.remove("hidden");
+}
+
+function closeExpectedCreditNoteModal() {
+  expectedCreditNoteModal?.classList.add("hidden");
+}
+
+async function createExpectedCreditNoteFromPurchase() {
+  clearFeedback(expectedCreditNoteFeedback);
+  const selectedLine = lines.find((line) => String(line.id) === String(expectedCreditNoteLine.value));
+  const payload = {
+    source_purchase_id: purchaseId,
+    source_purchase_line_id: expectedCreditNoteLine.value || null,
+    supplier_id: purchase?.supplier_id,
+    expected_amount_ex_vat: expectedCreditNoteAmount.value,
+    reason_type: expectedCreditNoteReason.value,
+    reason_comment: expectedCreditNoteComment.value,
+    affected_quantity: expectedCreditNoteQuantity.value || null,
+    affected_unit: expectedCreditNoteUnit.value || selectedLine?.price_unit || null,
+    idempotency_key: expectedCreditNoteRequestId,
+  };
+  createExpectedCreditNoteBtn.disabled = true;
+  try {
+    await apiFetch("/api/supplier-control/expected-credit-notes", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const expectedData = await apiFetch(`/api/supplier-control/purchases/${purchaseId}/expected-credit-notes`);
+    expectedCreditNotes = Array.isArray(expectedData.expected_credit_notes) ? expectedData.expected_credit_notes : [];
+    renderExpectedCreditNotes();
+    closeExpectedCreditNoteModal();
+    showFeedback(purchaseHeaderFeedback, "Avoir fournisseur attendu cree");
+  } catch (error) {
+    showFeedback(expectedCreditNoteFeedback, error.message || "Erreur creation avoir attendu", true);
+  } finally {
+    createExpectedCreditNoteBtn.disabled = false;
+  }
 }
 
 function getPhotoBlMobileUrl() {
@@ -1559,6 +1706,26 @@ if (purchaseLinesTableBody) {
 
 if (openQrModalBtn) {
   openQrModalBtn.addEventListener("click", openQrModal);
+}
+
+if (openExpectedCreditNoteModalBtn) {
+  openExpectedCreditNoteModalBtn.addEventListener("click", openExpectedCreditNoteModal);
+}
+
+if (closeExpectedCreditNoteModalBtn) {
+  closeExpectedCreditNoteModalBtn.addEventListener("click", closeExpectedCreditNoteModal);
+}
+
+if (createExpectedCreditNoteBtn) {
+  createExpectedCreditNoteBtn.addEventListener("click", createExpectedCreditNoteFromPurchase);
+}
+
+if (expectedCreditNoteModal) {
+  expectedCreditNoteModal.addEventListener("click", (event) => {
+    if (event.target === expectedCreditNoteModal) {
+      closeExpectedCreditNoteModal();
+    }
+  });
 }
 
 if (closeQrModalBtn) {

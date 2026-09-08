@@ -159,6 +159,10 @@ function createMockDb({
       return { rows: purchaseLines };
     }
 
+    if (/SELECT id FROM suppliers/i.test(sql)) {
+      return { rows: [{ id: params[0], store_id: params[1] }] };
+    }
+
     if (/FROM purchases p/i.test(sql) && /GROUP BY p\.id/i.test(sql)) {
       return {
         rows: state.purchases
@@ -217,6 +221,23 @@ function createMockDb({
         });
       }
       return { rows: [] };
+    }
+
+    if (/INSERT INTO supplier_expected_credit_notes/i.test(sql)) {
+      return {
+        rows: [{
+          id: 'expected-credit-note-id',
+          store_id: params[0],
+          supplier_id: params[1],
+          source_purchase_id: params[2],
+          source_purchase_line_id: params[3],
+          source_pennylane_supplier_invoice_id: params[4],
+          expected_amount_ex_vat: params[5],
+          reason_type: params[6],
+          reason_comment: params[7],
+          status: 'pending',
+        }],
+      };
     }
 
     if (/UPDATE pennylane_supplier_invoices/i.test(sql) && /supplier_control_status/i.test(sql)) {

@@ -321,6 +321,7 @@
 .summary-cell,
 .proposal,
 .candidate-row,
+.expected-credit-note,
 .event-row,
 .linked-purchase {
   border: 1px solid #eef2f7;
@@ -332,6 +333,7 @@
 .linked-purchase span,
 .candidate-row span,
 .proposal span,
+.expected-credit-note span,
 .event-row span {
   color: var(--alta-muted);
   display: block;
@@ -341,6 +343,7 @@
 .summary-cell strong,
 .linked-purchase strong,
 .candidate-row strong,
+.expected-credit-note strong,
 .proposal strong {
   font-variant-numeric: tabular-nums;
 }
@@ -348,9 +351,22 @@
 .linked-purchases,
 .proposals-list,
 .candidates-list,
+.expected-credit-note-list,
 .events-list {
   display: grid;
   gap: 8px;
+}
+
+.expected-credit-note-main {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.expected-credit-note p {
+  color: var(--alta-text);
+  margin: 8px 0 0;
 }
 
 .linked-purchase,

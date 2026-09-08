@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Détail achat - Gestion Commerciale</title>
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/purchase-detail.css?v=4" />
+  <link rel="stylesheet" href="./css/pages/purchase-detail.css?v=5" />
   <link rel="stylesheet" href="./css/pages/sanitary-sheet.css?v=5">
 </head>
 <body class="app-page purchase-detail-page">
@@ -45,6 +45,7 @@
   <button id="save-purchase-btn" class="btn btn-primary">💾 Enregistrer</button>
   <button id="validate-reception-btn" class="btn btn-primary">✅ Valider réception</button>
   <button id="add-line-btn" class="btn btn-secondary">➕ Ajouter ligne</button>
+  <button id="open-expected-credit-note-modal-btn" class="btn btn-secondary">Prévoir un avoir</button>
   <button id="open-qr-modal-btn" class="btn btn-secondary">📱 Générer QR photo BL</button>
 </div>
       </div>
@@ -151,6 +152,16 @@
         </table>
       </div>
     </section>
+
+    <section id="purchase-expected-credit-notes-card" class="card hidden">
+      <div class="page-actions">
+        <div>
+          <h3>Avoirs fournisseurs attendus</h3>
+          <p class="helper-text">Suivi financier separe du BL et du stock.</p>
+        </div>
+      </div>
+      <div id="purchase-expected-credit-notes-list" class="expected-credit-notes-list"></div>
+    </section>
   </main>
 
   <div id="supplier-modal" class="modal-overlay hidden">
@@ -181,6 +192,58 @@
           </thead>
           <tbody id="supplier-modal-table-body"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="expected-credit-note-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3>Prevoir un avoir fournisseur</h3>
+          <p id="expected-credit-note-context">BL fournisseur</p>
+        </div>
+        <button type="button" id="close-expected-credit-note-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="expected-credit-note-feedback" class="page-feedback hidden"></div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="expected-credit-note-reason">Motif *</label>
+          <select id="expected-credit-note-reason">
+            <option value="price_error">Erreur de prix</option>
+            <option value="quality_issue">Probleme qualite</option>
+            <option value="quantity_issue">Ecart de quantite</option>
+            <option value="missing_goods">Marchandise manquante</option>
+            <option value="supplier_return">Retour fournisseur</option>
+            <option value="other">Autre</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="expected-credit-note-amount">Montant HT attendu *</label>
+          <input id="expected-credit-note-amount" type="number" step="0.01" min="0" />
+        </div>
+        <div class="form-group form-group-span-2">
+          <label for="expected-credit-note-line">Article concerne</label>
+          <select id="expected-credit-note-line"></select>
+        </div>
+        <div class="form-group">
+          <label for="expected-credit-note-quantity">Quantite concernee</label>
+          <input id="expected-credit-note-quantity" type="number" step="0.001" min="0" />
+        </div>
+        <div class="form-group">
+          <label for="expected-credit-note-unit">Unite</label>
+          <input id="expected-credit-note-unit" type="text" placeholder="kg, pieces..." />
+        </div>
+        <div class="form-group form-group-span-2">
+          <label for="expected-credit-note-comment">Commentaire *</label>
+          <textarea id="expected-credit-note-comment" rows="4" placeholder="Motif accepte par le fournisseur"></textarea>
+        </div>
+      </div>
+
+      <div class="page-actions-right" style="margin-top:16px;">
+        <button type="button" id="create-expected-credit-note-btn" class="btn btn-primary">Creer l'attente</button>
       </div>
     </div>
   </div>
@@ -468,7 +531,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="./js/config.js"></script>
-<script src="./js/purchase-detail.js?v=10"></script>
+<script src="./js/purchase-detail.js?v=11"></script>
 <script src="./js/purchase-photo-gallery.js?v=1"></script>
 <script src="./js/purchase-reception-upgrade.js?v=2"></script>
 <script src="./js/whatsapp-business-documents.js?v=1"></script>
