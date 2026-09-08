@@ -33,6 +33,11 @@ const {
   fetchSupplierInvoicePaymentStatusFromPennylane,
   syncValidatedSupplierInvoiceStatusToPennylane,
 } = require('./pennylane/supplierInvoiceStatusSync');
+const {
+  appliedCreditNoteTotalForSourceDocument,
+  createExpectedCreditNoteInTransaction,
+  listExpectedCreditNotesForSourceDocument,
+} = require('./supplierExpectedCreditNoteService');
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -221,7 +226,10 @@ function buildValidationSummary(document, totals, controlStatus = canonicalSuppl
 
 function statusFromTotals(document, totals) {
   const currentStatus = canonicalSupplierControlStatus(document);
-  if (FINAL_CONTROL_STATUSES.has(currentStatus)) return currentStatus;
+  if (FINAL_CONTROL_STATUSES.has(currentStatus)) {
+    if (currentStatus !== 'avoir_attendu') return currentStatus;
+    if (!toNumber(totals.applied_credit_note_total_ex_vat)) return currentStatus;
+  }
   if (totals.linked_purchase_count <= 0) return 'a_rapprocher';
   if (Math.abs(totals.difference_total) <= amountTolerance(totals.invoice_total)) return 'conforme';
   return 'ecart';
@@ -378,6 +386,8 @@ async function loadPennylaneLines(client, { storeId, documentId }) {
 
 function totalsFromDocumentAndLinks(document, links) {
   const invoiceTotal = documentAmount(document);
+  const appliedCreditNotesTotal = round(document.applied_credit_note_total_ex_vat || 0);
+  const netInvoiceTotal = round(invoiceTotal - appliedCreditNotesTotal);
   const invoiceVat = documentVatAmount(document);
   const invoiceIncVat = documentIncVatAmount(document);
   const byPurchase = new Map();
@@ -392,10 +402,12 @@ function totalsFromDocumentAndLinks(document, links) {
   return {
     invoice_total: invoiceTotal,
     invoice_total_ex_vat: invoiceTotal,
+    applied_credit_note_total_ex_vat: appliedCreditNotesTotal,
+    net_invoice_total_ex_vat: netInvoiceTotal,
     matched_purchase_total: matchedPurchaseTotal,
     purchases_total_ex_vat: matchedPurchaseTotal,
-    difference_total: round(invoiceTotal - matchedPurchaseTotal, 4),
-    difference_ex_vat: round(invoiceTotal - matchedPurchaseTotal, 4),
+    difference_total: round(netInvoiceTotal - matchedPurchaseTotal, 4),
+    difference_ex_vat: round(netInvoiceTotal - matchedPurchaseTotal, 4),
     invoice_vat: Number.isFinite(invoiceVat) ? invoiceVat : null,
     purchases_vat: null,
     difference_vat: null,
@@ -995,6 +1007,7 @@ async function recalculateSupplierControl(client, { storeId, documentId, userId 
   if (!document) return null;
 
   const links = await loadActiveLinks(client, { storeId, documentId });
+  document.applied_credit_note_total_ex_vat = await appliedCreditNoteTotalForSourceDocument(client, { storeId, documentId });
   const totals = totalsFromDocumentAndLinks(document, links);
   const nextStatus = statusFromTotals(document, totals);
   const storedStatus = clean(document.supplier_control_status)?.toLowerCase() || null;
@@ -1244,12 +1257,15 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
   const document = await loadDocument(db, { storeId, documentId: pennylaneSupplierInvoiceId });
   if (!document) return null;
 
-  const [links, events, lines] = await Promise.all([
+  const [links, events, lines, expectedCreditNotes, appliedCreditNotesTotal] = await Promise.all([
     loadActiveLinks(db, { storeId, documentId: document.id }),
     loadEvents(db, { storeId, documentId: document.id }),
     loadPennylaneLines(db, { storeId, documentId: document.id }),
+    listExpectedCreditNotesForSourceDocument(db, { storeId, documentId: document.id }),
+    appliedCreditNoteTotalForSourceDocument(db, { storeId, documentId: document.id }),
   ]);
 
+  document.applied_credit_note_total_ex_vat = appliedCreditNotesTotal;
   const totals = totalsFromDocumentAndLinks(document, links);
   const purchaseIds = links.map((link) => link.purchase_id).filter(Boolean);
   const purchaseLines = await loadPurchaseLinesForPurchaseIds(db, { storeId, purchaseIds });
@@ -1268,6 +1284,7 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
     line_matching_available: lines.length > 0,
     lines,
     purchase_lines: purchaseLines,
+    expected_credit_notes: expectedCreditNotes,
     events,
     summary,
   };
@@ -1847,6 +1864,7 @@ async function resolveSupplierControlDifference(db, {
     const links = await loadActiveLinks(client, { storeId, documentId });
     const totals = totalsFromDocumentAndLinks(document, links);
     const currentSignature = supplierControlMatchSignature(document, links, totals);
+    let expectedCreditNote = null;
     const nextStatus = type === 'supplier_credit_note_expected'
       ? 'avoir_attendu'
       : (type === 'dispute' ? 'litige' : 'ecart');
@@ -1862,6 +1880,31 @@ async function resolveSupplierControlDifference(db, {
     if (type === 'accepted_difference') {
       resolutionPayload.purchase_ids = currentSignature.purchase_ids;
       resolutionPayload.match_signature = currentSignature.match_signature;
+    }
+    if (type === 'supplier_credit_note_expected') {
+      const firstPurchaseId = links
+        .filter((link) => link.purchase_supplier_id && String(link.purchase_supplier_id) === String(document.supplier_id))
+        .map((link) => clean(link.purchase_id))
+        .find(Boolean) || null;
+      const expectedAmount = expectedCreditNoteAmount === null
+        ? Math.abs(round(totals.difference_total, 4))
+        : round(expectedCreditNoteAmount, 4);
+      const created = await createExpectedCreditNoteInTransaction(client, {
+        storeId,
+        userId,
+        source: 'supplier_control_difference_resolution',
+        payload: {
+          supplier_id: document.supplier_id,
+          source_purchase_id: firstPurchaseId,
+          source_pennylane_supplier_invoice_id: document.id,
+          expected_amount_ex_vat: expectedAmount,
+          reason_type: 'price_error',
+          reason_comment: text,
+          idempotency_key: `supplier_control_difference:${document.id}:${currentSignature.match_signature}:${expectedAmount}`,
+        },
+      });
+      expectedCreditNote = created.expected_credit_note;
+      resolutionPayload.expected_credit_note_id = expectedCreditNote.id;
     }
 
     await insertEvent(client, {
@@ -1895,7 +1938,7 @@ async function resolveSupplierControlDifference(db, {
         }], document, links, totals),
     });
     await client.query('COMMIT');
-    return { document, summary };
+    return { document, summary, expected_credit_note: expectedCreditNote };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;

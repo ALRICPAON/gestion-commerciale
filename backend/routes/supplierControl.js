@@ -15,6 +15,16 @@ const {
   removePurchaseLink,
   validateSupplierControlDocument,
 } = require('../services/supplierControlService');
+const {
+  applyCreditNoteMatch,
+  cancelExpectedCreditNote,
+  createExpectedCreditNote,
+  getExpectedCreditNote,
+  listCreditNoteMatchCandidates,
+  listExpectedCreditNotes,
+  listExpectedCreditNotesForPurchase,
+  removeCreditNoteLink,
+} = require('../services/supplierExpectedCreditNoteService');
 
 const router = express.Router();
 
@@ -74,6 +84,135 @@ router.get('/supplier-control/documents/:id/purchase-candidates', authenticateTo
     return res.json(result);
   } catch (error) {
     return sendError(res, error, 'Erreur candidats BL controle fournisseur');
+  }
+});
+
+router.get('/supplier-control/expected-credit-notes', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    const result = await listExpectedCreditNotes(req.dbPool, {
+      storeId: req.user.store_id,
+      filters: req.query || {},
+    });
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, 'Erreur liste avoirs attendus');
+  }
+});
+
+router.post('/supplier-control/expected-credit-notes', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const result = await createExpectedCreditNote(req.dbPool, {
+      storeId: req.user.store_id,
+      payload: req.body || {},
+      userId: req.user.id,
+      source: 'manual',
+    });
+    return res.status(result.idempotent ? 200 : 201).json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur creation avoir attendu');
+  }
+});
+
+router.get('/supplier-control/expected-credit-notes/:id', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant attente avoir invalide' });
+    }
+    const result = await getExpectedCreditNote(req.dbPool, {
+      storeId: req.user.store_id,
+      expectedCreditNoteId: req.params.id,
+    });
+    if (!result) return res.status(404).json({ error: 'Attente avoir introuvable' });
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, 'Erreur detail avoir attendu');
+  }
+});
+
+router.get('/supplier-control/purchases/:purchaseId/expected-credit-notes', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    if (!isUuid(req.params.purchaseId)) {
+      return res.status(400).json({ error: 'Identifiant BL invalide' });
+    }
+    const result = await listExpectedCreditNotesForPurchase(req.dbPool, {
+      storeId: req.user.store_id,
+      purchaseId: req.params.purchaseId,
+    });
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, 'Erreur avoirs attendus du BL');
+  }
+});
+
+router.post('/supplier-control/expected-credit-notes/:id/cancel', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant attente avoir invalide' });
+    }
+    const result = await cancelExpectedCreditNote(req.dbPool, {
+      storeId: req.user.store_id,
+      expectedCreditNoteId: req.params.id,
+      comment: req.body?.comment,
+      userId: req.user.id,
+    });
+    if (!result) return res.status(404).json({ error: 'Attente avoir introuvable' });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur annulation avoir attendu');
+  }
+});
+
+router.get('/supplier-control/credit-notes/:id/match-candidates', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant avoir Pennylane invalide' });
+    }
+    const result = await listCreditNoteMatchCandidates(req.dbPool, {
+      storeId: req.user.store_id,
+      creditNoteId: req.params.id,
+    });
+    if (!result) return res.status(404).json({ error: 'Avoir Pennylane introuvable' });
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, 'Erreur candidats avoir fournisseur');
+  }
+});
+
+router.post('/supplier-control/credit-notes/:id/apply-match', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant avoir Pennylane invalide' });
+    }
+    const result = await applyCreditNoteMatch(req.dbPool, {
+      storeId: req.user.store_id,
+      creditNoteId: req.params.id,
+      expectedCreditNoteIds: req.body?.expected_credit_note_ids,
+      applications: req.body?.applications,
+      userId: req.user.id,
+    });
+    if (!result) return res.status(404).json({ error: 'Avoir Pennylane introuvable' });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur rattachement avoir fournisseur');
+  }
+});
+
+router.delete('/supplier-control/credit-notes/:id/links/:linkId', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id) || !isUuid(req.params.linkId)) {
+      return res.status(400).json({ error: 'Identifiant avoir ou lien invalide' });
+    }
+    const result = await removeCreditNoteLink(req.dbPool, {
+      storeId: req.user.store_id,
+      creditNoteId: req.params.id,
+      linkId: req.params.linkId,
+      comment: req.body?.comment,
+      userId: req.user.id,
+    });
+    if (!result) return res.status(404).json({ error: 'Lien avoir introuvable' });
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur retrait rattachement avoir');
   }
 });
 

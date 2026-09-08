@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Controle fournisseurs - Gestion Commerciale</title>
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/supplier-control.css?v=1" />
+  <link rel="stylesheet" href="./css/pages/supplier-control.css?v=2" />
 </head>
 <body class="app-page supplier-control-page">
   <header class="topbar">
@@ -128,6 +128,24 @@
             </div>
           </section>
 
+          <section id="expected-credit-note-section" class="detail-section hidden">
+            <div class="section-heading">
+              <h3>Avoir attendu</h3>
+            </div>
+            <div id="expected-credit-note-list" class="expected-credit-note-list"></div>
+          </section>
+
+          <section id="credit-note-match-section" class="detail-section hidden">
+            <div class="section-heading">
+              <h3>Rattachement avoir</h3>
+              <button id="load-credit-note-candidates-btn" class="btn btn-secondary btn-sm" type="button">Chercher attentes</button>
+            </div>
+            <div id="credit-note-candidates-list" class="candidates-list"></div>
+            <div class="page-actions-right manual-actions">
+              <button id="apply-credit-note-match-btn" class="btn btn-primary btn-sm" type="button" disabled>Associer cet avoir</button>
+            </div>
+          </section>
+
           <section class="detail-section validation-section">
             <div id="validation-message" class="validation-message"></div>
             <div class="page-actions-right">
@@ -145,6 +163,6 @@
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/supplier-control.js?v=1"></script>
+  <script src="./js/supplier-control.js?v=2"></script>
 </body>
 </html>

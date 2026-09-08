@@ -26,8 +26,8 @@ function testPageAssetsAndMenu() {
   const home = read(homePath);
 
   assertContains(html, /<title>Controle fournisseurs - Gestion Commerciale<\/title>/);
-  assertContains(html, /frontend\/css\/pages\/supplier-control\.css|\.\/css\/pages\/supplier-control\.css\?v=1/);
-  assertContains(html, /\.\/js\/supplier-control\.js\?v=1/);
+  assertContains(html, /frontend\/css\/pages\/supplier-control\.css|\.\/css\/pages\/supplier-control\.css\?v=2/);
+  assertContains(html, /\.\/js\/supplier-control\.js\?v=2/);
   assertContains(home, /href="\.\/supplier-control\.html"/);
   assertContains(home, /Controle fournisseurs/);
   assertContains(home, /pennylane-supplier-invoices\.html"[^>]*hidden/);

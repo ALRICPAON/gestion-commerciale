@@ -326,3 +326,43 @@ body.app-page.purchase-detail-page .purchase-lines-table td:nth-child(11) { widt
   background: rgba(17, 24, 39, 0.76);
   font-size: 13px;
 }
+
+.expected-credit-notes-list {
+  display: grid;
+  gap: 8px;
+}
+
+.expected-credit-note-summary,
+.expected-credit-note-row {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.expected-credit-note-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.expected-credit-note-summary span,
+.expected-credit-note-row span {
+  color: #667085;
+  font-size: 12px;
+}
+
+.expected-credit-note-summary strong,
+.expected-credit-note-row strong {
+  color: #101828;
+  font-variant-numeric: tabular-nums;
+}
+
+.expected-credit-note-row p {
+  margin: 6px 0 0;
+}
+
+@media (max-width: 900px) {
+  .expected-credit-note-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
