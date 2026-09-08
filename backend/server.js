@@ -36,6 +36,7 @@ const supplierInvoiceManualMatchingRoutes = require('./routes/supplierInvoiceMan
 const supplierInvoiceImportPatchRoutes = require('./routes/supplierInvoiceImportPatch');
 const supplierArticleMappingsCrudRoutes = require('./routes/supplierArticleMappingsCrud');
 const supplierArticleMappingsRoutes = require('./routes/supplierArticleMappings');
+const supplierControlRoutes = require('./routes/supplierControl');
 const supplierInvoicesRoutes = require('./routes/supplierInvoices');
 const purchasesRoutes = require('./routes/purchases');
 const saleUnitNormalizerRoutes = require('./routes/saleUnitNormalizer');
@@ -321,6 +322,7 @@ app.use('/api', supplierInvoiceManualMatchingRoutes);
 app.use('/api', supplierInvoiceImportPatchRoutes);
 app.use('/api', supplierArticleMappingsCrudRoutes);
 app.use('/api', supplierArticleMappingsRoutes);
+app.use('/api', supplierControlRoutes);
 app.use('/api', supplierInvoicesRoutes);
 app.use('/api', purchasesRoutes);
 app.use('/api', saleUnitNormalizerRoutes);
