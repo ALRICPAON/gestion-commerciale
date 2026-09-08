@@ -2118,3 +2118,5 @@ module.exports._sameQuantitySignatureForTest = sameQuantitySignature;
 module.exports._buildGenerationDeltaForTest = buildGenerationDelta;
 module.exports._generatedOrderIdsFromBatchesForTest = generatedOrderIdsFromBatches;
 module.exports._fetchDraftGeneratedOrdersByClientForTest = fetchDraftGeneratedOrdersByClient;
+module.exports._normalizeEntryPatchForTest = normalizeEntryPatch;
+module.exports._applyEntryPatchesForTest = applyEntryPatches;
