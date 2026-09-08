@@ -66,8 +66,10 @@ function canonicalSupplierControlStatus(document = {}) {
   const altaStatus = clean(document.alta_business_status)?.toLowerCase();
   const current = clean(document.supplier_control_status)?.toLowerCase();
 
+  if (paymentStatus === 'to_be_paid') return 'valide_a_payer';
+  if (current && FINAL_CONTROL_STATUSES.has(current)) return current;
   if (['litige', 'refusee'].includes(altaStatus)) return 'litige';
-  if (paymentStatus === 'to_be_paid' || altaStatus === 'validee_a_payer') return 'valide_a_payer';
+  if (altaStatus === 'validee_a_payer') return 'valide_a_payer';
   if (altaStatus === 'conforme') return 'conforme';
   if (['ecart_prix', 'ecart_quantite', 'ecart_tva'].includes(altaStatus)) return 'ecart';
   if (['analyse_automatique', 'en_controle', 'article_inconnu', 'controle_manuel'].includes(altaStatus)) {
@@ -80,6 +82,21 @@ function canonicalSupplierControlStatus(document = {}) {
 
 function documentAmount(document = {}) {
   return Math.abs(toNumber(document.amount_ex_vat ?? document.currency_amount_ex_vat));
+}
+
+function effectivePurchaseTotalExVat(purchase = {}) {
+  const headerTotals = [
+    purchase.total_amount_ex_vat,
+    purchase.purchase_total_ex_vat,
+    purchase.total_ex_vat,
+  ];
+  for (const value of headerTotals) {
+    const total = toNumber(value, NaN);
+    if (Number.isFinite(total) && total !== 0) return total;
+  }
+  const linesTotal = toNumber(purchase.purchase_lines_total_ex_vat, NaN);
+  if (Number.isFinite(linesTotal)) return linesTotal;
+  return 0;
 }
 
 function documentVatAmount(document = {}) {
@@ -238,6 +255,7 @@ async function loadActiveLinks(client, { storeId, documentId }) {
       p.receipt_date,
       p.status AS purchase_status,
       p.total_amount_ex_vat AS purchase_total_ex_vat,
+      pl_tot.purchase_lines_total_ex_vat,
       p.supplier_id AS purchase_supplier_id,
       s.name AS purchase_supplier_name,
       s.code AS purchase_supplier_code,
@@ -249,6 +267,13 @@ async function loadActiveLinks(client, { storeId, documentId }) {
     LEFT JOIN suppliers s
       ON s.id = p.supplier_id
      AND s.store_id = p.store_id
+    LEFT JOIN (
+      SELECT store_id, purchase_id, COALESCE(SUM(COALESCE(line_amount_ex_vat, 0)), 0) AS purchase_lines_total_ex_vat
+      FROM purchase_lines
+      GROUP BY store_id, purchase_id
+    ) pl_tot
+      ON pl_tot.purchase_id = p.id
+     AND pl_tot.store_id = p.store_id
     LEFT JOIN purchase_lines pl
       ON pl.id = scl.purchase_line_id
      AND pl.store_id = scl.store_id
@@ -344,7 +369,7 @@ function totalsFromDocumentAndLinks(document, links) {
     if (!link.purchase_id) continue;
     const key = String(link.purchase_id);
     if (!byPurchase.has(key)) {
-      byPurchase.set(key, toNumber(link.purchase_total_ex_vat));
+      byPurchase.set(key, effectivePurchaseTotalExVat(link));
     }
   }
   const matchedPurchaseTotal = round([...byPurchase.values()].reduce((sum, value) => sum + value, 0), 4);
@@ -794,7 +819,7 @@ async function loadMatchingPurchases(client, { storeId, document, dateWindowDays
 
   return result.rows.map((purchase) => ({
     ...purchase,
-    total_amount_ex_vat: toNumber(purchase.total_amount_ex_vat) || toNumber(purchase.purchase_lines_total_ex_vat),
+    total_amount_ex_vat: effectivePurchaseTotalExVat(purchase),
   }));
 }
 
@@ -854,7 +879,7 @@ function scoreReferenceMatch(document, purchase) {
 
 function scorePurchase(document, purchase, dateWindowDays) {
   const invoiceTotal = documentAmount(document);
-  const purchaseTotal = Math.abs(toNumber(purchase.total_amount_ex_vat));
+  const purchaseTotal = Math.abs(effectivePurchaseTotalExVat(purchase));
   const difference = round(invoiceTotal - purchaseTotal, 4);
   const dateDistance = daysBetween(document.invoice_date, purchase.receipt_date || purchase.purchase_date || purchase.order_date);
   const amountScore = invoiceTotal <= 0 ? 0 : Math.max(0, 1 - Math.abs(difference) / Math.max(invoiceTotal, purchaseTotal, 1));
@@ -880,6 +905,7 @@ function scorePurchase(document, purchase, dateWindowDays) {
 }
 
 function classifyProposal(document, proposal, sameTotalCount) {
+  if (proposal.locked) return 'candidate';
   const exactAmount = Math.abs(proposal.difference_ex_vat) <= amountTolerance(documentAmount(document));
   const hasReference = proposal.reasons.includes('reference_bl');
   if (exactAmount && hasReference && proposal.purchase_ids.length === 1 && sameTotalCount === 1) return 'exact';
@@ -914,6 +940,8 @@ function buildProposal(document, purchases, dateWindowDays, sameTotalCount = 1) 
     difference_ex_vat: difference,
     score: round((referenceScore * 20) + (amountScore * 60) + (dateScore * 20) - (locked ? 50 : 0), 2),
     confidence: 'candidate',
+    applicable: !locked,
+    locked,
     reasons: [
       scored.length > 1 ? 'multi_bl_combination' : 'single_bl',
       referenceScore ? 'reference_bl' : null,
@@ -935,22 +963,26 @@ function findCombinationProposals(document, purchases, dateWindowDays) {
   const seen = new Set();
   let explored = 0;
 
-  function visit(start, selected) {
-    if (explored >= MAX_COMBINATIONS || selected.length >= MAX_COMBINATION_SIZE) return;
-    for (let index = start; index < sorted.length; index += 1) {
-      explored += 1;
-      const next = [...selected, sorted[index]];
-      const key = next.map((item) => item.id).sort().join(':');
+  function visit(start, selected, targetSize) {
+    if (explored >= MAX_COMBINATIONS) return;
+    if (selected.length === targetSize) {
+      const key = selected.map((item) => item.id).sort().join(':');
       if (!seen.has(key)) {
         seen.add(key);
-        proposals.push(buildProposal(document, next, dateWindowDays));
+        proposals.push(buildProposal(document, selected, dateWindowDays));
+        explored += 1;
       }
+      return;
+    }
+    for (let index = start; index < sorted.length; index += 1) {
       if (explored >= MAX_COMBINATIONS) break;
-      visit(index + 1, next);
+      visit(index + 1, [...selected, sorted[index]], targetSize);
     }
   }
 
-  visit(0, []);
+  for (let size = 1; size <= MAX_COMBINATION_SIZE && explored < MAX_COMBINATIONS; size += 1) {
+    visit(0, [], size);
+  }
   const byRoundedTotal = new Map();
   for (const proposal of proposals) {
     const exactKey = Math.abs(proposal.difference_ex_vat) <= amountTolerance(documentAmount(document))
@@ -964,6 +996,7 @@ function findCombinationProposals(document, purchases, dateWindowDays) {
     confidence: classifyProposal(document, proposal, byRoundedTotal.get('exact') || 0),
   })).sort((left, right) => {
     const confidenceRank = { exact: 4, strong_candidate: 3, ambiguous: 2, candidate: 1, no_match: 0 };
+    if (Number(right.applicable) !== Number(left.applicable)) return Number(right.applicable) - Number(left.applicable);
     if (confidenceRank[right.confidence] !== confidenceRank[left.confidence]) {
       return confidenceRank[right.confidence] - confidenceRank[left.confidence];
     }
@@ -1086,7 +1119,7 @@ async function applySupplierControlMatch(db, { storeId, documentId, purchaseIds 
       purchases.push(await ensurePurchaseCanBeLinked(client, { storeId, document, purchaseId }));
     }
 
-    const purchasesTotal = round(purchases.reduce((sum, purchase) => sum + toNumber(purchase.total_amount_ex_vat), 0), 4);
+    const purchasesTotal = round(purchases.reduce((sum, purchase) => sum + effectivePurchaseTotalExVat(purchase), 0), 4);
     const amountDifference = round(documentAmount(document) - purchasesTotal, 4);
     const matchStatus = Math.abs(amountDifference) <= amountTolerance(documentAmount(document)) ? 'matched' : 'difference';
 
@@ -1136,7 +1169,7 @@ async function applySupplierControlMatch(db, { storeId, documentId, purchaseIds 
           amountDifference,
           userId,
           JSON.stringify({
-            purchase_total_ex_vat: purchase.total_amount_ex_vat,
+            purchase_total_ex_vat: effectivePurchaseTotalExVat(purchase),
             combination_purchase_ids: ids,
             combination_total_ex_vat: purchasesTotal,
             combination_difference_ex_vat: amountDifference,

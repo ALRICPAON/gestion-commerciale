@@ -3,9 +3,11 @@ const fs = require('fs');
 const path = require('path');
 
 const {
+  addPurchaseLink,
   analyzeSupplierControlMatches,
   applySupplierControlMatch,
   recalculateSupplierControl,
+  removePurchaseLink,
   resolveSupplierControlDifference,
   supplierControlMatchSignature,
 } = require('../services/supplierControlService');
@@ -103,6 +105,7 @@ function linkFor(rowPurchase, overrides = {}) {
     match_status: 'matched',
     amount_difference: 0,
     purchase_total_ex_vat: rowPurchase.total_amount_ex_vat,
+    purchase_lines_total_ex_vat: rowPurchase.purchase_lines_total_ex_vat,
     bl_number: rowPurchase.bl_number,
     receipt_date: rowPurchase.receipt_date,
     ...overrides,
@@ -284,6 +287,44 @@ async function testSingleAndMultiBlProposals() {
   assert.strictEqual(result.proposals.length, 0);
 }
 
+async function testFairMultiBlSearchFindsCombinationWithoutTopCandidate() {
+  const purchases = [
+    purchase({ id: ids.p1, bl_number: 'BL-TOP', total_amount_ex_vat: 95, receipt_date: '2026-09-08' }),
+  ];
+  for (let index = 2; index <= 18; index += 1) {
+    purchases.push(purchase({
+      id: `00000000-0000-4000-8000-0000000003${String(index).padStart(2, '0')}`,
+      bl_number: `BL-${index}`,
+      total_amount_ex_vat: index === 2 || index === 3 ? 50 : 7 + index,
+      receipt_date: '2026-09-20',
+    }));
+  }
+  const db = createMockDb({
+    doc: document({ amount_ex_vat: 100, invoice_number: 'FAC-100' }),
+    purchases,
+  });
+
+  const result = await analyzeSupplierControlMatches(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.ok(result.proposals.some((proposal) => (
+    proposal.purchase_ids.length === 2 &&
+    proposal.purchase_ids.includes(purchases[1].id) &&
+    proposal.purchase_ids.includes(purchases[2].id) &&
+    proposal.difference_ex_vat === 0
+  )));
+}
+
+async function testLockedPurchaseIsNeverExactApplicable() {
+  const db = createMockDb({
+    doc: document({ amount_ex_vat: 100, invoice_number: 'FAC-BL-1' }),
+    purchases: [purchase({ total_amount_ex_vat: 100, bl_number: 'BL-1', linked_to_locked_document: true })],
+  });
+  const result = await analyzeSupplierControlMatches(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.notStrictEqual(result.proposals[0].confidence, 'exact');
+  assert.notStrictEqual(result.proposals[0].confidence, 'strong_candidate');
+  assert.strictEqual(result.proposals[0].applicable, false);
+  assert.ok(result.proposals[0].reasons.includes('purchase_locked'));
+}
+
 async function testToleranceAndDifferences() {
   let db = createMockDb({
     doc: document({ amount_ex_vat: 100.5 }),
@@ -348,6 +389,35 @@ async function testApplyMatchAtomicIdempotentAndReplacement() {
   }));
   assert.strictEqual(db.state.links.length, 0);
   assert.ok(db.calls.some((call) => /ROLLBACK/i.test(call.sql)));
+}
+
+async function testEffectivePurchaseTotalIsSharedByAnalyzeApplyAndRecalculate() {
+  const rowPurchase = purchase({
+    id: ids.p1,
+    total_amount_ex_vat: 0,
+    purchase_lines_total_ex_vat: 100,
+    bl_number: 'BL-LINES-100',
+  });
+  const db = createMockDb({
+    doc: document({ amount_ex_vat: 100, invoice_number: 'FAC-LINES' }),
+    purchases: [rowPurchase],
+  });
+
+  const analysis = await analyzeSupplierControlMatches(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(analysis.proposals[0].combination_total_ex_vat, 100);
+  assert.strictEqual(analysis.proposals[0].difference_ex_vat, 0);
+
+  const applied = await applySupplierControlMatch(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseIds: [ids.p1],
+  });
+  assert.strictEqual(applied.summary.difference_total, 0);
+  assert.strictEqual(applied.summary.control_status, 'conforme');
+
+  const recalculated = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(recalculated.difference_total, 0);
+  assert.strictEqual(recalculated.control_status, 'conforme');
 }
 
 async function testApplyMatchGuards() {
@@ -464,6 +534,69 @@ async function testResolutionsAndValidation() {
   assert.strictEqual(result.summary.control_status, 'litige');
   assert.strictEqual(result.summary.can_validate, false);
   assert.ok(db.state.events.some((event) => event.event_type === 'dispute_opened'));
+}
+
+async function testResolutionStatusesOverrideHistoricalAltaStatusesAndLockLinks() {
+  let db = createMockDb({
+    doc: document({ alta_business_status: 'en_controle', supplier_control_status: 'a_controler' }),
+    links: [linkFor(purchase())],
+    purchases: [purchase()],
+  });
+  let result = await resolveSupplierControlDifference(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    resolutionType: 'dispute',
+    comment: 'Litige malgre ancien statut',
+  });
+  assert.strictEqual(result.summary.control_status, 'litige');
+  result = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(result.control_status, 'litige');
+  await assertRejectsWithCode('SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED', () => applySupplierControlMatch(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseIds: [ids.p1],
+  }));
+  await assertRejectsWithCode('SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED', () => addPurchaseLink(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseId: ids.p1,
+  }));
+  await assertRejectsWithCode('SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED', () => removePurchaseLink(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseId: ids.p1,
+  }));
+
+  db = createMockDb({
+    doc: document({ alta_business_status: 'conforme', supplier_control_status: 'conforme' }),
+    links: [linkFor(purchase({ total_amount_ex_vat: 90 }))],
+    purchases: [purchase()],
+  });
+  result = await resolveSupplierControlDifference(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    resolutionType: 'supplier_credit_note_expected',
+    expectedCreditNoteAmount: 10,
+    comment: 'Avoir attendu malgre ancien conforme',
+  });
+  assert.strictEqual(result.summary.control_status, 'avoir_attendu');
+  result = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(result.control_status, 'avoir_attendu');
+  await assertRejectsWithCode('SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED', () => applySupplierControlMatch(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseIds: [ids.p1],
+  }));
+  await assertRejectsWithCode('SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED', () => addPurchaseLink(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseId: ids.p1,
+  }));
+  await assertRejectsWithCode('SUPPLIER_CONTROL_DOCUMENT_LINKS_LOCKED', () => removePurchaseLink(db, {
+    storeId: ids.storeA,
+    documentId: ids.doc,
+    purchaseId: ids.p1,
+  }));
 }
 
 async function testAcceptedDifferenceIsBoundToCurrentMatchSignature() {
@@ -596,12 +729,16 @@ function testStaticContracts() {
 
 (async () => {
   await testSingleAndMultiBlProposals();
+  await testFairMultiBlSearchFindsCombinationWithoutTopCandidate();
+  await testLockedPurchaseIsNeverExactApplicable();
   await testToleranceAndDifferences();
   await testApplyMatchAtomicIdempotentAndReplacement();
+  await testEffectivePurchaseTotalIsSharedByAnalyzeApplyAndRecalculate();
   await testApplyMatchGuards();
   await testPurchaseLinesAndPennylaneLines();
   await testRepeatedAnalysisEventsAreIdempotent();
   await testResolutionsAndValidation();
+  await testResolutionStatusesOverrideHistoricalAltaStatusesAndLockLinks();
   await testAcceptedDifferenceIsBoundToCurrentMatchSignature();
   await testAcceptedDifferenceSurvivesIdempotentReplayAndSortedOrder();
   await testAcceptedDifferenceInvalidatesForDifferentPurchasesOrAmount();
