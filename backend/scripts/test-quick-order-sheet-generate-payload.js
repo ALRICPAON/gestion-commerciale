@@ -354,6 +354,52 @@ function testIncrementalGenerationCellIdentity() {
   ]), ['order-a', 'order-b', 'order-c']);
 }
 
+function testEntryPatchDeletionSemantics() {
+  const normalize = quickOrderSheetsRoute._normalizeEntryPatchForTest;
+  const apply = quickOrderSheetsRoute._applyEntryPatchesForTest;
+  const clientA = uuid('c', 1);
+  const clientB = uuid('c', 2);
+  const initial = {
+    [clientA]: {
+      'pricing-homard': { colis: '1', kg: '3', pieces: '' },
+      'pricing-sole': { colis: '', kg: '5', pieces: '' },
+    },
+    [clientB]: {
+      'pricing-homard': { colis: '', kg: '', pieces: '7' },
+    },
+  };
+
+  const cleared = apply(initial, [normalize({
+    client_id: clientA,
+    column_uid: 'pricing-homard',
+    colis: '',
+    kg: '',
+    pieces: '',
+  })]);
+  assert(!cleared[clientA]['pricing-homard'], 'champs vides doivent supprimer la cellule');
+  assert(cleared[clientA]['pricing-sole'], 'autre cellule du meme client doit rester');
+  assert(cleared[clientB]['pricing-homard'], 'autre client doit rester intact');
+
+  const zeroed = apply(initial, [normalize({
+    client_id: clientB,
+    column_uid: 'pricing-homard',
+    colis: '0',
+    kg: '0',
+    pieces: '0',
+  })]);
+  assert(!zeroed[clientB], '0/0/0 doit supprimer la cellule puis le client vide');
+  assert(zeroed[clientA]['pricing-homard'], 'autres clients ne doivent pas etre touches par 0/0/0');
+
+  const partial = apply(initial, [normalize({
+    client_id: clientA,
+    column_uid: 'pricing-homard',
+    colis: '',
+    kg: '3',
+    pieces: '',
+  })]);
+  assert.deepStrictEqual(partial[clientA]['pricing-homard'], { colis: '', kg: '3', pieces: '' }, 'une quantite positive restante doit conserver l entree');
+}
+
 (async () => {
   const legacyPayload = buildLegacyPayload();
   const nextPayload = {
@@ -371,7 +417,9 @@ function testIncrementalGenerationCellIdentity() {
   assert(!Object.prototype.hasOwnProperty.call(nextPayload, 'order_entries'));
   assert(!Object.prototype.hasOwnProperty.call(nextPayload, 'entries'));
 
-  assert(html.includes('./js/quick-order-sheet.js?v=14'), 'cache-buster quick-order-sheet attendu en v14');
+  assert(html.includes('./js/quick-order-sheet.js?v=15'), 'cache-buster quick-order-sheet attendu en v15');
+  assert(js.includes('function entryHasPositiveQuantity'), 'le front doit detecter une cellule vide/zero');
+  assert(js.includes('delete state.entries[safeClient][safeProduct]'), 'le front doit supprimer localement une cellule vide avant autosave');
   assert(js.includes('flushPendingAutosave'), 'generateOrders doit flusher les autosaves');
   assert(js.includes("Impossible de generer les commandes : certaines saisies ne sont pas encore enregistrees."), 'message blocage flush attendu');
   assert(js.includes("sheet_id: state.sheet?.id"), 'generateOrders doit envoyer sheet_id');
@@ -405,6 +453,7 @@ function testIncrementalGenerationCellIdentity() {
   testBusinessDateNormalization();
   testRoyaleMareeOrderTargetRequiresBilledClient();
   testIncrementalGenerationCellIdentity();
+  testEntryPatchDeletionSemantics();
   await testDraftGeneratedOrderLookupSql();
   await testServerGenerationSheetFromDatabase('2026-09-07', '2026-09-07');
   await testServerGenerationSheetFromDatabase(new Date(2026, 8, 7), '2026-09-07');

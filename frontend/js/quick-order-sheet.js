@@ -347,12 +347,20 @@ function entryFor(clientId, productId) {
   return state.entries[String(clientId)]?.[String(productId)] || {};
 }
 
+function entryHasPositiveQuantity(entry = {}) {
+  return parseDecimal(entry.colis) > 0 || parseDecimal(entry.kg) > 0 || parseDecimal(entry.pieces) > 0;
+}
+
 function setEntryValue(clientId, productId, field, value) {
   const safeClient = String(clientId);
   const safeProduct = String(productId);
   if (!state.entries[safeClient]) state.entries[safeClient] = {};
   if (!state.entries[safeClient][safeProduct]) state.entries[safeClient][safeProduct] = {};
   state.entries[safeClient][safeProduct][field] = value;
+  if (!entryHasPositiveQuantity(state.entries[safeClient][safeProduct])) {
+    delete state.entries[safeClient][safeProduct];
+    if (!Object.keys(state.entries[safeClient]).length) delete state.entries[safeClient];
+  }
 }
 
 function dirtyEntryKey(clientId, productId) {
@@ -594,6 +602,7 @@ async function saveSheetToServer() {
             delete state.dirtyEntries[key];
           }
         }
+        saveDraft();
       }
       setSaveStatus('Enregistre', 'saved');
     } finally {

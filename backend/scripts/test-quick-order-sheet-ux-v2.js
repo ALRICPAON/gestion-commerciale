@@ -11,7 +11,7 @@ const route = fs.readFileSync(path.join(root, 'backend/routes/quickOrderSheets.j
 assert(html.includes('Vue Clients'), 'la vue client doit etre exposee');
 assert(html.includes('Vue Articles'), 'la vue article doit etre exposee');
 assert(html.includes('Vue Fournisseurs'), 'la vue fournisseur doit etre exposee');
-assert(html.includes('./js/quick-order-sheet.js?v=14'), 'cache-buster JS fiche appel attendu');
+assert(html.includes('./js/quick-order-sheet.js?v=15'), 'cache-buster JS fiche appel attendu');
 assert(html.includes('./css/pages/quick-order-sheet.css?v=8'), 'cache-buster CSS fiche appel attendu');
 assert(!html.includes('new-sheet-btn'), 'le bouton Nouvelle fiche doit etre supprime');
 assert(!html.includes('supplier-select'), 'le filtre fournisseur ne doit plus etre dans la prise de commande principale');

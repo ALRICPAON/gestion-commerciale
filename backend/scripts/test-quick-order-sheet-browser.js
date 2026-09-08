@@ -242,6 +242,40 @@ async function main() {
     assert(!('order_entries' in generateCall.body), 'Generate must not send order_entries');
     assert(!('entries' in generateCall.body), 'Generate must not send entries');
 
+    await page.evaluate(() => {
+      window.__apiCalls = [];
+    });
+    await page.$eval('input[data-product-uid="product-1"][data-field="colis"]', (input) => {
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.$eval('input[data-product-uid="product-1"][data-field="kg"]', (input) => {
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await sleep(900);
+    calls = await page.evaluate(() => window.__apiCalls);
+    const deletePatch = calls.find((call) => call.url.includes('/entries') && call.method === 'PATCH');
+    assert(deletePatch, 'Clearing a cell must trigger an autosave PATCH');
+    assert(deletePatch.body.entries.some((entry) => (
+      entry.client_id === 'c0000000-0000-4000-8000-000000000001'
+      && entry.column_uid === 'product-1'
+      && entry.colis === ''
+      && entry.kg === ''
+      && entry.pieces === ''
+    )), 'Clearing a cell must send an explicit empty patch');
+    let serverEntries = await page.evaluate(() => window.__serverSheet.order_entries);
+    assert(!serverEntries['c0000000-0000-4000-8000-000000000001']?.['product-1'], 'Server entries must delete cleared cell');
+    await page.reload({ waitUntil: 'networkidle0' });
+    await page.waitForSelector('#primary-list [data-id]', { timeout: 5000 });
+    await page.click('#client-view-btn');
+    await page.type('#primary-search-input', 'Client 1');
+    await page.click('#primary-list [data-id]');
+    await page.type('#secondary-search-input', 'Homard');
+    await page.waitForSelector('input[data-product-uid="product-1"][data-field="kg"]', { timeout: 5000 });
+    assert.strictEqual(await page.$eval('input[data-product-uid="product-1"][data-field="colis"]', (input) => input.value), '');
+    assert.strictEqual(await page.$eval('input[data-product-uid="product-1"][data-field="kg"]', (input) => input.value), '');
+
     await page.click('#article-view-btn');
     await page.waitForSelector('#primary-list [data-id="product-1"]', { timeout: 5000 });
     assert.strictEqual(await page.$eval('#selector-title', (node) => node.textContent.trim()), 'Articles');
@@ -337,8 +371,8 @@ async function main() {
     await page.reload({ waitUntil: 'networkidle0' });
     await page.waitForSelector('#primary-list [data-id]', { timeout: 5000 });
     assert.strictEqual(await page.$eval('#sheet-note-input', (node) => node.value), 'Note fournisseur persistante');
-    const serverEntries = await page.evaluate(() => window.__serverSheet.order_entries);
-    assert(serverEntries['c0000000-0000-4000-8000-000000000002']);
+    const persistedEntries = await page.evaluate(() => window.__serverSheet.order_entries);
+    assert(persistedEntries['c0000000-0000-4000-8000-000000000002']);
 
     await page.click('#client-view-btn');
     await page.click('#article-view-btn');
