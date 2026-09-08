@@ -89,6 +89,7 @@ function testCanonicalStatuses() {
     'valide_a_payer',
     'paye',
     'litige',
+    'reconciliation_required',
   ]);
 
   assert.strictEqual(isPaidStatus('paid', false), true);
@@ -96,6 +97,7 @@ function testCanonicalStatuses() {
   assert.strictEqual(isPaidStatus(null, true), true);
   assert.strictEqual(canonicalSupplierControlStatus({ payment_status: 'to_be_paid' }), 'valide_a_payer');
   assert.strictEqual(canonicalSupplierControlStatus({ payment_status: 'to_be_paid', supplier_control_status: 'a_rapprocher' }), 'valide_a_payer');
+  assert.strictEqual(canonicalSupplierControlStatus({ payment_status: 'to_be_paid', supplier_control_status: 'reconciliation_required' }), 'reconciliation_required');
   assert.strictEqual(canonicalSupplierControlStatus({ paid: true, supplier_control_status: 'ecart' }), 'paye');
   assert.strictEqual(canonicalSupplierControlStatus({ alta_business_status: 'ecart_prix' }), 'ecart');
   assert.strictEqual(canonicalSupplierControlStatus({ alta_business_status: 'controle_manuel' }), 'a_controler');

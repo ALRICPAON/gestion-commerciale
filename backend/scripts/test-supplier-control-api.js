@@ -259,7 +259,8 @@ function assertNoSupplierInvoiceCreationInNewApiSource() {
   const service = read(servicePath);
   assert.ok(!/INSERT INTO supplier_invoices/i.test(route), 'New canonical route must not create supplier_invoices');
   assert.ok(!/INSERT INTO supplier_invoices/i.test(service), 'New canonical service must not create supplier_invoices');
-  assert.ok(!/syncValidatedSupplierInvoiceStatusToPennylane|createPennylaneClient/i.test(route + service), 'PR2 must not call Pennylane');
+  assert.ok(!/client\.(post|delete)\(/i.test(route + service), 'Supplier control must not create or delete Pennylane invoices');
+  assert.ok(!/(INSERT|UPDATE|DELETE)\s+(INTO\s+)?pennylane_supplier_invoice_lines/i.test(route + service), 'Supplier control must not mutate Pennylane invoice content');
 }
 
 async function testListDocumentsAndFilters() {
@@ -622,6 +623,7 @@ function testRoutesAreRegisteredAndProtected() {
   assert.match(route, /router\.get\('\/supplier-control\/documents'/);
   assert.match(route, /router\.get\('\/supplier-control\/documents\/:id'/);
   assert.match(route, /router\.get\('\/supplier-control\/documents\/:id\/purchase-candidates'/);
+  assert.match(route, /router\.post\('\/supplier-control\/documents\/:id\/validate'.+requireAdminOrManager/s);
   assert.match(route, /router\.post\('\/supplier-control\/documents\/:id\/purchase-links'/);
   assert.match(route, /router\.delete\('\/supplier-control\/documents\/:id\/purchase-links\/:purchaseId'/);
   assert.ok((route.match(/authenticateToken/g) || []).length >= 5, 'All supplier-control routes must be authenticated');

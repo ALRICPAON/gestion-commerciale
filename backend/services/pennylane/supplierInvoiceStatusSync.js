@@ -32,6 +32,51 @@ function sanitizePennylaneError(error) {
   };
 }
 
+function extractSupplierInvoice(body) {
+  if (!body || typeof body !== 'object') return null;
+  if (body.supplier_invoice && typeof body.supplier_invoice === 'object') return body.supplier_invoice;
+  if (body.data && typeof body.data === 'object') return body.data;
+  if (body.invoice && typeof body.invoice === 'object') return body.invoice;
+  return body;
+}
+
+async function fetchSupplierInvoicePaymentStatusFromPennylane({
+  invoiceId,
+  pennylaneSupplierInvoiceId,
+  storeId,
+}) {
+  if (!pennylaneSupplierInvoiceId) {
+    return { ok: true, skipped: true, reason: 'PENNYLANE_SUPPLIER_INVOICE_ID_MISSING' };
+  }
+
+  const client = createPennylaneClient();
+  const endpoint = `/supplier_invoices/${encodeURIComponent(pennylaneSupplierInvoiceId)}`;
+
+  try {
+    const response = await client.get(endpoint);
+    const invoice = extractSupplierInvoice(response.body) || {};
+    return {
+      ok: true,
+      pennylane_supplier_invoice_id: pennylaneSupplierInvoiceId,
+      payment_status: invoice.payment_status || null,
+      paid: invoice.paid === true,
+      http_status: response.status,
+    };
+  } catch (error) {
+    const sanitizedError = sanitizePennylaneError(error);
+    console.error('[Pennylane supplier invoice status] erreur lecture statut', {
+      invoice_id: invoiceId,
+      pennylane_supplier_invoice_id: pennylaneSupplierInvoiceId,
+      store_id: storeId,
+      endpoint,
+      error: sanitizedError,
+    });
+
+    error.pennylaneStatusSync = sanitizedError;
+    throw error;
+  }
+}
+
 async function syncValidatedSupplierInvoiceStatusToPennylane({
   invoiceId,
   pennylaneSupplierInvoiceId,
@@ -80,5 +125,6 @@ async function syncValidatedSupplierInvoiceStatusToPennylane({
 
 module.exports = {
   VALIDATED_PAYMENT_STATUS,
+  fetchSupplierInvoicePaymentStatusFromPennylane,
   syncValidatedSupplierInvoiceStatusToPennylane,
 };
