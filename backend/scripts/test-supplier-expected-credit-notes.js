@@ -5,6 +5,7 @@ const path = require('path');
 const {
   EXPECTED_CREDIT_NOTE_REASON_TYPES,
   EXPECTED_CREDIT_NOTE_STATUSES,
+  applyCreditNoteMatch,
   createExpectedCreditNote,
 } = require('../services/supplierExpectedCreditNoteService');
 
@@ -180,6 +181,123 @@ async function testValidations() {
   }));
 }
 
+function createApplyMatchMockDb() {
+  const queries = [];
+  const state = {
+    committed: false,
+    rolledBack: false,
+    events: [],
+    recalculatedSourceDocuments: [],
+  };
+  const expectedId = '88888888-8888-4888-8888-888888888888';
+  const linkId = '99999999-9999-4999-8999-999999999999';
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      const compact = sql.replace(/\s+/g, ' ');
+      if (/^BEGIN$/i.test(sql.trim())) return { rows: [], rowCount: 0 };
+      if (/^COMMIT$/i.test(sql.trim())) {
+        state.committed = true;
+        return { rows: [], rowCount: 0 };
+      }
+      if (/^ROLLBACK$/i.test(sql.trim())) {
+        state.rolledBack = true;
+        return { rows: [], rowCount: 0 };
+      }
+      if (/FROM pennylane_supplier_invoices psi/i.test(sql)) {
+        const requestedId = params[0];
+        if (requestedId === ids.credit) {
+          return { rows: [{ id: ids.credit, store_id: ids.store, supplier_id: ids.supplier, document_type: 'credit_note', amount_ex_vat: 100, invoice_number: 'AV-1' }] };
+        }
+        if (requestedId === ids.invoice) {
+          return { rows: [{ id: ids.invoice, store_id: ids.store, supplier_id: ids.supplier, document_type: 'invoice', amount_ex_vat: 1100, payment_status: 'pending', paid: false, supplier_control_status: 'avoir_attendu' }] };
+        }
+        return { rows: [] };
+      }
+      if (/FROM supplier_expected_credit_notes ecn/i.test(sql) && /FOR UPDATE OF ecn/i.test(sql)) {
+        return {
+          rows: [{
+            id: expectedId,
+            store_id: ids.store,
+            supplier_id: ids.supplier,
+            source_purchase_id: ids.purchase,
+            source_pennylane_supplier_invoice_id: ids.invoice,
+            expected_amount_ex_vat: 100,
+            received_amount_ex_vat: 0,
+            status: 'pending',
+          }],
+        };
+      }
+      if (/FROM supplier_expected_credit_note_links/i.test(sql) && /pennylane_credit_note_id = \$2/i.test(sql)) {
+        return { rows: [{ total: 0 }] };
+      }
+      if (/INSERT INTO supplier_expected_credit_note_links/i.test(sql)) {
+        return {
+          rows: [{
+            id: linkId,
+            store_id: params[0],
+            expected_credit_note_id: params[1],
+            pennylane_credit_note_id: params[2],
+            applied_amount_ex_vat: params[3],
+            status: 'matched',
+          }],
+          rowCount: 1,
+        };
+      }
+      if (/SELECT COALESCE\(SUM\(applied_amount_ex_vat\), 0\) AS applied/i.test(compact)) {
+        return { rows: [{ applied: 100 }] };
+      }
+      if (/UPDATE supplier_expected_credit_notes/i.test(sql)) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (/INSERT INTO supplier_control_events/i.test(sql)) {
+        state.events.push({ event_type: params[2], event_key: params[3], payload: params[4] ? JSON.parse(params[4]) : {} });
+        return { rows: [], rowCount: 1 };
+      }
+      if (/WITH linked_purchases AS/i.test(sql)) {
+        state.recalculatedSourceDocuments.push(params[1]);
+        return {
+          rows: [{
+            purchase_total_ex_vat: 1000,
+            applied_credit_note_total_ex_vat: 100,
+            remaining_expected_credit_note_total_ex_vat: 0,
+          }],
+        };
+      }
+      if (/UPDATE pennylane_supplier_invoices/i.test(sql) && /supplier_control_status = \$1/i.test(sql)) {
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  return {
+    queries,
+    state,
+    expectedId,
+    async connect() {
+      return client;
+    },
+  };
+}
+
+async function testApplyCreditNoteMatchCommitsAndRecalculatesSources() {
+  const db = createApplyMatchMockDb();
+  const result = await applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId],
+    userId: ids.user,
+  });
+  assert.strictEqual(result.links.length, 1);
+  assert.strictEqual(db.state.committed, true, 'success path must reach COMMIT');
+  assert.strictEqual(db.state.rolledBack, false, 'success path must not rollback');
+  assert.deepStrictEqual(db.state.recalculatedSourceDocuments, [ids.invoice]);
+  assert.ok(db.state.events.some((event) => event.event_type === 'credit_note_linked'));
+  const service = read(servicePath);
+  assertNotContains(service, /documentId:\s*link\.source_pennylane_supplier_invoice_id,\s*\n\s*\}\);\s*\n\s*await client\.query\('COMMIT'\)/);
+}
+
 function testMigrationSchema() {
   const migration = read(migrationPath);
   const rollback = read(rollbackPath);
@@ -259,6 +377,7 @@ function testNoForbiddenSideEffects() {
   await testCreateExpectedCreditNoteFromPurchase();
   await testIdempotentRetry();
   await testValidations();
+  await testApplyCreditNoteMatchCommitsAndRecalculatesSources();
   testMigrationSchema();
   testCanonicalRoutesAndPermissions();
   testSupplierControlIntegration();

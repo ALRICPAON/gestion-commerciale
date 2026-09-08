@@ -748,6 +748,7 @@ async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditN
     let totalToApply = 0;
     const explicitAmounts = new Map((applications || []).map((item) => [String(item.expected_credit_note_id), round(item.applied_amount_ex_vat)]));
     const links = [];
+    const sourceDocumentIdsToRecalculate = new Set();
     for (const expected of expectedResult.rows) {
       const remaining = round(toNumber(expected.expected_amount_ex_vat) - toNumber(expected.received_amount_ex_vat));
       const amount = explicitAmounts.has(String(expected.id)) ? explicitAmounts.get(String(expected.id)) : Math.min(remaining, amountAvailable);
@@ -812,10 +813,9 @@ async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditN
         },
         userId,
       });
-      await recalculateSourceInvoiceAfterCreditNote(client, {
-        storeId,
-        documentId: expected.source_pennylane_supplier_invoice_id,
-      });
+      if (expected.source_pennylane_supplier_invoice_id) {
+        sourceDocumentIdsToRecalculate.add(String(expected.source_pennylane_supplier_invoice_id));
+      }
     }
 
     await insertSupplierControlEvent(client, {
@@ -826,10 +826,12 @@ async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditN
       payload: { expected_credit_note_ids: ids, applied_amount_ex_vat: totalToApply },
       userId,
     });
-    await recalculateSourceInvoiceAfterCreditNote(client, {
-      storeId,
-      documentId: link.source_pennylane_supplier_invoice_id,
-    });
+    for (const sourceDocumentId of sourceDocumentIdsToRecalculate) {
+      await recalculateSourceInvoiceAfterCreditNote(client, {
+        storeId,
+        documentId: sourceDocumentId,
+      });
+    }
     await client.query('COMMIT');
     return { credit_note: creditNote, links };
   } catch (error) {
