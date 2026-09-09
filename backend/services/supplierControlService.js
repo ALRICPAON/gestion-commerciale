@@ -24,7 +24,7 @@ const DEFAULT_AMOUNT_RATIO_TOLERANCE = 0.005;
 const VALIDATION_FINAL_STATUSES = new Set(['valide_a_payer', 'paye']);
 const VALIDATION_BLOCKED_FINAL_STATUSES = new Set(['litige', 'avoir_attendu', 'reconciliation_required']);
 const SUPPLIER_CONTROL_STATUS_GROUPS = {
-  needs_action: ['a_rapprocher', 'a_controler', 'ecart', 'avoir_attendu', 'conforme', 'reconciliation_required'],
+  needs_action: ['a_rapprocher', 'a_controler', 'ecart', 'avoir_attendu', 'reconciliation_required'],
   ready_to_validate: ['conforme', 'ecart'],
   final: ['valide_a_payer', 'paye'],
 };
@@ -103,6 +103,57 @@ function canonicalSupplierControlStatus(document = {}) {
 
 function documentAmount(document = {}) {
   return Math.abs(toNumber(document.amount_ex_vat ?? document.currency_amount_ex_vat));
+}
+
+function creditNoteApplicationSummary(document = {}, creditNoteLinks = []) {
+  const amount = documentAmount(document);
+  const applied = round(creditNoteLinks.reduce((sum, link) => sum + toNumber(link.applied_amount_ex_vat), 0));
+  const unapplied = round(amount - applied);
+  const tolerance = amountTolerance(amount);
+
+  let controlStatus = 'a_rapprocher';
+  let matchingStatus = 'unallocated';
+  if (applied > tolerance && unapplied > tolerance) {
+    controlStatus = 'a_controler';
+    matchingStatus = 'partially_matched';
+  } else if (Math.abs(unapplied) <= tolerance && applied > tolerance) {
+    controlStatus = 'conforme';
+    matchingStatus = 'matched';
+  } else if (unapplied < -tolerance) {
+    controlStatus = 'ecart';
+    matchingStatus = 'over_applied';
+  }
+
+  return {
+    credit_note_amount_ex_vat: amount,
+    credit_note_applied_amount_ex_vat: applied,
+    credit_note_unapplied_amount_ex_vat: unapplied,
+    credit_note_over_applied_amount_ex_vat: unapplied < -tolerance ? round(Math.abs(unapplied)) : 0,
+    credit_note_link_count: creditNoteLinks.length,
+    credit_note_matching_status: matchingStatus,
+    control_status: controlStatus,
+    can_validate: false,
+    blocking_reasons: [],
+  };
+}
+
+function buildCreditNoteValidationSummary(document = {}, creditNoteLinks = []) {
+  const summary = creditNoteApplicationSummary(document, creditNoteLinks);
+  return {
+    invoice_total: summary.credit_note_amount_ex_vat,
+    applied_credit_note_total_ex_vat: 0,
+    remaining_expected_credit_note_total_ex_vat: 0,
+    over_applied_credit_note_total_ex_vat: summary.credit_note_over_applied_amount_ex_vat,
+    net_invoice_total_ex_vat: round(-summary.credit_note_unapplied_amount_ex_vat),
+    gross_purchase_total_ex_vat: 0,
+    net_purchase_total_ex_vat: 0,
+    residual_difference_ex_vat: summary.credit_note_unapplied_amount_ex_vat,
+    matched_purchase_total: 0,
+    difference_total: summary.credit_note_unapplied_amount_ex_vat,
+    linked_purchase_count: 0,
+    accepted_difference: false,
+    ...summary,
+  };
 }
 
 function effectivePurchaseTotalExVat(purchase = {}) {
@@ -238,6 +289,9 @@ function buildValidationSummary(document, totals, controlStatus = canonicalSuppl
 }
 
 function statusFromTotals(document, totals) {
+  if (document.document_type === 'credit_note') {
+    return clean(document.supplier_control_status)?.toLowerCase() || 'a_rapprocher';
+  }
   const currentStatus = canonicalSupplierControlStatus(document);
   if (currentStatus === 'avoir_attendu' && toNumber(totals.remaining_expected_credit_note_total_ex_vat) > 0.01) {
     return currentStatus;
@@ -1053,8 +1107,13 @@ async function recalculateSupplierControl(client, { storeId, documentId, userId 
   if (!document) return null;
 
   const links = await loadActiveLinks(client, { storeId, documentId });
+  const creditNoteLinks = document.document_type === 'credit_note'
+    ? await listCreditNoteLinks(client, { storeId, creditNoteId: document.id })
+    : [];
   const totals = await loadSupplierControlTotals(client, { storeId, document, links });
-  const nextStatus = statusFromTotals(document, totals);
+  const nextStatus = document.document_type === 'credit_note'
+    ? creditNoteApplicationSummary(document, creditNoteLinks).control_status
+    : statusFromTotals(document, totals);
   const storedStatus = clean(document.supplier_control_status)?.toLowerCase() || null;
 
   if (nextStatus !== storedStatus) {
@@ -1072,9 +1131,11 @@ async function recalculateSupplierControl(client, { storeId, documentId, userId 
   }
 
   const events = await loadEvents(client, { storeId, documentId, limit: 100 });
-  const summary = buildValidationSummary(document, totals, nextStatus, {
-    acceptedDifference: hasDifferenceAccepted(events, document, links, totals),
-  });
+  const summary = document.document_type === 'credit_note'
+    ? buildCreditNoteValidationSummary(document, creditNoteLinks)
+    : buildValidationSummary(document, totals, nextStatus, {
+      acceptedDifference: hasDifferenceAccepted(events, document, links, totals),
+    });
   if (emitEvent) {
     await insertEvent(client, {
       storeId,
@@ -1090,17 +1151,37 @@ async function recalculateSupplierControl(client, { storeId, documentId, userId 
 }
 
 async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
-  const params = [storeId];
+  const { absoluteTolerance, ratioTolerance } = amountToleranceConfig();
+  const params = [storeId, absoluteTolerance, ratioTolerance];
   const where = ['psi.store_id = $1', 'psi.pennylane_deleted_at IS NULL'];
+  const calculatedStatusSql = `CASE
+    WHEN psi.document_type = 'credit_note' THEN
+      CASE
+        WHEN COALESCE(credit_links.applied_amount_ex_vat, 0) <= GREATEST($2, ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) * $3) THEN 'a_rapprocher'
+        WHEN ABS(ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) - COALESCE(credit_links.applied_amount_ex_vat, 0)) <= GREATEST($2, ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) * $3) THEN 'conforme'
+        WHEN ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) - COALESCE(credit_links.applied_amount_ex_vat, 0) < -GREATEST($2, ABS(COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat, 0)) * $3) THEN 'ecart'
+        ELSE 'a_controler'
+      END
+    ELSE psi.supplier_control_status
+  END`;
 
   const status = clean(filters.supplier_control_status);
   const statusGroup = clean(filters.status_group);
-  if (statusGroup && SUPPLIER_CONTROL_STATUS_GROUPS[statusGroup]) {
+  if (statusGroup === 'final') {
+    params.push(SUPPLIER_CONTROL_STATUS_GROUPS.final);
+    where.push(`(
+      (psi.document_type = 'credit_note' AND ${calculatedStatusSql} = 'conforme')
+      OR (psi.document_type <> 'credit_note' AND ${calculatedStatusSql} = ANY($${params.length}::text[]))
+    )`);
+  } else if (statusGroup === 'ready_to_validate') {
+    params.push(SUPPLIER_CONTROL_STATUS_GROUPS.ready_to_validate);
+    where.push(`psi.document_type <> 'credit_note' AND ${calculatedStatusSql} = ANY($${params.length}::text[])`);
+  } else if (statusGroup && SUPPLIER_CONTROL_STATUS_GROUPS[statusGroup]) {
     params.push(SUPPLIER_CONTROL_STATUS_GROUPS[statusGroup]);
-    where.push(`psi.supplier_control_status = ANY($${params.length}::text[])`);
+    where.push(`${calculatedStatusSql} = ANY($${params.length}::text[])`);
   } else if (status && CANONICAL_SUPPLIER_CONTROL_STATUSES.has(status)) {
     params.push(status);
-    where.push(`psi.supplier_control_status = $${params.length}`);
+    where.push(`${calculatedStatusSql} = $${params.length}`);
   }
 
   const supplierId = clean(filters.supplier_id);
@@ -1172,15 +1253,23 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
     last_control_action_at: 'last_control_action_at',
   };
   const sortColumn = sortColumns[sortKey] || sortColumns.invoice_date;
-  const { absoluteTolerance, ratioTolerance } = amountToleranceConfig();
   const countParams = [...params];
   const countResult = await db.query(
     `
+    WITH credit_links AS (
+      SELECT store_id, pennylane_credit_note_id, SUM(applied_amount_ex_vat) AS applied_amount_ex_vat
+      FROM supplier_expected_credit_note_links
+      WHERE status <> 'unlinked'
+      GROUP BY store_id, pennylane_credit_note_id
+    )
     SELECT COUNT(*)::int AS total
     FROM pennylane_supplier_invoices psi
     LEFT JOIN suppliers s
       ON s.id = psi.supplier_id
      AND s.store_id = psi.store_id
+    LEFT JOIN credit_links
+      ON credit_links.pennylane_credit_note_id = psi.id
+     AND credit_links.store_id = psi.store_id
     WHERE ${where.join(' AND ')}
     `,
     countParams
@@ -1191,10 +1280,8 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
   const limitParam = queryParams.length;
   queryParams.push(offset);
   const offsetParam = queryParams.length;
-  queryParams.push(absoluteTolerance);
-  const absoluteToleranceParam = queryParams.length;
-  queryParams.push(ratioTolerance);
-  const ratioToleranceParam = queryParams.length;
+  const absoluteToleranceParam = 2;
+  const ratioToleranceParam = 3;
 
   const result = await db.query(
     `
@@ -1234,6 +1321,11 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
         BOOL_OR(event_type = 'expected_credit_note') AS has_expected_credit_note
       FROM supplier_control_events
       GROUP BY store_id, pennylane_supplier_invoice_id
+    ), credit_links AS (
+      SELECT store_id, pennylane_credit_note_id, SUM(applied_amount_ex_vat) AS applied_amount_ex_vat
+      FROM supplier_expected_credit_note_links
+      WHERE status <> 'unlinked'
+      GROUP BY store_id, pennylane_credit_note_id
     ), filtered AS (
       SELECT
         psi.id,
@@ -1253,7 +1345,8 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
         psi.amount_inc_vat,
         psi.currency,
         psi.payment_status,
-        psi.supplier_control_status,
+        ${calculatedStatusSql} AS supplier_control_status,
+        psi.supplier_control_status AS stored_supplier_control_status,
         psi.paid,
         COALESCE(al.linked_purchase_count, 0) AS linked_purchase_count,
         COALESCE(pt.linked_purchase_total, 0) AS linked_purchase_total,
@@ -1276,6 +1369,9 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
       LEFT JOIN last_events le
         ON le.pennylane_supplier_invoice_id = psi.id
        AND le.store_id = psi.store_id
+      LEFT JOIN credit_links
+        ON credit_links.pennylane_credit_note_id = psi.id
+       AND credit_links.store_id = psi.store_id
       WHERE ${where.join(' AND ')}
     )
     SELECT *
@@ -1326,11 +1422,17 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
   const summary = buildValidationSummary(document, totals, statusFromTotals(document, totals), {
     acceptedDifference: hasDifferenceAccepted(events, document, links, totals),
   });
+  const effectiveSummary = document.document_type === 'credit_note'
+    ? buildCreditNoteValidationSummary(document, creditNoteLinks)
+    : summary;
+  const effectiveStatus = effectiveSummary.control_status;
 
   return {
     document: {
       ...document,
-      supplier_control_status: canonicalSupplierControlStatus(document),
+      supplier_control_status: document.document_type === 'credit_note'
+        ? effectiveStatus
+        : canonicalSupplierControlStatus(document),
       pdf_available: Boolean(clean(document.public_file_url)),
     },
     links,
@@ -1344,7 +1446,7 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
     })),
     credit_note_links: creditNoteLinks,
     events,
-    summary,
+    summary: effectiveSummary,
   };
 }
 
@@ -2232,7 +2334,9 @@ module.exports = {
   amountTolerance,
   applySupplierControlMatch,
   assertDocumentLinksEditable,
+  buildCreditNoteValidationSummary,
   canonicalSupplierControlStatus,
+  creditNoteApplicationSummary,
   clean,
   getSupplierControlDocument,
   isPaidStatus,

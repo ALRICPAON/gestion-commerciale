@@ -5,7 +5,9 @@ const path = require('path');
 const {
   addPurchaseLink,
   amountTolerance,
+  buildCreditNoteValidationSummary,
   canonicalSupplierControlStatus,
+  creditNoteApplicationSummary,
   getSupplierControlDocument,
   listPurchaseCandidates,
   listSupplierControlDocuments,
@@ -113,6 +115,7 @@ function createMockDb({
   incompatibleLinks = [],
   legacyLocked = [],
   expectedCreditNotes = [],
+  creditNoteLinks = [],
   appliedCreditNoteTotal = 0,
   remainingExpectedCreditNoteTotal = 0,
 } = {}) {
@@ -133,13 +136,16 @@ function createMockDb({
     }
 
     if (/WITH active_link_purchases AS/i.test(sql)) {
-      const limit = Number(params[params.length - 4]);
-      const offset = Number(params[params.length - 3]);
-      const absoluteTolerance = Number(params[params.length - 2]);
-      const ratioTolerance = Number(params[params.length - 1]);
+      const limit = Number(params[params.length - 2]);
+      const offset = Number(params[params.length - 1]);
+      const absoluteTolerance = Number(params[1]);
+      const ratioTolerance = Number(params[2]);
       const rows = (documents || [state.doc]).filter(Boolean).slice(offset, offset + limit).map((row) => {
         const linkedPurchaseTotal = links.reduce((sum, item) => sum + Number(item.purchase_total_ex_vat || 0), 0);
         const difference = Number(row.amount_ex_vat || 0) - linkedPurchaseTotal;
+        const creditSummary = row.document_type === 'credit_note'
+          ? creditNoteApplicationSummary(row, creditNoteLinks.filter((item) => String(item.pennylane_credit_note_id || row.id) === String(row.id)))
+          : null;
         return {
           id: row.id,
           pennylane_supplier_invoice_id: row.pennylane_supplier_invoice_id,
@@ -156,7 +162,8 @@ function createMockDb({
           amount_inc_vat: row.amount_inc_vat,
           currency: row.currency,
           payment_status: row.payment_status,
-          supplier_control_status: row.supplier_control_status,
+          supplier_control_status: creditSummary?.control_status || row.supplier_control_status,
+          stored_supplier_control_status: row.supplier_control_status,
           paid: row.paid,
           linked_purchase_count: links.length,
           linked_purchase_total: linkedPurchaseTotal,
@@ -194,6 +201,10 @@ function createMockDb({
           over_applied_credit_note_total_ex_vat: 0,
         }],
       };
+    }
+
+    if (/WITH expected_totals AS/i.test(sql) && /pennylane_credit_note_id = \$2/i.test(sql)) {
+      return { rows: creditNoteLinks };
     }
 
     if (/FROM supplier_expected_credit_notes ecn/i.test(sql)) {
@@ -331,7 +342,8 @@ async function testListDocumentsStatusGroups() {
     filters: { status_group: 'needs_action', limit: 10 },
   });
   const needsActionCall = db.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql));
-  assert.match(needsActionCall.sql, /psi\.supplier_control_status = ANY/);
+  assert.match(needsActionCall.sql, /document_type = 'credit_note'/);
+  assert.match(needsActionCall.sql, /= ANY/);
   assert.ok(needsActionCall.params.some((param) => Array.isArray(param) && param.includes('reconciliation_required')));
 
   db.calls.length = 0;
@@ -341,6 +353,78 @@ async function testListDocumentsStatusGroups() {
   });
   const readyCall = db.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql));
   assert.ok(readyCall.params.some((param) => Array.isArray(param) && param.includes('conforme') && param.includes('ecart')));
+  assert.match(readyCall.sql, /psi\.document_type <> 'credit_note'/);
+}
+
+async function testRealCreditNoteCanonicalStatusesAndFilters() {
+  const creditDoc = document({
+    document_type: 'credit_note',
+    invoice_number: '511260004717',
+    supplier_name: 'SOGELMER',
+    amount_ex_vat: 407.7,
+    supplier_control_status: 'a_rapprocher',
+  });
+
+  let summary = buildCreditNoteValidationSummary(creditDoc, []);
+  assert.strictEqual(summary.control_status, 'a_rapprocher');
+  assert.strictEqual(summary.credit_note_applied_amount_ex_vat, 0);
+  assert.strictEqual(summary.credit_note_unapplied_amount_ex_vat, 407.7);
+  assert.strictEqual(summary.can_validate, false);
+
+  summary = buildCreditNoteValidationSummary(creditDoc, [{ applied_amount_ex_vat: 200 }]);
+  assert.strictEqual(summary.control_status, 'a_controler');
+  assert.strictEqual(summary.credit_note_matching_status, 'partially_matched');
+  assert.strictEqual(summary.credit_note_unapplied_amount_ex_vat, 207.7);
+
+  const sogelmerLinks = [{
+    id: 'credit-link-sogelmer',
+    store_id: ids.storeA,
+    expected_credit_note_id: 'expected-sogelmer',
+    pennylane_credit_note_id: ids.doc,
+    applied_amount_ex_vat: 407.7,
+    expected_amount_ex_vat: 407.7,
+    received_amount_ex_vat: 407.7,
+    remaining_amount_ex_vat: 0,
+    expected_credit_note_status: 'resolved',
+    source_invoice_number: '511260004713',
+  }];
+  summary = buildCreditNoteValidationSummary(creditDoc, sogelmerLinks);
+  assert.strictEqual(summary.control_status, 'conforme');
+  assert.strictEqual(summary.credit_note_matching_status, 'matched');
+  assert.strictEqual(summary.credit_note_applied_amount_ex_vat, 407.7);
+  assert.strictEqual(summary.credit_note_unapplied_amount_ex_vat, 0);
+
+  const detail = await getSupplierControlDocument(createMockDb({
+    doc: creditDoc,
+    creditNoteLinks: sogelmerLinks,
+  }), {
+    storeId: ids.storeA,
+    pennylaneSupplierInvoiceId: ids.doc,
+  });
+  assert.strictEqual(detail.document.supplier_control_status, 'conforme');
+  assert.strictEqual(detail.summary.control_status, 'conforme');
+  assert.strictEqual(detail.summary.credit_note_unapplied_amount_ex_vat, 0);
+
+  const listDb = createMockDb({
+    documents: [creditDoc],
+    creditNoteLinks: sogelmerLinks,
+  });
+  const finalList = await listSupplierControlDocuments(listDb, {
+    storeId: ids.storeA,
+    filters: { status_group: 'final', limit: 10 },
+  });
+  assert.strictEqual(finalList.documents[0].supplier_control_status, 'conforme');
+  const finalSql = listDb.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql)).sql;
+  assert.match(finalSql, /document_type = 'credit_note'/);
+  assert.match(finalSql, /= 'conforme'/);
+  assert.match(finalSql, /supplier_expected_credit_note_links/);
+  assert.ok(listDb.calls.some((call) => call.params.some((param) => Array.isArray(param) && param.includes('valide_a_payer') && param.includes('paye'))));
+
+  summary = buildCreditNoteValidationSummary(creditDoc, [{ applied_amount_ex_vat: 450 }]);
+  assert.strictEqual(summary.control_status, 'ecart');
+  assert.strictEqual(summary.credit_note_matching_status, 'over_applied');
+  assert.strictEqual(summary.credit_note_unapplied_amount_ex_vat, -42.3);
+  assert.strictEqual(summary.credit_note_over_applied_amount_ex_vat, 42.3);
 }
 
 async function testExpectedCreditNoteStatusVisibleAfterPennylaneValidation() {
@@ -611,8 +695,8 @@ async function testToleranceEnvironmentIsSharedByListDetailAndRecalculate() {
       filters: { limit: 10 },
     });
     const listCall = db.calls.find((call) => /WITH active_link_purchases AS/i.test(call.sql));
-    assert.strictEqual(Number(listCall.params[listCall.params.length - 2]), 100);
-    assert.strictEqual(Number(listCall.params[listCall.params.length - 1]), 0.005);
+    assert.strictEqual(Number(listCall.params[1]), 100);
+    assert.strictEqual(Number(listCall.params[2]), 0.005);
     assert.strictEqual(list.documents[0].amount_difference, 80);
     assert.strictEqual(list.documents[0].has_difference, false);
 
@@ -782,6 +866,7 @@ function testPennylaneLineAuditGuard() {
   assert.strictEqual(canonicalSupplierControlStatus({ payment_status: 'to_be_paid' }), 'valide_a_payer');
   await testListDocumentsAndFilters();
   await testListDocumentsStatusGroups();
+  await testRealCreditNoteCanonicalStatusesAndFilters();
   await testExpectedCreditNoteStatusVisibleAfterPennylaneValidation();
   await testListPaginationKeepsTotalOnEmptyPage();
   await testDetailDocumentLinesAndPdf();

@@ -41,6 +41,50 @@ function documentAmount(document = {}) {
   return Math.abs(toNumber(document.amount_ex_vat ?? document.currency_amount_ex_vat));
 }
 
+function creditNoteControlStatusFromAmounts({ amount, applied }) {
+  const creditAmount = round(amount);
+  const appliedAmount = round(applied);
+  const remaining = round(creditAmount - appliedAmount);
+  const tolerance = amountTolerance(creditAmount);
+  if (appliedAmount <= tolerance) return 'a_rapprocher';
+  if (Math.abs(remaining) <= tolerance) return 'conforme';
+  if (remaining < -tolerance) return 'ecart';
+  return 'a_controler';
+}
+
+async function recalculateCreditNoteControlStatus(client, { storeId, creditNoteId }) {
+  if (!creditNoteId) return null;
+  const creditNote = await loadPennylaneDocument(client, { storeId, documentId: creditNoteId, forUpdate: true });
+  if (!creditNote || creditNote.document_type !== 'credit_note') return null;
+  const totals = await client.query(
+    `
+    SELECT COALESCE(SUM(applied_amount_ex_vat), 0) AS applied_amount_ex_vat
+    FROM supplier_expected_credit_note_links
+    WHERE store_id = $1
+      AND pennylane_credit_note_id = $2
+      AND status <> 'unlinked'
+    `,
+    [storeId, creditNoteId]
+  );
+  const nextStatus = creditNoteControlStatusFromAmounts({
+    amount: documentAmount(creditNote),
+    applied: totals.rows[0]?.applied_amount_ex_vat,
+  });
+  await client.query(
+    `
+    UPDATE pennylane_supplier_invoices
+    SET supplier_control_status = $1,
+        updated_at = now()
+    WHERE id = $2
+      AND store_id = $3
+      AND document_type = 'credit_note'
+      AND supplier_control_status <> $1
+    `,
+    [nextStatus, creditNoteId, storeId]
+  );
+  return nextStatus;
+}
+
 function dateOnly(value) {
   if (!value) return null;
   if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) return value.slice(0, 10);
@@ -925,6 +969,10 @@ async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditN
       payload: { expected_credit_note_ids: ids, applied_amount_ex_vat: totalToApply },
       userId,
     });
+    const creditNoteControlStatus = await recalculateCreditNoteControlStatus(client, {
+      storeId,
+      creditNoteId: creditNote.id,
+    });
     for (const sourceDocumentId of sourceDocumentIdsToRecalculate) {
       await recalculateSourceInvoiceAfterCreditNote(client, {
         storeId,
@@ -936,6 +984,7 @@ async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditN
       credit_note: creditNote,
       links,
       applied_amount_ex_vat: totalToApply,
+      credit_note_control_status: creditNoteControlStatus,
       unapplied_amount_ex_vat: Math.max(round(amountAvailable - alreadyAppliedToCreditNote - totalToApply), 0),
     };
   } catch (error) {
@@ -1013,12 +1062,16 @@ async function removeCreditNoteLink(db, { storeId, creditNoteId, linkId, comment
       payload: { link_id: link.id, pennylane_credit_note_id: creditNoteId },
       userId,
     });
+    const creditNoteControlStatus = await recalculateCreditNoteControlStatus(client, {
+      storeId,
+      creditNoteId,
+    });
     await recalculateSourceInvoiceAfterCreditNote(client, {
       storeId,
       documentId: link.source_pennylane_supplier_invoice_id,
     });
     await client.query('COMMIT');
-    return { link };
+    return { link, credit_note_control_status: creditNoteControlStatus };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -1086,6 +1139,7 @@ module.exports = {
   listExpectedCreditNotes,
   listExpectedCreditNotesForPurchase,
   listExpectedCreditNotesForSourceDocument,
+  recalculateCreditNoteControlStatus,
   recalculateSourceInvoiceAfterCreditNote,
   removeCreditNoteLink,
   applyCreditNoteMatch,

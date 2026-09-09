@@ -66,6 +66,7 @@ function testFiltersAndStatuses() {
     'ready_to_validate',
     'valide_a_payer',
     'paye',
+    'final',
     'litige',
     'reconciliation_required',
     'all',
@@ -78,6 +79,8 @@ function testFiltersAndStatuses() {
     'Conforme',
     'Valide a payer',
     'Paye',
+    'Partiellement rapproche',
+    'Solde',
     'Litige',
     'A reconcilier',
   ].forEach((label) => assertContains(js, new RegExp(label)));
@@ -181,6 +184,17 @@ function testFinancialPresentationUsesResidualDifference() {
   assertContains(js, /residual_difference_ex_vat/);
 }
 
+function testCreditNoteFinalizationUi() {
+  const js = read(jsPath);
+  const html = read(htmlPath);
+  assertContains(html, /data-filter="final">Rapproches/);
+  assertContains(js, /status_group", "final"/);
+  assertContains(js, /credit_note_unapplied_amount_ex_vat/);
+  assertContains(js, /formatSignedCurrency\(remaining\)/);
+  assertContains(js, /Excedent/);
+  assertNotContains(js, /Math\.max\(amount - applied, 0\)/);
+}
+
 (async () => {
   testPageAssetsAndMenu();
   testRequiredDomIds();
@@ -192,6 +206,7 @@ function testFinancialPresentationUsesResidualDifference() {
   testNoFakeLineMatching();
   testCreditNoteWorkflowIsNotGloballyReadOnly();
   testFinancialPresentationUsesResidualDifference();
+  testCreditNoteFinalizationUi();
   console.log('OK supplier control UI tests');
 })().catch((error) => {
   console.error(error);
