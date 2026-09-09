@@ -46,6 +46,7 @@ const els = {
   creditNoteMatchSection: document.getElementById("credit-note-match-section"),
   loadCreditNoteCandidates: document.getElementById("load-credit-note-candidates-btn"),
   creditNoteCandidatesList: document.getElementById("credit-note-candidates-list"),
+  creditNoteLinksList: document.getElementById("credit-note-links-list"),
   applyCreditNoteMatch: document.getElementById("apply-credit-note-match-btn"),
   validationMessage: document.getElementById("validation-message"),
   validate: document.getElementById("validate-btn"),
@@ -157,6 +158,10 @@ function formatCurrency(value) {
   });
 }
 
+function documentAmountExVat(doc = {}) {
+  return doc.amount_ex_vat ?? doc.currency_amount_ex_vat;
+}
+
 function formatSignedCurrency(value) {
   const amount = Number(value || 0);
   const sign = amount > 0 ? "+" : "";
@@ -265,7 +270,7 @@ function renderDocuments() {
           <span class="document-row-meta">${doc.linked_purchase_count || 0} BL - ${statusLabels[status] || status}</span>
         </span>
         <span class="document-row-amount">
-          ${formatCurrency(doc.amount_ex_vat)}
+          ${formatCurrency(documentAmountExVat(doc))}
           <span class="status-badge status-${escapeHtml(status)}">${statusLabels[status] || status}</span>
         </span>
       </button>
@@ -316,7 +321,7 @@ function renderDetail() {
   const status = summary.control_status || doc.supplier_control_status || "a_rapprocher";
   const documentLocked = lockedStatus(status);
   const canEditInvoiceControl = canMutate() && !documentLocked && doc.document_type !== "credit_note";
-  const canMatchCreditNote = canMutate() && !documentLocked && doc.document_type === "credit_note";
+  const canMatchCreditNote = canMutate() && doc.document_type === "credit_note";
 
   els.documentKind.textContent = doc.document_type === "credit_note" ? "AVOIR" : "FACTURE";
   els.detailTitle.textContent = doc.invoice_number || "-";
@@ -373,7 +378,7 @@ function renderMetrics(doc, summary) {
   const cells = [
     ["Date", formatDate(doc.invoice_date)],
     ["Echeance", formatDate(doc.due_date)],
-    ["Montant HT", formatCurrency(summary.invoice_total ?? doc.amount_ex_vat)],
+    ["Montant HT", formatCurrency(summary.invoice_total ?? documentAmountExVat(doc))],
     ["TVA", formatCurrency(doc.amount_vat)],
     ["TTC", formatCurrency(doc.amount_inc_vat)],
     ["Montant BL", formatCurrency(summary.matched_purchase_total)],
@@ -540,8 +545,10 @@ function renderCreditNoteMatching(doc, readOnly) {
   els.creditNoteMatchSection.classList.toggle("hidden", !isCreditNote);
   if (!isCreditNote) {
     els.creditNoteCandidatesList.innerHTML = "";
+    if (els.creditNoteLinksList) els.creditNoteLinksList.innerHTML = "";
     return;
   }
+  renderCreditNoteLinks(state.detail?.credit_note_links || [], readOnly);
   if (!state.creditNoteCandidates.length) {
     els.creditNoteCandidatesList.innerHTML = `<div class="supplier-control-empty">Avoir a identifier : recherche les attentes du meme fournisseur.</div>`;
     els.loadCreditNoteCandidates.disabled = readOnly || state.busy;
@@ -562,6 +569,39 @@ function renderCreditNoteMatching(doc, readOnly) {
   `).join("");
   els.loadCreditNoteCandidates.disabled = readOnly || state.busy;
   els.applyCreditNoteMatch.disabled = readOnly || state.busy || state.selectedExpectedCreditNoteIds.size === 0;
+}
+
+function renderCreditNoteLinks(links, readOnly) {
+  if (!els.creditNoteLinksList) return;
+  if (!links.length) {
+    els.creditNoteLinksList.innerHTML = "";
+    return;
+  }
+  els.creditNoteLinksList.innerHTML = links.map((link) => {
+    const expected = Number(link.expected_amount_ex_vat || 0);
+    const received = Number(link.received_amount_ex_vat || 0);
+    const remaining = Number(link.remaining_amount_ex_vat ?? Math.max(expected - received, 0));
+    const overage = Number(link.over_applied_amount_ex_vat || 0);
+    return `
+      <div class="expected-credit-note">
+        <div class="expected-credit-note-main">
+          <strong>${escapeHtml(link.source_invoice_number || link.bl_number || "Attente liee")}</strong>
+          <span class="status-badge status-${escapeHtml(link.expected_credit_note_status || "matched")}">${escapeHtml(expectedCreditNoteStatusLabels[link.expected_credit_note_status] || link.expected_credit_note_status || "Avoir recu")}</span>
+        </div>
+        <div class="linked-details">
+          <span>Applique ${formatCurrency(link.applied_amount_ex_vat)}</span>
+          <span>Attendu ${formatCurrency(expected)}</span>
+          <span>Recu ${formatCurrency(received)}</span>
+          <span>Reste ${formatCurrency(remaining)}</span>
+          ${overage > 0 ? `<span>Excedent +${formatCurrency(overage)}</span>` : ""}
+          ${link.bl_number ? `<span>BL ${escapeHtml(link.bl_number)}</span>` : ""}
+        </div>
+        <div class="linked-actions">
+          <button class="btn btn-secondary btn-sm" type="button" data-remove-credit-note-link="${escapeHtml(link.id || "")}" ${readOnly ? "disabled" : ""}>Retirer</button>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
 function renderValidation(summary, doc, readOnly) {
@@ -734,12 +774,30 @@ async function applyCreditNoteSelection() {
   const expectedCreditNoteIds = [...state.selectedExpectedCreditNoteIds];
   if (!expectedCreditNoteIds.length) return;
   await mutate("Avoir fournisseur associe.", async () => {
-    await apiFetch(`/api/supplier-control/credit-notes/${encodeURIComponent(state.selectedId)}/apply-match`, {
+    const result = await apiFetch(`/api/supplier-control/credit-notes/${encodeURIComponent(state.selectedId)}/apply-match`, {
       method: "POST",
       body: JSON.stringify({ expected_credit_note_ids: expectedCreditNoteIds }),
     });
     state.creditNoteCandidates = [];
     state.selectedExpectedCreditNoteIds.clear();
+    await refreshSelectedDetail();
+    renderDetail();
+    if (Number(result.unapplied_amount_ex_vat || 0) > 0.0001) {
+      return {
+        message: `Avoir associe. Reliquat non affecte : ${formatCurrency(result.unapplied_amount_ex_vat)}.`,
+        type: "warning",
+      };
+    }
+    return null;
+  });
+}
+
+async function removeCreditNoteLink(linkId) {
+  if (!linkId) return;
+  await mutate("Lien avoir retire.", async () => {
+    await apiFetch(`/api/supplier-control/credit-notes/${encodeURIComponent(state.selectedId)}/links/${encodeURIComponent(linkId)}`, {
+      method: "DELETE",
+    });
     await refreshSelectedDetail();
     renderDetail();
   });
@@ -782,8 +840,8 @@ async function mutate(successMessage, fn) {
   state.busy = true;
   document.querySelectorAll("button").forEach((button) => { button.disabled = true; });
   try {
-    await fn();
-    showFeedback(successMessage, "success");
+    const result = await fn();
+    showFeedback(result?.message || successMessage, result?.type || "success");
   } catch (error) {
     showFeedback(errorMessage(error), error.code === "SUPPLIER_CONTROL_VALIDATION_RECONCILIATION_REQUIRED" ? "warning" : "error");
     await refreshSelectedDetail(false).catch(() => {});
@@ -853,6 +911,8 @@ function bindEvents() {
     if (removeButton) removePurchase(removeButton.dataset.removePurchase);
     const resolutionButton = event.target.closest("[data-resolution]");
     if (resolutionButton) resolveDifference(resolutionButton.dataset.resolution);
+    const removeCreditNoteLinkButton = event.target.closest("[data-remove-credit-note-link]");
+    if (removeCreditNoteLinkButton) removeCreditNoteLink(removeCreditNoteLinkButton.dataset.removeCreditNoteLink);
   });
   els.candidatesList?.addEventListener("change", (event) => {
     const input = event.target.closest("[data-candidate-id]");

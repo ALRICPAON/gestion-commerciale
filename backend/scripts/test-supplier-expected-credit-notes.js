@@ -412,6 +412,124 @@ function createApplyMatchMockDb() {
   };
 }
 
+function createConfigurableApplyMatchMockDb({
+  creditAmount = 100,
+  creditSupplierId = ids.supplier,
+  expectedRows = null,
+  existingCreditApplied = 0,
+  invoiceOverrides = {},
+  purchaseTotal = 1000,
+} = {}) {
+  const queries = [];
+  const expectedId1 = '88888888-8888-4888-8888-888888888888';
+  const expectedId2 = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const rows = expectedRows || [{
+    id: expectedId1,
+    store_id: ids.store,
+    supplier_id: ids.supplier,
+    source_purchase_id: ids.purchase,
+    source_pennylane_supplier_invoice_id: ids.invoice,
+    expected_amount_ex_vat: creditAmount,
+    received_amount_ex_vat: 0,
+    status: 'pending',
+  }];
+  const state = {
+    links: [],
+    events: [],
+    invoiceStatusUpdates: [],
+    committed: false,
+    rolledBack: false,
+  };
+  const client = {
+    async query(sql, params = []) {
+      queries.push({ sql, params });
+      const compact = sql.replace(/\s+/g, ' ');
+      if (/^BEGIN$/i.test(sql.trim())) return { rows: [], rowCount: 0 };
+      if (/^COMMIT$/i.test(sql.trim())) {
+        state.committed = true;
+        return { rows: [], rowCount: 0 };
+      }
+      if (/^ROLLBACK$/i.test(sql.trim())) {
+        state.rolledBack = true;
+        return { rows: [], rowCount: 0 };
+      }
+      if (/FROM pennylane_supplier_invoices psi/i.test(sql)) {
+        const requestedId = params[0];
+        if (requestedId === ids.credit) {
+          return { rows: [{ id: ids.credit, store_id: ids.store, supplier_id: creditSupplierId, document_type: 'credit_note', amount_ex_vat: creditAmount, invoice_number: 'AV-1' }] };
+        }
+        if (requestedId === ids.invoice) {
+          return { rows: [{ id: ids.invoice, store_id: ids.store, supplier_id: ids.supplier, document_type: 'invoice', amount_ex_vat: 1100, payment_status: 'pending', paid: false, supplier_control_status: 'avoir_attendu', ...invoiceOverrides }] };
+        }
+        return { rows: [] };
+      }
+      if (/FROM supplier_expected_credit_notes ecn/i.test(sql) && /FOR UPDATE OF ecn/i.test(sql)) {
+        const requested = new Set((params[1] || []).map(String));
+        return { rows: rows.filter((row) => requested.has(String(row.id))) };
+      }
+      if (/FROM supplier_expected_credit_note_links/i.test(sql) && /pennylane_credit_note_id = \$2/i.test(sql)) {
+        return { rows: [{ total: existingCreditApplied }] };
+      }
+      if (/INSERT INTO supplier_expected_credit_note_links/i.test(sql)) {
+        const link = {
+          id: `link-${state.links.length + 1}`,
+          store_id: params[0],
+          expected_credit_note_id: params[1],
+          pennylane_credit_note_id: params[2],
+          applied_amount_ex_vat: params[3],
+          status: 'matched',
+        };
+        state.links.push(link);
+        return { rows: [link], rowCount: 1 };
+      }
+      if (/SELECT COALESCE\(SUM\(applied_amount_ex_vat\), 0\) AS applied/i.test(compact)) {
+        const expectedId = params[1];
+        const preExisting = rows.find((row) => String(row.id) === String(expectedId))?.received_amount_ex_vat || 0;
+        const inserted = state.links
+          .filter((link) => String(link.expected_credit_note_id) === String(expectedId))
+          .reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0);
+        return { rows: [{ applied: preExisting + inserted }] };
+      }
+      if (/UPDATE supplier_expected_credit_notes/i.test(sql)) return { rows: [], rowCount: 1 };
+      if (/INSERT INTO supplier_control_events/i.test(sql)) {
+        state.events.push({ event_type: params[2], event_key: params[3], payload: params[4] ? JSON.parse(params[4]) : {} });
+        return { rows: [], rowCount: 1 };
+      }
+      if (/WITH linked_purchases AS/i.test(sql)) {
+        const applied = state.links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0);
+        const remaining = rows.reduce((sum, row) => {
+          const received = Number(row.received_amount_ex_vat || 0) + state.links
+            .filter((link) => String(link.expected_credit_note_id) === String(row.id))
+            .reduce((linkSum, link) => linkSum + Number(link.applied_amount_ex_vat || 0), 0);
+          return sum + Math.max(Number(row.expected_amount_ex_vat || 0) - received, 0);
+        }, 0);
+        return {
+          rows: [{
+            purchase_total_ex_vat: purchaseTotal,
+            applied_credit_note_total_ex_vat: applied,
+            remaining_expected_credit_note_total_ex_vat: remaining,
+          }],
+        };
+      }
+      if (/UPDATE pennylane_supplier_invoices/i.test(sql) && /supplier_control_status = \$1/i.test(compact)) {
+        state.invoiceStatusUpdates.push(params[0]);
+        return { rows: [], rowCount: 1 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    release() {},
+  };
+  return {
+    queries,
+    state,
+    expectedId1,
+    expectedId2,
+    async connect() {
+      return client;
+    },
+  };
+}
+
 async function testApplyCreditNoteMatchCommitsAndRecalculatesSources() {
   const db = createApplyMatchMockDb();
   const result = await applyCreditNoteMatch(db, {
@@ -425,6 +543,228 @@ async function testApplyCreditNoteMatchCommitsAndRecalculatesSources() {
   assert.strictEqual(db.state.rolledBack, false, 'success path must not rollback');
   assert.deepStrictEqual(db.state.recalculatedSourceDocuments, [ids.invoice]);
   assert.ok(db.state.events.some((event) => event.event_type === 'credit_note_linked'));
+}
+
+async function testApplyCreditNoteMatchPartialKeepsExpectedOpen() {
+  const db = createConfigurableApplyMatchMockDb({
+    creditAmount: 40,
+    expectedRows: [{
+      id: '88888888-8888-4888-8888-888888888888',
+      store_id: ids.store,
+      supplier_id: ids.supplier,
+      source_purchase_id: ids.purchase,
+      source_pennylane_supplier_invoice_id: ids.invoice,
+      expected_amount_ex_vat: 100,
+      received_amount_ex_vat: 0,
+      status: 'pending',
+    }],
+  });
+  const result = await applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1],
+    userId: ids.user,
+  });
+  assert.strictEqual(result.applied_amount_ex_vat, 40);
+  assert.strictEqual(result.unapplied_amount_ex_vat, 0);
+  assert.strictEqual(db.state.links[0].applied_amount_ex_vat, 40);
+  assert.ok(db.state.events.some((event) => event.event_type === 'expected_credit_note_partially_resolved'));
+}
+
+async function testApplyCreditNoteMatchCompletesAfterMultipleCredits() {
+  const db = createConfigurableApplyMatchMockDb({
+    creditAmount: 60,
+    expectedRows: [{
+      id: '88888888-8888-4888-8888-888888888888',
+      store_id: ids.store,
+      supplier_id: ids.supplier,
+      source_purchase_id: ids.purchase,
+      source_pennylane_supplier_invoice_id: ids.invoice,
+      expected_amount_ex_vat: 100,
+      received_amount_ex_vat: 40,
+      status: 'matched',
+    }],
+  });
+  const result = await applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1],
+    userId: ids.user,
+  });
+  assert.strictEqual(result.applied_amount_ex_vat, 60);
+  assert.ok(db.state.events.some((event) => event.event_type === 'expected_credit_note_resolved'));
+}
+
+async function testApplyCreditNoteCanCoverMultipleExpectations() {
+  const db = createConfigurableApplyMatchMockDb({
+    creditAmount: 150,
+    expectedRows: [
+      {
+        id: '88888888-8888-4888-8888-888888888888',
+        store_id: ids.store,
+        supplier_id: ids.supplier,
+        source_purchase_id: ids.purchase,
+        source_pennylane_supplier_invoice_id: ids.invoice,
+        expected_amount_ex_vat: 100,
+        received_amount_ex_vat: 0,
+        status: 'pending',
+      },
+      {
+        id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        store_id: ids.store,
+        supplier_id: ids.supplier,
+        source_purchase_id: ids.purchase,
+        source_pennylane_supplier_invoice_id: ids.invoice,
+        expected_amount_ex_vat: 50,
+        received_amount_ex_vat: 0,
+        status: 'pending',
+      },
+    ],
+  });
+  const result = await applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1, db.expectedId2],
+    userId: ids.user,
+  });
+  assert.deepStrictEqual(db.state.links.map((link) => link.applied_amount_ex_vat), [100, 50]);
+  assert.strictEqual(result.unapplied_amount_ex_vat, 0);
+}
+
+async function testApplyCreditNoteRejectsSupplierMismatch() {
+  const db = createConfigurableApplyMatchMockDb({ creditSupplierId: ids.purchase });
+  await assertRejects(/Fournisseur/, () => applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1],
+    userId: ids.user,
+  }));
+  assert.strictEqual(db.state.rolledBack, true);
+}
+
+async function testApplyCreditNoteRejectsCancelledExpectation() {
+  const db = createConfigurableApplyMatchMockDb({
+    expectedRows: [{
+      id: '88888888-8888-4888-8888-888888888888',
+      store_id: ids.store,
+      supplier_id: ids.supplier,
+      source_purchase_id: ids.purchase,
+      source_pennylane_supplier_invoice_id: ids.invoice,
+      expected_amount_ex_vat: 100,
+      received_amount_ex_vat: 0,
+      status: 'cancelled',
+    }],
+  });
+  await assertRejects(/non rapprochable/, () => applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1],
+    userId: ids.user,
+  }));
+  assert.strictEqual(db.state.links.length, 0);
+}
+
+async function testApplyCreditNoteRejectsOtherStoreExpectation() {
+  const db = createConfigurableApplyMatchMockDb({ expectedRows: [] });
+  await assertRejects(/introuvable/, () => applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1],
+    userId: ids.user,
+  }));
+  assert.strictEqual(db.state.links.length, 0);
+}
+
+async function testApplyCreditNoteRejectsExpectedOverApplyAndReportsCreditOverage() {
+  let db = createConfigurableApplyMatchMockDb({
+    creditAmount: 150,
+    expectedRows: [{
+      id: '88888888-8888-4888-8888-888888888888',
+      store_id: ids.store,
+      supplier_id: ids.supplier,
+      source_purchase_id: ids.purchase,
+      source_pennylane_supplier_invoice_id: ids.invoice,
+      expected_amount_ex_vat: 100,
+      received_amount_ex_vat: 0,
+      status: 'pending',
+    }],
+  });
+  await assertRejects(/superieur au reste/, () => applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1],
+    applications: [{ expected_credit_note_id: db.expectedId1, applied_amount_ex_vat: 150 }],
+    userId: ids.user,
+  }));
+
+  db = createConfigurableApplyMatchMockDb({
+    creditAmount: 150,
+    expectedRows: [{
+      id: '88888888-8888-4888-8888-888888888888',
+      store_id: ids.store,
+      supplier_id: ids.supplier,
+      source_purchase_id: ids.purchase,
+      source_pennylane_supplier_invoice_id: ids.invoice,
+      expected_amount_ex_vat: 100,
+      received_amount_ex_vat: 0,
+      status: 'pending',
+    }],
+  });
+  const result = await applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1],
+    userId: ids.user,
+  });
+  assert.strictEqual(result.applied_amount_ex_vat, 100);
+  assert.strictEqual(result.unapplied_amount_ex_vat, 50);
+}
+
+async function testApplyCreditNoteKeepsPennylanePaymentStatusesAndNoSideEffects() {
+  for (const invoiceOverrides of [
+    { payment_status: 'to_be_paid', supplier_control_status: 'valide_a_payer' },
+    { payment_status: 'paid', paid: true, supplier_control_status: 'paye' },
+  ]) {
+    const db = createConfigurableApplyMatchMockDb({ invoiceOverrides });
+    await applyCreditNoteMatch(db, {
+      storeId: ids.store,
+      creditNoteId: ids.credit,
+      expectedCreditNoteIds: [db.expectedId1],
+      userId: ids.user,
+    });
+    const allSql = db.queries.map((call) => call.sql).join('\n');
+    assertNotContains(allSql, /payment_status\s*=/i);
+    assertNotContains(allSql, /INSERT INTO stock_movements|UPDATE\s+stock_lots|UPDATE\s+stock_quantity|UPDATE\s+purchase_lines/i);
+  }
+}
+
+async function testSogelmerSyntheticNetAfterRealCreditNote() {
+  const db = createConfigurableApplyMatchMockDb({
+    creditAmount: 407.7,
+    purchaseTotal: 949.5,
+    expectedRows: [{
+      id: '88888888-8888-4888-8888-888888888888',
+      store_id: ids.store,
+      supplier_id: ids.supplier,
+      source_purchase_id: ids.purchase,
+      source_pennylane_supplier_invoice_id: ids.invoice,
+      expected_amount_ex_vat: 407.7,
+      received_amount_ex_vat: 0,
+      status: 'pending',
+    }],
+    invoiceOverrides: { amount_ex_vat: 949.5, invoice_number: '511260004713' },
+  });
+  await applyCreditNoteMatch(db, {
+    storeId: ids.store,
+    creditNoteId: ids.credit,
+    expectedCreditNoteIds: [db.expectedId1],
+    userId: ids.user,
+  });
+  const recalcQuery = db.queries.find((call) => /WITH linked_purchases AS/i.test(call.sql));
+  const row = await db.connect().then((client) => client.query(recalcQuery.sql, recalcQuery.params)).then((result) => result.rows[0]);
+  assert.strictEqual(Number(row.purchase_total_ex_vat), 949.5);
+  assert.strictEqual(Number(row.applied_credit_note_total_ex_vat), 407.7);
+  assert.strictEqual(Number((949.5 - 407.7).toFixed(2)), 541.8);
 }
 
 function createRemoveMatchMockDb() {
@@ -615,6 +955,15 @@ function testNoForbiddenSideEffects() {
   await testIdempotentRetry();
   await testValidations();
   await testApplyCreditNoteMatchCommitsAndRecalculatesSources();
+  await testApplyCreditNoteMatchPartialKeepsExpectedOpen();
+  await testApplyCreditNoteMatchCompletesAfterMultipleCredits();
+  await testApplyCreditNoteCanCoverMultipleExpectations();
+  await testApplyCreditNoteRejectsSupplierMismatch();
+  await testApplyCreditNoteRejectsCancelledExpectation();
+  await testApplyCreditNoteRejectsOtherStoreExpectation();
+  await testApplyCreditNoteRejectsExpectedOverApplyAndReportsCreditOverage();
+  await testApplyCreditNoteKeepsPennylanePaymentStatusesAndNoSideEffects();
+  await testSogelmerSyntheticNetAfterRealCreditNote();
   await testRemoveCreditNoteLinkRecalculatesSourceInvoice();
   testMigrationSchema();
   testCanonicalRoutesAndPermissions();

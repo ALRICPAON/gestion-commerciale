@@ -36,6 +36,7 @@ const {
 const {
   appliedCreditNoteTotalForSourceDocument,
   createExpectedCreditNoteInTransaction,
+  listCreditNoteLinks,
   listExpectedCreditNotesForSourceDocument,
 } = require('./supplierExpectedCreditNoteService');
 
@@ -1216,7 +1217,9 @@ async function listSupplierControlDocuments(db, { storeId, filters = {} }) {
         s.code AS supplier_code,
         psi.invoice_date,
         psi.due_date,
-        psi.amount_ex_vat,
+        COALESCE(psi.amount_ex_vat, psi.currency_amount_ex_vat) AS amount_ex_vat,
+        psi.amount_ex_vat AS pennylane_amount_ex_vat,
+        psi.currency_amount_ex_vat,
         psi.amount_vat,
         psi.amount_inc_vat,
         psi.currency,
@@ -1272,11 +1275,12 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
   const document = await loadDocument(db, { storeId, documentId: pennylaneSupplierInvoiceId });
   if (!document) return null;
 
-  const [links, events, lines, expectedCreditNotes] = await Promise.all([
+  const [links, events, lines, expectedCreditNotes, creditNoteLinks] = await Promise.all([
     loadActiveLinks(db, { storeId, documentId: document.id }),
     loadEvents(db, { storeId, documentId: document.id }),
     loadPennylaneLines(db, { storeId, documentId: document.id }),
     listExpectedCreditNotesForSourceDocument(db, { storeId, documentId: document.id }),
+    document.document_type === 'credit_note' ? listCreditNoteLinks(db, { storeId, creditNoteId: document.id }) : Promise.resolve([]),
   ]);
 
   const totals = await loadSupplierControlTotals(db, { storeId, document, links });
@@ -1298,6 +1302,7 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
     lines,
     purchase_lines: purchaseLines,
     expected_credit_notes: expectedCreditNotes,
+    credit_note_links: creditNoteLinks,
     events,
     summary,
   };
