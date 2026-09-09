@@ -341,7 +341,7 @@ function renderDetail() {
 
   renderReadonlyNote(status, doc);
   renderMetrics(doc, summary);
-  renderMatch(summary);
+  renderMatch(summary, doc);
   renderLinks(detail.links || [], !canEditInvoiceControl);
   renderProposals(!canEditInvoiceControl, doc);
   renderCandidates(!canEditInvoiceControl, doc);
@@ -375,6 +375,7 @@ function renderReadonlyNote(status, doc) {
 }
 
 function renderMetrics(doc, summary) {
+  if (doc.document_type === "credit_note") return renderCreditNoteMetrics(doc, summary);
   const cells = [
     ["Date", formatDate(doc.invoice_date)],
     ["Echeance", formatDate(doc.due_date)],
@@ -390,13 +391,46 @@ function renderMetrics(doc, summary) {
   `).join("");
 }
 
-function renderMatch(summary) {
+function renderCreditNoteMetrics(doc, summary) {
+  const links = state.detail?.credit_note_links || [];
+  const applied = links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0);
+  const amount = Number(summary.invoice_total ?? documentAmountExVat(doc) ?? 0);
+  const remaining = Math.max(amount - applied, 0);
+  const cells = [
+    ["Date", formatDate(doc.invoice_date)],
+    ["Montant avoir HT", formatCurrency(amount)],
+    ["Montant applique", formatCurrency(applied)],
+    ["Reliquat non affecte", formatCurrency(remaining)],
+    ["Attentes liees", String(links.length)],
+  ];
+  els.metrics.innerHTML = cells.map(([label, value]) => `
+    <div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
+  `).join("");
+}
+
+function renderMatch(summary, doc = {}) {
+  if (doc.document_type === "credit_note") {
+    const links = state.detail?.credit_note_links || [];
+    const applied = links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0);
+    const amount = Number(summary.invoice_total ?? documentAmountExVat(doc) ?? 0);
+    const remaining = Math.max(amount - applied, 0);
+    const rows = [
+      ["Montant avoir HT", formatCurrency(amount)],
+      ["Montant applique", formatCurrency(applied)],
+      ["Reliquat non affecte", formatCurrency(remaining)],
+      ["Attentes liees", String(links.length)],
+    ];
+    els.matchSummary.innerHTML = rows.map(([label, value]) => `
+      <div class="summary-cell"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
+    `).join("");
+    return;
+  }
   const rows = [
     ["Facture HT", formatCurrency(summary.invoice_total)],
+    ["BL brut", formatCurrency(summary.gross_purchase_total_ex_vat ?? summary.matched_purchase_total)],
     ["Avoirs recus", `-${formatCurrency(summary.applied_credit_note_total_ex_vat)}`],
-    ["Net facture", formatCurrency(summary.net_invoice_total_ex_vat ?? summary.invoice_total)],
-    ["BL rapproches", formatCurrency(summary.matched_purchase_total)],
-    ["Ecart", formatSignedCurrency(summary.difference_total)],
+    ["Valeur nette achat", formatCurrency(summary.net_purchase_total_ex_vat ?? summary.matched_purchase_total)],
+    ["Ecart residuel", formatSignedCurrency(summary.residual_difference_ex_vat ?? summary.difference_total)],
   ];
   els.matchSummary.innerHTML = rows.map(([label, value]) => `
     <div class="summary-cell"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
@@ -838,7 +872,8 @@ async function mutate(successMessage, fn) {
   if (state.busy) return;
   clearFeedback();
   state.busy = true;
-  document.querySelectorAll("button").forEach((button) => { button.disabled = true; });
+  renderDetail();
+  renderDocuments();
   try {
     const result = await fn();
     showFeedback(result?.message || successMessage, result?.type || "success");

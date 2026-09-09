@@ -34,8 +34,8 @@ const {
   syncValidatedSupplierInvoiceStatusToPennylane,
 } = require('./pennylane/supplierInvoiceStatusSync');
 const {
-  appliedCreditNoteTotalForSourceDocument,
   createExpectedCreditNoteInTransaction,
+  expectedCreditNoteFinancialTotalsForSourceDocument,
   listCreditNoteLinks,
   listExpectedCreditNotesForSourceDocument,
 } = require('./supplierExpectedCreditNoteService');
@@ -220,7 +220,12 @@ function buildValidationSummary(document, totals, controlStatus = canonicalSuppl
   return {
     invoice_total: totals.invoice_total,
     applied_credit_note_total_ex_vat: round(totals.applied_credit_note_total_ex_vat || 0),
+    remaining_expected_credit_note_total_ex_vat: round(totals.remaining_expected_credit_note_total_ex_vat || 0),
+    over_applied_credit_note_total_ex_vat: round(totals.over_applied_credit_note_total_ex_vat || 0),
     net_invoice_total_ex_vat: round(totals.net_invoice_total_ex_vat ?? totals.invoice_total),
+    gross_purchase_total_ex_vat: round(totals.gross_purchase_total_ex_vat ?? totals.matched_purchase_total),
+    net_purchase_total_ex_vat: round(totals.net_purchase_total_ex_vat ?? totals.matched_purchase_total),
+    residual_difference_ex_vat: round(totals.residual_difference_ex_vat ?? totals.difference_total),
     matched_purchase_total: totals.matched_purchase_total,
     difference_total: totals.difference_total,
     linked_purchase_count: totals.linked_purchase_count,
@@ -233,6 +238,11 @@ function buildValidationSummary(document, totals, controlStatus = canonicalSuppl
 
 function statusFromTotals(document, totals) {
   const currentStatus = canonicalSupplierControlStatus(document);
+  if (currentStatus === 'avoir_attendu' && toNumber(totals.remaining_expected_credit_note_total_ex_vat) > 0.01) {
+    return currentStatus;
+  }
+  if (isPaidStatus(document.payment_status, document.paid)) return 'paye';
+  if (clean(document.payment_status)?.toLowerCase() === 'to_be_paid') return 'valide_a_payer';
   if (FINAL_CONTROL_STATUSES.has(currentStatus)) {
     if (currentStatus !== 'avoir_attendu') return currentStatus;
     if (!toNumber(totals.applied_credit_note_total_ex_vat)) return currentStatus;
@@ -394,6 +404,8 @@ async function loadPennylaneLines(client, { storeId, documentId }) {
 function totalsFromDocumentAndLinks(document, links) {
   const invoiceTotal = documentAmount(document);
   const appliedCreditNotesTotal = round(document.applied_credit_note_total_ex_vat || 0);
+  const remainingExpectedCreditNotesTotal = round(document.remaining_expected_credit_note_total_ex_vat || 0);
+  const overAppliedCreditNotesTotal = round(document.over_applied_credit_note_total_ex_vat || 0);
   const netInvoiceTotal = round(invoiceTotal - appliedCreditNotesTotal);
   const invoiceVat = documentVatAmount(document);
   const invoiceIncVat = documentIncVatAmount(document);
@@ -406,15 +418,22 @@ function totalsFromDocumentAndLinks(document, links) {
     }
   }
   const matchedPurchaseTotal = round([...byPurchase.values()].reduce((sum, value) => sum + value, 0), 4);
+  const netPurchaseTotal = round(matchedPurchaseTotal - appliedCreditNotesTotal);
+  const residualDifference = round(invoiceTotal - matchedPurchaseTotal, 4);
   return {
     invoice_total: invoiceTotal,
     invoice_total_ex_vat: invoiceTotal,
     applied_credit_note_total_ex_vat: appliedCreditNotesTotal,
+    remaining_expected_credit_note_total_ex_vat: remainingExpectedCreditNotesTotal,
+    over_applied_credit_note_total_ex_vat: overAppliedCreditNotesTotal,
     net_invoice_total_ex_vat: netInvoiceTotal,
+    gross_purchase_total_ex_vat: matchedPurchaseTotal,
+    net_purchase_total_ex_vat: netPurchaseTotal,
+    residual_difference_ex_vat: residualDifference,
     matched_purchase_total: matchedPurchaseTotal,
     purchases_total_ex_vat: matchedPurchaseTotal,
-    difference_total: round(netInvoiceTotal - matchedPurchaseTotal, 4),
-    difference_ex_vat: round(netInvoiceTotal - matchedPurchaseTotal, 4),
+    difference_total: residualDifference,
+    difference_ex_vat: residualDifference,
     invoice_vat: Number.isFinite(invoiceVat) ? invoiceVat : null,
     purchases_vat: null,
     difference_vat: null,
@@ -426,10 +445,13 @@ function totalsFromDocumentAndLinks(document, links) {
 }
 
 async function loadSupplierControlTotals(client, { storeId, document, links }) {
-  document.applied_credit_note_total_ex_vat = await appliedCreditNoteTotalForSourceDocument(client, {
+  const creditNoteTotals = await expectedCreditNoteFinancialTotalsForSourceDocument(client, {
     storeId,
     documentId: document.id,
   });
+  document.applied_credit_note_total_ex_vat = creditNoteTotals.applied_credit_note_total_ex_vat;
+  document.remaining_expected_credit_note_total_ex_vat = creditNoteTotals.remaining_expected_credit_note_total_ex_vat;
+  document.over_applied_credit_note_total_ex_vat = creditNoteTotals.over_applied_credit_note_total_ex_vat;
   return totalsFromDocumentAndLinks(document, links);
 }
 
