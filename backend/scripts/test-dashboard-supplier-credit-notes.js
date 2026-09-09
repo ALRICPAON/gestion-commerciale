@@ -53,10 +53,10 @@ function createDashboardDb({
         return sum + Number(link.applied_amount_ex_vat || 0);
       }, 0);
       return {
-        rows: [{
-          gross_purchases_ht: gross,
-          supplier_credit_notes_applied_ht: applied,
-          purchases_ht: Math.max(gross - applied, 0),
+          rows: [{
+            gross_purchases_ht: gross,
+            supplier_credit_notes_applied_ht: applied,
+          purchases_ht: gross - applied,
         }],
       };
     }
@@ -138,6 +138,29 @@ async function testSogelmerRealCreditNoteReducesNetPurchase() {
   assert.strictEqual(result.kpis.purchases_ht, 541.8);
   assert.strictEqual(result.kpis.consumed_purchases_ht, 541.8);
   assert.strictEqual(result.kpis.gross_margin_ht, 458.2);
+}
+
+async function testNegativeNetPurchasesRemainNegativeAndFeedDerivedKpis() {
+  const db = createDashboardDb({
+    salesHt: 200,
+    initialStock: 20,
+    finalStock: 10,
+    purchases: [purchase({ lines: [{ line_amount_ex_vat: 100 }] })],
+    expectedCreditNotes: [expected()],
+    creditNoteLinks: [link({ applied_amount_ex_vat: 150 })],
+    creditDocuments: [credit()],
+  });
+  const result = await dashboard(db, ids.store, {
+    period: 'custom',
+    from: new Date('2026-09-08T00:00:00Z'),
+    to: new Date('2026-09-08T00:00:00Z'),
+  });
+  assert.strictEqual(result.kpis.gross_purchases_ht, 100);
+  assert.strictEqual(result.kpis.supplier_credit_notes_applied_ht, 150);
+  assert.strictEqual(result.kpis.purchases_ht, -50);
+  assert.strictEqual(result.kpis.consumed_purchases_ht, -40);
+  assert.strictEqual(result.kpis.gross_margin_ht, 240);
+  assert.strictEqual(result.kpis.margin_rate, 120);
 }
 
 async function testPartialMultipleUnlinkAndManyToManyNoDoubleCount() {
@@ -236,6 +259,7 @@ function testDashboardUiLabelsExposeNetPurchases() {
   await testGrossPurchaseWithoutCreditNote();
   await testExpectedOnlyDoesNotReduceRealizedPurchases();
   await testSogelmerRealCreditNoteReducesNetPurchase();
+  await testNegativeNetPurchasesRemainNegativeAndFeedDerivedKpis();
   await testPartialMultipleUnlinkAndManyToManyNoDoubleCount();
   await testSupplierStorePeriodAndOtherPurchases();
   await testQueryUsesRealCreditNoteLinksOnly();

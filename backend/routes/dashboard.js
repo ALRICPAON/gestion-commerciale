@@ -225,7 +225,7 @@ async function purchaseTotals(db, storeId, fromDate, toDate) {
      SELECT
        purchase_lines_total.gross_purchases_ht,
        applied_credit_notes.supplier_credit_notes_applied_ht,
-       GREATEST(purchase_lines_total.gross_purchases_ht - applied_credit_notes.supplier_credit_notes_applied_ht, 0) AS purchases_ht
+       purchase_lines_total.gross_purchases_ht - applied_credit_notes.supplier_credit_notes_applied_ht AS purchases_ht
      FROM purchase_lines_total, applied_credit_notes`,
     [storeId, fromDate, toDate]
   );
