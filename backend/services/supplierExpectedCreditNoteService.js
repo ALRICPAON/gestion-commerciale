@@ -606,6 +606,51 @@ async function getExpectedCreditNote(db, { storeId, expectedCreditNoteId }) {
   return { expected_credit_note: expectedCreditNote, links: links.rows };
 }
 
+async function listCreditNoteLinks(db, { storeId, creditNoteId }) {
+  const result = await db.query(
+    `
+    WITH expected_totals AS (
+      SELECT store_id, expected_credit_note_id, SUM(applied_amount_ex_vat) AS received_amount_ex_vat
+      FROM supplier_expected_credit_note_links
+      WHERE status <> 'unlinked'
+      GROUP BY store_id, expected_credit_note_id
+    )
+    SELECT
+      l.*,
+      ecn.expected_amount_ex_vat,
+      COALESCE(totals.received_amount_ex_vat, 0) AS received_amount_ex_vat,
+      GREATEST(ecn.expected_amount_ex_vat - COALESCE(totals.received_amount_ex_vat, 0), 0) AS remaining_amount_ex_vat,
+      GREATEST(COALESCE(totals.received_amount_ex_vat, 0) - ecn.expected_amount_ex_vat, 0) AS over_applied_amount_ex_vat,
+      ecn.status AS expected_credit_note_status,
+      ecn.reason_type,
+      ecn.reason_comment,
+      ecn.source_purchase_id,
+      p.bl_number,
+      p.receipt_date,
+      psi.invoice_number AS source_invoice_number
+    FROM supplier_expected_credit_note_links l
+    JOIN supplier_expected_credit_notes ecn
+      ON ecn.id = l.expected_credit_note_id
+     AND ecn.store_id = l.store_id
+    LEFT JOIN expected_totals totals
+      ON totals.store_id = ecn.store_id
+     AND totals.expected_credit_note_id = ecn.id
+    LEFT JOIN purchases p
+      ON p.id = ecn.source_purchase_id
+     AND p.store_id = ecn.store_id
+    LEFT JOIN pennylane_supplier_invoices psi
+      ON psi.id = ecn.source_pennylane_supplier_invoice_id
+     AND psi.store_id = ecn.store_id
+    WHERE l.store_id = $1
+      AND l.pennylane_credit_note_id = $2
+      AND l.status <> 'unlinked'
+    ORDER BY l.created_at DESC, l.id DESC
+    `,
+    [storeId, creditNoteId]
+  );
+  return result.rows;
+}
+
 async function cancelExpectedCreditNote(db, { storeId, expectedCreditNoteId, comment, userId = null }) {
   const text = clean(comment);
   if (!text) throw expectedCreditNoteError('Commentaire annulation obligatoire', 400, 'SUPPLIER_EXPECTED_CREDIT_NOTE_CANCEL_COMMENT_REQUIRED');
@@ -729,7 +774,8 @@ async function listCreditNoteMatchCandidates(db, { storeId, creditNoteId }) {
 }
 
 async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditNoteIds, applications = [], userId = null }) {
-  const ids = [...new Set((expectedCreditNoteIds || []).filter(isUuid).map(String))];
+  const applicationIds = (applications || []).map((item) => item?.expected_credit_note_id);
+  const ids = [...new Set([...(expectedCreditNoteIds || []), ...applicationIds].filter(isUuid).map(String))];
   if (!ids.length) {
     throw expectedCreditNoteError('Aucune attente avoir selectionnee', 400, 'SUPPLIER_EXPECTED_CREDIT_NOTE_MATCH_REQUIRED');
   }
@@ -769,6 +815,13 @@ async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditN
     if (expectedResult.rows.some((row) => String(row.supplier_id) !== String(creditNote.supplier_id))) {
       throw expectedCreditNoteError('Fournisseur de lavoir incoherent', 409, 'SUPPLIER_EXPECTED_CREDIT_NOTE_SUPPLIER_MISMATCH');
     }
+    const blocked = expectedResult.rows.find((row) => !['pending', 'matched'].includes(clean(row.status)));
+    if (blocked) {
+      throw expectedCreditNoteError('Attente avoir non rapprochable', 409, 'SUPPLIER_EXPECTED_CREDIT_NOTE_STATUS_BLOCKED', {
+        expected_credit_note_id: blocked.id,
+        status: blocked.status,
+      });
+    }
 
     const existingApplied = await client.query(
       `
@@ -781,15 +834,26 @@ async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditN
       [storeId, creditNote.id]
     );
     let totalToApply = 0;
+    const alreadyAppliedToCreditNote = round(existingApplied.rows[0]?.total);
     const explicitAmounts = new Map((applications || []).map((item) => [String(item.expected_credit_note_id), round(item.applied_amount_ex_vat)]));
     const links = [];
     const sourceDocumentIdsToRecalculate = new Set();
     for (const expected of expectedResult.rows) {
       const remaining = round(toNumber(expected.expected_amount_ex_vat) - toNumber(expected.received_amount_ex_vat));
-      const amount = explicitAmounts.has(String(expected.id)) ? explicitAmounts.get(String(expected.id)) : Math.min(remaining, amountAvailable);
+      const creditRemaining = round(amountAvailable - alreadyAppliedToCreditNote - totalToApply);
+      const amount = explicitAmounts.has(String(expected.id))
+        ? explicitAmounts.get(String(expected.id))
+        : Math.min(remaining, creditRemaining);
       if (!(amount > 0)) continue;
+      if (round(amount - remaining) > 0.01) {
+        throw expectedCreditNoteError('Montant applique superieur au reste attendu', 409, 'SUPPLIER_EXPECTED_CREDIT_NOTE_EXPECTED_AMOUNT_EXCEEDED', {
+          expected_credit_note_id: expected.id,
+          remaining_amount_ex_vat: remaining,
+          requested_amount_ex_vat: amount,
+        });
+      }
       totalToApply = round(totalToApply + amount);
-      if (round(toNumber(existingApplied.rows[0]?.total) + totalToApply) - amountAvailable > 0.01) {
+      if (round(alreadyAppliedToCreditNote + totalToApply) - amountAvailable > 0.01) {
         throw expectedCreditNoteError('Montant avoir deja totalement applique', 409, 'SUPPLIER_EXPECTED_CREDIT_NOTE_AMOUNT_EXCEEDED');
       }
       const inserted = await client.query(
@@ -868,7 +932,12 @@ async function applyCreditNoteMatch(db, { storeId, creditNoteId, expectedCreditN
       });
     }
     await client.query('COMMIT');
-    return { credit_note: creditNote, links };
+    return {
+      credit_note: creditNote,
+      links,
+      applied_amount_ex_vat: totalToApply,
+      unapplied_amount_ex_vat: Math.max(round(amountAvailable - alreadyAppliedToCreditNote - totalToApply), 0),
+    };
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -989,6 +1058,7 @@ module.exports = {
   createExpectedCreditNote,
   createExpectedCreditNoteInTransaction,
   getExpectedCreditNote,
+  listCreditNoteLinks,
   listCreditNoteMatchCandidates,
   listExpectedCreditNotes,
   listExpectedCreditNotesForPurchase,
