@@ -27,7 +27,8 @@ function testPageAssetsAndMenu() {
 
   assertContains(html, /<title>Controle fournisseurs - Gestion Commerciale<\/title>/);
   assertContains(html, /frontend\/css\/pages\/supplier-control\.css|\.\/css\/pages\/supplier-control\.css\?v=2/);
-  assertContains(html, /\.\/js\/supplier-control\.js\?v=3/);
+  assertContains(html, /\.\/js\/supplier-control\.js\?v=4/);
+  assertContains(html, /supplier-control-stock-effect-modal/);
   assertContains(home, /href="\.\/supplier-control\.html"/);
   assertContains(home, /Controle fournisseurs/);
   assertContains(home, /pennylane-supplier-invoices\.html"[^>]*hidden/);
@@ -91,6 +92,7 @@ function testCanonicalEndpointsOnly() {
     '/purchase-links/',
     '/resolve-difference',
     '/validate',
+    '/stock-effects/',
   ].forEach((endpoint) => assertContains(js, new RegExp(endpoint.replace(/[/-]/g, (char) => `\\${char}`))));
   assertNotContains(js, /\/api\/supplier-invoices/);
   assertNotContains(js, /\/api\/integrations\/pennylane\/supplier-invoices/);
@@ -133,7 +135,9 @@ function testReadOnlyAndBusinessMessages() {
 function testNoDangerousSideEffects() {
   const js = read(jsPath);
   const service = read(path.join(root, 'backend/services/supplierControlService.js'));
-  assertNotContains(js, /stock_quantity|stock_lots|stock_movements|purchase_lines|received_quantity/);
+  assertContains(js, /createStockEffectFromSupplierControl/);
+  assertContains(js, /supplier_expected_credit_note_id/);
+  assertNotContains(js, /stock_quantity|stock_lots|stock_movements|received_quantity/);
   assertNotContains(js, /supplier_invoices/);
   assertNotContains(js, /invoice_lines|supplier_invoice_lines/);
   assertNotContains(service, /INSERT INTO supplier_invoices/i);
@@ -142,7 +146,7 @@ function testNoDangerousSideEffects() {
 function testNoFakeLineMatching() {
   const js = read(jsPath);
   const html = read(htmlPath);
-  assertNotContains(js, /line_matching|purchase_lines|pennylane_supplier_invoice_lines/);
+  assertNotContains(js, /line_matching|pennylane_supplier_invoice_lines/);
   assertContains(html, /Rapprochement avec les bons de livraison/);
 }
 

@@ -39,6 +39,7 @@ const {
   listCreditNoteLinks,
   listExpectedCreditNotesForSourceDocument,
 } = require('./supplierExpectedCreditNoteService');
+const { listStockEffectsForExpectedCreditNote } = require('./supplierStockEffectService');
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -354,12 +355,18 @@ async function loadPurchaseLinesForPurchaseIds(client, { storeId, purchaseIds })
       pl.line_amount_ex_vat,
       pl.line_status,
       pl.lot_id,
+      l.lot_code AS stock_lot_code,
+      l.qty_remaining AS stock_qty_remaining,
+      l.unit_cost_ex_vat AS stock_unit_cost_ex_vat,
       plm.supplier_lot_number,
       plm.dlc,
       plm.notes AS metadata_notes
     FROM purchase_lines pl
     LEFT JOIN articles a
       ON a.id = pl.article_id
+    LEFT JOIN lots l
+      ON l.id = pl.lot_id
+     AND l.store_id = pl.store_id
     LEFT JOIN purchase_line_metadata plm
       ON plm.purchase_line_id = pl.id
      AND plm.meta_key = 'gc_line'
@@ -1308,6 +1315,14 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
   const totals = await loadSupplierControlTotals(db, { storeId, document, links });
   const purchaseIds = links.map((link) => link.purchase_id).filter(Boolean);
   const purchaseLines = await loadPurchaseLinesForPurchaseIds(db, { storeId, purchaseIds });
+  const stockEffectsByExpectedCreditNoteId = {};
+  await Promise.all(expectedCreditNotes.map(async (note) => {
+    const stockEffects = await listStockEffectsForExpectedCreditNote(db, {
+      storeId,
+      expectedCreditNoteId: note.id,
+    }).catch(() => ({ stock_effects: [], totals: null }));
+    stockEffectsByExpectedCreditNoteId[note.id] = stockEffects.stock_effects || [];
+  }));
   const summary = buildValidationSummary(document, totals, statusFromTotals(document, totals), {
     acceptedDifference: hasDifferenceAccepted(events, document, links, totals),
   });
@@ -1323,7 +1338,10 @@ async function getSupplierControlDocument(db, { storeId, pennylaneSupplierInvoic
     line_matching_available: lines.length > 0,
     lines,
     purchase_lines: purchaseLines,
-    expected_credit_notes: expectedCreditNotes,
+    expected_credit_notes: expectedCreditNotes.map((note) => ({
+      ...note,
+      stock_effects: stockEffectsByExpectedCreditNoteId[note.id] || [],
+    })),
     credit_note_links: creditNoteLinks,
     events,
     summary,

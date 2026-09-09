@@ -105,6 +105,15 @@ const expectedCreditNoteQuantity = document.getElementById("expected-credit-note
 const expectedCreditNoteUnit = document.getElementById("expected-credit-note-unit");
 const expectedCreditNoteComment = document.getElementById("expected-credit-note-comment");
 const createExpectedCreditNoteBtn = document.getElementById("create-expected-credit-note-btn");
+const supplierStockEffectModal = document.getElementById("supplier-stock-effect-modal");
+const supplierStockEffectContext = document.getElementById("supplier-stock-effect-context");
+const supplierStockEffectFeedback = document.getElementById("supplier-stock-effect-feedback");
+const supplierStockEffectType = document.getElementById("supplier-stock-effect-type");
+const supplierStockEffectQuantity = document.getElementById("supplier-stock-effect-quantity");
+const supplierStockEffectExpectedNote = document.getElementById("supplier-stock-effect-expected-note");
+const supplierStockEffectNotes = document.getElementById("supplier-stock-effect-notes");
+const closeSupplierStockEffectModalBtn = document.getElementById("close-supplier-stock-effect-modal-btn");
+const createSupplierStockEffectBtn = document.getElementById("create-supplier-stock-effect-btn");
 
 const sheetLinePluInput = document.getElementById("sheet-line-plu");
 const sheetLineArticleInput = document.getElementById("sheet-line-article");
@@ -134,6 +143,8 @@ let currentSheetLineId = null;
 let currentSheetLinePhotoUrlsRaw = '[]';
 let resolveQualityControlModal = null;
 let expectedCreditNoteRequestId = null;
+let supplierStockEffectRequestId = null;
+let currentStockEffectLineId = null;
 
 function getUserDepartments() {
   return Array.isArray(sessionUser.departments) ? sessionUser.departments : [];
@@ -731,6 +742,71 @@ async function createExpectedCreditNoteFromPurchase() {
   }
 }
 
+function stockEffectTypeLabel(type) {
+  return type === "supplier_return" ? "Retour fournisseur" : "Destruction / perte";
+}
+
+function openSupplierStockEffectModal(lineId) {
+  const line = lines.find((item) => String(item.id) === String(lineId));
+  if (!line) return;
+  if (!line.stock_lot_id && !line.lot_id) {
+    showFeedback(purchaseLinesFeedback, "Aucun lot stock rattache a cette ligne", true);
+    return;
+  }
+  currentStockEffectLineId = line.id;
+  supplierStockEffectRequestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  const available = Number(line.stock_qty_remaining || 0);
+  supplierStockEffectContext.textContent = `${line.article_name || line.supplier_label || "Article"} - stock lot ${available.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} ${line.price_unit || ""}`;
+  supplierStockEffectType.value = "destruction";
+  supplierStockEffectQuantity.value = "";
+  supplierStockEffectNotes.value = "";
+  supplierStockEffectExpectedNote.innerHTML = `<option value="">Aucune attente liee</option>` + expectedCreditNotes
+    .filter((note) => note.status !== "cancelled" && (!note.source_purchase_line_id || String(note.source_purchase_line_id) === String(line.id)))
+    .map((note) => `
+      <option value="${escapeHtml(note.id)}">${escapeHtml(expectedCreditNoteReasonLabel(note.reason_type))} - ${formatCurrency(note.expected_amount_ex_vat)}</option>
+    `).join("");
+  clearFeedback(supplierStockEffectFeedback);
+  supplierStockEffectModal?.classList.remove("hidden");
+}
+
+function closeSupplierStockEffectModal() {
+  supplierStockEffectModal?.classList.add("hidden");
+  currentStockEffectLineId = null;
+}
+
+async function createSupplierStockEffectFromPurchase() {
+  clearFeedback(supplierStockEffectFeedback);
+  const line = lines.find((item) => String(item.id) === String(currentStockEffectLineId));
+  if (!line) return;
+  const type = supplierStockEffectType.value === "supplier_return" ? "supplier_return" : "destruction";
+  const payload = {
+    purchase_id: purchaseId,
+    purchase_line_id: line.id,
+    lot_id: line.stock_lot_id || line.lot_id,
+    article_id: line.article_id,
+    supplier_id: purchase?.supplier_id,
+    supplier_expected_credit_note_id: supplierStockEffectExpectedNote.value || null,
+    quantity: supplierStockEffectQuantity.value,
+    reason: type,
+    notes: supplierStockEffectNotes.value || null,
+    idempotency_key: supplierStockEffectRequestId,
+  };
+  createSupplierStockEffectBtn.disabled = true;
+  try {
+    await apiFetch(`/api/supplier-control/stock-effects/${type === "supplier_return" ? "supplier-return" : "destruction"}`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    closeSupplierStockEffectModal();
+    await loadPurchase();
+    showFeedback(purchaseLinesFeedback, `${stockEffectTypeLabel(type)} enregistre`);
+  } catch (error) {
+    showFeedback(supplierStockEffectFeedback, error.message || "Erreur effet stock", true);
+  } finally {
+    createSupplierStockEffectBtn.disabled = false;
+  }
+}
+
 function getPhotoBlMobileUrl() {
   return `${FRONT_BASE}/photo-bl.html?purchaseId=${encodeURIComponent(purchaseId)}`;
 }
@@ -828,6 +904,8 @@ function renderLinesTable() {
   data-sanitary-photo-urls='${JSON.stringify(line.sanitary_photo_urls || [])}'
   data-metadata-notes="${line.metadata_notes || ""}"
   data-selected-article-id="${line.article_id || ""}"
+  data-stock-lot-id="${line.stock_lot_id || line.lot_id || ""}"
+  data-stock-qty-remaining="${line.stock_qty_remaining ?? ""}"
 >
         <td>
           <input class="line-input line-plu" type="text" value="${line.article_plu || line.article_code || line.plu || ""}" ${metadataReadonly ? "disabled" : ""} />
@@ -864,6 +942,7 @@ function renderLinesTable() {
         <td>
   <div class="page-actions-right">
     <button class="btn btn-secondary btn-sm" data-action="open-line-sheet" data-id="${line.id}">📄</button>
+    ${receivedView && (line.stock_lot_id || line.lot_id) ? `<button class="btn btn-secondary btn-sm" data-action="open-stock-effect" data-id="${line.id}">Stock</button>` : ""}
     ${metadataReadonly ? "" : `<button class="btn btn-secondary btn-sm" data-action="search-article" data-id="${line.id}">F9</button>`}
     ${metadataReadonly ? "" : `<button class="btn btn-secondary btn-sm" data-action="save-line" data-id="${line.id}">💾</button>`}
     ${metadataReadonly ? "" : `<button class="btn btn-danger btn-sm" data-action="delete-line" data-id="${line.id}">🗑️</button>`}
@@ -1619,6 +1698,11 @@ if (purchaseLinesTableBody) {
   return;
 }
 
+    if (action === "open-stock-effect") {
+      openSupplierStockEffectModal(lineId);
+      return;
+    }
+
     if (action === "search-article") {
       openArticleModal(lineId);
       return;
@@ -1718,6 +1802,22 @@ if (closeExpectedCreditNoteModalBtn) {
 
 if (createExpectedCreditNoteBtn) {
   createExpectedCreditNoteBtn.addEventListener("click", createExpectedCreditNoteFromPurchase);
+}
+
+if (closeSupplierStockEffectModalBtn) {
+  closeSupplierStockEffectModalBtn.addEventListener("click", closeSupplierStockEffectModal);
+}
+
+if (createSupplierStockEffectBtn) {
+  createSupplierStockEffectBtn.addEventListener("click", createSupplierStockEffectFromPurchase);
+}
+
+if (supplierStockEffectModal) {
+  supplierStockEffectModal.addEventListener("click", (event) => {
+    if (event.target === supplierStockEffectModal) {
+      closeSupplierStockEffectModal();
+    }
+  });
 }
 
 if (expectedCreditNoteModal) {

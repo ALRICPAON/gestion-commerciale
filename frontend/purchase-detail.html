@@ -248,6 +248,46 @@
     </div>
   </div>
 
+  <div id="supplier-stock-effect-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3>Effet physique stock</h3>
+          <p id="supplier-stock-effect-context">Ligne achat</p>
+        </div>
+        <button type="button" id="close-supplier-stock-effect-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="supplier-stock-effect-feedback" class="page-feedback hidden"></div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="supplier-stock-effect-type">Action *</label>
+          <select id="supplier-stock-effect-type">
+            <option value="destruction">Destruction / perte</option>
+            <option value="supplier_return">Retour fournisseur</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="supplier-stock-effect-quantity">Quantite *</label>
+          <input id="supplier-stock-effect-quantity" type="number" step="0.001" min="0" />
+        </div>
+        <div class="form-group form-group-span-2">
+          <label for="supplier-stock-effect-expected-note">Attente d'avoir liee</label>
+          <select id="supplier-stock-effect-expected-note"></select>
+        </div>
+        <div class="form-group form-group-span-2">
+          <label for="supplier-stock-effect-notes">Commentaire</label>
+          <textarea id="supplier-stock-effect-notes" rows="3" placeholder="Motif physique constate"></textarea>
+        </div>
+      </div>
+
+      <div class="page-actions-right" style="margin-top:16px;">
+        <button type="button" id="create-supplier-stock-effect-btn" class="btn btn-primary">Enregistrer l'effet stock</button>
+      </div>
+    </div>
+  </div>
+
   <div id="quality-control-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="quality-control-modal-title">
     <div class="modal-card">
       <div class="modal-header">
@@ -531,7 +571,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script src="./js/config.js"></script>
-<script src="./js/purchase-detail.js?v=11"></script>
+<script src="./js/purchase-detail.js?v=12"></script>
 <script src="./js/purchase-photo-gallery.js?v=1"></script>
 <script src="./js/purchase-reception-upgrade.js?v=2"></script>
 <script src="./js/whatsapp-business-documents.js?v=1"></script>

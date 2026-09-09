@@ -163,7 +163,43 @@
     </section>
   </main>
 
+  <div id="supplier-control-stock-effect-modal" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div>
+          <h3>Effet physique stock</h3>
+          <p id="supplier-control-stock-effect-context">Avoir attendu</p>
+        </div>
+        <button type="button" id="close-supplier-control-stock-effect-modal-btn" class="btn btn-secondary">Fermer</button>
+      </div>
+
+      <div id="supplier-control-stock-effect-feedback" class="page-feedback hidden"></div>
+
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="supplier-control-stock-effect-type">Action *</label>
+          <select id="supplier-control-stock-effect-type">
+            <option value="destruction">Destruction / perte</option>
+            <option value="supplier_return">Retour fournisseur</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="supplier-control-stock-effect-quantity">Quantite *</label>
+          <input id="supplier-control-stock-effect-quantity" type="number" step="0.001" min="0" />
+        </div>
+        <div class="form-group form-group-span-2">
+          <label for="supplier-control-stock-effect-notes">Commentaire</label>
+          <textarea id="supplier-control-stock-effect-notes" rows="3"></textarea>
+        </div>
+      </div>
+
+      <div class="page-actions-right" style="margin-top:16px;">
+        <button type="button" id="create-supplier-control-stock-effect-btn" class="btn btn-primary">Enregistrer l'effet stock</button>
+      </div>
+    </div>
+  </div>
+
   <script src="./js/config.js"></script>
-  <script src="./js/supplier-control.js?v=3"></script>
+  <script src="./js/supplier-control.js?v=4"></script>
 </body>
 </html>

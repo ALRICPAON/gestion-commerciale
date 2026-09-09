@@ -919,12 +919,12 @@ function testUiIntegration() {
   const purchaseJs = read(purchaseJsPath);
   assertContains(supplierHtml, /expected-credit-note-section/);
   assertContains(supplierHtml, /credit-note-match-section/);
-  assertContains(supplierHtml, /supplier-control\.js\?v=3/);
+  assertContains(supplierHtml, /supplier-control\.js\?v=4/);
   assertContains(supplierJs, /expected_credit_notes/);
   assertContains(supplierJs, /\/api\/supplier-control\/credit-notes\/.+\/match-candidates/);
   assertContains(supplierJs, /\/api\/supplier-control\/credit-notes\/.+\/apply-match/);
   assertContains(purchaseHtml, /open-expected-credit-note-modal-btn/);
-  assertContains(purchaseHtml, /purchase-detail\.js\?v=11/);
+  assertContains(purchaseHtml, /purchase-detail\.js\?v=12/);
   assertContains(purchaseJs, /\/api\/supplier-control\/expected-credit-notes/);
   assertContains(purchaseJs, /\/api\/supplier-control\/purchases\/.+\/expected-credit-notes/);
   assertContains(purchaseJs, /idempotency_key/);
