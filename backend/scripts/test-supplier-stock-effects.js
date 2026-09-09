@@ -15,6 +15,7 @@ const routePath = path.join(root, 'backend/routes/supplierControl.js');
 const purchaseRoutePath = path.join(root, 'backend/routes/purchases.js');
 const migrationPath = path.join(root, 'backend/db/gestion-commerciale/117_supplier_control_stock_effects.sql');
 const rollbackPath = path.join(root, 'backend/db/gestion-commerciale/117_supplier_control_stock_effects_rollback.sql');
+const previousConstraintPath = path.join(root, 'backend/db/gestion-commerciale/116_supplier_expected_credit_notes.sql');
 const supplierControlJsPath = path.join(root, 'frontend/js/supplier-control.js');
 const purchaseHtmlPath = path.join(root, 'frontend/purchase-detail.html');
 const purchaseJsPath = path.join(root, 'frontend/js/purchase-detail.js');
@@ -42,6 +43,12 @@ function assertContains(source, pattern, message) {
 
 function assertNotContains(source, pattern, message) {
   assert.ok(!pattern.test(source), message || `Unexpected ${pattern}`);
+}
+
+function extractSupplierControlEventTypes(sql) {
+  const constraintBlock = sql.match(/ALTER TABLE supplier_control_events[\s\S]*?ADD CONSTRAINT chk_supplier_control_events_type CHECK \(\s*event_type IN \(([\s\S]*?)\)\s*\);/);
+  assert.ok(constraintBlock, 'supplier_control_events event_type CHECK constraint not found');
+  return [...constraintBlock[1].matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
 }
 
 function createMockDb({
@@ -348,6 +355,21 @@ function testStaticContracts() {
   assertNotContains(expectedService, /supplierStockEffectService|createSupplierStockEffect|INSERT INTO stock_movements/i);
 }
 
+function testEventTypeConstraintOnlyExtendsPreviousDomain() {
+  const previous = extractSupplierControlEventTypes(read(previousConstraintPath));
+  const next = extractSupplierControlEventTypes(read(migrationPath));
+  const rollback = extractSupplierControlEventTypes(read(rollbackPath));
+  const added = next.filter((type) => !previous.includes(type)).sort();
+  const removed = previous.filter((type) => !next.includes(type));
+
+  assert.deepStrictEqual(removed, [], 'Migration 117 must not remove existing supplier_control_events.event_type values');
+  assert.deepStrictEqual(added, [
+    'supplier_stock_destruction_created',
+    'supplier_stock_return_created',
+  ]);
+  assert.deepStrictEqual(rollback, previous, 'Rollback 117 must restore the exact previous event_type domain');
+}
+
 function testNormalizePayloadAliases() {
   const normalized = normalizeStockEffectPayload({
     expected_credit_note_id: ids.expected,
@@ -370,6 +392,7 @@ function testNormalizePayloadAliases() {
   await testOptionalFinancialLinksAreReallyOptional();
   await testListStockEffectsForExpectedCreditNote();
   testStaticContracts();
+  testEventTypeConstraintOnlyExtendsPreviousDomain();
   console.log('OK supplier stock effects tests');
 })().catch((error) => {
   console.error(error);
