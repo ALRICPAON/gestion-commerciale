@@ -74,6 +74,13 @@ const statusLabels = {
   reconciliation_required: "A reconcilier",
 };
 
+const creditNoteStatusLabels = {
+  a_rapprocher: "A rapprocher",
+  a_controler: "Partiellement rapproche",
+  conforme: "Solde",
+  ecart: "Anomalie",
+};
+
 const eventLabels = {
   pennylane_sync: "Synchronisation Pennylane",
   automatic_analysis: "Analyse automatique",
@@ -181,6 +188,11 @@ function formatSignedCurrency(value) {
   return `${sign}${formatCurrency(amount)}`;
 }
 
+function statusLabelForDocument(doc = {}, status) {
+  if (doc.document_type === "credit_note") return creditNoteStatusLabels[status] || statusLabels[status] || status;
+  return statusLabels[status] || status;
+}
+
 function findStockEffectLineForExpectedCreditNote(note = {}) {
   const candidates = stockEffectLineCandidatesForExpectedCreditNote(note);
   return candidates.length === 1 ? candidates[0] : null;
@@ -255,6 +267,7 @@ function filterParams() {
   params.set("offset", String(state.offset));
   if (state.filter === "needs_action") params.set("status_group", "needs_action");
   else if (state.filter === "ready_to_validate") params.set("status_group", "ready_to_validate");
+  else if (state.filter === "final") params.set("status_group", "final");
   else if (state.filter !== "all") params.set("supplier_control_status", state.filter);
   const search = els.search?.value.trim();
   if (search) params.set("search", search);
@@ -302,11 +315,11 @@ function renderDocuments() {
             <span class="type-badge">${type}</span>
           </span>
           <span class="document-row-sub">${escapeHtml(doc.invoice_number || "-")} - ${formatDate(doc.invoice_date)}</span>
-          <span class="document-row-meta">${doc.linked_purchase_count || 0} BL - ${statusLabels[status] || status}</span>
+          <span class="document-row-meta">${doc.linked_purchase_count || 0} BL - ${statusLabelForDocument(doc, status)}</span>
         </span>
         <span class="document-row-amount">
           ${formatCurrency(documentAmountExVat(doc))}
-          <span class="status-badge status-${escapeHtml(status)}">${statusLabels[status] || status}</span>
+          <span class="status-badge status-${escapeHtml(status)}">${statusLabelForDocument(doc, status)}</span>
         </span>
       </button>
     `;
@@ -361,7 +374,7 @@ function renderDetail() {
   els.documentKind.textContent = doc.document_type === "credit_note" ? "AVOIR" : "FACTURE";
   els.detailTitle.textContent = doc.invoice_number || "-";
   els.detailSubtitle.textContent = doc.supplier_name || "Fournisseur non resolu";
-  els.detailStatus.textContent = statusLabels[status] || status;
+  els.detailStatus.textContent = statusLabelForDocument(doc, status);
   els.detailStatus.className = `status-badge status-${status}`;
 
   if (doc.public_file_url || doc.pdf_available) {
@@ -428,16 +441,18 @@ function renderMetrics(doc, summary) {
 
 function renderCreditNoteMetrics(doc, summary) {
   const links = state.detail?.credit_note_links || [];
-  const applied = links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0);
-  const amount = Number(summary.invoice_total ?? documentAmountExVat(doc) ?? 0);
-  const remaining = Math.max(amount - applied, 0);
+  const applied = Number(summary.credit_note_applied_amount_ex_vat ?? links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0));
+  const amount = Number(summary.credit_note_amount_ex_vat ?? summary.invoice_total ?? documentAmountExVat(doc) ?? 0);
+  const remaining = Number(summary.credit_note_unapplied_amount_ex_vat ?? (amount - applied));
   const cells = [
     ["Date", formatDate(doc.invoice_date)],
     ["Montant avoir HT", formatCurrency(amount)],
     ["Montant applique", formatCurrency(applied)],
-    ["Reliquat non affecte", formatCurrency(remaining)],
+    ["Reliquat non affecte", formatSignedCurrency(remaining)],
     ["Attentes liees", String(links.length)],
+    ["Statut rapprochement", statusLabelForDocument(doc, summary.control_status || doc.supplier_control_status || "a_rapprocher")],
   ];
+  if (remaining < -0.01) cells.push(["Anomalie", `Excedent ${formatCurrency(Math.abs(remaining))}`]);
   els.metrics.innerHTML = cells.map(([label, value]) => `
     <div class="metric"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
   `).join("");
@@ -446,15 +461,17 @@ function renderCreditNoteMetrics(doc, summary) {
 function renderMatch(summary, doc = {}) {
   if (doc.document_type === "credit_note") {
     const links = state.detail?.credit_note_links || [];
-    const applied = links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0);
-    const amount = Number(summary.invoice_total ?? documentAmountExVat(doc) ?? 0);
-    const remaining = Math.max(amount - applied, 0);
+    const applied = Number(summary.credit_note_applied_amount_ex_vat ?? links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0));
+    const amount = Number(summary.credit_note_amount_ex_vat ?? summary.invoice_total ?? documentAmountExVat(doc) ?? 0);
+    const remaining = Number(summary.credit_note_unapplied_amount_ex_vat ?? (amount - applied));
     const rows = [
       ["Montant avoir HT", formatCurrency(amount)],
       ["Montant applique", formatCurrency(applied)],
-      ["Reliquat non affecte", formatCurrency(remaining)],
+      ["Reliquat non affecte", formatSignedCurrency(remaining)],
       ["Attentes liees", String(links.length)],
+      ["Statut rapprochement", statusLabelForDocument(doc, summary.control_status || doc.supplier_control_status || "a_rapprocher")],
     ];
+    if (remaining < -0.01) rows.push(["Anomalie", `Excedent ${formatCurrency(Math.abs(remaining))}`]);
     els.matchSummary.innerHTML = rows.map(([label, value]) => `
       <div class="summary-cell"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>
     `).join("");
@@ -755,7 +772,7 @@ async function createStockEffectFromSupplierControl() {
 function renderValidation(summary, doc, readOnly) {
   const status = summary.control_status || doc.supplier_control_status;
   if (doc.document_type === "credit_note") {
-    els.validationMessage.textContent = "Les avoirs ne sont pas valides a payer dans ce flux.";
+    els.validationMessage.textContent = "Avoir fournisseur : statut de rapprochement calcule depuis le montant applique et le reliquat.";
     els.validate.classList.add("hidden");
     return;
   }

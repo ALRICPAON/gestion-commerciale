@@ -360,6 +360,7 @@ function createApplyMatchMockDb() {
         };
       }
       if (/FROM supplier_expected_credit_note_links/i.test(sql) && /pennylane_credit_note_id = \$2/i.test(sql)) {
+        if (/AS applied_amount_ex_vat/i.test(sql)) return { rows: [{ applied_amount_ex_vat: 100 }] };
         return { rows: [{ total: 0 }] };
       }
       if (/INSERT INTO supplier_expected_credit_note_links/i.test(sql)) {
@@ -468,6 +469,10 @@ function createConfigurableApplyMatchMockDb({
         return { rows: rows.filter((row) => requested.has(String(row.id))) };
       }
       if (/FROM supplier_expected_credit_note_links/i.test(sql) && /pennylane_credit_note_id = \$2/i.test(sql)) {
+        if (/AS applied_amount_ex_vat/i.test(sql)) {
+          const applied = existingCreditApplied + state.links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0);
+          return { rows: [{ applied_amount_ex_vat: applied }] };
+        }
         return { rows: [{ total: existingCreditApplied }] };
       }
       if (/INSERT INTO supplier_expected_credit_note_links/i.test(sql)) {
@@ -567,6 +572,7 @@ async function testApplyCreditNoteMatchPartialKeepsExpectedOpen() {
   });
   assert.strictEqual(result.applied_amount_ex_vat, 40);
   assert.strictEqual(result.unapplied_amount_ex_vat, 0);
+  assert.strictEqual(result.credit_note_control_status, 'conforme');
   assert.strictEqual(db.state.links[0].applied_amount_ex_vat, 40);
   assert.ok(db.state.events.some((event) => event.event_type === 'expected_credit_note_partially_resolved'));
 }
@@ -592,6 +598,7 @@ async function testApplyCreditNoteMatchCompletesAfterMultipleCredits() {
     userId: ids.user,
   });
   assert.strictEqual(result.applied_amount_ex_vat, 60);
+  assert.strictEqual(result.credit_note_control_status, 'conforme');
   assert.ok(db.state.events.some((event) => event.event_type === 'expected_credit_note_resolved'));
 }
 
@@ -718,6 +725,7 @@ async function testApplyCreditNoteRejectsExpectedOverApplyAndReportsCreditOverag
   });
   assert.strictEqual(result.applied_amount_ex_vat, 100);
   assert.strictEqual(result.unapplied_amount_ex_vat, 50);
+  assert.strictEqual(result.credit_note_control_status, 'a_controler');
 }
 
 async function testApplyCreditNoteKeepsPennylanePaymentStatusesAndNoSideEffects() {
@@ -760,6 +768,9 @@ async function testSogelmerSyntheticNetAfterRealCreditNote() {
     expectedCreditNoteIds: [db.expectedId1],
     userId: ids.user,
   });
+  const applied = db.state.links.reduce((sum, link) => sum + Number(link.applied_amount_ex_vat || 0), 0);
+  assert.strictEqual(applied, 407.7);
+  assert.ok(db.state.invoiceStatusUpdates.includes('conforme'), 'SOGELMER credit note must be sold after 407.70 / 407.70');
   const recalcQuery = db.queries.find((call) => /WITH linked_purchases AS/i.test(call.sql));
   const row = await db.connect().then((client) => client.query(recalcQuery.sql, recalcQuery.params)).then((result) => result.rows[0]);
   assert.strictEqual(Number(row.purchase_total_ex_vat), 949.5);
@@ -808,7 +819,13 @@ function createRemoveMatchMockDb() {
         return { rows: [], rowCount: 1 };
       }
       if (/FROM pennylane_supplier_invoices psi/i.test(sql)) {
+        if (params[0] === ids.credit) {
+          return { rows: [{ id: ids.credit, store_id: ids.store, supplier_id: ids.supplier, document_type: 'credit_note', amount_ex_vat: 100, supplier_control_status: 'conforme' }] };
+        }
         return { rows: [{ id: ids.invoice, store_id: ids.store, supplier_id: ids.supplier, document_type: 'invoice', amount_ex_vat: 1100, payment_status: 'pending', paid: false, supplier_control_status: 'conforme' }] };
+      }
+      if (/FROM supplier_expected_credit_note_links/i.test(sql) && /pennylane_credit_note_id = \$2/i.test(sql) && /AS applied_amount_ex_vat/i.test(sql)) {
+        return { rows: [{ applied_amount_ex_vat: 0 }] };
       }
       if (/WITH linked_purchases AS/i.test(sql)) {
         state.recalculatedSourceDocuments.push(params[1]);
@@ -847,10 +864,11 @@ async function testRemoveCreditNoteLinkRecalculatesSourceInvoice() {
     userId: ids.user,
   });
   assert.strictEqual(result.link.id, db.linkId);
+  assert.strictEqual(result.credit_note_control_status, 'a_rapprocher');
   assert.strictEqual(db.state.committed, true, 'unlink success path must reach COMMIT');
   assert.strictEqual(db.state.rolledBack, false, 'unlink success path must not rollback');
   assert.deepStrictEqual(db.state.recalculatedSourceDocuments, [ids.invoice]);
-  assert.deepStrictEqual(db.state.sourceStatuses, ['avoir_attendu']);
+  assert.deepStrictEqual(db.state.sourceStatuses, ['a_rapprocher', 'avoir_attendu']);
   assert.ok(db.state.events.some((event) => event.event_type === 'credit_note_unlinked'));
 }
 
@@ -895,6 +913,7 @@ function testSupplierControlIntegration() {
   assertContains(service, /net_invoice_total_ex_vat/);
   assertContains(service, /currentStatus !== 'avoir_attendu'/);
   assertContains(expectedService, /loadPennylaneDocumentsLinkedToPurchase/);
+  assertContains(expectedService, /recalculateCreditNoteControlStatus/);
   assertContains(expectedService, /recalculateSourceInvoiceAfterCreditNote/);
   assertContains(expectedService, /supplier_control_status NOT IN \('litige', 'reconciliation_required'\)/);
 }
@@ -919,7 +938,9 @@ function testUiIntegration() {
   const purchaseJs = read(purchaseJsPath);
   assertContains(supplierHtml, /expected-credit-note-section/);
   assertContains(supplierHtml, /credit-note-match-section/);
-  assertContains(supplierHtml, /supplier-control\.js\?v=4/);
+  assertContains(supplierHtml, /data-filter="final">Rapproches/);
+  assertContains(supplierHtml, /supplier-control\.js\?v=5/);
+  assertContains(supplierJs, /creditNoteStatusLabels/);
   assertContains(supplierJs, /expected_credit_notes/);
   assertContains(supplierJs, /\/api\/supplier-control\/credit-notes\/.+\/match-candidates/);
   assertContains(supplierJs, /\/api\/supplier-control\/credit-notes\/.+\/apply-match/);
