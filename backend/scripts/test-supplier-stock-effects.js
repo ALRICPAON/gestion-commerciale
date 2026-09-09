@@ -56,6 +56,7 @@ function createMockDb({
   expectedOverrides = {},
   creditOverrides = {},
   existingMovement = null,
+  uniqueViolationMovement = null,
   updateSucceeds = true,
 } = {}) {
   const calls = [];
@@ -65,6 +66,7 @@ function createMockDb({
     lotQty: Number(lotOverrides.qty_remaining ?? 12),
     movements: [],
     events: [],
+    uniqueViolationTriggered: false,
   };
   const lot = {
     id: ids.lot,
@@ -110,13 +112,17 @@ function createMockDb({
         return { rows: [] };
       }
       if (/FROM stock_movements\s+WHERE store_id = \$1 AND idempotency_key = \$2/i.test(compact)) {
-        return { rows: existingMovement ? [existingMovement] : [] };
+        const movement = existingMovement || (state.uniqueViolationTriggered ? uniqueViolationMovement : null);
+        return { rows: movement ? [movement] : [] };
       }
       if (/FROM supplier_expected_credit_notes/i.test(sql)) {
         return { rows: params[0] === ids.expected ? [expected] : [] };
       }
       if (/FROM pennylane_supplier_invoices/i.test(sql)) {
         return { rows: params[0] === ids.credit ? [credit] : [] };
+      }
+      if (/FROM purchases\s+WHERE id = \$1 AND store_id = \$2\s+FOR UPDATE/i.test(compact)) {
+        return { rows: [{ id: ids.purchase, store_id: ids.store, supplier_id: ids.supplier }] };
       }
       if (/FROM lots l\s+JOIN purchase_lines pl/i.test(sql)) {
         return { rows: [lot] };
@@ -127,6 +133,12 @@ function createMockDb({
         return { rows: [{ ...lot, qty_remaining: state.lotQty }], rowCount: 1 };
       }
       if (/INSERT INTO stock_movements/i.test(sql)) {
+        if (uniqueViolationMovement) {
+          state.uniqueViolationTriggered = true;
+          const error = new Error('duplicate key value violates unique constraint');
+          error.code = '23505';
+          throw error;
+        }
         const movement = {
           id: 'movement-1',
           store_id: params[0],
@@ -213,7 +225,13 @@ async function testDestructionCreatesNegativeMovementAndRecomputesStock() {
   assert.strictEqual(db.state.movements[0].pennylane_credit_note_id, ids.credit);
   assert.strictEqual(db.state.events[0].event_type, 'supplier_stock_destruction_created');
   const allSql = db.calls.map((call) => call.sql).join('\n');
+  assertContains(allSql, /FROM purchases[\s\S]*FOR UPDATE/);
   assertContains(allSql, /FOR UPDATE OF l/);
+  assert.ok(
+    db.calls.findIndex((call) => /FROM purchases[\s\S]*FOR UPDATE/i.test(call.sql)) <
+      db.calls.findIndex((call) => /FROM lots l[\s\S]*FOR UPDATE OF l/i.test(call.sql)),
+    'Supplier stock effect must lock purchase before lot to match purchase rebuild ordering'
+  );
   assertContains(allSql, /UPDATE lots\s+SET qty_remaining = qty_remaining - \$1::numeric/);
   assertContains(allSql, /INSERT INTO stock_summary/);
   assertNotContains(allSql, /UPDATE\s+purchases|UPDATE\s+purchase_lines|INSERT INTO supplier_invoices/i);
@@ -247,6 +265,20 @@ async function testIdempotentRetryDoesNotDecrementTwice() {
   assert.deepStrictEqual(result.movement, existing);
   assert.strictEqual(db.state.movements.length, 0);
   assert.ok(!db.calls.some((call) => /UPDATE lots/i.test(call.sql)));
+}
+
+async function testConcurrentIdempotentRetryAfterUniqueViolationDoesNotReturn500() {
+  const existing = { id: 'movement-concurrent', quantity: -5, movement_type: 'destruction', idempotency_key: 'stock-effect-1' };
+  const db = createMockDb({ uniqueViolationMovement: existing });
+  const result = await createSupplierStockEffect(db, {
+    storeId: ids.store,
+    type: 'destruction',
+    payload: payload(),
+    userId: ids.user,
+  });
+  assert.strictEqual(result.idempotent, true);
+  assert.deepStrictEqual(result.movement, existing);
+  assert.ok(db.state.rolledBack, 'The failed concurrent insert transaction must rollback before reading existing movement');
 }
 
 async function testValidationRejectsNegativeStockAndIncoherentLinks() {
@@ -299,6 +331,31 @@ async function testOptionalFinancialLinksAreReallyOptional() {
   assert.strictEqual(db.state.events.length, 0);
 }
 
+async function testExpectedCreditNoteFromPurchaseWithoutPennylaneStillCreatesDestruction() {
+  const db = createMockDb({
+    expectedOverrides: {
+      source_pennylane_supplier_invoice_id: null,
+    },
+  });
+  await createSupplierStockEffect(db, {
+    storeId: ids.store,
+    type: 'destruction',
+    payload: payload({
+      pennylane_credit_note_id: null,
+      idempotency_key: 'stock-effect-expected-without-pennylane',
+    }),
+    userId: ids.user,
+  });
+  assert.strictEqual(db.state.movements.length, 1);
+  assert.strictEqual(db.state.movements[0].supplier_expected_credit_note_id, ids.expected);
+  assert.strictEqual(db.state.movements[0].pennylane_credit_note_id, null);
+  assert.strictEqual(db.state.events.length, 0);
+  const allSql = db.calls.map((call) => call.sql).join('\n');
+  assertContains(allSql, /INSERT INTO stock_movements/);
+  assertContains(allSql, /INSERT INTO stock_summary/);
+  assertNotContains(allSql, /INSERT INTO supplier_control_events/i);
+}
+
 async function testListStockEffectsForExpectedCreditNote() {
   const db = {
     async query(sql, params) {
@@ -334,6 +391,11 @@ function testStaticContracts() {
   const dashboardTest = read(dashboardTestPath);
 
   assertContains(service, /FOR UPDATE OF l/);
+  assertContains(service, /FROM purchases[\s\S]*FOR UPDATE/);
+  assertContains(service, /ON CONFLICT DO NOTHING/);
+  assertNotContains(service, /ON CONFLICT \(store_id, pennylane_supplier_invoice_id, event_key\)/);
+  assertContains(service, /error\.code === '23505'/);
+  assertContains(service, /if \(effect\.expectedCreditNoteId && eventDocumentId\)/);
   assertContains(service, /qty_remaining \+ 0\.0001 >= \$1::numeric/);
   assertContains(service, /movement_type IN \('destruction', 'supplier_return'\)/);
   assertContains(route, /\/supplier-control\/stock-effects\/destruction'.+requireAdminOrManager/s);
@@ -345,6 +407,9 @@ function testStaticContracts() {
   assertContains(purchaseJs, /openSupplierStockEffectModal/);
   assertContains(purchaseJs, /\/api\/supplier-control\/stock-effects\/.+destruction/);
   assertContains(supplierControlJs, /stock_effects/);
+  assertContains(supplierControlJs, /stockEffectLineCandidatesForExpectedCreditNote/);
+  assertContains(supplierControlJs, /stockEffectLine\.innerHTML = candidates\.map/);
+  assertNotContains(supplierControlJs, /findStockEffectLineForExpectedCreditNote\(note\)[\s\S]{0,200}payload/);
   assertContains(migration, /supplier_expected_credit_note_id uuid REFERENCES supplier_expected_credit_notes/);
   assertContains(migration, /pennylane_credit_note_id uuid REFERENCES pennylane_supplier_invoices/);
   assertContains(migration, /ux_stock_movements_supplier_control_idempotency/);
@@ -388,8 +453,10 @@ function testNormalizePayloadAliases() {
   await testDestructionCreatesNegativeMovementAndRecomputesStock();
   await testSupplierReturnCreatesNegativeMovementWithoutLegacyBlMutation();
   await testIdempotentRetryDoesNotDecrementTwice();
+  await testConcurrentIdempotentRetryAfterUniqueViolationDoesNotReturn500();
   await testValidationRejectsNegativeStockAndIncoherentLinks();
   await testOptionalFinancialLinksAreReallyOptional();
+  await testExpectedCreditNoteFromPurchaseWithoutPennylaneStillCreatesDestruction();
   await testListStockEffectsForExpectedCreditNote();
   testStaticContracts();
   testEventTypeConstraintOnlyExtendsPreviousDomain();

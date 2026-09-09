@@ -29,6 +29,7 @@ function testPageAssetsAndMenu() {
   assertContains(html, /frontend\/css\/pages\/supplier-control\.css|\.\/css\/pages\/supplier-control\.css\?v=2/);
   assertContains(html, /\.\/js\/supplier-control\.js\?v=4/);
   assertContains(html, /supplier-control-stock-effect-modal/);
+  assertContains(html, /supplier-control-stock-effect-line/);
   assertContains(home, /href="\.\/supplier-control\.html"/);
   assertContains(home, /Controle fournisseurs/);
   assertContains(home, /pennylane-supplier-invoices\.html"[^>]*hidden/);
@@ -137,6 +138,8 @@ function testNoDangerousSideEffects() {
   const service = read(path.join(root, 'backend/services/supplierControlService.js'));
   assertContains(js, /createStockEffectFromSupplierControl/);
   assertContains(js, /supplier_expected_credit_note_id/);
+  assertContains(js, /stockEffectLineCandidatesForExpectedCreditNote/);
+  assertContains(js, /stockEffectLine\.innerHTML = candidates\.map/);
   assertNotContains(js, /stock_quantity|stock_lots|stock_movements|received_quantity/);
   assertNotContains(js, /supplier_invoices/);
   assertNotContains(js, /invoice_lines|supplier_invoice_lines/);
