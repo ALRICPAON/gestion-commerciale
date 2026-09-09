@@ -51,6 +51,14 @@ const els = {
   validationMessage: document.getElementById("validation-message"),
   validate: document.getElementById("validate-btn"),
   eventsList: document.getElementById("events-list"),
+  stockEffectModal: document.getElementById("supplier-control-stock-effect-modal"),
+  stockEffectContext: document.getElementById("supplier-control-stock-effect-context"),
+  stockEffectFeedback: document.getElementById("supplier-control-stock-effect-feedback"),
+  stockEffectType: document.getElementById("supplier-control-stock-effect-type"),
+  stockEffectQuantity: document.getElementById("supplier-control-stock-effect-quantity"),
+  stockEffectNotes: document.getElementById("supplier-control-stock-effect-notes"),
+  closeStockEffectModal: document.getElementById("close-supplier-control-stock-effect-modal-btn"),
+  createStockEffect: document.getElementById("create-supplier-control-stock-effect-btn"),
 };
 
 const statusLabels = {
@@ -80,6 +88,8 @@ const eventLabels = {
   difference_accepted: "Ecart accepte",
   dispute_opened: "Litige ouvert",
   expected_credit_note: "Avoir fournisseur attendu",
+  supplier_stock_destruction_created: "Destruction stock",
+  supplier_stock_return_created: "Retour stock fournisseur",
 };
 
 const reasonLabels = {
@@ -104,6 +114,8 @@ let state = {
   creditNoteCandidates: [],
   selectedPurchaseIds: new Set(),
   selectedExpectedCreditNoteIds: new Set(),
+  stockEffectExpectedCreditNoteId: null,
+  stockEffectRequestId: null,
   filter: "needs_action",
   offset: 0,
   total: 0,
@@ -166,6 +178,17 @@ function formatSignedCurrency(value) {
   const amount = Number(value || 0);
   const sign = amount > 0 ? "+" : "";
   return `${sign}${formatCurrency(amount)}`;
+}
+
+function findStockEffectLineForExpectedCreditNote(note = {}) {
+  const purchaseLines = state.detail?.purchase_lines || [];
+  if (note.source_purchase_line_id) {
+    return purchaseLines.find((line) => String(line.id) === String(note.source_purchase_line_id) && line.lot_id) || null;
+  }
+  if (note.source_purchase_id) {
+    return purchaseLines.find((line) => String(line.purchase_id) === String(note.source_purchase_id) && line.lot_id) || null;
+  }
+  return null;
 }
 
 function showFeedback(message, type = "success") {
@@ -553,6 +576,9 @@ function renderExpectedCreditNotes(expectedCreditNotes) {
     const received = Number(item.received_amount_ex_vat || 0);
     const remaining = Number(item.remaining_amount_ex_vat ?? Math.max(expected - received, 0));
     const overage = Math.max(received - expected, 0);
+    const stockEffects = Array.isArray(item.stock_effects) ? item.stock_effects : [];
+    const stockLine = findStockEffectLineForExpectedCreditNote(item);
+    const canCreateStockEffect = canMutate() && stockLine && Number(stockLine.stock_qty_remaining || 0) > 0;
     return `
       <div class="expected-credit-note">
         <div class="expected-credit-note-main">
@@ -569,6 +595,18 @@ function renderExpectedCreditNotes(expectedCreditNotes) {
           ${item.affected_quantity ? `<span>${escapeHtml(item.affected_quantity)} ${escapeHtml(item.affected_unit || "")}</span>` : ""}
         </div>
         <p>${escapeHtml(item.reason_comment || "")}</p>
+        ${stockEffects.length ? `
+          <div class="linked-details">
+            ${stockEffects.map((effect) => `
+              <span>${escapeHtml(effect.movement_type === "supplier_return" ? "Retour fournisseur" : "Destruction/perte")} ${escapeHtml(Math.abs(Number(effect.quantity || 0)).toLocaleString("fr-FR", { maximumFractionDigits: 3 }))} - ${escapeHtml(effect.article_name || effect.article_plu || "Article")}</span>
+            `).join("")}
+          </div>
+        ` : `<div class="linked-details"><span>Effet stock physique : aucun</span></div>`}
+        ${canCreateStockEffect ? `
+          <div class="linked-actions">
+            <button class="btn btn-secondary btn-sm" type="button" data-open-stock-effect="${escapeHtml(item.id)}">Effet stock</button>
+          </div>
+        ` : ""}
       </div>
     `;
   }).join("");
@@ -636,6 +674,66 @@ function renderCreditNoteLinks(links, readOnly) {
       </div>
     `;
   }).join("");
+}
+
+function closeStockEffectModal() {
+  els.stockEffectModal?.classList.add("hidden");
+  state.stockEffectExpectedCreditNoteId = null;
+}
+
+function openStockEffectModal(expectedCreditNoteId) {
+  const note = (state.detail?.expected_credit_notes || []).find((item) => String(item.id) === String(expectedCreditNoteId));
+  const line = findStockEffectLineForExpectedCreditNote(note);
+  if (!note || !line) {
+    showFeedback("Aucun lot stock disponible pour cette attente.", "warning");
+    return;
+  }
+  state.stockEffectExpectedCreditNoteId = note.id;
+  state.stockEffectRequestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  const available = Number(line.stock_qty_remaining || 0);
+  els.stockEffectContext.textContent = `${line.article_name || line.supplier_label || "Article"} - BL ${line.purchase_id || "-"} - stock lot ${available.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} ${line.price_unit || ""}`;
+  els.stockEffectType.value = "destruction";
+  els.stockEffectQuantity.value = "";
+  els.stockEffectNotes.value = "";
+  els.stockEffectFeedback?.classList.add("hidden");
+  els.stockEffectModal?.classList.remove("hidden");
+}
+
+async function createStockEffectFromSupplierControl() {
+  const note = (state.detail?.expected_credit_notes || []).find((item) => String(item.id) === String(state.stockEffectExpectedCreditNoteId));
+  const line = findStockEffectLineForExpectedCreditNote(note);
+  if (!note || !line) return;
+  const type = els.stockEffectType.value === "supplier_return" ? "supplier_return" : "destruction";
+  els.createStockEffect.disabled = true;
+  try {
+    await apiFetch(`/api/supplier-control/stock-effects/${type === "supplier_return" ? "supplier-return" : "destruction"}`, {
+      method: "POST",
+      body: JSON.stringify({
+        purchase_id: line.purchase_id,
+        purchase_line_id: line.id,
+        lot_id: line.lot_id,
+        article_id: line.article_id,
+        supplier_id: state.detail?.document?.supplier_id,
+        supplier_expected_credit_note_id: note.id,
+        quantity: els.stockEffectQuantity.value,
+        reason: type,
+        notes: els.stockEffectNotes.value || null,
+        idempotency_key: state.stockEffectRequestId,
+      }),
+    });
+    closeStockEffectModal();
+    await refreshSelectedDetail();
+    renderDetail();
+    showFeedback("Effet stock enregistre.", "success");
+  } catch (error) {
+    if (els.stockEffectFeedback) {
+      els.stockEffectFeedback.textContent = errorMessage(error);
+      els.stockEffectFeedback.classList.remove("hidden", "success", "warning");
+      els.stockEffectFeedback.classList.add("error");
+    }
+  } finally {
+    els.createStockEffect.disabled = false;
+  }
 }
 
 function renderValidation(summary, doc, readOnly) {
@@ -935,6 +1033,11 @@ function bindEvents() {
   els.applyManual?.addEventListener("click", applyManualSelection);
   els.loadCreditNoteCandidates?.addEventListener("click", loadCreditNoteCandidates);
   els.applyCreditNoteMatch?.addEventListener("click", applyCreditNoteSelection);
+  els.closeStockEffectModal?.addEventListener("click", closeStockEffectModal);
+  els.createStockEffect?.addEventListener("click", createStockEffectFromSupplierControl);
+  els.stockEffectModal?.addEventListener("click", (event) => {
+    if (event.target === els.stockEffectModal) closeStockEffectModal();
+  });
   els.validate?.addEventListener("click", validateDocument);
   els.pdfLink?.addEventListener("click", (event) => {
     if (els.pdfLink.getAttribute("aria-disabled") === "true") event.preventDefault();
@@ -948,6 +1051,8 @@ function bindEvents() {
     if (resolutionButton) resolveDifference(resolutionButton.dataset.resolution);
     const removeCreditNoteLinkButton = event.target.closest("[data-remove-credit-note-link]");
     if (removeCreditNoteLinkButton) removeCreditNoteLink(removeCreditNoteLinkButton.dataset.removeCreditNoteLink);
+    const stockEffectButton = event.target.closest("[data-open-stock-effect]");
+    if (stockEffectButton) openStockEffectModal(stockEffectButton.dataset.openStockEffect);
   });
   els.candidatesList?.addEventListener("change", (event) => {
     const input = event.target.closest("[data-candidate-id]");

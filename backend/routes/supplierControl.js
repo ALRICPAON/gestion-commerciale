@@ -25,6 +25,10 @@ const {
   listExpectedCreditNotesForPurchase,
   removeCreditNoteLink,
 } = require('../services/supplierExpectedCreditNoteService');
+const {
+  createSupplierStockEffect,
+  listStockEffectsForExpectedCreditNote,
+} = require('../services/supplierStockEffectService');
 
 const router = express.Router();
 
@@ -126,6 +130,56 @@ router.get('/supplier-control/expected-credit-notes/:id', authenticateToken, att
     return res.json(result);
   } catch (error) {
     return sendError(res, error, 'Erreur detail avoir attendu');
+  }
+});
+
+router.get('/supplier-control/expected-credit-notes/:id/stock-effects', authenticateToken, attachDbContext, async (req, res) => {
+  try {
+    if (!isUuid(req.params.id)) {
+      return res.status(400).json({ error: 'Identifiant attente avoir invalide' });
+    }
+    const expected = await getExpectedCreditNote(req.dbPool, {
+      storeId: req.user.store_id,
+      expectedCreditNoteId: req.params.id,
+    });
+    if (!expected) return res.status(404).json({ error: 'Attente avoir introuvable' });
+    const result = await listStockEffectsForExpectedCreditNote(req.dbPool, {
+      storeId: req.user.store_id,
+      expectedCreditNoteId: req.params.id,
+    });
+    return res.json(result);
+  } catch (error) {
+    return sendError(res, error, 'Erreur effets stock avoir attendu');
+  }
+});
+
+router.post('/supplier-control/stock-effects/destruction', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const result = await createSupplierStockEffect(req.dbPool, {
+      storeId: req.user.store_id,
+      clientKey: req.user.client_key || null,
+      type: 'destruction',
+      payload: req.body || {},
+      userId: req.user.id,
+    });
+    return res.status(result.idempotent ? 200 : 201).json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur destruction stock fournisseur');
+  }
+});
+
+router.post('/supplier-control/stock-effects/supplier-return', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
+  try {
+    const result = await createSupplierStockEffect(req.dbPool, {
+      storeId: req.user.store_id,
+      clientKey: req.user.client_key || null,
+      type: 'supplier_return',
+      payload: req.body || {},
+      userId: req.user.id,
+    });
+    return res.status(result.idempotent ? 200 : 201).json({ ok: true, ...result });
+  } catch (error) {
+    return sendError(res, error, 'Erreur retour stock fournisseur');
   }
 });
 
