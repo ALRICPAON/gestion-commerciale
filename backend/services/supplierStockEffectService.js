@@ -69,6 +69,18 @@ async function loadOptionalPennylaneCreditNote(client, storeId, pennylaneCreditN
   return result.rows[0];
 }
 
+async function loadExistingIdempotentMovement(queryable, storeId, idempotencyKey) {
+  if (!idempotencyKey) return null;
+  const existing = await queryable.query(
+    `SELECT *
+     FROM stock_movements
+     WHERE store_id = $1 AND idempotency_key = $2
+     LIMIT 1`,
+    [storeId, idempotencyKey]
+  );
+  return existing.rows[0] || null;
+}
+
 function validateLinks(effect, lot, expectedCreditNote, pennylaneCreditNote) {
   if (String(lot.article_id) !== String(effect.articleId)) {
     fail('Article incoherent avec le lot selectionne', 409, 'SUPPLIER_STOCK_EFFECT_ARTICLE_MISMATCH');
@@ -111,21 +123,24 @@ async function createSupplierStockEffect(db, { storeId, type, payload = {}, user
     await client.query('BEGIN');
 
     if (effect.idempotencyKey) {
-      const existing = await client.query(
-        `SELECT *
-         FROM stock_movements
-         WHERE store_id = $1 AND idempotency_key = $2
-         LIMIT 1`,
-        [storeId, effect.idempotencyKey]
-      );
-      if (existing.rows.length) {
+      const existing = await loadExistingIdempotentMovement(client, storeId, effect.idempotencyKey);
+      if (existing) {
         await client.query('COMMIT');
-        return { idempotent: true, movement: existing.rows[0] };
+        return { idempotent: true, movement: existing };
       }
     }
 
     const expectedCreditNote = await loadOptionalExpectedCreditNote(client, storeId, effect.expectedCreditNoteId);
     const pennylaneCreditNote = await loadOptionalPennylaneCreditNote(client, storeId, effect.pennylaneCreditNoteId);
+    const purchaseResult = await client.query(
+      `SELECT *
+       FROM purchases
+       WHERE id = $1 AND store_id = $2
+       FOR UPDATE`,
+      [effect.purchaseId, storeId]
+    );
+    const purchase = purchaseResult.rows[0];
+    if (!purchase) fail('BL fournisseur introuvable', 404, 'SUPPLIER_STOCK_EFFECT_PURCHASE_NOT_FOUND');
     const lotResult = await client.query(
       `SELECT l.*, pl.id AS purchase_line_id, pl.purchase_id, pl.article_id AS purchase_line_article_id,
               p.supplier_id AS purchase_supplier_id
@@ -144,7 +159,7 @@ async function createSupplierStockEffect(db, { storeId, type, payload = {}, user
 
     const normalizedLot = {
       ...lot,
-      supplier_id: lot.supplier_id || lot.purchase_supplier_id,
+      supplier_id: lot.supplier_id || purchase.supplier_id || lot.purchase_supplier_id,
       article_id: lot.article_id || lot.purchase_line_article_id,
     };
     validateLinks(effect, normalizedLot, expectedCreditNote, pennylaneCreditNote);
@@ -168,52 +183,63 @@ async function createSupplierStockEffect(db, { storeId, type, payload = {}, user
       fail('Stock lot insuffisant apres verrouillage', 409, 'SUPPLIER_STOCK_EFFECT_CONCURRENT_STOCK_INSUFFICIENT');
     }
 
-    const movementResult = await client.query(
-      `INSERT INTO stock_movements(
-         id, store_id, client_key, article_id, lot_id, movement_type, quantity,
-         unit_cost_ex_vat, source_table, source_id, notes, created_by,
-         purchase_id, purchase_line_id, supplier_id, supplier_expected_credit_note_id,
-         pennylane_credit_note_id, reason, occurred_at, idempotency_key, raw_payload
-       )
-       VALUES(
-         gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
-         'supplier_control_stock_effects', COALESCE($8::uuid, $9::uuid, $4::uuid), $10, $11,
-         $12, $13, $14, $8, $9, $15, COALESCE($16::timestamptz, NOW()), $17, $18::jsonb
-       )
-       RETURNING *`,
-      [
-        storeId,
-        normalizedLot.client_key || clientKey || null,
-        normalizedLot.article_id,
-        normalizedLot.id,
-        type,
-        -effect.quantity,
-        num(normalizedLot.unit_cost_ex_vat, 0),
-        effect.expectedCreditNoteId,
-        effect.pennylaneCreditNoteId,
-        effect.notes || (type === 'supplier_return' ? 'Retour fournisseur explicite' : 'Destruction/perte explicite'),
-        userId,
-        normalizedLot.purchase_id,
-        normalizedLot.purchase_line_id,
-        normalizedLot.supplier_id,
-        effect.reason || type,
-        effect.occurredAt,
-        effect.idempotencyKey,
-        JSON.stringify(effect.rawPayload || {}),
-      ]
-    );
+    let movementResult;
+    try {
+      movementResult = await client.query(
+        `INSERT INTO stock_movements(
+           id, store_id, client_key, article_id, lot_id, movement_type, quantity,
+           unit_cost_ex_vat, source_table, source_id, notes, created_by,
+           purchase_id, purchase_line_id, supplier_id, supplier_expected_credit_note_id,
+           pennylane_credit_note_id, reason, occurred_at, idempotency_key, raw_payload
+         )
+         VALUES(
+           gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7,
+           'supplier_control_stock_effects', COALESCE($8::uuid, $9::uuid, $4::uuid), $10, $11,
+           $12, $13, $14, $8, $9, $15, COALESCE($16::timestamptz, NOW()), $17, $18::jsonb
+         )
+         RETURNING *`,
+        [
+          storeId,
+          normalizedLot.client_key || clientKey || null,
+          normalizedLot.article_id,
+          normalizedLot.id,
+          type,
+          -effect.quantity,
+          num(normalizedLot.unit_cost_ex_vat, 0),
+          effect.expectedCreditNoteId,
+          effect.pennylaneCreditNoteId,
+          effect.notes || (type === 'supplier_return' ? 'Retour fournisseur explicite' : 'Destruction/perte explicite'),
+          userId,
+          normalizedLot.purchase_id,
+          normalizedLot.purchase_line_id,
+          normalizedLot.supplier_id,
+          effect.reason || type,
+          effect.occurredAt,
+          effect.idempotencyKey,
+          JSON.stringify(effect.rawPayload || {}),
+        ]
+      );
+    } catch (error) {
+      if (error.code === '23505' && effect.idempotencyKey) {
+        await client.query('ROLLBACK').catch(() => {});
+        const existing = await loadExistingIdempotentMovement(db, storeId, effect.idempotencyKey);
+        if (existing) return { idempotent: true, movement: existing };
+      }
+      throw error;
+    }
     const movement = movementResult.rows[0];
 
-    if (effect.expectedCreditNoteId) {
+    const eventDocumentId = expectedCreditNote?.source_pennylane_supplier_invoice_id || effect.pennylaneCreditNoteId;
+    if (effect.expectedCreditNoteId && eventDocumentId) {
       await client.query(
         `INSERT INTO supplier_control_events(
            id, store_id, pennylane_supplier_invoice_id, event_type, event_key, payload, created_by
          )
          VALUES(gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, $6)
-         ON CONFLICT (store_id, pennylane_supplier_invoice_id, event_key) DO NOTHING`,
+         ON CONFLICT DO NOTHING`,
         [
           storeId,
-          expectedCreditNote?.source_pennylane_supplier_invoice_id || effect.pennylaneCreditNoteId,
+          eventDocumentId,
           type === 'supplier_return' ? 'supplier_stock_return_created' : 'supplier_stock_destruction_created',
           `supplier_stock_effect:${movement.id}`,
           JSON.stringify({

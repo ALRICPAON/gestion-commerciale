@@ -56,6 +56,7 @@ const els = {
   stockEffectFeedback: document.getElementById("supplier-control-stock-effect-feedback"),
   stockEffectType: document.getElementById("supplier-control-stock-effect-type"),
   stockEffectQuantity: document.getElementById("supplier-control-stock-effect-quantity"),
+  stockEffectLine: document.getElementById("supplier-control-stock-effect-line"),
   stockEffectNotes: document.getElementById("supplier-control-stock-effect-notes"),
   closeStockEffectModal: document.getElementById("close-supplier-control-stock-effect-modal-btn"),
   createStockEffect: document.getElementById("create-supplier-control-stock-effect-btn"),
@@ -181,14 +182,25 @@ function formatSignedCurrency(value) {
 }
 
 function findStockEffectLineForExpectedCreditNote(note = {}) {
+  const candidates = stockEffectLineCandidatesForExpectedCreditNote(note);
+  return candidates.length === 1 ? candidates[0] : null;
+}
+
+function stockEffectLineCandidatesForExpectedCreditNote(note = {}) {
   const purchaseLines = state.detail?.purchase_lines || [];
   if (note.source_purchase_line_id) {
-    return purchaseLines.find((line) => String(line.id) === String(note.source_purchase_line_id) && line.lot_id) || null;
+    return purchaseLines.filter((line) => String(line.id) === String(note.source_purchase_line_id) && line.lot_id);
   }
   if (note.source_purchase_id) {
-    return purchaseLines.find((line) => String(line.purchase_id) === String(note.source_purchase_id) && line.lot_id) || null;
+    return purchaseLines.filter((line) => String(line.purchase_id) === String(note.source_purchase_id) && line.lot_id);
   }
-  return null;
+  return [];
+}
+
+function stockEffectLineLabel(line = {}) {
+  const available = Number(line.stock_qty_remaining || 0).toLocaleString("fr-FR", { maximumFractionDigits: 3 });
+  const lot = line.stock_lot_code || line.supplier_lot_number || line.lot_id || "lot";
+  return `${line.article_name || line.supplier_label || line.article_plu || "Article"} - ${lot} - dispo ${available} ${line.price_unit || ""}`;
 }
 
 function showFeedback(message, type = "success") {
@@ -577,8 +589,8 @@ function renderExpectedCreditNotes(expectedCreditNotes) {
     const remaining = Number(item.remaining_amount_ex_vat ?? Math.max(expected - received, 0));
     const overage = Math.max(received - expected, 0);
     const stockEffects = Array.isArray(item.stock_effects) ? item.stock_effects : [];
-    const stockLine = findStockEffectLineForExpectedCreditNote(item);
-    const canCreateStockEffect = canMutate() && stockLine && Number(stockLine.stock_qty_remaining || 0) > 0;
+    const stockLineCandidates = stockEffectLineCandidatesForExpectedCreditNote(item);
+    const canCreateStockEffect = canMutate() && stockLineCandidates.some((line) => Number(line.stock_qty_remaining || 0) > 0);
     return `
       <div class="expected-credit-note">
         <div class="expected-credit-note-main">
@@ -683,17 +695,20 @@ function closeStockEffectModal() {
 
 function openStockEffectModal(expectedCreditNoteId) {
   const note = (state.detail?.expected_credit_notes || []).find((item) => String(item.id) === String(expectedCreditNoteId));
-  const line = findStockEffectLineForExpectedCreditNote(note);
-  if (!note || !line) {
+  const candidates = stockEffectLineCandidatesForExpectedCreditNote(note)
+    .filter((line) => Number(line.stock_qty_remaining || 0) > 0);
+  if (!note || !candidates.length) {
     showFeedback("Aucun lot stock disponible pour cette attente.", "warning");
     return;
   }
   state.stockEffectExpectedCreditNoteId = note.id;
   state.stockEffectRequestId = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
-  const available = Number(line.stock_qty_remaining || 0);
-  els.stockEffectContext.textContent = `${line.article_name || line.supplier_label || "Article"} - BL ${line.purchase_id || "-"} - stock lot ${available.toLocaleString("fr-FR", { maximumFractionDigits: 3 })} ${line.price_unit || ""}`;
+  els.stockEffectContext.textContent = `${expectedCreditNoteReasonLabels[note.reason_type] || "Avoir attendu"} - ${candidates.length} lot${candidates.length > 1 ? "s" : ""} disponible${candidates.length > 1 ? "s" : ""}`;
   els.stockEffectType.value = "destruction";
   els.stockEffectQuantity.value = "";
+  els.stockEffectLine.innerHTML = candidates.map((line) => `
+    <option value="${escapeHtml(line.id)}">${escapeHtml(stockEffectLineLabel(line))}</option>
+  `).join("");
   els.stockEffectNotes.value = "";
   els.stockEffectFeedback?.classList.add("hidden");
   els.stockEffectModal?.classList.remove("hidden");
@@ -701,7 +716,8 @@ function openStockEffectModal(expectedCreditNoteId) {
 
 async function createStockEffectFromSupplierControl() {
   const note = (state.detail?.expected_credit_notes || []).find((item) => String(item.id) === String(state.stockEffectExpectedCreditNoteId));
-  const line = findStockEffectLineForExpectedCreditNote(note);
+  const line = stockEffectLineCandidatesForExpectedCreditNote(note)
+    .find((item) => String(item.id) === String(els.stockEffectLine?.value || ""));
   if (!note || !line) return;
   const type = els.stockEffectType.value === "supplier_return" ? "supplier_return" : "destruction";
   els.createStockEffect.disabled = true;
