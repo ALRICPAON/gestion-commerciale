@@ -92,6 +92,7 @@ function createMockDb({
   incompatibleLinks = [],
   legacyLocked = [],
   appliedCreditNoteTotal = 0,
+  remainingExpectedCreditNoteTotal = 0,
 } = {}) {
   const calls = [];
   const state = {
@@ -121,8 +122,15 @@ function createMockDb({
       return { rows: state.events.slice().reverse().map((item) => ({ ...item })) };
     }
 
-    if (/FROM supplier_expected_credit_notes ecn/i.test(sql) && /JOIN supplier_expected_credit_note_links l/i.test(sql)) {
-      return { rows: [{ total: appliedCreditNoteTotal }] };
+    if (/FROM supplier_expected_credit_notes ecn/i.test(sql) && /applied_credit_note_total_ex_vat/i.test(sql)) {
+      return {
+        rows: [{
+          expected_credit_note_total_ex_vat: appliedCreditNoteTotal + remainingExpectedCreditNoteTotal,
+          applied_credit_note_total_ex_vat: appliedCreditNoteTotal,
+          remaining_expected_credit_note_total_ex_vat: remainingExpectedCreditNoteTotal,
+          over_applied_credit_note_total_ex_vat: 0,
+        }],
+      };
     }
 
     if (/FROM purchases p/i.test(sql) && /FOR UPDATE OF p/i.test(sql)) {
@@ -572,7 +580,7 @@ async function testPaidInboundSyncAndLocks() {
 
 async function testValidationUsesAppliedCreditNoteTotals() {
   const db = createMockDb({
-    doc: document({ amount_ex_vat: 1100, supplier_control_status: 'avoir_attendu' }),
+    doc: document({ amount_ex_vat: 1000, supplier_control_status: 'avoir_attendu' }),
     links: [link({ purchase: purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 }) })],
     purchases: [purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 })],
     appliedCreditNoteTotal: 100,
@@ -590,9 +598,10 @@ async function testValidationUsesAppliedCreditNoteTotals() {
   });
   assert.strictEqual(syncCalls, 1);
   assert.strictEqual(result.validation.status, 'succeeded');
-  assert.strictEqual(result.summary.invoice_total, 1100);
+  assert.strictEqual(result.summary.invoice_total, 1000);
   assert.strictEqual(result.summary.applied_credit_note_total_ex_vat, 100);
-  assert.strictEqual(result.summary.net_invoice_total_ex_vat, 1000);
+  assert.strictEqual(result.summary.net_invoice_total_ex_vat, 900);
+  assert.strictEqual(result.summary.net_purchase_total_ex_vat, 900);
   assert.strictEqual(result.summary.matched_purchase_total, 1000);
   assert.strictEqual(result.summary.difference_total, 0);
   assert.strictEqual(db.state.doc.supplier_control_status, 'valide_a_payer');
@@ -604,6 +613,7 @@ async function testPartialAppliedCreditNoteStillBlocksValidation() {
     links: [link({ purchase: purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 }) })],
     purchases: [purchase({ total_amount_ex_vat: 1000, purchase_lines_total_ex_vat: 1000 })],
     appliedCreditNoteTotal: 80,
+    remainingExpectedCreditNoteTotal: 20,
   }), {
     storeId: ids.store,
     documentId: ids.doc,

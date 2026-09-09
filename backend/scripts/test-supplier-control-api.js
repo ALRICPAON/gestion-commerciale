@@ -114,6 +114,7 @@ function createMockDb({
   legacyLocked = [],
   expectedCreditNotes = [],
   appliedCreditNoteTotal = 0,
+  remainingExpectedCreditNoteTotal = 0,
 } = {}) {
   const calls = [];
   const state = {
@@ -184,8 +185,15 @@ function createMockDb({
       return { rows: state.events };
     }
 
-    if (/FROM supplier_expected_credit_notes ecn/i.test(sql) && /JOIN supplier_expected_credit_note_links l/i.test(sql)) {
-      return { rows: [{ total: appliedCreditNoteTotal }] };
+    if (/FROM supplier_expected_credit_notes ecn/i.test(sql) && /applied_credit_note_total_ex_vat/i.test(sql)) {
+      return {
+        rows: [{
+          expected_credit_note_total_ex_vat: appliedCreditNoteTotal + remainingExpectedCreditNoteTotal,
+          applied_credit_note_total_ex_vat: appliedCreditNoteTotal,
+          remaining_expected_credit_note_total_ex_vat: remainingExpectedCreditNoteTotal,
+          over_applied_credit_note_total_ex_vat: 0,
+        }],
+      };
     }
 
     if (/FROM supplier_expected_credit_notes ecn/i.test(sql)) {
@@ -373,6 +381,7 @@ async function testExpectedCreditNoteStatusVisibleAfterPennylaneValidation() {
     }),
     links: [link({ purchase: purchase({ total_amount_ex_vat: 949.5, bl_number: '511-00081293' }) })],
     expectedCreditNotes: [expectedCreditNote],
+    remainingExpectedCreditNoteTotal: 407.7,
   });
 
   const list = await listSupplierControlDocuments(db, {
@@ -458,6 +467,7 @@ async function testRecalculateNoBlOneBlManyBlAndFinalStatuses() {
   assert.strictEqual(summary.control_status, 'conforme');
   assert.strictEqual(summary.linked_purchase_count, 1);
   assert.strictEqual(summary.difference_total, 0);
+  assert.strictEqual(summary.residual_difference_ex_vat, 0);
 
   db = createMockDb({
     doc: document({ amount_ex_vat: 300 }),
@@ -495,6 +505,39 @@ async function testRecalculateNoBlOneBlManyBlAndFinalStatuses() {
   summary = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
   assert.strictEqual(summary.control_status, 'litige');
   assert.ok(summary.blocking_reasons.includes('document_en_litige'));
+}
+
+async function testRealCreditNoteExplainsNetValueWithoutResidualDifference() {
+  let db = createMockDb({
+    doc: document({ amount_ex_vat: 949.5, payment_status: 'to_be_paid', supplier_control_status: 'avoir_attendu' }),
+    links: [link({ purchase: purchase({ total_amount_ex_vat: 949.5, bl_number: '511-00081293' }) })],
+    appliedCreditNoteTotal: 407.7,
+  });
+  let summary = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(summary.invoice_total, 949.5);
+  assert.strictEqual(summary.gross_purchase_total_ex_vat, 949.5);
+  assert.strictEqual(summary.applied_credit_note_total_ex_vat, 407.7);
+  assert.strictEqual(summary.net_invoice_total_ex_vat, 541.8);
+  assert.strictEqual(summary.net_purchase_total_ex_vat, 541.8);
+  assert.strictEqual(summary.difference_total, 0);
+  assert.strictEqual(summary.control_status, 'valide_a_payer');
+
+  db = createMockDb({
+    doc: document({ amount_ex_vat: 949.5, supplier_control_status: 'avoir_attendu' }),
+    links: [link({ purchase: purchase({ total_amount_ex_vat: 949.5 }) })],
+    expectedCreditNotes: [{
+      expected_amount_ex_vat: 407.7,
+      received_amount_ex_vat: 200,
+      remaining_amount_ex_vat: 207.7,
+      status: 'matched',
+    }],
+    appliedCreditNoteTotal: 200,
+    remainingExpectedCreditNoteTotal: 207.7,
+  });
+  summary = await recalculateSupplierControl(db, { storeId: ids.storeA, documentId: ids.doc });
+  assert.strictEqual(summary.net_purchase_total_ex_vat, 749.5);
+  assert.strictEqual(summary.difference_total, 0);
+  assert.strictEqual(summary.control_status, 'avoir_attendu');
 }
 
 async function testRecalculateReturnsPersistedNextStatus() {
@@ -744,6 +787,7 @@ function testPennylaneLineAuditGuard() {
   await testDetailDocumentLinesAndPdf();
   await testOtherStoreRefused();
   await testRecalculateNoBlOneBlManyBlAndFinalStatuses();
+  await testRealCreditNoteExplainsNetValueWithoutResidualDifference();
   await testRecalculateReturnsPersistedNextStatus();
   await testListMultiPurchaseInvoiceUsesGlobalDifference();
   await testToleranceEnvironmentIsSharedByListDetailAndRecalculate();

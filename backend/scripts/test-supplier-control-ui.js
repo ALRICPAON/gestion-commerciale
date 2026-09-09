@@ -108,7 +108,7 @@ function testActionsAndPayloads() {
   assertContains(html, /data-resolution="accepted_difference"/);
   assertContains(js, /dispute/);
   assertContains(js, /state\.busy/);
-  assertContains(js, /button\.disabled = true/);
+  assertNotContains(js, /document\.querySelectorAll\("button"\)\.forEach\(\(button\) => \{ button\.disabled = true; \}\)/);
 }
 
 function testReadOnlyAndBusinessMessages() {
@@ -148,6 +148,7 @@ function testNoFakeLineMatching() {
 
 function testCreditNoteWorkflowIsNotGloballyReadOnly() {
   const js = read(jsPath);
+  const html = read(htmlPath);
   assertContains(js, /renderCreditNoteMatching\(doc, !canMatchCreditNote\)/);
   assertContains(js, /renderValidation\(summary, doc, !canEditInvoiceControl\)/);
   assertContains(js, /renderActionState\(!canEditInvoiceControl, !canMatchCreditNote, doc\)/);
@@ -156,7 +157,21 @@ function testCreditNoteWorkflowIsNotGloballyReadOnly() {
   assertContains(js, /state\.detail\?\.document\?\.document_type !== "credit_note"/);
   assertContains(js, /\/api\/supplier-control\/credit-notes\/.+\/match-candidates/);
   assertContains(js, /\/api\/supplier-control\/credit-notes\/.+\/apply-match/);
+  assertContains(js, /Montant avoir HT/);
+  assertContains(js, /Reliquat non affecte/);
+  assertContains(html, /credit-note-links-list/);
   assertNotContains(js, /const readOnly = [^\n]+doc\.document_type === "credit_note"/);
+  assertNotContains(js, /doc\.document_type === "credit_note"[\s\S]{0,120}Ecart/);
+}
+
+function testFinancialPresentationUsesResidualDifference() {
+  const js = read(jsPath);
+  assertContains(js, /BL brut/);
+  assertContains(js, /Valeur nette achat/);
+  assertContains(js, /Ecart residuel/);
+  assertContains(js, /gross_purchase_total_ex_vat/);
+  assertContains(js, /net_purchase_total_ex_vat/);
+  assertContains(js, /residual_difference_ex_vat/);
 }
 
 (async () => {
@@ -169,6 +184,7 @@ function testCreditNoteWorkflowIsNotGloballyReadOnly() {
   testNoDangerousSideEffects();
   testNoFakeLineMatching();
   testCreditNoteWorkflowIsNotGloballyReadOnly();
+  testFinancialPresentationUsesResidualDifference();
   console.log('OK supplier control UI tests');
 })().catch((error) => {
   console.error(error);

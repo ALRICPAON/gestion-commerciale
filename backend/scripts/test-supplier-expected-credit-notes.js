@@ -941,7 +941,7 @@ function testNoForbiddenSideEffects() {
   assertContains(service, /String\(row\.supplier_id\) !== String\(creditNote\.supplier_id\)/);
   assertContains(service, /SUPPLIER_EXPECTED_CREDIT_NOTE_AMOUNT_EXCEEDED/);
   assertContains(service, /remaining_expected_credit_note_total_ex_vat/);
-  assertContains(service, /invoiceTotal - appliedTotal - purchaseTotal/);
+  assertContains(service, /invoiceTotal - purchaseTotal/);
   assertContains(service, /\? 'avoir_attendu'\s*:/);
 }
 

@@ -251,7 +251,7 @@ async function recalculateSourceInvoiceAfterCreditNote(client, { storeId, docume
   const purchaseTotal = round(row.purchase_total_ex_vat);
   const appliedTotal = round(row.applied_credit_note_total_ex_vat);
   const remainingExpected = round(row.remaining_expected_credit_note_total_ex_vat);
-  const difference = round(invoiceTotal - appliedTotal - purchaseTotal);
+  const difference = round(invoiceTotal - purchaseTotal);
   const nextStatus = remainingExpected > 0.01
     ? 'avoir_attendu'
     : (paid
@@ -1028,26 +1028,48 @@ async function removeCreditNoteLink(db, { storeId, creditNoteId, linkId, comment
 }
 
 async function appliedCreditNoteTotalForSourceDocument(client, { storeId, documentId }) {
+  const totals = await expectedCreditNoteFinancialTotalsForSourceDocument(client, { storeId, documentId });
+  return totals.applied_credit_note_total_ex_vat;
+}
+
+async function expectedCreditNoteFinancialTotalsForSourceDocument(client, { storeId, documentId }) {
   const result = await client.query(
     `
-    SELECT COALESCE(SUM(l.applied_amount_ex_vat), 0) AS total
-    FROM supplier_expected_credit_notes ecn
-    JOIN supplier_expected_credit_note_links l
-      ON l.expected_credit_note_id = ecn.id
-     AND l.store_id = ecn.store_id
-     AND l.status <> 'unlinked'
-    JOIN pennylane_supplier_invoices credit
-      ON credit.id = l.pennylane_credit_note_id
-     AND credit.store_id = l.store_id
-     AND credit.document_type = 'credit_note'
-     AND credit.pennylane_deleted_at IS NULL
-    WHERE ecn.store_id = $1
-      AND ecn.source_pennylane_supplier_invoice_id = $2
-      AND ecn.status IN ('matched', 'resolved')
+    WITH expected AS (
+      SELECT ecn.id, ecn.expected_amount_ex_vat, ecn.status,
+        COALESCE(SUM(l.applied_amount_ex_vat) FILTER (
+          WHERE l.status <> 'unlinked'
+            AND credit.document_type = 'credit_note'
+            AND credit.pennylane_deleted_at IS NULL
+        ), 0) AS applied_amount_ex_vat
+      FROM supplier_expected_credit_notes ecn
+      LEFT JOIN supplier_expected_credit_note_links l
+        ON l.expected_credit_note_id = ecn.id
+       AND l.store_id = ecn.store_id
+      LEFT JOIN pennylane_supplier_invoices credit
+        ON credit.id = l.pennylane_credit_note_id
+       AND credit.store_id = l.store_id
+      WHERE ecn.store_id = $1
+        AND ecn.source_pennylane_supplier_invoice_id = $2
+        AND ecn.status NOT IN ('cancelled', 'disputed')
+      GROUP BY ecn.id, ecn.expected_amount_ex_vat, ecn.status
+    )
+    SELECT
+      COALESCE(SUM(expected_amount_ex_vat), 0) AS expected_credit_note_total_ex_vat,
+      COALESCE(SUM(applied_amount_ex_vat), 0) AS applied_credit_note_total_ex_vat,
+      COALESCE(SUM(GREATEST(expected_amount_ex_vat - applied_amount_ex_vat, 0)), 0) AS remaining_expected_credit_note_total_ex_vat,
+      COALESCE(SUM(GREATEST(applied_amount_ex_vat - expected_amount_ex_vat, 0)), 0) AS over_applied_credit_note_total_ex_vat
+    FROM expected
     `,
     [storeId, documentId]
   );
-  return round(result.rows[0]?.total);
+  const row = result.rows[0] || {};
+  return {
+    expected_credit_note_total_ex_vat: round(row.expected_credit_note_total_ex_vat),
+    applied_credit_note_total_ex_vat: round(row.applied_credit_note_total_ex_vat),
+    remaining_expected_credit_note_total_ex_vat: round(row.remaining_expected_credit_note_total_ex_vat),
+    over_applied_credit_note_total_ex_vat: round(row.over_applied_credit_note_total_ex_vat),
+  };
 }
 
 module.exports = {
@@ -1057,6 +1079,7 @@ module.exports = {
   cancelExpectedCreditNote,
   createExpectedCreditNote,
   createExpectedCreditNoteInTransaction,
+  expectedCreditNoteFinancialTotalsForSourceDocument,
   getExpectedCreditNote,
   listCreditNoteLinks,
   listCreditNoteMatchCandidates,

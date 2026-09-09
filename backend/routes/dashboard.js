@@ -192,16 +192,44 @@ async function salesTotals(db, storeId, fromDate, toDate) {
 
 async function purchaseTotals(db, storeId, fromDate, toDate) {
   const result = await db.query(
-    `SELECT COALESCE(SUM(pl.line_amount_ex_vat), 0) AS purchases_ht
-     FROM purchases p
-     JOIN purchase_lines pl ON pl.purchase_id = p.id AND pl.store_id = p.store_id
-     WHERE p.store_id = $1
-       AND COALESCE(p.receipt_date, p.purchase_date) >= $2::date
-       AND COALESCE(p.receipt_date, p.purchase_date) <= $3::date
-       AND p.status <> 'cancelled'`,
+    `WITH period_purchases AS (
+       SELECT p.id, p.store_id
+       FROM purchases p
+       WHERE p.store_id = $1
+         AND COALESCE(p.receipt_date, p.purchase_date) >= $2::date
+         AND COALESCE(p.receipt_date, p.purchase_date) <= $3::date
+         AND p.status <> 'cancelled'
+     ), purchase_lines_total AS (
+       SELECT COALESCE(SUM(pl.line_amount_ex_vat), 0) AS gross_purchases_ht
+       FROM period_purchases pp
+       JOIN purchase_lines pl
+         ON pl.purchase_id = pp.id
+        AND pl.store_id = pp.store_id
+     ), applied_credit_notes AS (
+       SELECT COALESCE(SUM(l.applied_amount_ex_vat), 0) AS supplier_credit_notes_applied_ht
+       FROM period_purchases pp
+       JOIN supplier_expected_credit_notes ecn
+         ON ecn.source_purchase_id = pp.id
+        AND ecn.store_id = pp.store_id
+        AND ecn.status <> 'cancelled'
+       JOIN supplier_expected_credit_note_links l
+         ON l.expected_credit_note_id = ecn.id
+        AND l.store_id = ecn.store_id
+        AND l.status <> 'unlinked'
+       JOIN pennylane_supplier_invoices credit
+         ON credit.id = l.pennylane_credit_note_id
+        AND credit.store_id = l.store_id
+        AND credit.document_type = 'credit_note'
+        AND credit.pennylane_deleted_at IS NULL
+     )
+     SELECT
+       purchase_lines_total.gross_purchases_ht,
+       applied_credit_notes.supplier_credit_notes_applied_ht,
+       GREATEST(purchase_lines_total.gross_purchases_ht - applied_credit_notes.supplier_credit_notes_applied_ht, 0) AS purchases_ht
+     FROM purchase_lines_total, applied_credit_notes`,
     [storeId, fromDate, toDate]
   );
-  return result.rows[0] || { purchases_ht: 0 };
+  return result.rows[0] || { gross_purchases_ht: 0, supplier_credit_notes_applied_ht: 0, purchases_ht: 0 };
 }
 
 async function dashboard(db, storeId, range) {
@@ -217,6 +245,8 @@ async function dashboard(db, storeId, range) {
   const caHt = money(sales.ca_ht);
   const caTtc = money(sales.ca_ttc);
   const purchasesHt = money(purchases.purchases_ht);
+  const grossPurchasesHt = money(purchases.gross_purchases_ht);
+  const supplierCreditNotesAppliedHt = money(purchases.supplier_credit_notes_applied_ht);
   const stockInitialHt = hasSnapshots ? money(initialSnapshot.total_value_ht) : null;
   const stockFinalHt = hasSnapshots ? money(finalSnapshot.total_value_ht) : null;
   const consumedPurchasesHt = hasSnapshots ? money(purchasesHt + stockInitialHt - stockFinalHt) : null;
@@ -231,6 +261,8 @@ async function dashboard(db, storeId, range) {
       ca_ht: caHt,
       ca_ttc: caTtc,
       purchases_ht: purchasesHt,
+      gross_purchases_ht: grossPurchasesHt,
+      supplier_credit_notes_applied_ht: supplierCreditNotesAppliedHt,
       stock_initial_ht: stockInitialHt,
       stock_final_ht: stockFinalHt,
       consumed_purchases_ht: consumedPurchasesHt,
@@ -244,13 +276,14 @@ async function dashboard(db, storeId, range) {
       message: hasSnapshots ? null : 'Capture de stock manquante pour calculer stock initial, stock final, achats consommes et marge.',
     },
     formula: {
-      consumed_purchases_ht: 'Achats periode + Stock initial - Stock final',
+      purchases_ht: 'Achats bruts periode - Avoirs fournisseurs reels appliques aux BL de la periode',
+      consumed_purchases_ht: 'Achats nets periode + Stock initial - Stock final',
       gross_margin_ht: 'CA HT - Achats consommes HT',
       margin_rate: 'Marge brute HT / CA HT',
     },
     chart: [
       { label: 'CA HT', value: caHt },
-      { label: 'Achats HT', value: purchasesHt },
+      { label: 'Achats nets HT', value: purchasesHt },
       { label: 'Marge HT', value: grossMarginHt || 0 },
     ],
   };
@@ -358,5 +391,13 @@ function startAutomaticStockSnapshotScheduler() {
 }
 
 startAutomaticStockSnapshotScheduler();
+
+router._test = {
+  dashboard,
+  periodRange,
+  purchaseTotals,
+  rangeBounds,
+  salesTotals,
+};
 
 module.exports = router;
