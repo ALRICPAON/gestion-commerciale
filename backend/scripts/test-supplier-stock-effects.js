@@ -398,6 +398,7 @@ function testStaticContracts() {
   assertContains(service, /if \(effect\.expectedCreditNoteId && eventDocumentId\)/);
   assertContains(service, /qty_remaining \+ 0\.0001 >= \$1::numeric/);
   assertContains(service, /movement_type IN \('destruction', 'supplier_return'\)/);
+  assertContains(read(path.join(root, 'frontend/supplier-control.html')), /supplier-control\.js\?v=5/);
   assertContains(route, /\/supplier-control\/stock-effects\/destruction'.+requireAdminOrManager/s);
   assertContains(route, /\/supplier-control\/stock-effects\/supplier-return'.+requireAdminOrManager/s);
   assertContains(route, /\/supplier-control\/expected-credit-notes\/:id\/stock-effects/);

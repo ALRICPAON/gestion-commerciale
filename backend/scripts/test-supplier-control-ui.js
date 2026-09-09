@@ -27,7 +27,7 @@ function testPageAssetsAndMenu() {
 
   assertContains(html, /<title>Controle fournisseurs - Gestion Commerciale<\/title>/);
   assertContains(html, /frontend\/css\/pages\/supplier-control\.css|\.\/css\/pages\/supplier-control\.css\?v=2/);
-  assertContains(html, /\.\/js\/supplier-control\.js\?v=4/);
+  assertContains(html, /\.\/js\/supplier-control\.js\?v=5/);
   assertContains(html, /supplier-control-stock-effect-modal/);
   assertContains(html, /supplier-control-stock-effect-line/);
   assertContains(home, /href="\.\/supplier-control\.html"/);
