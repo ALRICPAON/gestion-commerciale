@@ -24,11 +24,14 @@ router.get('/delivery-notes/:id/communication-options', authenticateToken, attac
       client_name: context.document.client_name,
       billed_client_name: context.document.billed_client_name,
       email: context.contacts.email,
+      emails: context.contacts.emails || [],
+      email_recipients: context.contacts.email_recipients || [],
       email_source: context.contacts.email_source,
+      preferred_email_recipient_count: context.contacts.preferred_count || 0,
       phone: context.contacts.phone,
       whatsapp_phone: context.contacts.whatsapp_phone,
       phone_source: context.contacts.phone_source,
-      can_send_email: Boolean(context.contacts.email),
+      can_send_email: Boolean((context.contacts.emails || []).length || context.contacts.email),
       can_send_whatsapp: Boolean(context.contacts.whatsapp_phone),
     });
   } catch (err) {

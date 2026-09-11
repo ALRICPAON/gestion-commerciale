@@ -1,5 +1,9 @@
 const { sendEmail } = require('./emailService');
 const { normalizePhone, sendTemplateMessage } = require('./whatsappService');
+const {
+  resolveDocumentRecipients,
+  recipientsToEmailList,
+} = require('./documentRecipientService');
 
 function clean(value) {
   if (value === undefined || value === null) return null;
@@ -60,6 +64,7 @@ function defaultPhone(document) {
 async function getDeliveryNoteCommunicationContext(db, { storeId, deliveryNoteId }) {
   const documentResult = await db.query(
     `SELECT dn.id, dn.store_id, dn.reference_number, dn.document_date, dn.status,
+      dn.client_id AS delivered_client_id, dn.billed_client_id,
       dn.total_amount_ex_vat, dn.total_vat_amount, dn.total_amount_inc_vat, dn.notes,
       COALESCE(delivered.name, dn.delivered_client_name_snapshot) AS client_name,
       COALESCE(delivered.code, dn.delivered_client_code_snapshot) AS client_code,
@@ -119,7 +124,14 @@ async function getDeliveryNoteCommunicationContext(db, { storeId, deliveryNoteId
   ]);
 
   const document = documentResult.rows[0];
-  const email = defaultEmail(document);
+  const recipientResolution = await resolveDocumentRecipients(db, {
+    entityType: 'client',
+    entityId: document.delivered_client_id || document.billed_client_id,
+    documentType: 'delivery_note',
+    storeId,
+  }).catch(() => ({ recipients: [], source: null, preferred_count: 0 }));
+  const emailRecipients = recipientsToEmailList(recipientResolution);
+  const email = emailRecipients[0] || defaultEmail(document);
   const phone = defaultPhone(document);
 
   return {
@@ -128,9 +140,12 @@ async function getDeliveryNoteCommunicationContext(db, { storeId, deliveryNoteId
     store_settings: storeSettingsResult.rows[0] || {},
     contacts: {
       email,
+      emails: emailRecipients.length ? emailRecipients : (email ? [email] : []),
+      email_recipients: recipientResolution.recipients || (email ? [{ email, source: 'legacy_document_email' }] : []),
       phone,
       whatsapp_phone: normalizePhone(phone),
-      email_source: email === clean(document.billed_client_email) ? 'billed_client' : (email ? 'delivered_client' : null),
+      email_source: recipientResolution.source || (email === clean(document.billed_client_email) ? 'billed_client' : (email ? 'delivered_client' : null)),
+      preferred_count: recipientResolution.preferred_count || 0,
       phone_source: phone ? 'client' : null,
     },
   };
