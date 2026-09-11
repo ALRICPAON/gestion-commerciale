@@ -102,6 +102,27 @@ function validateLogisticsServicePayload(body = {}) {
   };
 }
 
+function hasOwn(body = {}, field) {
+  return Object.prototype.hasOwnProperty.call(body, field);
+}
+
+function resolveCarrierSettingPatch(existing = {}, body = {}) {
+  const mode = hasOwn(body, 'purchase_transport_mode')
+    ? clean(body.purchase_transport_mode) || 'manual'
+    : clean(existing.purchase_transport_mode) || 'manual';
+  if (!['franco', 'carrier_paid_by_us', 'manual'].includes(mode)) throw badRequest('Mode achat transport invalide');
+  return {
+    purchase_transport_mode: mode,
+    purchase_transport_chain_id: hasOwn(body, 'purchase_transport_chain_id')
+      ? clean(body.purchase_transport_chain_id)
+      : clean(existing.purchase_transport_chain_id),
+    admin_fee_ht: hasOwn(body, 'admin_fee_ht')
+      ? assertNonNegative(body.admin_fee_ht, 'Frais administratifs HT', 0)
+      : assertNonNegative(existing.admin_fee_ht, 'Frais administratifs HT', 0),
+    notes: hasOwn(body, 'notes') ? clean(body.notes) : clean(existing.notes),
+  };
+}
+
 async function assertCarrier(db, storeId, carrierId) {
   const result = await db.query(
     `SELECT id FROM suppliers
@@ -166,9 +187,14 @@ router.put('/carriers/:carrierId/settings', requireAdminOrManager, async (req, r
       [carrierId, req.user.store_id]
     );
     if (!supplier.rows[0]) throw Object.assign(new Error('Transporteur introuvable'), { status: 404 });
-    const adminFee = assertNonNegative(req.body?.admin_fee_ht, 'Frais administratifs HT', 0);
-    const mode = clean(req.body?.purchase_transport_mode) || 'manual';
-    if (!['franco', 'carrier_paid_by_us', 'manual'].includes(mode)) throw badRequest('Mode achat transport invalide');
+    const existing = await req.dbPool.query(
+      `SELECT purchase_transport_mode, purchase_transport_chain_id, admin_fee_ht, notes
+       FROM supplier_transport_settings
+       WHERE store_id = $1 AND supplier_id = $2
+       LIMIT 1`,
+      [req.user.store_id, carrierId]
+    );
+    const patch = resolveCarrierSettingPatch(existing.rows[0] || {}, req.body || {});
     await req.dbPool.query(
       `UPDATE suppliers
        SET is_carrier = true, updated_by = $3, updated_at = now()
@@ -191,10 +217,10 @@ router.put('/carriers/:carrierId/settings', requireAdminOrManager, async (req, r
       [
         req.user.store_id,
         carrierId,
-        mode,
-        clean(req.body?.purchase_transport_chain_id),
-        adminFee,
-        clean(req.body?.notes),
+        patch.purchase_transport_mode,
+        patch.purchase_transport_chain_id,
+        patch.admin_fee_ht,
+        patch.notes,
         req.user.id,
       ]
     );
@@ -502,5 +528,7 @@ router.post('/pricing/:sessionId/apply-purchase-estimates', requireAdminOrManage
     db.release();
   }
 });
+
+router._private = { resolveCarrierSettingPatch };
 
 module.exports = router;
