@@ -9,6 +9,9 @@ const importDocument = require('../services/imports/import-document');
 const { recomputeArticleStock } = require('../services/stockService');
 const supplierArticleMappings = require('../services/supplierArticleMappingService');
 const purchaseReceiptStockSync = require('../services/purchaseReceiptStockSync');
+const {
+  enrichPurchasesWithSupplierInvoiceStatus,
+} = require('../services/purchaseSupplierInvoiceStatusService');
 
 const router = express.Router();
 const IMPORTS_ROOT = path.join(__dirname, '..', 'uploads', 'imports');
@@ -31,6 +34,14 @@ function toNullableString(v) { const s = String(v ?? '').trim(); return s || nul
 function normalizePriceUnit(v) { return ['kg','piece','colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg'; }
 function normalizeMappingUnit(v) { return ['kg','piece','colis'].includes(String(v || '').toLowerCase()) ? String(v).toLowerCase() : 'kg'; }
 const NORMALIZED_SUPPLIER_REF_SQL = "regexp_replace(UPPER(TRIM(COALESCE(%s, ''))), '[^A-Z0-9]', '', 'g')";
+const SUPPLIER_INVOICE_DISPLAY_STATUSES = new Set([
+  'invoice_matched',
+  'invoice_difference',
+  'validee_a_payer',
+  'payee',
+  'litige',
+  'refusee',
+]);
 function normalizedSupplierRefSql(expression) {
   return NORMALIZED_SUPPLIER_REF_SQL.replace('%s', expression);
 }
@@ -386,13 +397,21 @@ router.get('/purchases', authenticateToken, attachDbContext, async (req,res)=>{
   try {
     const { status='', supplier_id='', date_from='', date_to='', limit='500' } = req.query;
     const params=[req.user.store_id]; let where='WHERE p.store_id=$1';
-    if(status){params.push(status); where+=` AND p.status=$${params.length}`;}
+    const displayStatusFilter = SUPPLIER_INVOICE_DISPLAY_STATUSES.has(status) ? status : '';
+    if(status && !displayStatusFilter){params.push(status); where+=` AND p.status=$${params.length}`;}
     if(supplier_id){params.push(supplier_id); where+=` AND p.supplier_id=$${params.length}`;}
     if(date_from){params.push(date_from); where+=` AND p.purchase_date >= $${params.length}::date`;}
     if(date_to){params.push(date_to); where+=` AND p.purchase_date <= $${params.length}::date`;}
     params.push(Math.min(Number(limit)||500,2000));
     const r=await req.dbPool.query(`SELECT p.*, s.name supplier_name, COUNT(pl.id) line_count FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id LEFT JOIN purchase_lines pl ON pl.purchase_id=p.id ${where} GROUP BY p.id,s.name ORDER BY p.created_at DESC LIMIT $${params.length}`, params);
-    res.json(Array.isArray(r.rows) ? r.rows : []);
+    let rows = await enrichPurchasesWithSupplierInvoiceStatus(req.dbPool, {
+      storeId: req.user.store_id,
+      purchases: Array.isArray(r.rows) ? r.rows : [],
+    });
+    if (displayStatusFilter) {
+      rows = rows.filter((purchase) => purchase.supplier_invoice_display_status === displayStatusFilter);
+    }
+    res.json(rows);
   } catch(e){ console.error('Erreur liste achats :', e); res.status(500).json({error:'Erreur serveur achats'}); }
 });
 
@@ -436,7 +455,11 @@ router.get('/purchases/:id', authenticateToken, attachDbContext, async (req,res)
     `,[req.params.id,req.user.store_id]);
     if(!p.rows.length) return res.status(404).json({error:'Achat introuvable'});
     const l=await req.dbPool.query(`SELECT pl.*, a.plu article_plu, a.designation article_name, l.id stock_lot_id, l.lot_code stock_lot_code, l.qty_remaining stock_qty_remaining, l.unit_cost_ex_vat stock_unit_cost_ex_vat, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number, plm.sanitary_photo_url, CASE WHEN jsonb_typeof(plm.sanitary_photo_urls) = 'array' THEN plm.sanitary_photo_urls WHEN plm.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(plm.sanitary_photo_url) ELSE '[]'::jsonb END AS sanitary_photo_urls, plm.notes metadata_notes FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN lots l ON l.id=pl.lot_id AND l.store_id=pl.store_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' WHERE pl.purchase_id=$1 AND pl.store_id=$2 ORDER BY pl.line_number`,[req.params.id,req.user.store_id]);
-    res.json({purchase:p.rows[0], lines:l.rows.map(sanitizePurchaseLine)});
+    const [purchase] = await enrichPurchasesWithSupplierInvoiceStatus(req.dbPool, {
+      storeId: req.user.store_id,
+      purchases: [p.rows[0]],
+    });
+    res.json({purchase, lines:l.rows.map(sanitizePurchaseLine)});
   }catch(e){console.error('Erreur détail achat :', e); res.status(500).json({error:'Erreur détail achat'});}
 });
 

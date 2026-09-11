@@ -160,6 +160,13 @@ function formatCurrency(value) {
 
 function formatPurchaseStatus(status) {
   const map = {
+    received_pending_invoice: "Recu - facture attendue",
+    invoice_matched: "Facture rapprochee",
+    invoice_difference: "Ecart facture",
+    validee_a_payer: "Valide a payer",
+    payee: "Paye",
+    litige: "Litige",
+    refusee: "Refusee",
     draft: "Brouillon",
     ordered: "Commandé",
     receiving: "Réception en cours",
@@ -176,6 +183,10 @@ function renderPurchaseStatusBadge(status) {
   const label = formatPurchaseStatus(safeStatus);
   const cls = `purchase-status-badge status-${safeStatus}`;
   return `<span class="${cls}">${label}</span>`;
+}
+
+function getPurchaseDisplayStatus(purchase) {
+  return purchase?.supplier_invoice_display_status || purchase?.display_status || purchase?.status || "";
 }
 
 function formatPurchaseType(type) {
@@ -397,7 +408,9 @@ function renderPurchasesTable() {
         String(purchase.supplier_name || "").toLowerCase().includes(search) ||
         String(purchase.bl_number || "").toLowerCase().includes(search) ||
         String(purchase.purchase_type || "").toLowerCase().includes(search) ||
-        String(purchase.status || "").toLowerCase().includes(search)
+        String(purchase.status || "").toLowerCase().includes(search) ||
+        String(getPurchaseDisplayStatus(purchase)).toLowerCase().includes(search) ||
+        String(purchase.supplier_invoice_display_label || "").toLowerCase().includes(search)
       );
     });
   }
@@ -416,7 +429,7 @@ function renderPurchasesTable() {
       <td>${formatDate(purchase.order_date)}</td>
       <td>${purchase.supplier_name || "-"}</td>
       <td>${formatPurchaseType(purchase.purchase_type)}</td>
-      <td>${renderPurchaseStatusBadge(purchase.status)}</td>
+      <td>${renderPurchaseStatusBadge(getPurchaseDisplayStatus(purchase))}</td>
       <td>${purchase.bl_number || "-"}</td>
       <td class="purchases-total-cell"><strong>${formatCurrency(purchase.total_amount_ex_vat)}</strong></td>
       <td>${purchase.line_count || 0}</td>
