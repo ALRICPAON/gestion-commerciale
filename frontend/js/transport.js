@@ -76,6 +76,7 @@ function fillSelect(id, items, placeholder = 'Choisir', emptyLabel = null) {
 function fillCarrierSelects() {
   ['carrier-setting-carrier', 'grid-carrier', 'fuel-carrier'].forEach((id) => fillSelect(id, carriers, 'Choisir'));
   fillSelect('service-carrier', carriers, 'Sans transporteur', 'Sans transporteur');
+  refreshChainLegCarrierSelects();
 }
 
 function fillChainSelects() {
@@ -182,6 +183,26 @@ function gridOptions(carrierId, selected = '') {
   return optionList(gridsForCarrier(carrierId), 'Choisir une grille', selected);
 }
 
+function refreshChainLegGridSelect(row) {
+  if (!row) return;
+  const carrierId = row.querySelector('[data-field="carrier_id"]')?.value || '';
+  const gridSelect = row.querySelector('[data-field="grid_id"]');
+  if (gridSelect) gridSelect.innerHTML = gridOptions(carrierId, gridSelect.value);
+}
+
+function refreshChainLegCarrierSelects() {
+  Array.from(el('chain-legs-body').querySelectorAll('tr')).forEach((row) => {
+    const carrierSelect = row.querySelector('[data-field="carrier_id"]');
+    if (!carrierSelect) return;
+    carrierSelect.innerHTML = optionList(carriers, 'Choisir', carrierSelect.value);
+    refreshChainLegGridSelect(row);
+  });
+}
+
+function refreshChainLegGridSelects() {
+  Array.from(el('chain-legs-body').querySelectorAll('tr')).forEach((row) => refreshChainLegGridSelect(row));
+}
+
 function addBracketRow(values = {}) {
   const body = el('grid-brackets-body');
   const row = document.createElement('tr');
@@ -275,11 +296,7 @@ async function loadGrids() {
   const data = await api('/api/transport/grids');
   grids = data?.results || [];
   renderGrids();
-  Array.from(el('chain-legs-body').querySelectorAll('tr')).forEach((row) => {
-    const carrierId = row.querySelector('[data-field="carrier_id"]')?.value || '';
-    const select = row.querySelector('[data-field="grid_id"]');
-    if (select) select.innerHTML = gridOptions(carrierId, select.value);
-  });
+  refreshChainLegGridSelects();
 }
 
 async function loadChains() {
@@ -451,9 +468,7 @@ function bindEvents() {
   el('chain-legs-body').addEventListener('change', (event) => {
     const select = event.target.closest('[data-field="carrier_id"]');
     if (!select) return;
-    const row = select.closest('tr');
-    const gridSelect = row.querySelector('[data-field="grid_id"]');
-    gridSelect.innerHTML = gridOptions(select.value);
+    refreshChainLegGridSelect(select.closest('tr'));
   });
   el('grids-body').addEventListener('click', (event) => {
     const button = event.target.closest('[data-action="grid-detail"]');
