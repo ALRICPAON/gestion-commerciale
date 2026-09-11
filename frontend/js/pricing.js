@@ -26,6 +26,8 @@ const saveNowBtn = el('save-now-btn');
 const searchInput = el('search-input');
 const supplierFilter = el('supplier-filter');
 const familyFilter = el('family-filter');
+const autoTariffRules = el('auto-tariff-rules');
+const autoTariffsBtn = el('auto-tariffs-btn');
 const headRow = el('pricing-head-row');
 const linesBody = el('pricing-lines-body');
 const articleModal = el('article-modal');
@@ -285,6 +287,41 @@ function renderFilters() {
   familyFilter.value = selectedFamily;
 }
 
+function autoTariffLevels() {
+  return tariffLevels
+    .filter((level) => [1, 2, 3].includes(Number(level.legacy_level)))
+    .slice(0, 3);
+}
+
+function renderAutoTariffRules() {
+  const levels = autoTariffLevels();
+  autoTariffRules.innerHTML = levels.map((level) => `
+    <label class="pricing-auto-rule" data-auto-tariff-level-id="${level.id}">
+      <span>${escapeHtml(level.name || level.code || `Tarif ${level.legacy_level}`)}</span>
+      <select data-auto-field="mode">
+        <option value="fixed_eur_kg">EUR/kg</option>
+        <option value="percent">%</option>
+      </select>
+      <input data-auto-field="value" class="pricing-number" type="number" step="0.01" min="0" placeholder="0.00" />
+    </label>
+  `).join('');
+  autoTariffsBtn.disabled = !levels.length;
+}
+
+function autoTariffPayload() {
+  const rules = [];
+  autoTariffRules.querySelectorAll('[data-auto-tariff-level-id]').forEach((row) => {
+    const rawValue = row.querySelector('[data-auto-field="value"]')?.value;
+    if (rawValue === '') return;
+    rules.push({
+      tariff_level_id: row.dataset.autoTariffLevelId,
+      mode: row.querySelector('[data-auto-field="mode"]')?.value || 'fixed_eur_kg',
+      value: rawValue,
+    });
+  });
+  return rules;
+}
+
 function renderLines() {
   renderHead();
   renderFilters();
@@ -363,6 +400,7 @@ async function loadReferenceData() {
   suppliers = Array.isArray(supplierRows) ? supplierRows : supplierRows.results || [];
   tariffLevels = tariffRows.results || [];
   importSupplierSelect.innerHTML = '<option value="">Choisir fournisseur</option>' + suppliers.map((supplier) => `<option value="${supplier.id}">${escapeHtml(supplier.name || supplier.code || supplier.id)}</option>`).join('');
+  renderAutoTariffRules();
 }
 
 async function loadSession(showMessage = true) {
@@ -519,6 +557,23 @@ async function applyTransportEstimates() {
   const result = await apiJson(`/api/transport/pricing/${encodeURIComponent(session.id)}/apply-purchase-estimates`, {});
   await loadSession(false);
   showFeedback(`${result.updated_line_count || 0} ligne(s) transport achat recalculee(s).`, 'success');
+}
+
+async function applyAutoTariffs() {
+  await saveDirtyLines();
+  if (!session) return showFeedback('Aucune session chargee.', 'error');
+  if (session.status === 'published') {
+    const editable = await createDraftRevision('Cette tarification est publiee. Creer une revision modifiable pour calculer les tarifs ?');
+    if (!editable) return;
+  }
+  const rules = autoTariffPayload();
+  if (!rules.length) return showFeedback('Saisir au moins une regle de calcul.', 'error');
+  const result = await apiJson(`/api/pricing/sessions/${encodeURIComponent(session.id)}/auto-tariffs`, { rules });
+  session = result.session;
+  lines = result.lines || [];
+  dirty.clear();
+  renderLines();
+  showFeedback(`${result.applied_tariff_count || 0} tarif(s) calcule(s). Les champs restent modifiables.`, 'success');
 }
 
 async function runImport() {
@@ -779,6 +834,7 @@ function bindEvents() {
     importSupplierSelect.focus();
   }).catch((error) => showFeedback(error.message, 'error')));
   transportEstimatesBtn.addEventListener('click', () => applyTransportEstimates().catch((error) => showFeedback(error.message, 'error')));
+  autoTariffsBtn.addEventListener('click', () => applyAutoTariffs().catch((error) => showFeedback(error.message, 'error')));
   closeImportModalBtn.addEventListener('click', () => importModal.classList.add('hidden'));
   runImportBtn.addEventListener('click', () => runImport().catch((error) => showFeedback(error.message, 'error')));
   confirmKnownBtn.addEventListener('click', () => confirmKnownMappings().catch((error) => showFeedback(error.message, 'error')));

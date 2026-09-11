@@ -188,6 +188,14 @@ router.post('/sessions/:id/publish', requireAdminOrManager, async (req, res) => 
   }
 });
 
+router.post('/sessions/:id/auto-tariffs', requireAdminOrManager, async (req, res) => {
+  try {
+    res.json(await pricing.applyAutoTariffsToSession(req.dbPool, req.user.store_id, { ...req.body, pricing_session_id: req.params.id }, context(req)));
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur calcul automatique des tarifs' });
+  }
+});
+
 router.get('/lines', async (req, res) => {
   try {
     res.json(await pricing.listPricingLines(req.dbPool, req.user.store_id, req.query));

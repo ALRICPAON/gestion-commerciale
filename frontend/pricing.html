@@ -7,7 +7,7 @@
   <link rel="icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="shortcut icon" type="image/png" href="/assets/favicon.png?v=7">
   <link rel="stylesheet" href="./css/app.css" />
-  <link rel="stylesheet" href="./css/pages/pricing.css?v=3" />
+  <link rel="stylesheet" href="./css/pages/pricing.css?v=4" />
 </head>
 <body class="app-page pricing-page">
   <header class="topbar">
@@ -51,6 +51,15 @@
       <select id="supplier-filter"><option value="">Tous fournisseurs</option></select>
       <select id="family-filter"><option value="">Toutes familles</option></select>
       <button id="save-now-btn" class="btn btn-secondary" type="button">Sauvegarder</button>
+    </section>
+
+    <section class="pricing-auto-panel" aria-label="Calcul automatique des tarifs">
+      <div class="pricing-auto-title">
+        <strong>Calcul automatique des tarifs</strong>
+        <span>Remplit les tarifs a partir du cout rendu. Les valeurs restent modifiables manuellement.</span>
+      </div>
+      <div id="auto-tariff-rules" class="pricing-auto-rules"></div>
+      <button id="auto-tariffs-btn" class="btn btn-secondary" type="button">Calculer les tarifs</button>
     </section>
 
     <section class="pricing-table-wrap" aria-label="Tableau tarification">
@@ -123,6 +132,6 @@
   </div>
 
   <script src="./js/config.js"></script>
-  <script src="./js/pricing.js?v=4"></script>
+  <script src="./js/pricing.js?v=5"></script>
 </body>
 </html>
