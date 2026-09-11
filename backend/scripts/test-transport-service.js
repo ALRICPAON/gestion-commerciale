@@ -1,5 +1,8 @@
 const assert = require('assert');
 const transport = require('../services/transportService');
+const transportRoutes = require('../routes/transport');
+
+const { resolveCarrierSettingPatch } = transportRoutes._private;
 
 function approx(actual, expected, precision = 0.000001) {
   assert.ok(Math.abs(Number(actual) - Number(expected)) <= precision, `${actual} !== ${expected}`);
@@ -94,6 +97,28 @@ approx(frozen.total_ht, 198.79);
 approx(transport.logisticsServicePerKg({ calculation_mode: 'per_tonne', amount_ht: 180 }), 0.18);
 approx(transport.logisticsServicePerKg({ calculation_mode: 'per_kg', amount_ht: 0.42 }), 0.42);
 approx(transport.logisticsServicePerKg({ calculation_mode: 'fixed', amount_ht: 12 }), 0);
+
+const existingCarrierSetting = {
+  purchase_transport_mode: 'carrier_paid_by_us',
+  purchase_transport_chain_id: 'chain-purchase',
+  admin_fee_ht: 5.92,
+  notes: 'achat configure',
+};
+const adminOnlyCarrierPatch = resolveCarrierSettingPatch(existingCarrierSetting, {
+  admin_fee_ht: 7.5,
+  notes: 'frais admin maj',
+});
+assert.deepStrictEqual(adminOnlyCarrierPatch, {
+  purchase_transport_mode: 'carrier_paid_by_us',
+  purchase_transport_chain_id: 'chain-purchase',
+  admin_fee_ht: 7.5,
+  notes: 'frais admin maj',
+});
+const feeOnlyCarrierPatch = resolveCarrierSettingPatch(existingCarrierSetting, { admin_fee_ht: 8 });
+assert.strictEqual(feeOnlyCarrierPatch.purchase_transport_mode, 'carrier_paid_by_us');
+assert.strictEqual(feeOnlyCarrierPatch.purchase_transport_chain_id, 'chain-purchase');
+assert.strictEqual(feeOnlyCarrierPatch.notes, 'achat configure');
+assert.strictEqual(feeOnlyCarrierPatch.admin_fee_ht, 8);
 
 function mockDbForClientEstimate({ mode = 'carrier_paid_by_us', services = [] } = {}) {
   return {
