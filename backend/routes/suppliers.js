@@ -44,6 +44,7 @@ function normalizeSupplierType(value) {
 }
 
 function mapSupplierPayload(body) {
+  const purchaseTransportMode = normalizeText(body.purchase_transport_mode) || 'manual';
   return {
     code: normalizeText(body.code),
     name: normalizeText(body.name),
@@ -70,11 +71,55 @@ function mapSupplierPayload(body) {
 
     notes: normalizeText(body.notes),
     is_carrier: body.is_carrier === true || body.is_carrier === 'true' || body.supplier_type === 'transporteur',
-    purchase_transport_mode: normalizeText(body.purchase_transport_mode) || 'manual',
-    purchase_transport_chain_id: normalizeText(body.purchase_transport_chain_id),
+    purchase_transport_mode: purchaseTransportMode,
+    purchase_transport_chain_id: purchaseTransportMode === 'carrier_paid_by_us' ? normalizeText(body.purchase_transport_chain_id) : null,
     transport_admin_fee_ht: body.transport_admin_fee_ht ?? body.admin_fee_ht ?? 0,
     transport_notes: normalizeText(body.transport_notes),
   };
+}
+
+async function getSupplierDetail(db, storeId, supplierId) {
+  const result = await db.query(
+    `
+    SELECT
+      suppliers.id,
+      suppliers.code,
+      suppliers.name,
+      suppliers.legal_name,
+      suppliers.supplier_type,
+      suppliers.status,
+      suppliers.contact_name,
+      suppliers.phone,
+      suppliers.mobile,
+      suppliers.email,
+      suppliers.address_line1,
+      suppliers.address_line2,
+      suppliers.postal_code,
+      suppliers.city,
+      suppliers.country,
+      suppliers.vat_number,
+      suppliers.siret,
+      suppliers.payment_terms,
+      suppliers.delivery_terms,
+      suppliers.notes,
+      suppliers.is_carrier,
+      sts.purchase_transport_mode,
+      sts.purchase_transport_chain_id,
+      sts.admin_fee_ht AS transport_admin_fee_ht,
+      sts.notes AS transport_notes,
+      suppliers.created_at,
+      suppliers.updated_at
+    FROM suppliers
+    LEFT JOIN supplier_transport_settings sts
+      ON sts.supplier_id = suppliers.id
+     AND sts.store_id = suppliers.store_id
+    WHERE suppliers.id = $1
+      AND suppliers.store_id = $2
+    LIMIT 1
+    `,
+    [supplierId, storeId]
+  );
+  return result.rows[0] || null;
 }
 
 router.get('/suppliers', authenticateToken, attachDbContext, async (req, res) => {
@@ -163,51 +208,13 @@ router.get('/suppliers', authenticateToken, attachDbContext, async (req, res) =>
 
 router.get('/suppliers/:id', authenticateToken, attachDbContext, async (req, res) => {
   try {
-    const result = await req.dbPool.query(
-      `
-      SELECT
-        suppliers.id,
-        suppliers.code,
-        suppliers.name,
-        suppliers.legal_name,
-        suppliers.supplier_type,
-        suppliers.status,
-        suppliers.contact_name,
-        suppliers.phone,
-        suppliers.mobile,
-        suppliers.email,
-        suppliers.address_line1,
-        suppliers.address_line2,
-        suppliers.postal_code,
-        suppliers.city,
-        suppliers.country,
-        suppliers.vat_number,
-        suppliers.siret,
-        suppliers.payment_terms,
-        suppliers.delivery_terms,
-        suppliers.notes,
-        suppliers.is_carrier,
-        sts.purchase_transport_mode,
-        sts.purchase_transport_chain_id,
-        sts.admin_fee_ht AS transport_admin_fee_ht,
-        sts.notes AS transport_notes,
-        suppliers.created_at,
-        suppliers.updated_at
-      FROM suppliers
-      LEFT JOIN supplier_transport_settings sts
-        ON sts.supplier_id = suppliers.id
-       AND sts.store_id = suppliers.store_id
-      WHERE suppliers.id = $1
-        AND suppliers.store_id = $2
-      `,
-      [req.params.id, req.user.store_id]
-    );
+    const supplier = await getSupplierDetail(req.dbPool, req.user.store_id, req.params.id);
 
-    if (result.rows.length === 0) {
+    if (!supplier) {
       return res.status(404).json({ error: 'Fournisseur introuvable' });
     }
 
-    res.json(result.rows[0]);
+    res.json(supplier);
   } catch (err) {
     console.error('Erreur GET /api/suppliers/:id :', err);
     res.status(500).json({ error: 'Erreur serveur fournisseur' });
@@ -313,7 +320,8 @@ router.post(
         ]
       );
 
-      res.status(201).json(result.rows[0]);
+      const savedSupplier = await getSupplierDetail(req.dbPool, req.user.store_id, result.rows[0].id);
+      res.status(201).json(savedSupplier || result.rows[0]);
     } catch (err) {
       console.error('Erreur POST /api/suppliers :', err);
 
@@ -422,7 +430,8 @@ router.put(
         ]
       );
 
-      res.json(result.rows[0]);
+      const savedSupplier = await getSupplierDetail(req.dbPool, req.user.store_id, req.params.id);
+      res.json(savedSupplier || result.rows[0]);
     } catch (err) {
       console.error('Erreur PUT /api/suppliers/:id :', err);
 
@@ -504,5 +513,7 @@ router.delete(
     }
   }
 );
+
+router._private = { mapSupplierPayload, getSupplierDetail };
 
 module.exports = router;
