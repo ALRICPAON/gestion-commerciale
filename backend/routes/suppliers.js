@@ -69,6 +69,11 @@ function mapSupplierPayload(body) {
     delivery_terms: normalizeText(body.delivery_terms),
 
     notes: normalizeText(body.notes),
+    is_carrier: body.is_carrier === true || body.is_carrier === 'true' || body.supplier_type === 'transporteur',
+    purchase_transport_mode: normalizeText(body.purchase_transport_mode) || 'manual',
+    purchase_transport_chain_id: normalizeText(body.purchase_transport_chain_id),
+    transport_admin_fee_ht: body.transport_admin_fee_ht ?? body.admin_fee_ht ?? 0,
+    transport_notes: normalizeText(body.transport_notes),
   };
 }
 
@@ -77,7 +82,7 @@ router.get('/suppliers', authenticateToken, attachDbContext, async (req, res) =>
     const { search, status, supplier_type } = req.query;
 
     const params = [req.user.store_id];
-    const where = ['store_id = $1'];
+    const where = ['suppliers.store_id = $1'];
 
     if (search && String(search).trim()) {
       params.push(`%${String(search).trim()}%`);
@@ -96,45 +101,53 @@ router.get('/suppliers', authenticateToken, attachDbContext, async (req, res) =>
 
     if (status && String(status).trim() !== 'all') {
       params.push(String(status).trim());
-      where.push(`status = $${params.length}`);
+      where.push(`suppliers.status = $${params.length}`);
     }
 
     if (supplier_type && String(supplier_type).trim() !== 'all') {
       params.push(String(supplier_type).trim());
-      where.push(`supplier_type = $${params.length}`);
+      where.push(`suppliers.supplier_type = $${params.length}`);
     }
 
     const result = await req.dbPool.query(
       `
       SELECT
-        id,
-        code,
-        name,
-        legal_name,
-        supplier_type,
-        status,
+        suppliers.id,
+        suppliers.code,
+        suppliers.name,
+        suppliers.legal_name,
+        suppliers.supplier_type,
+        suppliers.status,
         CASE
-          WHEN LOWER(COALESCE(status, 'active')) IN ('active', 'actif') THEN true
-          WHEN LOWER(COALESCE(status, 'active')) IN ('inactive', 'inactif', 'blocked') THEN false
+          WHEN LOWER(COALESCE(suppliers.status, 'active')) IN ('active', 'actif') THEN true
+          WHEN LOWER(COALESCE(suppliers.status, 'active')) IN ('inactive', 'inactif', 'blocked') THEN false
           ELSE true
         END AS is_active,
-        contact_name,
-        phone,
-        mobile,
-        email,
-        address_line1,
-        address_line2,
-        postal_code,
-        city,
-        country,
-        vat_number,
-        siret,
-        payment_terms,
-        delivery_terms,
-        notes,
-        created_at,
-        updated_at
+        suppliers.contact_name,
+        suppliers.phone,
+        suppliers.mobile,
+        suppliers.email,
+        suppliers.address_line1,
+        suppliers.address_line2,
+        suppliers.postal_code,
+        suppliers.city,
+        suppliers.country,
+        suppliers.vat_number,
+        suppliers.siret,
+        suppliers.payment_terms,
+        suppliers.delivery_terms,
+        suppliers.notes,
+        suppliers.is_carrier,
+        sts.purchase_transport_mode,
+        sts.purchase_transport_chain_id,
+        sts.admin_fee_ht AS transport_admin_fee_ht,
+        sts.notes AS transport_notes,
+        suppliers.created_at,
+        suppliers.updated_at
       FROM suppliers
+      LEFT JOIN supplier_transport_settings sts
+        ON sts.supplier_id = suppliers.id
+       AND sts.store_id = suppliers.store_id
       WHERE ${where.join(' AND ')}
       ORDER BY name ASC, code ASC
       `,
@@ -153,31 +166,39 @@ router.get('/suppliers/:id', authenticateToken, attachDbContext, async (req, res
     const result = await req.dbPool.query(
       `
       SELECT
-        id,
-        code,
-        name,
-        legal_name,
-        supplier_type,
-        status,
-        contact_name,
-        phone,
-        mobile,
-        email,
-        address_line1,
-        address_line2,
-        postal_code,
-        city,
-        country,
-        vat_number,
-        siret,
-        payment_terms,
-        delivery_terms,
-        notes,
-        created_at,
-        updated_at
+        suppliers.id,
+        suppliers.code,
+        suppliers.name,
+        suppliers.legal_name,
+        suppliers.supplier_type,
+        suppliers.status,
+        suppliers.contact_name,
+        suppliers.phone,
+        suppliers.mobile,
+        suppliers.email,
+        suppliers.address_line1,
+        suppliers.address_line2,
+        suppliers.postal_code,
+        suppliers.city,
+        suppliers.country,
+        suppliers.vat_number,
+        suppliers.siret,
+        suppliers.payment_terms,
+        suppliers.delivery_terms,
+        suppliers.notes,
+        suppliers.is_carrier,
+        sts.purchase_transport_mode,
+        sts.purchase_transport_chain_id,
+        sts.admin_fee_ht AS transport_admin_fee_ht,
+        sts.notes AS transport_notes,
+        suppliers.created_at,
+        suppliers.updated_at
       FROM suppliers
-      WHERE id = $1
-        AND store_id = $2
+      LEFT JOIN supplier_transport_settings sts
+        ON sts.supplier_id = suppliers.id
+       AND sts.store_id = suppliers.store_id
+      WHERE suppliers.id = $1
+        AND suppliers.store_id = $2
       `,
       [req.params.id, req.user.store_id]
     );
@@ -229,6 +250,7 @@ router.post(
           payment_terms,
           delivery_terms,
           notes,
+          is_carrier,
           created_by,
           updated_by
         )
@@ -237,7 +259,7 @@ router.post(
           $7, $8, $9, $10,
           $11, $12, $13, $14, $15,
           $16, $17, $18, $19, $20,
-          $21, $22
+          $21, $22, $23
         )
         RETURNING *
         `,
@@ -262,7 +284,31 @@ router.post(
           supplier.payment_terms,
           supplier.delivery_terms,
           supplier.notes,
+          supplier.is_carrier,
           req.user.id,
+          req.user.id,
+        ]
+      );
+
+      await req.dbPool.query(
+        `INSERT INTO supplier_transport_settings (
+          store_id, supplier_id, purchase_transport_mode, purchase_transport_chain_id,
+          admin_fee_ht, notes, created_by, updated_by
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+        ON CONFLICT (store_id, supplier_id)
+        DO UPDATE SET purchase_transport_mode = EXCLUDED.purchase_transport_mode,
+          purchase_transport_chain_id = EXCLUDED.purchase_transport_chain_id,
+          admin_fee_ht = EXCLUDED.admin_fee_ht,
+          notes = EXCLUDED.notes,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = now()`,
+        [
+          req.user.store_id,
+          result.rows[0].id,
+          supplier.purchase_transport_mode,
+          supplier.purchase_transport_chain_id,
+          Number(supplier.transport_admin_fee_ht || 0),
+          supplier.transport_notes,
           req.user.id,
         ]
       );
@@ -316,9 +362,10 @@ router.put(
           payment_terms = $17,
           delivery_terms = $18,
           notes = $19,
-          updated_by = $20
-        WHERE id = $21
-          AND store_id = $22
+          is_carrier = $20,
+          updated_by = $21
+        WHERE id = $22
+          AND store_id = $23
         RETURNING *
         `,
         [
@@ -341,6 +388,7 @@ router.put(
           supplier.payment_terms,
           supplier.delivery_terms,
           supplier.notes,
+          supplier.is_carrier,
           req.user.id,
           req.params.id,
           req.user.store_id,
@@ -350,6 +398,29 @@ router.put(
       if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Fournisseur introuvable' });
       }
+
+      await req.dbPool.query(
+        `INSERT INTO supplier_transport_settings (
+          store_id, supplier_id, purchase_transport_mode, purchase_transport_chain_id,
+          admin_fee_ht, notes, created_by, updated_by
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+        ON CONFLICT (store_id, supplier_id)
+        DO UPDATE SET purchase_transport_mode = EXCLUDED.purchase_transport_mode,
+          purchase_transport_chain_id = EXCLUDED.purchase_transport_chain_id,
+          admin_fee_ht = EXCLUDED.admin_fee_ht,
+          notes = EXCLUDED.notes,
+          updated_by = EXCLUDED.updated_by,
+          updated_at = now()`,
+        [
+          req.user.store_id,
+          req.params.id,
+          supplier.purchase_transport_mode,
+          supplier.purchase_transport_chain_id,
+          Number(supplier.transport_admin_fee_ht || 0),
+          supplier.transport_notes,
+          req.user.id,
+        ]
+      );
 
       res.json(result.rows[0]);
     } catch (err) {

@@ -20,6 +20,7 @@ const duplicateSessionBtn = el('duplicate-session-btn');
 const createRevisionBtn = el('create-revision-btn');
 const addLineBtn = el('add-line-btn');
 const importBtn = el('import-btn');
+const transportEstimatesBtn = el('transport-estimates-btn');
 const publishBtn = el('publish-btn');
 const saveNowBtn = el('save-now-btn');
 const searchInput = el('search-input');
@@ -508,6 +509,18 @@ async function publishSession() {
   showFeedback('Tarifs publies et fiche appel synchronisee.', 'success');
 }
 
+async function applyTransportEstimates() {
+  await saveDirtyLines();
+  if (!session) return showFeedback('Aucune session chargee.', 'error');
+  if (session.status === 'published') {
+    const editable = await createDraftRevision('Cette tarification est publiee. Creer une revision modifiable pour recalculer le transport achat ?');
+    if (!editable) return;
+  }
+  const result = await apiJson(`/api/transport/pricing/${encodeURIComponent(session.id)}/apply-purchase-estimates`, {});
+  await loadSession(false);
+  showFeedback(`${result.updated_line_count || 0} ligne(s) transport achat recalculee(s).`, 'success');
+}
+
 async function runImport() {
   if (!importSupplierSelect.value) throw new Error('Choisir un fournisseur');
   const file = importFileInput.files?.[0] || null;
@@ -765,6 +778,7 @@ function bindEvents() {
     importModal.classList.remove('hidden');
     importSupplierSelect.focus();
   }).catch((error) => showFeedback(error.message, 'error')));
+  transportEstimatesBtn.addEventListener('click', () => applyTransportEstimates().catch((error) => showFeedback(error.message, 'error')));
   closeImportModalBtn.addEventListener('click', () => importModal.classList.add('hidden'));
   runImportBtn.addEventListener('click', () => runImport().catch((error) => showFeedback(error.message, 'error')));
   confirmKnownBtn.addEventListener('click', () => confirmKnownMappings().catch((error) => showFeedback(error.message, 'error')));

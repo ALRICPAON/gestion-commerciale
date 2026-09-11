@@ -88,6 +88,9 @@ function clientSelectSql() {
       c.payment_terms,
       c.delivery_terms,
       c.notes,
+      c.sale_transport_mode,
+      c.sale_transport_chain_id,
+      c.sale_transport_notes,
       c.created_at,
       c.updated_at
     FROM clients c
@@ -133,6 +136,9 @@ function mapClientPayload(body) {
     delivery_terms: normalizeText(body.delivery_terms),
 
     notes: normalizeText(body.notes),
+    sale_transport_mode: normalizeText(body.sale_transport_mode) || 'none',
+    sale_transport_chain_id: normalizeUuid(body.sale_transport_chain_id),
+    sale_transport_notes: normalizeText(body.sale_transport_notes),
   };
 }
 
@@ -302,6 +308,7 @@ router.post('/clients/:id/affiliates', authenticateToken, attachDbContext, requi
         affiliate_store_number, store_identifier, contact_name, phone, mobile, email,
         address_line1, address_line2, postal_code, city, country,
         vat_number, siret, payment_terms, delivery_terms, notes,
+        sale_transport_mode, sale_transport_chain_id, sale_transport_notes,
         created_by, updated_by
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7,
@@ -309,7 +316,8 @@ router.post('/clients/:id/affiliates', authenticateToken, attachDbContext, requi
         $12, $13, $14, $15, $16, $17,
         $18, $19, $20, $21, $22,
         $23, $24, $25, $26, $27,
-        $28, $28
+        $28, $29, $30,
+        $31, $31
       )
       RETURNING id
       `,
@@ -320,6 +328,7 @@ router.post('/clients/:id/affiliates', authenticateToken, attachDbContext, requi
         client.store_identifier, client.contact_name, client.phone, client.mobile, client.email,
         client.address_line1, client.address_line2, client.postal_code, client.city, client.country,
         client.vat_number, client.siret, client.payment_terms, client.delivery_terms, client.notes,
+        client.sale_transport_mode, client.sale_transport_chain_id, client.sale_transport_notes,
         req.user.id,
       ]
     );
@@ -355,6 +364,7 @@ router.post(
           contact_name, phone, mobile, email,
           address_line1, address_line2, postal_code, city, country,
           vat_number, siret, payment_terms, delivery_terms, notes,
+          sale_transport_mode, sale_transport_chain_id, sale_transport_notes,
           created_by, updated_by
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
@@ -363,7 +373,8 @@ router.post(
           $14, $15, $16, $17,
           $18, $19, $20, $21, $22,
           $23, $24, $25, $26, $27,
-          $28, $29
+          $28, $29, $30,
+          $31, $32
         )
         RETURNING id
         `,
@@ -395,6 +406,9 @@ router.post(
           client.payment_terms,
           client.delivery_terms,
           client.notes,
+          client.sale_transport_mode,
+          client.sale_transport_chain_id,
+          client.sale_transport_notes,
           req.user.id,
           req.user.id,
         ]
@@ -463,9 +477,12 @@ router.put(
           parent_client_id = $24,
           affiliate_label = $25,
           affiliate_store_number = $26,
-          updated_by = $27
-        WHERE id = $28
-          AND store_id = $29
+          sale_transport_mode = $27,
+          sale_transport_chain_id = $28,
+          sale_transport_notes = $29,
+          updated_by = $30
+        WHERE id = $31
+          AND store_id = $32
         RETURNING id
         `,
         [
@@ -495,6 +512,9 @@ router.put(
           parentClientId,
           client.affiliate_label,
           client.affiliate_store_number,
+          client.sale_transport_mode,
+          client.sale_transport_chain_id,
+          client.sale_transport_notes,
           req.user.id,
           req.params.id,
           req.user.store_id,

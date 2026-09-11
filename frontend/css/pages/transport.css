@@ -1,0 +1,46 @@
+.transport-layout {
+  display: grid;
+  gap: 16px;
+}
+
+.transport-toolbar,
+.transport-panel {
+  background: #fff;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.transport-toolbar {
+  display: grid;
+  grid-template-columns: 160px minmax(220px, 1fr) 140px 140px auto auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.transport-field {
+  display: grid;
+  gap: 6px;
+}
+
+.transport-field label {
+  color: #516070;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.transport-field input,
+.transport-field select {
+  min-height: 38px;
+}
+
+.transport-muted {
+  color: #64748b;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .transport-toolbar {
+    grid-template-columns: 1fr;
+  }
+}

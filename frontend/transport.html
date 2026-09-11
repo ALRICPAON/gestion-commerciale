@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Transport - ALTA MAREE</title>
+  <link rel="stylesheet" href="./css/app.css" />
+  <link rel="stylesheet" href="./css/pages/transport.css" />
+</head>
+<body class="app-page">
+  <header class="topbar">
+    <div class="topbar-left">
+      <h1 class="app-title">ALTA MAREE</h1>
+      <p class="app-subtitle">Transport / Journee transport</p>
+    </div>
+    <div class="topbar-right">
+      <div class="user-box"><span id="user-name">Utilisateur</span></div>
+      <button id="back-home-btn" class="btn btn-secondary" type="button">Accueil</button>
+      <button id="logout-btn" class="btn btn-secondary" type="button">Deconnexion</button>
+    </div>
+  </header>
+
+  <main class="main-content transport-layout">
+    <section class="transport-toolbar">
+      <div class="transport-field">
+        <label for="transport-date">Date</label>
+        <input id="transport-date" type="date" />
+      </div>
+      <div class="transport-field">
+        <label for="transport-chain">Circuit</label>
+        <select id="transport-chain"><option value="">Choisir un circuit</option></select>
+      </div>
+      <div class="transport-field">
+        <label for="transport-direction">Sens</label>
+        <select id="transport-direction"><option value="sale">Vente</option><option value="purchase">Achat</option></select>
+      </div>
+      <div class="transport-field">
+        <label for="transport-weight">Poids kg</label>
+        <input id="transport-weight" type="number" min="0" step="0.001" />
+      </div>
+      <button id="create-shipment-btn" class="btn btn-primary" type="button">Creer envoi</button>
+      <button id="refresh-shipments-btn" class="btn btn-secondary" type="button">Actualiser</button>
+    </section>
+
+    <div id="page-feedback" class="page-feedback hidden"></div>
+
+    <section class="transport-panel">
+      <div class="page-actions">
+        <div>
+          <h2>Journee transport</h2>
+          <p>Regroupements explicites, calcul reel par poids total et generation BL transport.</p>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Statut</th>
+              <th>Sens</th>
+              <th>Transporteur</th>
+              <th>Circuit</th>
+              <th>Origine</th>
+              <th>Destination</th>
+              <th>Poids</th>
+              <th>Estimation HT</th>
+              <th>BLT</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="shipments-body"><tr><td colspan="10">Chargement...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script src="./js/config.js"></script>
+  <script src="./js/transport.js"></script>
+</body>
+</html>

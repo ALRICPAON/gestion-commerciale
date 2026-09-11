@@ -91,6 +91,19 @@
               <option value="blocked">Bloqué</option>
             </select>
           </div>
+          <div class="suppliers-field">
+            <label for="is_carrier"><input id="is_carrier" name="is_carrier" type="checkbox" /> Transporteur</label>
+          </div>
+        </div>
+      </section>
+
+      <section class="suppliers-card">
+        <h3>Transport achat</h3>
+        <div class="form-grid">
+          <div class="suppliers-field"><label for="purchase_transport_mode">Mode</label><select id="purchase_transport_mode" name="purchase_transport_mode"><option value="manual">Manuel / autre</option><option value="franco">Franco</option><option value="carrier_paid_by_us">Transport a notre charge</option></select></div>
+          <div class="suppliers-field"><label for="purchase_transport_chain_id">Circuit</label><select id="purchase_transport_chain_id" name="purchase_transport_chain_id"><option value="">Aucun</option></select></div>
+          <div class="suppliers-field"><label for="transport_admin_fee_ht">Frais administratifs HT / envoi</label><input id="transport_admin_fee_ht" name="transport_admin_fee_ht" type="number" min="0" step="0.01" /></div>
+          <div class="suppliers-field form-group-span-2"><label for="transport_notes">Notes transport</label><textarea id="transport_notes" name="transport_notes" rows="3"></textarea></div>
         </div>
       </section>
 
@@ -219,6 +232,6 @@
   </main>
 
   <script src="./js/config.js"></script>
-  <script src="./js/supplier-detail.js?v=2"></script>
+  <script src="./js/supplier-detail.js?v=3"></script>
 </body>
 </html>

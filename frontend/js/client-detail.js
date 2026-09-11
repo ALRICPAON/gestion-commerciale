@@ -22,11 +22,12 @@ const contactForm = $('contact-form');
 const affiliateForm = $('affiliate-form');
 const saveContactBtn = $('save-contact-btn');
 
-const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'parent_client_id', 'affiliate_label', 'affiliate_store_number', 'is_royale_maree_member', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
+const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'parent_client_id', 'affiliate_label', 'affiliate_store_number', 'is_royale_maree_member', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'sale_transport_mode', 'sale_transport_chain_id', 'sale_transport_notes', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
 let currentClient = null;
 let clients = [];
 let contacts = [];
 let affiliates = [];
+let transportChains = [];
 
 function logoutAndRedirect() {
   ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key));
@@ -84,6 +85,7 @@ function fillForm(client) {
   if (!client.country) setFieldValue('country', 'France');
   if (!client.tariff_level) setFieldValue('tariff_level', '1');
   setFieldValue('billed_client_id', client.billed_client_id === client.id ? '' : client.billed_client_id);
+  renderTransportChains();
 }
 
 function collectPayload() {
@@ -93,6 +95,7 @@ function collectPayload() {
   if (!payload.country) payload.country = 'France';
   if (!payload.client_type) payload.client_type = 'standard';
   if (!payload.status) payload.status = 'active';
+  if (!payload.sale_transport_mode) payload.sale_transport_mode = 'none';
   if (!['1', '2', '3'].includes(String(payload.tariff_level || ''))) payload.tariff_level = '1';
   if (!payload.billed_client_id && clientId) payload.billed_client_id = clientId;
   return payload;
@@ -130,6 +133,24 @@ async function loadClientsForBilling() {
   if (!response.ok) throw new Error(data.error || 'Impossible de charger les clients facturés');
   clients = Array.isArray(data) ? data : [];
   renderBilledClients();
+}
+
+function renderTransportChains() {
+  const select = $('sale_transport_chain_id');
+  if (!select) return;
+  const selected = currentClient?.sale_transport_chain_id || select.value || '';
+  select.innerHTML = '<option value="">Aucun</option>' + transportChains.map((chain) => (
+    `<option value="${esc(chain.id)}">${esc(chain.name || chain.code || chain.id)}</option>`
+  )).join('');
+  select.value = selected;
+}
+
+async function loadTransportChains() {
+  const response = await apiFetch(`${API_BASE_URL}/api/transport/chains?direction=sale`);
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  transportChains = data.results || [];
+  renderTransportChains();
 }
 
 async function loadClient() {
@@ -408,4 +429,4 @@ function bindEvents() {
 }
 
 bindEvents();
-loadClientsForBilling().then(loadClient).then(loadContactsAndAffiliates).catch((err) => { console.error('Erreur initialisation client :', err); showFeedback(err.message || 'Erreur initialisation client', 'error'); loadClient(); });
+Promise.all([loadClientsForBilling(), loadTransportChains()]).then(loadClient).then(loadContactsAndAffiliates).catch((err) => { console.error('Erreur initialisation client :', err); showFeedback(err.message || 'Erreur initialisation client', 'error'); loadClient(); });
