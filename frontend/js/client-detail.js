@@ -28,6 +28,8 @@ let clients = [];
 let contacts = [];
 let affiliates = [];
 let transportChains = [];
+let logisticsServices = [];
+let clientLogisticsServiceIds = new Set();
 
 function logoutAndRedirect() {
   ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key));
@@ -153,6 +155,55 @@ async function loadTransportChains() {
   renderTransportChains();
 }
 
+function renderLogisticsServices() {
+  const container = $('client-logistics-services');
+  if (!container) return;
+  container.innerHTML = logisticsServices.length ? logisticsServices.map((service) => {
+    const checked = clientLogisticsServiceIds.has(service.id) ? 'checked' : '';
+    const unit = service.calculation_mode === 'per_tonne' ? 'EUR/T' : service.calculation_mode === 'per_kg' ? 'EUR/kg' : 'EUR';
+    return `<label><input type="checkbox" data-logistics-service-id="${esc(service.id)}" ${checked} /> ${esc(service.label)} - ${esc(service.amount_ht)} ${unit}</label>`;
+  }).join('') : '<span>Aucune prestation disponible.</span>';
+}
+
+async function loadLogisticsServices() {
+  const response = await apiFetch(`${API_BASE_URL}/api/transport/logistics-services`);
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  logisticsServices = data.results || [];
+  renderLogisticsServices();
+}
+
+async function loadClientLogisticsServices() {
+  if (!clientId) {
+    clientLogisticsServiceIds = new Set();
+    renderLogisticsServices();
+    return;
+  }
+  const response = await apiFetch(`${API_BASE_URL}/api/transport/clients/${clientId}/logistics-services`);
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  clientLogisticsServiceIds = new Set((data.results || []).map((item) => item.id));
+  renderLogisticsServices();
+}
+
+async function saveClientLogisticsServices(targetClientId) {
+  const id = targetClientId || clientId;
+  if (!id) return;
+  const serviceIds = [...document.querySelectorAll('[data-logistics-service-id]')]
+    .filter((input) => input.checked)
+    .map((input) => input.dataset.logisticsServiceId);
+  const response = await apiFetch(`${API_BASE_URL}/api/transport/clients/${id}/logistics-services`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ logistics_service_ids: serviceIds }),
+  });
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || 'Erreur prestations logistiques client');
+  clientLogisticsServiceIds = new Set((data.results || []).map((item) => item.id));
+  renderLogisticsServices();
+}
+
 async function loadClient() {
   if (!clientId) { currentClient = null; updateHeader(); renderBilledClients(); lockFormIfNeeded(); return; }
   try {
@@ -178,6 +229,7 @@ async function saveClient() {
     if (!response) return;
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || 'Erreur enregistrement client');
+    if (clientId || data.id) await saveClientLogisticsServices(data.id || clientId);
     currentClient = data;
     showFeedback('Client enregistré.');
     if (!clientId && data.id) window.location.href = `./client-detail.html?id=${encodeURIComponent(data.id)}`;
@@ -429,4 +481,4 @@ function bindEvents() {
 }
 
 bindEvents();
-Promise.all([loadClientsForBilling(), loadTransportChains()]).then(loadClient).then(loadContactsAndAffiliates).catch((err) => { console.error('Erreur initialisation client :', err); showFeedback(err.message || 'Erreur initialisation client', 'error'); loadClient(); });
+Promise.all([loadClientsForBilling(), loadTransportChains(), loadLogisticsServices()]).then(loadClient).then(loadClientLogisticsServices).then(loadContactsAndAffiliates).catch((err) => { console.error('Erreur initialisation client :', err); showFeedback(err.message || 'Erreur initialisation client', 'error'); loadClient(); });

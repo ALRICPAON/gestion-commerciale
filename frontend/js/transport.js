@@ -10,9 +10,13 @@ const chainSelect = el('transport-chain');
 const directionSelect = el('transport-direction');
 const weightInput = el('transport-weight');
 const body = el('shipments-body');
+const fuelCarrierSelect = el('fuel-carrier');
+const fuelBody = el('fuel-body');
 const feedback = el('page-feedback');
 let chains = [];
 let shipments = [];
+let carriers = [];
+let fuelSurcharges = [];
 
 function todayIso() {
   const now = new Date();
@@ -61,6 +65,15 @@ function renderChains() {
   chainSelect.value = selected;
 }
 
+function renderCarriers() {
+  if (!fuelCarrierSelect) return;
+  const selected = fuelCarrierSelect.value;
+  fuelCarrierSelect.innerHTML = '<option value="">Choisir</option>' + carriers.map((carrier) => (
+    `<option value="${esc(carrier.id)}">${esc(carrier.name || carrier.code || carrier.id)}</option>`
+  )).join('');
+  fuelCarrierSelect.value = selected;
+}
+
 function renderShipments() {
   body.innerHTML = shipments.length ? shipments.map((shipment) => `
     <tr data-shipment-id="${esc(shipment.id)}">
@@ -78,10 +91,35 @@ function renderShipments() {
   `).join('') : '<tr><td colspan="10">Aucun envoi pour cette date.</td></tr>';
 }
 
+function renderFuelSurcharges() {
+  if (!fuelBody) return;
+  fuelBody.innerHTML = fuelSurcharges.length ? fuelSurcharges.map((rate) => `
+    <tr>
+      <td>${esc(rate.carrier_name || '')}</td>
+      <td>${Number(rate.surcharge_percent || 0).toLocaleString('fr-FR')} %</td>
+      <td>${esc(String(rate.effective_from || '').slice(0, 10))}</td>
+      <td>${esc(rate.effective_to ? String(rate.effective_to).slice(0, 10) : '-')}</td>
+      <td>${esc(rate.notes || '')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="5">Aucun taux carburant.</td></tr>';
+}
+
 async function loadChains() {
   const data = await api('/api/transport/chains?direction=all');
   chains = data?.results || [];
   renderChains();
+}
+
+async function loadCarriers() {
+  const data = await api('/api/transport/carriers');
+  carriers = data?.results || [];
+  renderCarriers();
+}
+
+async function loadFuelSurcharges() {
+  const data = await api('/api/transport/fuel-surcharges');
+  fuelSurcharges = data?.results || [];
+  renderFuelSurcharges();
 }
 
 async function loadShipments() {
@@ -111,6 +149,22 @@ async function generateBlt(shipmentId) {
   showFeedback(`BL transport ${result.delivery_note?.reference_number || ''} genere.`);
 }
 
+async function createFuelSurcharge() {
+  if (!fuelCarrierSelect.value) return showFeedback('Choisir un transporteur.', 'error');
+  if (!el('fuel-percent').value) return showFeedback('Saisir un taux carburant.', 'error');
+  if (!el('fuel-from').value) return showFeedback("Saisir une date d'effet.", 'error');
+  await apiJson('/api/transport/fuel-surcharges', {
+    carrier_id: fuelCarrierSelect.value,
+    surcharge_percent: el('fuel-percent').value,
+    effective_from: el('fuel-from').value,
+    effective_to: el('fuel-to').value || null,
+  });
+  el('fuel-percent').value = '';
+  el('fuel-to').value = '';
+  await loadFuelSurcharges();
+  showFeedback('Taux carburant ajoute.');
+}
+
 function bindEvents() {
   el('user-name').textContent = user.name || user.email || 'Utilisateur';
   el('back-home-btn').addEventListener('click', () => { window.location.href = './home.html'; });
@@ -119,6 +173,7 @@ function bindEvents() {
     window.location.href = './login.html';
   });
   el('create-shipment-btn').addEventListener('click', () => createShipment().catch((error) => showFeedback(error.message, 'error')));
+  el('create-fuel-btn').addEventListener('click', () => createFuelSurcharge().catch((error) => showFeedback(error.message, 'error')));
   el('refresh-shipments-btn').addEventListener('click', () => loadShipments().catch((error) => showFeedback(error.message, 'error')));
   dateInput.addEventListener('change', () => loadShipments().catch((error) => showFeedback(error.message, 'error')));
   body.addEventListener('click', (event) => {
@@ -130,8 +185,9 @@ function bindEvents() {
 
 async function init() {
   dateInput.value = todayIso();
+  el('fuel-from').value = todayIso();
   bindEvents();
-  await loadChains();
+  await Promise.all([loadChains(), loadCarriers(), loadFuelSurcharges()]);
   await loadShipments();
 }
 

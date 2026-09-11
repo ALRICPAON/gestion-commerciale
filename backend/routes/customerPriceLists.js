@@ -5,6 +5,7 @@ const { attachDbContext } = require('../middleware/dbContext');
 const { resolveMercurialeTargetTariff } = require('../services/customerTariffEmailService');
 const { decorateLineWithDisplayedPrices } = require('../services/royaleMareeCommission');
 const pricingService = require('../services/pricingService');
+const transportService = require('../services/transportService');
 
 const router = express.Router();
 
@@ -104,6 +105,29 @@ function decorateCourseLine(row, { client = null, storeSettings = {}, targetTari
       clientOptionalTargetTariff: client ? null : targetTariffLevel,
     },
   });
+}
+
+function addAmount(value, amount) {
+  if (value === null || value === undefined || value === '') return value;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return value;
+  return Number((parsed + Number(amount || 0)).toFixed(4));
+}
+
+function applySaleLogisticsToCourseLine(row, saleLogistics = null) {
+  const amount = Number(saleLogistics?.total_per_kg_ht || 0);
+  if (!amount || row.sale_logistics_applied === true) return row;
+  return {
+    ...row,
+    price_ht: addAmount(row.price_ht ?? row.suggested_price_ht, amount),
+    suggested_price_ht: addAmount(row.suggested_price_ht, amount),
+    price_level_1_ht: addAmount(row.price_level_1_ht, amount),
+    price_level_2_ht: addAmount(row.price_level_2_ht, amount),
+    price_level_3_ht: addAmount(row.price_level_3_ht, amount),
+    sale_logistics_per_kg_ht: amount,
+    sale_logistics_snapshot: saleLogistics,
+    sale_logistics_applied: true,
+  };
 }
 
 async function fetchCommissionSettings(db, storeId) {
@@ -428,6 +452,9 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     const pricingProducts = await fetchPublishedPricingProducts(req.dbPool, req.user.store_id, requestedDate, effectiveTargetTariffLevel);
     const quickSheetProducts = pricingProducts || await fetchQuickOrderSheetProducts(req.dbPool, req.user.store_id, requestedDate, effectiveTargetTariffLevel);
     const commissionSettings = await fetchCommissionSettings(req.dbPool, req.user.store_id);
+    const saleLogistics = client && requestedDate
+      ? await transportService.estimateClientSaleLogistics(req.dbPool, req.user.store_id, client.id, requestedDate)
+      : null;
 
     if (requestedDate && quickSheetProducts === null) {
       return res.status(404).json({ error: `Aucune tarification publiee ni fiche d'appel configuree pour le ${requestedDate}` });
@@ -449,10 +476,16 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
         client,
         storeSettings: commissionSettings,
         targetTariffLevel: effectiveTargetTariffLevel,
-      }));
+      })).map((row) => applySaleLogisticsToCourseLine(row, saleLogistics))
+        .map((row) => decorateCourseLine(row, {
+          client,
+          storeSettings: commissionSettings,
+          targetTariffLevel: effectiveTargetTariffLevel,
+        }));
       return res.json({
         client,
         target_tariff_level: effectiveTargetTariffLevel,
+        sale_logistics: saleLogistics,
         source: pricingProducts ? 'pricing_session' : 'quick_order_sheet_legacy_fallback',
         legacy_fallback: !pricingProducts,
         products: filteredProducts,
@@ -536,7 +569,8 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
       price_level_1_ht: priceForLevel(row, 1),
       price_level_2_ht: priceForLevel(row, 2),
       price_level_3_ht: priceForLevel(row, 3),
-    })).map((row) => decorateCourseLine(row, {
+    })).map((row) => applySaleLogisticsToCourseLine(row, saleLogistics))
+      .map((row) => decorateCourseLine(row, {
       client,
       storeSettings: commissionSettings,
       targetTariffLevel: effectiveTargetTariffLevel,
@@ -545,6 +579,7 @@ router.get('/source-products', authenticateToken, attachDbContext, async (req, r
     res.json({
       client,
       target_tariff_level: effectiveTargetTariffLevel,
+      sale_logistics: saleLogistics,
       products: rows,
     });
   } catch (err) {

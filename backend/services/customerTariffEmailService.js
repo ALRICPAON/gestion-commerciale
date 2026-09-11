@@ -15,6 +15,7 @@ const {
   generateCustomerPriceListPdf,
 } = require('./customerPriceListPdfService');
 const pricingService = require('./pricingService');
+const transportService = require('./transportService');
 
 const VALID_PRICING_LEVELS = new Set([1, 2, 3]);
 
@@ -339,14 +340,20 @@ async function fetchActiveClients(db, storeId) {
   return result.rows;
 }
 
-function applyDisplayedPricesForClient(products, client, storeSettings) {
+async function applyDisplayedPricesForClient(db, storeId, products, client, storeSettings, mercurialeDate) {
   const safeClient = client || {};
   const pricingLevel = resolveClientPricingLevel(client);
   if (!pricingLevel) return [];
+  const saleLogistics = safeClient.id && mercurialeDate
+    ? await transportService.estimateClientSaleLogistics(db, storeId, safeClient.id, mercurialeDate).catch(() => null)
+    : null;
+  const saleLogisticsAmount = Number(saleLogistics?.total_per_kg_ht || 0);
   return (products || []).map((product) => ({
     ...product,
+    sale_logistics_per_kg_ht: saleLogisticsAmount,
+    sale_logistics_snapshot: saleLogistics,
     price_ht: getCustomerDisplayedPrice({
-      price: product.price_ht,
+      price: Number((Number(product.price_ht || 0) + saleLogisticsAmount).toFixed(4)),
       pricingLevel,
       client: safeClient,
       storeSettings,
@@ -1048,7 +1055,7 @@ async function sendCustomerTariffEmails(db, storeId, options = {}) {
       continue;
     }
 
-    const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
+    const products = await applyDisplayedPricesForClient(db, storeId, productsByPricingLevel[pricingLevel] || [], client, storeSettings, context.mercuriale_date);
     const trackingToken = generateEmailTrackingToken();
     const mail = buildMercurialeEmailMessage({
       companySettings: storeSettings,
@@ -1162,7 +1169,7 @@ async function sendCustomerTariffTestEmail(db, storeId, options = {}) {
     if (previewRow.status !== 'ready') continue;
 
     const filename = buildPdfFilename(context.mercuriale_date);
-    const products = applyDisplayedPricesForClient(productsByPricingLevel[pricingLevel] || [], client, storeSettings);
+    const products = await applyDisplayedPricesForClient(db, storeId, productsByPricingLevel[pricingLevel] || [], client, storeSettings, context.mercuriale_date);
     const buildPdf = options.buildPdf || (async (args) => {
       if (args.priceListId) {
         const generated = await generateCustomerPriceListPdf({

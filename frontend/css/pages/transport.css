@@ -18,6 +18,11 @@
   align-items: end;
 }
 
+.transport-toolbar-compact {
+  grid-template-columns: minmax(220px, 1fr) 120px 160px 160px auto;
+  margin-bottom: 12px;
+}
+
 .transport-field {
   display: grid;
   gap: 6px;

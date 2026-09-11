@@ -63,6 +63,53 @@ router.get('/grids', async (req, res) => {
   }
 });
 
+router.get('/fuel-surcharges', async (req, res) => {
+  try {
+    const params = [req.user.store_id];
+    const where = ['tfs.store_id = $1'];
+    if (clean(req.query.carrier_id)) {
+      params.push(clean(req.query.carrier_id));
+      where.push(`tfs.carrier_id = $${params.length}`);
+    }
+    const result = await req.dbPool.query(
+      `SELECT tfs.*, s.name AS carrier_name
+       FROM transport_fuel_surcharges tfs
+       JOIN suppliers s ON s.id = tfs.carrier_id AND s.store_id = tfs.store_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY s.name ASC, tfs.effective_from DESC`,
+      params
+    );
+    res.json({ results: result.rows });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur historique carburant' });
+  }
+});
+
+router.post('/fuel-surcharges', requireAdminOrManager, async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!clean(body.carrier_id)) throw Object.assign(new Error('Transporteur obligatoire'), { status: 400 });
+    const result = await req.dbPool.query(
+      `INSERT INTO transport_fuel_surcharges (
+        store_id, carrier_id, effective_from, effective_to, surcharge_percent, notes, created_by, updated_by
+      ) VALUES ($1,$2,$3::date,$4::date,$5,$6,$7,$7)
+      RETURNING *`,
+      [
+        req.user.store_id,
+        clean(body.carrier_id),
+        transport.isoDate(body.effective_from),
+        clean(body.effective_to),
+        num(body.surcharge_percent),
+        clean(body.notes),
+        req.user.id,
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur creation taux carburant' });
+  }
+});
+
 router.post('/grids', requireAdminOrManager, async (req, res) => {
   const db = await req.dbPool.connect();
   try {
@@ -190,6 +237,48 @@ router.post('/logistics-services', requireAdminOrManager, async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message || 'Erreur creation prestation logistique' });
+  }
+});
+
+router.get('/clients/:clientId/logistics-services', async (req, res) => {
+  try {
+    res.json(await transport.listClientLogisticsServices(req.dbPool, req.user.store_id, req.params.clientId, req.query));
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur prestations client' });
+  }
+});
+
+router.put('/clients/:clientId/logistics-services', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const result = await transport.replaceClientLogisticsServices(
+      db,
+      req.user.store_id,
+      req.params.clientId,
+      req.body?.logistics_service_ids || req.body?.service_ids || [],
+      context(req)
+    );
+    await db.query('COMMIT');
+    res.json(result);
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    res.status(error.status || 500).json({ error: error.message || 'Erreur enregistrement prestations client' });
+  } finally {
+    db.release();
+  }
+});
+
+router.get('/clients/:clientId/sale-logistics-estimate', async (req, res) => {
+  try {
+    res.json(await transport.estimateClientSaleLogistics(
+      req.dbPool,
+      req.user.store_id,
+      req.params.clientId,
+      req.query.date || req.query.pricing_date
+    ));
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur estimation logistique client' });
   }
 });
 

@@ -71,6 +71,28 @@
         </table>
       </div>
     </section>
+
+    <section class="transport-panel">
+      <div class="page-actions">
+        <div>
+          <h2>Majoration carburant</h2>
+          <p>Historique par transporteur et date d'effet.</p>
+        </div>
+      </div>
+      <div class="transport-toolbar transport-toolbar-compact">
+        <div class="transport-field"><label for="fuel-carrier">Transporteur</label><select id="fuel-carrier"><option value="">Choisir</option></select></div>
+        <div class="transport-field"><label for="fuel-percent">Taux %</label><input id="fuel-percent" type="number" min="0" step="0.01" /></div>
+        <div class="transport-field"><label for="fuel-from">Date d'effet</label><input id="fuel-from" type="date" /></div>
+        <div class="transport-field"><label for="fuel-to">Fin facultative</label><input id="fuel-to" type="date" /></div>
+        <button id="create-fuel-btn" class="btn btn-secondary" type="button">Ajouter taux</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Transporteur</th><th>Taux</th><th>Debut</th><th>Fin</th><th>Notes</th></tr></thead>
+          <tbody id="fuel-body"><tr><td colspan="5">Chargement...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
   </main>
 
   <script src="./js/config.js"></script>

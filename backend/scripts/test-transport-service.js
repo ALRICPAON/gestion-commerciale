@@ -27,8 +27,8 @@ const fixed = transport.calculateLeg({
 });
 approx(fixed.transport_amount_ht, 9.05);
 approx(fixed.fuel_amount_ht, 0.32);
-approx(fixed.admin_fee_ht, 5.92);
-approx(fixed.total_ht, 15.29);
+approx(fixed.admin_fee_ht, 0);
+approx(fixed.total_ht, 9.37);
 
 const tonne = transport.calculateLeg({
   leg: { id: 'l2', carrier_id: 'delanchy' },
@@ -41,7 +41,8 @@ const tonne = transport.calculateLeg({
 });
 approx(tonne.transport_amount_ht, 64.71);
 approx(tonne.fuel_amount_ht, 2.26);
-approx(tonne.total_ht, 72.9);
+approx(tonne.admin_fee_ht, 0);
+approx(tonne.total_ht, 66.98);
 assert.strictEqual(tonne.bracket_id, 'c');
 
 const oldFuel = transport.fuelRateForDate(oldFuelRates, '2026-08-20');
@@ -67,12 +68,86 @@ const snapshot = transport.calculateChainSnapshot({
   services: [{ id: 'prep', label: 'Preparation commandes', calculation_mode: 'per_tonne', amount_ht: 180 }],
 });
 assert.strictEqual(snapshot.legs.length, 2);
+assert.strictEqual(snapshot.admin_fees.length, 1);
+approx(snapshot.admin_fee_ht, 5.92);
 approx(snapshot.services_amount_ht, 58.93);
-approx(snapshot.total_ht, 204.71);
+approx(snapshot.total_ht, 198.79);
+
+const multiCarrierSnapshot = transport.calculateChainSnapshot({
+  chain: { id: 'chain2', name: 'Multi carriers' },
+  date: '2026-09-11',
+  weightKg: 327.4,
+  adminFeeByCarrier: { delanchy: 5.92, other: 4 },
+  legs: [
+    { id: 'l1', carrier_id: 'delanchy', grid: { id: 'g1', name: 'A -> B' }, brackets, fuel_rates: fuelRates },
+    { id: 'l2', carrier_id: 'other', grid: { id: 'g2', name: 'B -> C' }, brackets, fuel_rates: [] },
+  ],
+});
+assert.strictEqual(multiCarrierSnapshot.admin_fees.length, 2);
+approx(multiCarrierSnapshot.admin_fee_ht, 9.92);
 
 const frozen = JSON.parse(JSON.stringify(snapshot));
 brackets[2].amount_ht = 358;
 approx(frozen.legs[0].rate_amount_ht, 197.66);
-approx(frozen.total_ht, 204.71);
+approx(frozen.total_ht, 198.79);
 
-console.log('transportService tests ok');
+approx(transport.logisticsServicePerKg({ calculation_mode: 'per_tonne', amount_ht: 180 }), 0.18);
+approx(transport.logisticsServicePerKg({ calculation_mode: 'per_kg', amount_ht: 0.42 }), 0.42);
+approx(transport.logisticsServicePerKg({ calculation_mode: 'fixed', amount_ht: 12 }), 0);
+
+function mockDbForClientEstimate({ mode = 'carrier_paid_by_us', services = [] } = {}) {
+  return {
+    async query(sql, params) {
+      if (sql.includes('FROM clients')) {
+        return { rows: [{ id: params[0], sale_transport_mode: mode, sale_transport_chain_id: mode === 'carrier_paid_by_us' ? 'chain-sale' : null }] };
+      }
+      if (sql.includes('FROM transport_chains')) {
+        return { rows: [{ id: 'chain-sale', name: '44 -> Les Sables', direction: 'sale' }] };
+      }
+      if (sql.includes('FROM transport_chain_legs')) {
+        return { rows: [{ id: 'leg-sale', chain_id: 'chain-sale', carrier_id: 'delanchy', grid_id: 'grid-sale', grid_name: '44 -> Les Sables', grid_origin_label: '44', grid_destination_label: 'Les Sables' }] };
+      }
+      if (sql.includes('FROM transport_rate_brackets')) {
+        return { rows: [{ id: 'sale-bracket', min_weight_kg: 41, max_weight_kg: 200, pricing_mode: 'per_tonne', amount_ht: 397.02, display_order: 1 }] };
+      }
+      if (sql.includes('FROM transport_fuel_surcharges')) {
+        return { rows: [{ effective_from: '2026-09-01', surcharge_percent: 3.5 }] };
+      }
+      if (sql.includes('FROM client_logistics_services')) {
+        return { rows: services };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
+(async () => {
+  const saleEstimate = await transport.estimateClientSaleLogistics(
+    mockDbForClientEstimate({ services: [{ id: 'prep', label: 'Preparation', calculation_mode: 'per_tonne', amount_ht: 180 }] }),
+    'store',
+    'client',
+    '2026-09-11'
+  );
+  approx(saleEstimate.transport_per_kg_ht, 0.4109157);
+  approx(saleEstimate.services_per_kg_ht, 0.18);
+  approx(saleEstimate.total_per_kg_ht, 0.5909157);
+
+  const francoPrep = await transport.estimateClientSaleLogistics(
+    mockDbForClientEstimate({ mode: 'franco', services: [{ id: 'prep', label: 'Preparation', calculation_mode: 'per_tonne', amount_ht: 180 }] }),
+    'store',
+    'client',
+    '2026-09-11'
+  );
+  approx(francoPrep.transport_per_kg_ht, 0);
+  approx(francoPrep.total_per_kg_ht, 0.18);
+
+  const inactiveHistorical = await transport.estimateClientSaleLogistics(
+    mockDbForClientEstimate({ services: [] }),
+    'store',
+    'client',
+    '2026-08-15'
+  );
+  assert.strictEqual(inactiveHistorical.transport.legs[0].grid_id, 'grid-sale');
+
+  console.log('transportService tests ok');
+})();

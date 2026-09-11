@@ -65,7 +65,7 @@ function calculateLeg({ leg, grid, brackets, fuelRates, date, weightKg, adminFee
   const fuel = fuelRateForDate(fuelRates, date);
   const fuelPercent = positive(fuel?.surcharge_percent, 0);
   const fuelAmount = baseAmount * fuelPercent / 100;
-  const legAdminFee = positive(leg?.specific_admin_fee_ht ?? adminFeeHt, 0);
+  const legAdminFee = positive(leg?.specific_admin_fee_ht, 0);
   const total = money(baseAmount + fuelAmount + legAdminFee);
   return {
     leg_id: leg?.id || null,
@@ -106,6 +106,14 @@ function calculateLogisticsService(service, weightKg) {
   };
 }
 
+function logisticsServicePerKg(service) {
+  const mode = clean(service.calculation_mode);
+  const amount = positive(service.amount_ht, 0);
+  if (mode === 'per_kg') return amount;
+  if (mode === 'per_tonne') return amount / 1000;
+  return 0;
+}
+
 function calculateChainSnapshot({ chain, legs, services = [], date, weightKg, adminFeeByCarrier = {} }) {
   const calculatedLegs = (legs || []).map((leg) => calculateLeg({
     leg,
@@ -114,12 +122,20 @@ function calculateChainSnapshot({ chain, legs, services = [], date, weightKg, ad
     fuelRates: leg.fuel_rates || [],
     date,
     weightKg,
-    adminFeeHt: adminFeeByCarrier[leg.carrier_id] || 0,
   }));
   const calculatedServices = (services || []).map((service) => calculateLogisticsService(service, weightKg));
+  const carriersWithTransport = new Set(calculatedLegs.map((leg) => leg.carrier_id).filter(Boolean));
+  const adminFees = Object.entries(adminFeeByCarrier || {})
+    .filter(([carrierId, amount]) => carriersWithTransport.has(carrierId) && positive(amount, 0) > 0)
+    .map(([carrierId, amount]) => ({
+      carrier_id: carrierId,
+      amount_ht: money(amount),
+      scope: 'shipment_carrier',
+    }));
   const transportAmount = calculatedLegs.reduce((sum, leg) => sum + Number(leg.transport_amount_ht || 0), 0);
   const fuelAmount = calculatedLegs.reduce((sum, leg) => sum + Number(leg.fuel_amount_ht || 0), 0);
-  const adminFee = calculatedLegs.reduce((sum, leg) => sum + Number(leg.admin_fee_ht || 0), 0);
+  const adminFee = calculatedLegs.reduce((sum, leg) => sum + Number(leg.admin_fee_ht || 0), 0)
+    + adminFees.reduce((sum, fee) => sum + Number(fee.amount_ht || 0), 0);
   const servicesAmount = calculatedServices.reduce((sum, service) => sum + Number(service.total_ht || 0), 0);
   return {
     chain_id: chain?.id || null,
@@ -127,6 +143,7 @@ function calculateChainSnapshot({ chain, legs, services = [], date, weightKg, ad
     date: isoDate(date),
     weight_kg: positive(weightKg, 0),
     legs: calculatedLegs,
+    admin_fees: adminFees,
     services: calculatedServices,
     transport_amount_ht: money(transportAmount),
     fuel_amount_ht: money(fuelAmount),
@@ -209,7 +226,6 @@ async function getChainForCalculation(db, storeId, chainId, date) {
      WHERE tcl.store_id = $1 AND tcl.chain_id = $2
        AND trg.valid_from <= $3::date
        AND (trg.valid_to IS NULL OR trg.valid_to >= $3::date)
-       AND trg.is_active = true
      ORDER BY tcl.leg_order ASC`,
     [storeId, chainId, isoDate(date)]
   );
@@ -289,6 +305,106 @@ async function estimateSupplierPurchaseTransport(db, storeId, supplierId, date) 
   }
   const estimate = await estimateChainPerKg(db, storeId, setting.purchase_transport_chain_id, date);
   return { amount_per_kg_ht: estimate.total_per_kg_ht, source: 'transport_chain', setting, estimate };
+}
+
+async function listClientLogisticsServices(db, storeId, clientId, input = {}) {
+  const includeInactive = input.include_inactive === true || input.include_inactive === 'true';
+  const params = [storeId, clientId];
+  const where = ['cls.store_id = $1', 'cls.client_id = $2'];
+  if (!includeInactive) where.push('cls.is_active = true', 'ls.is_active = true');
+  const result = await db.query(
+    `SELECT cls.id AS assignment_id, cls.is_active AS assignment_active,
+            ls.*, s.name AS carrier_name
+     FROM client_logistics_services cls
+     JOIN logistics_services ls ON ls.id = cls.logistics_service_id AND ls.store_id = cls.store_id
+     LEFT JOIN suppliers s ON s.id = ls.carrier_id AND s.store_id = ls.store_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY ls.label ASC`,
+    params
+  );
+  return { results: result.rows };
+}
+
+async function replaceClientLogisticsServices(db, storeId, clientId, serviceIds = [], context = {}) {
+  const ids = Array.isArray(serviceIds) ? serviceIds.map(clean).filter(Boolean) : [];
+  await db.query(
+    `UPDATE client_logistics_services
+     SET is_active = false, updated_by = $3, updated_at = now()
+     WHERE store_id = $1 AND client_id = $2`,
+    [storeId, clientId, context.user_id || null]
+  );
+  for (const serviceId of ids) {
+    const service = await db.query(
+      `SELECT id FROM logistics_services WHERE id = $1 AND store_id = $2 LIMIT 1`,
+      [serviceId, storeId]
+    );
+    if (!service.rows[0]) throw expose(404, 'Prestation logistique introuvable');
+    await db.query(
+      `INSERT INTO client_logistics_services (
+        store_id, client_id, logistics_service_id, is_active, created_by, updated_by
+      ) VALUES ($1,$2,$3,true,$4,$4)
+      ON CONFLICT (store_id, client_id, logistics_service_id)
+      DO UPDATE SET is_active = true, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      [storeId, clientId, serviceId, context.user_id || null]
+    );
+  }
+  return listClientLogisticsServices(db, storeId, clientId, { include_inactive: false });
+}
+
+async function activeClientLogisticsServicesForDate(db, storeId, clientId, date) {
+  const result = await db.query(
+    `SELECT ls.*
+     FROM client_logistics_services cls
+     JOIN logistics_services ls ON ls.id = cls.logistics_service_id AND ls.store_id = cls.store_id
+     WHERE cls.store_id = $1
+       AND cls.client_id = $2
+       AND cls.is_active = true
+       AND ls.is_active = true
+       AND ls.effective_from <= $3::date
+       AND (ls.effective_to IS NULL OR ls.effective_to >= $3::date)
+     ORDER BY ls.label ASC`,
+    [storeId, clientId, isoDate(date)]
+  );
+  return result.rows;
+}
+
+async function estimateClientSaleLogistics(db, storeId, clientId, date) {
+  const client = (await db.query(
+    `SELECT id, sale_transport_mode, sale_transport_chain_id
+     FROM clients
+     WHERE id = $1 AND store_id = $2 AND COALESCE(status, 'active') <> 'inactive'
+     LIMIT 1`,
+    [clientId, storeId]
+  )).rows[0];
+  if (!client) throw expose(404, 'Client introuvable pour ce magasin');
+  let transportEstimate = { total_per_kg_ht: 0, legs: [], source: 'none' };
+  if (client.sale_transport_mode === 'carrier_paid_by_us' && client.sale_transport_chain_id) {
+    const estimate = await estimateChainPerKg(db, storeId, client.sale_transport_chain_id, date);
+    transportEstimate = { ...estimate, source: 'transport_chain' };
+  } else if (client.sale_transport_mode === 'franco' || client.sale_transport_mode === 'none') {
+    transportEstimate = { total_per_kg_ht: 0, legs: [], source: 'franco_or_none' };
+  } else {
+    transportEstimate = { total_per_kg_ht: 0, legs: [], source: 'manual_or_missing_chain' };
+  }
+  const services = await activeClientLogisticsServicesForDate(db, storeId, clientId, date);
+  const serviceEstimates = services.map((service) => ({
+    service_id: service.id,
+    label: service.label,
+    calculation_mode: service.calculation_mode,
+    amount_ht: Number(service.amount_ht || 0),
+    amount_per_kg_ht: logisticsServicePerKg(service),
+  }));
+  const servicesPerKg = serviceEstimates.reduce((sum, service) => sum + service.amount_per_kg_ht, 0);
+  return {
+    client_id: client.id,
+    date: isoDate(date),
+    transport_mode: client.sale_transport_mode,
+    transport_per_kg_ht: transportEstimate.total_per_kg_ht || 0,
+    services_per_kg_ht: servicesPerKg,
+    total_per_kg_ht: (transportEstimate.total_per_kg_ht || 0) + servicesPerKg,
+    transport: transportEstimate,
+    services: serviceEstimates,
+  };
 }
 
 async function applyPurchaseTransportEstimatesToPricingSession(db, storeId, sessionId, context = {}) {
@@ -420,9 +536,13 @@ module.exports = {
   fuelRateForDate,
   calculateLeg,
   calculateLogisticsService,
+  logisticsServicePerKg,
   calculateChainSnapshot,
   estimateChainPerKg,
   estimateSupplierPurchaseTransport,
+  estimateClientSaleLogistics,
+  listClientLogisticsServices,
+  replaceClientLogisticsServices,
   applyPurchaseTransportEstimatesToPricingSession,
   listCarriers,
   listChains,
