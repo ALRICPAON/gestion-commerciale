@@ -3,6 +3,7 @@ const {
   royaleMareeCommissionAmount,
 } = require('./royaleMareeCommission');
 const supplierArticleMappings = require('./supplierArticleMappingService');
+const transportService = require('./transportService');
 
 function expose(status, message) {
   const error = new Error(message);
@@ -778,13 +779,18 @@ async function resolvePublishedPrice(db, storeId, input = {}) {
   );
   const row = result.rows[0];
   if (!row) return { found: false, client, tariff_level: level, date };
+  const saleLogistics = input.client_id
+    ? await transportService.estimateClientSaleLogistics(db, storeId, input.client_id, date).catch(() => null)
+    : null;
+  const saleLogisticsAmount = Number(saleLogistics?.total_per_kg_ht || 0);
+  const priceBeforeCommission = Number((Number(row.source_tariff_price_ht || 0) + saleLogisticsAmount).toFixed(4));
   const finalPrice = getCustomerDisplayedPrice({
-    price: row.source_tariff_price_ht,
+    price: priceBeforeCommission,
     pricingLevel: level.legacy_level,
     client: client.billing_client || client,
     storeSettings: row,
   });
-  const commission = Number((Number(finalPrice || 0) - Number(row.source_tariff_price_ht || 0)).toFixed(4));
+  const commission = Number((Number(finalPrice || 0) - priceBeforeCommission).toFixed(4));
   return {
     found: true,
     client,
@@ -794,6 +800,8 @@ async function resolvePublishedPrice(db, storeId, input = {}) {
     pricing_line_id: row.pricing_line_id,
     tariff_level_id: row.tariff_level_id,
     source_tariff_price_ht: row.source_tariff_price_ht === null ? null : Number(row.source_tariff_price_ht),
+    sale_logistics_per_kg_ht: saleLogisticsAmount,
+    sale_logistics_snapshot: saleLogistics,
     royale_maree_commission_ht: Math.max(0, commission || 0),
     royale_maree_commission_setting: royaleMareeCommissionAmount(row),
     final_unit_price_ht: Number(finalPrice),

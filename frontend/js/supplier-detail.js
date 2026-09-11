@@ -33,6 +33,11 @@ const fields = [
   "legal_name",
   "supplier_type",
   "status",
+  "is_carrier",
+  "purchase_transport_mode",
+  "purchase_transport_chain_id",
+  "transport_admin_fee_ht",
+  "transport_notes",
   "contact_name",
   "phone",
   "mobile",
@@ -51,6 +56,7 @@ const fields = [
 
 let currentSupplier = null;
 let contacts = [];
+let transportChains = [];
 
 function logoutAndRedirect() {
   localStorage.removeItem("gc_token");
@@ -86,6 +92,10 @@ function setFieldValue(id, value) {
   const el = document.getElementById(id);
   if (!el) return;
 
+  if (el.type === "checkbox") {
+    el.checked = value === true || value === "true" || value === "1";
+    return;
+  }
   el.value = value ?? "";
 }
 
@@ -93,6 +103,7 @@ function getFieldValue(id) {
   const el = document.getElementById(id);
   if (!el) return null;
 
+  if (el.type === "checkbox") return el.checked;
   const value = el.value.trim();
   return value === "" ? null : value;
 }
@@ -125,8 +136,19 @@ function collectPayload() {
   if (!payload.status) {
     payload.status = "active";
   }
+  payload.is_carrier = Boolean(document.getElementById("is_carrier")?.checked);
 
   return payload;
+}
+
+function renderTransportChains() {
+  const select = document.getElementById("purchase_transport_chain_id");
+  if (!select) return;
+  const selected = currentSupplier?.purchase_transport_chain_id || select.value || "";
+  select.innerHTML = '<option value="">Aucun</option>' + transportChains.map((chain) => (
+    `<option value="${escapeHtml(chain.id)}">${escapeHtml(chain.name || chain.code || chain.id)}</option>`
+  )).join("");
+  select.value = selected;
 }
 
 function updateHeader() {
@@ -196,6 +218,7 @@ async function loadSupplier() {
     currentSupplier = data;
 
     fillForm(data);
+    renderTransportChains();
     updateHeader();
     lockFormIfNeeded();
   } catch (err) {
@@ -249,6 +272,14 @@ async function loadContacts() {
   }
   contacts = Array.isArray(data) ? data : [];
   renderContacts();
+}
+
+async function loadTransportChains() {
+  const response = await apiFetch(`${API_BASE_URL}/api/transport/chains?direction=purchase`);
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  transportChains = data.results || [];
+  renderTransportChains();
 }
 
 function contactPayload() {
@@ -458,4 +489,4 @@ function bindEvents() {
 }
 
 bindEvents();
-loadSupplier().then(loadContacts);
+loadTransportChains().then(loadSupplier).then(loadContacts);
