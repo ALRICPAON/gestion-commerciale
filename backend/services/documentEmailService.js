@@ -4,6 +4,7 @@ const {
   renderInvoicePdfAttachment,
 } = require('./documentPdfService');
 const {
+  parseEmailRecipients,
   resolveDocumentRecipients,
   recipientsToEmailList,
 } = require('./documentRecipientService');
@@ -92,9 +93,16 @@ async function sendDeliveryNoteDocumentEmail(db, { storeId, deliveryNoteId, to, 
   }
 
   const reference = contacts.reference_number || contacts.id;
-  const explicitRecipient = clean(to);
-  const recipientResolution = explicitRecipient
-    ? { recipients: [{ email: explicitRecipient, source: 'manual_override' }], source: 'manual_override' }
+  const explicitText = clean(Array.isArray(to) ? to.join(';') : to);
+  const explicitRecipients = parseEmailRecipients(to, 'manual_override');
+  if (explicitText && !explicitRecipients.length) {
+    const error = new Error('Aucun destinataire email valide.');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+  const recipientResolution = explicitRecipients.length
+    ? { recipients: explicitRecipients, source: 'manual_override' }
     : await resolveDocumentRecipients(db, {
       entityType: 'client',
       entityId: contacts.delivered_client_id || contacts.billed_client_id,
@@ -143,9 +151,16 @@ async function sendInvoiceDocumentEmail(db, { storeId, invoiceId, to, subject, m
   }
 
   const reference = contacts.reference_number || contacts.id;
-  const explicitRecipient = clean(to);
-  const recipientResolution = explicitRecipient
-    ? { recipients: [{ email: explicitRecipient, source: 'manual_override' }], source: 'manual_override' }
+  const explicitText = clean(Array.isArray(to) ? to.join(';') : to);
+  const explicitRecipients = parseEmailRecipients(to, 'manual_override');
+  if (explicitText && !explicitRecipients.length) {
+    const error = new Error('Aucun destinataire email valide.');
+    error.status = 400;
+    error.expose = true;
+    throw error;
+  }
+  const recipientResolution = explicitRecipients.length
+    ? { recipients: explicitRecipients, source: 'manual_override' }
     : await resolveDocumentRecipients(db, {
       entityType: 'client',
       entityId: contacts.billed_client_id || contacts.delivered_client_id,

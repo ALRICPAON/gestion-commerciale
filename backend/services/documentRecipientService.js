@@ -30,6 +30,13 @@ function uniqueEmails(rows = []) {
   return recipients;
 }
 
+function parseEmailRecipients(value, source = 'manual_override') {
+  const values = Array.isArray(value)
+    ? value
+    : String(value ?? '').split(/[;,]/);
+  return uniqueEmails(values.map((email) => ({ email, source })));
+}
+
 const CLIENT_DOCUMENT_COLUMNS = {
   order_confirmation: 'receives_orders',
   delivery_note: 'receives_delivery_notes',
@@ -60,10 +67,11 @@ async function resolveClientRecipients(db, { storeId, entityId, documentType }) 
     `
     SELECT id AS contact_id, contact_name, email, $3::text AS source
     FROM client_contacts
-    WHERE store_id = $1 AND client_id = $2 AND status = 'active' AND ${preferenceColumn} = true
+    WHERE store_id = $1 AND client_id = $2 AND status = 'active'
+      AND (${preferenceColumn} = true OR ($4::boolean = true AND is_default_for_delivery_notes = true))
     ORDER BY is_primary DESC, contact_name ASC
     `,
-    [storeId, entityId, documentType === 'price_list' ? 'mercuriale_contact' : 'contact_preference']
+    [storeId, entityId, documentType === 'price_list' ? 'mercuriale_contact' : 'contact_preference', documentType === 'delivery_note']
   );
   let recipients = uniqueEmails(preferred.rows);
   const preferredCount = preferred.rows.length;
@@ -81,6 +89,22 @@ async function resolveClientRecipients(db, { storeId, entityId, documentType }) 
     );
     recipients = uniqueEmails(fallback.rows);
     if (recipients.length) return { recipients, source: 'client_fallback', preferred_count: preferredCount };
+
+    return { recipients: [], source: null, preferred_count: preferredCount };
+  }
+
+  if (documentType === 'delivery_note') {
+    const fallback = await db.query(
+      `
+      SELECT NULL::uuid AS contact_id, contact_name, email, 'legacy_client_email' AS source
+      FROM clients
+      WHERE store_id = $1 AND id = $2
+      LIMIT 1
+      `,
+      [storeId, entityId]
+    );
+    recipients = uniqueEmails(fallback.rows);
+    if (recipients.length) return { recipients, source: 'legacy_client_email', preferred_count: preferredCount };
 
     return { recipients: [], source: null, preferred_count: preferredCount };
   }
@@ -181,6 +205,7 @@ function recipientsToEmailList(resolution) {
 
 module.exports = {
   normalizeEmail,
+  parseEmailRecipients,
   resolveDocumentRecipients,
   recipientsToEmailList,
 };

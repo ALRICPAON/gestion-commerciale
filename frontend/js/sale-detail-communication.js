@@ -17,6 +17,16 @@
     return text || '';
   }
 
+  function emailList(value) {
+    if (Array.isArray(value)) return value.map(clean).filter(Boolean);
+    return String(value ?? '').split(/[;,]/).map(clean).filter(Boolean);
+  }
+
+  function deliveryNoteEmails() {
+    const emails = emailList(blOptions?.emails);
+    return emails.length ? emails : emailList(blOptions?.email);
+  }
+
   function showFeedback(message, isError = false) {
     if (!feedbackEl) return;
     feedbackEl.textContent = message;
@@ -87,8 +97,9 @@
         </div>
         <div class="form-grid">
           <div class="form-group form-group-span-2">
-            <label for="document-email-to">Destinataire</label>
-            <input id="document-email-to" type="email" autocomplete="email" />
+            <label for="document-email-to">Destinataires</label>
+            <input id="document-email-to" type="text" autocomplete="email" placeholder="jean@client.fr; marie@client.fr" />
+            <p class="helper-text">Separe les emails par ; ou ,</p>
           </div>
           <div class="form-group form-group-span-2">
             <label for="document-email-subject">Objet</label>
@@ -152,7 +163,7 @@
     const isInvoiceEmail = kind === 'invoice';
     const reference = isInvoiceEmail ? invoiceReference() : deliveryNoteReference();
     modalField('document-email-modal-title').textContent = isInvoiceEmail ? 'Envoyer la facture par email' : 'Envoyer le BL par email';
-    modalField('document-email-to').value = isInvoiceEmail ? clean(invoiceDefaults?.email) : clean(blOptions?.email);
+    modalField('document-email-to').value = isInvoiceEmail ? clean(invoiceDefaults?.email) : deliveryNoteEmails().join('; ');
     modalField('document-email-subject').value = isInvoiceEmail ? `Facture ${reference}` : `Bon de livraison ${reference}`;
     modalField('document-email-message').value = isInvoiceEmail ? defaultInvoiceMessage() : defaultDeliveryNoteMessage();
     document.getElementById('document-email-modal')?.classList.remove('hidden');
@@ -216,7 +227,8 @@
         body: JSON.stringify({ to, subject, message }),
       });
       closeEmailModal();
-      showFeedback(`Email envoyé à ${result.to}`);
+      const sentTo = emailList(result.to);
+      showFeedback(sentTo.length > 1 ? `Email envoyé à ${sentTo.length} destinataires.` : `Email envoyé à ${sentTo[0] || result.to}`);
     } catch (err) {
       showFeedback(err.message || 'Erreur envoi email', true);
     } finally {
@@ -299,7 +311,7 @@
     if (isDeliveryNote()) {
       mailBtn.disabled = false;
       mailBtn.textContent = '📧 Envoyer par email';
-      mailBtn.title = blOptions?.email ? `Envoyer à ${blOptions.email}` : 'Destinataire à renseigner';
+      mailBtn.title = deliveryNoteEmails().length ? `Envoyer à ${deliveryNoteEmails().join('; ')}` : 'Destinataire à renseigner';
       whatsappBtn.disabled = false;
       whatsappBtn.textContent = '💬 Envoyer BL WhatsApp';
       whatsappBtn.title = 'Envoyer le BL par WhatsApp';
