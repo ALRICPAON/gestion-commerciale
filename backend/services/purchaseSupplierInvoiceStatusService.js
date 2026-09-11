@@ -93,22 +93,35 @@ function resolveSupplierInvoiceDisplayStatus(purchase = {}, invoiceLinks = []) {
   };
 }
 
+function logicalInvoiceKey(row = {}) {
+  return clean(row.logical_invoice_key) ||
+    clean(row.supplier_invoice_id) ||
+    clean(row.invoice_number) ||
+    JSON.stringify(row);
+}
+
 async function loadSupplierInvoiceLinksForPurchases(db, { storeId, purchaseIds }) {
   const ids = [...new Set((purchaseIds || []).map(clean).filter(Boolean))];
   if (!ids.length) return new Map();
 
   const byPurchase = new Map();
+  const seenByPurchase = new Map();
   const addRow = (row) => {
     const purchaseId = clean(row.purchase_id);
     if (!purchaseId) return;
+    const invoiceKey = logicalInvoiceKey(row);
+    if (!seenByPurchase.has(purchaseId)) seenByPurchase.set(purchaseId, new Set());
+    if (seenByPurchase.get(purchaseId).has(invoiceKey)) return;
+    seenByPurchase.get(purchaseId).add(invoiceKey);
     if (!byPurchase.has(purchaseId)) byPurchase.set(purchaseId, []);
     byPurchase.get(purchaseId).push(row);
   };
 
   const supplierControl = await db.query(
     `
-    SELECT
-      scl.purchase_id,
+    SELECT DISTINCT
+      COALESCE(scl.purchase_id, pl.purchase_id) AS purchase_id,
+      ('pennylane:' || psi.id::text) AS logical_invoice_key,
       scl.match_status AS link_match_status,
       psi.id AS supplier_invoice_id,
       psi.invoice_number,
@@ -120,8 +133,11 @@ async function loadSupplierInvoiceLinksForPurchases(db, { storeId, purchaseIds }
     JOIN pennylane_supplier_invoices psi
       ON psi.id = scl.pennylane_supplier_invoice_id
      AND psi.store_id = scl.store_id
+    LEFT JOIN purchase_lines pl
+      ON pl.id = scl.purchase_line_id
+     AND pl.store_id = scl.store_id
     WHERE scl.store_id = $1
-      AND scl.purchase_id = ANY($2::uuid[])
+      AND COALESCE(scl.purchase_id, pl.purchase_id) = ANY($2::uuid[])
       AND scl.match_status <> 'removed'
       AND psi.pennylane_deleted_at IS NULL
     `,
@@ -134,8 +150,9 @@ async function loadSupplierInvoiceLinksForPurchases(db, { storeId, purchaseIds }
 
   const automaticPennylane = await db.query(
     `
-    SELECT
-      mr.purchase_id,
+    SELECT DISTINCT
+      COALESCE(mr.purchase_id, pl.purchase_id) AS purchase_id,
+      ('pennylane:' || psi.id::text) AS logical_invoice_key,
       mr.match_status AS link_match_status,
       psi.id AS supplier_invoice_id,
       psi.invoice_number,
@@ -147,8 +164,11 @@ async function loadSupplierInvoiceLinksForPurchases(db, { storeId, purchaseIds }
     JOIN pennylane_supplier_invoices psi
       ON psi.id = mr.supplier_invoice_id
      AND psi.store_id = mr.store_id
+    LEFT JOIN purchase_lines pl
+      ON pl.id = mr.purchase_line_id
+     AND pl.store_id = mr.store_id
     WHERE mr.store_id = $1
-      AND mr.purchase_id = ANY($2::uuid[])
+      AND COALESCE(mr.purchase_id, pl.purchase_id) = ANY($2::uuid[])
       AND psi.pennylane_deleted_at IS NULL
     `,
     [storeId, ids]
@@ -160,8 +180,9 @@ async function loadSupplierInvoiceLinksForPurchases(db, { storeId, purchaseIds }
 
   const legacyAlta = await db.query(
     `
-    SELECT
-      sim.purchase_id,
+    SELECT DISTINCT
+      COALESCE(sim.purchase_id, pl.purchase_id) AS purchase_id,
+      ('legacy:' || si.id::text) AS logical_invoice_key,
       sim.match_status AS link_match_status,
       si.id AS supplier_invoice_id,
       si.invoice_number,
@@ -173,8 +194,11 @@ async function loadSupplierInvoiceLinksForPurchases(db, { storeId, purchaseIds }
     JOIN supplier_invoices si
       ON si.id = sim.supplier_invoice_id
      AND si.store_id = sim.store_id
+    LEFT JOIN purchase_lines pl
+      ON pl.id = sim.purchase_line_id
+     AND pl.store_id = sim.store_id
     WHERE sim.store_id = $1
-      AND sim.purchase_id = ANY($2::uuid[])
+      AND COALESCE(sim.purchase_id, pl.purchase_id) = ANY($2::uuid[])
       AND COALESCE(si.status, '') <> 'cancelled'
     `,
     [storeId, ids]
