@@ -108,6 +108,24 @@ async function testServiceHelpers() {
   assert.equal(pricing.normalizeSupplierDesignation('MERLU 1,2 / 1,8'), 'merlu 1,2/1,8');
 }
 
+async function testAutoTariffCalculationHelpers() {
+  assert.equal(pricing.calculateAutoTariffPrice(10, { mode: 'fixed_eur_kg', value: 2 }), 12);
+  assert.equal(pricing.calculateAutoTariffPrice(10, { mode: 'percent', value: 25 }), 12.5);
+  assert.equal(pricing.calculateAutoTariffPrice(10.5, { mode: 'fixed_eur_kg', value: 2 }), 12.5);
+
+  const threeTariffs = [
+    pricing.calculateAutoTariffPrice(8.2, { mode: 'fixed_eur_kg', value: 2 }),
+    pricing.calculateAutoTariffPrice(8.2, { mode: 'percent', value: 30 }),
+    pricing.calculateAutoTariffPrice(8.2, { mode: 'fixed_eur_kg', value: 4.5 }),
+  ];
+  assert.deepEqual(threeTariffs, [10.2, 10.66, 12.7], 'three tariffs can use different modes');
+
+  const baseWithPurchaseTransport = 10 + 0.5;
+  assert.equal(pricing.calculateAutoTariffPrice(baseWithPurchaseTransport, { mode: 'fixed_eur_kg', value: 2 }), 12.5);
+  assert.equal(pricing.calculateAutoTariffPrice(10, { mode: 'fixed_eur_kg', value: 2 }), 12, 'Royale Maree commission is not part of base auto margin calculation');
+  assert.equal(pricing.calculateAutoTariffPrice(10, { mode: 'percent', value: 25 }), 12.5, 'client sale transport is not part of generic tariff calculation');
+}
+
 async function testResolvePublishedPriceWithCommission() {
   const clients = {
     'client-1': {
@@ -1059,7 +1077,7 @@ async function testPricingFrontendImportWorkflowContracts() {
   assert(js.includes('/supplier-import-lines/articles/search'), 'frontend searches ALTA articles in matching workflow');
   assert(html.includes('pricing-import-modal-content'), 'supplier import modal has dedicated wide workspace');
   assert(html.includes('id="import-article-panel"'), 'frontend uses a wide article picker panel');
-  assert(html.includes('pricing.css?v=3') && html.includes('pricing.js?v=4'), 'pricing assets are cache-busted');
+  assert(html.includes('pricing.css?v=4') && html.includes('pricing.js?v=5'), 'pricing assets are cache-busted');
   assert(js.includes('matchLabel'), 'frontend translates technical matching labels');
   assert(js.includes('updateImportLine(updated)'), 'frontend updates selected import line after override');
   assert(html.includes('id="create-revision-btn"'), 'frontend exposes explicit revision button on published sessions');
@@ -1103,6 +1121,7 @@ async function testPricingRouteFileParsingContracts() {
   assert(route.includes('rowFromCells'), 'file parsing detects price-like cells instead of always using the last cell blindly');
   assert(route.includes("source_type: req.file.originalname.toLowerCase().endsWith('.pdf') ? 'pdf' : 'file'"), 'PDF source type is preserved');
   assert(route.includes('logPricingRouteError'), 'pricing routes log unexpected backend errors with context');
+  assert(route.includes("'/sessions/:id/auto-tariffs'"), 'pricing route exposes explicit auto tariff calculation action');
 }
 
 async function testIntegrationFilesReferencePricing() {
@@ -1136,6 +1155,12 @@ async function testIntegrationFilesReferencePricing() {
   assert(pricingService.includes('const sessionDate = isoDate(session.pricing_date)'), 'call sheet mirror uses normalized session business date');
   assert(pricingService.includes('const sourceDate = isoDate(source.pricing_date)'), 'revision workflow normalizes source pricing_date before reuse');
   assert(!pricingService.includes('source.pricing_date, source.id]'), 'revision query never sends raw Date display strings back to PostgreSQL');
+
+  const pricingHtml = read('frontend/pricing.html');
+  const pricingJs = read('frontend/js/pricing.js');
+  assert(pricingHtml.includes('auto-tariffs-btn'), 'pricing page exposes auto tariff calculation button');
+  assert(pricingJs.includes('/auto-tariffs'), 'pricing UI calls backend auto tariff calculation');
+  assert(pricingJs.includes('await saveDirtyLines();'), 'auto tariff calculation preserves pending manual edits before applying');
 }
 
 (async () => {
@@ -1143,6 +1168,7 @@ async function testIntegrationFilesReferencePricing() {
   await testMigrationContract();
   await testAgentContracts();
   await testServiceHelpers();
+  await testAutoTariffCalculationHelpers();
   await testResolvePublishedPriceWithCommission();
   await testDuplicatePricingSessionUsesSourceLineMap();
   await testSalesLinePricingSnapshotDecisions();

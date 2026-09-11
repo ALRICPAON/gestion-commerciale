@@ -51,6 +51,26 @@ function nonNegative(value, fallback = null) {
   return parsed;
 }
 
+function roundPricingPrice(value) {
+  const parsed = num(value, 0);
+  return Number(parsed.toFixed(4));
+}
+
+function normalizeAutoTariffMode(value) {
+  const mode = clean(value);
+  if (['fixed_eur_kg', 'eur_kg', 'fixed', 'amount'].includes(mode)) return 'fixed_eur_kg';
+  if (['percent', 'percentage', 'pct'].includes(mode)) return 'percent';
+  throw expose(400, 'Mode de calcul tarif invalide');
+}
+
+function calculateAutoTariffPrice(costRenderedHt, rule = {}) {
+  const cost = nonNegative(costRenderedHt, 0);
+  const value = nonNegative(rule.value ?? rule.margin_value, 0);
+  const mode = normalizeAutoTariffMode(rule.mode);
+  if (mode === 'fixed_eur_kg') return roundPricingPrice(cost + value);
+  return roundPricingPrice(cost * (1 + value / 100));
+}
+
 function normalizeSupplierDesignation(value) {
   return String(value || '')
     .normalize('NFD')
@@ -755,6 +775,66 @@ async function publishPricingSession(db, storeId, input = {}, context = {}) {
   });
 }
 
+function normalizeAutoTariffRules(rules = []) {
+  if (!Array.isArray(rules)) throw expose(400, 'Regles de calcul tarif invalides');
+  return rules.map((rule) => ({
+    tariff_level_id: clean(rule.tariff_level_id),
+    legacy_level: rule.legacy_level === undefined ? null : Number(rule.legacy_level),
+    mode: normalizeAutoTariffMode(rule.mode),
+    value: nonNegative(rule.value ?? rule.margin_value),
+  })).filter((rule) => rule.tariff_level_id || Number.isInteger(rule.legacy_level));
+}
+
+async function applyAutoTariffsToSession(db, storeId, input = {}, context = {}) {
+  return inTransaction(db, async (client) => {
+    const sessionId = clean(input.pricing_session_id || input.session_id || input.id);
+    const session = await assertDraftSession(client, storeId, sessionId);
+    const normalizedRules = normalizeAutoTariffRules(input.rules || input.tariffs || []);
+    if (!normalizedRules.length) throw expose(400, 'Au moins une regle de calcul tarif est requise');
+
+    const rules = [];
+    for (const rule of normalizedRules) {
+      const level = rule.tariff_level_id
+        ? await getTariffLevel(client, storeId, { id: rule.tariff_level_id })
+        : await getTariffLevel(client, storeId, { legacy_level: rule.legacy_level });
+      if (!level) throw expose(400, 'Niveau tarifaire introuvable');
+      rules.push({ ...rule, tariff_level_id: level.id, legacy_level: level.legacy_level });
+    }
+
+    const lineRows = await client.query(
+      `SELECT id, cost_rendered_ht
+       FROM pricing_lines
+       WHERE store_id = $1 AND pricing_session_id = $2
+       ORDER BY display_order ASC, designation_snapshot ASC
+       FOR UPDATE`,
+      [storeId, session.id]
+    );
+
+    for (const line of lineRows.rows) {
+      const tariffs = rules.map((rule) => ({
+        tariff_level_id: rule.tariff_level_id,
+        price_ht: calculateAutoTariffPrice(line.cost_rendered_ht, rule),
+        source: 'auto_margin',
+      }));
+      await upsertLineTariffs(client, storeId, line.id, tariffs);
+      await client.query(
+        'UPDATE pricing_lines SET updated_by = $3, updated_at = now() WHERE store_id = $1 AND id = $2',
+        [storeId, line.id, context.user_id || null]
+      );
+    }
+
+    const detail = await getPricingSession(client, storeId, { id: session.id });
+    return {
+      ok: true,
+      applied_line_count: lineRows.rows.length,
+      applied_tariff_count: lineRows.rows.length * rules.length,
+      rules,
+      session: detail.session,
+      lines: detail.lines,
+    };
+  });
+}
+
 async function resolvePublishedPrice(db, storeId, input = {}) {
   const date = isoDate(input.date || input.pricing_date || input.document_date);
   const { client, tariff_level: level } = await resolveClientTariffLevel(db, storeId, input.client_id);
@@ -1309,6 +1389,7 @@ async function applySupplierImportToSession(db, storeId, input = {}, context = {
 }
 
 module.exports = {
+  calculateAutoTariffPrice,
   normalizeSupplierDesignation,
   listTariffLevels,
   getTariffLevel,
@@ -1326,6 +1407,7 @@ module.exports = {
   updatePricingLine,
   removePricingLine,
   publishPricingSession,
+  applyAutoTariffsToSession,
   resolvePublishedPrice,
   salesLineHasPricingSnapshot,
   salesLineHasExplicitManualPrice,
