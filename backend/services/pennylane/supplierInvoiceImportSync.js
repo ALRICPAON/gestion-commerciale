@@ -207,13 +207,42 @@ function buildChangelogEndpoint({ startDate, cursor, limit }) {
   return `/changelogs/supplier_invoices?${params.toString()}`;
 }
 
+function normalizePaymentStatus(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isPaidPaymentStatus(paymentStatus, paid) {
+  const status = normalizePaymentStatus(paymentStatus);
+  return paid === true || status === 'paid' || status.startsWith('paid_');
+}
+
 function normalizeAltaStatus(currentStatus, invoice, supplierId) {
+  const paymentStatus = firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']);
+  if (isPaidPaymentStatus(paymentStatus, invoice.paid)) return 'payee';
+  if (normalizePaymentStatus(paymentStatus) === 'to_be_paid') return 'validee_a_payer';
+
   if (currentStatus && ALTA_STATUSES.has(currentStatus) && currentStatus !== 'nouvelle') {
     return currentStatus;
   }
 
-  if (invoice.paid === true || invoice.payment_status === 'paid') return 'payee';
   if (!supplierId) return 'a_rapprocher';
+  return 'a_rapprocher';
+}
+
+function normalizeSupplierControlStatus(currentStatus, invoice, altaBusinessStatus) {
+  const paymentStatus = firstPresent(invoice, ['payment_status', 'paid_status', 'payment_state']);
+  const status = normalizePaymentStatus(paymentStatus);
+  const current = normalizePaymentStatus(currentStatus);
+  const alta = normalizePaymentStatus(altaBusinessStatus);
+
+  if (isPaidPaymentStatus(paymentStatus, invoice.paid)) return 'paye';
+  if (status === 'to_be_paid') return 'valide_a_payer';
+  if (['reconciliation_required', 'avoir_attendu', 'litige'].includes(current)) return current;
+  if (['litige', 'refusee'].includes(alta)) return 'litige';
+  if (alta === 'conforme') return 'conforme';
+  if (['ecart_prix', 'ecart_quantite', 'ecart_tva'].includes(alta)) return 'ecart';
+  if (['analyse_automatique', 'en_controle', 'article_inconnu', 'controle_manuel'].includes(alta)) return 'a_controler';
+  if (current) return current;
   return 'a_rapprocher';
 }
 
@@ -280,6 +309,7 @@ function buildLocalStatusSnapshot(row) {
     paid: row.paid ?? null,
     accounting_status: row.accounting_status || null,
     alta_business_status: row.alta_business_status || null,
+    supplier_control_status: row.supplier_control_status || null,
     match_status: row.match_status || null,
     auto_match_status: row.auto_match_status || null,
     updated_at: row.updated_at || null,
@@ -464,6 +494,7 @@ async function upsertInvoice(db, { storeId, invoice, reason }) {
         payment_status,
         paid,
         alta_business_status,
+        supplier_control_status,
         match_status,
         auto_match_status,
         updated_at,
@@ -484,6 +515,11 @@ async function upsertInvoice(db, { storeId, invoice, reason }) {
       ? normalizeCreditNoteReason(firstPresent(invoice, ['credit_note_reason', 'reason', 'category']))
       : null;
     const altaBusinessStatus = normalizeAltaStatus(existingRow?.alta_business_status, invoice, supplierId);
+    const supplierControlStatus = normalizeSupplierControlStatus(
+      existingRow?.supplier_control_status,
+      invoice,
+      altaBusinessStatus
+    );
 
     logSupplierInvoiceStatusFlow('before_upsert', {
       store_id: storeId,
@@ -496,6 +532,7 @@ async function upsertInvoice(db, { storeId, invoice, reason }) {
         payment_status: firstPresent(invoice, ['payment_status']),
         paid: invoice.paid === true,
         alta_business_status: altaBusinessStatus,
+        supplier_control_status: supplierControlStatus,
         payment_status_included_in_upsert: true,
         paid_included_in_upsert: true,
         accounting_status_included_in_upsert: true,
@@ -516,7 +553,7 @@ async function upsertInvoice(db, { storeId, invoice, reason }) {
         accounting_status, payment_status, paid,
         e_invoice_status, e_invoice_reason, e_invoice_flow_id,
         pennylane_filename, public_file_url, external_reference,
-        alta_business_status, sync_status, raw_payload, last_synced_at,
+        alta_business_status, supplier_control_status, sync_status, raw_payload, last_synced_at,
         document_type, credit_note_reason, stock_effect
       )
       VALUES(
@@ -528,8 +565,8 @@ async function upsertInvoice(db, { storeId, invoice, reason }) {
         $17, $18, $19,
         $20, $21, $22,
         $23, $24, $25,
-        $26, 'synced', $27::jsonb, now(),
-        $28, $29, 'none'
+        $26, $27, 'synced', $28::jsonb, now(),
+        $29, $30, 'none'
       )
       ON CONFLICT (store_id, pennylane_supplier_invoice_id) DO UPDATE
       SET pennylane_supplier_id = EXCLUDED.pennylane_supplier_id,
@@ -559,9 +596,18 @@ async function upsertInvoice(db, { storeId, invoice, reason }) {
         credit_note_reason = EXCLUDED.credit_note_reason,
         stock_effect = EXCLUDED.stock_effect,
         alta_business_status = CASE
-          WHEN pennylane_supplier_invoices.alta_business_status IN ('validee_a_payer', 'payee', 'litige', 'refusee')
+          WHEN EXCLUDED.alta_business_status IN ('validee_a_payer', 'payee')
+            THEN EXCLUDED.alta_business_status
+          WHEN pennylane_supplier_invoices.alta_business_status IN ('litige', 'refusee')
             THEN pennylane_supplier_invoices.alta_business_status
           ELSE EXCLUDED.alta_business_status
+        END,
+        supplier_control_status = CASE
+          WHEN EXCLUDED.supplier_control_status IN ('valide_a_payer', 'paye')
+            THEN EXCLUDED.supplier_control_status
+          WHEN pennylane_supplier_invoices.supplier_control_status IN ('litige', 'avoir_attendu', 'reconciliation_required')
+            THEN pennylane_supplier_invoices.supplier_control_status
+          ELSE EXCLUDED.supplier_control_status
         END,
         sync_status = 'synced',
         pennylane_deleted_at = NULL,
@@ -574,6 +620,7 @@ async function upsertInvoice(db, { storeId, invoice, reason }) {
         payment_status,
         paid,
         alta_business_status,
+        supplier_control_status,
         match_status,
         auto_match_status,
         updated_at,
@@ -606,6 +653,7 @@ async function upsertInvoice(db, { storeId, invoice, reason }) {
         firstPresent(invoice, ['public_file_url']),
         firstPresent(invoice, ['external_reference']),
         altaBusinessStatus,
+        supplierControlStatus,
         JSON.stringify(invoice),
         documentType,
         creditNoteReason,
@@ -905,4 +953,6 @@ async function processPennylaneSupplierInvoiceImportSync(db, options = {}) {
 
 module.exports = {
   processPennylaneSupplierInvoiceImportSync,
+  normalizeAltaStatus,
+  normalizeSupplierControlStatus,
 };
