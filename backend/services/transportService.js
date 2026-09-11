@@ -11,7 +11,12 @@ function clean(value) {
   return text || null;
 }
 
+function hasOwn(body = {}, field) {
+  return Object.prototype.hasOwnProperty.call(body, field);
+}
+
 function isoDate(value) {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
   const text = clean(value);
   if (!text) return new Date().toISOString().slice(0, 10);
   const match = text.match(/^(\d{4}-\d{2}-\d{2})/);
@@ -480,6 +485,73 @@ async function createShipment(db, storeId, input = {}, context = {}) {
   return result.rows[0];
 }
 
+async function updateDraftShipment(db, storeId, shipmentId, input = {}, context = {}) {
+  const shipment = (await db.query(
+    `SELECT * FROM transport_shipments WHERE id = $1 AND store_id = $2 FOR UPDATE`,
+    [shipmentId, storeId]
+  )).rows[0];
+  if (!shipment) throw expose(404, 'Envoi transport introuvable');
+  if (shipment.status !== 'draft') throw expose(409, 'Envoi transport verrouille apres generation BL transport');
+  const deliveryNote = (await db.query(
+    `SELECT id FROM transport_delivery_notes WHERE shipment_id = $1 AND store_id = $2 LIMIT 1`,
+    [shipmentId, storeId]
+  )).rows[0];
+  if (deliveryNote) throw expose(409, 'Envoi transport verrouille apres generation BL transport');
+  const date = isoDate(input.shipment_date || input.date || shipment.shipment_date);
+  const direction = clean(input.direction) || shipment.direction || 'sale';
+  if (!['purchase', 'sale'].includes(direction)) throw expose(400, 'Sens transport invalide');
+  const chainId = clean(input.chain_id) || shipment.chain_id;
+  const weightKg = positive(input.total_weight_kg ?? input.weight_kg ?? shipment.total_weight_kg, 0);
+  if (!chainId) throw expose(400, 'Circuit transport obligatoire');
+  if (weightKg <= 0) throw expose(400, 'Poids transport obligatoire');
+  const { chain, legs } = await getChainForCalculation(db, storeId, chainId, date);
+  const carrierId = clean(input.carrier_id) || legs[0]?.carrier_id || shipment.carrier_id || null;
+  const adminFeeByCarrier = {};
+  for (const leg of legs) adminFeeByCarrier[leg.carrier_id] = await getCarrierAdminFee(db, storeId, leg.carrier_id);
+  const snapshot = calculateChainSnapshot({ chain, legs, date, weightKg, adminFeeByCarrier });
+  const result = await db.query(
+    `UPDATE transport_shipments
+     SET shipment_date = $3::date, direction = $4, carrier_id = $5, chain_id = $6,
+         origin_label = $7, destination_label = $8, total_weight_kg = $9,
+         expected_total_ht = $10, calculation_snapshot = $11::jsonb,
+         notes = $12, updated_by = $13, updated_at = now()
+     WHERE id = $1 AND store_id = $2
+     RETURNING *`,
+    [
+      shipment.id, storeId, date, direction, carrierId, chainId,
+      clean(input.origin_label) || chain.origin_label,
+      clean(input.destination_label) || chain.destination_label,
+      weightKg, snapshot.total_ht, JSON.stringify(snapshot),
+      hasOwn(input, 'notes') ? clean(input.notes) : clean(shipment.notes),
+      context.user_id || null,
+    ]
+  );
+  return result.rows[0];
+}
+
+async function deleteDraftShipment(db, storeId, shipmentId, context = {}) {
+  const shipment = (await db.query(
+    `SELECT * FROM transport_shipments WHERE id = $1 AND store_id = $2 FOR UPDATE`,
+    [shipmentId, storeId]
+  )).rows[0];
+  if (!shipment) throw expose(404, 'Envoi transport introuvable');
+  const deliveryNote = (await db.query(
+    `SELECT id FROM transport_delivery_notes WHERE shipment_id = $1 AND store_id = $2 LIMIT 1`,
+    [shipmentId, storeId]
+  )).rows[0];
+  if (deliveryNote || shipment.status === 'blt_generated') {
+    await db.query(
+      `UPDATE transport_shipments
+       SET status = 'cancelled', updated_by = $3, updated_at = now()
+       WHERE id = $1 AND store_id = $2`,
+      [shipment.id, storeId, context.user_id || null]
+    );
+    return { deleted: false, cancelled: true };
+  }
+  await db.query('DELETE FROM transport_shipments WHERE id = $1 AND store_id = $2', [shipment.id, storeId]);
+  return { deleted: true, cancelled: false };
+}
+
 async function nextBltReference(db, storeId, date) {
   const year = isoDate(date).slice(0, 4);
   const result = await db.query(
@@ -548,5 +620,7 @@ module.exports = {
   listChains,
   listDayShipments,
   createShipment,
+  updateDraftShipment,
+  deleteDraftShipment,
   generateTransportDeliveryNote,
 };

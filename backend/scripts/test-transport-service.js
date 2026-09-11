@@ -2,7 +2,13 @@ const assert = require('assert');
 const transport = require('../services/transportService');
 const transportRoutes = require('../routes/transport');
 
-const { resolveCarrierSettingPatch } = transportRoutes._private;
+const {
+  resolveCarrierSettingPatch,
+  deletionDecision,
+  validateGridPayload,
+  validateChainPayload,
+  validateLogisticsServicePayload,
+} = transportRoutes._private;
 
 function approx(actual, expected, precision = 0.000001) {
   assert.ok(Math.abs(Number(actual) - Number(expected)) <= precision, `${actual} !== ${expected}`);
@@ -120,6 +126,55 @@ assert.strictEqual(feeOnlyCarrierPatch.purchase_transport_chain_id, 'chain-purch
 assert.strictEqual(feeOnlyCarrierPatch.notes, 'achat configure');
 assert.strictEqual(feeOnlyCarrierPatch.admin_fee_ht, 8);
 
+assert.deepStrictEqual(deletionDecision({ used: false }, 'deactivate'), { delete_physical: true, fallback: null });
+assert.deepStrictEqual(deletionDecision({ used: true }, 'deactivate'), { delete_physical: false, fallback: 'deactivate' });
+assert.deepStrictEqual(deletionDecision({ used: true }, 'cancel'), { delete_physical: false, fallback: 'cancel' });
+
+const validGrid = validateGridPayload({
+  carrier_id: 'carrier',
+  name: 'Grille test',
+  valid_from: '2026-09-11',
+  brackets: [{ min_weight_kg: 0, max_weight_kg: 100, pricing_mode: 'per_tonne', amount_ht: 180 }],
+});
+assert.strictEqual(validGrid.brackets.length, 1);
+assert.throws(() => validateGridPayload({
+  carrier_id: 'carrier',
+  name: 'Grille test',
+  valid_from: '2026-09-11',
+  brackets: [{ min_weight_kg: 200, max_weight_kg: 100, pricing_mode: 'per_tonne', amount_ht: 180 }],
+}), /poids maximum/);
+
+const validChain = validateChainPayload({
+  name: 'Circuit test',
+  direction: 'sale',
+  legs: [
+    { leg_order: 1, carrier_id: 'carrier', grid_id: 'grid-a' },
+    { leg_order: 2, carrier_id: 'carrier', grid_id: 'grid-b' },
+  ],
+});
+assert.strictEqual(validChain.legs.length, 2);
+assert.throws(() => validateChainPayload({
+  name: 'Circuit test',
+  legs: [
+    { leg_order: 1, carrier_id: 'carrier', grid_id: 'grid-a' },
+    { leg_order: 1, carrier_id: 'carrier', grid_id: 'grid-b' },
+  ],
+}), /doublon/);
+
+const validService = validateLogisticsServicePayload({
+  label: 'Preparation',
+  calculation_mode: 'per_tonne',
+  amount_ht: 180,
+  effective_from: '2026-09-11',
+});
+assert.strictEqual(validService.calculation_mode, 'per_tonne');
+assert.throws(() => validateLogisticsServicePayload({
+  label: 'Preparation',
+  calculation_mode: 'bad',
+  amount_ht: 180,
+  effective_from: '2026-09-11',
+}), /Mode de prestation/);
+
 function mockDbForClientEstimate({ mode = 'carrier_paid_by_us', services = [] } = {}) {
   return {
     async query(sql, params) {
@@ -140,6 +195,55 @@ function mockDbForClientEstimate({ mode = 'carrier_paid_by_us', services = [] } 
       }
       if (sql.includes('FROM client_logistics_services')) {
         return { rows: services };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
+function mockDbForDraftShipment({ withDeliveryNote = false } = {}) {
+  return {
+    updates: [],
+    async query(sql, params) {
+      if (sql.includes('FROM transport_shipments') && sql.includes('FOR UPDATE')) {
+        return {
+          rows: [{
+            id: params[0],
+            shipment_date: '2026-09-11',
+            direction: 'sale',
+            carrier_id: 'carrier',
+            chain_id: 'chain-sale',
+            total_weight_kg: 80,
+            status: withDeliveryNote ? 'blt_generated' : 'draft',
+            notes: 'draft',
+          }],
+        };
+      }
+      if (sql.includes('FROM transport_delivery_notes') && sql.includes('shipment_id')) {
+        return { rows: withDeliveryNote ? [{ id: 'blt' }] : [] };
+      }
+      if (sql.includes('FROM transport_chains')) {
+        return { rows: [{ id: 'chain-sale', name: 'Circuit', direction: 'sale', origin_label: 'A', destination_label: 'B' }] };
+      }
+      if (sql.includes('FROM transport_chain_legs')) {
+        return { rows: [{ id: 'leg', chain_id: 'chain-sale', carrier_id: 'carrier', grid_id: 'grid', grid_name: 'Grid', grid_origin_label: 'A', grid_destination_label: 'B' }] };
+      }
+      if (sql.includes('FROM transport_rate_brackets')) {
+        return { rows: [{ id: 'bracket', min_weight_kg: 0, max_weight_kg: null, pricing_mode: 'per_tonne', amount_ht: 100, display_order: 1 }] };
+      }
+      if (sql.includes('FROM transport_fuel_surcharges')) {
+        return { rows: [] };
+      }
+      if (sql.includes('FROM supplier_transport_settings')) {
+        return { rows: [{ admin_fee_ht: 2 }] };
+      }
+      if (sql.includes('UPDATE transport_shipments')) {
+        this.updates.push({ sql, params });
+        return { rows: [{ id: params[0], total_weight_kg: params[8], expected_total_ht: params[9], status: 'draft' }] };
+      }
+      if (sql.includes('DELETE FROM transport_shipments')) {
+        this.updates.push({ sql, params });
+        return { rows: [] };
       }
       return { rows: [] };
     },
@@ -173,6 +277,26 @@ function mockDbForClientEstimate({ mode = 'carrier_paid_by_us', services = [] } 
     '2026-08-15'
   );
   assert.strictEqual(inactiveHistorical.transport.legs[0].grid_id, 'grid-sale');
+
+  const draftDb = mockDbForDraftShipment();
+  const updatedShipment = await transport.updateDraftShipment(draftDb, 'store', 'shipment', {
+    shipment_date: '2026-09-12',
+    chain_id: 'chain-sale',
+    direction: 'sale',
+    total_weight_kg: 120,
+  }, { user_id: 'user' });
+  approx(updatedShipment.expected_total_ht, 14);
+  assert.strictEqual(draftDb.updates.length, 1);
+
+  const deletedDraft = await transport.deleteDraftShipment(mockDbForDraftShipment(), 'store', 'shipment', { user_id: 'user' });
+  assert.deepStrictEqual(deletedDraft, { deleted: true, cancelled: false });
+
+  const cancelledLocked = await transport.deleteDraftShipment(mockDbForDraftShipment({ withDeliveryNote: true }), 'store', 'shipment', { user_id: 'user' });
+  assert.deepStrictEqual(cancelledLocked, { deleted: false, cancelled: true });
+  await assert.rejects(
+    () => transport.updateDraftShipment(mockDbForDraftShipment({ withDeliveryNote: true }), 'store', 'shipment', { total_weight_kg: 120 }, { user_id: 'user' }),
+    /verrouille/
+  );
 
   console.log('transportService tests ok');
 })();
