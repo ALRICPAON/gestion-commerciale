@@ -1,5 +1,9 @@
 (function initPurchaseStatusUpgrade() {
   const labels = {
+    validee_a_payer: "Valide a payer",
+    payee: "Paye",
+    litige: "Litige",
+    refusee: "Refusee",
     received_pending_invoice: "Reçu - facture attendue",
     invoice_matched: "Facture rapprochée",
     invoice_difference: "Écart facture",
@@ -90,7 +94,9 @@
                   String(purchase?.supplier_name || "").toLowerCase().includes(search) ||
                   String(purchase?.bl_number || "").toLowerCase().includes(search) ||
                   String(purchase?.purchase_type || "").toLowerCase().includes(search) ||
-                  String(purchase?.status || "").toLowerCase().includes(search)
+                  String(purchase?.status || "").toLowerCase().includes(search) ||
+                  String(purchase?.supplier_invoice_display_status || purchase?.display_status || "").toLowerCase().includes(search) ||
+                  String(purchase?.supplier_invoice_display_label || "").toLowerCase().includes(search)
                 );
               } catch (error) {
                 console.error("Achat ignore pendant la recherche :", { purchase, error });
@@ -110,7 +116,7 @@
 
           purchasesTableBody.innerHTML = filtered.map((purchase) => {
             try {
-              const status = purchase?.status || "";
+              const status = purchase?.supplier_invoice_display_status || purchase?.display_status || purchase?.status || "";
               const statusBadge = typeof renderPurchaseStatusBadge === "function"
                 ? renderPurchaseStatusBadge(status)
                 : `<span class="purchase-status-badge status-${safeStatusClass(status)}">${escapeHtml(statusLabel(status))}</span>`;
