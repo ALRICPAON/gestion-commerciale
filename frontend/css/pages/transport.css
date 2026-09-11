@@ -3,7 +3,6 @@
   gap: 16px;
 }
 
-.transport-toolbar,
 .transport-panel {
   background: #fff;
   border: 1px solid #dde3ea;
@@ -11,16 +10,29 @@
   padding: 16px;
 }
 
-.transport-toolbar {
+.transport-form {
   display: grid;
-  grid-template-columns: 160px minmax(220px, 1fr) 140px 140px auto auto;
   gap: 12px;
   align-items: end;
+  margin-bottom: 12px;
 }
 
-.transport-toolbar-compact {
+.transport-form-admin {
+  grid-template-columns: minmax(220px, 1fr) 160px minmax(220px, 1fr) auto;
+}
+
+.transport-form-grid,
+.transport-form-chain,
+.transport-form-service {
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+}
+
+.transport-form-fuel {
   grid-template-columns: minmax(220px, 1fr) 120px 160px 160px auto;
-  margin-bottom: 12px;
+}
+
+.transport-form-day {
+  grid-template-columns: 160px minmax(220px, 1fr) 140px 140px auto auto;
 }
 
 .transport-field {
@@ -36,7 +48,51 @@
 
 .transport-field input,
 .transport-field select {
+  width: 100%;
   min-height: 38px;
+}
+
+.transport-field-wide {
+  grid-column: span 2;
+}
+
+.transport-check {
+  align-items: center;
+  color: #516070;
+  display: flex;
+  font-size: 13px;
+  font-weight: 600;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.transport-check input {
+  height: 16px;
+  width: 16px;
+}
+
+.transport-subheader,
+.transport-actions-row {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin: 10px 0;
+}
+
+.transport-subheader h3 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.transport-editor-table input,
+.transport-editor-table select {
+  min-width: 110px;
+  width: 100%;
+}
+
+.transport-detail-panel.hidden {
+  display: none;
 }
 
 .transport-muted {
@@ -45,7 +101,17 @@
 }
 
 @media (max-width: 900px) {
-  .transport-toolbar {
+  .transport-form,
+  .transport-form-admin,
+  .transport-form-grid,
+  .transport-form-chain,
+  .transport-form-service,
+  .transport-form-fuel,
+  .transport-form-day {
     grid-template-columns: 1fr;
+  }
+
+  .transport-field-wide {
+    grid-column: auto;
   }
 }

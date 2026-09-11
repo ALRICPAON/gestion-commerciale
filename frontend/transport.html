@@ -11,7 +11,7 @@
   <header class="topbar">
     <div class="topbar-left">
       <h1 class="app-title">ALTA MAREE</h1>
-      <p class="app-subtitle">Transport / Journee transport</p>
+      <p class="app-subtitle">Transport / Configuration et journee transport</p>
     </div>
     <div class="topbar-right">
       <div class="user-box"><span id="user-name">Utilisateur</span></div>
@@ -21,28 +21,154 @@
   </header>
 
   <main class="main-content transport-layout">
-    <section class="transport-toolbar">
-      <div class="transport-field">
-        <label for="transport-date">Date</label>
-        <input id="transport-date" type="date" />
+    <div id="page-feedback" class="page-feedback hidden"></div>
+
+    <section class="transport-panel">
+      <div class="page-actions">
+        <div>
+          <h2>Transporteurs</h2>
+          <p>Frais administratifs par transporteur, repris par le calcul serveur.</p>
+        </div>
       </div>
-      <div class="transport-field">
-        <label for="transport-chain">Circuit</label>
-        <select id="transport-chain"><option value="">Choisir un circuit</option></select>
+      <div class="transport-form transport-form-admin">
+        <div class="transport-field"><label for="carrier-setting-carrier">Transporteur</label><select id="carrier-setting-carrier"><option value="">Choisir</option></select></div>
+        <div class="transport-field"><label for="carrier-setting-admin-fee">Frais admin HT</label><input id="carrier-setting-admin-fee" type="number" min="0" step="0.01" /></div>
+        <div class="transport-field"><label for="carrier-setting-notes">Notes</label><input id="carrier-setting-notes" type="text" /></div>
+        <button id="save-carrier-setting-btn" class="btn btn-primary" type="button">Enregistrer</button>
       </div>
-      <div class="transport-field">
-        <label for="transport-direction">Sens</label>
-        <select id="transport-direction"><option value="sale">Vente</option><option value="purchase">Achat</option></select>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Transporteur</th><th>Code</th><th>Frais admin HT</th><th>Mode achat</th><th>Notes</th></tr></thead>
+          <tbody id="carrier-settings-body"><tr><td colspan="5">Chargement...</td></tr></tbody>
+        </table>
       </div>
-      <div class="transport-field">
-        <label for="transport-weight">Poids kg</label>
-        <input id="transport-weight" type="number" min="0" step="0.001" />
-      </div>
-      <button id="create-shipment-btn" class="btn btn-primary" type="button">Creer envoi</button>
-      <button id="refresh-shipments-btn" class="btn btn-secondary" type="button">Actualiser</button>
     </section>
 
-    <div id="page-feedback" class="page-feedback hidden"></div>
+    <section class="transport-panel">
+      <div class="page-actions">
+        <div>
+          <h2>Grilles tarifaires</h2>
+          <p>Versions par transporteur, periode et tranches de poids.</p>
+        </div>
+      </div>
+      <div class="transport-form transport-form-grid">
+        <div class="transport-field"><label for="grid-carrier">Transporteur</label><select id="grid-carrier"><option value="">Choisir</option></select></div>
+        <div class="transport-field"><label for="grid-code">Code</label><input id="grid-code" type="text" /></div>
+        <div class="transport-field"><label for="grid-name">Nom</label><input id="grid-name" type="text" /></div>
+        <div class="transport-field"><label for="grid-origin">Depart</label><input id="grid-origin" type="text" /></div>
+        <div class="transport-field"><label for="grid-destination">Destination</label><input id="grid-destination" type="text" /></div>
+        <div class="transport-field"><label for="grid-from">Debut</label><input id="grid-from" type="date" /></div>
+        <div class="transport-field"><label for="grid-to">Fin</label><input id="grid-to" type="date" /></div>
+        <label class="transport-check"><input id="grid-active" type="checkbox" checked /> Actif</label>
+        <div class="transport-field transport-field-wide"><label for="grid-notes">Notes</label><input id="grid-notes" type="text" /></div>
+      </div>
+      <div class="transport-subheader">
+        <h3>Tranches</h3>
+        <button id="add-bracket-btn" class="btn btn-secondary btn-sm" type="button">Ajouter tranche</button>
+      </div>
+      <div class="table-wrap transport-editor-table">
+        <table class="data-table">
+          <thead><tr><th>Min kg</th><th>Max kg</th><th>Mode</th><th>Montant HT</th><th></th></tr></thead>
+          <tbody id="grid-brackets-body"></tbody>
+        </table>
+      </div>
+      <div class="transport-actions-row">
+        <button id="save-grid-btn" class="btn btn-primary" type="button">Creer grille</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Transporteur</th><th>Grille</th><th>Trajet</th><th>Validite</th><th>Tranches</th><th>Statut</th><th>Actions</th></tr></thead>
+          <tbody id="grids-body"><tr><td colspan="7">Chargement...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="transport-panel">
+      <div class="page-actions">
+        <div>
+          <h2>Circuits transport</h2>
+          <p>Enchainement d'etapes associees aux grilles existantes.</p>
+        </div>
+      </div>
+      <div class="transport-form transport-form-chain">
+        <div class="transport-field"><label for="chain-code">Code</label><input id="chain-code" type="text" /></div>
+        <div class="transport-field"><label for="chain-name">Nom</label><input id="chain-name" type="text" /></div>
+        <div class="transport-field"><label for="chain-direction">Sens</label><select id="chain-direction"><option value="sale">Vente</option><option value="purchase">Achat</option><option value="both">Mixte</option></select></div>
+        <div class="transport-field"><label for="chain-origin">Depart</label><input id="chain-origin" type="text" /></div>
+        <div class="transport-field"><label for="chain-destination">Destination</label><input id="chain-destination" type="text" /></div>
+        <label class="transport-check"><input id="chain-active" type="checkbox" checked /> Actif</label>
+        <div class="transport-field transport-field-wide"><label for="chain-notes">Notes</label><input id="chain-notes" type="text" /></div>
+      </div>
+      <div class="transport-subheader">
+        <h3>Etapes</h3>
+        <button id="add-leg-btn" class="btn btn-secondary btn-sm" type="button">Ajouter etape</button>
+      </div>
+      <div class="table-wrap transport-editor-table">
+        <table class="data-table">
+          <thead><tr><th>Ordre</th><th>Transporteur</th><th>Grille</th><th>Depart</th><th>Destination</th><th>Frais admin</th><th></th></tr></thead>
+          <tbody id="chain-legs-body"></tbody>
+        </table>
+      </div>
+      <div class="transport-actions-row">
+        <button id="save-chain-btn" class="btn btn-primary" type="button">Creer circuit</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Circuit</th><th>Sens</th><th>Trajet</th><th>Etapes</th><th>Statut</th><th>Actions</th></tr></thead>
+          <tbody id="chains-body"><tr><td colspan="6">Chargement...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="transport-panel">
+      <div class="page-actions">
+        <div>
+          <h2>Prestations logistiques</h2>
+          <p>Prestations applicables aux clients, calculees par le backend.</p>
+        </div>
+      </div>
+      <div class="transport-form transport-form-service">
+        <div class="transport-field"><label for="service-carrier">Transporteur</label><select id="service-carrier"><option value="">Sans transporteur</option></select></div>
+        <div class="transport-field"><label for="service-label">Libelle</label><input id="service-label" type="text" /></div>
+        <div class="transport-field"><label for="service-mode">Mode</label><select id="service-mode"><option value="per_tonne">EUR/tonne</option><option value="per_kg">EUR/kg</option><option value="fixed">Forfait</option></select></div>
+        <div class="transport-field"><label for="service-amount">Montant HT</label><input id="service-amount" type="number" min="0" step="0.0001" /></div>
+        <div class="transport-field"><label for="service-from">Debut</label><input id="service-from" type="date" /></div>
+        <div class="transport-field"><label for="service-to">Fin</label><input id="service-to" type="date" /></div>
+        <label class="transport-check"><input id="service-active" type="checkbox" checked /> Actif</label>
+        <div class="transport-field transport-field-wide"><label for="service-notes">Notes</label><input id="service-notes" type="text" /></div>
+      </div>
+      <div class="transport-actions-row">
+        <button id="save-service-btn" class="btn btn-primary" type="button">Creer prestation</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Libelle</th><th>Transporteur</th><th>Mode</th><th>Montant HT</th><th>Validite</th><th>Statut</th></tr></thead>
+          <tbody id="services-body"><tr><td colspan="6">Chargement...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="transport-panel">
+      <div class="page-actions">
+        <div>
+          <h2>Majoration carburant</h2>
+          <p>Historique par transporteur et date d'effet.</p>
+        </div>
+      </div>
+      <div class="transport-form transport-form-fuel">
+        <div class="transport-field"><label for="fuel-carrier">Transporteur</label><select id="fuel-carrier"><option value="">Choisir</option></select></div>
+        <div class="transport-field"><label for="fuel-percent">Taux %</label><input id="fuel-percent" type="number" min="0" step="0.01" /></div>
+        <div class="transport-field"><label for="fuel-from">Date d'effet</label><input id="fuel-from" type="date" /></div>
+        <div class="transport-field"><label for="fuel-to">Fin facultative</label><input id="fuel-to" type="date" /></div>
+        <button id="create-fuel-btn" class="btn btn-secondary" type="button">Ajouter taux</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Transporteur</th><th>Taux</th><th>Debut</th><th>Fin</th><th>Notes</th></tr></thead>
+          <tbody id="fuel-body"><tr><td colspan="5">Chargement...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="transport-panel">
       <div class="page-actions">
@@ -51,6 +177,14 @@
           <p>Regroupements explicites, calcul reel par poids total et generation BL transport.</p>
         </div>
       </div>
+      <section class="transport-form transport-form-day">
+        <div class="transport-field"><label for="transport-date">Date</label><input id="transport-date" type="date" /></div>
+        <div class="transport-field"><label for="transport-chain">Circuit</label><select id="transport-chain"><option value="">Choisir un circuit</option></select></div>
+        <div class="transport-field"><label for="transport-direction">Sens</label><select id="transport-direction"><option value="sale">Vente</option><option value="purchase">Achat</option></select></div>
+        <div class="transport-field"><label for="transport-weight">Poids kg</label><input id="transport-weight" type="number" min="0" step="0.001" /></div>
+        <button id="create-shipment-btn" class="btn btn-primary" type="button">Creer envoi</button>
+        <button id="refresh-shipments-btn" class="btn btn-secondary" type="button">Actualiser</button>
+      </section>
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -72,27 +206,7 @@
       </div>
     </section>
 
-    <section class="transport-panel">
-      <div class="page-actions">
-        <div>
-          <h2>Majoration carburant</h2>
-          <p>Historique par transporteur et date d'effet.</p>
-        </div>
-      </div>
-      <div class="transport-toolbar transport-toolbar-compact">
-        <div class="transport-field"><label for="fuel-carrier">Transporteur</label><select id="fuel-carrier"><option value="">Choisir</option></select></div>
-        <div class="transport-field"><label for="fuel-percent">Taux %</label><input id="fuel-percent" type="number" min="0" step="0.01" /></div>
-        <div class="transport-field"><label for="fuel-from">Date d'effet</label><input id="fuel-from" type="date" /></div>
-        <div class="transport-field"><label for="fuel-to">Fin facultative</label><input id="fuel-to" type="date" /></div>
-        <button id="create-fuel-btn" class="btn btn-secondary" type="button">Ajouter taux</button>
-      </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Transporteur</th><th>Taux</th><th>Debut</th><th>Fin</th><th>Notes</th></tr></thead>
-          <tbody id="fuel-body"><tr><td colspan="5">Chargement...</td></tr></tbody>
-        </table>
-      </div>
-    </section>
+    <section id="transport-detail-panel" class="transport-panel transport-detail-panel hidden"></section>
   </main>
 
   <script src="./js/config.js"></script>
