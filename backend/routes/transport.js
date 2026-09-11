@@ -34,9 +34,13 @@ function assertNonNegative(value, label, fallback = 0) {
 function validatePeriod(start, end, startLabel = 'Date de debut') {
   if (!clean(start)) throw badRequest(`${startLabel} obligatoire`);
   const from = transport.isoDate(start);
-  const to = clean(end);
-  if (to && transport.isoDate(to) < from) throw badRequest('La date de fin doit etre posterieure au debut');
+  const to = dateOrNull(end);
+  if (to && to < from) throw badRequest('La date de fin doit etre posterieure au debut');
   return { from, to };
+}
+
+function dateOrNull(value) {
+  return clean(value) ? transport.isoDate(value) : null;
 }
 
 function validateGridPayload(body = {}) {
@@ -141,6 +145,78 @@ async function assertGridForCarrier(db, storeId, gridId, carrierId) {
     [gridId, storeId, carrierId]
   );
   if (!result.rows[0]) throw Object.assign(new Error('Grille transport introuvable pour ce transporteur'), { status: 404 });
+}
+
+function allKeysAllowed(body = {}, allowed = []) {
+  const allowedSet = new Set(allowed);
+  return Object.keys(body || {}).every((key) => allowedSet.has(key));
+}
+
+function deletionDecision(usage = {}, fallback = 'deactivate') {
+  return usage.used ? { delete_physical: false, fallback } : { delete_physical: true, fallback: null };
+}
+
+async function getById(db, table, storeId, id, label) {
+  const result = await db.query(`SELECT * FROM ${table} WHERE id = $1 AND store_id = $2 LIMIT 1`, [id, storeId]);
+  if (!result.rows[0]) throw Object.assign(new Error(`${label} introuvable`), { status: 404 });
+  return result.rows[0];
+}
+
+async function gridUsage(db, storeId, gridId) {
+  const legs = await db.query('SELECT COUNT(*)::int AS count FROM transport_chain_legs WHERE store_id = $1 AND grid_id = $2', [storeId, gridId]);
+  const snapshots = await db.query(
+    `SELECT COUNT(*)::int AS count
+     FROM transport_delivery_notes
+     WHERE store_id = $1 AND calculation_snapshot::text LIKE $2`,
+    [storeId, `%${gridId}%`]
+  );
+  return { chain_legs: legs.rows[0].count, snapshots: snapshots.rows[0].count, used: legs.rows[0].count > 0 || snapshots.rows[0].count > 0 };
+}
+
+async function chainUsage(db, storeId, chainId) {
+  const supplierSettings = await db.query('SELECT COUNT(*)::int AS count FROM supplier_transport_settings WHERE store_id = $1 AND purchase_transport_chain_id = $2', [storeId, chainId]);
+  const clientSettings = await db.query('SELECT COUNT(*)::int AS count FROM clients WHERE store_id = $1 AND sale_transport_chain_id = $2', [storeId, chainId]);
+  const shipments = await db.query('SELECT COUNT(*)::int AS count FROM transport_shipments WHERE store_id = $1 AND chain_id = $2', [storeId, chainId]);
+  const deliveryNotes = await db.query('SELECT COUNT(*)::int AS count FROM transport_delivery_notes WHERE store_id = $1 AND calculation_snapshot::text LIKE $2', [storeId, `%${chainId}%`]);
+  return {
+    supplier_settings: supplierSettings.rows[0].count,
+    client_settings: clientSettings.rows[0].count,
+    shipments: shipments.rows[0].count,
+    delivery_notes: deliveryNotes.rows[0].count,
+    used: supplierSettings.rows[0].count > 0 || clientSettings.rows[0].count > 0 || shipments.rows[0].count > 0 || deliveryNotes.rows[0].count > 0,
+  };
+}
+
+async function logisticsServiceUsage(db, storeId, serviceId) {
+  const assignments = await db.query('SELECT COUNT(*)::int AS count FROM client_logistics_services WHERE store_id = $1 AND logistics_service_id = $2', [storeId, serviceId]);
+  const snapshots = await db.query(
+    `SELECT COUNT(*)::int AS count
+     FROM transport_delivery_notes
+     WHERE store_id = $1 AND calculation_snapshot::text LIKE $2`,
+    [storeId, `%${serviceId}%`]
+  );
+  return { assignments: assignments.rows[0].count, snapshots: snapshots.rows[0].count, used: assignments.rows[0].count > 0 || snapshots.rows[0].count > 0 };
+}
+
+async function fuelSurchargeUsage(db, storeId, rate) {
+  const result = await db.query(
+    `SELECT COUNT(*)::int AS count
+     FROM transport_delivery_notes
+     WHERE store_id = $1
+       AND carrier_id = $2
+       AND document_date >= $3::date
+       AND ($4::date IS NULL OR document_date <= $4::date)`,
+    [storeId, rate.carrier_id, rate.effective_from, rate.effective_to]
+  );
+  return { delivery_notes: result.rows[0].count, used: result.rows[0].count > 0 };
+}
+
+async function shipmentUsage(db, storeId, shipmentId) {
+  const result = await db.query(
+    'SELECT COUNT(*)::int AS count FROM transport_delivery_notes WHERE store_id = $1 AND shipment_id = $2',
+    [storeId, shipmentId]
+  );
+  return { delivery_notes: result.rows[0].count, used: result.rows[0].count > 0 };
 }
 
 router.use(authenticateToken, attachDbContext);
@@ -311,6 +387,55 @@ router.post('/fuel-surcharges', requireAdminOrManager, async (req, res) => {
   }
 });
 
+router.patch('/fuel-surcharges/:id', requireAdminOrManager, async (req, res) => {
+  try {
+    const rate = await getById(req.dbPool, 'transport_fuel_surcharges', req.user.store_id, req.params.id, 'Taux carburant');
+    const usage = await fuelSurchargeUsage(req.dbPool, req.user.store_id, rate);
+    if (usage.used && !allKeysAllowed(req.body, ['effective_to', 'notes'])) {
+      throw Object.assign(new Error('Taux carburant deja utilise : seule la cloture ou les notes sont autorisees'), { status: 409 });
+    }
+    const carrierId = hasOwn(req.body, 'carrier_id') ? clean(req.body.carrier_id) : rate.carrier_id;
+    const effectiveFrom = hasOwn(req.body, 'effective_from') ? transport.isoDate(req.body.effective_from) : transport.isoDate(rate.effective_from);
+    const effectiveTo = hasOwn(req.body, 'effective_to') ? dateOrNull(req.body.effective_to) : dateOrNull(rate.effective_to);
+    if (effectiveTo && transport.isoDate(effectiveTo) < effectiveFrom) throw badRequest('La date de fin doit etre posterieure au debut');
+    if (!usage.used && carrierId) await assertCarrier(req.dbPool, req.user.store_id, carrierId);
+    const result = await req.dbPool.query(
+      `UPDATE transport_fuel_surcharges
+       SET carrier_id = $3, effective_from = $4::date, effective_to = $5::date,
+           surcharge_percent = $6, notes = $7, updated_by = $8, updated_at = now()
+       WHERE id = $1 AND store_id = $2
+       RETURNING *`,
+      [
+        rate.id,
+        req.user.store_id,
+        carrierId,
+        effectiveFrom,
+        effectiveTo,
+        hasOwn(req.body, 'surcharge_percent') ? assertNonNegative(req.body.surcharge_percent, 'Taux carburant', 0) : rate.surcharge_percent,
+        hasOwn(req.body, 'notes') ? clean(req.body.notes) : clean(rate.notes),
+        req.user.id,
+      ]
+    );
+    res.json({ result: result.rows[0], usage });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur modification taux carburant' });
+  }
+});
+
+router.delete('/fuel-surcharges/:id', requireAdminOrManager, async (req, res) => {
+  try {
+    const rate = await getById(req.dbPool, 'transport_fuel_surcharges', req.user.store_id, req.params.id, 'Taux carburant');
+    const usage = await fuelSurchargeUsage(req.dbPool, req.user.store_id, rate);
+    if (usage.used) {
+      throw Object.assign(new Error('Taux carburant deja utilise : suppression interdite, cloturez la periode'), { status: 409, details: usage });
+    }
+    await req.dbPool.query('DELETE FROM transport_fuel_surcharges WHERE id = $1 AND store_id = $2', [rate.id, req.user.store_id]);
+    res.json({ ok: true, deleted: true, usage });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur suppression taux carburant', details: error.details });
+  }
+});
+
 router.post('/grids', requireAdminOrManager, async (req, res) => {
   const db = await req.dbPool.connect();
   try {
@@ -346,6 +471,122 @@ router.post('/grids', requireAdminOrManager, async (req, res) => {
   } catch (error) {
     await db.query('ROLLBACK').catch(() => {});
     res.status(error.status || 500).json({ error: error.message || 'Erreur creation grille transport' });
+  } finally {
+    db.release();
+  }
+});
+
+router.patch('/grids/:id', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const grid = await getById(db, 'transport_rate_grids', req.user.store_id, req.params.id, 'Grille transport');
+    const usage = await gridUsage(db, req.user.store_id, grid.id);
+    const body = req.body || {};
+    if (usage.used && !allKeysAllowed(body, ['valid_to', 'is_active', 'notes'])) {
+      throw Object.assign(new Error('Grille deja utilisee : modification retroactive interdite, creez une nouvelle version'), { status: 409, details: usage });
+    }
+    if (usage.used) {
+      const result = await db.query(
+        `UPDATE transport_rate_grids
+         SET valid_to = $3::date, is_active = COALESCE($4::boolean, is_active),
+             notes = COALESCE($5, notes), updated_by = $6, updated_at = now()
+         WHERE id = $1 AND store_id = $2
+         RETURNING *`,
+        [
+          grid.id,
+          req.user.store_id,
+          hasOwn(body, 'valid_to') ? dateOrNull(body.valid_to) : dateOrNull(grid.valid_to),
+          hasOwn(body, 'is_active') ? body.is_active !== false : grid.is_active,
+          hasOwn(body, 'notes') ? clean(body.notes) : clean(grid.notes),
+          req.user.id,
+        ]
+      );
+      await db.query('COMMIT');
+      return res.json({ result: result.rows[0], usage, archived: result.rows[0].is_active === false });
+    }
+    const existingBrackets = Array.isArray(body.brackets) ? body.brackets : (await db.query(
+      `SELECT min_weight_kg, max_weight_kg, pricing_mode, amount_ht, display_order
+       FROM transport_rate_brackets
+       WHERE store_id = $1 AND grid_id = $2
+       ORDER BY display_order ASC, min_weight_kg ASC`,
+      [req.user.store_id, grid.id]
+    )).rows;
+    const validation = validateGridPayload({
+      ...grid,
+      ...body,
+      valid_from: hasOwn(body, 'valid_from') ? body.valid_from : grid.valid_from,
+      valid_to: hasOwn(body, 'valid_to') ? body.valid_to : grid.valid_to,
+      brackets: existingBrackets,
+    });
+    await assertCarrier(db, req.user.store_id, clean(body.carrier_id) || grid.carrier_id);
+    const result = await db.query(
+      `UPDATE transport_rate_grids
+       SET carrier_id = $3, code = $4, name = $5, origin_label = $6,
+           destination_label = $7, valid_from = $8::date, valid_to = $9::date,
+           is_active = $10, notes = $11, updated_by = $12, updated_at = now()
+       WHERE id = $1 AND store_id = $2
+       RETURNING *`,
+      [
+        grid.id,
+        req.user.store_id,
+        clean(body.carrier_id) || grid.carrier_id,
+        hasOwn(body, 'code') ? clean(body.code) : clean(grid.code),
+        hasOwn(body, 'name') ? clean(body.name) : clean(grid.name),
+        hasOwn(body, 'origin_label') ? clean(body.origin_label) : clean(grid.origin_label),
+        hasOwn(body, 'destination_label') ? clean(body.destination_label) : clean(grid.destination_label),
+        validation.period.from,
+        validation.period.to,
+        hasOwn(body, 'is_active') ? body.is_active !== false : grid.is_active,
+        hasOwn(body, 'notes') ? clean(body.notes) : clean(grid.notes),
+        req.user.id,
+      ]
+    );
+    if (Array.isArray(body.brackets)) {
+      await db.query('DELETE FROM transport_rate_brackets WHERE store_id = $1 AND grid_id = $2', [req.user.store_id, grid.id]);
+      for (const bracket of validation.brackets) {
+        await db.query(
+          `INSERT INTO transport_rate_brackets (
+            store_id, grid_id, min_weight_kg, max_weight_kg, pricing_mode, amount_ht, display_order
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [req.user.store_id, grid.id, bracket.min_weight_kg, bracket.max_weight_kg, bracket.pricing_mode, bracket.amount_ht, bracket.display_order]
+        );
+      }
+    }
+    await db.query('COMMIT');
+    res.json({ result: result.rows[0], usage });
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    res.status(error.status || 500).json({ error: error.message || 'Erreur modification grille transport', details: error.details });
+  } finally {
+    db.release();
+  }
+});
+
+router.delete('/grids/:id', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const grid = await getById(db, 'transport_rate_grids', req.user.store_id, req.params.id, 'Grille transport');
+    const usage = await gridUsage(db, req.user.store_id, grid.id);
+    if (usage.used) {
+      const result = await db.query(
+        `UPDATE transport_rate_grids
+         SET is_active = false, valid_to = COALESCE(valid_to, CURRENT_DATE),
+             updated_by = $3, updated_at = now()
+         WHERE id = $1 AND store_id = $2
+         RETURNING *`,
+        [grid.id, req.user.store_id, req.user.id]
+      );
+      await db.query('COMMIT');
+      return res.json({ ok: true, deleted: false, deactivated: true, result: result.rows[0], usage });
+    }
+    await db.query('DELETE FROM transport_rate_grids WHERE id = $1 AND store_id = $2', [grid.id, req.user.store_id]);
+    await db.query('COMMIT');
+    res.json({ ok: true, deleted: true, usage });
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    res.status(error.status || 500).json({ error: error.message || 'Erreur suppression grille transport', details: error.details });
   } finally {
     db.release();
   }
@@ -401,6 +642,93 @@ router.post('/chains', requireAdminOrManager, async (req, res) => {
   }
 });
 
+router.patch('/chains/:id', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const chain = await getById(db, 'transport_chains', req.user.store_id, req.params.id, 'Circuit transport');
+    const body = req.body || {};
+    const validation = Array.isArray(body.legs) ? validateChainPayload({ ...chain, ...body }) : null;
+    if (validation) {
+      for (const leg of validation.legs) {
+        await assertCarrier(db, req.user.store_id, leg.carrier_id);
+        await assertGridForCarrier(db, req.user.store_id, leg.grid_id, leg.carrier_id);
+      }
+    }
+    const direction = hasOwn(body, 'direction') ? clean(body.direction) || 'sale' : chain.direction;
+    if (!['purchase', 'sale', 'both'].includes(direction)) throw badRequest('Sens du circuit invalide');
+    const result = await db.query(
+      `UPDATE transport_chains
+       SET code = $3, name = $4, direction = $5, origin_label = $6,
+           destination_label = $7, is_active = $8, notes = $9,
+           updated_by = $10, updated_at = now()
+       WHERE id = $1 AND store_id = $2
+       RETURNING *`,
+      [
+        chain.id,
+        req.user.store_id,
+        hasOwn(body, 'code') ? clean(body.code) : clean(chain.code),
+        hasOwn(body, 'name') ? clean(body.name) : chain.name,
+        direction,
+        hasOwn(body, 'origin_label') ? clean(body.origin_label) : clean(chain.origin_label),
+        hasOwn(body, 'destination_label') ? clean(body.destination_label) : clean(chain.destination_label),
+        hasOwn(body, 'is_active') ? body.is_active !== false : chain.is_active,
+        hasOwn(body, 'notes') ? clean(body.notes) : clean(chain.notes),
+        req.user.id,
+      ]
+    );
+    if (validation) {
+      await db.query('DELETE FROM transport_chain_legs WHERE store_id = $1 AND chain_id = $2', [req.user.store_id, chain.id]);
+      for (const leg of validation.legs) {
+        await db.query(
+          `INSERT INTO transport_chain_legs (
+            store_id, chain_id, leg_order, carrier_id, grid_id, origin_label, destination_label, specific_admin_fee_ht
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [
+            req.user.store_id, chain.id, leg.leg_order, leg.carrier_id, leg.grid_id,
+            leg.origin_label, leg.destination_label, leg.specific_admin_fee_ht,
+          ]
+        );
+      }
+    }
+    await db.query('COMMIT');
+    res.json({ result: result.rows[0], usage: await chainUsage(req.dbPool, req.user.store_id, chain.id) });
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    res.status(error.status || 500).json({ error: error.message || 'Erreur modification circuit transport', details: error.details });
+  } finally {
+    db.release();
+  }
+});
+
+router.delete('/chains/:id', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const chain = await getById(db, 'transport_chains', req.user.store_id, req.params.id, 'Circuit transport');
+    const usage = await chainUsage(db, req.user.store_id, chain.id);
+    if (usage.used) {
+      const result = await db.query(
+        `UPDATE transport_chains
+         SET is_active = false, updated_by = $3, updated_at = now()
+         WHERE id = $1 AND store_id = $2
+         RETURNING *`,
+        [chain.id, req.user.store_id, req.user.id]
+      );
+      await db.query('COMMIT');
+      return res.json({ ok: true, deleted: false, deactivated: true, result: result.rows[0], usage });
+    }
+    await db.query('DELETE FROM transport_chains WHERE id = $1 AND store_id = $2', [chain.id, req.user.store_id]);
+    await db.query('COMMIT');
+    res.json({ ok: true, deleted: true, usage });
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    res.status(error.status || 500).json({ error: error.message || 'Erreur suppression circuit transport', details: error.details });
+  } finally {
+    db.release();
+  }
+});
+
 router.get('/logistics-services', async (req, res) => {
   try {
     const result = await req.dbPool.query(
@@ -438,6 +766,70 @@ router.post('/logistics-services', requireAdminOrManager, async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message || 'Erreur creation prestation logistique' });
+  }
+});
+
+router.patch('/logistics-services/:id', requireAdminOrManager, async (req, res) => {
+  try {
+    const service = await getById(req.dbPool, 'logistics_services', req.user.store_id, req.params.id, 'Prestation logistique');
+    const body = req.body || {};
+    const merged = {
+      ...service,
+      ...body,
+      label: hasOwn(body, 'label') ? body.label : service.label,
+      calculation_mode: hasOwn(body, 'calculation_mode') ? body.calculation_mode : service.calculation_mode,
+      amount_ht: hasOwn(body, 'amount_ht') ? body.amount_ht : service.amount_ht,
+      effective_from: hasOwn(body, 'effective_from') ? body.effective_from : service.effective_from,
+      effective_to: hasOwn(body, 'effective_to') ? body.effective_to : service.effective_to,
+    };
+    const validation = validateLogisticsServicePayload(merged);
+    if (hasOwn(body, 'carrier_id') && clean(body.carrier_id)) await assertCarrier(req.dbPool, req.user.store_id, clean(body.carrier_id));
+    const result = await req.dbPool.query(
+      `UPDATE logistics_services
+       SET carrier_id = $3, label = $4, calculation_mode = $5, amount_ht = $6,
+           effective_from = $7::date, effective_to = $8::date, is_active = $9,
+           notes = $10, updated_by = $11, updated_at = now()
+       WHERE id = $1 AND store_id = $2
+       RETURNING *`,
+      [
+        service.id,
+        req.user.store_id,
+        hasOwn(body, 'carrier_id') ? clean(body.carrier_id) : clean(service.carrier_id),
+        clean(merged.label),
+        validation.calculation_mode,
+        validation.amount_ht,
+        validation.period.from,
+        validation.period.to,
+        hasOwn(body, 'is_active') ? body.is_active !== false : service.is_active,
+        hasOwn(body, 'notes') ? clean(body.notes) : clean(service.notes),
+        req.user.id,
+      ]
+    );
+    res.json({ result: result.rows[0], usage: await logisticsServiceUsage(req.dbPool, req.user.store_id, service.id) });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur modification prestation logistique' });
+  }
+});
+
+router.delete('/logistics-services/:id', requireAdminOrManager, async (req, res) => {
+  try {
+    const service = await getById(req.dbPool, 'logistics_services', req.user.store_id, req.params.id, 'Prestation logistique');
+    const usage = await logisticsServiceUsage(req.dbPool, req.user.store_id, service.id);
+    if (usage.used) {
+      const result = await req.dbPool.query(
+        `UPDATE logistics_services
+         SET is_active = false, effective_to = COALESCE(effective_to, CURRENT_DATE),
+             updated_by = $3, updated_at = now()
+         WHERE id = $1 AND store_id = $2
+         RETURNING *`,
+        [service.id, req.user.store_id, req.user.id]
+      );
+      return res.json({ ok: true, deleted: false, deactivated: true, result: result.rows[0], usage });
+    }
+    await req.dbPool.query('DELETE FROM logistics_services WHERE id = $1 AND store_id = $2', [service.id, req.user.store_id]);
+    res.json({ ok: true, deleted: true, usage });
+  } catch (error) {
+    res.status(error.status || 500).json({ error: error.message || 'Erreur suppression prestation logistique', details: error.details });
   }
 });
 
@@ -500,6 +892,36 @@ router.post('/shipments', requireAdminOrManager, async (req, res) => {
   }
 });
 
+router.patch('/shipments/:id', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const shipment = await transport.updateDraftShipment(db, req.user.store_id, req.params.id, req.body, context(req));
+    await db.query('COMMIT');
+    res.json(shipment);
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    res.status(error.status || 500).json({ error: error.message || 'Erreur modification envoi transport' });
+  } finally {
+    db.release();
+  }
+});
+
+router.delete('/shipments/:id', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const result = await transport.deleteDraftShipment(db, req.user.store_id, req.params.id, context(req));
+    await db.query('COMMIT');
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    res.status(error.status || 500).json({ error: error.message || 'Erreur suppression envoi transport' });
+  } finally {
+    db.release();
+  }
+});
+
 router.post('/shipments/:id/generate-blt', requireAdminOrManager, async (req, res) => {
   try {
     const result = await transport.generateTransportDeliveryNote(
@@ -529,6 +951,12 @@ router.post('/pricing/:sessionId/apply-purchase-estimates', requireAdminOrManage
   }
 });
 
-router._private = { resolveCarrierSettingPatch };
+router._private = {
+  resolveCarrierSettingPatch,
+  deletionDecision,
+  validateGridPayload,
+  validateChainPayload,
+  validateLogisticsServicePayload,
+};
 
 module.exports = router;
