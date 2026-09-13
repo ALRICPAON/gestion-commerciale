@@ -364,6 +364,45 @@
   gap: 12px;
 }
 
+.quality-master-detail,
+.quality-master-section {
+  display: grid;
+  gap: 12px;
+}
+
+.quality-definition-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  margin: 0;
+}
+
+.quality-definition-grid div {
+  background: #f8fbfd;
+  border: 1px solid var(--alta-border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.quality-definition-grid dt {
+  color: var(--alta-muted);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.quality-definition-grid dd {
+  color: var(--alta-navy);
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.quality-reference-card {
+  box-shadow: none;
+}
+
 .quality-doc-editor-toolbar {
   align-items: center;
   display: flex;

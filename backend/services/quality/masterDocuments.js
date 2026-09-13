@@ -55,6 +55,8 @@ const ATTACHMENT_SOURCES = Object.freeze({
   },
 });
 
+const NULL_UUID = '00000000-0000-0000-0000-000000000000';
+
 function cleanText(value, fallback = null) {
   if (value === undefined || value === null) return fallback;
   const text = String(value).trim();
@@ -253,14 +255,39 @@ function typedLabel(targetType) {
     ddpp_view: 'Vue DDPP',
     procedure: 'Procedure',
     supply_material: 'Fourniture ou materiel',
+    master_document: 'Document maitre',
+    record_form: 'ENR / formulaire',
   }[targetType] || targetType || 'Reference';
 }
 
 const TARGET_LABEL_QUERIES = Object.freeze({
   documentation_section: {
     sql: `SELECT id, code, title FROM quality_documentation_sections WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    searchSql: `SELECT id, code, title, status
+                FROM quality_documentation_sections
+                WHERE store_id = $1::uuid
+                  AND archived_at IS NULL
+                  AND ($2::text IS NULL OR code ILIKE $2::text OR title ILIKE $2::text)
+                ORDER BY code ASC, title ASC
+                LIMIT $3::int`,
     label: (row) => [row.code, row.title].filter(Boolean).join(' - '),
     url: (row) => `documentation.html?sectionId=${encodeURIComponent(row.id)}`,
+  },
+  document_block: {
+    sql: `SELECT b.id, b.title, b.block_type, b.chapter_id, s.code AS section_code, s.title AS section_title
+          FROM quality_document_blocks b
+          LEFT JOIN quality_documentation_sections s ON s.id = b.chapter_id AND s.store_id = b.store_id
+          WHERE b.id = $1::uuid AND b.store_id = $2::uuid LIMIT 1`,
+    searchSql: `SELECT b.id, b.title, b.block_type, b.chapter_id, s.code AS section_code, s.title AS section_title
+                FROM quality_document_blocks b
+                LEFT JOIN quality_documentation_sections s ON s.id = b.chapter_id AND s.store_id = b.store_id
+                WHERE b.store_id = $1::uuid
+                  AND b.is_visible = true
+                  AND ($2::text IS NULL OR b.title ILIKE $2::text OR b.block_type ILIKE $2::text OR s.code ILIKE $2::text OR s.title ILIKE $2::text)
+                ORDER BY s.code ASC, b.position ASC
+                LIMIT $3::int`,
+    label: (row) => [row.section_code, row.title || row.block_type].filter(Boolean).join(' - '),
+    url: (row) => `documentation.html?sectionId=${encodeURIComponent(row.chapter_id || '')}`,
   },
   temperature_parameter: {
     sql: `SELECT l.id, l.type_code, z.code AS zone_code, e.code AS equipment_code
@@ -268,28 +295,98 @@ const TARGET_LABEL_QUERIES = Object.freeze({
           LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
           LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
           WHERE l.id = $1::uuid AND l.store_id = $2::uuid LIMIT 1`,
+    searchSql: `SELECT l.id, l.type_code, z.code AS zone_code, e.code AS equipment_code
+                FROM quality_temperature_limits l
+                LEFT JOIN quality_zones z ON z.id = l.zone_id AND z.store_id = l.store_id
+                LEFT JOIN quality_equipments e ON e.id = l.equipment_id AND e.store_id = l.store_id
+                WHERE l.store_id = $1::uuid
+                  AND ($2::text IS NULL OR l.type_code ILIKE $2::text OR z.code ILIKE $2::text OR e.code ILIKE $2::text)
+                ORDER BY l.type_code ASC, z.code ASC, e.code ASC
+                LIMIT $3::int`,
     label: (row) => [row.type_code, row.zone_code, row.equipment_code].filter(Boolean).join(' - '),
     url: (row) => `temperature-settings.html?parameter_id=${encodeURIComponent(row.id)}`,
   },
   cleaning_plan: {
     sql: `SELECT id, title FROM quality_cleaning_plans WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    searchSql: `SELECT id, title, configuration_status AS status
+                FROM quality_cleaning_plans
+                WHERE store_id = $1::uuid
+                  AND ($2::text IS NULL OR title ILIKE $2::text)
+                ORDER BY title ASC
+                LIMIT $3::int`,
     label: (row) => row.title,
     url: (row) => `cleaning-plans.html?id=${encodeURIComponent(row.id)}`,
   },
   non_conformity: {
     sql: `SELECT id, title, description FROM quality_non_conformities WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    searchSql: `SELECT id, title, description, status
+                FROM quality_non_conformities
+                WHERE store_id = $1::uuid
+                  AND ($2::text IS NULL OR title ILIKE $2::text OR description ILIKE $2::text)
+                ORDER BY created_at DESC
+                LIMIT $3::int`,
     label: (row) => row.title || row.description,
     url: (row) => `non-conformities.html?id=${encodeURIComponent(row.id)}`,
   },
   corrective_action: {
     sql: `SELECT id, action FROM quality_corrective_actions WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    searchSql: `SELECT id, action, status
+                FROM quality_corrective_actions
+                WHERE store_id = $1::uuid
+                  AND ($2::text IS NULL OR action ILIKE $2::text)
+                ORDER BY created_at DESC
+                LIMIT $3::int`,
     label: (row) => row.action,
     url: (row) => `corrective-actions.html?id=${encodeURIComponent(row.id)}`,
   },
   supply_material: {
     sql: `SELECT id, code, name, category FROM supplies_materials WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    searchSql: `SELECT id, code, name, category
+                FROM supplies_materials
+                WHERE store_id = $1::uuid
+                  AND archived_at IS NULL
+                  AND ($2::text IS NULL OR code ILIKE $2::text OR name ILIKE $2::text OR category ILIKE $2::text)
+                ORDER BY code ASC, name ASC
+                LIMIT $3::int`,
     label: (row) => [row.code, row.name].filter(Boolean).join(' - '),
     url: (row) => `../../supplies-materials.html?id=${encodeURIComponent(row.id)}`,
+  },
+  procedure: {
+    sql: `SELECT id, reference_number AS code, title, status FROM quality_master_documents WHERE id = $1::uuid AND store_id = $2::uuid AND document_type = 'procedure' LIMIT 1`,
+    searchSql: `SELECT id, reference_number AS code, title, status
+                FROM quality_master_documents
+                WHERE store_id = $1::uuid
+                  AND archived_at IS NULL
+                  AND document_type = 'procedure'
+                  AND ($2::text IS NULL OR reference_number ILIKE $2::text OR title ILIKE $2::text)
+                ORDER BY reference_number ASC, title ASC
+                LIMIT $3::int`,
+    label: (row) => [row.code, row.title].filter(Boolean).join(' - '),
+    url: (row) => `master-documents.html?document_id=${encodeURIComponent(row.id)}`,
+  },
+  record_form: {
+    sql: `SELECT id, reference_number AS code, title, status FROM quality_master_documents WHERE id = $1::uuid AND store_id = $2::uuid AND document_type = 'record_form' LIMIT 1`,
+    searchSql: `SELECT id, reference_number AS code, title, status
+                FROM quality_master_documents
+                WHERE store_id = $1::uuid
+                  AND archived_at IS NULL
+                  AND document_type = 'record_form'
+                  AND ($2::text IS NULL OR reference_number ILIKE $2::text OR title ILIKE $2::text)
+                ORDER BY reference_number ASC, title ASC
+                LIMIT $3::int`,
+    label: (row) => [row.code, row.title].filter(Boolean).join(' - '),
+    url: (row) => `master-documents.html?document_id=${encodeURIComponent(row.id)}`,
+  },
+  equipment: {
+    sql: `SELECT id, code, name, status FROM quality_equipments WHERE id = $1::uuid AND store_id = $2::uuid LIMIT 1`,
+    searchSql: `SELECT id, code, name, status
+                FROM quality_equipments
+                WHERE store_id = $1::uuid
+                  AND ($2::text IS NULL OR code ILIKE $2::text OR name ILIKE $2::text)
+                ORDER BY code ASC, name ASC
+                LIMIT $3::int`,
+    label: (row) => [row.code, row.name].filter(Boolean).join(' - '),
+    url: (row) => `equipments.html?id=${encodeURIComponent(row.id)}`,
   },
 });
 
@@ -346,6 +443,65 @@ function referencePayload(body = {}) {
     label: cleanText(body.label),
     sort_order: cleanInteger(body.sort_order, 0),
   };
+}
+
+function attachmentSourceAlias(sourceType) {
+  const source = cleanText(sourceType);
+  return Object.entries(ATTACHMENT_SOURCES).find(([, config]) => config.table === source)?.[0] || source;
+}
+
+function existingAttachmentLabel(attachment) {
+  return [
+    attachment.name || attachment.title || attachment.original_filename,
+    attachment.target_code && attachment.target_title ? `${attachment.target_code} - ${attachment.target_title}` : null,
+  ].filter(Boolean).join(' | ') || 'Piece jointe existante';
+}
+
+async function resolveTarget(db, storeId, targetType, targetId) {
+  if (!targetType) {
+    throw Object.assign(new Error('Type de cible obligatoire'), { status: 400 });
+  }
+  if (targetType === 'ddpp_view' && !targetId) {
+    return { target_type: targetType, target_id: null, target_label: 'Vue DDPP' };
+  }
+  const resolver = TARGET_LABEL_QUERIES[targetType];
+  if (!resolver) {
+    throw Object.assign(new Error('Type de cible documentaire non supporte'), { status: 400 });
+  }
+  if (!targetId) {
+    throw Object.assign(new Error('Cible obligatoire'), { status: 400 });
+  }
+  const result = await db.query(resolver.sql, [targetId, storeId]);
+  const row = result.rows[0];
+  if (!row) {
+    throw Object.assign(new Error('Cible introuvable pour ce magasin'), { status: 404 });
+  }
+  return {
+    ...row,
+    target_type: targetType,
+    target_id: row.id,
+    target_type_label: typedLabel(targetType),
+    target_label: resolver.label(row) || typedLabel(targetType),
+    target_url: resolver.url(row),
+  };
+}
+
+async function listReferenceTargets(db, storeId, query = {}) {
+  const targetType = cleanText(query.target_type, 'documentation_section');
+  const resolver = TARGET_LABEL_QUERIES[targetType];
+  if (!resolver?.searchSql) {
+    throw Object.assign(new Error('Type de cible documentaire non recherchable'), { status: 400 });
+  }
+  const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 100);
+  const search = cleanText(query.query || query.q);
+  const result = await db.query(resolver.searchSql, [storeId, search ? `%${search}%` : null, limit]);
+  return result.rows.map((row) => ({
+    ...row,
+    target_type: targetType,
+    target_type_label: typedLabel(targetType),
+    target_label: resolver.label(row) || typedLabel(targetType),
+    target_url: resolver.url(row),
+  }));
 }
 
 async function checksumFile(filePath) {
@@ -610,8 +766,8 @@ async function updateMasterDocument(db, storeId, id, userId, body = {}) {
          file_size=$17::bigint, checksum_sha256=$18::text, description=$19::text,
          source_attachment_table=$20::text, source_attachment_id=$21::uuid,
          updated_by=$22::uuid, updated_at=now(),
-         archived_at=CASE WHEN $13::text = 'archived' THEN COALESCE(archived_at, now()) ELSE archived_at END,
-         archived_by=CASE WHEN $13::text = 'archived' THEN COALESCE(archived_by, $22::uuid) ELSE archived_by END
+         archived_at=CASE WHEN $13::text = 'archived' THEN COALESCE(archived_at, now()) ELSE NULL END,
+         archived_by=CASE WHEN $13::text = 'archived' THEN COALESCE(archived_by, $22::uuid) ELSE NULL END
      WHERE id=$1::uuid AND store_id=$2::uuid
      RETURNING *`,
     [
@@ -628,6 +784,38 @@ async function updateMasterDocument(db, storeId, id, userId, body = {}) {
 
 async function archiveMasterDocument(db, storeId, id, userId) {
   return updateMasterDocument(db, storeId, id, userId, { status: 'archived' });
+}
+
+async function associateExistingAttachmentToMasterDocument(db, storeId, documentId, userId, body = {}) {
+  const before = await getMasterDocument(db, storeId, documentId);
+  if (!before || before.archived_at) {
+    throw Object.assign(new Error('Document maitre introuvable ou archive'), { status: 404 });
+  }
+  const sourceType = cleanText(body.source_type || body.attachment_source_type || body.attachment_type);
+  const sourceId = cleanText(body.source_id || body.attachment_id);
+  const attachment = await getExistingAttachment(db, storeId, sourceType, sourceId);
+  const checksum = body.checksum_sha256 || await checksumFile(attachment.storage_path);
+  const updated = await updateMasterDocument(db, storeId, documentId, userId, {
+    original_filename: attachment.original_filename,
+    storage_path: attachment.storage_path,
+    mime_type: attachment.mime_type,
+    file_size: attachment.file_size,
+    checksum_sha256: checksum,
+    source_attachment_table: attachment.source_attachment_table,
+    source_attachment_id: attachment.source_attachment_id,
+  });
+  await logQualityEvent({
+    dbPool: db,
+    storeId,
+    actorId: userId,
+    eventType: 'quality.master_document.file.associated',
+    targetType: 'quality_master_document',
+    targetId: documentId,
+    before,
+    after: updated,
+    metadata: { attachment },
+  });
+  return { document: updated, attachment, duplicated_file: false };
 }
 
 async function linkExistingAttachmentToMasterDocument(db, storeId, userId, body = {}) {
@@ -671,13 +859,19 @@ async function addDocumentReference(db, storeId, userId, body = {}) {
   if (!document || document.archived_at) {
     throw Object.assign(new Error('Document maitre introuvable ou archive'), { status: 404 });
   }
+  if (payload.target_type === 'procedure' || payload.target_type === 'record_form') {
+    if (payload.target_id === payload.document_id) {
+      throw Object.assign(new Error('Un document ne peut pas etre rattache a lui-meme'), { status: 400 });
+    }
+  }
+  const target = await resolveTarget(db, storeId, payload.target_type, payload.target_id);
   const existing = await db.query(
     `SELECT *
      FROM quality_document_references
      WHERE store_id = $1::uuid
        AND document_id = $2::uuid
        AND target_type = $3::text
-       AND COALESCE(target_id, '00000000-0000-0000-0000-000000000000'::uuid) = COALESCE($4::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+       AND COALESCE(target_id, '${NULL_UUID}'::uuid) = COALESCE($4::uuid, '${NULL_UUID}'::uuid)
        AND relation_type = $5::text
        AND archived_at IS NULL
      LIMIT 1`,
@@ -701,7 +895,7 @@ async function addDocumentReference(db, storeId, userId, body = {}) {
     [storeId, payload.document_id, payload.target_type, payload.target_id, payload.relation_type, payload.label, payload.sort_order, userId]
   );
   await logQualityEvent({ dbPool: db, storeId, actorId: userId, eventType: 'quality.master_document.reference.linked', targetType: payload.target_type, targetId: payload.target_id, after: result.rows[0] });
-  return result.rows[0];
+  return { ...result.rows[0], target_label: target.target_label, target_type_label: target.target_type_label, target_url: target.target_url };
 }
 
 async function archiveDocumentReference(db, storeId, userId, referenceId) {
@@ -1028,15 +1222,46 @@ async function inventoryExistingAttachments(db, storeId) {
   return enriched;
 }
 
+async function listExistingAttachments(db, storeId, query = {}) {
+  const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 100);
+  const search = cleanText(query.query || query.q);
+  const sourceFilter = attachmentSourceAlias(query.source_type);
+  const attachments = await inventoryExistingAttachments(db, storeId);
+  return attachments
+    .filter((attachment) => !sourceFilter || attachment.source_type === sourceFilter)
+    .filter((attachment) => {
+      if (!search) return true;
+      const haystack = [
+        attachment.name,
+        attachment.title,
+        attachment.original_filename,
+        attachment.target_code,
+        attachment.target_title,
+        attachment.mime_type,
+      ].join(' ').toLowerCase();
+      return haystack.includes(search.toLowerCase());
+    })
+    .slice(0, limit)
+    .map((attachment) => ({
+      ...attachment,
+      source_label: typedLabel(attachment.target_type) || attachment.source_type,
+      display_label: existingAttachmentLabel(attachment),
+      duplicated_file: false,
+    }));
+}
+
 module.exports = {
   ATTACHMENT_SOURCES,
   checksumFile,
   inventoryExistingAttachments,
+  listExistingAttachments,
+  listReferenceTargets,
   listMasterDocuments,
   getMasterDocument,
   createMasterDocument,
   updateMasterDocument,
   archiveMasterDocument,
+  associateExistingAttachmentToMasterDocument,
   linkExistingAttachmentToMasterDocument,
   addDocumentReference,
   archiveDocumentReference,

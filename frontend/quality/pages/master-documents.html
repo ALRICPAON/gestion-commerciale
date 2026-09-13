@@ -31,7 +31,7 @@
     <section class="quality-doc-workbench">
       <aside class="quality-card quality-doc-tree">
         <div class="quality-section-header">
-          <div><h3>Documents</h3><p class="quality-muted">Fiches actives et archivees.</p></div>
+          <div><h3>Documents</h3><p class="quality-muted">Fiches actives par defaut.</p></div>
           <button id="master-document-refresh" class="btn btn-secondary" type="button">Actualiser</button>
         </div>
         <input id="master-document-search" class="form-input" placeholder="Rechercher titre, emetteur, reference">
@@ -85,11 +85,11 @@
             <button id="master-document-pdf" class="btn btn-secondary" type="button">PDF</button>
           </div>
         </div>
-        <article id="master-document-detail" class="quality-list-grid"></article>
+        <article id="master-document-detail" class="quality-master-detail"></article>
         <form id="master-document-form" class="quality-form-grid">
           <input id="master-document-id" type="hidden">
           <fieldset class="quality-form-wide quality-inline-fieldset">
-            <legend>Identite documentaire</legend>
+            <legend>Informations du document</legend>
             <label>Titre <input id="master-document-title" class="form-input" required></label>
             <label>Type documentaire
               <select id="master-document-type" class="form-input" required>
@@ -113,7 +113,7 @@
             </label>
           </fieldset>
           <fieldset class="quality-form-wide quality-inline-fieldset">
-            <legend>Maitrise documentaire</legend>
+            <legend>Historique / statut</legend>
           <label>Source
             <select id="master-document-source" class="form-input">
               <option value="interne">Interne</option>
@@ -143,7 +143,7 @@
           </fieldset>
           <label class="quality-form-wide">Description historique<textarea id="master-document-description" class="form-input"></textarea></label>
           <details class="quality-form-wide">
-            <summary>Champs techniques avances</summary>
+            <summary>Fichier associe</summary>
             <div class="quality-form-grid">
               <label>Fichier original <input id="master-document-filename" class="form-input"></label>
               <label>Chemin/reference fichier <input id="master-document-storage" class="form-input"></label>
@@ -161,34 +161,44 @@
       </section>
 
       <aside class="quality-card quality-doc-meta">
-        <h3>References entrantes</h3>
+        <h3>Rattachements</h3>
         <div id="master-document-references" class="quality-list-grid"></div>
-        <h3>Ajouter une reference</h3>
+        <h3>Ajouter un rattachement</h3>
         <form id="master-reference-form" class="quality-form-grid">
           <label>Cible
             <select id="master-reference-target-type" class="form-input">
-              <option value="documentation_section">Chapitre dossier</option>
+              <option value="documentation_section">Chapitre QMS</option>
+              <option value="procedure">Procedure</option>
+              <option value="record_form">ENR / formulaire</option>
               <option value="document_block">Bloc documentaire</option>
-              <option value="quality_object">Objet qualite</option>
-              <option value="temperature">Releve temperature</option>
-              <option value="cleaning">Nettoyage realise</option>
               <option value="cleaning_plan">Plan de nettoyage</option>
               <option value="temperature_parameter">Parametre temperature</option>
+              <option value="equipment">Equipement</option>
+              <option value="supply_material">Fourniture / materiel</option>
               <option value="non_conformity">Non-conformite</option>
               <option value="corrective_action">Action corrective</option>
-              <option value="ddpp_view">Vue DDPP</option>
-              <option value="procedure">Procedure future</option>
             </select>
           </label>
-          <label>ID cible <input id="master-reference-target-id" class="form-input"></label>
+          <label>Rechercher une cible <input id="master-reference-target-search" class="form-input" placeholder="T2-C20, PROC-014, ENR..."></label>
+          <label>Cible existante
+            <select id="master-reference-target-id" class="form-input"></select>
+          </label>
           <label>Relation <input id="master-reference-relation" class="form-input" value="reference"></label>
           <label>Libelle <input id="master-reference-label" class="form-input"></label>
-          <button class="btn btn-primary" type="submit">Ajouter</button>
+          <button class="btn btn-primary" type="submit">Ajouter un rattachement</button>
+        </form>
+        <h3>Fichier associe</h3>
+        <form id="master-attachment-form" class="quality-form-grid">
+          <label>Recherche piece existante <input id="master-attachment-search" class="form-input" placeholder="Nom fichier, chapitre..."></label>
+          <label>Piece existante
+            <select id="master-attachment-id" class="form-input"></select>
+          </label>
+          <button id="master-attachment-link" class="btn btn-secondary" type="submit">Associer/remplacer le fichier</button>
         </form>
       </aside>
     </section>
   </main>
 
-  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/master-documents.js?v=3"></script>
+  <script src="../../js/config.js"></script><script src="../js/permissions.js"></script><script src="../js/master-documents.js?v=4"></script>
 </body>
 </html>
