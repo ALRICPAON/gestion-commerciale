@@ -55,12 +55,16 @@
     references: $('master-document-references'),
     referenceForm: $('master-reference-form'),
     referenceTargetType: $('master-reference-target-type'),
+    referenceTargetSearch: $('master-reference-target-search'),
     referenceTargetId: $('master-reference-target-id'),
     referenceRelation: $('master-reference-relation'),
     referenceLabel: $('master-reference-label'),
+    attachmentForm: $('master-attachment-form'),
+    attachmentSearch: $('master-attachment-search'),
+    attachmentId: $('master-attachment-id'),
   };
 
-  let state = { documents: [], current: null, editMode: false };
+  let state = { documents: [], current: null, editMode: false, targets: [], attachments: [] };
 
   function setFeedback(message = '', type = '') {
     els.feedback.textContent = message;
@@ -96,6 +100,14 @@
 
   function formatDate(value) {
     return value ? new Date(value).toLocaleDateString('fr-FR') : '-';
+  }
+
+  function formatSize(value) {
+    const size = Number(value);
+    if (!Number.isFinite(size) || size <= 0) return '-';
+    if (size < 1024) return `${size} o`;
+    if (size < 1024 * 1024) return `${Math.round(size / 1024)} Ko`;
+    return `${(size / 1024 / 1024).toFixed(1)} Mo`;
   }
 
   function structuredDescription() {
@@ -200,6 +212,8 @@
     renderReferences(document?.references || []);
     renderDetail(document);
     refreshMode();
+    loadReferenceTargets().catch((error) => setFeedback(error.message, 'error'));
+    loadExistingAttachments().catch((error) => setFeedback(error.message, 'error'));
   }
 
   function refreshMode() {
@@ -243,7 +257,42 @@
       ['Enregistrements associes', content.associated_records],
       ['Documents associes', content.associated_documents],
     ].filter(([, value]) => String(value || '').trim());
+    const fileName = document.original_filename || document.storage_path || '';
+    const activeRefs = (document.references || []).filter((reference) => !reference.archived_at);
+    const archivedRefs = (document.references || []).filter((reference) => reference.archived_at);
     els.detail.innerHTML = `
+      <section class="quality-card quality-master-section">
+        <div class="quality-section-header">
+          <h3>Informations du document</h3>
+          <span class="quality-badge">${escapeHtml(statusLabel(document.status))}</span>
+        </div>
+        <dl class="quality-definition-grid">
+          <div><dt>Titre</dt><dd>${escapeHtml(document.title || '-')}</dd></div>
+          <div><dt>Type</dt><dd>${escapeHtml(typeLabel(document.document_type))}</dd></div>
+          <div><dt>Reference</dt><dd>${escapeHtml(document.reference_number || '-')}</dd></div>
+          <div><dt>Emetteur</dt><dd>${escapeHtml(document.issuer_name || document.source_type || '-')}</dd></div>
+          <div><dt>Date</dt><dd>${escapeHtml(formatDate(document.issue_date))}</dd></div>
+          <div><dt>Version</dt><dd>${escapeHtml(document.version || '-')}</dd></div>
+        </dl>
+      </section>
+      <section class="quality-card quality-master-section">
+        <h3>Fichier associe</h3>
+        <dl class="quality-definition-grid">
+          <div><dt>Fichier</dt><dd>${escapeHtml(fileName || 'Aucun fichier associe')}</dd></div>
+          <div><dt>MIME</dt><dd>${escapeHtml(document.mime_type || '-')}</dd></div>
+          <div><dt>Taille</dt><dd>${escapeHtml(formatSize(document.file_size))}</dd></div>
+          <div><dt>Source</dt><dd>${escapeHtml(document.source_attachment_table ? 'Piece existante liee' : 'Fiche sans piece source')}</dd></div>
+        </dl>
+      </section>
+      <section class="quality-card quality-master-section">
+        <h3>Rattachements</h3>
+        ${activeRefs.length ? `<div class="quality-list-grid">${activeRefs.map(renderReferenceCard).join('')}</div>` : '<div class="quality-empty-state">Aucun rattachement actif.</div>'}
+      </section>
+      <section class="quality-card quality-master-section">
+        <h3>Historique / statut</h3>
+        <p class="quality-muted">Cree le ${escapeHtml(formatDate(document.created_at))} - Mis a jour le ${escapeHtml(formatDate(document.updated_at))}${document.archived_at ? ` - Archive le ${escapeHtml(formatDate(document.archived_at))}` : ''}</p>
+        ${archivedRefs.length ? `<p class="quality-muted">${archivedRefs.length} rattachement(s) retire(s) conserves dans l'historique.</p>` : ''}
+      </section>
       <article class="quality-card">
         <span class="quality-badge">${escapeHtml(statusLabel(document.status))}</span>
         <h3>${escapeHtml(document.reference_number || document.title)} - ${escapeHtml(document.title)}</h3>
@@ -261,6 +310,20 @@
     `;
   }
 
+  function renderReferenceCard(reference) {
+    return `
+      <article class="quality-card quality-reference-card">
+        <span class="quality-badge">${escapeHtml(reference.relation_type || 'reference')}</span>
+        <h4>${escapeHtml(reference.target_label || reference.label || reference.target_type_label || reference.target_type || '-')}</h4>
+        <p class="quality-muted">${escapeHtml(reference.target_type_label || reference.target_type || '-')} ${reference.label ? `- ${escapeHtml(reference.label)}` : ''}</p>
+        <div class="quality-actions">
+          ${reference.target_url ? `<button class="btn btn-secondary" type="button" data-open-reference="${escapeHtml(reference.target_url)}">Ouvrir</button>` : ''}
+          ${state.editMode && canEdit && !reference.archived_at ? `<button class="btn btn-secondary" type="button" data-archive-reference="${escapeHtml(reference.id)}">Retirer le rattachement</button>` : ''}
+        </div>
+      </article>
+    `;
+  }
+
   function renderList() {
     const query = els.search.value.trim().toLowerCase();
     const rows = state.documents.filter((document) => !query || [document.title, document.reference_number, document.issuer_name].some((value) => String(value || '').toLowerCase().includes(query)));
@@ -273,20 +336,45 @@
   }
 
   function renderReferences(references = []) {
-    els.references.innerHTML = references.length ? references.map((reference) => `
-      <article class="quality-card">
-        <span class="quality-badge">${escapeHtml(reference.relation_type)}</span>
-        <h3>${escapeHtml(reference.label || reference.target_type)}</h3>
-        <p class="quality-muted">${escapeHtml(reference.target_type_label || reference.target_type)} - ${escapeHtml(reference.target_label || '-')}</p>
-        ${reference.target_url ? `<button class="btn btn-secondary" type="button" data-open-reference="${escapeHtml(reference.target_url)}">Ouvrir</button>` : ''}
-        ${state.editMode && canEdit ? `<button class="btn btn-secondary" type="button" data-archive-reference="${escapeHtml(reference.id)}">Archiver</button>` : ''}
-      </article>
-    `).join('') : '<div class="quality-empty-state">Aucune reference entrante.</div>';
+    const active = references.filter((reference) => !reference.archived_at);
+    els.references.innerHTML = active.length ? active.map(renderReferenceCard).join('') : '<div class="quality-empty-state">Aucun rattachement actif.</div>';
+  }
+
+  function renderTargetOptions(targets = []) {
+    els.referenceTargetId.innerHTML = targets.length
+      ? targets.map((target) => `<option value="${escapeHtml(target.id)}">${escapeHtml(target.target_label || target.label || target.title || target.name)}</option>`).join('')
+      : '<option value="">Aucune cible trouvee</option>';
+  }
+
+  function renderAttachmentOptions(attachments = []) {
+    els.attachmentId.innerHTML = attachments.length
+      ? attachments.map((attachment) => `<option value="${escapeHtml(attachment.id)}" data-source-type="${escapeHtml(attachment.source_type)}">${escapeHtml(attachment.display_label || attachment.name || attachment.original_filename || 'Piece jointe')}</option>`).join('')
+      : '<option value="">Aucune piece eligible trouvee</option>';
+  }
+
+  async function loadReferenceTargets() {
+    const params = new URLSearchParams({
+      target_type: els.referenceTargetType.value,
+      limit: '75',
+    });
+    if (els.referenceTargetSearch.value.trim()) params.set('query', els.referenceTargetSearch.value.trim());
+    const data = await request(`/reference-targets?${params.toString()}`);
+    state.targets = data.targets || [];
+    renderTargetOptions(state.targets);
+  }
+
+  async function loadExistingAttachments() {
+    const params = new URLSearchParams({ limit: '75' });
+    if (els.attachmentSearch.value.trim()) params.set('query', els.attachmentSearch.value.trim());
+    const data = await request(`/existing-attachments?${params.toString()}`);
+    state.attachments = data.attachments || [];
+    renderAttachmentOptions(state.attachments);
   }
 
   async function load(selectedId = null) {
     setFeedback('Chargement...');
-    const params = new URLSearchParams({ include_archived: 'true', limit: '200' });
+    const params = new URLSearchParams({ limit: '200' });
+    if (els.filterStatus.value === 'archived') params.set('include_archived', 'true');
     if (els.filterType.value) params.set('document_type', els.filterType.value);
     if (els.filterStatus.value) params.set('status', els.filterStatus.value);
     if (els.filterValidity.value) params.set('validity', els.filterValidity.value);
@@ -327,7 +415,7 @@
       body: JSON.stringify({
         document_id: state.current.id,
         target_type: els.referenceTargetType.value,
-        target_id: els.referenceTargetId.value || null,
+        target_id: els.referenceTargetId.value,
         relation_type: els.referenceRelation.value || 'reference',
         label: els.referenceLabel.value,
       }),
@@ -335,7 +423,23 @@
     await load(state.current.id);
     els.referenceForm.reset();
     els.referenceRelation.value = 'reference';
-    setFeedback('Reference ajoutee.', 'success');
+    setFeedback('Rattachement ajoute.', 'success');
+  });
+
+  els.attachmentForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!canEdit || !state.current?.id || !els.attachmentId.value) return;
+    const selected = els.attachmentId.selectedOptions[0];
+    if (!window.confirm('Associer cette piece existante a la fiche ? Aucun fichier physique ne sera duplique.')) return;
+    const saved = await request(`/${encodeURIComponent(state.current.id)}/file-from-attachment`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        source_type: selected?.dataset.sourceType,
+        source_id: els.attachmentId.value,
+      }),
+    });
+    await load(saved.document.id);
+    setFeedback('Fichier existant associe sans duplication.', 'success');
   });
 
   els.list.addEventListener('click', async (event) => {
@@ -354,9 +458,10 @@
     }
     const button = event.target.closest('[data-archive-reference]');
     if (!button || !canEdit) return;
+    if (!window.confirm('Retirer uniquement ce rattachement ? Le document, le fichier et les autres rattachements seront conserves.')) return;
     await request(`/references/${encodeURIComponent(button.dataset.archiveReference)}`, { method: 'DELETE' });
     await load(state.current?.id);
-    setFeedback('Reference archivee.', 'success');
+    setFeedback('Rattachement retire.', 'success');
   });
   els.detail.addEventListener('click', (event) => {
     const openButton = event.target.closest('[data-open-reference]');
@@ -387,6 +492,9 @@
     setFeedback('Document maitre archive.', 'success');
   });
   els.refresh.addEventListener('click', () => load().catch((error) => setFeedback(error.message, 'error')));
+  els.referenceTargetType.addEventListener('change', () => loadReferenceTargets().catch((error) => setFeedback(error.message, 'error')));
+  els.referenceTargetSearch.addEventListener('input', () => loadReferenceTargets().catch((error) => setFeedback(error.message, 'error')));
+  els.attachmentSearch.addEventListener('input', () => loadExistingAttachments().catch((error) => setFeedback(error.message, 'error')));
   [els.search, els.filterType, els.filterStatus, els.filterValidity, els.filterSource].forEach((element) => {
     element.addEventListener('input', () => load().catch((error) => setFeedback(error.message, 'error')));
     element.addEventListener('change', () => load().catch((error) => setFeedback(error.message, 'error')));
@@ -394,8 +502,10 @@
 
   Array.from(els.form.elements).forEach((element) => { element.disabled = element.disabled || !canEdit; });
   Array.from(els.referenceForm.elements).forEach((element) => { element.disabled = element.disabled || !canEdit; });
+  Array.from(els.attachmentForm.elements).forEach((element) => { element.disabled = element.disabled || !canEdit; });
   els.archiveButton.disabled = !canEdit;
   els.newButton.disabled = !canEdit;
-  const initialDocumentId = new URLSearchParams(window.location.search).get('document_id');
+  const searchParams = new URLSearchParams(window.location.search);
+  const initialDocumentId = searchParams.get('document_id') || searchParams.get('id');
   load(initialDocumentId).catch((error) => setFeedback(error.message, 'error'));
 })();

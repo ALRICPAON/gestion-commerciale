@@ -67,6 +67,10 @@ function makeDb(filePath) {
         return { rows: state.attachments.filter((item) => item.id === params[0] || params[0] === STORE_ID).map((item) => ({ ...item, source_type: 'quality_documentation_attachment', target_id: item.section_id, target_type: 'documentation_section', name: item.title, file_path: item.storage_path })) };
       }
       if (/FROM quality_documentation_sections/i.test(sql)) {
+        if (/LIMIT \$3::int/i.test(sql)) {
+          const needle = String(params[1] || '').replace(/%/g, '').toLowerCase();
+          return { rows: state.sections.filter((item) => item.store_id === params[0] && (!needle || `${item.code} ${item.title}`.toLowerCase().includes(needle))).slice(0, params[2]) };
+        }
         return { rows: state.sections.filter((item) => item.id === params[0] && item.store_id === params[1]) };
       }
       if (/FROM quality_cleaning_plans/i.test(sql) && /ANY\(\$2::uuid\[\]\)/i.test(sql)) {
@@ -99,6 +103,13 @@ function makeDb(filePath) {
       }
       if (/SELECT \* FROM quality_master_documents WHERE id/i.test(sql)) {
         return { rows: state.documents.filter((item) => item.id === params[0] && item.store_id === params[1]) };
+      }
+      if (/FROM quality_master_documents/i.test(sql) && /document_type = 'procedure'/i.test(sql)) {
+        if (/LIMIT \$3::int/i.test(sql)) {
+          const needle = String(params[1] || '').replace(/%/g, '').toLowerCase();
+          return { rows: state.documents.filter((item) => item.store_id === params[0] && item.document_type === 'procedure' && !item.archived_at && (!needle || `${item.reference_number} ${item.title}`.toLowerCase().includes(needle))).slice(0, params[2]).map((item) => ({ id: item.id, code: item.reference_number, title: item.title, status: item.status })) };
+        }
+        return { rows: state.documents.filter((item) => item.id === params[0] && item.store_id === params[1] && item.document_type === 'procedure').map((item) => ({ id: item.id, code: item.reference_number, title: item.title, status: item.status })) };
       }
       if (/SELECT \* FROM quality_master_documents WHERE store_id=\$1::uuid AND checksum_sha256/i.test(sql)) {
         return { rows: state.documents.filter((item) => item.store_id === params[0] && item.checksum_sha256 === params[1] && !item.archived_at).slice(0, 1) };
@@ -161,8 +172,8 @@ function makeDb(filePath) {
           source_attachment_table: params[19],
           source_attachment_id: params[20],
           updated_by: params[21],
-          archived_at: params[12] === 'archived' ? new Date().toISOString() : state.documents[index].archived_at,
-          archived_by: params[12] === 'archived' ? params[21] : state.documents[index].archived_by,
+          archived_at: params[12] === 'archived' ? new Date().toISOString() : null,
+          archived_by: params[12] === 'archived' ? params[21] : null,
         };
         state.documents[index] = row;
         return { rows: [row] };
@@ -189,6 +200,19 @@ function makeDb(filePath) {
         };
         state.references.push(row);
         return { rows: [row] };
+      }
+      if (/SELECT \*/i.test(sql) && /FROM quality_document_references/i.test(sql)) {
+        const targetId = params[3] || null;
+        return {
+          rows: state.references.filter((item) => (
+            item.store_id === params[0]
+            && item.document_id === params[1]
+            && item.target_type === params[2]
+            && (item.target_id || null) === targetId
+            && item.relation_type === params[4]
+            && !item.archived_at
+          )),
+        };
       }
       if (/FROM quality_document_references r/i.test(sql)) {
         let rows = state.references.filter((item) => item.store_id === params[0]);
@@ -257,6 +281,13 @@ async function main() {
   assert.equal(linked.reused_existing, true, 'checksum identique doit reutiliser le document maitre');
   assert.equal(linked.document.id, DOC_ID);
 
+  const fileLinked = await masterDocuments.associateExistingAttachmentToMasterDocument(db, STORE_ID, DOC_ID, USER_ID, {
+    source_type: 'quality_documentation_attachment',
+    source_id: ATTACHMENT_ID,
+  });
+  assert.equal(fileLinked.duplicated_file, false, 'association fichier existant sans copie physique attendue');
+  assert.equal(fileLinked.document.source_attachment_id, ATTACHMENT_ID);
+
   const sameNameDifferentContent = path.join(dir, 'same-name.pdf');
   fs.writeFileSync(sameNameDifferentContent, 'document different');
   const second = await masterDocuments.createMasterDocument(db, STORE_ID, USER_ID, {
@@ -269,11 +300,17 @@ async function main() {
   assert.notEqual(second.checksum_sha256, checksum, 'meme nom mais contenu different ne doit pas etre un doublon exact');
 
   const firstRef = await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: DOC_ID, target_type: 'documentation_section', target_id: SECTION_ID, relation_type: 'proof', label: 'Chapitre PMS' });
+  const duplicateFirstRef = await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: DOC_ID, target_type: 'documentation_section', target_id: SECTION_ID, relation_type: 'proof', label: 'Chapitre PMS corrige' });
+  assert.equal(duplicateFirstRef.id, firstRef.id, 'un rattachement identique ne doit pas creer de doublon');
   await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: DOC_ID, target_type: 'documentation_section', target_id: '88888888-8888-4888-8888-888888888888', relation_type: 'applicable_document', label: 'Chapitre nettoyage' });
   const secondRef = await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: DOC_ID, target_type: 'ddpp_view', relation_type: 'inspection', label: 'DDPP' });
   assert(firstRef.id && secondRef.id, 'plusieurs references doivent etre possibles');
   const archivedRef = await masterDocuments.archiveDocumentReference(db, STORE_ID, USER_ID, firstRef.id);
   assert(archivedRef.archived_at, 'archivage logique reference attendu');
+  const archivedDocument = await masterDocuments.archiveMasterDocument(db, STORE_ID, DOC_ID, USER_ID);
+  assert(archivedDocument.archived_at, 'archivage logique document attendu');
+  const restoredDocument = await masterDocuments.updateMasterDocument(db, STORE_ID, DOC_ID, USER_ID, { status: 'valid' });
+  assert.equal(restoredDocument.archived_at, null, 'restauration document attendue via statut actif');
   assert(fs.existsSync(filePath), 'le fichier original doit etre conserve');
   assert.equal((await masterDocuments.listMasterDocuments(db, OTHER_STORE_ID)).length, 0, 'isolation store_id attendue');
   const detail = await masterDocuments.getMasterDocument(db, STORE_ID, DOC_ID);
@@ -282,6 +319,38 @@ async function main() {
   const annexes = await collectMasterAnnexes(db, STORE_ID, db.state.sections);
   assert.equal(annexes.length, 1, 'procedure rattachee a plusieurs chapitres doit etre dedupliquee en annexe');
   assert.equal(annexes[0].references.length, 1, 'seules les references actives doivent alimenter la table des annexes');
+
+  const t2c20 = await masterDocuments.listReferenceTargets(db, STORE_ID, { target_type: 'documentation_section', query: 'PMS-02' });
+  assert.equal(t2c20[0].target_label, 'PMS-02 - Nettoyage', 'selection cible lisible attendue');
+  await assert.rejects(
+    () => masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: DOC_ID, target_type: 'documentation_section', target_id: '00000000-0000-4000-8000-000000000000', relation_type: 'proof' }),
+    /Cible introuvable/
+  );
+
+  const proc014 = await masterDocuments.createMasterDocument(db, STORE_ID, USER_ID, {
+    title: 'Procedure reception produits',
+    document_type: 'procedure',
+    source_type: 'interne',
+    status: 'valid',
+    reference_number: 'PROC-014',
+  });
+  const fireDoc = await masterDocuments.createMasterDocument(db, STORE_ID, USER_ID, {
+    title: 'Securite incendie',
+    document_type: 'external_evidence',
+    source_type: 'administration',
+    status: 'valid',
+    reference_number: 'T2-C20',
+    storage_path: filePath,
+    original_filename: 'attestation.pdf',
+  });
+  const legitimateFireRef = await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: fireDoc.id, target_type: 'documentation_section', target_id: SECTION_ID, relation_type: 'applicable_document', label: 'T2-C20 - Securite incendie' });
+  const wrongProcRef = await masterDocuments.addDocumentReference(db, STORE_ID, USER_ID, { document_id: fireDoc.id, target_type: 'procedure', target_id: proc014.id, relation_type: 'applicable_document', label: 'PROC-014' });
+  const removedProcRef = await masterDocuments.archiveDocumentReference(db, STORE_ID, USER_ID, wrongProcRef.id);
+  assert(removedProcRef.archived_at, 'le rattachement PROC-014 doit etre retire logiquement');
+  const fireRefs = await masterDocuments.listDocumentReferences(db, STORE_ID, { document_id: fireDoc.id });
+  assert(fireRefs.some((ref) => ref.id === legitimateFireRef.id), 'le rattachement legitime T2-C20 doit rester actif');
+  assert(!fireRefs.some((ref) => ref.id === wrongProcRef.id), 'PROC-014 ne doit plus referencer le document incendie en actif');
+  assert.equal(fs.readFileSync(filePath, 'utf8'), 'document identique', 'le fichier source ne doit pas etre modifie');
 
   const enr = await masterDocuments.createMasterDocument(db, STORE_ID, USER_ID, {
     title: 'ENR-010 Plans de nettoyage',
@@ -344,8 +413,13 @@ async function main() {
     create_update: true,
     exact_duplicate_reused: true,
     same_name_different_file_not_merged: true,
+    existing_attachment_associated_without_copy: true,
     multiple_references: true,
+    duplicate_reference_prevented: true,
     reference_archive_logical: true,
+    archive_restore_document: true,
+    invalid_target_rejected: true,
+    proc014_reference_removed_without_file_duplication: true,
     structured_content: true,
     readable_references: true,
     annex_deduplication: true,

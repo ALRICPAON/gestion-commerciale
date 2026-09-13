@@ -40,6 +40,22 @@ router.get('/references', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTA
   }
 });
 
+router.get('/reference-targets', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    res.json({ targets: await masterDocuments.listReferenceTargets(req.dbPool, req.user.store_id, req.query) });
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/master-documents/reference-targets');
+  }
+});
+
+router.get('/existing-attachments', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_READ), async (req, res) => {
+  try {
+    res.json({ attachments: await masterDocuments.listExistingAttachments(req.dbPool, req.user.store_id, req.query) });
+  } catch (err) {
+    handleError(res, err, 'Erreur GET /api/quality/master-documents/existing-attachments');
+  }
+});
+
 router.post('/references', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
   try {
     const reference = await masterDocuments.addDocumentReference(req.dbPool, req.user.store_id, req.user.id, req.body);
@@ -90,6 +106,14 @@ router.post('/link-existing-attachment', requireQualityPermission(QUALITY_PERMIS
     res.status(201).json(await masterDocuments.linkExistingAttachmentToMasterDocument(req.dbPool, req.user.store_id, req.user.id, req.body));
   } catch (err) {
     handleError(res, err, 'Erreur POST /api/quality/master-documents/link-existing-attachment');
+  }
+});
+
+router.patch('/:id/file-from-attachment', requireQualityPermission(QUALITY_PERMISSIONS.DOCUMENTATION_EDIT), async (req, res) => {
+  try {
+    res.json(await masterDocuments.associateExistingAttachmentToMasterDocument(req.dbPool, req.user.store_id, req.params.id, req.user.id, req.body));
+  } catch (err) {
+    handleError(res, err, 'Erreur PATCH /api/quality/master-documents/:id/file-from-attachment');
   }
 });
 
