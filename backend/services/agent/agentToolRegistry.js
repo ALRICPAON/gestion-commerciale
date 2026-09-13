@@ -2667,7 +2667,19 @@ const tools = [
         `SELECT id, collection_id, parent_id, code, title, section_type, status, version, updated_at
          FROM quality_documentation_sections
          WHERE store_id = $1 AND archived_at IS NULL
-           AND (COALESCE(code,'') ILIKE $2 OR COALESCE(title,'') ILIKE $2 OR COALESCE(content_text,'') ILIKE $2)
+           AND (
+             COALESCE(code,'') ILIKE $2
+             OR COALESCE(title,'') ILIKE $2
+             OR COALESCE(content_text,'') ILIKE $2
+             OR EXISTS (
+               SELECT 1
+               FROM quality_document_blocks b
+               WHERE b.store_id = quality_documentation_sections.store_id
+                 AND b.chapter_id = quality_documentation_sections.id
+                 AND b.is_visible IS DISTINCT FROM false
+                 AND COALESCE(b.title, '') || ' ' || COALESCE(b.content::text, '') ILIKE $2
+             )
+           )
          ORDER BY display_order ASC
          LIMIT $3`,
         [context.store_id, query, limit(input.limit, 25, 100)]

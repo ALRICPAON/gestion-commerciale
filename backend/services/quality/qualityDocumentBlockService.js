@@ -163,15 +163,110 @@ async function getHydratedChapterBlocks(db, storeId, chapterId) {
   return hydrateBlocks(blocks.rows, tables, diagrams, attachments);
 }
 
+function normalizeDerivedText(value = '') {
+  return String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+}
+
+function tableBlockToText(block) {
+  const table = block.table || {};
+  const data = table.table_data || {};
+  const lines = [];
+  const title = table.title || data.title || block.title;
+  if (title) lines.push(String(title));
+  const columns = Array.isArray(data.columns) ? data.columns : [];
+  const rows = Array.isArray(data.rows) ? data.rows : [];
+  if (columns.length) lines.push(columns.map((column) => column.label || column.id).filter(Boolean).join(' | '));
+  rows.forEach((row) => {
+    const cells = columns.length
+      ? columns.map((column) => row?.cells?.[column.id] ?? row?.[column.id] ?? '')
+      : Object.values(row?.cells || row || {});
+    const line = cells.map((cell) => String(cell || '').trim()).filter(Boolean).join(' | ');
+    if (line) lines.push(line);
+  });
+  return lines.join('\n');
+}
+
+function diagramBlockToText(block) {
+  const diagram = block.diagram || {};
+  const data = diagram.diagram_data || {};
+  const lines = [];
+  const title = diagram.title || data.title || block.title;
+  if (title) lines.push(String(title));
+  if (data.editor_mode === 'mermaid' && data.source) {
+    lines.push(String(data.source));
+  }
+  if (Array.isArray(data.nodes)) {
+    data.nodes.forEach((node) => {
+      const line = [node.label, node.description, node.chapter_code].filter(Boolean).join(' - ');
+      if (line) lines.push(line);
+    });
+  }
+  if (Array.isArray(data.edges)) {
+    data.edges.forEach((edge) => {
+      const line = [edge.from, edge.label, edge.to].filter(Boolean).join(' -> ');
+      if (line) lines.push(line);
+    });
+  }
+  return lines.join('\n');
+}
+
+function renderBlockText(block, options = {}) {
+  if (!block || block.is_visible === false) return '';
+  if (block.block_type === 'rich_text') return stripHtml(block.content?.html || '');
+  if (block.block_type === 'document_table') return tableBlockToText(block);
+  if (block.block_type === 'mermaid_diagram') return diagramBlockToText(block);
+  if (block.block_type === 'to_complete') return options.include_missing === false ? '' : (block.content?.text || block.title || '');
+  if (block.block_type === 'image' || block.block_type === 'attachment') {
+    return [
+      block.content?.caption,
+      block.title,
+      block.attachment?.original_filename,
+      block.attachment?.filename,
+    ].filter(Boolean).join(' - ');
+  }
+  return '';
+}
+
+function deriveSectionContentFromBlocks(blocks = [], options = {}) {
+  const activeBlocks = (Array.isArray(blocks) ? blocks : [])
+    .filter((block) => block && block.is_visible !== false)
+    .sort((a, b) => {
+      const positionDiff = Number(a.position || 0) - Number(b.position || 0);
+      if (positionDiff) return positionDiff;
+      return String(a.created_at || '').localeCompare(String(b.created_at || ''));
+    });
+  const contentHtml = activeBlocks
+    .map((block) => renderDocumentBlock(block, options))
+    .filter(Boolean)
+    .join('\n');
+  const contentText = normalizeDerivedText(
+    activeBlocks
+      .map((block) => renderBlockText(block, options))
+      .filter(Boolean)
+      .join('\n\n')
+  );
+  return {
+    content_html: contentHtml,
+    content_text: contentText || stripHtml(contentHtml),
+    block_count: activeBlocks.length,
+  };
+}
+
 async function syncSectionContentHtmlFromBlocks(db, storeId, chapterId, userId) {
   const blocks = await getHydratedChapterBlocks(db, storeId, chapterId);
   if (!blocks.length) return null;
-  const html = blocks
-    .filter((block) => block.is_visible !== false)
-    .sort((a, b) => Number(a.position || 0) - Number(b.position || 0))
-    .map((block) => renderDocumentBlock(block))
-    .filter(Boolean)
-    .join('\n');
+  const derived = deriveSectionContentFromBlocks(blocks);
   const result = await db.query(
     `UPDATE quality_documentation_sections
      SET content_html = $3,
@@ -180,7 +275,7 @@ async function syncSectionContentHtmlFromBlocks(db, storeId, chapterId, userId) 
          updated_at = now()
      WHERE id = $1 AND store_id = $2
      RETURNING *`,
-    [chapterId, storeId, html, stripHtml(html), userId]
+    [chapterId, storeId, derived.content_html, derived.content_text, userId]
   );
   return result.rows[0] || null;
 }
@@ -297,9 +392,9 @@ function fallbackBlocks(section, tables = [], diagrams = [], attachments = []) {
 }
 
 function hydrateBlocks(blocks, tables = [], diagrams = [], attachments = []) {
-  const tableById = new Map(tables.map((item) => [String(item.id), item]));
-  const diagramById = new Map(diagrams.map((item) => [String(item.id), item]));
-  const attachmentById = new Map(attachments.map((item) => [String(item.id), item]));
+  const tableById = new Map(tables.filter((item) => !item.archived_at).map((item) => [String(item.id), item]));
+  const diagramById = new Map(diagrams.filter((item) => !item.archived_at).map((item) => [String(item.id), item]));
+  const attachmentById = new Map(attachments.filter((item) => !item.archived_at).map((item) => [String(item.id), item]));
   return blocks.map((block) => {
     const content = block.content || {};
     return {
@@ -578,19 +673,105 @@ function escapeHtml(value) {
 }
 
 function blocksToText(blocks) {
-  return stripHtml(blocks.map((block) => renderDocumentBlock(block)).join('\n'));
+  return deriveSectionContentFromBlocks(blocks).content_text;
+}
+
+function isPlaceholderContentText(value) {
+  return /^information\s+a\s+completer\.?$/i.test(
+    normalizeDerivedText(String(value || '').replace(/\u00a0/g, ' '))
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+  );
+}
+
+function applyDerivedContentToSection(section = {}, blocks = []) {
+  const derived = deriveSectionContentFromBlocks(blocks);
+  if (!derived.content_text) return { ...section, effective_content_text: section.content_text || '' };
+  const currentText = normalizeDerivedText(section.content_text || '');
+  if (!currentText || isPlaceholderContentText(currentText)) {
+    return {
+      ...section,
+      content_text: derived.content_text,
+      content_html: section.content_html || derived.content_html,
+      effective_content_text: derived.content_text,
+      content_text_source: 'derived_blocks',
+    };
+  }
+  return { ...section, effective_content_text: currentText, content_text_source: 'stored' };
+}
+
+async function previewSectionContentTextResync(db, storeId, sectionId) {
+  const section = await getSection(db, storeId, sectionId);
+  if (!section) return null;
+  const blocks = await getHydratedChapterBlocks(db, storeId, sectionId);
+  const derived = deriveSectionContentFromBlocks(blocks);
+  const beforeText = normalizeDerivedText(section.content_text || '');
+  const afterText = derived.content_text;
+  return {
+    section,
+    blocks,
+    derived,
+    changed: Boolean(afterText && afterText !== beforeText),
+    before: {
+      content_text: section.content_text || '',
+      status: section.status,
+      version: section.version,
+    },
+    after: {
+      content_text: afterText || section.content_text || '',
+      status: section.status,
+      version: section.version,
+    },
+  };
+}
+
+async function resyncSectionContentTextFromBlocks(db, storeId, sectionId, userId = null, options = {}) {
+  const dryRun = options.dry_run !== false;
+  const preview = await previewSectionContentTextResync(db, storeId, sectionId);
+  if (!preview) return { found: false, dry_run: dryRun, changed: false };
+  const result = {
+    found: true,
+    dry_run: dryRun,
+    changed: preview.changed,
+    section_id: preview.section.id,
+    code: preview.section.code,
+    title: preview.section.title,
+    block_count: preview.derived.block_count,
+    before: preview.before,
+    after: preview.after,
+  };
+  if (dryRun || !preview.changed) return result;
+  const updated = await db.query(
+    `UPDATE quality_documentation_sections
+     SET content_text = $3,
+         updated_by = COALESCE($4, updated_by),
+         updated_at = now()
+     WHERE id = $1
+       AND store_id = $2
+       AND archived_at IS NULL
+     RETURNING *`,
+    [sectionId, storeId, preview.derived.content_text, userId]
+  );
+  return { ...result, section: updated.rows[0] || null };
 }
 
 module.exports = {
   BLOCK_TYPES,
+  applyDerivedContentToSection,
   blocksToText,
   createChapterBlock,
   deleteDocumentBlock,
+  deriveSectionContentFromBlocks,
   duplicateDocumentBlock,
   hydrateBlocks,
+  isPlaceholderContentText,
   listChapterBlocks,
+  normalizeDerivedText,
+  previewSectionContentTextResync,
   renderDocumentBlock,
+  renderBlockText,
   reorderChapterBlocks,
+  resyncSectionContentTextFromBlocks,
   syncRichTextBlockFromContentHtml,
   syncSectionContentHtmlFromBlocks,
   updateDocumentBlock,
