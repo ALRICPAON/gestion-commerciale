@@ -60,11 +60,25 @@ function main() {
   const purchaseDetail = read('frontend/js/purchase-detail.js');
   assert(purchaseDetail.includes('visibilitychange'), 'purchase-detail doit recharger au retour de visibilite');
   assert(purchaseDetail.includes('window.addEventListener("focus"'), 'purchase-detail doit recharger au focus');
+  assert(purchaseDetail.includes('purchaseHasUnsavedChanges'), 'purchase-detail doit suivre les modifications non sauvegardees');
+  assert(purchaseDetail.includes('if (purchaseHasUnsavedChanges) return false;'), 'purchase-detail ne doit pas recharger avec une saisie non sauvegardee');
+  assert(purchaseDetail.includes('externalPhotoRefreshPending'), 'purchase-detail doit conditionner le refresh a un flux photo externe');
+  assert(purchaseDetail.includes('PHOTO_UPLOAD_STORAGE_KEY'), 'purchase-detail doit pouvoir detecter un upload photo confirme par photo-bl');
   assert(purchaseDetail.includes('openLineSheet(sheetLineToRefresh)'), 'La fiche ligne ouverte doit etre rafraichie apres reload');
 
   const photoBl = read('frontend/js/photo-bl.js');
+  assert(photoBl.includes('let result;'), 'photo-bl doit separer le resultat POST de la verification GET');
+  assert(photoBl.includes('result = await apiFetch(`/api/purchase-lines/${encodeURIComponent(lineId)}/sanitary-photos`'), 'photo-bl doit conserver le succes du POST upload');
   assert(photoBl.includes('const refreshed = await apiFetch(`/api/purchases/${encodeURIComponent(purchaseId)}`)'), 'photo-bl doit relire achat apres upload');
+  assert(photoBl.includes('fallbackPersistedCount'), 'photo-bl doit utiliser la reponse POST comme fallback du total enregistre');
+  assert(photoBl.includes('du total enregistr'), 'photo-bl doit afficher un succes degrade si le GET de verification echoue');
   assert(photoBl.includes('persistedUrls.length'), 'photo-bl doit afficher le total persiste');
+  const degradedFeedbackIndex = photoBl.indexOf('du total enregistr');
+  const degradedFeedbackBlock = degradedFeedbackIndex >= 0
+    ? photoBl.slice(degradedFeedbackIndex, photoBl.indexOf('} finally', degradedFeedbackIndex))
+    : '';
+  assert(degradedFeedbackBlock && !degradedFeedbackBlock.includes('Upload impossible'), 'photo-bl ne doit pas afficher upload impossible si seul le GET de verification echoue');
+  assert(!degradedFeedbackBlock.includes('essaie'), 'photo-bl ne doit pas inciter a renvoyer les photos apres POST reussi');
 
   const receptionRoute = read('backend/routes/purchaseReceptionUpgrade.js');
   assert(receptionRoute.includes('sanitary_photo_urls: normalizeSanitaryPhotoUrls(line.sanitary_photo_urls, line.sanitary_photo_url'), 'Validation reception doit embarquer les photos normalisees');
@@ -86,7 +100,10 @@ function main() {
     explicit_clear_supported: true,
     historical_single_photo_normalized: true,
     purchase_detail_focus_reload: true,
+    purchase_detail_dirty_guard: true,
+    purchase_detail_external_photo_signal: true,
     photo_bl_persistence_confirmation: true,
+    photo_bl_post_success_get_failure_message: true,
     traceability_jsonb_guard: true,
     reception_quality_evidence_preserved: true,
     transformations_source_photos_checked: true,
