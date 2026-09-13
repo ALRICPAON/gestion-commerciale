@@ -42,6 +42,7 @@ async function getQualitySectionContext(db, storeId, input = {}) {
   const section = await findQualitySection(db, storeId, input);
   if (!section) return null;
   const doc = await documentation.getDocumentation(db, storeId, section.collection_id);
+  const effectiveSection = (doc?.sections || []).find((row) => row.id === section.id) || section;
   const [
     sectionBlocks,
     sectionTables,
@@ -58,7 +59,7 @@ async function getQualitySectionContext(db, storeId, input = {}) {
     documents.listPhotos(db, storeId, { owner_type: 'documentation_section', owner_id: section.id }).catch(() => []),
   ]);
   return {
-    section,
+    section: effectiveSection,
     collection: doc?.collection || null,
     outline: (doc?.sections || []).filter((row) => !row.archived_at).map((row) => ({
       id: row.id,

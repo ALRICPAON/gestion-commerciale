@@ -3,7 +3,7 @@ const { initializeDefaultDocumentation, stripHtml } = require('./qualityDocument
 const { recordSectionVersion } = require('./qualityDocumentationVersionService');
 const { ensureDefaultFabricationDiagram } = require('./qualityDocumentationDiagramService');
 const { ensureDefaultProductTables } = require('./qualityDocumentationTableService');
-const { hydrateBlocks, syncRichTextBlockFromContentHtml } = require('./qualityDocumentBlockService');
+const { applyDerivedContentToSection, hydrateBlocks, syncRichTextBlockFromContentHtml } = require('./qualityDocumentBlockService');
 
 const STATUSES = new Set(['draft', 'to_complete', 'ready_for_review', 'validated', 'archived']);
 const MISSING_ITEM_STATUSES = new Set(['open', 'resolved']);
@@ -266,7 +266,19 @@ async function getDocumentation(db, storeId, id) {
     }),
   ]);
 
-  const activeSections = sections.rows.filter((section) => !section.archived_at);
+  const hydratedBlocks = hydrateBlocks(blocks.rows, tables.rows, diagrams.rows, attachments.rows);
+  const blocksByChapter = hydratedBlocks.reduce((acc, block) => {
+    const key = String(block.chapter_id);
+    if (!acc.has(key)) acc.set(key, []);
+    acc.get(key).push(block);
+    return acc;
+  }, new Map());
+  const sectionsWithEffectiveText = sections.rows.map((section) => {
+    if (section.archived_at || section.section_type === 'tome') return section;
+    return applyDerivedContentToSection(section, blocksByChapter.get(String(section.id)) || []);
+  });
+
+  const activeSections = sectionsWithEffectiveText.filter((section) => !section.archived_at);
   const chapters = activeSections.filter((section) => section.section_type !== 'tome');
   const validated = chapters.filter((section) => section.status === 'validated').length;
   const openMissing = missing.rows.filter((item) => item.status !== 'resolved').length;
@@ -274,12 +286,12 @@ async function getDocumentation(db, storeId, id) {
 
   return {
     collection,
-    sections: sections.rows,
+    sections: sectionsWithEffectiveText,
     missing_items: missing.rows,
     attachments: attachments.rows,
     diagrams: diagrams.rows,
     tables: tables.rows,
-    blocks: hydrateBlocks(blocks.rows, tables.rows, diagrams.rows, attachments.rows),
+    blocks: hydratedBlocks,
     exports: exports.rows,
     dashboard: {
       tome_count: activeSections.filter((section) => section.section_type === 'tome').length,
