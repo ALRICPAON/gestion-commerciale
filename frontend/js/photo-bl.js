@@ -96,8 +96,16 @@ async function uploadPhoto(lineId, card, button) {
       body: form,
     });
     resetFileInputs(card);
+    const refreshed = await apiFetch(`/api/purchases/${encodeURIComponent(purchaseId)}`);
+    renderLines(refreshed);
+    const refreshedLine = Array.isArray(refreshed.lines)
+      ? refreshed.lines.find((line) => String(line.id) === String(lineId))
+      : null;
+    const persistedUrls = Array.isArray(refreshedLine?.sanitary_photo_urls)
+      ? refreshedLine.sanitary_photo_urls
+      : (Array.isArray(result.urls) ? result.urls : []);
     const uploadedCount = Array.isArray(result.urls) ? result.urls.length : files.length;
-    showFeedback(`${uploadedCount} photo(s) sanitaire(s) enregistrée(s). Elles seront visibles dans la fiche ligne achat/réception.`);
+    showFeedback(`${uploadedCount} photo(s) envoyée(s). ${persistedUrls.length} photo(s) sanitaire(s) enregistrée(s) au total pour cette ligne.`);
   } catch (error) {
     showFeedback(`${error.message || "Upload impossible"}. Vérifie la photo puis réessaie ou contacte un administrateur.`, true);
   } finally {

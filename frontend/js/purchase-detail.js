@@ -145,6 +145,9 @@ let resolveQualityControlModal = null;
 let expectedCreditNoteRequestId = null;
 let supplierStockEffectRequestId = null;
 let currentStockEffectLineId = null;
+let purchaseLoadInProgress = false;
+let lastPurchaseLoadAt = 0;
+let lastPageHiddenAt = 0;
 
 function getUserDepartments() {
   return Array.isArray(sessionUser.departments) ? sessionUser.departments : [];
@@ -598,21 +601,51 @@ function renderDepartmentSelector() {
 }
 
 async function loadPurchase() {
+  if (purchaseLoadInProgress) return;
+  purchaseLoadInProgress = true;
+  const sheetLineToRefresh = currentSheetLineId;
+  const sheetWasOpen = Boolean(sheetLineToRefresh && !lineSheetModal?.classList.contains("hidden"));
   clearFeedback(purchaseHeaderFeedback);
   clearFeedback(purchaseLinesFeedback);
 
-  const [data, expectedData] = await Promise.all([
-    apiFetch(`/api/purchases/${purchaseId}`),
-    apiFetch(`/api/supplier-control/purchases/${purchaseId}/expected-credit-notes`).catch(() => ({ expected_credit_notes: [] })),
-  ]);
-  purchase = data.purchase;
-  lines = Array.isArray(data.lines) ? data.lines : [];
-  expectedCreditNotes = Array.isArray(expectedData.expected_credit_notes) ? expectedData.expected_credit_notes : [];
+  try {
+    const [data, expectedData] = await Promise.all([
+      apiFetch(`/api/purchases/${purchaseId}`),
+      apiFetch(`/api/supplier-control/purchases/${purchaseId}/expected-credit-notes`).catch(() => ({ expected_credit_notes: [] })),
+    ]);
+    purchase = data.purchase;
+    lines = Array.isArray(data.lines) ? data.lines : [];
+    expectedCreditNotes = Array.isArray(expectedData.expected_credit_notes) ? expectedData.expected_credit_notes : [];
 
-  renderPurchaseHeader();
-  renderExpectedCreditNotes();
-  renderLinesTable();
-  refreshDisplayedPurchaseTotal();
+    renderPurchaseHeader();
+    renderExpectedCreditNotes();
+    renderLinesTable();
+    refreshDisplayedPurchaseTotal();
+    lastPurchaseLoadAt = Date.now();
+    if (sheetWasOpen && lines.some((line) => String(line.id) === String(sheetLineToRefresh))) {
+      openLineSheet(sheetLineToRefresh);
+    }
+  } finally {
+    purchaseLoadInProgress = false;
+  }
+}
+
+function shouldRefreshAfterExternalPhotoFlow() {
+  const now = Date.now();
+  if (purchaseLoadInProgress) return false;
+  if (document.visibilityState && document.visibilityState !== "visible") return false;
+  if (now - lastPurchaseLoadAt < 1500) return false;
+  if (lastPageHiddenAt && now - lastPageHiddenAt < 500) return false;
+  return true;
+}
+
+async function refreshPurchaseAfterExternalPhotoFlow() {
+  if (!shouldRefreshAfterExternalPhotoFlow()) return;
+  try {
+    await loadPurchase();
+  } catch (error) {
+    console.error("Erreur rafraichissement achat apres retour page :", error);
+  }
 }
 
 function renderPurchaseHeader() {
@@ -1791,6 +1824,18 @@ if (purchaseLinesTableBody) {
 if (openQrModalBtn) {
   openQrModalBtn.addEventListener("click", openQrModal);
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    lastPageHiddenAt = Date.now();
+    return;
+  }
+  window.setTimeout(refreshPurchaseAfterExternalPhotoFlow, 600);
+});
+
+window.addEventListener("focus", () => {
+  window.setTimeout(refreshPurchaseAfterExternalPhotoFlow, 600);
+});
 
 if (openExpectedCreditNoteModalBtn) {
   openExpectedCreditNoteModalBtn.addEventListener("click", openExpectedCreditNoteModal);
