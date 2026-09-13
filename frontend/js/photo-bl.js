@@ -3,6 +3,7 @@ const sessionUser = JSON.parse(localStorage.getItem("gc_user") || localStorage.g
 const API_BASE = window.APP_CONFIG.API_BASE_URL;
 const params = new URLSearchParams(window.location.search);
 const purchaseId = params.get("purchaseId");
+const PHOTO_UPLOAD_STORAGE_KEY = `gc_purchase_sanitary_photo_upload:${purchaseId}`;
 
 const purchaseLabel = document.getElementById("purchase-label");
 const linesContainer = document.getElementById("lines-container");
@@ -88,18 +89,46 @@ async function uploadPhoto(lineId, card, button) {
     button.textContent = "Envoi en cours...";
   }
 
+  let result;
   try {
     const form = new FormData();
     files.forEach((file) => form.append("photos", file));
-    const result = await apiFetch(`/api/purchase-lines/${encodeURIComponent(lineId)}/sanitary-photos`, {
+    result = await apiFetch(`/api/purchase-lines/${encodeURIComponent(lineId)}/sanitary-photos`, {
       method: "POST",
       body: form,
     });
-    resetFileInputs(card);
-    const uploadedCount = Array.isArray(result.urls) ? result.urls.length : files.length;
-    showFeedback(`${uploadedCount} photo(s) sanitaire(s) enregistrée(s). Elles seront visibles dans la fiche ligne achat/réception.`);
   } catch (error) {
     showFeedback(`${error.message || "Upload impossible"}. Vérifie la photo puis réessaie ou contacte un administrateur.`, true);
+    if (button) {
+      button.disabled = false;
+      button.textContent = "Envoyer photo(s) sanitaire(s)";
+    }
+    return;
+  }
+
+  resetFileInputs(card);
+  try {
+    localStorage.setItem(PHOTO_UPLOAD_STORAGE_KEY, String(Date.now()));
+  } catch (error) {
+    console.warn("Impossible de signaler l'upload photo sanitaire :", error);
+  }
+
+  const uploadedCount = Array.isArray(result.urls) ? result.urls.length : files.length;
+  const fallbackPersistedCount = Array.isArray(result.urls) ? result.urls.length : uploadedCount;
+
+  try {
+    const refreshed = await apiFetch(`/api/purchases/${encodeURIComponent(purchaseId)}`);
+    renderLines(refreshed);
+    const refreshedLine = Array.isArray(refreshed.lines)
+      ? refreshed.lines.find((line) => String(line.id) === String(lineId))
+      : null;
+    const persistedUrls = Array.isArray(refreshedLine?.sanitary_photo_urls)
+      ? refreshedLine.sanitary_photo_urls
+      : (Array.isArray(result.urls) ? result.urls : []);
+    showFeedback(`${uploadedCount} photo(s) envoyée(s). ${persistedUrls.length} photo(s) sanitaire(s) enregistrée(s) au total pour cette ligne.`);
+  } catch (error) {
+    console.warn("Verification persistence photo sanitaire impossible :", error);
+    showFeedback(`${uploadedCount} photo(s) envoyée(s). Vérification du total enregistré impossible pour le moment ; au moins ${fallbackPersistedCount} photo(s) confirmée(s) par l'envoi.`);
   } finally {
     if (button) {
       button.disabled = false;

@@ -184,7 +184,12 @@ function lotSelectSql(extraColumns = '') {
         (ARRAY_REMOVE(ARRAY_AGG(NULLIF(m.sanitary_photo_url, '') ORDER BY m.updated_at DESC NULLS LAST, m.created_at DESC NULLS LAST), NULL))[1] AS sanitary_photo_url,
         COALESCE(JSONB_AGG(DISTINCT url_elem) FILTER (WHERE url_elem IS NOT NULL), '[]'::jsonb) AS sanitary_photo_urls
       FROM purchase_line_metadata m
-      LEFT JOIN LATERAL JSONB_ARRAY_ELEMENTS_TEXT(COALESCE(m.sanitary_photo_urls, '[]'::jsonb)) AS url_elem ON true
+      LEFT JOIN LATERAL JSONB_ARRAY_ELEMENTS_TEXT(
+        CASE
+          WHEN jsonb_typeof(m.sanitary_photo_urls) = 'array' THEN m.sanitary_photo_urls
+          ELSE '[]'::jsonb
+        END
+      ) AS url_elem ON true
       WHERE m.purchase_line_id = l.purchase_line_id
     ) plm ON true
   `;

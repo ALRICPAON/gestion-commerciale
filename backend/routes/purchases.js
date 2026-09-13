@@ -112,6 +112,43 @@ function normalizeSanitaryPhotoUrls(rawUrls, primaryUrl = null, context = {}) {
   }
   return urls;
 }
+
+function resolveSanitaryPhotoPatch(body = {}, context = {}) {
+  const action = String(body.sanitary_photo_action || body.sanitary_photo_update_mode || '').trim().toLowerCase();
+  const explicitClear = body.clear_sanitary_photos === true || action === 'clear';
+  const explicitReplace = action === 'replace';
+  const hasPhotoUrls = Object.prototype.hasOwnProperty.call(body, 'sanitary_photo_urls');
+  const hasPrimaryPhotoField = Object.prototype.hasOwnProperty.call(body, 'sanitary_photo_url');
+  const primaryPhoto = toNullableString(body.sanitary_photo_url);
+  const normalized = hasPhotoUrls || hasPrimaryPhotoField
+    ? normalizeSanitaryPhotoUrls(body.sanitary_photo_urls, primaryPhoto, context)
+    : [];
+
+  if (explicitClear) {
+    return { mode: 'clear', primaryUrl: null, urlsJson: JSON.stringify([]), urls: [] };
+  }
+
+  if (explicitReplace) {
+    return {
+      mode: 'replace',
+      primaryUrl: normalized[0] || primaryPhoto || null,
+      urlsJson: JSON.stringify(normalized),
+      urls: normalized,
+    };
+  }
+
+  if (normalized.length > 0) {
+    return {
+      mode: 'merge',
+      primaryUrl: primaryPhoto || normalized[0],
+      urlsJson: JSON.stringify(normalized),
+      urls: normalized,
+    };
+  }
+
+  return { mode: 'preserve', primaryUrl: null, urlsJson: null, urls: [] };
+}
+
 function sanitizePurchaseLine(line) {
   return {
     ...line,
@@ -568,10 +605,8 @@ router.patch('/purchase-lines/:id', authenticateToken, attachDbContext, requireA
     const quantities=purchaseReceiptStockSync.purchaseLineUpdateValues(req.body,chk.rows[0],stockBacked);
     const amount=lineAmount({...merged,...quantities}, stockBacked);
     const r=await client.query(`UPDATE purchase_lines SET article_id=$1, ordered_colis=$2, ordered_pieces=$3, ordered_quantity=$4, received_colis=$5, received_pieces=$6, received_quantity=$7, unit_price_ex_vat=$8, price_unit=$9, line_amount_ex_vat=$10, updated_at=NOW() WHERE id=$11 RETURNING *`,[article.id,quantities.ordered_colis,quantities.ordered_pieces,quantities.ordered_quantity,quantities.received_colis,quantities.received_pieces,quantities.received_quantity,req.body.unit_price_ex_vat??chk.rows[0].unit_price_ex_vat,merged.price_unit,amount,req.params.id]);
-    const hasPhotoUrls = Object.prototype.hasOwnProperty.call(req.body, 'sanitary_photo_urls');
-    const hasPrimaryPhoto = Boolean(toNullableString(req.body.sanitary_photo_url));
-    const normalizedPhotoUrls = hasPhotoUrls || hasPrimaryPhoto ? normalizeSanitaryPhotoUrls(req.body.sanitary_photo_urls, req.body.sanitary_photo_url, { purchase_line_id: req.params.id }) : null;
-    await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,latin_name,fao_zone,sous_zone,fishing_gear,allergens,origin_label,supplier_lot_number,dlc,sanitary_photo_url,sanitary_photo_urls,notes,updated_at) VALUES(gen_random_uuid(),$1,'gc_line','{}'::jsonb,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,NOW()) ON CONFLICT(purchase_line_id,meta_key) DO UPDATE SET latin_name=EXCLUDED.latin_name,fao_zone=EXCLUDED.fao_zone,sous_zone=EXCLUDED.sous_zone,fishing_gear=EXCLUDED.fishing_gear,allergens=EXCLUDED.allergens,origin_label=EXCLUDED.origin_label,supplier_lot_number=EXCLUDED.supplier_lot_number,dlc=EXCLUDED.dlc,sanitary_photo_url=COALESCE(EXCLUDED.sanitary_photo_url,purchase_line_metadata.sanitary_photo_url),sanitary_photo_urls=COALESCE(EXCLUDED.sanitary_photo_urls,CASE WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls)='array' THEN purchase_line_metadata.sanitary_photo_urls WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url) ELSE '[]'::jsonb END),notes=EXCLUDED.notes,updated_at=NOW()`,[req.params.id,req.body.latin_name||null,req.body.fao_zone||null,req.body.sous_zone||null,req.body.fishing_gear||null,req.body.allergens||null,req.body.origin_label||null,req.body.supplier_lot_number||null,req.body.dlc||null,toNullableString(req.body.sanitary_photo_url),normalizedPhotoUrls ? JSON.stringify(normalizedPhotoUrls) : null,req.body.metadata_notes||null]);
+    const photoPatch = resolveSanitaryPhotoPatch(req.body, { purchase_line_id: req.params.id });
+    await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,latin_name,fao_zone,sous_zone,fishing_gear,allergens,origin_label,supplier_lot_number,dlc,sanitary_photo_url,sanitary_photo_urls,notes,updated_at) VALUES(gen_random_uuid(),$1,'gc_line','{}'::jsonb,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::jsonb,'[]'::jsonb),$12,NOW()) ON CONFLICT(purchase_line_id,meta_key) DO UPDATE SET latin_name=EXCLUDED.latin_name,fao_zone=EXCLUDED.fao_zone,sous_zone=EXCLUDED.sous_zone,fishing_gear=EXCLUDED.fishing_gear,allergens=EXCLUDED.allergens,origin_label=EXCLUDED.origin_label,supplier_lot_number=EXCLUDED.supplier_lot_number,dlc=EXCLUDED.dlc,sanitary_photo_url=CASE WHEN $13::text='clear' THEN NULL WHEN $13::text IN ('replace','merge') THEN COALESCE(EXCLUDED.sanitary_photo_url, purchase_line_metadata.sanitary_photo_url) ELSE purchase_line_metadata.sanitary_photo_url END,sanitary_photo_urls=CASE WHEN $13::text='clear' THEN '[]'::jsonb WHEN $13::text='replace' THEN COALESCE(EXCLUDED.sanitary_photo_urls,'[]'::jsonb) WHEN $13::text='merge' THEN (SELECT COALESCE(jsonb_agg(to_jsonb(url) ORDER BY first_ord),'[]'::jsonb) FROM (SELECT url, MIN(ord) AS first_ord FROM (SELECT value AS url, ord FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls)='array' THEN purchase_line_metadata.sanitary_photo_urls WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url) ELSE '[]'::jsonb END) WITH ORDINALITY AS existing(value, ord) UNION ALL SELECT value AS url, 100000 + ord FROM jsonb_array_elements_text(COALESCE(EXCLUDED.sanitary_photo_urls,'[]'::jsonb)) WITH ORDINALITY AS incoming(value, ord)) all_urls WHERE url ~ '^(https?://|/uploads/sanitary-photos/)' GROUP BY url ORDER BY first_ord) limited_urls) ELSE CASE WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls)='array' THEN purchase_line_metadata.sanitary_photo_urls WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url) ELSE '[]'::jsonb END END,notes=EXCLUDED.notes,updated_at=NOW()`,[req.params.id,req.body.latin_name||null,req.body.fao_zone||null,req.body.sous_zone||null,req.body.fishing_gear||null,req.body.allergens||null,req.body.origin_label||null,req.body.supplier_lot_number||null,req.body.dlc||null,photoPatch.primaryUrl,photoPatch.urlsJson,req.body.metadata_notes||null,photoPatch.mode]);
     await rebuildStockForPurchaseIfNeeded(client, purchase, req.user.id, articleIdsBefore);
     await client.query('COMMIT'); return res.json({ok:true,line:r.rows[0],article});
   }catch(e){await client.query('ROLLBACK'); console.error('Erreur modification ligne achat :', e); return res.status(e.status||500).json({error:e.expose?e.message:'Erreur modification ligne achat'});} finally{client.release();}
@@ -591,10 +626,8 @@ router.patch('/purchase-lines/:id', authenticateToken, attachDbContext, requireA
     const quantities=purchaseReceiptStockSync.purchaseLineUpdateValues(req.body,chk.rows[0],stockBacked);
     const amount=lineAmount({...merged,...quantities}, stockBacked);
     const r=await client.query(`UPDATE purchase_lines SET article_id=$1, ordered_colis=$2, ordered_pieces=$3, ordered_quantity=$4, received_colis=$5, received_pieces=$6, received_quantity=$7, unit_price_ex_vat=$8, price_unit=$9, line_amount_ex_vat=$10, updated_at=NOW() WHERE id=$11 RETURNING *`,[article.id,quantities.ordered_colis,quantities.ordered_pieces,quantities.ordered_quantity,quantities.received_colis,quantities.received_pieces,quantities.received_quantity,req.body.unit_price_ex_vat??chk.rows[0].unit_price_ex_vat,merged.price_unit,amount,req.params.id]);
-    const hasPhotoUrls = Object.prototype.hasOwnProperty.call(req.body, 'sanitary_photo_urls');
-    const hasPrimaryPhoto = Boolean(toNullableString(req.body.sanitary_photo_url));
-    const normalizedPhotoUrls = hasPhotoUrls || hasPrimaryPhoto ? normalizeSanitaryPhotoUrls(req.body.sanitary_photo_urls, req.body.sanitary_photo_url, { purchase_line_id: req.params.id }) : null;
-    await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,latin_name,fao_zone,sous_zone,fishing_gear,allergens,origin_label,supplier_lot_number,dlc,sanitary_photo_url,sanitary_photo_urls,notes,updated_at) VALUES(gen_random_uuid(),$1,'gc_line','{}'::jsonb,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12,NOW()) ON CONFLICT(purchase_line_id,meta_key) DO UPDATE SET latin_name=EXCLUDED.latin_name,fao_zone=EXCLUDED.fao_zone,sous_zone=EXCLUDED.sous_zone,fishing_gear=EXCLUDED.fishing_gear,allergens=EXCLUDED.allergens,origin_label=EXCLUDED.origin_label,supplier_lot_number=EXCLUDED.supplier_lot_number,dlc=EXCLUDED.dlc,sanitary_photo_url=COALESCE(EXCLUDED.sanitary_photo_url,purchase_line_metadata.sanitary_photo_url),sanitary_photo_urls=COALESCE(EXCLUDED.sanitary_photo_urls,CASE WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls)='array' THEN purchase_line_metadata.sanitary_photo_urls WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url) ELSE '[]'::jsonb END),notes=EXCLUDED.notes,updated_at=NOW()`,[req.params.id,req.body.latin_name||null,req.body.fao_zone||null,req.body.sous_zone||null,req.body.fishing_gear||null,req.body.allergens||null,req.body.origin_label||null,req.body.supplier_lot_number||null,req.body.dlc||null,toNullableString(req.body.sanitary_photo_url),normalizedPhotoUrls ? JSON.stringify(normalizedPhotoUrls) : null,req.body.metadata_notes||null]);
+    const photoPatch = resolveSanitaryPhotoPatch(req.body, { purchase_line_id: req.params.id });
+    await client.query(`INSERT INTO purchase_line_metadata(id,purchase_line_id,meta_key,meta_value,latin_name,fao_zone,sous_zone,fishing_gear,allergens,origin_label,supplier_lot_number,dlc,sanitary_photo_url,sanitary_photo_urls,notes,updated_at) VALUES(gen_random_uuid(),$1,'gc_line','{}'::jsonb,$2,$3,$4,$5,$6,$7,$8,$9,$10,COALESCE($11::jsonb,'[]'::jsonb),$12,NOW()) ON CONFLICT(purchase_line_id,meta_key) DO UPDATE SET latin_name=EXCLUDED.latin_name,fao_zone=EXCLUDED.fao_zone,sous_zone=EXCLUDED.sous_zone,fishing_gear=EXCLUDED.fishing_gear,allergens=EXCLUDED.allergens,origin_label=EXCLUDED.origin_label,supplier_lot_number=EXCLUDED.supplier_lot_number,dlc=EXCLUDED.dlc,sanitary_photo_url=CASE WHEN $13::text='clear' THEN NULL WHEN $13::text IN ('replace','merge') THEN COALESCE(EXCLUDED.sanitary_photo_url, purchase_line_metadata.sanitary_photo_url) ELSE purchase_line_metadata.sanitary_photo_url END,sanitary_photo_urls=CASE WHEN $13::text='clear' THEN '[]'::jsonb WHEN $13::text='replace' THEN COALESCE(EXCLUDED.sanitary_photo_urls,'[]'::jsonb) WHEN $13::text='merge' THEN (SELECT COALESCE(jsonb_agg(to_jsonb(url) ORDER BY first_ord),'[]'::jsonb) FROM (SELECT url, MIN(ord) AS first_ord FROM (SELECT value AS url, ord FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls)='array' THEN purchase_line_metadata.sanitary_photo_urls WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url) ELSE '[]'::jsonb END) WITH ORDINALITY AS existing(value, ord) UNION ALL SELECT value AS url, 100000 + ord FROM jsonb_array_elements_text(COALESCE(EXCLUDED.sanitary_photo_urls,'[]'::jsonb)) WITH ORDINALITY AS incoming(value, ord)) all_urls WHERE url ~ '^(https?://|/uploads/sanitary-photos/)' GROUP BY url ORDER BY first_ord) limited_urls) ELSE CASE WHEN jsonb_typeof(purchase_line_metadata.sanitary_photo_urls)='array' THEN purchase_line_metadata.sanitary_photo_urls WHEN purchase_line_metadata.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(purchase_line_metadata.sanitary_photo_url) ELSE '[]'::jsonb END END,notes=EXCLUDED.notes,updated_at=NOW()`,[req.params.id,req.body.latin_name||null,req.body.fao_zone||null,req.body.sous_zone||null,req.body.fishing_gear||null,req.body.allergens||null,req.body.origin_label||null,req.body.supplier_lot_number||null,req.body.dlc||null,photoPatch.primaryUrl,photoPatch.urlsJson,req.body.metadata_notes||null,photoPatch.mode]);
     await recomputePurchaseTotals(client, chk.rows[0].purchase_id); await client.query('COMMIT'); res.json({ok:true,line:r.rows[0],article});
   }catch(e){await client.query('ROLLBACK'); console.error('Erreur modification ligne achat :', e); res.status(500).json({error:'Erreur modification ligne achat'});} finally{client.release();}
 });
@@ -829,5 +862,10 @@ router.post('/purchases/import-document', authenticateToken, attachDbContext, re
     res.json({...parsed,purchase:{...purchase.rows[0],supplier_code:supplier.code},imported_lines:imported,missing_trad_mappings:missing});
   }catch(e){await client.query('ROLLBACK'); console.error(e); res.status(500).json({error:e.message});} finally{client.release();}
 });
+
+router._sanitaryPhotoTest = {
+  normalizeSanitaryPhotoUrls,
+  resolveSanitaryPhotoPatch,
+};
 
 module.exports = router;

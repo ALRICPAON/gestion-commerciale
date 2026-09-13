@@ -145,6 +145,14 @@ let resolveQualityControlModal = null;
 let expectedCreditNoteRequestId = null;
 let supplierStockEffectRequestId = null;
 let currentStockEffectLineId = null;
+let purchaseLoadInProgress = false;
+let lastPurchaseLoadAt = 0;
+let lastPageHiddenAt = 0;
+let purchaseHasUnsavedChanges = false;
+let externalPhotoRefreshPending = false;
+let externalPhotoRefreshArmedUntil = 0;
+const EXTERNAL_PHOTO_REFRESH_ARM_MS = 10 * 60 * 1000;
+const PHOTO_UPLOAD_STORAGE_KEY = `gc_purchase_sanitary_photo_upload:${purchaseId}`;
 
 function getUserDepartments() {
   return Array.isArray(sessionUser.departments) ? sessionUser.departments : [];
@@ -598,21 +606,95 @@ function renderDepartmentSelector() {
 }
 
 async function loadPurchase() {
+  if (purchaseLoadInProgress) return;
+  purchaseLoadInProgress = true;
+  const sheetLineToRefresh = currentSheetLineId;
+  const sheetWasOpen = Boolean(sheetLineToRefresh && !lineSheetModal?.classList.contains("hidden"));
   clearFeedback(purchaseHeaderFeedback);
   clearFeedback(purchaseLinesFeedback);
 
-  const [data, expectedData] = await Promise.all([
-    apiFetch(`/api/purchases/${purchaseId}`),
-    apiFetch(`/api/supplier-control/purchases/${purchaseId}/expected-credit-notes`).catch(() => ({ expected_credit_notes: [] })),
-  ]);
-  purchase = data.purchase;
-  lines = Array.isArray(data.lines) ? data.lines : [];
-  expectedCreditNotes = Array.isArray(expectedData.expected_credit_notes) ? expectedData.expected_credit_notes : [];
+  try {
+    const [data, expectedData] = await Promise.all([
+      apiFetch(`/api/purchases/${purchaseId}`),
+      apiFetch(`/api/supplier-control/purchases/${purchaseId}/expected-credit-notes`).catch(() => ({ expected_credit_notes: [] })),
+    ]);
+    purchase = data.purchase;
+    lines = Array.isArray(data.lines) ? data.lines : [];
+    expectedCreditNotes = Array.isArray(expectedData.expected_credit_notes) ? expectedData.expected_credit_notes : [];
 
-  renderPurchaseHeader();
-  renderExpectedCreditNotes();
-  renderLinesTable();
-  refreshDisplayedPurchaseTotal();
+    renderPurchaseHeader();
+    renderExpectedCreditNotes();
+    renderLinesTable();
+    refreshDisplayedPurchaseTotal();
+    lastPurchaseLoadAt = Date.now();
+    purchaseHasUnsavedChanges = false;
+    if (sheetWasOpen && lines.some((line) => String(line.id) === String(sheetLineToRefresh))) {
+      openLineSheet(sheetLineToRefresh);
+    }
+  } finally {
+    purchaseLoadInProgress = false;
+  }
+}
+
+function markPurchaseDirty() {
+  purchaseHasUnsavedChanges = true;
+}
+
+function isPurchaseEditField(target) {
+  if (!target || !(target instanceof Element)) return false;
+  if (qrModal?.contains(target)) return false;
+  if (lineSheetModal?.contains(target)) return true;
+  if (purchaseLinesTableBody?.contains(target)) return true;
+  return [
+    purchaseOrderDateInput,
+    purchaseReceiptDateInput,
+    purchaseSupplierNameInput,
+    purchaseTypeInput,
+    purchaseStatusInput,
+    purchaseBlNumberInput,
+    purchaseInvoiceNumberInput,
+    purchaseNotesInput,
+  ].some((element) => element === target);
+}
+
+function armExternalPhotoRefresh() {
+  externalPhotoRefreshPending = true;
+  externalPhotoRefreshArmedUntil = Date.now() + EXTERNAL_PHOTO_REFRESH_ARM_MS;
+}
+
+function markExternalPhotoUploadSeen() {
+  externalPhotoRefreshPending = false;
+  externalPhotoRefreshArmedUntil = 0;
+  try {
+    localStorage.removeItem(PHOTO_UPLOAD_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Impossible de nettoyer le marqueur photo sanitaire :", error);
+  }
+}
+
+function shouldRefreshAfterExternalPhotoFlow() {
+  const now = Date.now();
+  const storedPhotoUploadAt = Number(localStorage.getItem(PHOTO_UPLOAD_STORAGE_KEY) || 0);
+  if (storedPhotoUploadAt > lastPurchaseLoadAt) {
+    externalPhotoRefreshPending = true;
+  }
+  if (purchaseLoadInProgress) return false;
+  if (purchaseHasUnsavedChanges) return false;
+  if (document.visibilityState && document.visibilityState !== "visible") return false;
+  if (now - lastPurchaseLoadAt < 1500) return false;
+  if (lastPageHiddenAt && now - lastPageHiddenAt < 500) return false;
+  if (!externalPhotoRefreshPending && now > externalPhotoRefreshArmedUntil) return false;
+  return true;
+}
+
+async function refreshPurchaseAfterExternalPhotoFlow() {
+  if (!shouldRefreshAfterExternalPhotoFlow()) return;
+  try {
+    await loadPurchase();
+    markExternalPhotoUploadSeen();
+  } catch (error) {
+    console.error("Erreur rafraichissement achat apres retour page :", error);
+  }
 }
 
 function renderPurchaseHeader() {
@@ -823,6 +905,7 @@ function openQrModal() {
   if (!purchase) return;
 
   const targetUrl = getPhotoBlMobileUrl();
+  armExternalPhotoRefresh();
 
   qrSupplierNameEl.textContent = buildQrLabelSupplier();
   qrBlNumberEl.textContent = buildQrLabelBl();
@@ -846,6 +929,7 @@ function closeQrModal() {
 async function copyQrLink() {
   try {
     await navigator.clipboard.writeText(qrTargetUrlInput.value || "");
+    armExternalPhotoRefresh();
     showFeedback(purchaseHeaderFeedback, "Lien photo BL copié");
   } catch (error) {
     console.error("Erreur copie lien QR :", error);
@@ -854,6 +938,7 @@ async function copyQrLink() {
 }
 
 function printQr() {
+  armExternalPhotoRefresh();
   window.print();
 }
 
@@ -1791,6 +1876,32 @@ if (purchaseLinesTableBody) {
 if (openQrModalBtn) {
   openQrModalBtn.addEventListener("click", openQrModal);
 }
+
+document.addEventListener("input", (event) => {
+  if (isPurchaseEditField(event.target)) markPurchaseDirty();
+});
+
+document.addEventListener("change", (event) => {
+  if (isPurchaseEditField(event.target)) markPurchaseDirty();
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    lastPageHiddenAt = Date.now();
+    return;
+  }
+  window.setTimeout(refreshPurchaseAfterExternalPhotoFlow, 600);
+});
+
+window.addEventListener("focus", () => {
+  window.setTimeout(refreshPurchaseAfterExternalPhotoFlow, 600);
+});
+
+window.addEventListener("storage", (event) => {
+  if (event.key !== PHOTO_UPLOAD_STORAGE_KEY || !event.newValue) return;
+  armExternalPhotoRefresh();
+  window.setTimeout(refreshPurchaseAfterExternalPhotoFlow, 600);
+});
 
 if (openExpectedCreditNoteModalBtn) {
   openExpectedCreditNoteModalBtn.addEventListener("click", openExpectedCreditNoteModal);
