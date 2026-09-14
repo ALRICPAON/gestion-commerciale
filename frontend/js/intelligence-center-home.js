@@ -53,7 +53,20 @@ function renderAlert(alert) {
   view.textContent = 'Voir';
 
   actions.append(view);
-  card.append(header, count, description, actions);
+  card.append(header, count, description);
+  if (Array.isArray(alert.items) && alert.items.length) {
+    const list = document.createElement('div');
+    list.className = 'intelligence-items';
+    alert.items.slice(0, 5).forEach((item) => {
+      const link = document.createElement('a');
+      link.className = 'intelligence-item-link';
+      link.href = item.url || alert.view_url || '#';
+      link.textContent = [item.label, item.detail].filter(Boolean).join(' - ');
+      list.appendChild(link);
+    });
+    card.appendChild(list);
+  }
+  card.append(actions);
   return card;
 }
 

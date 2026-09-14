@@ -12,6 +12,10 @@ const {
   saleOrderFilename,
 } = require('../services/pdf/templates/saleOrderPdfTemplate');
 const { generateCustomerPriceListPdf } = require('../services/customerPriceListPdfService');
+const {
+  computeDeliveryLogisticsTotals,
+  enrichLines,
+} = require('../services/salesLineMetrics');
 
 const router = express.Router();
 function isUuid(value) {
@@ -130,6 +134,7 @@ router.get('/delivery-notes/:id/pdf', authenticateToken, attachDbContext, async 
           jsonb_agg(jsonb_build_object(
             'lot_id', sla.lot_id,
             'quantity', sla.quantity,
+            'unit_cost_ex_vat', sla.unit_cost_ex_vat,
             'lot_code', l.lot_code,
             'supplier_lot_number', l.supplier_lot_number,
             'dlc', l.dlc,
@@ -138,13 +143,15 @@ router.get('/delivery-notes/:id/pdf', authenticateToken, attachDbContext, async 
             'sous_zone', COALESCE(l.traceability_data->>'sous_zone', a.sous_zone),
             'fishing_gear', COALESCE(l.traceability_data->>'fishing_gear', a.fishing_gear),
             'production_method', COALESCE(l.traceability_data->>'production_method', a.production_method)
-          )) FILTER (WHERE sla.id IS NOT NULL) AS allocations
+          )) FILTER (WHERE sla.id IS NOT NULL) AS allocations,
+          selected_lot.unit_cost_ex_vat AS selected_lot_unit_cost_ex_vat
         FROM sales_lines sl
         LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
         LEFT JOIN lots l ON l.id = sla.lot_id
+        LEFT JOIN lots selected_lot ON selected_lot.id = sl.selected_lot_id AND selected_lot.store_id = sl.store_id
         LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
         WHERE sl.sales_document_id = $1 AND sl.store_id = $2
-        GROUP BY sl.id
+        GROUP BY sl.id, selected_lot.id
         ORDER BY sl.line_number ASC
         `,
         [req.params.id, req.user.store_id]
@@ -152,8 +159,9 @@ router.get('/delivery-notes/:id/pdf', authenticateToken, attachDbContext, async 
       getStoreSettings(req.dbPool, req.user.store_id),
     ]);
 
-    const document = documentResult.rows[0];
-    const html = renderDeliveryNotePdf({ document, lines: linesResult.rows, storeSettings });
+    const lines = enrichLines(linesResult.rows);
+    const document = { ...documentResult.rows[0], logistics_totals: computeDeliveryLogisticsTotals(lines) };
+    const html = renderDeliveryNotePdf({ document, lines, storeSettings });
     return renderAndSend(res, html, deliveryNoteFilename(document));
   } catch (err) {
     console.error('Erreur PDF BL :', err);

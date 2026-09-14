@@ -5,6 +5,7 @@ if (!token || !sessionUser) window.location.href = './login.html';
 const API_BASE = window.APP_CONFIG.API_BASE_URL;
 const saleId = new URLSearchParams(window.location.search).get('id');
 if (!saleId) window.location.href = './sales.html';
+const highlightedLineId = new URLSearchParams(window.location.search).get('line_id');
 const $ = (id) => document.getElementById(id);
 const els = { user: $('user-name'), logout: $('logout-btn'), back: $('back-sales-btn'), dep: $('topbar-department-select'), depName: $('current-department-name'), save: $('save-sale-btn'), validateBl: $('validate-bl-btn'), printOrder: $('print-order-btn'), add: $('add-line-btn'), hf: $('sale-header-feedback'), lf: $('sale-lines-feedback'), client: $('sale-client-id'), tariff: $('sale-tariff-level'), vat: $('sale-vat-context'), date: $('sale-document-date'), type: $('sale-document-type'), status: $('sale-status'), ref: $('sale-reference-number'), notes: $('sale-notes'), body: $('sale-lines-table-body'), stockModal: $('stock-article-modal'), stockTitle: $('stock-article-modal-title'), stockSubtitle: $('stock-article-modal-subtitle'), closeStock: $('close-stock-article-modal-btn'), stockSearch: $('stock-article-search-input'), stockHead: $('stock-article-modal-table-head'), stockBody: $('stock-article-modal-table-body'), lotModal: $('lot-modal'), closeLot: $('close-lot-modal-btn'), lotBody: $('lot-modal-table-body') };
 let sale = null;
@@ -21,6 +22,7 @@ function n(v, f = 0) { const x = Number(String(v ?? '').replace(',', '.')); retu
 function clean(v) { return String(v ?? '').trim(); }
 function money(v) { return n(v).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function qty(v) { return n(v).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 }); }
+function percent(v) { return n(v).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
 function dinput(v) { if (!v) return ''; try { return new Date(v).toISOString().slice(0, 10); } catch { return ''; } }
 function sdate(v) { if (!v) return '-'; try { return new Date(v).toLocaleDateString('fr-FR'); } catch { return v; } }
 function esc(v) { return String(v ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
@@ -36,6 +38,8 @@ function vatRate() { const c = selectedClient(); if (c?.is_vat_exempt || sale?.c
 function priceFor(a) { return n(a?.[`sale_price_level_${tariffLevel()}_ht`] ?? a?.sale_price_ex_vat ?? 0, 0); }
 function trace(line) { return line.traceability_snapshot || {}; }
 function traceText(t) { const parts = [t?.lot_code || t?.supplier_lot_number, t?.latin_name, t?.fao_zone, t?.sous_zone, t?.fishing_gear || t?.engin, t?.production_method || t?.category, t?.allergens || t?.allergenes].filter(Boolean); return parts.length ? parts.join(' | ') : '-'; }
+function marginText(line) { const margin = line.real_margin; if (!margin) return 'Marge : -'; return `Achat ${money(margin.purchase_unit_cost_ht)} EUR | Vente ${money(margin.sale_unit_price_ht)} EUR | Marge ${money(margin.margin_per_kg)} EUR/kg | ${percent(margin.margin_rate_percent)} % | ${money(margin.margin_total)} EUR`; }
+function marginClass(line) { return `line-margin-badge margin-${line.real_margin?.status || 'unknown'}`; }
 function normalizeArticle(item) { return { ...item, article_id: item.article_id || item.id, plu: item.plu || item.code || '', designation: item.designation || item.display_name || '', family_name: item.family_name || item.family || item.category || '', sale_price_level_1_ht: item.sale_price_level_1_ht ?? item.sale_price_ex_vat ?? 0, sale_price_level_2_ht: item.sale_price_level_2_ht ?? 0, sale_price_level_3_ht: item.sale_price_level_3_ht ?? 0, stock_quantity: item.stock_quantity ?? 0, pma: item.pma ?? item.unit_cost_ex_vat ?? 0, sale_unit: item.sale_unit || item.unit || 'kg', lot_code: item.lot_code || item.next_lot_code || '', supplier_lot_number: item.supplier_lot_number || item.next_supplier_lot_number || '', next_dlc: item.next_dlc || item.next_lot_dlc || null, fishing_gear: item.fishing_gear || item.engin, allergens: item.allergens || item.allergenes, production_method: item.production_method || item.category }; }
 function normalizeKind(value) { return String(value || '').trim().toLowerCase(); }
 function isNegoce() { return normalizeKind(sale?.origin) === 'negoce'; }
@@ -223,7 +227,7 @@ function renderHeader() {
 
 function renderLines() {
   ensureAffiliateLineHeader();
-  if (!lines.length) { els.body.innerHTML = '<tr><td colspan="14">Aucune ligne.</td></tr>'; return; }
+  if (!lines.length) { els.body.innerHTML = '<tr><td colspan="15">Aucune ligne.</td></tr>'; return; }
   els.body.innerHTML = lines.map((line) => {
     const t = trace(line);
     const locked = !editable();
@@ -240,12 +244,18 @@ function renderLines() {
       <td class="line-total-ht">${money(line.line_amount_ht)}</td>
       <td><input class="line-input line-vat-rate" type="number" step="0.01" value="${n(line.vat_rate, vatRate())}" ${locked ? 'disabled' : ''}></td>
       <td class="line-total-ttc">${money(line.line_amount_ttc)}</td>
+      <td class="${marginClass(line)}">${esc(marginText(line))}</td>
       <td class="trace-cell">${esc(traceText(t) !== '-' ? traceText(t) : (negoce ? 'Négoce hors stock' : '-'))}</td>
       <td>${esc(line.line_status || '-')}</td>
       <td><button type="button" class="btn btn-primary" data-action="save-line" data-id="${line.id}" ${locked ? 'disabled' : ''}>OK</button><button type="button" class="btn btn-secondary" data-action="delete-line" data-id="${line.id}" ${locked ? 'disabled' : ''}>Suppr.</button></td>
     </tr>`;
   }).join('');
   syncDeliveredClientSelects();
+  const highlighted = highlightedLineId ? els.body.querySelector(`tr[data-line-id="${highlightedLineId}"]`) : null;
+  if (highlighted) {
+    highlighted.classList.add('line-highlight');
+    highlighted.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
 }
 
 function computeRow(row) {
