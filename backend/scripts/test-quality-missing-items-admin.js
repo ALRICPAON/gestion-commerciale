@@ -25,7 +25,15 @@ class FakeDb {
       code: 'T1-C01',
       title: 'Identite',
       archived_at: null,
+    }, {
+      id: '00000000-0000-4000-8000-000000000302',
+      store_id: STORE_ID,
+      collection_id: COLLECTION_ID,
+      code: 'T2-C20',
+      title: 'Securite incendie',
+      archived_at: null,
     }];
+    this.collections = [{ id: COLLECTION_ID, store_id: STORE_ID, title: 'Manuel qualite', updated_at: '2026-08-01T00:00:00.000Z' }];
     this.users = [{ id: USER_ID, store_id: STORE_ID, is_active: true }];
     this.stores = [{ id: STORE_ID, client_key: 'scorpa' }, { id: OTHER_STORE_ID, client_key: 'other' }];
     this.missingItems = [{
@@ -41,8 +49,38 @@ class FakeDb {
       resolved_by: null,
       created_at: '2026-08-01T00:00:00.000Z',
       updated_at: '2026-08-01T00:00:00.000Z',
+    }, {
+      id: '00000000-0000-4000-8000-000000000402',
+      section_id: '00000000-0000-4000-8000-000000000302',
+      store_id: STORE_ID,
+      description: 'Securite incendie',
+      severity: 'external_pending',
+      responsible_user_id: null,
+      due_at: null,
+      status: 'open',
+      resolved_at: null,
+      resolved_by: null,
+      created_at: '2026-08-01T00:00:00.000Z',
+      updated_at: '2026-08-01T00:00:00.000Z',
     }];
     this.auditEvents = [];
+  }
+
+  missingRows(compact, params) {
+    const collectionId = params[1] === COLLECTION_ID ? params[1] : null;
+    const rows = this.missingItems.filter((item) => {
+      if (item.store_id !== params[0]) return false;
+      const section = this.sections.find((row) => row.id === item.section_id && row.store_id === item.store_id);
+      if (!section) return false;
+      if (collectionId && section.collection_id !== collectionId) return false;
+      if (compact.includes("m.status <> 'resolved'") && item.status === 'resolved') return false;
+      if (compact.includes('m.status = $2') && item.status !== params[1]) return false;
+      return true;
+    });
+    return rows.map((item) => {
+      const section = this.sections.find((row) => row.id === item.section_id && row.store_id === item.store_id);
+      return { ...clone(item), collection_id: section.collection_id, section_title: section.title, section_code: section.code };
+    });
   }
 
   async query(sql, params = []) {
@@ -54,11 +92,27 @@ class FakeDb {
       this.auditEvents.push({ store_id: params[0], user_id: params[1], action: params[3], details: params[6] });
       return { rows: [] };
     }
+    if (compact.startsWith('SELECT * FROM quality_documentation_collections')) {
+      return { rows: this.collections.filter((collection) => collection.id === params[0] && collection.store_id === params[1]) };
+    }
+    if (compact.startsWith('SELECT * FROM quality_documentation_sections WHERE collection_id')) {
+      return { rows: this.sections.filter((section) => section.collection_id === params[0] && section.store_id === params[1]) };
+    }
+    if (compact.startsWith('SELECT * FROM quality_documentation_exports')
+      || compact.startsWith('SELECT * FROM quality_document_diagrams')
+      || compact.startsWith('SELECT * FROM quality_document_tables')
+      || compact.startsWith('SELECT * FROM quality_document_blocks')
+      || compact.startsWith('SELECT a.*, s.title AS section_title')) {
+      return { rows: [] };
+    }
     if (compact.startsWith('SELECT * FROM quality_documentation_sections')) {
       return { rows: this.sections.filter((section) => section.id === params[0] && section.store_id === params[1]) };
     }
     if (compact.startsWith('SELECT id FROM users')) {
       return { rows: this.users.filter((user) => user.id === params[0] && user.store_id === params[1] && user.is_active) };
+    }
+    if (compact.startsWith('SELECT m.*, s.title AS section_title')) {
+      return { rows: this.missingRows(compact, params) };
     }
     if (compact.startsWith('SELECT m.*, s.collection_id')) {
       const item = this.missingItems.find((row) => row.id === params[0] && row.store_id === params[1]);
@@ -97,6 +151,13 @@ async function assertRejectsStatus(fn, status, message) {
 
 async function main() {
   const db = new FakeDb();
+  const t2C20Id = '00000000-0000-4000-8000-000000000402';
+
+  const initialDocumentation = await qualityDocumentation.getDocumentation(db, STORE_ID, COLLECTION_ID);
+  assert(initialDocumentation.missing_items.some((item) => item.id === t2C20Id), 'reload initial doit retourner T2-C20 ouvert');
+  assert(initialDocumentation.missing_items.every((item) => item.status !== 'resolved'), 'reload standard ne doit exposer que les points ouverts');
+  const initialActiveItems = await qualityDocumentation.listMissingItems(db, STORE_ID, {});
+  assert(initialActiveItems.some((item) => item.id === t2C20Id && item.severity === 'external_pending'), 'external_pending T2-C20 doit apparaitre tant qu il est ouvert');
 
   const updated = await qualityDocumentation.updateMissingItem(db, STORE_ID, ITEM_ID, USER_ID, {
     collection_id: COLLECTION_ID,
@@ -112,6 +173,16 @@ async function main() {
   const resolved = await qualityDocumentation.resolveMissingItem(db, STORE_ID, ITEM_ID, USER_ID, { reason: 'Document recu' });
   assert.strictEqual(resolved.status, 'resolved', 'resolve doit passer le point en resolved');
   assert.strictEqual(resolved.resolved_by, USER_ID, 'resolve doit tracer resolved_by');
+
+  const resolvedExternal = await qualityDocumentation.resolveMissingItem(db, STORE_ID, t2C20Id, USER_ID, { reason: 'Attente externe levee' });
+  assert.strictEqual(resolvedExternal.status, 'resolved', 'external_pending doit pouvoir etre resolu normalement');
+  assert.strictEqual(resolvedExternal.severity, 'external_pending', 'resolve ne doit pas changer la temporalite');
+  const activeAfterResolve = await qualityDocumentation.listMissingItems(db, STORE_ID, {});
+  assert(!activeAfterResolve.some((item) => item.id === t2C20Id), 'un point resolu doit disparaitre de la liste active');
+  const reloadedAfterResolve = await qualityDocumentation.getDocumentation(db, STORE_ID, COLLECTION_ID);
+  assert(!reloadedAfterResolve.missing_items.some((item) => item.id === t2C20Id), 'apres reload complet, T2-C20 resolu ne doit pas reapparaitre');
+  const resolvedHistory = await qualityDocumentation.listMissingItems(db, STORE_ID, { status: 'resolved' });
+  assert(resolvedHistory.some((item) => item.id === t2C20Id), 'l historique resolu doit rester consultable');
 
   const reopened = await qualityDocumentation.reopenMissingItem(db, STORE_ID, ITEM_ID, USER_ID, { reason: 'Controle manuel' });
   assert.strictEqual(reopened.status, 'open', 'reopen doit remettre le point en open');
