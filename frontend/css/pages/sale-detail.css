@@ -8,7 +8,7 @@ body.app-page.sale-detail-page .sale-document-actions { align-items: center; dis
 body.app-page.sale-detail-page .legacy-bl-action { display: none !important; }
 body.app-page.sale-detail-page .line-label-btn { margin-left: 6px; }
 body.app-page.sale-detail-page .sale-lines-wrap { width: 100% !important; overflow-x: auto !important; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; }
-body.app-page.sale-detail-page .sale-lines-table { min-width: 2260px !important; width: max-content !important; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+body.app-page.sale-detail-page .sale-lines-table { min-width: 2330px !important; width: max-content !important; border-collapse: separate; border-spacing: 0; table-layout: fixed; }
 body.app-page.sale-detail-page .sale-lines-table th { position: sticky; top: 0; z-index: 2; background: var(--theme-soft); color: #111827; font-size: 12px; font-weight: 700; padding: 10px 8px; border-bottom: 1px solid #dbe3ee; white-space: nowrap; }
 body.app-page.sale-detail-page .sale-lines-table td { padding: 8px; border-bottom: 1px solid #eef2f7; vertical-align: middle; background: #fff; white-space: nowrap; }
 body.app-page.sale-detail-page .sale-lines-table tbody tr:nth-child(even) td { background: #fafbfc; }
@@ -23,7 +23,10 @@ body.app-page.sale-detail-page #sale-vat-context { background: #f8fafc; font-wei
 body.app-page.sale-detail-page .line-lot-btn { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 body.app-page.sale-detail-page .line-muted { margin-top: 4px; font-size: 11px; color: #6b7280; }
 body.app-page.sale-detail-page .trace-cell { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #374151; font-size: 12px; }
-body.app-page.sale-detail-page .line-margin-badge { border-left: 3px solid #94a3b8; color: #334155; font-size: 12px; font-weight: 700; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.app-page.sale-detail-page .line-margin-badge { border-left: 3px solid #94a3b8; color: #334155; font-size: 12px; font-weight: 700; line-height: 1.25; max-width: 290px; min-width: 240px; white-space: normal; }
+body.app-page.sale-detail-page .line-margin-main,
+body.app-page.sale-detail-page .line-margin-sub { display: block; }
+body.app-page.sale-detail-page .line-margin-sub { margin-top: 2px; }
 body.app-page.sale-detail-page .line-margin-badge.margin-ok { border-left-color: #16a34a; color: #166534; }
 body.app-page.sale-detail-page .line-margin-badge.margin-low { border-left-color: #f59e0b; color: #92400e; }
 body.app-page.sale-detail-page .line-margin-badge.margin-negative { border-left-color: #dc2626; color: #991b1b; }
@@ -41,7 +44,7 @@ body.app-page.sale-detail-page .sale-lines-table th:nth-child(7), body.app-page.
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(8), body.app-page.sale-detail-page .sale-lines-table td:nth-child(8) { width: 110px !important; }
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(9), body.app-page.sale-detail-page .sale-lines-table td:nth-child(9) { width: 90px !important; }
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(10), body.app-page.sale-detail-page .sale-lines-table td:nth-child(10) { width: 110px !important; }
-body.app-page.sale-detail-page .sale-lines-table th:nth-child(11), body.app-page.sale-detail-page .sale-lines-table td:nth-child(11) { width: 220px !important; }
+body.app-page.sale-detail-page .sale-lines-table th:nth-child(11), body.app-page.sale-detail-page .sale-lines-table td:nth-child(11) { width: 290px !important; }
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(12), body.app-page.sale-detail-page .sale-lines-table td:nth-child(12) { width: 340px !important; }
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(13), body.app-page.sale-detail-page .sale-lines-table td:nth-child(13) { width: 90px !important; }
 body.app-page.sale-detail-page .sale-lines-table th:nth-child(14), body.app-page.sale-detail-page .sale-lines-table td:nth-child(14) { width: 250px !important; }

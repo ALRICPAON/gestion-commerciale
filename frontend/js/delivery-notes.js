@@ -65,7 +65,7 @@ async function postWithStockConfirmation(url, payload = {}) {
 async function downloadPdf(url, fallbackName) { const response = await apiFetch(url); if (!response) return; if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || 'Erreur generation PDF'); } const disposition = response.headers.get('Content-Disposition') || ''; const match = disposition.match(/filename="?([^";]+)"?/i); const filename = match?.[1] || fallbackName; const blob = await response.blob(); const objectUrl = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = objectUrl; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(objectUrl); }
 const money = (value) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(Number(value || 0));
 const qty = (value) => Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-const percent = (value) => Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+const percent = (value) => Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmtDate = (value) => (value ? new Intl.DateTimeFormat('fr-FR').format(new Date(value)) : '-');
 const isoDate = (value) => (value ? String(value).slice(0, 10) : '');
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
@@ -75,6 +75,22 @@ function marginText(line) {
   const margin = line.real_margin;
   if (!margin) return 'Marge : -';
   return `Achat ${money(margin.purchase_unit_cost_ht)} | Vente ${money(margin.sale_unit_price_ht)} | Marge ${money(margin.margin_per_kg)}/kg | ${percent(margin.margin_rate_percent)} % | ${money(margin.margin_total)}`;
+}
+
+function signedMoney(value) {
+  const amount = Number(value || 0);
+  return `${amount > 0 ? '+' : ''}${money(amount)}`;
+}
+
+function signedPercent(value) {
+  const amount = Number(value || 0);
+  return `${amount > 0 ? '+' : ''}${percent(amount)} %`;
+}
+
+function marginHtml(line) {
+  const margin = line.real_margin;
+  if (!margin) return '<span class="line-margin-main">Marge : -</span>';
+  return `<span class="line-margin-main">Achat ${money(margin.purchase_unit_cost_ht)} | Vente ${money(margin.sale_unit_price_ht)}</span><span class="line-margin-sub">Marge ${signedMoney(margin.margin_per_kg)}/kg | ${signedPercent(margin.margin_rate_percent)} | Total ${money(margin.margin_total)}</span>`;
 }
 
 function marginClass(line) {
@@ -181,7 +197,7 @@ function renderDetail(note) {
   if (downloadPdfBtn) downloadPdfBtn.disabled = false;
   labelsBtn.disabled = false;
   detailContent.classList.remove('empty-state');
-  const rows = (note.lines || []).map((line) => `<tr data-line-id="${esc(line.id || '')}"><td>${line.line_number}</td><td>${esc(line.article_plu || '')} ${esc(line.article_label || '')}</td><td>${Number(line.package_count || 0)}</td><td>${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${money(line.unit_sale_price_ht)}</td><td>${money(line.line_amount_ht)}</td><td class="${marginClass(line)}">${esc(marginText(line))}</td><td>${Number(line.vat_rate || 0).toFixed(2)} %</td><td>${money(line.line_amount_ttc)}</td></tr>`).join('');
+  const rows = (note.lines || []).map((line) => `<tr data-line-id="${esc(line.id || '')}"><td>${line.line_number}</td><td>${esc(line.article_plu || '')} ${esc(line.article_label || '')}</td><td>${Number(line.package_count || 0)}</td><td>${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${money(line.unit_sale_price_ht)}</td><td>${money(line.line_amount_ht)}</td><td class="${marginClass(line)}">${marginHtml(line)}</td><td>${Number(line.vat_rate || 0).toFixed(2)} %</td><td>${money(line.line_amount_ttc)}</td></tr>`).join('');
   detailContent.innerHTML = `<div class="summary-grid"><div class="summary-item"><span class="summary-label">Client livré</span><span class="summary-value">${esc(note.client_name || note.delivered_client_name_snapshot || '-')}</span></div><div class="summary-item"><span class="summary-label">Identifiant magasin</span><span class="summary-value">${esc(note.client_store_identifier || note.delivered_client_store_identifier || '-')}</span></div><div class="summary-item"><span class="summary-label">Client facturé</span><span class="summary-value">${esc(note.billed_client_name || note.billed_client_name_snapshot || '-')}</span></div><div class="summary-item"><span class="summary-label">Logistique</span><span class="summary-value">${esc(logisticsText(note))}</span></div><div class="summary-item"><span class="summary-label">Facture</span><span class="summary-value">${esc(note.invoice_reference || note.invoice_id || '-')}</span></div></div><div class="table-wrapper"><table class="data-table"><thead><tr><th>Ligne</th><th>Article</th><th>Colis</th><th>Poids</th><th>Prix HT</th><th>Total HT</th><th>Marge réelle</th><th>TVA</th><th>TTC</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   const highlighted = highlightedLineId ? detailContent.querySelector(`tr[data-line-id="${highlightedLineId}"]`) : null;
   if (highlighted) {
