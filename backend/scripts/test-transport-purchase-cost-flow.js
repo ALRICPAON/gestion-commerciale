@@ -5,6 +5,7 @@ const path = require('path');
 const {
   allocateTransportAmountByWeight,
   buildTransportPurchaseComponents,
+  insertShipmentDocumentPurchaseLink,
   realTransportUnitCost,
 } = require('../services/transportPurchaseFlowService');
 
@@ -77,6 +78,7 @@ function testTransportPurchaseFlowSqlShape() {
   assert(service.includes('supplier_invoice_matches'), 'service must block purchase refresh when a supplier invoice is linked');
   assert(service.includes('DELETE FROM purchase_lines WHERE purchase_id'), 'modifiable linked purchase must be refreshed');
   assert(service.includes('transport_shipment_documents'), 'service must keep shipment document purchase link');
+  assert(service.includes('$2::uuid IS NOT NULL'), 'shipment document link must cast nullable shipment parameter');
   assert(service.includes('target_sales_line_id'), 'service must allocate costs to sales lines');
   assert(service.includes('target_purchase_line_id'), 'service must allocate costs to purchase lines');
   assert(service.includes('allocateTransportAmountByWeight'), 'service must allocate transport proportionally by allocable weight');
@@ -84,8 +86,95 @@ function testTransportPurchaseFlowSqlShape() {
   assert(transportRoute.includes("await db.query('BEGIN')"), 'BLT generation route must be transactional');
 }
 
-testTransportPurchaseComponents();
-testRealTransportUnitCost();
-testProportionalAllocationUsesAllocableWeightAndRemainder();
-testTransportPurchaseFlowSqlShape();
-console.log('transport purchase cost flow tests passed');
+async function testShipmentDocumentPurchaseLinkCastsNonNullShipmentId() {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 1, rows: [] };
+    },
+  };
+
+  await insertShipmentDocumentPurchaseLink(db, {
+    storeId: '11111111-1111-1111-1111-111111111111',
+    shipmentId: '22222222-2222-2222-2222-222222222222',
+    purchaseId: '33333333-3333-3333-3333-333333333333',
+    supplierId: '44444444-4444-4444-4444-444444444444',
+    documentReference: 'BLT-2026-00001',
+    weightKg: 123.456,
+  });
+
+  assert.strictEqual(calls.length, 1);
+  assert(calls[0].sql.includes('SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, $6::numeric'), 'insert select must cast all parameters');
+  assert(calls[0].sql.includes('WHERE $2::uuid IS NOT NULL'), 'shipment_id null guard must be cast');
+  assert(calls[0].sql.includes('WHERE store_id = $1::uuid'), 'idempotence lookup must cast store_id');
+  assert(calls[0].sql.includes('shipment_id = $2::uuid'), 'idempotence lookup must cast shipment_id');
+  assert(calls[0].sql.includes('purchase_id = $3::uuid'), 'idempotence lookup must cast purchase_id');
+  assert.deepStrictEqual(calls[0].params, [
+    '11111111-1111-1111-1111-111111111111',
+    '22222222-2222-2222-2222-222222222222',
+    '33333333-3333-3333-3333-333333333333',
+    '44444444-4444-4444-4444-444444444444',
+    'BLT-2026-00001',
+    123.456,
+  ]);
+}
+
+async function testShipmentDocumentPurchaseLinkCastsNullShipmentId() {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 0, rows: [] };
+    },
+  };
+
+  await insertShipmentDocumentPurchaseLink(db, {
+    storeId: '11111111-1111-1111-1111-111111111111',
+    shipmentId: null,
+    purchaseId: '33333333-3333-3333-3333-333333333333',
+    supplierId: '44444444-4444-4444-4444-444444444444',
+    documentReference: 'BLT-2026-00002',
+    weightKg: 0,
+  });
+
+  assert.strictEqual(calls.length, 1);
+  assert(calls[0].sql.includes('WHERE $2::uuid IS NOT NULL'), 'null shipment guard must remain typed');
+  assert.strictEqual(calls[0].params[1], null);
+}
+
+async function testShipmentDocumentPurchaseLinkIdempotenceShape() {
+  const calls = [];
+  const db = {
+    async query(sql, params) {
+      calls.push({ sql, params });
+      return { rowCount: 0, rows: [] };
+    },
+  };
+
+  await insertShipmentDocumentPurchaseLink(db, {
+    storeId: '11111111-1111-1111-1111-111111111111',
+    shipmentId: '22222222-2222-2222-2222-222222222222',
+    purchaseId: '33333333-3333-3333-3333-333333333333',
+    supplierId: '44444444-4444-4444-4444-444444444444',
+    documentReference: 'BLT-2026-00001',
+    weightKg: 10,
+  });
+
+  assert(calls[0].sql.includes('NOT EXISTS'), 'shipment document link must stay idempotent');
+  assert.strictEqual((calls[0].sql.match(/transport_shipment_documents/g) || []).length, 2, 'query must insert only when matching link is absent');
+}
+
+(async () => {
+  testTransportPurchaseComponents();
+  testRealTransportUnitCost();
+  testProportionalAllocationUsesAllocableWeightAndRemainder();
+  testTransportPurchaseFlowSqlShape();
+  await testShipmentDocumentPurchaseLinkCastsNonNullShipmentId();
+  await testShipmentDocumentPurchaseLinkCastsNullShipmentId();
+  await testShipmentDocumentPurchaseLinkIdempotenceShape();
+  console.log('transport purchase cost flow tests passed');
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});

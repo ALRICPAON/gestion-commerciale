@@ -140,6 +140,30 @@ async function hasLinkedSupplierInvoice(db, storeId, purchaseId) {
   return false;
 }
 
+async function insertShipmentDocumentPurchaseLink(db, {
+  storeId,
+  shipmentId,
+  purchaseId,
+  supplierId,
+  documentReference,
+  weightKg,
+}) {
+  return db.query(
+    `INSERT INTO transport_shipment_documents (
+      store_id, shipment_id, purchase_id, supplier_id, document_reference, weight_kg
+    )
+    SELECT $1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::text, $6::numeric
+    WHERE $2::uuid IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM transport_shipment_documents
+        WHERE store_id = $1::uuid
+          AND shipment_id = $2::uuid
+          AND purchase_id = $3::uuid
+      )`,
+    [storeId, shipmentId, purchaseId, supplierId, documentReference, weightKg]
+  );
+}
+
 async function loadTransportDeliveryNote(db, storeId, deliveryNoteId) {
   const result = await db.query(
     `SELECT tdn.*, s.name AS carrier_name
@@ -306,18 +330,14 @@ async function upsertTransportPurchase(db, storeId, deliveryNoteId, context = {}
     [deliveryNote.id, storeId, purchase.id, unitCost, context.user_id || null]
   );
 
-  await db.query(
-    `INSERT INTO transport_shipment_documents (
-      store_id, shipment_id, purchase_id, supplier_id, document_reference, weight_kg
-    )
-    SELECT $1, $2, $3, $4, $5, $6
-    WHERE $2 IS NOT NULL
-      AND NOT EXISTS (
-        SELECT 1 FROM transport_shipment_documents
-        WHERE store_id = $1 AND shipment_id = $2 AND purchase_id = $3
-      )`,
-    [storeId, deliveryNote.shipment_id, purchase.id, deliveryNote.carrier_id, deliveryNote.reference_number, number(deliveryNote.total_weight_kg, 0)]
-  );
+  await insertShipmentDocumentPurchaseLink(db, {
+    storeId,
+    shipmentId: deliveryNote.shipment_id,
+    purchaseId: purchase.id,
+    supplierId: deliveryNote.carrier_id,
+    documentReference: deliveryNote.reference_number,
+    weightKg: number(deliveryNote.total_weight_kg, 0),
+  });
 
   await rebuildTransportCostAllocations(db, storeId, deliveryNote.id);
   return { delivery_note_id: deliveryNote.id, purchase_id: purchase.id, unit_transport_cost_ht: unitCost };
@@ -421,6 +441,7 @@ module.exports = {
   allocateTransportAmountByWeight,
   buildTransportPurchaseComponents,
   hasLinkedSupplierInvoice,
+  insertShipmentDocumentPurchaseLink,
   isTransportPurchaseLocked,
   realTransportUnitCost,
   rebuildTransportCostAllocations,
