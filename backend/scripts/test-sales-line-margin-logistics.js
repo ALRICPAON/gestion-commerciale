@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const {
   computeDeliveryLogisticsTotals,
@@ -109,6 +111,26 @@ async function testLowMarginsQueryShape() {
   assert(result.items[0].detail.includes('Achat 11.2 EUR/kg'), 'detail must expose purchase cost');
 }
 
+function testSalesDetailAllocationsRegression() {
+  const salesRoute = fs.readFileSync(path.join(__dirname, '..', 'routes', 'sales.js'), 'utf8');
+  const routeStart = salesRoute.indexOf("router.get('/:id'");
+  const routeEnd = salesRoute.indexOf("router.patch('/:id'", routeStart);
+  const detailRoute = salesRoute.slice(routeStart, routeEnd);
+
+  assert(detailRoute.includes('LEFT JOIN LATERAL'), 'GET /api/sales/:id must aggregate allocations with a lateral subquery');
+  assert(detailRoute.includes('alloc.allocations'), 'GET /api/sales/:id must select lateral allocations');
+  assert(!detailRoute.includes('GROUP BY sl.id'), 'GET /api/sales/:id must not group the main detail query');
+  assert(detailRoute.includes('selected_lot.unit_cost_ex_vat selected_lot_unit_cost_ex_vat'), 'selected lot real cost must be preserved');
+  assert(detailRoute.includes("'unit_cost_ex_vat',sla.unit_cost_ex_vat"), 'allocation real costs must be preserved');
+  assert(detailRoute.includes('a.latin_name'), 'article latin name traceability must be preserved');
+  assert(detailRoute.includes('a.fao_zone'), 'article FAO traceability must be preserved');
+  assert(detailRoute.includes('a.sous_zone'), 'article sous-zone traceability must be preserved');
+  assert(detailRoute.includes('a.fishing_gear'), 'article fishing gear traceability must be preserved');
+  assert(detailRoute.includes('a.production_method'), 'article production method traceability must be preserved');
+  assert(detailRoute.includes('a.allergens'), 'article allergens traceability must be preserved');
+  assert(detailRoute.includes('enrichLines(l.rows)'), 'real margin enrichment must remain on sales detail response');
+}
+
 (async () => {
   testSingleLotMargin();
   testWeightedLotsMargin();
@@ -117,6 +139,7 @@ async function testLowMarginsQueryShape() {
   testLogisticsTotals();
   testDeliveryNotePdfLogistics();
   await testLowMarginsQueryShape();
+  testSalesDetailAllocationsRegression();
   console.log('sales line margin and logistics tests passed');
 })().catch((error) => {
   console.error(error);
