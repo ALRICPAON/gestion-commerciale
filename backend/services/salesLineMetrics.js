@@ -51,18 +51,27 @@ function computeLineMargin(line = {}) {
   if (!Number.isFinite(saleUnitPriceHt)) return null;
 
   const soldWeight = positive(line.total_weight || line.sold_quantity);
-  const marginPerKg = saleUnitPriceHt - purchaseUnitCostHt;
-  const marginRatePercent = (marginPerKg / purchaseUnitCostHt) * 100;
+  const transportUnitCostHt = positive(line.transport_unit_cost_ht ?? line.allocated_transport_unit_cost_ht, 0);
+  const landedUnitCostHt = purchaseUnitCostHt + transportUnitCostHt;
+  const commercialMarginPerKg = saleUnitPriceHt - purchaseUnitCostHt;
+  const commercialMarginRatePercent = (commercialMarginPerKg / purchaseUnitCostHt) * 100;
+  const marginPerKg = saleUnitPriceHt - landedUnitCostHt;
+  const marginRatePercent = (marginPerKg / landedUnitCostHt) * 100;
   const marginTotal = soldWeight > 0 ? marginPerKg * soldWeight : null;
   const status = marginPerKg < 0 ? 'negative' : marginRatePercent < LOW_MARGIN_RATE_PERCENT ? 'low' : 'ok';
 
   return {
     purchase_unit_cost_ht: round(purchaseUnitCostHt, 4),
+    transport_unit_cost_ht: round(transportUnitCostHt, 4),
+    landed_unit_cost_ht: round(landedUnitCostHt, 4),
     sale_unit_price_ht: round(saleUnitPriceHt, 4),
+    commercial_margin_per_kg: round(commercialMarginPerKg, 4),
+    commercial_margin_rate_percent: round(commercialMarginRatePercent, 2),
     margin_per_kg: round(marginPerKg, 4),
     margin_rate_percent: round(marginRatePercent, 2),
     margin_total: marginTotal === null ? null : round(marginTotal, 2),
     allocated_quantity: round(allocatedQuantity, 3),
+    transport_integrated: transportUnitCostHt > 0,
     status,
   };
 }

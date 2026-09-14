@@ -104,12 +104,18 @@ async function lowMargins(db, storeId, thresholdRate) {
         COALESCE(a.designation, sl.article_label, 'Article sans nom') AS designation,
         sl.unit_sale_price_ht AS sale_unit_price_ht,
         COALESCE(ac.purchase_unit_cost_ht, selected_lot.unit_cost_ex_vat) AS purchase_unit_cost_ht,
+        COALESCE(tc.transport_unit_cost_ht, 0) AS transport_unit_cost_ht,
         sl.total_weight,
         sl.sold_quantity
       FROM sales_lines sl
       JOIN sales_documents sd ON sd.id = sl.sales_document_id AND sd.store_id = sl.store_id
       LEFT JOIN allocation_costs ac ON ac.sales_line_id = sl.id
       LEFT JOIN lots selected_lot ON selected_lot.id = sl.selected_lot_id AND selected_lot.store_id = sl.store_id
+      LEFT JOIN LATERAL (
+        SELECT SUM(tca.allocated_amount_ht) / NULLIF(SUM(tca.allocated_weight_kg), 0) AS transport_unit_cost_ht
+        FROM transport_cost_allocations tca
+        WHERE tca.target_sales_line_id = sl.id AND tca.store_id = sl.store_id
+      ) tc ON true
       LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
       LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
       WHERE sl.store_id = $1
@@ -127,27 +133,32 @@ async function lowMargins(db, storeId, thresholdRate) {
       plu,
       designation,
       purchase_unit_cost_ht,
+      transport_unit_cost_ht,
+      purchase_unit_cost_ht + transport_unit_cost_ht AS landed_unit_cost_ht,
       sale_unit_price_ht,
-      sale_unit_price_ht - purchase_unit_cost_ht AS margin_per_kg,
-      (sale_unit_price_ht - purchase_unit_cost_ht) / NULLIF(purchase_unit_cost_ht, 0) * 100 AS margin_rate,
-      (sale_unit_price_ht - purchase_unit_cost_ht) * COALESCE(NULLIF(total_weight, 0), sold_quantity, 0) AS margin_total
+      sale_unit_price_ht - (purchase_unit_cost_ht + transport_unit_cost_ht) AS margin_per_kg,
+      (sale_unit_price_ht - (purchase_unit_cost_ht + transport_unit_cost_ht)) / NULLIF(purchase_unit_cost_ht + transport_unit_cost_ht, 0) * 100 AS margin_rate,
+      (sale_unit_price_ht - (purchase_unit_cost_ht + transport_unit_cost_ht)) * COALESCE(NULLIF(total_weight, 0), sold_quantity, 0) AS margin_total
     FROM line_margins
     WHERE purchase_unit_cost_ht > 0
       AND sale_unit_price_ht IS NOT NULL
-      AND (sale_unit_price_ht - purchase_unit_cost_ht) / NULLIF(purchase_unit_cost_ht, 0) * 100 < $2
+      AND (sale_unit_price_ht - (purchase_unit_cost_ht + transport_unit_cost_ht)) / NULLIF(purchase_unit_cost_ht + transport_unit_cost_ht, 0) * 100 < $2
     ORDER BY margin_rate ASC, document_date DESC
     LIMIT 20
   `, [storeId, thresholdRate]);
 
   const items = result.rows.map((row) => ({
     label: `${row.reference_number || row.document_id} - ${row.designation}`,
-    detail: `${row.client_name || 'Client non renseigné'} - Achat ${moneyValue(row.purchase_unit_cost_ht)} EUR/kg - Vente ${moneyValue(row.sale_unit_price_ht)} EUR/kg - Marge ${moneyValue(row.margin_per_kg)} EUR/kg - ${moneyValue(row.margin_rate)} %`,
+    detail: `${row.client_name || 'Client non renseigné'} - Achat ${moneyValue(row.purchase_unit_cost_ht)} EUR/kg${Number(row.transport_unit_cost_ht || 0) > 0 ? ` + transport ${moneyValue(row.transport_unit_cost_ht)} EUR/kg` : ' - transport non integre'} - Vente ${moneyValue(row.sale_unit_price_ht)} EUR/kg - Marge ${moneyValue(row.margin_per_kg)} EUR/kg - ${moneyValue(row.margin_rate)} %`,
     date: row.document_date,
     reference: row.reference_number,
     document_id: row.document_id,
     line_id: row.id,
     article: row.designation,
     purchase_unit_cost_ht: moneyValue(row.purchase_unit_cost_ht),
+    transport_unit_cost_ht: moneyValue(row.transport_unit_cost_ht),
+    landed_unit_cost_ht: moneyValue(row.landed_unit_cost_ht),
+    transport_integrated: Number(row.transport_unit_cost_ht || 0) > 0,
     sale_unit_price_ht: moneyValue(row.sale_unit_price_ht),
     margin_per_kg: moneyValue(row.margin_per_kg),
     margin_rate_percent: moneyValue(row.margin_rate),
