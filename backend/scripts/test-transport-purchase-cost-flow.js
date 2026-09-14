@@ -5,6 +5,7 @@ const path = require('path');
 const {
   allocateTransportAmountByWeight,
   buildTransportPurchaseComponents,
+  buildTransportPurchaseLine,
   insertShipmentDocumentPurchaseLink,
   realTransportUnitCost,
 } = require('../services/transportPurchaseFlowService');
@@ -34,11 +35,85 @@ function testTransportPurchaseComponents() {
     'logistics_service',
   ]);
   assertNear(components.reduce((sum, item) => sum + item.amount_ht, 0), 114, 'component total');
+
+  const aggregatedServices = buildTransportPurchaseComponents({
+    transport_amount_ht: 0,
+    fuel_amount_ht: 0,
+    admin_fee_ht: 0,
+    services_amount_ht: 15,
+    expected_total_ht: 15,
+    calculation_snapshot: {},
+  });
+  assert.deepStrictEqual(aggregatedServices.map((item) => item.code), ['logistics_service']);
 }
 
 function testRealTransportUnitCost() {
   assertNear(realTransportUnitCost({ expected_total_ht: 99, total_weight_kg: 50 }), 1.98, 'real transport cost per kg');
   assert.strictEqual(realTransportUnitCost({ expected_total_ht: 99, total_weight_kg: 0 }), null);
+}
+
+function amountWithPurchasePieceConvention(line) {
+  const colis = Number(line.received_colis ?? line.ordered_colis ?? 0);
+  const pieces = Number(line.received_pieces ?? line.ordered_pieces ?? 0);
+  const unitPrice = Number(line.unit_price_ex_vat || 0);
+  return Number(((colis > 0 && pieces > 0 ? colis * pieces : pieces) * unitPrice).toFixed(4));
+}
+
+function testTransportServiceLinesUsePieceQuantityConvention() {
+  const components = buildTransportPurchaseComponents({
+    transport_amount_ht: 85.21,
+    fuel_amount_ht: 29.82,
+    admin_fee_ht: 5.92,
+    services_amount_ht: 7.5,
+    expected_total_ht: 128.45,
+    calculation_snapshot: {
+      legs: [{ carrier_id: 'carrier-1', transport_amount_ht: 85.21 }],
+      admin_fees: [{ carrier_id: 'carrier-1', amount_ht: 5.92 }],
+      services: [{ label: 'Etiquetage', total_ht: 7.5 }],
+    },
+  });
+  const lines = components.map(buildTransportPurchaseLine);
+
+  assert.deepStrictEqual(components.map((item) => item.code), [
+    'base_transport',
+    'fuel_surcharge',
+    'admin_fee',
+    'logistics_service',
+  ]);
+
+  for (const line of lines) {
+    assert.strictEqual(line.article_id, null, `${line.supplier_reference} must remain a service line`);
+    assert.strictEqual(line.ordered_colis, null, `${line.supplier_reference} must not use colis`);
+    assert.strictEqual(line.received_colis, null, `${line.supplier_reference} must not use received colis`);
+    assert.strictEqual(line.ordered_pieces, 1, `${line.supplier_reference} must use ordered_pieces=1`);
+    assert.strictEqual(line.received_pieces, 1, `${line.supplier_reference} must use received_pieces=1`);
+    assert.strictEqual(line.ordered_quantity, 0, `${line.supplier_reference} must not use weight as quantity`);
+    assert.strictEqual(line.received_quantity, 0, `${line.supplier_reference} must not use received weight as quantity`);
+    assert.strictEqual(line.stock_quantity, 0, `${line.supplier_reference} must not create stock quantity`);
+    assert.strictEqual(line.price_unit, 'piece');
+    assert.strictEqual(line.line_status, 'received');
+    assertNear(amountWithPurchasePieceConvention(line), line.line_amount_ex_vat, `${line.supplier_reference} line total`);
+  }
+}
+
+function testBlt202600001TransportLineTotal() {
+  const components = buildTransportPurchaseComponents({
+    transport_amount_ht: 85.21,
+    fuel_amount_ht: 29.82,
+    admin_fee_ht: 5.92,
+    expected_total_ht: 120.95,
+    calculation_snapshot: {
+      legs: [{ carrier_id: 'carrier-1', transport_amount_ht: 85.21 }],
+      admin_fees: [{ carrier_id: 'carrier-1', amount_ht: 5.92 }],
+      services: [],
+    },
+  });
+  const lines = components.map(buildTransportPurchaseLine);
+
+  assertNear(lines.find((line) => line.supplier_reference === 'base_transport').line_amount_ex_vat, 85.21, 'base transport amount');
+  assertNear(lines.find((line) => line.supplier_reference === 'fuel_surcharge').line_amount_ex_vat, 29.82, 'fuel surcharge amount');
+  assertNear(lines.find((line) => line.supplier_reference === 'admin_fee').line_amount_ex_vat, 5.92, 'admin fee amount');
+  assertNear(lines.reduce((sum, line) => sum + line.line_amount_ex_vat, 0), 120.95, 'transport purchase total');
 }
 
 function testProportionalAllocationUsesAllocableWeightAndRemainder() {
@@ -79,6 +154,9 @@ function testTransportPurchaseFlowSqlShape() {
   assert(service.includes('DELETE FROM purchase_lines WHERE purchase_id'), 'modifiable linked purchase must be refreshed');
   assert(service.includes('transport_shipment_documents'), 'service must keep shipment document purchase link');
   assert(service.includes('$2::uuid IS NOT NULL'), 'shipment document link must cast nullable shipment parameter');
+  assert(service.includes('ordered_pieces, ordered_quantity'), 'transport service lines must write purchase piece quantities');
+  assert(service.includes('received_colis, received_pieces, received_quantity, stock_quantity'), 'transport service lines must write received piece quantities and no stock');
+  assert(!/INSERT INTO lots|INSERT INTO stock_movements|stock_summary/i.test(service), 'transport purchase service must not create stock or lots');
   assert(service.includes('target_sales_line_id'), 'service must allocate costs to sales lines');
   assert(service.includes('target_purchase_line_id'), 'service must allocate costs to purchase lines');
   assert(service.includes('allocateTransportAmountByWeight'), 'service must allocate transport proportionally by allocable weight');
@@ -168,6 +246,8 @@ async function testShipmentDocumentPurchaseLinkIdempotenceShape() {
 (async () => {
   testTransportPurchaseComponents();
   testRealTransportUnitCost();
+  testTransportServiceLinesUsePieceQuantityConvention();
+  testBlt202600001TransportLineTotal();
   testProportionalAllocationUsesAllocableWeightAndRemainder();
   testTransportPurchaseFlowSqlShape();
   await testShipmentDocumentPurchaseLinkCastsNonNullShipmentId();

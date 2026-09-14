@@ -51,10 +51,30 @@ function buildTransportPurchaseComponents(deliveryNote = {}) {
       components.push(component('logistics_service', label, service.total_ht, { service }));
     }
   } else if (number(deliveryNote.services_amount_ht, 0) > 0) {
-    components.push(component('logistics_services', 'Prestations logistiques', deliveryNote.services_amount_ht));
+    components.push(component('logistics_service', 'Prestations logistiques', deliveryNote.services_amount_ht));
   }
 
   return components.filter((item) => item.amount_ht > 0);
+}
+
+function buildTransportPurchaseLine(item = {}) {
+  const amount = money(item.amount_ht);
+  return {
+    article_id: null,
+    supplier_reference: item.code,
+    supplier_label: item.label,
+    ordered_colis: null,
+    ordered_pieces: 1,
+    ordered_quantity: 0,
+    received_colis: null,
+    received_pieces: 1,
+    received_quantity: 0,
+    stock_quantity: 0,
+    unit_price_ex_vat: amount,
+    line_amount_ex_vat: amount,
+    price_unit: 'piece',
+    line_status: 'received',
+  };
 }
 
 function realTransportUnitCost(deliveryNote = {}) {
@@ -299,16 +319,34 @@ async function upsertTransportPurchase(db, storeId, deliveryNoteId, context = {}
 
   let lineNumber = 1;
   for (const item of components) {
+    const purchaseLine = buildTransportPurchaseLine(item);
     const line = await db.query(
       `INSERT INTO purchase_lines (
         id, purchase_id, store_id, client_key, supplier_id, line_number, article_id,
-        supplier_reference, supplier_label, ordered_quantity, received_quantity,
+        supplier_reference, supplier_label, ordered_colis, ordered_pieces, ordered_quantity,
+        received_colis, received_pieces, received_quantity, stock_quantity,
         unit_price_ex_vat, line_amount_ex_vat, price_unit, line_status
       ) VALUES (
         gen_random_uuid(), $1, $2, NULL, $3, $4, NULL,
-        $5, $6, 1, 1, $7, $7, 'piece', 'received'
+        $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 'piece', 'received'
       ) RETURNING id`,
-      [purchase.id, storeId, deliveryNote.carrier_id, lineNumber, item.code, item.label, item.amount_ht]
+      [
+        purchase.id,
+        storeId,
+        deliveryNote.carrier_id,
+        lineNumber,
+        purchaseLine.supplier_reference,
+        purchaseLine.supplier_label,
+        purchaseLine.ordered_colis,
+        purchaseLine.ordered_pieces,
+        purchaseLine.ordered_quantity,
+        purchaseLine.received_colis,
+        purchaseLine.received_pieces,
+        purchaseLine.received_quantity,
+        purchaseLine.stock_quantity,
+        purchaseLine.unit_price_ex_vat,
+        purchaseLine.line_amount_ex_vat,
+      ]
     );
     await db.query(
       `INSERT INTO purchase_line_metadata (id, purchase_line_id, meta_key, meta_value)
@@ -439,6 +477,7 @@ async function rebuildTransportCostAllocations(db, storeId, deliveryNoteId) {
 
 module.exports = {
   allocateTransportAmountByWeight,
+  buildTransportPurchaseLine,
   buildTransportPurchaseComponents,
   hasLinkedSupplierInvoice,
   insertShipmentDocumentPurchaseLink,
