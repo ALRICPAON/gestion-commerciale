@@ -973,6 +973,8 @@ function renderLinesTable() {
     const qtyColis = getDisplayValue(line, "ordered_colis", "received_colis");
     const qtyPieces = getDisplayValue(line, "ordered_pieces", "received_pieces");
     const qtyPoids = getDisplayValue(line, "ordered_quantity", "received_quantity");
+    const displayReference = line.article_plu || line.article_code || line.plu || line.supplier_reference || "";
+    const displayLabel = line.article_name || line.supplier_label || "";
 
     return `
       <tr
@@ -993,10 +995,10 @@ function renderLinesTable() {
   data-stock-qty-remaining="${line.stock_qty_remaining ?? ""}"
 >
         <td>
-          <input class="line-input line-plu" type="text" value="${line.article_plu || line.article_code || line.plu || ""}" ${metadataReadonly ? "disabled" : ""} />
+          <input class="line-input line-plu" type="text" value="${escapeHtml(displayReference)}" ${metadataReadonly ? "disabled" : ""} />
         </td>
         <td>
-          <input class="line-input line-article-label" type="text" value="${line.article_name || ""}" readonly />
+          <input class="line-input line-article-label" type="text" value="${escapeHtml(displayLabel)}" readonly />
         </td>
         <td>
           <input class="line-input line-qty-colis" type="number" step="0.001" value="${qtyColis ?? ""}" ${metadataReadonly ? "disabled" : ""} />

@@ -12,6 +12,10 @@ const purchaseReceiptStockSync = require('../services/purchaseReceiptStockSync')
 const {
   enrichPurchasesWithSupplierInvoiceStatus,
 } = require('../services/purchaseSupplierInvoiceStatusService');
+const {
+  sanitizePurchaseLineForDisplay,
+  sumPurchaseLinesExVat,
+} = require('../services/purchaseLinePresentationService');
 
 const router = express.Router();
 const IMPORTS_ROOT = path.join(__dirname, '..', 'uploads', 'imports');
@@ -342,7 +346,24 @@ async function rebuildPurchaseReceptionStock(client, purchase, userId) {
     const rq = Number(line.received_quantity ?? line.ordered_quantity ?? 0);
     const qty = unit === 'colis' ? rc : unit === 'piece' ? (rc > 0 && rp > 0 ? rc * rp : rp) : (rc > 0 && rq > 0 ? rc * rq : rq);
     if (qty <= 0) continue;
-    if (!line.article_id) throw businessError(`Ligne ${line.line_number} sans article`);
+    if (!line.article_id) {
+      const finalAmount = lineAmount({ ...line, received_colis: rc, received_pieces: rp, received_quantity: rq }, true);
+      await client.query(
+        `UPDATE purchase_lines
+         SET received_colis = $1,
+             received_pieces = $2,
+             received_quantity = $3,
+             stock_quantity = 0,
+             lot_id = NULL,
+             line_amount_ex_vat = $4,
+             line_status = 'received',
+             received_at = COALESCE(received_at, NOW()),
+             updated_at = NOW()
+         WHERE id = $5`,
+        [rc, rp, rq, finalAmount, line.id]
+      );
+      continue;
+    }
 
     const lotCode = buildLotCode(line.plu, purchase.supplier_id, line.id);
     const lot = await client.query(
@@ -409,7 +430,7 @@ async function rebuildPurchaseReceptionStock(client, purchase, userId) {
     createdLots += 1;
   }
 
-  if (createdLots === 0) throw businessError('Aucune quantite receptionnee');
+  if (createdLots === 0 && !lines.rows.some((line) => !line.article_id)) throw businessError('Aucune quantite receptionnee');
   await recomputePurchaseTotals(client, purchase.id);
 }
 
@@ -440,11 +461,15 @@ router.get('/purchases', authenticateToken, attachDbContext, async (req,res)=>{
     if(date_from){params.push(date_from); where+=` AND p.purchase_date >= $${params.length}::date`;}
     if(date_to){params.push(date_to); where+=` AND p.purchase_date <= $${params.length}::date`;}
     params.push(Math.min(Number(limit)||500,2000));
-    const r=await req.dbPool.query(`SELECT p.*, s.name supplier_name, COUNT(pl.id) line_count FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id LEFT JOIN purchase_lines pl ON pl.purchase_id=p.id ${where} GROUP BY p.id,s.name ORDER BY p.created_at DESC LIMIT $${params.length}`, params);
+    const r=await req.dbPool.query(`SELECT p.*, s.name supplier_name, COUNT(pl.id) line_count, COALESCE(SUM(pl.line_amount_ex_vat),0) computed_total_amount_ex_vat FROM purchases p LEFT JOIN suppliers s ON s.id=p.supplier_id LEFT JOIN purchase_lines pl ON pl.purchase_id=p.id ${where} GROUP BY p.id,s.name ORDER BY p.created_at DESC LIMIT $${params.length}`, params);
     let rows = await enrichPurchasesWithSupplierInvoiceStatus(req.dbPool, {
       storeId: req.user.store_id,
       purchases: Array.isArray(r.rows) ? r.rows : [],
     });
+    rows = rows.map((purchase) => ({
+      ...purchase,
+      total_amount_ex_vat: Number(purchase.computed_total_amount_ex_vat ?? purchase.total_amount_ex_vat ?? 0),
+    }));
     if (displayStatusFilter) {
       rows = rows.filter((purchase) => purchase.supplier_invoice_display_status === displayStatusFilter);
     }
@@ -491,12 +516,19 @@ router.get('/purchases/:id', authenticateToken, attachDbContext, async (req,res)
       LIMIT 1
     `,[req.params.id,req.user.store_id]);
     if(!p.rows.length) return res.status(404).json({error:'Achat introuvable'});
-    const l=await req.dbPool.query(`SELECT pl.*, a.plu article_plu, a.designation article_name, l.id stock_lot_id, l.lot_code stock_lot_code, l.qty_remaining stock_qty_remaining, l.unit_cost_ex_vat stock_unit_cost_ex_vat, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number, plm.sanitary_photo_url, CASE WHEN jsonb_typeof(plm.sanitary_photo_urls) = 'array' THEN plm.sanitary_photo_urls WHEN plm.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(plm.sanitary_photo_url) ELSE '[]'::jsonb END AS sanitary_photo_urls, plm.notes metadata_notes FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN lots l ON l.id=pl.lot_id AND l.store_id=pl.store_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' WHERE pl.purchase_id=$1 AND pl.store_id=$2 ORDER BY pl.line_number`,[req.params.id,req.user.store_id]);
+    const l=await req.dbPool.query(`SELECT pl.*, COALESCE(a.plu, pl.supplier_reference) article_plu, COALESCE(a.designation, pl.supplier_label) article_name, l.id stock_lot_id, l.lot_code stock_lot_code, l.qty_remaining stock_qty_remaining, l.unit_cost_ex_vat stock_unit_cost_ex_vat, plm.dlc, plm.latin_name, plm.fao_zone, plm.sous_zone, plm.fishing_gear, plm.production_method, plm.allergens, plm.origin_label, plm.supplier_lot_number, plm.sanitary_photo_url, CASE WHEN jsonb_typeof(plm.sanitary_photo_urls) = 'array' THEN plm.sanitary_photo_urls WHEN plm.sanitary_photo_url IS NOT NULL THEN jsonb_build_array(plm.sanitary_photo_url) ELSE '[]'::jsonb END AS sanitary_photo_urls, plm.notes metadata_notes, tcm.meta_value transport_component_meta_value FROM purchase_lines pl LEFT JOIN articles a ON a.id=pl.article_id LEFT JOIN lots l ON l.id=pl.lot_id AND l.store_id=pl.store_id LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id=pl.id AND plm.meta_key='gc_line' LEFT JOIN LATERAL (SELECT meta_value FROM purchase_line_metadata WHERE purchase_line_id=pl.id AND meta_key='transport_component' ORDER BY updated_at DESC NULLS LAST, created_at DESC NULLS LAST LIMIT 1) tcm ON true WHERE pl.purchase_id=$1 AND pl.store_id=$2 ORDER BY pl.line_number`,[req.params.id,req.user.store_id]);
     const [purchase] = await enrichPurchasesWithSupplierInvoiceStatus(req.dbPool, {
       storeId: req.user.store_id,
       purchases: [p.rows[0]],
     });
-    res.json({purchase, lines:l.rows.map(sanitizePurchaseLine)});
+    const lines = l.rows.map((line) => sanitizePurchaseLineForDisplay(line, sanitizePurchaseLine));
+    res.json({
+      purchase: {
+        ...purchase,
+        total_amount_ex_vat: sumPurchaseLinesExVat(lines),
+      },
+      lines,
+    });
   }catch(e){console.error('Erreur détail achat :', e); res.status(500).json({error:'Erreur détail achat'});}
 });
 
