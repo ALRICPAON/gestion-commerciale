@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const {
+  allocateTransportAmountByWeight,
   buildTransportPurchaseComponents,
   realTransportUnitCost,
 } = require('../services/transportPurchaseFlowService');
@@ -39,6 +40,30 @@ function testRealTransportUnitCost() {
   assert.strictEqual(realTransportUnitCost({ expected_total_ht: 99, total_weight_kg: 0 }), null);
 }
 
+function testProportionalAllocationUsesAllocableWeightAndRemainder() {
+  const allocations = allocateTransportAmountByWeight([
+    { id: 'small', weight_kg: 1 },
+    { id: 'largest', weight_kg: 2 },
+    { id: 'empty', weight_kg: 0 },
+  ], 100);
+
+  assert.strictEqual(allocations.length, 2);
+  assertNear(
+    allocations.reduce((sum, line) => sum + line.allocated_amount_ht, 0),
+    100,
+    'allocated total must equal transport total'
+  );
+  assert.strictEqual(
+    allocations.reduce((sum, line) => sum + line.allocated_amount_ht, 0).toFixed(4),
+    '100.0000',
+    'allocated total must be exact at stored precision'
+  );
+  assertNear(allocations.find((line) => line.id === 'small').allocated_amount_ht, 33.3333, 'small line prorata');
+  assertNear(allocations.find((line) => line.id === 'largest').allocated_amount_ht, 66.6667, 'largest line receives remainder');
+  assertNear(allocations.find((line) => line.id === 'small').unit_transport_cost_ht, 33.3333, 'small unit transport cost');
+  assertNear(allocations.find((line) => line.id === 'largest').unit_transport_cost_ht, 33.3334, 'largest unit transport cost');
+}
+
 function testTransportPurchaseFlowSqlShape() {
   const service = fs.readFileSync(path.join(__dirname, '..', 'services', 'transportPurchaseFlowService.js'), 'utf8');
   const migration = fs.readFileSync(path.join(__dirname, '..', 'db', 'gestion-commerciale', '119_transport_purchase_cost_flow.sql'), 'utf8');
@@ -54,10 +79,13 @@ function testTransportPurchaseFlowSqlShape() {
   assert(service.includes('transport_shipment_documents'), 'service must keep shipment document purchase link');
   assert(service.includes('target_sales_line_id'), 'service must allocate costs to sales lines');
   assert(service.includes('target_purchase_line_id'), 'service must allocate costs to purchase lines');
+  assert(service.includes('allocateTransportAmountByWeight'), 'service must allocate transport proportionally by allocable weight');
+  assert(service.includes('totalAllocableWeight'), 'allocation must use actual allocable weight, not BLT weight');
   assert(transportRoute.includes("await db.query('BEGIN')"), 'BLT generation route must be transactional');
 }
 
 testTransportPurchaseComponents();
 testRealTransportUnitCost();
+testProportionalAllocationUsesAllocableWeightAndRemainder();
 testTransportPurchaseFlowSqlShape();
 console.log('transport purchase cost flow tests passed');

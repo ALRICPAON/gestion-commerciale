@@ -63,6 +63,45 @@ function realTransportUnitCost(deliveryNote = {}) {
   return weight > 0 ? round(total / weight, 4) : null;
 }
 
+function allocateTransportAmountByWeight(lines = [], totalAmountHt = 0) {
+  const eligible = (lines || [])
+    .map((line, index) => ({
+      ...line,
+      index,
+      weight_kg: round(number(line.weight_kg, 0), 3),
+    }))
+    .filter((line) => number(line.weight_kg, 0) > 0);
+  const totalAllocableWeight = eligible.reduce((sum, line) => sum + number(line.weight_kg, 0), 0);
+  const total = round(totalAmountHt, 4);
+
+  if (!eligible.length || totalAllocableWeight <= 0 || !total || total <= 0) return [];
+
+  const allocations = eligible.map((line) => {
+    const allocatedAmount = round((total * number(line.weight_kg, 0)) / totalAllocableWeight, 4);
+    return {
+      ...line,
+      allocated_amount_ht: allocatedAmount,
+      unit_transport_cost_ht: round(allocatedAmount / number(line.weight_kg, 0), 4),
+    };
+  });
+
+  const allocatedTotal = allocations.reduce((sum, line) => sum + number(line.allocated_amount_ht, 0), 0);
+  const remainder = round(total - allocatedTotal, 4);
+  if (remainder) {
+    const target = allocations.reduce((best, line) => {
+      const bestWeight = number(best.weight_kg, 0);
+      const lineWeight = number(line.weight_kg, 0);
+      if (lineWeight > bestWeight) return line;
+      if (lineWeight === bestWeight && line.index > best.index) return line;
+      return best;
+    }, allocations[0]);
+    target.allocated_amount_ht = round(number(target.allocated_amount_ht, 0) + remainder, 4);
+    target.unit_transport_cost_ht = round(number(target.allocated_amount_ht, 0) / number(target.weight_kg, 0), 4);
+  }
+
+  return allocations;
+}
+
 function isTransportPurchaseLocked(purchase = {}) {
   return purchaseReceiptStockSync.isAccountingLockedPurchaseStatus(purchase.status)
     || ['closed', 'cancelled'].includes(String(purchase.status || ''));
@@ -287,8 +326,8 @@ async function upsertTransportPurchase(db, storeId, deliveryNoteId, context = {}
 async function rebuildTransportCostAllocations(db, storeId, deliveryNoteId) {
   const deliveryNote = await loadTransportDeliveryNote(db, storeId, deliveryNoteId);
   if (!deliveryNote) return { allocated_line_count: 0 };
-  const unitCost = realTransportUnitCost(deliveryNote);
-  if (!unitCost || unitCost <= 0) return { allocated_line_count: 0 };
+  const totalTransportHt = round(deliveryNote.expected_total_ht, 4);
+  if (!totalTransportHt || totalTransportHt <= 0) return { allocated_line_count: 0 };
 
   await db.query(
     'DELETE FROM transport_cost_allocations WHERE store_id = $1 AND transport_delivery_note_id = $2',
@@ -321,10 +360,11 @@ async function rebuildTransportCostAllocations(db, storeId, deliveryNoteId) {
     [storeId, deliveryNote.shipment_id]
   );
 
+  const purchaseAllocations = allocateTransportAmountByWeight(purchaseLines.rows, totalTransportHt);
+  const salesAllocations = allocateTransportAmountByWeight(salesLines.rows, totalTransportHt);
+
   let count = 0;
-  for (const line of purchaseLines.rows) {
-    const weight = number(line.weight_kg, 0);
-    if (weight <= 0) continue;
+  for (const line of purchaseAllocations) {
     await db.query(
       `INSERT INTO transport_cost_allocations (
         store_id, transport_delivery_note_id, transport_purchase_id, target_purchase_id,
@@ -335,14 +375,21 @@ async function rebuildTransportCostAllocations(db, storeId, deliveryNoteId) {
       DO UPDATE SET allocated_weight_kg = EXCLUDED.allocated_weight_kg,
                     allocated_amount_ht = EXCLUDED.allocated_amount_ht,
                     unit_transport_cost_ht = EXCLUDED.unit_transport_cost_ht`,
-      [storeId, deliveryNote.id, deliveryNote.purchase_id, line.purchase_id, line.id, weight, round(weight * unitCost, 4), unitCost]
+      [
+        storeId,
+        deliveryNote.id,
+        deliveryNote.purchase_id,
+        line.purchase_id,
+        line.id,
+        line.weight_kg,
+        line.allocated_amount_ht,
+        line.unit_transport_cost_ht,
+      ]
     );
     count += 1;
   }
 
-  for (const line of salesLines.rows) {
-    const weight = number(line.weight_kg, 0);
-    if (weight <= 0) continue;
+  for (const line of salesAllocations) {
     await db.query(
       `INSERT INTO transport_cost_allocations (
         store_id, transport_delivery_note_id, transport_purchase_id, target_sales_document_id,
@@ -353,7 +400,16 @@ async function rebuildTransportCostAllocations(db, storeId, deliveryNoteId) {
       DO UPDATE SET allocated_weight_kg = EXCLUDED.allocated_weight_kg,
                     allocated_amount_ht = EXCLUDED.allocated_amount_ht,
                     unit_transport_cost_ht = EXCLUDED.unit_transport_cost_ht`,
-      [storeId, deliveryNote.id, deliveryNote.purchase_id, line.sales_document_id, line.id, weight, round(weight * unitCost, 4), unitCost]
+      [
+        storeId,
+        deliveryNote.id,
+        deliveryNote.purchase_id,
+        line.sales_document_id,
+        line.id,
+        line.weight_kg,
+        line.allocated_amount_ht,
+        line.unit_transport_cost_ht,
+      ]
     );
     count += 1;
   }
@@ -362,6 +418,7 @@ async function rebuildTransportCostAllocations(db, storeId, deliveryNoteId) {
 }
 
 module.exports = {
+  allocateTransportAmountByWeight,
   buildTransportPurchaseComponents,
   hasLinkedSupplierInvoice,
   isTransportPurchaseLocked,
