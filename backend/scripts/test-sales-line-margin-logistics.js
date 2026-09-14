@@ -42,6 +42,22 @@ function testWeightedLotsMargin() {
   assertNear(margin.margin_total, 35, 'weighted total');
 }
 
+function testMarginAfterTransport() {
+  const margin = computeLineMargin({
+    unit_sale_price_ht: 12,
+    total_weight: 10,
+    allocations: [{ quantity: 10, unit_cost_ex_vat: 8 }],
+    transport_unit_cost_ht: 1.5,
+  });
+  assertNear(margin.purchase_unit_cost_ht, 8, 'purchase cost stays gross');
+  assertNear(margin.transport_unit_cost_ht, 1.5, 'transport cost per kg');
+  assertNear(margin.landed_unit_cost_ht, 9.5, 'landed cost per kg');
+  assertNear(margin.commercial_margin_per_kg, 4, 'commercial margin remains visible');
+  assertNear(margin.margin_per_kg, 2.5, 'after transport margin per kg');
+  assertNear(margin.margin_total, 25, 'after transport margin total');
+  assert.strictEqual(margin.transport_integrated, true);
+}
+
 function testNoLotMargin() {
   assert.strictEqual(computeLineMargin({ unit_sale_price_ht: 12, total_weight: 18 }), null);
   assert.strictEqual(enrichLines([{ id: 'line-1' }])[0].real_margin, null);
@@ -86,6 +102,7 @@ async function testLowMarginsQueryShape() {
       assert(sql.includes('sale_line_allocations'), 'low margins must use lot allocations');
       assert(sql.includes("sd.document_type = 'DELIVERY_NOTE'"), 'low margins must avoid ORDER/INVOICE double counting');
       assert(sql.includes('line_margins'), 'low margins must be line-level');
+      assert(sql.includes('transport_cost_allocations'), 'low margins must include allocated transport costs');
       return {
         rows: [{
           id: 'line-1',
@@ -95,10 +112,12 @@ async function testLowMarginsQueryShape() {
           client_name: 'E.LECLERC SODIVARDIERE',
           designation: 'FILET DE MERLU',
           purchase_unit_cost_ht: 11.2,
+          transport_unit_cost_ht: 0.4,
+          landed_unit_cost_ht: 11.6,
           sale_unit_price_ht: 11.9,
-          margin_per_kg: 0.7,
-          margin_rate: 6.25,
-          margin_total: 12.6,
+          margin_per_kg: 0.3,
+          margin_rate: 2.59,
+          margin_total: 5.4,
         }],
       };
     },
@@ -109,6 +128,8 @@ async function testLowMarginsQueryShape() {
   assert.strictEqual(result.items[0].line_id, 'line-1');
   assert.strictEqual(result.items[0].url, './delivery-notes.html?id=doc-1&line_id=line-1');
   assert(result.items[0].detail.includes('Achat 11.2 EUR/kg'), 'detail must expose purchase cost');
+  assert(result.items[0].detail.includes('transport 0.4 EUR/kg'), 'detail must expose allocated transport cost');
+  assert.strictEqual(result.items[0].transport_integrated, true);
 }
 
 function testSalesDetailAllocationsRegression() {
@@ -129,11 +150,14 @@ function testSalesDetailAllocationsRegression() {
   assert(detailRoute.includes('a.production_method'), 'article production method traceability must be preserved');
   assert(detailRoute.includes('a.allergens'), 'article allergens traceability must be preserved');
   assert(detailRoute.includes('enrichLines(l.rows)'), 'real margin enrichment must remain on sales detail response');
+  assert(detailRoute.includes('transport_cost_allocations'), 'GET /api/sales/:id must expose allocated transport cost per line');
+  assert(detailRoute.includes('transport_unit_cost_ht'), 'GET /api/sales/:id must feed landed margin with transport unit cost');
 }
 
 (async () => {
   testSingleLotMargin();
   testWeightedLotsMargin();
+  testMarginAfterTransport();
   testNoLotMargin();
   testMarginStatuses();
   testLogisticsTotals();

@@ -1,3 +1,5 @@
+const transportPurchaseFlow = require('./transportPurchaseFlowService');
+
 function expose(status, message) {
   const error = new Error(message);
   error.status = status;
@@ -574,7 +576,18 @@ async function generateTransportDeliveryNote(db, storeId, input = {}, context = 
     `SELECT * FROM transport_delivery_notes WHERE shipment_id = $1 AND store_id = $2 LIMIT 1`,
     [shipmentId, storeId]
   )).rows[0];
-  if (existing) return { existing: true, delivery_note: existing };
+  if (existing) {
+    const purchaseLink = await transportPurchaseFlow.upsertTransportPurchase(db, storeId, existing.id, context);
+    return {
+      existing: true,
+      delivery_note: {
+        ...existing,
+        purchase_id: purchaseLink.purchase_id,
+        real_transport_cost_per_kg_ht: purchaseLink.unit_transport_cost_ht,
+      },
+      transport_purchase: purchaseLink,
+    };
+  }
   const snapshot = shipment.calculation_snapshot || {};
   const reference = clean(input.reference_number) || await nextBltReference(db, storeId, shipment.shipment_date);
   const result = await db.query(
@@ -596,7 +609,13 @@ async function generateTransportDeliveryNote(db, storeId, input = {}, context = 
      WHERE id = $1 AND store_id = $2`,
     [shipment.id, storeId, context.user_id || null]
   );
-  return { existing: false, delivery_note: result.rows[0] };
+  const purchaseLink = await transportPurchaseFlow.upsertTransportPurchase(db, storeId, result.rows[0].id, context);
+  const linkedDeliveryNote = {
+    ...result.rows[0],
+    purchase_id: purchaseLink.purchase_id,
+    real_transport_cost_per_kg_ht: purchaseLink.unit_transport_cost_ht,
+  };
+  return { existing: false, delivery_note: linkedDeliveryNote, transport_purchase: purchaseLink };
 }
 
 module.exports = {

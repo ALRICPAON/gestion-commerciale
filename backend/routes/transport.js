@@ -923,16 +923,22 @@ router.delete('/shipments/:id', requireAdminOrManager, async (req, res) => {
 });
 
 router.post('/shipments/:id/generate-blt', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
   try {
+    await db.query('BEGIN');
     const result = await transport.generateTransportDeliveryNote(
-      req.dbPool,
+      db,
       req.user.store_id,
       { ...req.body, shipment_id: req.params.id },
       context(req)
     );
+    await db.query('COMMIT');
     res.status(result.existing ? 200 : 201).json(result);
   } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
     res.status(error.status || 500).json({ error: error.message || 'Erreur generation BL transport' });
+  } finally {
+    db.release();
   }
 });
 

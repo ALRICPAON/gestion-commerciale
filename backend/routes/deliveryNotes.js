@@ -445,6 +445,7 @@ router.get('/delivery-notes/:id', authenticateToken, attachDbContext, async (req
         COALESCE(sl.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
         COALESCE(sl.delivered_client_store_identifier_snapshot, delivered.store_identifier) AS delivered_client_store_identifier,
         selected_lot.unit_cost_ex_vat AS selected_lot_unit_cost_ex_vat,
+        COALESCE(transport_cost.unit_transport_cost_ht, 0) AS transport_unit_cost_ht,
         COALESCE(jsonb_agg(jsonb_build_object(
           'lot_id', sla.lot_id,
           'quantity', sla.quantity,
@@ -454,8 +455,13 @@ router.get('/delivery-notes/:id', authenticateToken, attachDbContext, async (req
        LEFT JOIN clients delivered ON delivered.id = sl.delivered_client_id AND delivered.store_id = sl.store_id
        LEFT JOIN lots selected_lot ON selected_lot.id = sl.selected_lot_id AND selected_lot.store_id = sl.store_id
        LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
+       LEFT JOIN LATERAL (
+         SELECT SUM(tca.allocated_amount_ht) / NULLIF(SUM(tca.allocated_weight_kg), 0) AS unit_transport_cost_ht
+         FROM transport_cost_allocations tca
+         WHERE tca.target_sales_line_id = sl.id AND tca.store_id = sl.store_id
+       ) transport_cost ON true
        WHERE sl.sales_document_id = $1 AND sl.store_id = $2
-       GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier, selected_lot.id
+       GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier, selected_lot.id, transport_cost.unit_transport_cost_ht
        ORDER BY sl.line_number ASC`,
       [req.params.id, req.user.store_id]
     );
