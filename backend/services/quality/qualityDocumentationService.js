@@ -215,7 +215,7 @@ async function getDocumentation(db, storeId, id) {
       `SELECT m.*, s.title AS section_title, s.code AS section_code
        FROM quality_documentation_missing_items m
        JOIN quality_documentation_sections s ON s.id = m.section_id AND s.store_id = m.store_id
-       WHERE m.store_id = $1 AND s.collection_id = $2
+       WHERE m.store_id = $1 AND s.collection_id = $2 AND m.status <> 'resolved'
        ORDER BY m.status ASC, m.due_at NULLS LAST, m.created_at DESC`,
       [storeId, id]
     ),
@@ -472,9 +472,13 @@ async function mergeSections(db, storeId, sourceSectionId, targetSectionId, user
 async function listMissingItems(db, storeId, query = {}) {
   const params = [storeId];
   const where = ['m.store_id = $1'];
-  if (query.status) {
-    params.push(query.status);
+  const status = cleanText(query.status);
+  const includeResolved = query.include_resolved === true || query.include_resolved === 'true' || status === 'all';
+  if (status && status !== 'all') {
+    params.push(status);
     where.push(`m.status = $${params.length}`);
+  } else if (!includeResolved) {
+    where.push("m.status <> 'resolved'");
   }
   if (query.severity) {
     params.push(query.severity);

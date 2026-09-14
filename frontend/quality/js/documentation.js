@@ -182,7 +182,7 @@
     note: { fill: '#fefce8', stroke: '#a16207', icon: 'i', shape: 'note' },
   };
 
-  let state = { collection: null, sections: [], missing: [], attachments: [], diagrams: [], tables: [], blocks: [], currentId: null, dirty: false, filter: 'all', mermaidTemplates: [], tableTemplates: [] };
+  let state = { collection: null, sections: [], missing: [], resolvedMissing: [], resolvedMissingLoaded: false, attachments: [], diagrams: [], tables: [], blocks: [], currentId: null, dirty: false, filter: 'all', mermaidTemplates: [], tableTemplates: [] };
   let diagramState = { id: null, data: null, history: [], future: [], zoom: 100, mode: 'structured', mermaidSvg: '', mermaidDirty: false };
   let tableState = { id: null, data: null, mode: 'visual' };
 
@@ -718,11 +718,9 @@
 
   function renderMissing() {
     const now = new Date().toISOString().slice(0, 10);
-    let items = state.filter === 'all'
-      ? [...state.missing]
-      : state.missing.filter((item) => item.status !== 'resolved');
-    if (state.filter === 'active') items = state.missing.filter((item) => item.status !== 'resolved');
-    if (state.filter === 'resolved') items = state.missing.filter((item) => item.status === 'resolved');
+    const openItems = state.missing.filter((item) => item.status !== 'resolved');
+    let items = state.filter === 'resolved' ? [...state.resolvedMissing] : [...openItems];
+    if (state.filter === 'active') items = [...openItems];
     if (state.filter === 'blocking') items = items.filter((item) => item.severity === 'blocking');
     if (state.filter === 'before_submission') items = items.filter((item) => item.severity === 'before_submission');
     if (state.filter === 'before_opening') items = items.filter((item) => item.severity === 'before_opening');
@@ -1477,6 +1475,8 @@
     state.collection = data.collection;
     state.sections = data.sections;
     state.missing = data.missing_items;
+    state.resolvedMissing = [];
+    state.resolvedMissingLoaded = false;
     state.attachments = data.attachments;
     state.diagrams = data.diagrams || [];
     state.tables = data.tables || [];
@@ -1490,6 +1490,12 @@
     renderTree();
     renderEditor();
     if (!requested.missing) setFeedback('');
+  }
+
+  async function loadResolvedMissing() {
+    if (state.resolvedMissingLoaded) return;
+    state.resolvedMissing = await request('/missing-items?status=resolved');
+    state.resolvedMissingLoaded = true;
   }
 
   function payload(extra = {}) {
@@ -2191,9 +2197,14 @@
       setFeedback(error.message, 'error');
     }
   });
-  document.querySelectorAll('[data-missing-filter]').forEach((button) => button.addEventListener('click', () => {
+  document.querySelectorAll('[data-missing-filter]').forEach((button) => button.addEventListener('click', async () => {
     state.filter = button.dataset.missingFilter;
-    renderMissing();
+    try {
+      if (state.filter === 'resolved') await loadResolvedMissing();
+      renderMissing();
+    } catch (error) {
+      setFeedback(error.message, 'error');
+    }
   }));
   els.missing.addEventListener('click', async (event) => {
     const open = event.target.closest('[data-open-section]');
@@ -2211,6 +2222,8 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ reason: 'Resolution depuis la documentation qualite' }),
       });
+      state.resolvedMissing = [];
+      state.resolvedMissingLoaded = false;
       await load(state.currentId);
     }
     if (reopen) {
