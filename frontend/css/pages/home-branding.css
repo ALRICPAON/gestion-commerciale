@@ -388,6 +388,27 @@
   margin: 0;
 }
 
+.intelligence-items {
+  display: grid;
+  gap: 6px;
+}
+
+.intelligence-item-link {
+  border-left: 3px solid #CBD5E1;
+  color: var(--alta-text);
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  padding-left: 8px;
+  text-decoration: none;
+}
+
+.intelligence-item-link:hover {
+  color: var(--alta-primary);
+  text-decoration: underline;
+}
+
 .intelligence-actions {
   display: flex;
   flex-wrap: wrap;

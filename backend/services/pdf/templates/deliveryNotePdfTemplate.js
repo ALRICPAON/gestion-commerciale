@@ -64,6 +64,14 @@ function lineDeliveredLabel(line, fallback) {
   return storeIdentifier ? `${name} - N° magasin ${storeIdentifier}` : name;
 }
 
+function logisticsSummary(document, lines = []) {
+  const totals = document.logistics_totals || {};
+  const packageCount = totals.package_count ?? lines.reduce((sum, line) => sum + number(line.package_count), 0);
+  const totalWeight = totals.total_weight ?? lines.reduce((sum, line) => sum + number(line.total_weight || line.sold_quantity), 0);
+  const referenceCount = totals.reference_count ?? new Set(lines.map((line) => line.article_id || line.article_plu || line.article_label).filter(Boolean)).size;
+  return `${number(packageCount)} colis - ${qty(totalWeight)} kg net - ${number(referenceCount)} references`;
+}
+
 function renderLineRow(line) {
   return `<tr>
     <td class="line-cell">${escapeHtml(line.line_number || '')}</td>
@@ -110,6 +118,7 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
   const body = `<article class="pdf-document bl-document">
     ${companyHeader(settings, documentReference, `Bon de livraison - ${formatDate(doc.document_date)}`)}
     ${sourceOrder ? `<p class="source-order">Commande source : <strong>${escapeHtml(sourceOrder)}</strong></p>` : ''}
+    <section class="logistics-summary">${escapeHtml(logisticsSummary(doc, lines || []))}</section>
     <section class="parties">
       <div class="party-card">
         <h3>Client livre</h3>
@@ -157,6 +166,7 @@ function renderDeliveryNotePdf({ document, lines, storeSettings }) {
     .bl-document { display: flex; flex-direction: column; min-height: 277mm; }
     .source-order { color: #52616f; font-size: 9.5px; margin: -2px 0 7px; text-align: right; }
     .source-order strong { color: #17212b; }
+    .logistics-summary { border: 1px solid #17212b; color: #17212b; font-size: 12px; font-weight: 800; margin: 6px 0 8px; padding: 7px 9px; text-align: center; }
     .bl-document .parties { gap: 10px; margin: 8px 0 10px; }
     .bl-document .party-card { min-height: 20mm; padding: 7px 9px; }
     .bl-document .party-card h3 { margin-bottom: 4px; }

@@ -83,36 +83,83 @@ async function lossSales(db, storeId) {
 
 async function lowMargins(db, storeId, thresholdRate) {
   const result = await safeQuery(db, 'marges faibles', `
+    WITH allocation_costs AS (
+      SELECT
+        sales_line_id,
+        SUM(quantity) AS allocated_quantity,
+        SUM(quantity * unit_cost_ex_vat) / NULLIF(SUM(quantity), 0) AS purchase_unit_cost_ht
+      FROM sale_line_allocations
+      WHERE quantity > 0
+      GROUP BY sales_line_id
+    ),
+    line_margins AS (
+      SELECT
+        sl.id,
+        sd.id AS document_id,
+        sd.document_type,
+        sd.reference_number,
+        sd.document_date,
+        c.name AS client_name,
+        COALESCE(a.plu, sl.article_plu) AS plu,
+        COALESCE(a.designation, sl.article_label, 'Article sans nom') AS designation,
+        sl.unit_sale_price_ht AS sale_unit_price_ht,
+        COALESCE(ac.purchase_unit_cost_ht, selected_lot.unit_cost_ex_vat) AS purchase_unit_cost_ht,
+        sl.total_weight,
+        sl.sold_quantity
+      FROM sales_lines sl
+      JOIN sales_documents sd ON sd.id = sl.sales_document_id AND sd.store_id = sl.store_id
+      LEFT JOIN allocation_costs ac ON ac.sales_line_id = sl.id
+      LEFT JOIN lots selected_lot ON selected_lot.id = sl.selected_lot_id AND selected_lot.store_id = sl.store_id
+      LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
+      LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
+      WHERE sl.store_id = $1
+        AND sd.document_type = 'DELIVERY_NOTE'
+        AND sd.document_date >= CURRENT_DATE - INTERVAL '30 days'
+        AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
+    )
     SELECT
-      COALESCE(a.plu, sl.article_plu) AS plu,
-      COALESCE(a.designation, sl.article_label, 'Article sans nom') AS designation,
-      COALESCE(SUM(sl.line_amount_ht), 0) AS ca_ht,
-      COALESCE(SUM(sl.line_margin_ex_vat), 0) AS margin_ht,
-      CASE WHEN COALESCE(SUM(sl.line_amount_ht), 0) > 0
-        THEN COALESCE(SUM(sl.line_margin_ex_vat), 0) / COALESCE(SUM(sl.line_amount_ht), 0) * 100
-        ELSE 0
-      END AS margin_rate
-    FROM sales_lines sl
-    JOIN sales_documents sd ON sd.id = sl.sales_document_id AND sd.store_id = sl.store_id
-    LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
-    WHERE sl.store_id = $1
-      AND sd.document_date >= CURRENT_DATE - INTERVAL '30 days'
-      AND COALESCE(sd.status, '') NOT IN ('draft', 'cancelled')
-    GROUP BY COALESCE(a.plu, sl.article_plu), COALESCE(a.designation, sl.article_label, 'Article sans nom')
-    HAVING COALESCE(SUM(sl.line_amount_ht), 0) > 0
-      AND COALESCE(SUM(sl.line_margin_ex_vat), 0) / COALESCE(SUM(sl.line_amount_ht), 0) * 100 < $2
-    ORDER BY margin_rate ASC, ca_ht DESC
+      id,
+      document_id,
+      document_type,
+      reference_number,
+      document_date,
+      client_name,
+      plu,
+      designation,
+      purchase_unit_cost_ht,
+      sale_unit_price_ht,
+      sale_unit_price_ht - purchase_unit_cost_ht AS margin_per_kg,
+      (sale_unit_price_ht - purchase_unit_cost_ht) / NULLIF(purchase_unit_cost_ht, 0) * 100 AS margin_rate,
+      (sale_unit_price_ht - purchase_unit_cost_ht) * COALESCE(NULLIF(total_weight, 0), sold_quantity, 0) AS margin_total
+    FROM line_margins
+    WHERE purchase_unit_cost_ht > 0
+      AND sale_unit_price_ht IS NOT NULL
+      AND (sale_unit_price_ht - purchase_unit_cost_ht) / NULLIF(purchase_unit_cost_ht, 0) * 100 < $2
+    ORDER BY margin_rate ASC, document_date DESC
     LIMIT 20
   `, [storeId, thresholdRate]);
+
+  const items = result.rows.map((row) => ({
+    label: `${row.reference_number || row.document_id} - ${row.designation}`,
+    detail: `${row.client_name || 'Client non renseigné'} - Achat ${moneyValue(row.purchase_unit_cost_ht)} EUR/kg - Vente ${moneyValue(row.sale_unit_price_ht)} EUR/kg - Marge ${moneyValue(row.margin_per_kg)} EUR/kg - ${moneyValue(row.margin_rate)} %`,
+    date: row.document_date,
+    reference: row.reference_number,
+    document_id: row.document_id,
+    line_id: row.id,
+    article: row.designation,
+    purchase_unit_cost_ht: moneyValue(row.purchase_unit_cost_ht),
+    sale_unit_price_ht: moneyValue(row.sale_unit_price_ht),
+    margin_per_kg: moneyValue(row.margin_per_kg),
+    margin_rate_percent: moneyValue(row.margin_rate),
+    margin_total: moneyValue(row.margin_total),
+    url: `./delivery-notes.html?id=${row.document_id}&line_id=${row.id}`,
+  }));
 
   return {
     count: result.rows.length,
     available: result.available,
-    items: result.rows.map((row) => ({
-      label: row.designation,
-      detail: `${moneyValue(row.margin_ht)} EUR de marge, ${moneyValue(row.margin_rate)} %`,
-      reference: row.plu,
-    })),
+    view_url: items[0]?.url || './delivery-notes.html',
+    items,
   };
 }
 

@@ -113,6 +113,39 @@
   font-weight: 700;
 }
 
+.line-margin-badge {
+  border-left: 3px solid #94a3b8;
+  color: #334155;
+  font-size: 0.82rem;
+  font-weight: 700;
+  max-width: 260px;
+}
+
+.line-margin-badge.margin-ok {
+  border-left-color: #16a34a;
+  color: #166534;
+}
+
+.line-margin-badge.margin-low {
+  border-left-color: #f59e0b;
+  color: #92400e;
+}
+
+.line-margin-badge.margin-negative {
+  border-left-color: #dc2626;
+  color: #991b1b;
+}
+
+.line-margin-badge.margin-unknown {
+  color: #64748b;
+  font-weight: 600;
+}
+
+.data-table tr.line-highlight td {
+  background: #fff7d6;
+  box-shadow: inset 0 1px 0 #f59e0b, inset 0 -1px 0 #f59e0b;
+}
+
 .label-preview {
   display: grid;
   gap: 10px;
@@ -261,6 +294,16 @@
   .bl-document-meta {
     border: 1px solid #8b98a5;
     padding: 10px 12px;
+  }
+
+  .bl-logistics-summary {
+    border: 1px solid #17212b;
+    color: #17212b;
+    font-size: 12px;
+    font-weight: 800;
+    margin: 10px 0 8px;
+    padding: 7px 9px;
+    text-align: center;
   }
 
   .bl-label {

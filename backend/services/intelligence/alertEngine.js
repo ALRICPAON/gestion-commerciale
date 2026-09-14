@@ -25,7 +25,7 @@ function makeAlert(config, result) {
     level: result.available === false ? 'green' : levelFromCount(count, config.thresholds),
     available: result.available !== false,
     unavailable_reason: result.available === false ? 'Données non disponibles' : null,
-    view_url: config.viewUrl,
+    view_url: result.view_url || config.viewUrl,
     alta_prompt: config.altaPrompt(count),
     items: Array.isArray(result.items) ? result.items : [],
   };

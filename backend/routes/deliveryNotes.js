@@ -14,6 +14,10 @@ const {
   combineZpl,
 } = require('../services/healthLabelService');
 const salesPriceResolver = require('../services/salesPriceResolver');
+const {
+  computeDeliveryLogisticsTotals,
+  enrichLines,
+} = require('../services/salesLineMetrics');
 
 const router = express.Router();
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
@@ -439,14 +443,24 @@ router.get('/delivery-notes/:id', authenticateToken, attachDbContext, async (req
       `SELECT sl.*,
         COALESCE(sl.delivered_client_name_snapshot, delivered.name) AS delivered_client_name,
         COALESCE(sl.delivered_client_code_snapshot, delivered.code) AS delivered_client_code,
-        COALESCE(sl.delivered_client_store_identifier_snapshot, delivered.store_identifier) AS delivered_client_store_identifier
+        COALESCE(sl.delivered_client_store_identifier_snapshot, delivered.store_identifier) AS delivered_client_store_identifier,
+        selected_lot.unit_cost_ex_vat AS selected_lot_unit_cost_ex_vat,
+        COALESCE(jsonb_agg(jsonb_build_object(
+          'lot_id', sla.lot_id,
+          'quantity', sla.quantity,
+          'unit_cost_ex_vat', sla.unit_cost_ex_vat
+        )) FILTER (WHERE sla.id IS NOT NULL), '[]'::jsonb) AS allocations
        FROM sales_lines sl
        LEFT JOIN clients delivered ON delivered.id = sl.delivered_client_id AND delivered.store_id = sl.store_id
+       LEFT JOIN lots selected_lot ON selected_lot.id = sl.selected_lot_id AND selected_lot.store_id = sl.store_id
+       LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
        WHERE sl.sales_document_id = $1 AND sl.store_id = $2
+       GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier, selected_lot.id
        ORDER BY sl.line_number ASC`,
       [req.params.id, req.user.store_id]
     );
-    res.json({ ...document.rows[0], lines: lines.rows });
+    const enrichedLines = enrichLines(lines.rows);
+    res.json({ ...document.rows[0], logistics_totals: computeDeliveryLogisticsTotals(enrichedLines), lines: enrichedLines });
   } catch (err) {
     console.error('Erreur GET /api/delivery-notes/:id :', err);
     res.status(500).json({ error: 'Erreur serveur bon de livraison' });
@@ -534,6 +548,7 @@ async function getPrintableDeliveryNote(req, res, withPrintedAt = false) {
         jsonb_agg(jsonb_build_object(
           'lot_id', sla.lot_id,
           'quantity', sla.quantity,
+          'unit_cost_ex_vat', sla.unit_cost_ex_vat,
           'lot_code', l.lot_code,
           'supplier_lot_number', l.supplier_lot_number,
           'dlc', l.dlc,
@@ -542,14 +557,16 @@ async function getPrintableDeliveryNote(req, res, withPrintedAt = false) {
           'sous_zone', COALESCE(l.traceability_data->>'sous_zone', a.sous_zone),
           'fishing_gear', COALESCE(l.traceability_data->>'fishing_gear', a.fishing_gear),
           'production_method', COALESCE(l.traceability_data->>'production_method', a.production_method)
-        )) FILTER (WHERE sla.id IS NOT NULL) AS allocations
+        )) FILTER (WHERE sla.id IS NOT NULL) AS allocations,
+        selected_lot.unit_cost_ex_vat AS selected_lot_unit_cost_ex_vat
        FROM sales_lines sl
        LEFT JOIN clients delivered ON delivered.id = sl.delivered_client_id AND delivered.store_id = sl.store_id
        LEFT JOIN sale_line_allocations sla ON sla.sales_line_id = sl.id
        LEFT JOIN lots l ON l.id = sla.lot_id
+       LEFT JOIN lots selected_lot ON selected_lot.id = sl.selected_lot_id AND selected_lot.store_id = sl.store_id
        LEFT JOIN articles a ON a.id = sl.article_id AND a.store_id = sl.store_id
        WHERE sl.sales_document_id = $1 AND sl.store_id = $2
-       GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier
+       GROUP BY sl.id, delivered.name, delivered.code, delivered.store_identifier, selected_lot.id
        ORDER BY sl.line_number ASC`,
       [req.params.id, req.user.store_id]
     ),
@@ -565,7 +582,8 @@ async function getPrintableDeliveryNote(req, res, withPrintedAt = false) {
     ),
   ]);
   if (withPrintedAt) await req.dbPool.query(`UPDATE sales_documents SET printed_at = COALESCE(printed_at, NOW()) WHERE id = $1 AND store_id = $2`, [req.params.id, req.user.store_id]);
-  return res.json({ document: document.rows[0], lines: lines.rows, store_settings: storeSettings.rows[0] || null });
+  const enrichedLines = enrichLines(lines.rows);
+  return res.json({ document: { ...document.rows[0], logistics_totals: computeDeliveryLogisticsTotals(enrichedLines) }, lines: enrichedLines, store_settings: storeSettings.rows[0] || null });
 }
 
 router.get('/delivery-notes/:id/print-data', authenticateToken, attachDbContext, async (req, res) => {

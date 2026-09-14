@@ -25,6 +25,8 @@ const invoiceDateSubtitle = $('invoice-date-modal-subtitle');
 const cancelInvoiceDateBtn = $('cancel-invoice-date-btn');
 const confirmInvoiceDateBtn = $('confirm-invoice-date-btn');
 let selectedDeliveryNote = null;
+const initialDeliveryNoteId = new URLSearchParams(window.location.search).get('id') || new URLSearchParams(window.location.search).get('open');
+const highlightedLineId = new URLSearchParams(window.location.search).get('line_id');
 
 function logoutAndRedirect() { ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key)); window.location.href = './login.html'; }
 function showFeedback(message, type = 'success') { if (!pageFeedback) return; pageFeedback.textContent = message; pageFeedback.className = `page-feedback ${type}`; setTimeout(() => { pageFeedback.className = 'page-feedback hidden'; pageFeedback.textContent = ''; }, 3500); }
@@ -63,10 +65,26 @@ async function postWithStockConfirmation(url, payload = {}) {
 async function downloadPdf(url, fallbackName) { const response = await apiFetch(url); if (!response) return; if (!response.ok) { const data = await response.json().catch(() => ({})); throw new Error(data.error || 'Erreur generation PDF'); } const disposition = response.headers.get('Content-Disposition') || ''; const match = disposition.match(/filename="?([^";]+)"?/i); const filename = match?.[1] || fallbackName; const blob = await response.blob(); const objectUrl = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = objectUrl; link.download = filename; document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(objectUrl); }
 const money = (value) => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(Number(value || 0));
 const qty = (value) => Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+const percent = (value) => Number(value || 0).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 const fmtDate = (value) => (value ? new Intl.DateTimeFormat('fr-FR').format(new Date(value)) : '-');
 const isoDate = (value) => (value ? String(value).slice(0, 10) : '');
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const statusLabel = (status) => ({ draft: 'Brouillon', validated: 'Validé BL', delivered: 'Livré', invoiced: 'Facturé' }[status] || status || '-');
+
+function marginText(line) {
+  const margin = line.real_margin;
+  if (!margin) return 'Marge : -';
+  return `Achat ${money(margin.purchase_unit_cost_ht)} | Vente ${money(margin.sale_unit_price_ht)} | Marge ${money(margin.margin_per_kg)}/kg | ${percent(margin.margin_rate_percent)} % | ${money(margin.margin_total)}`;
+}
+
+function marginClass(line) {
+  return `line-margin-badge margin-${line.real_margin?.status || 'unknown'}`;
+}
+
+function logisticsText(note) {
+  const totals = note?.logistics_totals || {};
+  return `${Number(totals.package_count || 0).toLocaleString('fr-FR')} colis - ${qty(totals.total_weight || 0)} kg - ${Number(totals.reference_count || 0).toLocaleString('fr-FR')} references`;
+}
 
 function todayIsoDate() {
   const now = new Date();
@@ -163,8 +181,13 @@ function renderDetail(note) {
   if (downloadPdfBtn) downloadPdfBtn.disabled = false;
   labelsBtn.disabled = false;
   detailContent.classList.remove('empty-state');
-  const rows = (note.lines || []).map((line) => `<tr><td>${line.line_number}</td><td>${esc(line.article_plu || '')} ${esc(line.article_label || '')}</td><td>${Number(line.package_count || 0)}</td><td>${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${money(line.unit_sale_price_ht)}</td><td>${money(line.line_amount_ht)}</td><td>${Number(line.vat_rate || 0).toFixed(2)} %</td><td>${money(line.line_amount_ttc)}</td></tr>`).join('');
-  detailContent.innerHTML = `<div class="summary-grid"><div class="summary-item"><span class="summary-label">Client livré</span><span class="summary-value">${esc(note.client_name || note.delivered_client_name_snapshot || '-')}</span></div><div class="summary-item"><span class="summary-label">Identifiant magasin</span><span class="summary-value">${esc(note.client_store_identifier || note.delivered_client_store_identifier || '-')}</span></div><div class="summary-item"><span class="summary-label">Client facturé</span><span class="summary-value">${esc(note.billed_client_name || note.billed_client_name_snapshot || '-')}</span></div><div class="summary-item"><span class="summary-label">Facture</span><span class="summary-value">${esc(note.invoice_reference || note.invoice_id || '-')}</span></div></div><div class="table-wrapper"><table class="data-table"><thead><tr><th>Ligne</th><th>Article</th><th>Colis</th><th>Poids</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>TTC</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const rows = (note.lines || []).map((line) => `<tr data-line-id="${esc(line.id || '')}"><td>${line.line_number}</td><td>${esc(line.article_plu || '')} ${esc(line.article_label || '')}</td><td>${Number(line.package_count || 0)}</td><td>${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${money(line.unit_sale_price_ht)}</td><td>${money(line.line_amount_ht)}</td><td class="${marginClass(line)}">${esc(marginText(line))}</td><td>${Number(line.vat_rate || 0).toFixed(2)} %</td><td>${money(line.line_amount_ttc)}</td></tr>`).join('');
+  detailContent.innerHTML = `<div class="summary-grid"><div class="summary-item"><span class="summary-label">Client livré</span><span class="summary-value">${esc(note.client_name || note.delivered_client_name_snapshot || '-')}</span></div><div class="summary-item"><span class="summary-label">Identifiant magasin</span><span class="summary-value">${esc(note.client_store_identifier || note.delivered_client_store_identifier || '-')}</span></div><div class="summary-item"><span class="summary-label">Client facturé</span><span class="summary-value">${esc(note.billed_client_name || note.billed_client_name_snapshot || '-')}</span></div><div class="summary-item"><span class="summary-label">Logistique</span><span class="summary-value">${esc(logisticsText(note))}</span></div><div class="summary-item"><span class="summary-label">Facture</span><span class="summary-value">${esc(note.invoice_reference || note.invoice_id || '-')}</span></div></div><div class="table-wrapper"><table class="data-table"><thead><tr><th>Ligne</th><th>Article</th><th>Colis</th><th>Poids</th><th>Prix HT</th><th>Total HT</th><th>Marge réelle</th><th>TVA</th><th>TTC</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  const highlighted = highlightedLineId ? detailContent.querySelector(`tr[data-line-id="${highlightedLineId}"]`) : null;
+  if (highlighted) {
+    highlighted.classList.add('line-highlight');
+    highlighted.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
 }
 
 async function loadOrders() { const response = await apiFetch(`${API_BASE_URL}/api/sales?document_type=ORDER&status=validated`); if (!response) return; const data = await response.json().catch(() => []); if (!response.ok) throw new Error(data.error || 'Impossible de charger les commandes'); renderOrders(Array.isArray(data) ? data : []); }
@@ -196,7 +219,7 @@ function buildPrintHtml(document, lines, storeSettings = null) {
   const companyName = settings.company_name || 'Gestion Commerciale';
   const deliveredStoreId = document.client_store_identifier || document.delivered_client_store_identifier || '';
   const sourceOrder = document.source_order_reference || document.source_order_id || '';
-  const rows = lines.map((line) => `<tr><td>${esc(line.line_number || '')}</td><td><strong>${esc(line.article_label || '-')}</strong><small>${esc(line.article_plu || '')}</small></td><td class="num">${Number(line.package_count || 0)}</td><td class="num">${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${lineLots(line) || '-'}</td><td class="num">${money(line.unit_sale_price_ht)}</td><td class="num">${money(line.line_amount_ht)}</td><td class="num">${Number(line.vat_rate || 0).toFixed(2)} %</td><td class="num">${money(line.line_amount_ttc)}</td></tr>`).join('');
+  const rows = lines.map((line) => `<tr><td>${esc(line.line_number || '')}</td><td><strong>${esc(line.article_label || '-')}</strong><small>${esc(line.article_plu || '')}</small></td><td class="num">${Number(line.package_count || 0)}</td><td class="num">${qty(line.total_weight || line.sold_quantity)} ${esc(line.sale_unit || 'kg')}</td><td>${lineLots(line) || '-'}</td><td class="num">${money(line.unit_sale_price_ht)}</td><td class="num">${money(line.line_amount_ht)}</td><td>${esc(marginText(line))}</td><td class="num">${Number(line.vat_rate || 0).toFixed(2)} %</td><td class="num">${money(line.line_amount_ttc)}</td></tr>`).join('');
 
   return `<article class="bl-print-document">
     <header class="bl-print-header">
@@ -222,6 +245,8 @@ function buildPrintHtml(document, lines, storeSettings = null) {
       </div>
     </header>
 
+    <section class="bl-logistics-summary">${esc(logisticsText(document))}</section>
+
     <section class="bl-parties">
       <div class="bl-party-card">
         <h3>Client livré</h3>
@@ -237,8 +262,8 @@ function buildPrintHtml(document, lines, storeSettings = null) {
     </section>
 
     <table class="print-table bl-lines-table">
-      <thead><tr><th>Ligne</th><th>Désignation</th><th>Colis</th><th>Poids</th><th>Lots</th><th>Prix HT</th><th>Total HT</th><th>TVA</th><th>TTC</th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="9">Aucune ligne.</td></tr>'}</tbody>
+      <thead><tr><th>Ligne</th><th>Désignation</th><th>Colis</th><th>Poids</th><th>Lots</th><th>Prix HT</th><th>Total HT</th><th>Marge</th><th>TVA</th><th>TTC</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="10">Aucune ligne.</td></tr>'}</tbody>
     </table>
 
     <section class="bl-bottom">
@@ -294,4 +319,4 @@ function bindEvents() {
 }
 
 bindEvents();
-refreshAll().then(() => { const openId = new URLSearchParams(window.location.search).get('open'); if (openId) openDeliveryNote(openId); });
+refreshAll().then(() => { if (initialDeliveryNoteId) openDeliveryNote(initialDeliveryNoteId); });
