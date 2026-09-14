@@ -22,7 +22,7 @@ function n(v, f = 0) { const x = Number(String(v ?? '').replace(',', '.')); retu
 function clean(v) { return String(v ?? '').trim(); }
 function money(v) { return n(v).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function qty(v) { return n(v).toLocaleString('fr-FR', { minimumFractionDigits: 3, maximumFractionDigits: 3 }); }
-function percent(v) { return n(v).toLocaleString('fr-FR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+function percent(v) { return n(v).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function dinput(v) { if (!v) return ''; try { return new Date(v).toISOString().slice(0, 10); } catch { return ''; } }
 function sdate(v) { if (!v) return '-'; try { return new Date(v).toLocaleDateString('fr-FR'); } catch { return v; } }
 function esc(v) { return String(v ?? '').replace(/[&<>'"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[c])); }
@@ -38,7 +38,9 @@ function vatRate() { const c = selectedClient(); if (c?.is_vat_exempt || sale?.c
 function priceFor(a) { return n(a?.[`sale_price_level_${tariffLevel()}_ht`] ?? a?.sale_price_ex_vat ?? 0, 0); }
 function trace(line) { return line.traceability_snapshot || {}; }
 function traceText(t) { const parts = [t?.lot_code || t?.supplier_lot_number, t?.latin_name, t?.fao_zone, t?.sous_zone, t?.fishing_gear || t?.engin, t?.production_method || t?.category, t?.allergens || t?.allergenes].filter(Boolean); return parts.length ? parts.join(' | ') : '-'; }
-function marginText(line) { const margin = line.real_margin; if (!margin) return 'Marge : -'; return `Achat ${money(margin.purchase_unit_cost_ht)} EUR | Vente ${money(margin.sale_unit_price_ht)} EUR | Marge ${money(margin.margin_per_kg)} EUR/kg | ${percent(margin.margin_rate_percent)} % | ${money(margin.margin_total)} EUR`; }
+function signedMoney(v) { const value = n(v); return `${value > 0 ? '+' : ''}${money(value)} €`; }
+function signedPercent(v) { const value = n(v); return `${value > 0 ? '+' : ''}${percent(value)} %`; }
+function marginHtml(line) { const margin = line.real_margin; if (!margin) return '<span class="line-margin-main">Marge : -</span>'; return `<span class="line-margin-main">Achat ${money(margin.purchase_unit_cost_ht)} € | Vente ${money(margin.sale_unit_price_ht)} €</span><span class="line-margin-sub">Marge ${signedMoney(margin.margin_per_kg)}/kg | ${signedPercent(margin.margin_rate_percent)} | Total ${money(margin.margin_total)} €</span>`; }
 function marginClass(line) { return `line-margin-badge margin-${line.real_margin?.status || 'unknown'}`; }
 function normalizeArticle(item) { return { ...item, article_id: item.article_id || item.id, plu: item.plu || item.code || '', designation: item.designation || item.display_name || '', family_name: item.family_name || item.family || item.category || '', sale_price_level_1_ht: item.sale_price_level_1_ht ?? item.sale_price_ex_vat ?? 0, sale_price_level_2_ht: item.sale_price_level_2_ht ?? 0, sale_price_level_3_ht: item.sale_price_level_3_ht ?? 0, stock_quantity: item.stock_quantity ?? 0, pma: item.pma ?? item.unit_cost_ex_vat ?? 0, sale_unit: item.sale_unit || item.unit || 'kg', lot_code: item.lot_code || item.next_lot_code || '', supplier_lot_number: item.supplier_lot_number || item.next_supplier_lot_number || '', next_dlc: item.next_dlc || item.next_lot_dlc || null, fishing_gear: item.fishing_gear || item.engin, allergens: item.allergens || item.allergenes, production_method: item.production_method || item.category }; }
 function normalizeKind(value) { return String(value || '').trim().toLowerCase(); }
@@ -244,7 +246,7 @@ function renderLines() {
       <td class="line-total-ht">${money(line.line_amount_ht)}</td>
       <td><input class="line-input line-vat-rate" type="number" step="0.01" value="${n(line.vat_rate, vatRate())}" ${locked ? 'disabled' : ''}></td>
       <td class="line-total-ttc">${money(line.line_amount_ttc)}</td>
-      <td class="${marginClass(line)}">${esc(marginText(line))}</td>
+      <td class="${marginClass(line)}">${marginHtml(line)}</td>
       <td class="trace-cell">${esc(traceText(t) !== '-' ? traceText(t) : (negoce ? 'Négoce hors stock' : '-'))}</td>
       <td>${esc(line.line_status || '-')}</td>
       <td><button type="button" class="btn btn-primary" data-action="save-line" data-id="${line.id}" ${locked ? 'disabled' : ''}>OK</button><button type="button" class="btn btn-secondary" data-action="delete-line" data-id="${line.id}" ${locked ? 'disabled' : ''}>Suppr.</button></td>
