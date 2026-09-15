@@ -55,8 +55,19 @@ async function api(path, options = {}) {
     return null;
   }
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || 'Erreur API');
+  if (!response.ok) {
+    const details = data.details
+      ? ` (${typeof data.details === 'string' ? data.details : JSON.stringify(data.details)})`
+      : '';
+    const code = data.code ? ` [${data.code}]` : '';
+    throw new Error(`${data.error || 'Erreur API'}${code}${details}`);
+  }
   return data;
+}
+
+function requestId() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function apiJson(path, payload, method = 'POST') {
@@ -567,18 +578,25 @@ async function createFuelSurcharge() {
 async function createShipment() {
   requireValue(el('transport-chain').value, 'Choisir un circuit.');
   if (!Number(el('transport-weight').value)) throw new Error('Saisir un poids.');
+  const button = el('create-shipment-btn');
   const payload = {
     shipment_date: el('transport-date').value || todayIso(),
     chain_id: el('transport-chain').value,
     direction: el('transport-direction').value || 'sale',
     total_weight_kg: el('transport-weight').value,
+    idempotency_key: requestId(),
   };
   const wasEditing = Boolean(editingShipmentId);
-  if (editingShipmentId) await apiJson(`/api/transport/shipments/${encodeURIComponent(editingShipmentId)}`, payload, 'PATCH');
-  else await apiJson('/api/transport/shipments', payload);
-  clearShipmentForm();
-  await loadShipments();
-  showFeedback(wasEditing ? 'Envoi transport modifie.' : 'Envoi transport cree.');
+  if (button) button.disabled = true;
+  try {
+    if (editingShipmentId) await apiJson(`/api/transport/shipments/${encodeURIComponent(editingShipmentId)}`, payload, 'PATCH');
+    else await apiJson('/api/transport/shipments', payload);
+    clearShipmentForm();
+    await loadShipments();
+    showFeedback(wasEditing ? 'Envoi transport modifie.' : 'Envoi transport cree.');
+  } finally {
+    if (button) button.disabled = false;
+  }
 }
 
 async function generateBlt(shipmentId) {

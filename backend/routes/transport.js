@@ -25,6 +25,14 @@ function badRequest(message) {
   return Object.assign(new Error(message), { status: 400 });
 }
 
+function transportErrorPayload(error, fallback) {
+  return {
+    error: error.message || fallback,
+    code: error.code || null,
+    details: error.details || error.constraint || null,
+  };
+}
+
 function assertNonNegative(value, label, fallback = 0) {
   const parsed = num(value, fallback);
   if (parsed < 0) throw badRequest(`${label} doit etre positif`);
@@ -888,7 +896,7 @@ router.post('/shipments', requireAdminOrManager, async (req, res) => {
     const shipment = await transport.createShipment(req.dbPool, req.user.store_id, req.body, context(req));
     res.status(201).json(shipment);
   } catch (error) {
-    res.status(error.status || 500).json({ error: error.message || 'Erreur creation envoi transport' });
+    res.status(error.status || 500).json(transportErrorPayload(error, 'Erreur creation envoi transport'));
   }
 });
 
@@ -901,7 +909,7 @@ router.patch('/shipments/:id', requireAdminOrManager, async (req, res) => {
     res.json(shipment);
   } catch (error) {
     await db.query('ROLLBACK').catch(() => {});
-    res.status(error.status || 500).json({ error: error.message || 'Erreur modification envoi transport' });
+    res.status(error.status || 500).json(transportErrorPayload(error, 'Erreur modification envoi transport'));
   } finally {
     db.release();
   }
