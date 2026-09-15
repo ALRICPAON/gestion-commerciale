@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const resolver = require('../services/salesPriceResolver');
+const pricingService = require('../services/pricingService');
 
 const storeId = 'store-1';
 const article = {
@@ -47,6 +48,91 @@ async function resolve(input, published) {
 
   const frontendOldPriceIgnored = await resolve({ suggested_unit_sale_price_ht: 4 }, publishedLevel2);
   assert.strictEqual(frontendOldPriceIgnored.unit_price_ht, 12);
+
+  let implicitResolverInput = null;
+  await resolver.resolveSalesLinePrice({}, storeId, {
+    client_id: 'client-1',
+    article,
+    article_id: article.id,
+    document_date: '2026-09-02',
+    preserve_existing: false,
+  }, {
+    resolvePublishedPrice: async (_db, _storeId, publishedInput) => {
+      implicitResolverInput = publishedInput;
+      return publishedLevel2;
+    },
+  });
+  assert.strictEqual(
+    Object.prototype.hasOwnProperty.call(implicitResolverInput, 'tariff_level'),
+    false,
+    'resolver must not force tariff level 1 when no explicit tariff was provided'
+  );
+
+  let forwardedResolverInput = null;
+  const forwardedLevel2 = await resolver.resolveSalesLinePrice({}, storeId, {
+    client_id: 'client-1',
+    article,
+    article_id: article.id,
+    document_date: '2026-09-02',
+    tariff_level: 2,
+    preserve_existing: false,
+  }, {
+    resolvePublishedPrice: async (_db, _storeId, publishedInput) => {
+      forwardedResolverInput = publishedInput;
+      return publishedLevel2;
+    },
+  });
+  assert.strictEqual(forwardedLevel2.unit_price_ht, 12);
+  assert.strictEqual(forwardedResolverInput.tariff_level, 2, 'resolver must forward explicit quick-order tariff level');
+
+  const pricingQueries = [];
+  const pricingDb = {
+    async query(sql, params) {
+      pricingQueries.push({ sql, params });
+      if (sql.includes('FROM clients c')) {
+        return {
+          rows: [{
+            id: 'client-t2',
+            code: 'C-T2',
+            name: 'Client tarif 2',
+            tariff_level: 2,
+            tariff_level_id: null,
+            billed_client_id: 'billed-t1',
+            billed_client_code: 'BILLED',
+            billed_client_name: 'Facture tarif 1',
+            billed_is_royale_maree_member: false,
+            resolved_tariff_level_id: null,
+            resolved_legacy_level: 1,
+          }],
+        };
+      }
+      if (sql.includes('FROM tariff_levels') && sql.includes('legacy_level = $2')) {
+        return { rows: [{ id: `level-${params[1]}`, legacy_level: params[1], code: `T${params[1]}` }] };
+      }
+      if (sql.includes('FROM pricing_sessions ps')) {
+        return {
+          rows: [{
+            pricing_session_id: 'session-1',
+            pricing_line_id: 'pline-1',
+            article_id: article.id,
+            tariff_level_id: params[3],
+            source_tariff_price_ht: params[3] === 'level-2' ? 10 : 8,
+            royale_maree_commission_eur_per_kg: 0,
+          }],
+        };
+      }
+      return { rows: [] };
+    },
+  };
+  const publishedExplicitT2 = await pricingService.resolvePublishedPrice(pricingDb, storeId, {
+    client_id: 'client-t2',
+    article_id: article.id,
+    date: '2026-09-02',
+    tariff_level: 2,
+  });
+  assert.strictEqual(publishedExplicitT2.tariff_level.legacy_level, 2);
+  assert.strictEqual(publishedExplicitT2.tariff_level_id, 'level-2');
+  assert.strictEqual(publishedExplicitT2.source_tariff_price_ht, 10);
 
   const manualBeatsPublished = await resolve(
     { allow_manual_input: true, manual_price_override: true, manual_unit_price_ht: 22.9 },

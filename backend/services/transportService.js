@@ -464,26 +464,46 @@ async function createShipment(db, storeId, input = {}, context = {}) {
   if (!['purchase', 'sale'].includes(direction)) throw expose(400, 'Sens transport invalide');
   const chainId = clean(input.chain_id);
   const weightKg = positive(input.total_weight_kg ?? input.weight_kg, 0);
+  const idempotencyKey = clean(input.idempotency_key || input.request_id);
   if (!chainId) throw expose(400, 'Circuit transport obligatoire');
   if (weightKg <= 0) throw expose(400, 'Poids transport obligatoire');
+  if (idempotencyKey) {
+    const existing = await db.query(
+      'SELECT * FROM transport_shipments WHERE store_id = $1 AND idempotency_key = $2 LIMIT 1',
+      [storeId, idempotencyKey]
+    );
+    if (existing.rows.length) return existing.rows[0];
+  }
   const { chain, legs } = await getChainForCalculation(db, storeId, chainId, date);
   const carrierId = clean(input.carrier_id) || legs[0]?.carrier_id || null;
   const adminFeeByCarrier = {};
   for (const leg of legs) adminFeeByCarrier[leg.carrier_id] = await getCarrierAdminFee(db, storeId, leg.carrier_id);
   const snapshot = calculateChainSnapshot({ chain, legs, date, weightKg, adminFeeByCarrier });
-  const result = await db.query(
-    `INSERT INTO transport_shipments (
-      store_id, shipment_date, direction, carrier_id, chain_id, origin_label, destination_label,
-      total_weight_kg, expected_total_ht, calculation_snapshot, notes, created_by, updated_by
-    ) VALUES ($1,$2::date,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$12)
-    RETURNING *`,
-    [
-      storeId, date, direction, carrierId, chainId,
-      clean(input.origin_label) || chain.origin_label,
-      clean(input.destination_label) || chain.destination_label,
-      weightKg, snapshot.total_ht, JSON.stringify(snapshot), clean(input.notes), context.user_id || null,
-    ]
-  );
+  let result;
+  try {
+    result = await db.query(
+      `INSERT INTO transport_shipments (
+        store_id, shipment_date, direction, carrier_id, chain_id, origin_label, destination_label,
+        total_weight_kg, expected_total_ht, calculation_snapshot, notes, idempotency_key, created_by, updated_by
+      ) VALUES ($1,$2::date,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$13)
+      RETURNING *`,
+      [
+        storeId, date, direction, carrierId, chainId,
+        clean(input.origin_label) || chain.origin_label,
+        clean(input.destination_label) || chain.destination_label,
+        weightKg, snapshot.total_ht, JSON.stringify(snapshot), clean(input.notes), idempotencyKey, context.user_id || null,
+      ]
+    );
+  } catch (error) {
+    if (idempotencyKey && error.code === '23505' && String(error.constraint || '').includes('ux_transport_shipments_idempotency_key')) {
+      const existing = await db.query(
+        'SELECT * FROM transport_shipments WHERE store_id = $1 AND idempotency_key = $2 LIMIT 1',
+        [storeId, idempotencyKey]
+      );
+      if (existing.rows.length) return existing.rows[0];
+    }
+    throw error;
+  }
   return result.rows[0];
 }
 

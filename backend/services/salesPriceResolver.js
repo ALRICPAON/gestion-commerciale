@@ -151,11 +151,15 @@ async function resolveSalesLinePrice(db, storeId, input = {}, deps = {}) {
     };
   }
 
-  const published = await resolvePublishedPrice(db, storeId, {
+  const publishedInput = {
     client_id: clientId,
     article_id: articleId,
     date: input.date || input.document_date,
-  });
+  };
+  const explicitTariffLevelId = clean(input.tariff_level_id);
+  if (explicitTariffLevelId) publishedInput.tariff_level_id = explicitTariffLevelId;
+  if (input.tariff_level !== undefined && input.tariff_level !== null) publishedInput.tariff_level = requestedTariffLevel;
+  const published = await resolvePublishedPrice(db, storeId, publishedInput);
   const tariffLevel = legacyTariffLevel(published?.tariff_level || input.tariff_level || 1);
 
   if (published?.found) {

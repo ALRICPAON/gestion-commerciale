@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const transport = require('../services/transportService');
 const transportRoutes = require('../routes/transport');
 
@@ -250,6 +252,54 @@ function mockDbForDraftShipment({ withDeliveryNote = false } = {}) {
   };
 }
 
+function mockDbForCreateShipments() {
+  let nextId = 1;
+  const byIdempotencyKey = new Map();
+  return {
+    inserts: [],
+    async query(sql, params) {
+      if (sql.includes('FROM transport_shipments') && sql.includes('idempotency_key')) {
+        return { rows: byIdempotencyKey.has(params[1]) ? [byIdempotencyKey.get(params[1])] : [] };
+      }
+      if (sql.includes('FROM transport_chains')) {
+        return { rows: [{ id: 'chain-purchase', name: 'COPROMER -> FT44', direction: 'purchase', origin_label: 'COPROMER', destination_label: 'FT44' }] };
+      }
+      if (sql.includes('FROM transport_chain_legs')) {
+        return { rows: [{ id: 'leg', chain_id: 'chain-purchase', carrier_id: 'carrier', grid_id: 'grid', grid_name: 'COPROMER -> FT44', grid_origin_label: 'COPROMER', grid_destination_label: 'FT44' }] };
+      }
+      if (sql.includes('FROM transport_rate_brackets')) {
+        return { rows: [{ id: 'bracket', min_weight_kg: 0, max_weight_kg: null, pricing_mode: 'per_tonne', amount_ht: 100, display_order: 1 }] };
+      }
+      if (sql.includes('FROM transport_fuel_surcharges')) {
+        return { rows: [] };
+      }
+      if (sql.includes('FROM supplier_transport_settings')) {
+        return { rows: [{ admin_fee_ht: 0 }] };
+      }
+      if (sql.includes('INSERT INTO transport_shipments')) {
+        const row = {
+          id: `shipment-${nextId}`,
+          store_id: params[0],
+          shipment_date: params[1],
+          direction: params[2],
+          carrier_id: params[3],
+          chain_id: params[4],
+          origin_label: params[5],
+          destination_label: params[6],
+          total_weight_kg: params[7],
+          expected_total_ht: params[8],
+          idempotency_key: params[11],
+        };
+        nextId += 1;
+        this.inserts.push({ sql, params, row });
+        if (row.idempotency_key) byIdempotencyKey.set(row.idempotency_key, row);
+        return { rows: [row] };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
 (async () => {
   const saleEstimate = await transport.estimateClientSaleLogistics(
     mockDbForClientEstimate({ services: [{ id: 'prep', label: 'Preparation', calculation_mode: 'per_tonne', amount_ht: 180 }] }),
@@ -297,6 +347,50 @@ function mockDbForDraftShipment({ withDeliveryNote = false } = {}) {
     () => transport.updateDraftShipment(mockDbForDraftShipment({ withDeliveryNote: true }), 'store', 'shipment', { total_weight_kg: 120 }, { user_id: 'user' }),
     /verrouille/
   );
+
+  const duplicateRouteDb = mockDbForCreateShipments();
+  const firstShipment = await transport.createShipment(duplicateRouteDb, 'store', {
+    shipment_date: '2026-09-15',
+    chain_id: 'chain-purchase',
+    direction: 'purchase',
+    total_weight_kg: 80,
+    idempotency_key: 'request-morning',
+  }, { user_id: 'user' });
+  const secondShipment = await transport.createShipment(duplicateRouteDb, 'store', {
+    shipment_date: '2026-09-15',
+    chain_id: 'chain-purchase',
+    direction: 'purchase',
+    total_weight_kg: 120,
+    idempotency_key: 'request-afternoon',
+  }, { user_id: 'user' });
+  const retriedShipment = await transport.createShipment(duplicateRouteDb, 'store', {
+    shipment_date: '2026-09-15',
+    chain_id: 'chain-purchase',
+    direction: 'purchase',
+    total_weight_kg: 120,
+    idempotency_key: 'request-afternoon',
+  }, { user_id: 'user' });
+  assert.notStrictEqual(firstShipment.id, secondShipment.id, 'same route/day must create two distinct shipment ids');
+  assert.strictEqual(retriedShipment.id, secondShipment.id, 'same idempotency key must return the existing shipment');
+  assert.strictEqual(duplicateRouteDb.inserts.length, 2, 'same business route/day must not be deduplicated by application code');
+  assert.strictEqual(duplicateRouteDb.inserts[0].params[7], 80);
+  assert.strictEqual(duplicateRouteDb.inserts[1].params[7], 120);
+
+  const migration = fs.readFileSync(path.join(__dirname, '..', 'db', 'gestion-commerciale', '120_transport_shipments_allow_same_route_same_day.sql'), 'utf8');
+  assert(migration.includes('transport_shipments'), 'migration must target transport shipments');
+  assert(migration.includes("con.contype = 'u'"), 'migration must remove unique business constraints only');
+  assert(migration.includes('idx.indisprimary = false'), 'migration must preserve the primary key');
+  assert(migration.includes('ux_transport_shipments_idempotency_key'), 'migration must add technical idempotency uniqueness');
+  assert(!/UNIQUE\s*\(\s*store_id\s*,\s*shipment_date/i.test(migration), 'migration must not recreate route/day uniqueness');
+  const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'transport.js'), 'utf8');
+  const service = fs.readFileSync(path.join(__dirname, '..', 'services', 'transportService.js'), 'utf8');
+  const frontend = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'transport.js'), 'utf8');
+  assert(service.includes('idempotency_key = $2 LIMIT 1'), 'createShipment must lookup existing technical idempotency key');
+  assert(service.includes("error.code === '23505'") && service.includes('ux_transport_shipments_idempotency_key'), 'createShipment must handle concurrent idempotent retries');
+  assert(route.includes('transportErrorPayload'), 'transport routes must return structured API error payloads');
+  assert(route.includes('code: error.code || null'), 'transport API errors must expose database/API code');
+  assert(route.includes('details: error.details || error.constraint || null'), 'transport API errors must expose useful details');
+  assert(frontend.includes('idempotency_key: requestId()'), 'frontend must send a technical idempotency key per shipment create');
 
   console.log('transportService tests ok');
 })();

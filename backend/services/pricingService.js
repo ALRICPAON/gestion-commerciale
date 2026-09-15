@@ -837,7 +837,15 @@ async function applyAutoTariffsToSession(db, storeId, input = {}, context = {}) 
 
 async function resolvePublishedPrice(db, storeId, input = {}) {
   const date = isoDate(input.date || input.pricing_date || input.document_date);
-  const { client, tariff_level: level } = await resolveClientTariffLevel(db, storeId, input.client_id);
+  const { client, tariff_level: resolvedLevel } = await resolveClientTariffLevel(db, storeId, input.client_id);
+  let level = resolvedLevel;
+  const explicitTariffLevelId = clean(input.tariff_level_id);
+  const explicitLegacyLevel = Number(input.tariff_level?.legacy_level || input.tariff_level);
+  if (explicitTariffLevelId) {
+    level = await getTariffLevel(db, storeId, { id: explicitTariffLevelId });
+  } else if ([1, 2, 3].includes(explicitLegacyLevel)) {
+    level = await getTariffLevel(db, storeId, { legacy_level: explicitLegacyLevel });
+  }
   if (!level) throw expose(404, 'Niveau tarifaire client introuvable');
   const result = await db.query(
     `SELECT ps.id AS pricing_session_id, pl.id AS pricing_line_id, pl.article_id,
