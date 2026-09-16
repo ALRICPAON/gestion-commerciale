@@ -3,7 +3,7 @@ const { initializeDefaultDocumentation, stripHtml } = require('./qualityDocument
 const { recordSectionVersion } = require('./qualityDocumentationVersionService');
 const { ensureDefaultFabricationDiagram } = require('./qualityDocumentationDiagramService');
 const { ensureDefaultProductTables } = require('./qualityDocumentationTableService');
-const { applyDerivedContentToSection, hydrateBlocks, syncRichTextBlockFromContentHtml } = require('./qualityDocumentBlockService');
+const { applyDerivedContentToSection, hydrateBlocks, normalizeDerivedText, syncRichTextBlockFromContentHtml } = require('./qualityDocumentBlockService');
 
 const STATUSES = new Set(['draft', 'to_complete', 'ready_for_review', 'validated', 'archived']);
 const MISSING_ITEM_STATUSES = new Set(['open', 'resolved']);
@@ -168,6 +168,24 @@ async function getSection(db, storeId, sectionId) {
   return result.rows[0] || null;
 }
 
+async function sectionHasDocumentBlocks(db, storeId, sectionId) {
+  const result = await db.query(
+    `SELECT id
+     FROM quality_document_blocks
+     WHERE store_id = $1 AND chapter_id = $2
+     LIMIT 1`,
+    [storeId, sectionId]
+  ).catch((err) => {
+    if (err.code === '42P01' || err.code === '42703') return { rows: [] };
+    throw err;
+  });
+  return Boolean(result.rows[0]);
+}
+
+function normalizePersistedHtml(value = '') {
+  return sanitizeHtml(value || '').trim();
+}
+
 async function getOrCreateDefaultDocumentation(db, storeId, userId) {
   const collection = await initializeDefaultDocumentation(db, storeId, userId);
   try {
@@ -323,6 +341,15 @@ async function createSection(db, storeId, collectionId, userId, body) {
 async function updateSection(db, storeId, sectionId, userId, body) {
   const before = await getSection(db, storeId, sectionId);
   if (!before) return null;
+  const hasContentHtml = Object.prototype.hasOwnProperty.call(body, 'content_html');
+  const hasContentText = Object.prototype.hasOwnProperty.call(body, 'content_text');
+  const contentHtmlChanged = hasContentHtml && normalizePersistedHtml(body.content_html) !== normalizePersistedHtml(before.content_html);
+  const contentTextChanged = hasContentText && normalizeDerivedText(body.content_text || '') !== normalizeDerivedText(before.content_text || '');
+  if ((contentHtmlChanged || contentTextChanged) && await sectionHasDocumentBlocks(db, storeId, sectionId)) {
+    const err = new Error('Ce chapitre utilise des blocs documentaires. Modifie le bloc texte concerne, pas le miroir HTML du chapitre.');
+    err.status = 409;
+    throw err;
+  }
   const payload = sectionPayload({ ...before, ...body });
   if (payload.parent_id === sectionId) {
     const err = new Error('Un chapitre ne peut pas etre son propre parent');
@@ -373,7 +400,7 @@ async function updateSection(db, storeId, sectionId, userId, body) {
     [sectionId, storeId, payload.parent_id, payload.section_type, payload.code, payload.title, payload.content_html, payload.content_text, payload.display_order, payload.status, payload.version, payload.include_in_export, payload.comment_internal, payload.regulatory_references, validatedAt, userId, payload.applicable_from, payload.revision_due_at]
   );
   let updated = result.rows[0];
-  if (Object.prototype.hasOwnProperty.call(body, 'content_html')) {
+  if (contentHtmlChanged) {
     updated = await syncRichTextBlockFromContentHtml(db, storeId, updated, userId, payload.content_html);
   }
   await recordSectionVersion(db, storeId, updated, userId, body.change_summary || 'Modification du chapitre', 'update', before);
