@@ -1315,6 +1315,37 @@
       .sort((a, b) => Number(a.position || 0) - Number(b.position || 0));
   }
 
+  function contentForBlockEditor(block, editor) {
+    if (block.block_type === 'rich_text') return { html: editor.innerHTML };
+    if (block.block_type === 'to_complete') return { text: editor.textContent.trim() || 'A completer' };
+    return null;
+  }
+
+  function blockContentChanged(block, content) {
+    if (!content) return false;
+    if (block.block_type === 'rich_text') return String(block.content?.html || '') !== String(content.html || '');
+    if (block.block_type === 'to_complete') return String(block.content?.text || '') !== String(content.text || '');
+    return false;
+  }
+
+  async function persistVisibleBlockEditors() {
+    if (!canEdit || !els.blockList) return;
+    const saves = [];
+    els.blockList.querySelectorAll('[data-block-rich], [data-block-missing]').forEach((editor) => {
+      const card = editor.closest('[data-block-id]');
+      const block = state.blocks.find((item) => item.id === card?.dataset.blockId);
+      if (!block) return;
+      const content = contentForBlockEditor(block, editor);
+      if (!blockContentChanged(block, content)) return;
+      saves.push(requestQuality(`/document-blocks/${block.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      }).then((saved) => Object.assign(block, saved)));
+    });
+    if (saves.length) await Promise.all(saves);
+  }
+
   function blockLabel(type) {
     return {
       rich_text: 'Texte',
@@ -1501,9 +1532,8 @@
   function payload(extra = {}) {
     const section = currentSection();
     const hasBlocks = currentBlocks().length > 0;
-    return {
+    const body = {
       title: els.titleInput.value,
-      content_html: hasBlocks ? (section?.content_html || '') : editorContentHtml(),
       status: els.status.value,
       version: els.version.value,
       parent_id: els.parent.value || null,
@@ -1514,11 +1544,14 @@
       comment_internal: els.comment.value,
       ...extra,
     };
+    if (!hasBlocks) body.content_html = editorContentHtml();
+    return body;
   }
 
   async function save(extra = {}) {
     const section = currentSection();
     if (!section || !canEdit) return null;
+    await persistVisibleBlockEditors();
     const updated = await request(`/sections/${section.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -2103,9 +2136,8 @@
     const card = editor.closest('[data-block-id]');
     const block = state.blocks.find((item) => item.id === card?.dataset.blockId);
     if (!block) return;
-    const content = block.block_type === 'rich_text'
-      ? { html: editor.innerHTML }
-      : { text: editor.textContent.trim() || 'A completer' };
+    const content = contentForBlockEditor(block, editor);
+    if (!blockContentChanged(block, content)) return;
     try {
       const saved = await requestQuality(`/document-blocks/${block.id}`, {
         method: 'PATCH',

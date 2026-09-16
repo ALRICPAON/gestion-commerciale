@@ -15,8 +15,8 @@ function makePending(overrides = {}) {
   const payload = overrides.frozen_payload || {
     collection_id: 'collection-1',
     updates: [
-      { section_id: 'section-1', content_html: '<p>Nouveau 1</p>' },
       { section_id: 'section-2', content_html: '<p>Nouveau 2</p>' },
+      { section_id: 'section-3', content_html: '<p>Nouveau 3</p>' },
     ],
   };
   return {
@@ -84,6 +84,7 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
     sections: new Map([
       ['section-1', { id: 'section-1', store_id: 'store-1', collection_id: 'collection-1', code: 'T1-C1', title: 'Chapitre 1', content_html: '<p>Ancien 1</p>', content_text: 'Ancien 1', status: 'draft', version: '1.0', section_type: 'chapter', include_in_export: true }],
       ['section-2', { id: 'section-2', store_id: 'store-1', collection_id: 'collection-1', code: 'T1-C2', title: 'Chapitre 2', content_html: '<p>Ancien 2</p>', content_text: 'Ancien 2', status: 'draft', version: '1.0', section_type: 'chapter', include_in_export: true }],
+      ['section-3', { id: 'section-3', store_id: 'store-1', collection_id: 'collection-1', code: 'T1-C3', title: 'Chapitre 3', content_html: '<p>Ancien 3</p>', content_text: 'Ancien 3', status: 'draft', version: '1.0', section_type: 'chapter', include_in_export: true }],
     ]),
   };
 
@@ -135,6 +136,9 @@ function makePool({ pending = makePending(), failSectionId = null } = {}) {
       if (compact.startsWith('SELECT') && compact.includes('FROM quality_document_blocks') && compact.includes('id = $1')) {
         const block = state.blocks.get(params[0]);
         return { rows: block && block.store_id === params[1] ? [block] : [] };
+      }
+      if (compact.startsWith('SELECT id FROM quality_document_blocks') && compact.includes('LIMIT 1')) {
+        return { rows: [...state.blocks.values()].filter((block) => block.store_id === params[0] && block.chapter_id === params[1]).slice(0, 1) };
       }
       if (compact.startsWith('UPDATE quality_document_blocks SET position')) {
         const block = state.blocks.get(params[0]);
@@ -283,7 +287,7 @@ async function main() {
   assert.equal(qualityAction.example?.action_type, 'quality.documentation.apply_section_updates', 'exemple canonique attendu');
 
   const validPayload = {
-    updates: [{ section_id: 'section-1', content_html: '<p>Nouveau</p>' }],
+    updates: [{ section_id: 'section-2', content_html: '<p>Nouveau</p>' }],
   };
   const createCanonicalDb = makeCreateDb();
   const canonical = await createExecutablePendingAction({
@@ -499,40 +503,41 @@ async function main() {
   assert.equal(direct.execution_result.modified_sections[0].status, 'draft', 'statut brouillon attendu');
   assert(direct.execution_result.modified_sections[0].version_behavior.includes('Modification de brouillon'), 'note version brouillon attendue');
 
-  const servicePool = makePool();
-  const mcpPool = makePool();
-  const serviceClient = await servicePool.connect();
-  const serviceSection = await qualityDocumentation.updateSection(
-    serviceClient,
+  const blockedSectionPool = makePool();
+  let blockedSectionError = null;
+  try {
+    await executeExecutableActionDirect({
+      dbPool: blockedSectionPool,
+      context: makeContext({ trusted_mode: true, user_permissions: [], agent_permissions: [] }),
+      actionType: 'quality.documentation.apply_section_updates',
+      payload: {
+        updates: [{
+          section_id: 'section-1',
+          content_html: '<p>Comparaison service</p>',
+          change_summary: 'Comparaison service normal',
+        }],
+      },
+    });
+  } catch (error) {
+    blockedSectionError = error;
+  }
+  assert.equal(blockedSectionError?.status, 409, 'une mise a jour content_html sur chapitre a blocs doit etre refusee explicitement');
+  assert.equal(blockedSectionPool.state.sections.get('section-1').content_html, '<p>Ancien 1</p>', 'le miroir chapitre ne doit pas etre remplace');
+  assert.equal(blockedSectionPool.state.blocks.get('block-1').content.html, '<p>Ancien bloc</p>', 'le bloc riche ne doit pas etre ecrase par le miroir');
+
+  const metadataPool = makePool();
+  const metadataSection = await qualityDocumentation.updateSection(
+    metadataPool,
     'store-1',
     'section-1',
     'user-1',
     {
-      content_html: '<p>Comparaison service</p>',
-      change_summary: 'Comparaison service normal',
+      title: 'Chapitre 1 renomme',
+      change_summary: 'Modification metadonnees',
     }
   );
-  const mcpResult = await executeExecutableActionDirect({
-    dbPool: mcpPool,
-    context: makeContext({ trusted_mode: true, user_permissions: [], agent_permissions: [] }),
-    actionType: 'quality.documentation.apply_section_updates',
-    payload: {
-      updates: [{
-        section_id: 'section-1',
-        content_html: '<p>Comparaison service</p>',
-        change_summary: 'Comparaison service normal',
-      }],
-    },
-  });
-  const mcpSection = mcpPool.state.sections.get('section-1');
-  assert.deepEqual(
-    comparableSection(mcpSection),
-    comparableSection(serviceSection),
-    `service normal et action MCP doivent produire la meme section: ${JSON.stringify({ service: comparableSection(serviceSection), mcp: comparableSection(mcpSection) })}`
-  );
-  assert.equal(servicePool.state.versions.length, mcpPool.state.versions.length, 'meme nombre de versions attendu');
-  assert.equal(servicePool.state.versions.length, 1, 'historique version attendu');
-  serviceClient.release();
+  assert.equal(metadataSection.title, 'Chapitre 1 renomme', 'les metadonnees restent modifiables sur chapitre a blocs');
+  assert.equal(metadataPool.state.blocks.get('block-1').content.html, '<p>Ancien bloc</p>', 'modification metadonnees ne touche pas le bloc riche');
 
   const blockPool = makePool();
   const blockResult = await executeExecutableActionDirect({
