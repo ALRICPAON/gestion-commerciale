@@ -337,10 +337,45 @@ function productLabel(product) {
   return [product.plu, product.designation].filter(Boolean).join(' - ');
 }
 
+function normalizeSearch(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase();
+}
+
+function royaleMareeCommissionAmount() {
+  return Math.max(parseDecimal(state.sheet?.royale_maree_commission_eur_per_kg), 0);
+}
+
+function isRoyaleMareeBillingClient(client = {}) {
+  const code = normalizeSearch(client.billed_client_code || client.code);
+  const name = normalizeSearch(client.billed_client_name || client.name || client.legal_name);
+  return code.startsWith('RM-')
+    || ['ROYALE_MAREE', 'ROYALE-MAREE', 'ROYALE'].includes(code)
+    || name.includes('ROYALE MAREE');
+}
+
+function shouldDisplayRoyaleMareeCommission(client = {}, level = 1) {
+  const hasSeparateBillingClient = client.billed_client_id
+    && client.id
+    && String(client.billed_client_id) !== String(client.id);
+  return Number(level) === 1
+    && royaleMareeCommissionAmount() > 0
+    && (
+      client.is_royale_maree_member === true
+      || normalizeSearch(client.code).startsWith('RM-')
+      || (hasSeparateBillingClient && isRoyaleMareeBillingClient(client))
+    );
+}
+
 function priceForClient(product, client) {
   if (product.out_of_tariff) return product.price || product.sale_price_level_1_ht || '';
   const level = [1, 2, 3].includes(Number(client?.tariff_level)) ? Number(client.tariff_level) : 1;
-  return product[`sale_price_level_${level}_ht`] || '';
+  const sourcePrice = product[`sale_price_level_${level}_ht`] || '';
+  const parsedSourcePrice = parseDecimal(sourcePrice);
+  if (parsedSourcePrice <= 0 || !shouldDisplayRoyaleMareeCommission(client, level)) return sourcePrice;
+  return Number((parsedSourcePrice + royaleMareeCommissionAmount()).toFixed(4));
 }
 
 function entryFor(clientId, productId) {

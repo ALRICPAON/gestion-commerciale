@@ -28,11 +28,33 @@ function normalizeText(value) {
 }
 
 function isRoyaleMareeCommissionClient(client = {}) {
+  if (!client) return false;
   const code = normalizeText(client.code);
-  const name = normalizeText(client.name || client.legal_name);
+  const billedCode = normalizeText(client.billed_client_code || client.billing_client?.code);
+  const billedName = normalizeText(client.billed_client_name || client.billing_client?.name);
+  const hasSeparateBillingClient = client.billed_client_id
+    && client.id
+    && String(client.billed_client_id) !== String(client.id);
   return Boolean(
     client.is_royale_maree_member === true
     || code.startsWith('RM-')
+    || (
+      hasSeparateBillingClient
+      && (
+        billedCode.startsWith('RM-')
+        || ['ROYALE_MAREE', 'ROYALE-MAREE', 'ROYALE'].includes(billedCode)
+        || billedName.includes('ROYALE MAREE')
+      )
+    )
+  );
+}
+
+function isRoyaleMareeBillingClient(client = {}) {
+  if (!client) return false;
+  const code = normalizeText(client.code);
+  const name = normalizeText(client.name || client.legal_name);
+  return Boolean(
+    code.startsWith('RM-')
     || code === 'ROYALE_MAREE'
     || code === 'ROYALE-MAREE'
     || code === 'ROYALE'
@@ -43,7 +65,7 @@ function isRoyaleMareeCommissionClient(client = {}) {
 function shouldApplyRoyaleMareeCommission({ pricingLevel, context = {} } = {}) {
   return (
     isRoyaleMareeCommissionPricingLevel(pricingLevel)
-    && isRoyaleMareeCommissionClient(context.client || context.billingClient || context.billedClient)
+    && isRoyaleMareeCommissionClient(context.client)
     && royaleMareeCommissionAmount(context.storeSettings || context.settings || {}) > 0
   );
 }
@@ -52,6 +74,7 @@ function getCustomerDisplayedPrice({ price, pricingLevel, client = null, storeSe
   if (price === null || price === undefined || price === '') return price;
   const parsedPrice = parseDecimal(price, null);
   if (parsedPrice === null) return price;
+  if (parsedPrice <= 0) return parsedPrice;
   const settings = storeSettings || context.storeSettings || {};
   if (!shouldApplyRoyaleMareeCommission({ pricingLevel, context: { ...context, storeSettings: settings, client } })) {
     return parsedPrice;
@@ -106,6 +129,7 @@ module.exports = {
   decorateLineWithDisplayedPrices,
   getCustomerDisplayedPrice,
   isRoyaleMareeCommissionPricingLevel,
+  isRoyaleMareeBillingClient,
   isRoyaleMareeCommissionClient,
   priceWithRoyaleMareeCommission,
   royaleMareeCommissionAmount,

@@ -88,7 +88,7 @@ function testDeliveryNotesModalDisplaysBillingContext() {
   assert(js.includes('Date du BL : ${fmtDate(deliveryDate)}'), 'modal subtitle displays the BL date in French format');
   assert(js.includes('Client facturé : ${billedClient}'), 'modal subtitle displays billed client when available');
   assert(js.includes('invoiceDateInput.value = invoiceDateDefault(selectedDeliveryNote)'), 'invoice date defaults from the BL date with fallback');
-  assert(html.includes('delivery-notes.js?v=10'), 'delivery notes JS cache-busting is bumped to v=10');
+  assert(html.includes('delivery-notes.js?v=12'), 'delivery notes JS cache-busting is bumped to v=12');
 }
 
 function testSaleDetailBillingUsesModalWithoutNativeConfirmation() {
