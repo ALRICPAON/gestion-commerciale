@@ -266,6 +266,44 @@
   min-height: 140px;
 }
 
+.client-logistics-service {
+  border: 1px solid #EAECF0;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.client-logistics-service + .client-logistics-service {
+  margin-top: 8px;
+}
+
+.client-logistics-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.client-logistics-main input {
+  width: auto;
+  min-height: 0;
+}
+
+.client-logistics-provider {
+  display: grid;
+  grid-template-columns: minmax(110px, max-content) minmax(220px, 1fr);
+  gap: 8px 12px;
+  align-items: center;
+  margin-top: 10px;
+  padding-left: 24px;
+}
+
+.client-logistics-provider.hidden {
+  display: none;
+}
+
+.client-logistics-provider label {
+  margin: 0;
+}
+
 /* Badges */
 
 .badge-ok,
@@ -346,6 +384,11 @@
   .page-actions-right {
     width: 100%;
     align-items: stretch;
+  }
+
+  .client-logistics-provider {
+    grid-template-columns: 1fr;
+    padding-left: 0;
   }
 
   .page-actions-right,

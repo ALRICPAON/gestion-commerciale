@@ -29,7 +29,9 @@ let contacts = [];
 let affiliates = [];
 let transportChains = [];
 let logisticsServices = [];
+let logisticsProviders = [];
 let clientLogisticsServiceIds = new Set();
+let clientLogisticsAssignments = new Map();
 
 function logoutAndRedirect() {
   ['gc_token', 'gc_user', 'gc_active_department', 'grv2_token', 'grv2_user', 'grv2_active_department'].forEach((key) => localStorage.removeItem(key));
@@ -159,10 +161,31 @@ function renderLogisticsServices() {
   const container = $('client-logistics-services');
   if (!container) return;
   container.innerHTML = logisticsServices.length ? logisticsServices.map((service) => {
+    const assignment = clientLogisticsAssignments.get(service.id) || {};
     const checked = clientLogisticsServiceIds.has(service.id) ? 'checked' : '';
-    const unit = service.calculation_mode === 'per_tonne' ? 'EUR/T' : service.calculation_mode === 'per_kg' ? 'EUR/kg' : 'EUR';
-    return `<label><input type="checkbox" data-logistics-service-id="${esc(service.id)}" ${checked} /> ${esc(service.label)} - ${esc(service.amount_ht)} ${unit}</label>`;
+    const visible = checked ? '' : ' hidden';
+    const unit = service.calculation_mode === 'per_tonne' ? '€/T' : service.calculation_mode === 'per_kg' ? '€/kg' : '€';
+    const providerId = assignment.provider_supplier_id || '';
+    return `<div class="client-logistics-service">
+      <label class="client-logistics-main"><input type="checkbox" data-logistics-service-id="${esc(service.id)}" ${checked} /> <span>${esc(service.label)} - ${esc(formatLogisticsAmount(service.amount_ht))} ${unit}</span></label>
+      <div class="client-logistics-provider${visible}" data-logistics-provider-row="${esc(service.id)}">
+        <label for="provider-${esc(service.id)}">Prestataire</label>
+        <select id="provider-${esc(service.id)}" data-logistics-provider-id="${esc(service.id)}">
+          <option value="">Prestataire non renseigné</option>
+          ${logisticsProviders.map((provider) => {
+            const id = provider.id || provider.carrier_id;
+            return `<option value="${esc(id)}" ${id === providerId ? 'selected' : ''}>${esc(provider.name || provider.code || id)}</option>`;
+          }).join('')}
+        </select>
+      </div>
+    </div>`;
   }).join('') : '<span>Aucune prestation disponible.</span>';
+}
+
+function formatLogisticsAmount(value) {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  if (!Number.isFinite(parsed)) return value ?? '';
+  return parsed.toLocaleString('fr-FR', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 }
 
 async function loadLogisticsServices() {
@@ -173,34 +196,48 @@ async function loadLogisticsServices() {
   renderLogisticsServices();
 }
 
+async function loadLogisticsProviders() {
+  const response = await apiFetch(`${API_BASE_URL}/api/transport/carriers`);
+  if (!response) return;
+  const data = await response.json().catch(() => ({}));
+  logisticsProviders = data.results || [];
+  renderLogisticsServices();
+}
+
 async function loadClientLogisticsServices() {
   if (!clientId) {
     clientLogisticsServiceIds = new Set();
+    clientLogisticsAssignments = new Map();
     renderLogisticsServices();
     return;
   }
   const response = await apiFetch(`${API_BASE_URL}/api/transport/clients/${clientId}/logistics-services`);
   if (!response) return;
   const data = await response.json().catch(() => ({}));
-  clientLogisticsServiceIds = new Set((data.results || []).map((item) => item.id));
+  clientLogisticsServiceIds = new Set((data.results || []).map((item) => item.service_id || item.id));
+  clientLogisticsAssignments = new Map((data.results || []).map((item) => [item.service_id || item.id, item]));
   renderLogisticsServices();
 }
 
 async function saveClientLogisticsServices(targetClientId) {
   const id = targetClientId || clientId;
   if (!id) return;
-  const serviceIds = [...document.querySelectorAll('[data-logistics-service-id]')]
+  const services = [...document.querySelectorAll('[data-logistics-service-id]')]
     .filter((input) => input.checked)
-    .map((input) => input.dataset.logisticsServiceId);
+    .map((input) => ({
+      service_id: input.dataset.logisticsServiceId,
+      provider_supplier_id: document.querySelector(`[data-logistics-provider-id="${input.dataset.logisticsServiceId}"]`)?.value || null,
+    }));
   const response = await apiFetch(`${API_BASE_URL}/api/transport/clients/${id}/logistics-services`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ logistics_service_ids: serviceIds }),
+    body: JSON.stringify({ services }),
   });
   if (!response) return;
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || 'Erreur prestations logistiques client');
-  clientLogisticsServiceIds = new Set((data.results || []).map((item) => item.id));
+  clientLogisticsServiceIds = new Set((data.results || []).map((item) => item.service_id || item.id));
+  clientLogisticsAssignments = new Map((data.results || []).map((item) => [item.service_id || item.id, item]));
   renderLogisticsServices();
 }
 
@@ -478,7 +515,17 @@ function bindEvents() {
   if (affiliateForm) affiliateForm.noValidate = true;
   affiliateForm?.addEventListener('submit', createAffiliate);
   affiliateForm?.querySelector('button[type="submit"]')?.addEventListener('click', createAffiliate);
+  $('client-logistics-services')?.addEventListener('change', (event) => {
+    const checkbox = event.target.closest('[data-logistics-service-id]');
+    if (!checkbox) return;
+    const row = document.querySelector(`[data-logistics-provider-row="${checkbox.dataset.logisticsServiceId}"]`);
+    row?.classList.toggle('hidden', !checkbox.checked);
+    if (!checkbox.checked) {
+      const select = row?.querySelector('[data-logistics-provider-id]');
+      if (select) select.value = '';
+    }
+  });
 }
 
 bindEvents();
-Promise.all([loadClientsForBilling(), loadTransportChains(), loadLogisticsServices()]).then(loadClient).then(loadClientLogisticsServices).then(loadContactsAndAffiliates).catch((err) => { console.error('Erreur initialisation client :', err); showFeedback(err.message || 'Erreur initialisation client', 'error'); loadClient(); });
+Promise.all([loadClientsForBilling(), loadTransportChains(), loadLogisticsServices(), loadLogisticsProviders()]).then(loadClient).then(loadClientLogisticsServices).then(loadContactsAndAffiliates).catch((err) => { console.error('Erreur initialisation client :', err); showFeedback(err.message || 'Erreur initialisation client', 'error'); loadClient(); });
