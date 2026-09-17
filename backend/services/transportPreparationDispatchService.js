@@ -3,6 +3,7 @@ const transport = require('./transportService');
 const { displaySalesDocumentReference } = require('./salesReferenceService');
 
 const MISSING = 'A completer';
+const QUIET_MISSING = '-';
 const UNKNOWN_SUPPLIER = 'Fournisseur non determine';
 const DELIVERY_MODE = 'LIVRAISON';
 const DOCK_PICKUP_MODE = 'PRISE A QUAI DELANCHY';
@@ -39,6 +40,16 @@ function num(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function businessReference(value, fallback = '') {
+  const cleaned = clean(value);
+  if (!cleaned || isUuid(cleaned)) return fallback;
+  return cleaned;
+}
+
 function sumKnown(rows, fields) {
   const values = rows
     .map((row) => fields.map((field) => num(row[field])).find((value) => value !== null && value > 0))
@@ -57,6 +68,12 @@ function formatDateFr(value) {
 function formatQuantity(value, suffix) {
   const parsed = num(value);
   if (parsed === null || parsed <= 0) return MISSING;
+  return `${parsed.toLocaleString('fr-FR', { maximumFractionDigits: 3 })} ${suffix}`;
+}
+
+function formatQuietQuantity(value, suffix) {
+  const parsed = num(value);
+  if (parsed === null || parsed <= 0) return QUIET_MISSING;
   return `${parsed.toLocaleString('fr-FR', { maximumFractionDigits: 3 })} ${suffix}`;
 }
 
@@ -89,6 +106,17 @@ function formatAnnouncementLine(item = {}) {
     clean(item.reference) || MISSING,
     clean(item.client_name) || MISSING,
     clean(item.delivery_mode) || DELIVERY_MODE,
+  ].join(' | ');
+}
+
+function formatSupplierArrivalAnnouncementLine(item = {}) {
+  return [
+    clean(item.origin_label) || QUIET_MISSING,
+    clean(item.site_code) || QUIET_MISSING,
+    clean(item.supplier_name) || QUIET_MISSING,
+    formatQuietQuantity(item.weight_kg, 'kg'),
+    formatQuietQuantity(item.package_count, 'colis'),
+    item.date ? formatDateFr(item.date) : QUIET_MISSING,
   ].join(' | ');
 }
 
@@ -148,7 +176,10 @@ function decorateDispatchItem(item = {}) {
   if (!clean(item.site_code)) missing.push('code site');
   const decorated = { ...item, missing };
   decorated.status = lineStatus(decorated);
-  decorated.announcement_line = formatAnnouncementLine(decorated);
+  decorated.reference = businessReference(decorated.reference);
+  decorated.announcement_line = decorated.source_type === 'purchase_arrival'
+    ? formatSupplierArrivalAnnouncementLine(decorated)
+    : formatAnnouncementLine(decorated);
   return decorated;
 }
 
@@ -436,7 +467,8 @@ async function getPreparationDispatch(db, storeId, input = {}) {
       supplier_blocks: supplierBlocks,
       date,
       delivery_mode: row.delanchy_dock_pickup ? DOCK_PICKUP_MODE : DELIVERY_MODE,
-      document_url: `/api/pdf-documents/sales/${row.source_id}/pdf`,
+      order_reference: businessReference(row.reference, 'Commande'),
+      preparation_order_url: `/api/pdf-documents/sales/${row.source_id}/pdf`,
     });
   }
 
@@ -455,7 +487,7 @@ function buildEmailPreviewForCarrier(group = {}) {
     ['Livraisons clients', group.client_deliveries || []],
     ['Preparations', group.preparations || []],
     ['Prises a quai', group.dock_pickups || []],
-  ];
+  ].filter(([, items]) => items.length);
   const text = [
     `Bonjour,`,
     '',
@@ -463,7 +495,7 @@ function buildEmailPreviewForCarrier(group = {}) {
     '',
     ...sections.flatMap(([title, items]) => [
       title,
-      ...(items.length ? items.map((item) => `- ${item.announcement_line}`) : ['- Aucun element']),
+      ...items.map((item) => `- ${item.announcement_line}`),
       '',
     ]),
     `Pieces jointes preparation: ${(group.preparations || []).length}`,
@@ -487,8 +519,8 @@ function buildEmailPreviewForCarrier(group = {}) {
     html,
     attachments: (group.preparations || []).map((item) => ({
       sales_document_id: item.source_id,
-      reference: item.reference,
-      filename: `${displaySalesDocumentReference({ reference_number: item.reference }, 'CMD') || item.reference || item.source_id}.pdf`,
+      reference: item.order_reference || item.reference,
+      filename: `${displaySalesDocumentReference({ reference_number: item.order_reference || item.reference }, 'CMD') || item.order_reference || 'commande-preparation'}.pdf`,
     })),
     missing_information: group.summary?.missing_information || [],
   };
@@ -496,18 +528,35 @@ function buildEmailPreviewForCarrier(group = {}) {
 
 async function getSaleOrderPayloadForPdf(db, storeId, documentId) {
   const docResult = await db.query(
-    `SELECT sd.*, c.name AS client_name, c.code AS client_code,
+    `WITH requested AS (
+       SELECT * FROM sales_documents WHERE id = $1 AND store_id = $2 LIMIT 1
+     ),
+     target AS (
+       SELECT COALESCE(
+         CASE WHEN requested.document_type = 'ORDER' THEN requested.id END,
+         requested.source_order_id,
+         delivery_note.source_order_id,
+         CASE WHEN requested.document_type = 'DELIVERY_NOTE' THEN requested.id END,
+         requested.source_delivery_note_id,
+         requested.id
+       ) AS document_id
+       FROM requested
+       LEFT JOIN sales_documents delivery_note
+         ON delivery_note.id = requested.source_delivery_note_id
+        AND delivery_note.store_id = requested.store_id
+     )
+     SELECT sd.*, requested.id AS requested_id, requested.document_type AS requested_document_type,
+        c.name AS client_name, c.code AS client_code,
         c.store_identifier AS client_store_identifier,
         c.address_line1, c.address_line2, c.postal_code, c.city,
         COALESCE(c.delanchy_dock_pickup, false) AS delanchy_dock_pickup,
         COALESCE(c.tariff_level, sd.tariff_level_snapshot, 1) AS client_tariff_level
-     FROM sales_documents requested
-     JOIN sales_documents sd
-       ON sd.id = COALESCE(requested.source_order_id, requested.id)
-      AND sd.store_id = requested.store_id
+     FROM requested
+     JOIN target ON true
+     JOIN sales_documents sd ON sd.id = target.document_id AND sd.store_id = requested.store_id
      LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
-     WHERE requested.id = $1 AND requested.store_id = $2
-       AND requested.document_type IN ('ORDER', 'DELIVERY_NOTE')
+     WHERE requested.document_type IN ('ORDER', 'DELIVERY_NOTE', 'INVOICE')
+       AND sd.document_type IN ('ORDER', 'DELIVERY_NOTE')
      LIMIT 1`,
     [documentId, storeId]
   );
@@ -661,6 +710,7 @@ module.exports = {
   isPreparationService,
   deliveryModeForClient,
   formatAnnouncementLine,
+  formatSupplierArrivalAnnouncementLine,
   supplierNameFromLine,
   buildPreparationSupplierBlocks,
   buildClientRecap,

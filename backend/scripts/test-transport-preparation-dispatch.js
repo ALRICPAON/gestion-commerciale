@@ -12,6 +12,7 @@ const CLIENT_ID = '44444444-4444-4444-8444-444444444444';
 const RM_ID = '55555555-5555-4555-8555-555555555555';
 const ORDER_ID = '66666666-6666-4666-8666-666666666666';
 const DELIVERY_NOTE_ID = '77777777-7777-4777-8777-777777777777';
+const INVOICE_ID = '99999999-9999-4999-8999-999999999999';
 const CHAIN_ID = '88888888-8888-4888-8888-888888888888';
 
 function makeDb(overrides = {}) {
@@ -91,10 +92,13 @@ function makeDb(overrides = {}) {
         Object.assign(row, { total_weight_kg: params[8], expected_total_ht: params[9], source_reference: params[14] || row.source_reference });
         return { rows: [row] };
       }
-      if (sql.includes('SELECT sd.*, c.name AS client_name')) {
+      if (sql.includes('requested.document_type AS requested_document_type')) {
+        const requestedId = params[0];
+        const requestedType = requestedId === INVOICE_ID ? 'INVOICE' : requestedId === DELIVERY_NOTE_ID ? 'DELIVERY_NOTE' : 'ORDER';
         return { rows: [{
           id: ORDER_ID,
-          requested_id: DELIVERY_NOTE_ID,
+          requested_id: requestedId,
+          requested_document_type: requestedType,
           document_type: 'ORDER',
           reference_number: 'BC-2026-00142',
           document_date: '2026-09-18',
@@ -237,6 +241,22 @@ function prepLine(extra = {}) {
     assert(announcement.includes(needle), `Test E annonce contient ${needle}`);
   });
 
+  const supplierAnnouncement = dispatch.formatSupplierArrivalAnnouncementLine({
+    origin_label: 'COPROMER',
+    site_code: 'FT44',
+    supplier_name: 'LECRI MAREE',
+    weight_kg: 29.636,
+    package_count: 19,
+    date: '2026-09-15',
+    reference: '2a6f002d-306d-47ce-b914-b69a64f1602e',
+    client_name: 'Client final',
+    delivery_mode: dispatch.DELIVERY_MODE,
+  });
+  assert.strictEqual(supplierAnnouncement, 'COPROMER | FT44 | LECRI MAREE | 29,636 kg | 19 colis | 15/09/2026', 'Test E arrivage fournisseur simplifie');
+  assert(!supplierAnnouncement.includes('2a6f002d-306d-47ce-b914-b69a64f1602e'), 'Test F UUID absent annonce fournisseur');
+  assert(!supplierAnnouncement.includes('Client final'), 'Test F client final absent annonce fournisseur');
+  assert(!supplierAnnouncement.includes(dispatch.DELIVERY_MODE), 'Test F mode absent annonce fournisseur');
+
   assert(noPrep.results[0].client_deliveries[0].announcement_line.includes('E.Leclerc Orvault'), 'Test F client livre dans annonce');
   assert(!noPrep.results[0].client_deliveries[0].announcement_line.includes('Royale Maree'), 'Test F client facture absent du champ client a livrer');
 
@@ -251,6 +271,9 @@ function prepLine(extra = {}) {
   const payload = await dispatch.getSaleOrderPayloadForPdf(makeDb({ prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 1, total_weight: 10 })] }), STORE_ID, DELIVERY_NOTE_ID);
   assert.strictEqual(payload.sale.id, ORDER_ID, 'Test I impression commande depuis BL remonte a la commande');
   assert.strictEqual(payload.lines.length, 1, 'Test I lignes commande disponibles');
+
+  const invoicePayload = await dispatch.getSaleOrderPayloadForPdf(makeDb({ prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 1, total_weight: 10 })] }), STORE_ID, INVOICE_ID);
+  assert.strictEqual(invoicePayload.sale.id, ORDER_ID, 'Test J facture remonte a la commande source');
 
   const dockDb = makeDb({ dockDeliveries: [deliveryRow({ delanchy_dock_pickup: true })] });
   const dock = await dispatch.getPreparationDispatch(dockDb, STORE_ID, { date: '2026-09-18' });
@@ -278,6 +301,9 @@ function prepLine(extra = {}) {
   const emailPreview = dispatch.buildEmailPreviewForCarrier(withPrep.results[0]);
   assert.strictEqual(emailPreview.email_to, 'exploitation@delanchy.test', 'Test C email exploitation utilise');
   assert(emailPreview.text.includes('Preparations'), 'Test C email recap lisible');
+  assert(!emailPreview.text.includes('Arrivages fournisseurs\n- Aucun element'), 'Test H section vide masquee');
+  assert.strictEqual(emailPreview.attachments.length, 1, 'Test I preparation ajoute une piece jointe');
+  assert(!emailPreview.attachments[0].filename.includes(ORDER_ID), 'Test I nom de fichier metier');
 
   console.log('transport preparation dispatch tests ok');
 })().catch((error) => {
