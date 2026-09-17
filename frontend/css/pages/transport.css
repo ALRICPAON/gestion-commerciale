@@ -137,6 +137,18 @@
   font-size: 13px;
 }
 
+.dispatch-document-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.dispatch-missing {
+  color: #9a3412;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .dispatch-pickup-row {
   background: #fff7ed;
   font-weight: 700;

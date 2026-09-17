@@ -210,16 +210,60 @@ function formatQty(value, suffix) {
   return `${parsed.toLocaleString('fr-FR', { maximumFractionDigits: 3 })} ${suffix}`;
 }
 
-function renderDispatchTable(items, columns, emptyText) {
+function formatOptionalQty(value, suffix) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return '-';
+  return `${parsed.toLocaleString('fr-FR', { maximumFractionDigits: 3 })} ${suffix}`;
+}
+
+function labelCount(count, singular, plural = `${singular}s`) {
+  const parsed = Number(count || 0);
+  if (!parsed) return '';
+  return `${parsed.toLocaleString('fr-FR')} ${parsed > 1 ? plural : singular}`;
+}
+
+function renderDispatchSummary(group = {}) {
+  const summary = group.summary?.total || {};
+  return [
+    labelCount(group.summary?.supplier_arrivals?.count, 'arrivage'),
+    labelCount(group.summary?.client_deliveries?.count, 'livraison'),
+    labelCount(group.summary?.preparations?.count, 'preparation'),
+    labelCount(group.summary?.dock_pickups?.count, 'prise a quai', 'prises a quai'),
+    Number(summary.package_count || 0) ? formatQty(summary.package_count, 'colis') : '',
+    Number(summary.weight_kg || 0) ? formatQty(summary.weight_kg, 'kg') : '',
+  ].filter(Boolean).join(' - ');
+}
+
+function renderDispatchTable(items, columns, emptyText, options = {}) {
   if (!items.length) return `<div class="transport-muted">${esc(emptyText)}</div>`;
   return `<div class="table-wrap"><table class="data-table dispatch-table">
-    <thead><tr><th></th>${columns.map((column) => `<th>${esc(column.label)}</th>`).join('')}<th>Statut</th></tr></thead>
+    <thead><tr><th></th>${columns.map((column) => `<th>${esc(column.label)}</th>`).join('')}${options.showStatus ? '<th>Statut</th>' : ''}</tr></thead>
     <tbody>${items.map((item) => `<tr class="${item.delivery_mode === 'PRISE A QUAI DELANCHY' ? 'dispatch-pickup-row' : ''}">
       <td><input type="checkbox" checked /></td>
       ${columns.map((column) => `<td>${column.render ? column.render(item) : esc(item[column.key] || '')}</td>`).join('')}
-      <td>${esc(item.status || '')}${item.missing?.length ? `<div class="transport-muted">${esc(item.missing.join(', '))}</div>` : ''}</td>
+      ${options.showStatus ? `<td>${item.missing?.length ? `<span class="dispatch-missing">Information manquante</span><div class="transport-muted">${esc(item.missing.join(', '))}</div>` : ''}</td>` : ''}
     </tr>`).join('')}</tbody>
   </table></div>`;
+}
+
+async function openAuthenticatedPdf(url) {
+  if (!url) throw new Error('Document indisponible.');
+  const response = await fetch(`${API_BASE_URL}${url}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (response.status === 401) {
+    localStorage.removeItem('gc_token');
+    localStorage.removeItem('gc_user');
+    window.location.href = './login.html';
+    return;
+  }
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'Erreur ouverture PDF');
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const popup = window.open(objectUrl, '_blank', 'noopener,noreferrer');
+  if (!popup) throw new Error('Ouverture du PDF bloquee par le navigateur.');
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
 }
 
 function renderDispatchGroups() {
@@ -233,12 +277,9 @@ function renderDispatchGroups() {
     { label: 'Origine', key: 'origin_label' },
     { label: 'Code site', key: 'site_code' },
     { label: 'Fournisseur', key: 'supplier_name' },
-    { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
-    { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
+    { label: 'Poids', render: (item) => esc(formatOptionalQty(item.weight_kg, 'kg')) },
+    { label: 'Colis', render: (item) => esc(formatOptionalQty(item.package_count, 'colis')) },
     { label: 'Date', render: (item) => esc(formatDate(item.date)) },
-    { label: 'Reference', key: 'reference' },
-    { label: 'Client final', key: 'client_name' },
-    { label: 'Mode', key: 'delivery_mode' },
   ];
   const deliveryColumns = [
     { label: 'Client', key: 'client_name' },
@@ -252,14 +293,19 @@ function renderDispatchGroups() {
   const prepColumns = [
     { label: 'Client', key: 'client_name' },
     { label: 'Fournisseur(s)', key: 'supplier_name' },
+    { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
+    { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
+    { label: 'Mode', key: 'delivery_mode' },
+    { label: 'Bon de commande', render: (item) => item.preparation_order_url ? `<div class="dispatch-document-actions"><button class="btn btn-primary btn-sm" data-action="open-preparation-order" data-pdf-url="${esc(item.preparation_order_url)}" type="button">Ouvrir bon de commande</button><button class="btn btn-secondary btn-sm" data-action="print-preparation-order" data-pdf-url="${esc(item.preparation_order_url)}" type="button">Imprimer</button></div><div class="transport-muted">${esc(item.order_reference || item.reference || '')}</div>` : '-' },
+  ];
+  const pickupColumns = [
+    { label: 'Client', key: 'client_name' },
     { label: 'Reference', key: 'reference' },
     { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
     { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
     { label: 'Mode', key: 'delivery_mode' },
-    { label: 'Document', render: (item) => item.document_url ? `<a href="${API_BASE_URL}${esc(item.document_url)}" target="_blank" rel="noreferrer">PDF</a>` : '-' },
   ];
   container.innerHTML = dispatchGroups.map((group) => {
-    const summary = group.summary?.total || {};
     return `<article class="dispatch-carrier" data-carrier-id="${esc(group.carrier_id)}">
       <div class="dispatch-carrier-header">
         <div>
@@ -279,8 +325,8 @@ function renderDispatchGroups() {
       <h4>Commandes a preparer</h4>
       ${renderDispatchTable(group.preparations || [], prepColumns, 'Aucune commande a preparer.')}
       <h4>Prises a quai</h4>
-      ${renderDispatchTable(group.dock_pickups || [], deliveryColumns, 'Aucune prise a quai.')}
-      <div class="dispatch-summary">${Number(summary.count || 0)} lignes - ${Number(group.summary?.supplier_arrivals?.count || 0)} arrivages - ${Number(group.summary?.client_deliveries?.count || 0)} livraisons - ${Number(group.summary?.preparations?.count || 0)} preparations - ${Number(summary.pickup_count || 0)} prises a quai - ${formatQty(summary.package_count, 'colis')} - ${formatQty(summary.weight_kg, 'kg')}</div>
+      ${renderDispatchTable(group.dock_pickups || [], pickupColumns, 'Aucune prise a quai.')}
+      <div class="dispatch-summary">${esc(renderDispatchSummary(group))}</div>
     </article>`;
   }).join('');
 }
@@ -771,7 +817,12 @@ function bindEvents() {
   el('dispatch-groups').addEventListener('click', (event) => {
     const button = event.target.closest('[data-action]');
     const group = event.target.closest('[data-carrier-id]');
-    if (!button || !group) return;
+    if (!button) return;
+    if (button.dataset.action === 'open-preparation-order' || button.dataset.action === 'print-preparation-order') {
+      openAuthenticatedPdf(button.dataset.pdfUrl).catch((error) => showFeedback(error.message, 'error'));
+      return;
+    }
+    if (!group) return;
     if (button.dataset.action === 'dispatch-preview') previewDispatchEmail(group.dataset.carrierId).catch((error) => showFeedback(error.message, 'error'));
     if (button.dataset.action === 'dispatch-send') sendDispatchEmail(group.dataset.carrierId).catch((error) => showFeedback(error.message, 'error'));
     if (button.dataset.action === 'dispatch-print') printDispatchGroup(group.dataset.carrierId);
