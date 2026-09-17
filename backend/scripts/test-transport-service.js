@@ -345,7 +345,74 @@ function mockDbForConcurrentShipmentConflict({ constraint, existing }) {
   };
 }
 
+function mockDbForClientLogisticsAssignments() {
+  const services = new Map([
+    ['prep-service', { id: 'prep-service', label: 'PREPA COMMANDE', calculation_mode: 'per_tonne', amount_ht: 180, is_active: true }],
+    ['ice-service', { id: 'ice-service', label: 'Glacage', calculation_mode: 'fixed', amount_ht: 12, is_active: true }],
+  ]);
+  const providers = new Map([
+    ['delanchy', { id: 'delanchy', name: 'FRIGO TRANSPORTS 44', code: 'FT44' }],
+    ['other-carrier', { id: 'other-carrier', name: 'Autre Transport', code: 'OTH' }],
+  ]);
+  const assignments = new Map();
+  return {
+    assignments,
+    async query(sql, params) {
+      if (sql.startsWith('UPDATE client_logistics_services')) {
+        for (const assignment of assignments.values()) {
+          if (assignment.store_id === params[0] && assignment.client_id === params[1]) {
+            assignment.is_active = false;
+            assignment.provider_supplier_id = null;
+          }
+        }
+        return { rows: [] };
+      }
+      if (sql.includes('SELECT id, label FROM logistics_services')) {
+        return { rows: services.has(params[0]) ? [services.get(params[0])] : [] };
+      }
+      if (sql.includes('SELECT id FROM suppliers')) {
+        return { rows: providers.has(params[0]) ? [{ id: params[0] }] : [] };
+      }
+      if (sql.includes('INSERT INTO client_logistics_services')) {
+        const service = services.get(params[2]);
+        const assignment = {
+          assignment_id: `assignment-${params[2]}`,
+          store_id: params[0],
+          client_id: params[1],
+          logistics_service_id: params[2],
+          provider_supplier_id: params[3],
+          is_active: true,
+          ...service,
+        };
+        assignments.set(params[2], assignment);
+        return { rows: [assignment] };
+      }
+      if (sql.includes('FROM client_logistics_services')) {
+        const includeInactive = !sql.includes('cls.is_active = true');
+        return {
+          rows: Array.from(assignments.values())
+            .filter((assignment) => includeInactive || assignment.is_active)
+            .map((assignment) => {
+              const provider = providers.get(assignment.provider_supplier_id);
+              return {
+                ...assignment,
+                assignment_active: assignment.is_active,
+                provider_supplier_name: provider?.name || null,
+                provider_supplier_code: provider?.code || null,
+              };
+            }),
+        };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
 (async () => {
+  assert.strictEqual(transport.isPreparationLogisticsService({ label: 'PREPA COMMANDE' }), true, 'PREPA COMMANDE reconnue');
+  assert.strictEqual(transport.isPreparationLogisticsService({ label: 'Préparation commande' }), true, 'preparation accentuee reconnue');
+  assert.strictEqual(transport.isPreparationLogisticsService({ label: 'Glacage' }), false, 'autre prestation non preparation');
+
   const saleEstimate = await transport.estimateClientSaleLogistics(
     mockDbForClientEstimate({ services: [{ id: 'prep', label: 'Preparation', calculation_mode: 'per_tonne', amount_ht: 180 }] }),
     'store',
@@ -392,6 +459,40 @@ function mockDbForConcurrentShipmentConflict({ constraint, existing }) {
     () => transport.updateDraftShipment(mockDbForDraftShipment({ withDeliveryNote: true }), 'store', 'shipment', { total_weight_kg: 120 }, { user_id: 'user' }),
     /verrouille/
   );
+
+  const clientLogisticsDb = mockDbForClientLogisticsAssignments();
+  await assert.rejects(
+    () => transport.replaceClientLogisticsServices(clientLogisticsDb, 'store', 'client', [{ service_id: 'prep-service' }], { user_id: 'user' }),
+    /Prestataire obligatoire/
+  );
+  const savedAssignments = await transport.replaceClientLogisticsServices(
+    clientLogisticsDb,
+    'store',
+    'client',
+    [{ service_id: 'prep-service', provider_supplier_id: 'delanchy' }],
+    { user_id: 'user' }
+  );
+  assert.strictEqual(savedAssignments.results[0].provider_supplier_id, 'delanchy', 'Test H prestataire persiste');
+  assert.strictEqual(savedAssignments.results[0].provider_supplier_name, 'FRIGO TRANSPORTS 44', 'Test H nom prestataire retourne');
+  const uncheckedAssignments = await transport.replaceClientLogisticsServices(clientLogisticsDb, 'store', 'client', [], { user_id: 'user' });
+  assert.strictEqual(uncheckedAssignments.results.length, 0, 'Test I prestation decochee non active');
+  assert.strictEqual(clientLogisticsDb.assignments.get('prep-service').provider_supplier_id, null, 'Test I prestataire nettoye au decochage');
+
+  const legacyDb = mockDbForClientLogisticsAssignments();
+  legacyDb.assignments.set('prep-service', {
+    assignment_id: 'legacy-assignment',
+    store_id: 'store',
+    client_id: 'client',
+    logistics_service_id: 'prep-service',
+    id: 'prep-service',
+    label: 'PREPA COMMANDE',
+    calculation_mode: 'per_tonne',
+    amount_ht: 180,
+    is_active: true,
+    provider_supplier_id: null,
+  });
+  const legacyAssignments = await transport.listClientLogisticsServices(legacyDb, 'store', 'client');
+  assert.strictEqual(legacyAssignments.results[0].provider_missing, true, 'Test C UI signale prestataire manquant');
 
   const duplicateRouteDb = mockDbForCreateShipments();
   const firstShipment = await transport.createShipment(duplicateRouteDb, 'store', {
@@ -498,6 +599,7 @@ function mockDbForConcurrentShipmentConflict({ constraint, existing }) {
 
   const migration = fs.readFileSync(path.join(__dirname, '..', 'db', 'gestion-commerciale', '120_transport_shipments_allow_same_route_same_day.sql'), 'utf8');
   const dispatchMigration = fs.readFileSync(path.join(__dirname, '..', 'db', 'gestion-commerciale', '121_transport_preparation_dispatch.sql'), 'utf8');
+  const providerMigration = fs.readFileSync(path.join(__dirname, '..', 'db', 'gestion-commerciale', '122_client_logistics_service_providers.sql'), 'utf8');
   assert(migration.includes('transport_shipments'), 'migration must target transport shipments');
   assert(migration.includes("con.contype = 'u'"), 'migration must remove unique business constraints only');
   assert(migration.includes('idx.indisprimary = false'), 'migration must preserve the primary key');
@@ -506,12 +608,17 @@ function mockDbForConcurrentShipmentConflict({ constraint, existing }) {
   const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'transport.js'), 'utf8');
   const service = fs.readFileSync(path.join(__dirname, '..', 'services', 'transportService.js'), 'utf8');
   const frontend = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'transport.js'), 'utf8');
+  const clientFrontend = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'client-detail.js'), 'utf8');
   assert(service.includes('idempotency_key = $2 LIMIT 1'), 'createShipment must lookup existing technical idempotency key');
   assert(service.includes("error.code === '23505'") && service.includes('ux_transport_shipments_idempotency_key'), 'createShipment must handle concurrent idempotent retries');
   assert(dispatchMigration.includes('ux_transport_shipments_source_active'), 'dispatch migration must add business source uniqueness');
   assert(service.includes('findActiveShipmentBySource'), 'createShipment must lookup existing business source shipment');
   assert(service.includes('ux_transport_shipments_source_active'), 'createShipment must recover concurrent business source conflicts');
   assert(service.includes('idempotency_key, source_type, source_id, source_reference'), 'createShipment must persist technical and business idempotence keys');
+  assert(providerMigration.includes('provider_supplier_id'), 'provider migration must add a client-level logistics provider');
+  assert(service.includes('prestataire_id: row.provider_supplier_id'), 'client logistics API must expose prestataire_id');
+  assert(service.includes('SET is_active = false, provider_supplier_id = NULL'), 'unchecked logistics services must clear stale provider links');
+  assert(clientFrontend.includes('Prestataire non renseign'), 'client UI must show missing provider state');
   assert(route.includes('transportErrorPayload'), 'transport routes must return structured API error payloads');
   assert(route.includes('code: error.code || null'), 'transport API errors must expose database/API code');
   assert(route.includes('details: error.details || error.constraint || null'), 'transport API errors must expose useful details');

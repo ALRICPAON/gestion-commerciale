@@ -1,4 +1,6 @@
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 
 const dispatch = require('../services/transportPreparationDispatchService');
 const { renderSaleOrderPdf } = require('../services/pdf/templates/saleOrderPdfTemplate');
@@ -41,7 +43,9 @@ function makeDb(overrides = {}) {
       if (sql.includes('FROM sales_documents sd') && sql.includes("c.delanchy_dock_pickup, false) = $3")) {
         return { rows: params[2] ? state.dockDeliveries : state.deliveries };
       }
-      if (sql.includes('JOIN client_logistics_services')) return { rows: state.preparations };
+      if (sql.includes('JOIN client_logistics_services')) {
+        return { rows: state.preparations.filter((row) => row.carrier_id) };
+      }
       if (sql.includes('WHERE sl.store_id = $1 AND sl.sales_document_id = ANY')) return { rows: state.prepLines };
       if (sql.includes('FROM transport_shipments') && sql.includes('source_type')) {
         return { rows: state.shipments.filter((shipment) => shipment.source_type === params[1] && shipment.source_id === params[2]).slice(0, 1) };
@@ -158,16 +162,42 @@ function prepLine(extra = {}) {
   assert.strictEqual(dispatch.resolveCarrierEmail({ transport_operations_email: 'ops@test', email: 'main@test' }), 'ops@test');
   assert.strictEqual(dispatch.resolveCarrierEmail({ email: 'main@test' }), 'main@test');
   assert.strictEqual(dispatch.isPreparationService({ label: 'Preparation commandes' }), true);
+  assert.strictEqual(dispatch.isPreparationService({ label: 'PREPA COMMANDE' }), true, 'Test A PREPA COMMANDE reconnue');
+  assert.strictEqual(dispatch.isPreparationService({ label: 'PRÉPARATION' }), true, 'Test B PREPARATION accentuee reconnue');
 
   const noPrepDb = makeDb({ deliveries: [deliveryRow()], preparations: [] });
   const noPrep = await dispatch.getPreparationDispatch(noPrepDb, STORE_ID, { date: '2026-09-18' });
   assert.strictEqual(noPrep.results[0].client_deliveries.length, 1, 'Test A livraison visible');
   assert.strictEqual(noPrep.results[0].preparations.length, 0, 'Test A aucune preparation');
 
+  const missingProviderDb = makeDb({ preparations: [prepRow({ carrier_id: null })] });
+  const missingProvider = await dispatch.getPreparationDispatch(missingProviderDb, STORE_ID, { date: '2026-09-18' });
+  assert.strictEqual(missingProvider.results.length, 0, 'Test C prestation sans prestataire non envoyee en preparation');
+
   const prepDb = makeDb({ preparations: [prepRow()], prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 3, total_weight: 40 })] });
   const withPrep = await dispatch.getPreparationDispatch(prepDb, STORE_ID, { date: '2026-09-18' });
   assert.strictEqual(withPrep.results[0].preparations.length, 1, 'Test B commande en preparation');
   assert.strictEqual(withPrep.results[0].carrier_id, DELANCHY_ID, 'Test B transporteur correct');
+
+  const splitCarrierDb = makeDb({
+    deliveries: [deliveryRow({ carrier_id: OTHER_ID })],
+    preparations: [prepRow({ carrier_id: DELANCHY_ID })],
+    prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 2, total_weight: 20 })],
+  });
+  const splitCarrier = await dispatch.getPreparationDispatch(splitCarrierDb, STORE_ID, { date: '2026-09-18' });
+  const prepGroup = splitCarrier.results.find((group) => group.carrier_id === DELANCHY_ID);
+  const deliveryGroup = splitCarrier.results.find((group) => group.carrier_id === OTHER_ID);
+  assert.strictEqual(prepGroup.preparations.length, 1, 'Test E preparation rangee sous prestataire preparation');
+  assert.strictEqual(deliveryGroup.client_deliveries.length, 1, 'Test E livraison conserve le transporteur du circuit');
+
+  const prepDeliveryDb = makeDb({
+    deliveries: [deliveryRow()],
+    preparations: [prepRow()],
+    prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 2, total_weight: 20 })],
+  });
+  const prepDelivery = await dispatch.getPreparationDispatch(prepDeliveryDb, STORE_ID, { date: '2026-09-18' });
+  assert.strictEqual(prepDelivery.results[0].preparations.length, 1, 'Test G preparation presente');
+  assert.strictEqual(prepDelivery.results[0].client_deliveries.length, 1, 'Test G livraison presente');
 
   const blocks = dispatch.buildPreparationSupplierBlocks([
     prepLine({ supplier_name: 'SOGELMER', package_count: 6, total_weight: 82 }),
@@ -228,13 +258,19 @@ function prepLine(extra = {}) {
   assert.strictEqual(dock.results[0].dock_pickups[0].delivery_mode, dispatch.DOCK_PICKUP_MODE, 'Test J mode prise a quai');
 
   const prepDockDb = makeDb({
+    dockDeliveries: [deliveryRow({ delanchy_dock_pickup: true })],
     preparations: [prepRow({ delanchy_dock_pickup: true })],
     prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 2, total_weight: 20 })],
   });
   const prepDock = await dispatch.getPreparationDispatch(prepDockDb, STORE_ID, { date: '2026-09-18' });
   assert.strictEqual(prepDock.results[0].preparations.length, 1, 'Test K preparation visible');
+  assert.strictEqual(prepDock.results[0].dock_pickups.length, 1, 'Test K prise a quai visible');
   assert.strictEqual(prepDock.results[0].preparations[0].delivery_mode, dispatch.DOCK_PICKUP_MODE, 'Test K Delanchy prepare et remise quai');
   assert.strictEqual(prepDock.results[0].client_deliveries.length, 0, 'Test K aucune livraison finale creee');
+
+  const service = fs.readFileSync(path.join(__dirname, '..', 'services', 'transportPreparationDispatchService.js'), 'utf8');
+  assert(service.includes('cls.provider_supplier_id AS carrier_id'), 'dispatch must use client logistics provider');
+  assert(service.includes('prepa'), 'dispatch SQL must recognize PREPA labels');
 
   const missing = dispatch.formatAnnouncementLine({ date: '2026-09-18', reference: 'BC-X', client_name: 'Client', delivery_mode: dispatch.DELIVERY_MODE });
   assert(missing.includes('A completer'), 'Test L donnees manquantes signalees');

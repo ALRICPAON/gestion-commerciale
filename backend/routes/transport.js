@@ -855,11 +855,15 @@ router.put('/clients/:clientId/logistics-services', requireAdminOrManager, async
   const db = await req.dbPool.connect();
   try {
     await db.query('BEGIN');
+    const body = req.body || {};
+    const assignments = Array.isArray(body.services)
+      ? body.services
+      : body.logistics_service_ids || body.service_ids || [];
     const result = await transport.replaceClientLogisticsServices(
       db,
       req.user.store_id,
       req.params.clientId,
-      req.body?.logistics_service_ids || req.body?.service_ids || [],
+      assignments,
       context(req)
     );
     await db.query('COMMIT');
@@ -1023,6 +1027,7 @@ router._private = {
   validateGridPayload,
   validateChainPayload,
   validateLogisticsServicePayload,
+  assertCarrier,
   preparationDispatch,
 };
 

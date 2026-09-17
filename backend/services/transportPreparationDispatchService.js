@@ -20,10 +20,7 @@ function normalizeText(value) {
 }
 
 function normalizeKey(value) {
-  return normalizeText(value)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
+  return transport.normalizeKey ? transport.normalizeKey(value) : normalizeText(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 }
 
 function parseJson(value, fallback = {}) {
@@ -68,8 +65,9 @@ function resolveCarrierEmail(carrier = {}) {
 }
 
 function isPreparationService(service = {}) {
+  if (transport.isPreparationLogisticsService) return transport.isPreparationLogisticsService(service);
   const label = normalizeKey(service.label);
-  return label === 'preparation' || label.includes('preparation');
+  return /\bprepa\b/.test(label) || /\bpreparation\b/.test(label);
 }
 
 function deliveryModeForClient(client = {}) {
@@ -309,7 +307,9 @@ async function fetchPreparationDocuments(db, storeId, date) {
         c.address_line1, c.address_line2, c.postal_code, c.city,
         COALESCE(c.delanchy_dock_pickup, false) AS delanchy_dock_pickup,
         billed.id AS billed_client_id, billed.name AS billed_client_name, billed.code AS billed_client_code,
-        ls.id AS logistics_service_id, ls.label AS logistics_service_label, ls.carrier_id,
+        ls.id AS logistics_service_id, ls.label AS logistics_service_label,
+        cls.provider_supplier_id AS carrier_id,
+        provider.name AS provider_supplier_name,
         c.sale_transport_chain_id AS chain_id,
         COALESCE(SUM(NULLIF(COALESCE(sl.total_weight, sl.sold_quantity, 0), 0)), 0) AS weight_kg,
         COALESCE(SUM(NULLIF(sl.package_count, 0)), 0) AS package_count
@@ -318,16 +318,22 @@ async function fetchPreparationDocuments(db, storeId, date) {
      LEFT JOIN clients billed ON billed.id = COALESCE(sd.billed_client_id, c.billed_client_id, c.id) AND billed.store_id = sd.store_id
      JOIN client_logistics_services cls ON cls.client_id = c.id AND cls.store_id = c.store_id AND cls.is_active = true
      JOIN logistics_services ls ON ls.id = cls.logistics_service_id AND ls.store_id = cls.store_id
+     JOIN suppliers provider ON provider.id = cls.provider_supplier_id AND provider.store_id = cls.store_id
      LEFT JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
      WHERE sd.store_id = $1
        AND sd.document_date = $2::date
        AND sd.document_type IN ('ORDER', 'DELIVERY_NOTE')
        AND COALESCE(sd.status, 'draft') <> 'cancelled'
        AND ls.is_active = true
-       AND ls.carrier_id IS NOT NULL
+       AND cls.provider_supplier_id IS NOT NULL
+       AND COALESCE(provider.status, 'active') <> 'inactive'
+       AND (provider.is_carrier = true OR provider.supplier_type = 'transporteur')
        AND ls.effective_from <= $2::date
        AND (ls.effective_to IS NULL OR ls.effective_to >= $2::date)
-       AND LOWER(COALESCE(ls.label, '')) LIKE '%paration%'
+       AND (
+         LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(ls.label, ''), 'É', 'E'), 'È', 'E'), 'Ê', 'E'), 'é', 'e'), 'è', 'e'), 'ê', 'e')) ~ '(^|[^a-z])prepa([^a-z]|$)'
+         OR LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(ls.label, ''), 'É', 'E'), 'È', 'E'), 'Ê', 'E'), 'é', 'e'), 'è', 'e'), 'ê', 'e')) ~ '(^|[^a-z])preparation([^a-z]|$)'
+       )
        AND (
          sd.document_type = 'DELIVERY_NOTE'
          OR NOT EXISTS (
@@ -338,7 +344,7 @@ async function fetchPreparationDocuments(db, storeId, date) {
              AND COALESCE(dn.status, 'draft') <> 'cancelled'
          )
        )
-     GROUP BY sd.id, c.id, billed.id, ls.id`,
+     GROUP BY sd.id, c.id, billed.id, ls.id, cls.provider_supplier_id, provider.id`,
     [storeId, date]
   );
   return result.rows;

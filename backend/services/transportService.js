@@ -13,6 +13,16 @@ function clean(value) {
   return text || null;
 }
 
+function normalizeKey(value) {
+  const text = clean(value);
+  return text ? text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim() : '';
+}
+
+function isPreparationLogisticsService(service = {}) {
+  const label = normalizeKey(service.label);
+  return /\bprepa\b/.test(label) || /\bpreparation\b/.test(label);
+}
+
 function hasOwn(body = {}, field) {
   return Object.prototype.hasOwnProperty.call(body, field);
 }
@@ -321,38 +331,85 @@ async function listClientLogisticsServices(db, storeId, clientId, input = {}) {
   if (!includeInactive) where.push('cls.is_active = true', 'ls.is_active = true');
   const result = await db.query(
     `SELECT cls.id AS assignment_id, cls.is_active AS assignment_active,
-            ls.*, s.name AS carrier_name
+            cls.provider_supplier_id,
+            provider.name AS provider_supplier_name,
+            provider.code AS provider_supplier_code,
+            ls.*, service_carrier.name AS carrier_name
      FROM client_logistics_services cls
      JOIN logistics_services ls ON ls.id = cls.logistics_service_id AND ls.store_id = cls.store_id
-     LEFT JOIN suppliers s ON s.id = ls.carrier_id AND s.store_id = ls.store_id
+     LEFT JOIN suppliers service_carrier ON service_carrier.id = ls.carrier_id AND service_carrier.store_id = ls.store_id
+     LEFT JOIN suppliers provider ON provider.id = cls.provider_supplier_id AND provider.store_id = cls.store_id
      WHERE ${where.join(' AND ')}
      ORDER BY ls.label ASC`,
     params
   );
-  return { results: result.rows };
+  return {
+    results: result.rows.map((row) => ({
+      ...row,
+      id: row.id,
+      service_id: row.id,
+      assignment_id: row.assignment_id,
+      active: row.assignment_active,
+      actif: row.assignment_active,
+      prestataire_id: row.provider_supplier_id,
+      prestataire_name: row.provider_supplier_name,
+      provider_missing: row.assignment_active === true && isPreparationLogisticsService(row) && !row.provider_supplier_id,
+    })),
+  };
 }
 
-async function replaceClientLogisticsServices(db, storeId, clientId, serviceIds = [], context = {}) {
-  const ids = Array.isArray(serviceIds) ? serviceIds.map(clean).filter(Boolean) : [];
+async function assertLogisticsProvider(db, storeId, supplierId) {
+  const result = await db.query(
+    `SELECT id FROM suppliers
+     WHERE id = $1
+       AND store_id = $2
+       AND COALESCE(status, 'active') <> 'inactive'
+       AND (is_carrier = true OR supplier_type = 'transporteur')
+     LIMIT 1`,
+    [supplierId, storeId]
+  );
+  if (!result.rows[0]) throw expose(400, 'Prestataire logistique introuvable ou inactif');
+}
+
+function normalizeClientLogisticsAssignments(input = []) {
+  if (!Array.isArray(input)) return [];
+  return input.map((item) => {
+    if (typeof item === 'string') return { service_id: clean(item), provider_supplier_id: null };
+    return {
+      service_id: clean(item.service_id || item.logistics_service_id || item.id),
+      provider_supplier_id: clean(item.provider_supplier_id || item.prestataire_id || item.carrier_id),
+    };
+  }).filter((item) => item.service_id);
+}
+
+async function replaceClientLogisticsServices(db, storeId, clientId, serviceAssignments = [], context = {}) {
+  const assignments = normalizeClientLogisticsAssignments(serviceAssignments);
   await db.query(
     `UPDATE client_logistics_services
-     SET is_active = false, updated_by = $3, updated_at = now()
+     SET is_active = false, provider_supplier_id = NULL, updated_by = $3, updated_at = now()
      WHERE store_id = $1 AND client_id = $2`,
     [storeId, clientId, context.user_id || null]
   );
-  for (const serviceId of ids) {
+  for (const assignment of assignments) {
     const service = await db.query(
-      `SELECT id FROM logistics_services WHERE id = $1 AND store_id = $2 LIMIT 1`,
-      [serviceId, storeId]
+      `SELECT id, label FROM logistics_services WHERE id = $1 AND store_id = $2 LIMIT 1`,
+      [assignment.service_id, storeId]
     );
     if (!service.rows[0]) throw expose(404, 'Prestation logistique introuvable');
+    if (assignment.provider_supplier_id) await assertLogisticsProvider(db, storeId, assignment.provider_supplier_id);
+    if (isPreparationLogisticsService(service.rows[0]) && !assignment.provider_supplier_id) {
+      throw expose(400, 'Prestataire obligatoire pour une prestation de preparation');
+    }
     await db.query(
       `INSERT INTO client_logistics_services (
-        store_id, client_id, logistics_service_id, is_active, created_by, updated_by
-      ) VALUES ($1,$2,$3,true,$4,$4)
+        store_id, client_id, logistics_service_id, provider_supplier_id, is_active, created_by, updated_by
+      ) VALUES ($1,$2,$3,$4,true,$5,$5)
       ON CONFLICT (store_id, client_id, logistics_service_id)
-      DO UPDATE SET is_active = true, updated_by = EXCLUDED.updated_by, updated_at = now()`,
-      [storeId, clientId, serviceId, context.user_id || null]
+      DO UPDATE SET is_active = true,
+        provider_supplier_id = EXCLUDED.provider_supplier_id,
+        updated_by = EXCLUDED.updated_by,
+        updated_at = now()`,
+      [storeId, clientId, assignment.service_id, assignment.provider_supplier_id, context.user_id || null]
     );
   }
   return listClientLogisticsServices(db, storeId, clientId, { include_inactive: false });
@@ -360,9 +417,12 @@ async function replaceClientLogisticsServices(db, storeId, clientId, serviceIds 
 
 async function activeClientLogisticsServicesForDate(db, storeId, clientId, date) {
   const result = await db.query(
-    `SELECT ls.*
+    `SELECT ls.*, cls.provider_supplier_id,
+        provider.name AS provider_supplier_name,
+        provider.code AS provider_supplier_code
      FROM client_logistics_services cls
      JOIN logistics_services ls ON ls.id = cls.logistics_service_id AND ls.store_id = cls.store_id
+     LEFT JOIN suppliers provider ON provider.id = cls.provider_supplier_id AND provider.store_id = cls.store_id
      WHERE cls.store_id = $1
        AND cls.client_id = $2
        AND cls.is_active = true
@@ -687,6 +747,8 @@ async function generateTransportDeliveryNote(db, storeId, input = {}, context = 
 module.exports = {
   clean,
   isoDate,
+  normalizeKey,
+  isPreparationLogisticsService,
   money,
   selectBracket,
   calculateBracketAmount,
@@ -700,6 +762,8 @@ module.exports = {
   estimateClientSaleLogistics,
   listClientLogisticsServices,
   replaceClientLogisticsServices,
+  normalizeClientLogisticsAssignments,
+  assertLogisticsProvider,
   applyPurchaseTransportEstimatesToPricingSession,
   listCarriers,
   listChains,
