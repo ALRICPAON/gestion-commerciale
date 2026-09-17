@@ -485,7 +485,7 @@ async function getPreparationDispatch(db, storeId, input = {}) {
       order_source_id: row.order_source_id || (row.document_type === 'ORDER' ? row.source_id : null),
       order_reference: businessReference(row.order_reference || row.reference, 'Commande'),
       preparation_order_url: (row.order_source_id || row.document_type === 'ORDER')
-        ? `/api/pdf-documents/sales/${row.order_source_id || row.source_id}/pdf`
+        ? `/api/sales/${row.order_source_id || row.source_id}/pdf`
         : null,
     });
   }

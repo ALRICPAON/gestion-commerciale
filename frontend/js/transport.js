@@ -268,12 +268,12 @@ async function openAuthenticatedPdf(url) {
 
 function openDeliveryNotePdf(id) {
   if (!id) return Promise.reject(new Error('Bon de livraison indisponible.'));
-  return openAuthenticatedPdf(`/api/pdf-documents/delivery-notes/${encodeURIComponent(id)}/pdf`);
+  return openAuthenticatedPdf(`/api/delivery-notes/${encodeURIComponent(id)}/pdf`);
 }
 
 function openSaleOrderPdf(id) {
   if (!id) return Promise.reject(new Error('Bon de commande indisponible.'));
-  return openAuthenticatedPdf(`/api/pdf-documents/sales/${encodeURIComponent(id)}/pdf`);
+  return openAuthenticatedPdf(`/api/sales/${encodeURIComponent(id)}/pdf`);
 }
 
 function renderDispatchGroups() {

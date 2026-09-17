@@ -192,7 +192,7 @@ function prepLine(extra = {}) {
   const withPrep = await dispatch.getPreparationDispatch(prepDb, STORE_ID, { date: '2026-09-18' });
   assert.strictEqual(withPrep.results[0].preparations.length, 1, 'Test B commande en preparation');
   assert.strictEqual(withPrep.results[0].carrier_id, DELANCHY_ID, 'Test B transporteur correct');
-  assert.strictEqual(withPrep.results[0].preparations[0].preparation_order_url, `/api/pdf-documents/sales/${ORDER_ID}/pdf`, 'Test B commande directe utilise la route sales');
+  assert.strictEqual(withPrep.results[0].preparations[0].preparation_order_url, `/api/sales/${ORDER_ID}/pdf`, 'Test B commande directe utilise la route sales');
 
   const linkedDocumentDb = makeDb({
     deliveries: [deliveryRow({ source_id: DELIVERY_NOTE_ID, document_type: 'DELIVERY_NOTE', source_order_id: ORDER_ID, source_type: 'client_delivery_note' })],
@@ -203,7 +203,7 @@ function prepLine(extra = {}) {
   assert.strictEqual(linkedDocuments.results[0].client_deliveries[0].source_id, DELIVERY_NOTE_ID, 'Test A bouton BL conserve identifiant BL');
   assert.strictEqual(linkedDocuments.results[0].client_deliveries[0].document_type, 'DELIVERY_NOTE', 'Test A livraison typee BL');
   assert.strictEqual(linkedDocuments.results[0].preparations[0].order_source_id, ORDER_ID, 'Test C preparation BL expose commande source');
-  assert.strictEqual(linkedDocuments.results[0].preparations[0].preparation_order_url, `/api/pdf-documents/sales/${ORDER_ID}/pdf`, 'Test C aucun identifiant BL envoye a la route commande');
+  assert.strictEqual(linkedDocuments.results[0].preparations[0].preparation_order_url, `/api/sales/${ORDER_ID}/pdf`, 'Test C aucun identifiant BL envoye a la route commande');
 
   const splitCarrierDb = makeDb({
     deliveries: [deliveryRow({ carrier_id: OTHER_ID })],
