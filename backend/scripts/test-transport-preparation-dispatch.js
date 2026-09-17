@@ -330,7 +330,7 @@ function prepLine(extra = {}) {
 
   const emailPreview = dispatch.buildEmailPreviewForCarrier(withPrep.results[0]);
   assert.strictEqual(emailPreview.email_to, 'exploitation@delanchy.test', 'Test C email exploitation utilise');
-  assert(emailPreview.text.includes('Preparations'), 'Test C email recap lisible');
+  assert(emailPreview.text.includes('COMMANDES A PREPARER'), 'Test C email recap lisible');
   assert(!emailPreview.text.includes('Arrivages fournisseurs\n- Aucun element'), 'Test H section vide masquee');
   assert.strictEqual(emailPreview.attachments.length, 1, 'Test I preparation ajoute une piece jointe');
   assert(!emailPreview.attachments[0].filename.includes(ORDER_ID), 'Test I nom de fichier metier');
