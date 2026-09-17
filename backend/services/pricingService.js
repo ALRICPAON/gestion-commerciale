@@ -174,8 +174,8 @@ async function resolveClientTariffLevel(db, storeId, clientId) {
             billed.code AS billed_client_code,
             billed.name AS billed_client_name,
             COALESCE(billed.is_royale_maree_member, false) AS billed_is_royale_maree_member,
-            COALESCE(billed.tariff_level_id, c.tariff_level_id) AS resolved_tariff_level_id,
-            COALESCE(billed.tariff_level, c.tariff_level, 1) AS resolved_legacy_level
+            COALESCE(c.tariff_level_id, billed.tariff_level_id) AS resolved_tariff_level_id,
+            COALESCE(c.tariff_level, billed.tariff_level, 1) AS resolved_legacy_level
      FROM clients c
      LEFT JOIN clients billed ON billed.id = COALESCE(c.billed_client_id, c.id) AND billed.store_id = c.store_id
      WHERE c.store_id = $1 AND c.id = $2 AND COALESCE(c.status, 'active') <> 'inactive'

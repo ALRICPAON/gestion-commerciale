@@ -220,7 +220,33 @@ function testRoyaleMareeOrderTargetRequiresBilledClient() {
   });
   assert.strictEqual(billedRoyale.flow, 'royale_maree');
   assert.strictEqual(billedRoyale.documentClientId, 'rm-88');
-  assert.strictEqual(billedRoyale.tariffLevel, 1);
+  assert.strictEqual(billedRoyale.tariffLevel, 2, 'le tarif du magasin prime sur le Tarif 1 du client facture');
+
+  const affiliateBilledToTariff3 = orderTarget({
+    id: 'store-affiliate',
+    code: '88',
+    name: 'E.LECLERC AFFILIE',
+    tariff_level: 1,
+    billed_client_id: 'royale-central',
+    billed_client_code: 'ROYALE',
+    billed_client_name: 'ROYALE MAREE',
+    billed_tariff_level: 3,
+  });
+  assert.strictEqual(affiliateBilledToTariff3.documentClientId, 'royale-central');
+  assert.strictEqual(affiliateBilledToTariff3.tariffLevel, 1, 'magasin affilie conserve son Tarif 1 avec RM centrale en Tarif 3');
+
+  const royaleDirectTariff3 = orderTarget({
+    id: 'royale-central',
+    code: 'ROYALE',
+    name: 'ROYALE MAREE',
+    tariff_level: 3,
+    billed_client_id: 'royale-central',
+    billed_client_code: 'ROYALE',
+    billed_client_name: 'ROYALE MAREE',
+    billed_tariff_level: 3,
+  });
+  assert.strictEqual(royaleDirectTariff3.flow, 'classic');
+  assert.strictEqual(royaleDirectTariff3.tariffLevel, 3, 'vente directe RM utilise le Tarif 3');
 
   const orvault = {
     id: 'store-orvault',

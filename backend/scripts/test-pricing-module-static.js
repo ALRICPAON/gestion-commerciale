@@ -248,7 +248,7 @@ async function testResolvePublishedPriceWithCommission() {
   assert.equal(royaleDirect.display_unit_price_ht, 8.5);
   assert.equal(royaleDirect.final_unit_price_ht, 8.5);
   assert(calls.length >= 3, 'service uses database lookups rather than hardcoded price');
-  assert(calls.some((call) => call.sql.includes('COALESCE(billed.tariff_level_id, c.tariff_level_id)')), 'tarif resolu doit venir du client facture, pas du parent commercial');
+  assert(calls.some((call) => call.sql.includes('COALESCE(c.tariff_level_id, billed.tariff_level_id)')), 'tarif resolu doit venir du client selectionne avant le client facture');
 }
 
 async function testDuplicatePricingSessionUsesSourceLineMap() {

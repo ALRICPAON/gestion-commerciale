@@ -162,9 +162,12 @@ function formatClientDeliveryEmailLine(item = {}) {
 }
 
 function formatPreparationEmailLines(item = {}) {
-  const blocks = Array.isArray(item.supplier_blocks) && item.supplier_blocks.length
-    ? item.supplier_blocks
-    : [{ supplier_name: item.supplier_name, weight_kg: item.weight_kg, package_count: item.package_count }];
+  const hasSelection = Array.isArray(item.selected_supplier_blocks);
+  const blocks = hasSelection
+    ? item.selected_supplier_blocks
+    : Array.isArray(item.supplier_blocks) && item.supplier_blocks.length
+      ? item.supplier_blocks
+      : [{ supplier_name: item.supplier_name, weight_kg: item.weight_kg, package_count: item.package_count }];
   const candidateReference = businessReference(item.order_reference);
   const orderReference = /^(BL|FAC)-/i.test(candidateReference) || normalizeKey(candidateReference) === 'commande'
     ? ''
@@ -209,18 +212,42 @@ function supplierNameFromLine(line = {}) {
     || UNKNOWN_SUPPLIER;
 }
 
+function supplierIdFromLine(line = {}) {
+  const allocationIds = Array.isArray(line.allocation_supplier_ids)
+    ? line.allocation_supplier_ids.filter(Boolean)
+    : [];
+  if (allocationIds.length > 1) return null;
+  return clean(line.supplier_id)
+    || (allocationIds.length === 1 ? clean(allocationIds[0]) : null)
+    || clean(line.selected_lot_supplier_id)
+    || clean(line.suggested_lot_supplier_id)
+    || null;
+}
+
+function supplierSelectionKey({ supplier_id: supplierId, supplier_name: supplierName } = {}) {
+  const id = clean(supplierId);
+  if (id) return `supplier:${id}`;
+  return `name:${normalizeKey(supplierName || UNKNOWN_SUPPLIER)}`;
+}
+
 function buildPreparationSupplierBlocks(lines = []) {
   const groups = new Map();
   for (const line of lines) {
     const supplierName = supplierNameFromLine(line);
-    if (!groups.has(supplierName)) groups.set(supplierName, []);
-    groups.get(supplierName).push({ ...line, supplier_name: supplierName });
+    const supplierId = supplierIdFromLine(line);
+    const selectionKey = supplierSelectionKey({ supplier_id: supplierId, supplier_name: supplierName });
+    if (!groups.has(selectionKey)) groups.set(selectionKey, { supplierId, supplierName, lines: [] });
+    groups.get(selectionKey).lines.push({ ...line, supplier_id: supplierId, supplier_name: supplierName });
   }
-  return Array.from(groups.entries()).map(([supplierName, supplierLines]) => {
+  return Array.from(groups.entries()).map(([selectionKey, group]) => {
+    const supplierLines = group.lines;
     const packages = sumKnown(supplierLines, ['package_count']);
     const weight = sumKnown(supplierLines, ['total_weight', 'sold_quantity']);
     return {
-      supplier_name: supplierName,
+      supplier_id: group.supplierId,
+      supplier_name: group.supplierName,
+      selection_key: selectionKey,
+      is_selected: true,
       package_count: packages.value,
       package_count_partial: packages.hasMissing,
       weight_kg: weight.value,
@@ -228,6 +255,13 @@ function buildPreparationSupplierBlocks(lines = []) {
       lines: supplierLines,
     };
   });
+}
+
+function summarizeSupplierBlocks(blocks = []) {
+  return {
+    package_count: Number(blocks.reduce((sum, block) => sum + Number(block.package_count || 0), 0).toFixed(3)),
+    weight_kg: Number(blocks.reduce((sum, block) => sum + Number(block.weight_kg || 0), 0).toFixed(3)),
+  };
 }
 
 function buildClientRecap({ sale = {}, lines = [], deliveryMode = null }) {
@@ -476,6 +510,10 @@ async function fetchPreparationLines(db, storeId, documentIds = []) {
   const result = await db.query(
     `SELECT sl.*,
         COALESCE(alloc.supplier_name, selected_supplier.name, suggested_supplier.name) AS allocation_supplier_name,
+        CASE WHEN cardinality(alloc.supplier_ids) = 1 THEN alloc.supplier_ids[1] END AS supplier_id,
+        alloc.supplier_ids AS allocation_supplier_ids,
+        selected_lot.supplier_id AS selected_lot_supplier_id,
+        suggested_lot.supplier_id AS suggested_lot_supplier_id,
         selected_supplier.name AS selected_lot_supplier_name,
         suggested_supplier.name AS suggested_lot_supplier_name
      FROM sales_lines sl
@@ -484,7 +522,8 @@ async function fetchPreparationLines(db, storeId, documentIds = []) {
      LEFT JOIN lots suggested_lot ON suggested_lot.id = sl.suggested_lot_id AND suggested_lot.store_id = sl.store_id
      LEFT JOIN suppliers suggested_supplier ON suggested_supplier.id = suggested_lot.supplier_id AND suggested_supplier.store_id = sl.store_id
      LEFT JOIN LATERAL (
-       SELECT string_agg(DISTINCT s.name, ', ' ORDER BY s.name) AS supplier_name
+       SELECT string_agg(DISTINCT s.name, ', ' ORDER BY s.name) AS supplier_name,
+          array_agg(DISTINCT s.id) FILTER (WHERE s.id IS NOT NULL) AS supplier_ids
        FROM sale_line_allocations sla
        JOIN lots l ON l.id = sla.lot_id
        LEFT JOIN suppliers s ON s.id = l.supplier_id AND s.store_id = sl.store_id
@@ -498,6 +537,22 @@ async function fetchPreparationLines(db, storeId, documentIds = []) {
   for (const line of result.rows) {
     if (!byDocument.has(line.sales_document_id)) byDocument.set(line.sales_document_id, []);
     byDocument.get(line.sales_document_id).push(line);
+  }
+  return byDocument;
+}
+
+async function fetchPreparationSupplierSelections(db, storeId, documentIds = []) {
+  if (!documentIds.length) return new Map();
+  const result = await db.query(
+    `SELECT sales_document_id, supplier_key, is_selected
+     FROM transport_preparation_supplier_selections
+     WHERE store_id = $1 AND sales_document_id = ANY($2::uuid[])`,
+    [storeId, documentIds]
+  );
+  const byDocument = new Map();
+  for (const row of result.rows) {
+    if (!byDocument.has(row.sales_document_id)) byDocument.set(row.sales_document_id, new Map());
+    byDocument.get(row.sales_document_id).set(row.supplier_key, row.is_selected !== false);
   }
   return byDocument;
 }
@@ -548,16 +603,31 @@ async function getPreparationDispatch(db, storeId, input = {}) {
   }
 
   const linesByDocument = await fetchPreparationLines(db, storeId, preparations.map((row) => row.source_id));
+  const orderIds = preparations
+    .map((row) => row.order_source_id || (row.document_type === 'ORDER' ? row.source_id : null))
+    .filter(Boolean);
+  const selectionsByDocument = await fetchPreparationSupplierSelections(db, storeId, orderIds);
   for (const row of preparations) {
     const lines = linesByDocument.get(row.source_id) || [];
-    const supplierBlocks = buildPreparationSupplierBlocks(lines);
+    const orderSourceId = row.order_source_id || (row.document_type === 'ORDER' ? row.source_id : null);
+    const savedSelections = selectionsByDocument.get(orderSourceId) || new Map();
+    const supplierBlocks = buildPreparationSupplierBlocks(lines).map((block) => ({
+      ...block,
+      is_selected: savedSelections.has(block.selection_key) ? savedSelections.get(block.selection_key) : true,
+    }));
+    const selectedSupplierBlocks = supplierBlocks.filter((block) => block.is_selected);
+    const selectedTotals = summarizeSupplierBlocks(selectedSupplierBlocks);
     addToCarrier(groups, carriersById.get(row.carrier_id), date, 'preparations', {
       ...row,
-      supplier_name: supplierBlocks.map((block) => block.supplier_name).join(', ') || UNKNOWN_SUPPLIER,
+      supplier_name: selectedSupplierBlocks.map((block) => block.supplier_name).join(', ') || '',
       supplier_blocks: supplierBlocks,
+      selected_supplier_blocks: selectedSupplierBlocks,
+      selected_supplier_keys: selectedSupplierBlocks.map((block) => block.selection_key),
+      weight_kg: selectedTotals.weight_kg,
+      package_count: selectedTotals.package_count,
       date,
       delivery_mode: row.delanchy_dock_pickup ? DOCK_PICKUP_MODE : DELIVERY_MODE,
-      order_source_id: row.order_source_id || (row.document_type === 'ORDER' ? row.source_id : null),
+      order_source_id: orderSourceId,
       order_reference: businessReference(row.order_reference || row.reference, 'Commande'),
       preparation_order_url: (row.order_source_id || row.document_type === 'ORDER')
         ? `/api/sales/${row.order_source_id || row.source_id}/pdf`
@@ -575,9 +645,12 @@ async function getPreparationDispatch(db, storeId, input = {}) {
 
 function buildEmailPreviewForCarrier(group = {}) {
   const subject = `Preparation des envois ${group.carrier_name || ''} - ${formatDateFr(group.date)}`;
-  const attachments = (group.preparations || []).map((item) => ({
+  const attachments = (group.preparations || [])
+    .filter((item) => !Array.isArray(item.selected_supplier_blocks) || item.selected_supplier_blocks.length)
+    .map((item) => ({
     sales_document_id: item.source_id,
     reference: item.order_reference || item.reference,
+    selected_supplier_keys: item.selected_supplier_keys,
     filename: `${displaySalesDocumentReference({ reference_number: item.order_reference || item.reference }, 'CMD') || item.order_reference || 'commande-preparation'}.pdf`,
   }));
   const sections = [
@@ -626,6 +699,55 @@ function buildEmailPreviewForCarrier(group = {}) {
   };
 }
 
+async function savePreparationSupplierSelection(db, storeId, input = {}, context = {}) {
+  const documentId = clean(input.document_id || input.sales_document_id);
+  const supplierId = clean(input.supplier_id) || null;
+  const supplierName = clean(input.supplier_name);
+  if (!documentId || !supplierName || typeof input.is_selected !== 'boolean') {
+    const error = new Error('document_id, supplier_name et is_selected sont requis');
+    error.status = 400;
+    throw error;
+  }
+  const orderResult = await db.query(
+    `SELECT id FROM sales_documents
+     WHERE id = $1 AND store_id = $2 AND document_type = 'ORDER'
+     LIMIT 1`,
+    [documentId, storeId]
+  );
+  if (!orderResult.rows.length) {
+    const error = new Error('Commande source introuvable');
+    error.status = 404;
+    throw error;
+  }
+  if (supplierId) {
+    const supplierResult = await db.query(
+      `SELECT id FROM suppliers WHERE id = $1 AND store_id = $2 LIMIT 1`,
+      [supplierId, storeId]
+    );
+    if (!supplierResult.rows.length) {
+      const error = new Error('Fournisseur introuvable');
+      error.status = 404;
+      throw error;
+    }
+  }
+  const supplierKey = supplierSelectionKey({ supplier_id: supplierId, supplier_name: supplierName });
+  const result = await db.query(
+    `INSERT INTO transport_preparation_supplier_selections (
+       store_id, sales_document_id, supplier_id, supplier_key, supplier_name_snapshot,
+       is_selected, created_by, updated_by
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+     ON CONFLICT (store_id, sales_document_id, supplier_key)
+     DO UPDATE SET supplier_id = EXCLUDED.supplier_id,
+       supplier_name_snapshot = EXCLUDED.supplier_name_snapshot,
+       is_selected = EXCLUDED.is_selected,
+       updated_by = EXCLUDED.updated_by,
+       updated_at = NOW()
+     RETURNING *`,
+    [storeId, documentId, supplierId, supplierKey, supplierName, input.is_selected, context.user_id || null]
+  );
+  return { ok: true, selection: result.rows[0] };
+}
+
 async function getSaleOrderPayloadForPdf(db, storeId, documentId) {
   const docResult = await db.query(
     `WITH requested AS (
@@ -665,14 +787,19 @@ async function getSaleOrderPayloadForPdf(db, storeId, documentId) {
   const sale = docResult.rows[0];
   const linesResult = await db.query(
     `SELECT sl.*,
-        COALESCE(alloc.supplier_name, selected_supplier.name, suggested_supplier.name) AS supplier_name
+        COALESCE(alloc.supplier_name, selected_supplier.name, suggested_supplier.name) AS supplier_name,
+        CASE WHEN cardinality(alloc.supplier_ids) = 1 THEN alloc.supplier_ids[1] END AS supplier_id,
+        alloc.supplier_ids AS allocation_supplier_ids,
+        selected_lot.supplier_id AS selected_lot_supplier_id,
+        suggested_lot.supplier_id AS suggested_lot_supplier_id
      FROM sales_lines sl
      LEFT JOIN lots selected_lot ON selected_lot.id = sl.selected_lot_id AND selected_lot.store_id = sl.store_id
      LEFT JOIN suppliers selected_supplier ON selected_supplier.id = selected_lot.supplier_id AND selected_supplier.store_id = sl.store_id
      LEFT JOIN lots suggested_lot ON suggested_lot.id = sl.suggested_lot_id AND suggested_lot.store_id = sl.store_id
      LEFT JOIN suppliers suggested_supplier ON suggested_supplier.id = suggested_lot.supplier_id AND suggested_supplier.store_id = sl.store_id
      LEFT JOIN LATERAL (
-       SELECT string_agg(DISTINCT s.name, ', ' ORDER BY s.name) AS supplier_name
+       SELECT string_agg(DISTINCT s.name, ', ' ORDER BY s.name) AS supplier_name,
+          array_agg(DISTINCT s.id) FILTER (WHERE s.id IS NOT NULL) AS supplier_ids
        FROM sale_line_allocations sla
        JOIN lots l ON l.id = sla.lot_id
        LEFT JOIN suppliers s ON s.id = l.supplier_id AND s.store_id = sl.store_id
@@ -706,9 +833,39 @@ async function getSaleOrderPayloadForPdf(db, storeId, documentId) {
   };
 }
 
-async function buildPreparationPdfAttachment(db, storeId, documentId) {
+function filterPreparationPdfPayload(payload, selectedSupplierKeys) {
+  if (!Array.isArray(selectedSupplierKeys)) return payload;
+  const allowed = new Set(selectedSupplierKeys);
+  const blocks = (payload.sale?.supplier_blocks || []).filter((block) => allowed.has(block.selection_key));
+  const lines = blocks.flatMap((block) => block.lines || []);
+  const totals = summarizeSupplierBlocks(blocks);
+  return {
+    ...payload,
+    sale: {
+      ...payload.sale,
+      supplier_blocks: blocks,
+      client_recap: {
+        ...(payload.sale?.client_recap || {}),
+        package_count: totals.package_count,
+        weight_kg: totals.weight_kg,
+      },
+    },
+    lines,
+  };
+}
+
+async function buildPreparationPdfAttachment(db, storeId, documentId, options = {}) {
   const { renderHtmlToPdf } = require('./pdf/pdfRenderer');
-  const payload = await getSaleOrderPayloadForPdf(db, storeId, documentId);
+  const basePayload = await getSaleOrderPayloadForPdf(db, storeId, documentId);
+  let selectedSupplierKeys = options.selected_supplier_keys;
+  if (basePayload && options.use_persisted_selection === true) {
+    const selections = await fetchPreparationSupplierSelections(db, storeId, [basePayload.sale.id]);
+    const saved = selections.get(basePayload.sale.id) || new Map();
+    selectedSupplierKeys = (basePayload.sale.supplier_blocks || [])
+      .filter((block) => !saved.has(block.selection_key) || saved.get(block.selection_key))
+      .map((block) => block.selection_key);
+  }
+  const payload = basePayload ? filterPreparationPdfPayload(basePayload, selectedSupplierKeys) : null;
   if (!payload) return null;
   const html = renderSaleOrderPdf(payload);
   const content = await renderHtmlToPdf(html);
@@ -772,7 +929,9 @@ async function sendCarrierEmail(db, storeId, input = {}, context = {}) {
   }
   const attachments = [];
   for (const attachment of preview.attachments) {
-    const pdf = await buildPreparationPdfAttachment(db, storeId, attachment.sales_document_id);
+    const pdf = await buildPreparationPdfAttachment(db, storeId, attachment.sales_document_id, {
+      selected_supplier_keys: attachment.selected_supplier_keys,
+    });
     if (pdf) attachments.push(pdf);
   }
   const email = await sendEmail({
@@ -816,13 +975,18 @@ module.exports = {
   formatClientDeliveryEmailLine,
   formatPreparationEmailLines,
   attachmentSummary,
+  supplierSelectionKey,
   supplierNameFromLine,
   buildPreparationSupplierBlocks,
+  summarizeSupplierBlocks,
   buildClientRecap,
   buildEmailPreviewForCarrier,
+  savePreparationSupplierSelection,
   getPreparationDispatch,
   syncDraftShipments,
   previewCarrierEmail,
   sendCarrierEmail,
   getSaleOrderPayloadForPdf,
+  filterPreparationPdfPayload,
+  buildPreparationPdfAttachment,
 };

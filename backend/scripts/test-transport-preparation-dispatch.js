@@ -32,6 +32,7 @@ function makeDb(overrides = {}) {
     updatedShipments: 0,
     bltGenerated: 0,
     saleOrderResolutionSql: '',
+    selections: [],
     ...overrides,
   };
 
@@ -68,6 +69,23 @@ function makeDb(overrides = {}) {
       }
       if (sql.includes('FROM transport_fuel_surcharges')) return { rows: [] };
       if (sql.includes('FROM supplier_transport_settings')) return { rows: [{ admin_fee_ht: 0 }] };
+      if (sql.includes('FROM transport_preparation_supplier_selections')) {
+        return { rows: state.selections.filter((row) => row.store_id === params[0] && params[1].includes(row.sales_document_id)) };
+      }
+      if (sql.includes("document_type = 'ORDER'") && sql.includes('SELECT id FROM sales_documents')) {
+        return { rows: params[0] === ORDER_ID ? [{ id: ORDER_ID }] : [] };
+      }
+      if (sql.includes('SELECT id FROM suppliers WHERE id = $1')) {
+        return { rows: state.carriers.some((supplier) => supplier.id === params[0]) ? [{ id: params[0] }] : [] };
+      }
+      if (sql.includes('INSERT INTO transport_preparation_supplier_selections')) {
+        const [storeId, salesDocumentId, supplierId, supplierKey, supplierName, isSelected, updatedBy] = params;
+        const existing = state.selections.find((row) => row.store_id === storeId && row.sales_document_id === salesDocumentId && row.supplier_key === supplierKey);
+        const row = { store_id: storeId, sales_document_id: salesDocumentId, supplier_id: supplierId, supplier_key: supplierKey, supplier_name_snapshot: supplierName, is_selected: isSelected, updated_by: updatedBy };
+        if (existing) Object.assign(existing, row);
+        else state.selections.push(row);
+        return { rows: [row] };
+      }
       if (sql.includes('INSERT INTO transport_shipments')) {
         state.insertedShipments += 1;
         const row = {
@@ -194,6 +212,38 @@ function prepLine(extra = {}) {
   assert.strictEqual(withPrep.results[0].carrier_id, DELANCHY_ID, 'Test B transporteur correct');
   assert.strictEqual(withPrep.results[0].preparations[0].preparation_order_url, `/api/sales/${ORDER_ID}/pdf`, 'Test B commande directe utilise la route sales');
 
+  const selectionDb = makeDb({
+    preparations: [prepRow()],
+    prepLines: [
+      prepLine({ supplier_name: 'SOGELMER', package_count: 3, total_weight: 40 }),
+      prepLine({ supplier_name: 'DISTRIMER', package_count: 2, total_weight: 20, line_number: 2 }),
+    ],
+  });
+  const initialSelection = await dispatch.getPreparationDispatch(selectionDb, STORE_ID, { date: '2026-09-18' });
+  assert(initialSelection.results[0].preparations[0].supplier_blocks.every((block) => block.is_selected), 'selection fournisseur cochee par defaut');
+  await dispatch.savePreparationSupplierSelection(selectionDb, STORE_ID, {
+    document_id: ORDER_ID,
+    supplier_name: 'DISTRIMER',
+    is_selected: false,
+  }, { user_id: 'user-1' });
+  const persistedSelection = await dispatch.getPreparationDispatch(selectionDb, STORE_ID, { date: '2026-09-18' });
+  const selectedPreparation = persistedSelection.results[0].preparations[0];
+  assert.strictEqual(selectedPreparation.selected_supplier_blocks.length, 1, 'selection fournisseur persiste apres refresh');
+  assert.strictEqual(selectedPreparation.selected_supplier_blocks[0].supplier_name, 'SOGELMER', 'fournisseur decoche exclu');
+  assert.strictEqual(selectedPreparation.weight_kg, 40, 'poids recalcule sur fournisseurs selectionnes');
+  assert.strictEqual(selectedPreparation.package_count, 3, 'colis recalcules sur fournisseurs selectionnes');
+  const selectedEmail = dispatch.buildEmailPreviewForCarrier(persistedSelection.results[0]);
+  assert(selectedEmail.text.includes('SOGELMER') && !selectedEmail.text.includes('DISTRIMER'), 'email filtre sur fournisseurs selectionnes');
+  assert.deepStrictEqual(selectedEmail.attachments[0].selected_supplier_keys, selectedPreparation.selected_supplier_keys, 'piece jointe transporte les cles selectionnees');
+  const filteredPayload = dispatch.filterPreparationPdfPayload({
+    sale: { supplier_blocks: selectedPreparation.supplier_blocks, client_recap: {} },
+    lines: selectionDb.state.prepLines,
+    storeSettings: {},
+  }, selectedPreparation.selected_supplier_keys);
+  assert.strictEqual(filteredPayload.sale.supplier_blocks.length, 1, 'PDF transporteur filtre un fournisseur');
+  assert.strictEqual(filteredPayload.sale.client_recap.weight_kg, 40, 'PDF transporteur recalcule le poids');
+  assert.strictEqual(filteredPayload.sale.client_recap.package_count, 3, 'PDF transporteur recalcule les colis');
+
   const linkedDocumentDb = makeDb({
     deliveries: [deliveryRow({ source_id: DELIVERY_NOTE_ID, document_type: 'DELIVERY_NOTE', source_order_id: ORDER_ID, source_type: 'client_delivery_note' })],
     preparations: [prepRow({ source_id: DELIVERY_NOTE_ID, document_type: 'DELIVERY_NOTE', source_order_id: ORDER_ID })],
@@ -232,6 +282,15 @@ function prepLine(extra = {}) {
   assert.deepStrictEqual(blocks.map((block) => block.supplier_name), ['SOGELMER', 'COPROMER']);
   assert.strictEqual(blocks.reduce((sum, block) => sum + block.package_count, 0), 12, 'Test D total colis');
   assert.strictEqual(blocks.reduce((sum, block) => sum + block.weight_kg, 0), 146.5, 'Test D total poids');
+  const supplierIdBlock = dispatch.buildPreparationSupplierBlocks([
+    { ...prepLine({ supplier_name: 'SOGELMER', package_count: 1, total_weight: 10 }), supplier_id: 'supplier-1' },
+  ])[0];
+  assert.strictEqual(supplierIdBlock.selection_key, 'supplier:supplier-1', 'persistance utilise supplier_id quand il est univoque');
+  const multiSupplierBlock = dispatch.buildPreparationSupplierBlocks([
+    { ...prepLine({ supplier_name: 'SOGELMER, COPROMER', package_count: 2, total_weight: 20 }), allocation_supplier_ids: ['supplier-1', 'supplier-2'], selected_lot_supplier_id: 'supplier-1' },
+  ])[0];
+  assert.strictEqual(multiSupplierBlock.supplier_id, null, 'une allocation multi-fournisseurs ne choisit pas arbitrairement un supplier_id');
+  assert(multiSupplierBlock.selection_key.startsWith('name:'), 'une allocation multi-fournisseurs conserve une cle nominale stable');
   const pdfHtml = renderSaleOrderPdf({
     sale: {
       reference_number: 'BC-2026-00142',

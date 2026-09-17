@@ -237,13 +237,27 @@ function renderDispatchSummary(group = {}) {
 function renderDispatchTable(items, columns, emptyText, options = {}) {
   if (!items.length) return `<div class="transport-muted">${esc(emptyText)}</div>`;
   return `<div class="table-wrap"><table class="data-table dispatch-table">
-    <thead><tr><th></th>${columns.map((column) => `<th>${esc(column.label)}</th>`).join('')}${options.showStatus ? '<th>Statut</th>' : ''}</tr></thead>
+    <thead><tr>${options.showRowCheckbox === false ? '' : '<th></th>'}${columns.map((column) => `<th>${esc(column.label)}</th>`).join('')}${options.showStatus ? '<th>Statut</th>' : ''}</tr></thead>
     <tbody>${items.map((item) => `<tr class="${item.delivery_mode === 'PRISE A QUAI DELANCHY' ? 'dispatch-pickup-row' : ''}">
-      <td><input type="checkbox" checked /></td>
+      ${options.showRowCheckbox === false ? '' : '<td><input type="checkbox" checked /></td>'}
       ${columns.map((column) => `<td>${column.render ? column.render(item) : esc(item[column.key] || '')}</td>`).join('')}
       ${options.showStatus ? `<td>${item.missing?.length ? `<span class="dispatch-missing">Information manquante</span><div class="transport-muted">${esc(item.missing.join(', '))}</div>` : ''}</td>` : ''}
     </tr>`).join('')}</tbody>
   </table></div>`;
+}
+
+function renderPreparationSuppliers(item) {
+  const blocks = Array.isArray(item.supplier_blocks) ? item.supplier_blocks : [];
+  if (!blocks.length) return '-';
+  return `<div class="dispatch-supplier-selections">${blocks.map((block) => `
+    <label class="dispatch-supplier-selection">
+      <input type="checkbox" data-action="toggle-preparation-supplier"
+        data-document-id="${esc(item.order_source_id || '')}"
+        data-supplier-id="${esc(block.supplier_id || '')}"
+        data-supplier-name="${esc(block.supplier_name || '')}"
+        ${block.is_selected !== false ? 'checked' : ''} />
+      <span><strong>${esc(block.supplier_name || 'Fournisseur')}</strong><small>${esc(formatOptionalQty(block.weight_kg, 'kg'))} - ${esc(formatOptionalQty(block.package_count, 'colis'))}</small></span>
+    </label>`).join('')}</div>`;
 }
 
 async function openAuthenticatedPdf(url) {
@@ -276,6 +290,11 @@ function openSaleOrderPdf(id) {
   return openAuthenticatedPdf(`/api/sales/${encodeURIComponent(id)}/pdf`);
 }
 
+function openTransportPreparationPdf(id) {
+  if (!id) return Promise.reject(new Error('Bon de preparation indisponible.'));
+  return openAuthenticatedPdf(`/api/transport/preparation-dispatch/documents/${encodeURIComponent(id)}/pdf`);
+}
+
 function renderDispatchGroups() {
   const container = el('dispatch-groups');
   if (!container) return;
@@ -303,7 +322,7 @@ function renderDispatchGroups() {
   ];
   const prepColumns = [
     { label: 'Client', key: 'client_name' },
-    { label: 'Fournisseur(s)', key: 'supplier_name' },
+    { label: 'Fournisseur(s)', render: renderPreparationSuppliers },
     { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
     { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
     { label: 'Mode', key: 'delivery_mode' },
@@ -334,7 +353,7 @@ function renderDispatchGroups() {
       <h4>Livraisons clients</h4>
       ${renderDispatchTable(group.client_deliveries || [], deliveryColumns, 'Aucune livraison client.')}
       <h4>Commandes a preparer</h4>
-      ${renderDispatchTable(group.preparations || [], prepColumns, 'Aucune commande a preparer.')}
+      ${renderDispatchTable(group.preparations || [], prepColumns, 'Aucune commande a preparer.', { showRowCheckbox: false })}
       <h4>Prises a quai</h4>
       ${renderDispatchTable(group.dock_pickups || [], pickupColumns, 'Aucune prise a quai.')}
       <div class="dispatch-summary">${esc(renderDispatchSummary(group))}</div>
@@ -623,6 +642,17 @@ async function loadDispatch() {
   renderDispatchGroups();
 }
 
+async function savePreparationSupplierSelection(input) {
+  await apiJson('/api/transport/preparation-dispatch/supplier-selection', {
+    document_id: input.dataset.documentId,
+    supplier_id: input.dataset.supplierId || null,
+    supplier_name: input.dataset.supplierName,
+    is_selected: input.checked,
+  }, 'PATCH');
+  await loadDispatch();
+  showFeedback('Selection fournisseur enregistree.');
+}
+
 async function saveCarrierSetting() {
   const carrierId = el('carrier-setting-carrier').value;
   requireValue(carrierId, 'Choisir un transporteur.');
@@ -838,13 +868,23 @@ function bindEvents() {
       return;
     }
     if (button.dataset.action === 'open-preparation-order' || button.dataset.action === 'print-preparation-order') {
-      openSaleOrderPdf(button.dataset.sourceOrderId).catch((error) => showFeedback(error.message, 'error'));
+      openTransportPreparationPdf(button.dataset.sourceOrderId).catch((error) => showFeedback(error.message, 'error'));
       return;
     }
     if (!group) return;
     if (button.dataset.action === 'dispatch-preview') previewDispatchEmail(group.dataset.carrierId).catch((error) => showFeedback(error.message, 'error'));
     if (button.dataset.action === 'dispatch-send') sendDispatchEmail(group.dataset.carrierId).catch((error) => showFeedback(error.message, 'error'));
     if (button.dataset.action === 'dispatch-print') printDispatchGroup(group.dataset.carrierId);
+  });
+  el('dispatch-groups').addEventListener('change', (event) => {
+    const input = event.target.closest('[data-action="toggle-preparation-supplier"]');
+    if (!input) return;
+    input.disabled = true;
+    savePreparationSupplierSelection(input).catch((error) => {
+      input.checked = !input.checked;
+      input.disabled = false;
+      showFeedback(error.message, 'error');
+    });
   });
   el('grid-brackets-body').addEventListener('click', (event) => {
     const button = event.target.closest('[data-action="remove-row"]');
