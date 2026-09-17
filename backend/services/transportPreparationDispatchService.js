@@ -120,6 +120,81 @@ function formatSupplierArrivalAnnouncementLine(item = {}) {
   ].join(' | ');
 }
 
+function emailField(value) {
+  const cleaned = clean(value);
+  if (!cleaned || cleaned === MISSING || cleaned === QUIET_MISSING || isUuid(cleaned)) return '';
+  return cleaned;
+}
+
+function emailQuantity(value, suffix) {
+  const parsed = num(value);
+  if (parsed === null || parsed <= 0) return '';
+  return `${parsed.toLocaleString('fr-FR', { maximumFractionDigits: 3 })} ${suffix}`;
+}
+
+function joinEmailFields(fields = []) {
+  return fields.filter(Boolean).join(' | ');
+}
+
+function formatSupplierArrivalEmailLine(item = {}) {
+  const origin = emailField(item.origin_label);
+  const site = emailField(item.site_code);
+  const route = origin && site ? `${origin} -> ${site}` : origin || site;
+  return joinEmailFields([
+    route,
+    emailField(item.supplier_name),
+    emailQuantity(item.weight_kg, 'kg'),
+    emailQuantity(item.package_count, 'colis'),
+  ]);
+}
+
+function formatClientDeliveryEmailLine(item = {}) {
+  const deliveryReference = item.document_type && item.document_type !== 'DELIVERY_NOTE'
+    ? ''
+    : businessReference(item.reference);
+  return joinEmailFields([
+    emailField(item.client_name),
+    deliveryReference,
+    emailQuantity(item.weight_kg, 'kg'),
+    emailQuantity(item.package_count, 'colis'),
+    emailField(item.delivery_mode),
+  ]);
+}
+
+function formatPreparationEmailLines(item = {}) {
+  const blocks = Array.isArray(item.supplier_blocks) && item.supplier_blocks.length
+    ? item.supplier_blocks
+    : [{ supplier_name: item.supplier_name, weight_kg: item.weight_kg, package_count: item.package_count }];
+  const candidateReference = businessReference(item.order_reference);
+  const orderReference = /^(BL|FAC)-/i.test(candidateReference) || normalizeKey(candidateReference) === 'commande'
+    ? ''
+    : candidateReference;
+  return blocks.map((block) => joinEmailFields([
+    emailField(item.client_name),
+    emailField(block.supplier_name),
+    orderReference,
+    emailQuantity(block.weight_kg, 'kg'),
+    emailQuantity(block.package_count, 'colis'),
+    emailField(item.delivery_mode),
+  ])).filter(Boolean);
+}
+
+function escapeEmailHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function attachmentSummary(count) {
+  if (!count) return '';
+  return count === 1
+    ? '1 bon de commande en pi\u00e8ce jointe.'
+    : `${count} bons de commande en pi\u00e8ces jointes.`;
+}
+
 function supplierNameFromLine(line = {}) {
   const source = parseJson(line.source_inventory_line, {});
   const trace = parseJson(line.traceability_snapshot, {});
@@ -500,33 +575,44 @@ async function getPreparationDispatch(db, storeId, input = {}) {
 
 function buildEmailPreviewForCarrier(group = {}) {
   const subject = `Preparation des envois ${group.carrier_name || ''} - ${formatDateFr(group.date)}`;
+  const attachments = (group.preparations || []).map((item) => ({
+    sales_document_id: item.source_id,
+    reference: item.order_reference || item.reference,
+    filename: `${displaySalesDocumentReference({ reference_number: item.order_reference || item.reference }, 'CMD') || item.order_reference || 'commande-preparation'}.pdf`,
+  }));
   const sections = [
-    ['Arrivages fournisseurs', group.supplier_arrivals || []],
-    ['Livraisons clients', group.client_deliveries || []],
-    ['Preparations', group.preparations || []],
-    ['Prises a quai', group.dock_pickups || []],
-  ].filter(([, items]) => items.length);
+    ['ARRIVAGES FOURNISSEURS', (group.supplier_arrivals || []).map(formatSupplierArrivalEmailLine).filter(Boolean)],
+    ['LIVRAISONS CLIENTS', [...(group.client_deliveries || []), ...(group.dock_pickups || [])].map(formatClientDeliveryEmailLine).filter(Boolean)],
+    ['COMMANDES A PREPARER', (group.preparations || []).flatMap(formatPreparationEmailLines)],
+  ].filter(([, lines]) => lines.length);
+  const attachmentText = attachmentSummary(attachments.length);
   const text = [
     `Bonjour,`,
     '',
     `Voici le recapitulatif transport du ${formatDateFr(group.date)} pour ${group.carrier_name || 'le transporteur'}.`,
     '',
-    ...sections.flatMap(([title, items]) => [
+    ...sections.flatMap(([title, lines]) => [
       title,
-      ...items.map((item) => `- ${item.announcement_line}`),
+      '',
+      ...lines,
       '',
     ]),
-    `Pieces jointes preparation: ${(group.preparations || []).length}`,
-  ].join('\n');
-  const html = text
-    .split('\n')
-    .map((line) => {
-      if (!line) return '<br>';
-      if (line === 'Prises a quai') return '<h3 style="color:#9a3412">Prises a quai</h3>';
-      if (['Arrivages fournisseurs', 'Livraisons clients', 'Preparations'].includes(line)) return `<h3>${line}</h3>`;
-      const strong = line.includes(DOCK_PICKUP_MODE);
-      return `<p${strong ? ' style="font-weight:700;color:#9a3412"' : ''}>${line.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>`;
-    }).join('');
+    attachmentText,
+  ].filter((line, index, lines) => line || (index > 0 && lines[index - 1])).join('\n').trim();
+  const htmlSections = sections.map(([title, lines]) => [
+    `<h3>${escapeEmailHtml(title)}</h3>`,
+    ...lines.map((line) => {
+      const escaped = escapeEmailHtml(line);
+      const emphasized = escaped.replace(DOCK_PICKUP_MODE, `<strong>${DOCK_PICKUP_MODE}</strong>`);
+      return `<p>${emphasized}</p>`;
+    }),
+  ].join('')).join('');
+  const html = [
+    '<p>Bonjour,</p>',
+    `<p>Voici le recapitulatif transport du ${escapeEmailHtml(formatDateFr(group.date))} pour ${escapeEmailHtml(group.carrier_name || 'le transporteur')}.</p>`,
+    htmlSections,
+    attachmentText ? `<p>${escapeEmailHtml(attachmentText)}</p>` : '',
+  ].join('');
   return {
     carrier_id: group.carrier_id,
     carrier_name: group.carrier_name,
@@ -535,11 +621,7 @@ function buildEmailPreviewForCarrier(group = {}) {
     subject,
     text,
     html,
-    attachments: (group.preparations || []).map((item) => ({
-      sales_document_id: item.source_id,
-      reference: item.order_reference || item.reference,
-      filename: `${displaySalesDocumentReference({ reference_number: item.order_reference || item.reference }, 'CMD') || item.order_reference || 'commande-preparation'}.pdf`,
-    })),
+    attachments,
     missing_information: group.summary?.missing_information || [],
   };
 }
@@ -730,6 +812,10 @@ module.exports = {
   deliveryModeForClient,
   formatAnnouncementLine,
   formatSupplierArrivalAnnouncementLine,
+  formatSupplierArrivalEmailLine,
+  formatClientDeliveryEmailLine,
+  formatPreparationEmailLines,
+  attachmentSummary,
   supplierNameFromLine,
   buildPreparationSupplierBlocks,
   buildClientRecap,
