@@ -5,6 +5,7 @@ const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const transport = require('../services/transportService');
 const preparationDispatch = require('../services/transportPreparationDispatchService');
+const { sendPdf } = require('../services/pdf/pdfRenderer');
 
 const router = express.Router();
 
@@ -903,6 +904,36 @@ router.get('/preparation-dispatch', async (req, res) => {
   } catch (error) {
     console.error('Erreur preparation dispatch transport :', error);
     res.status(error.status || 500).json({ error: error.message || 'Erreur preparation des envois' });
+  }
+});
+
+router.patch('/preparation-dispatch/supplier-selection', requireAdminOrManager, async (req, res) => {
+  try {
+    res.json(await preparationDispatch.savePreparationSupplierSelection(
+      req.dbPool,
+      req.user.store_id,
+      req.body || {},
+      context(req)
+    ));
+  } catch (error) {
+    console.error('Erreur selection fournisseur preparation transport :', error);
+    res.status(error.status || 500).json({ error: error.message || 'Erreur selection fournisseur' });
+  }
+});
+
+router.get('/preparation-dispatch/documents/:id/pdf', async (req, res) => {
+  try {
+    const pdf = await preparationDispatch.buildPreparationPdfAttachment(
+      req.dbPool,
+      req.user.store_id,
+      req.params.id,
+      { use_persisted_selection: true }
+    );
+    if (!pdf) return res.status(404).json({ error: 'Bon de preparation introuvable' });
+    return sendPdf(res, pdf.content, pdf.filename);
+  } catch (error) {
+    console.error('Erreur PDF preparation transporteur :', error);
+    return res.status(error.status || 500).json({ error: error.message || 'Erreur PDF preparation transporteur' });
   }
 });
 

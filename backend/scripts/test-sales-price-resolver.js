@@ -151,6 +151,14 @@ async function resolve(input, published) {
   assert.strictEqual(publishedExplicitT2.tariff_level.legacy_level, 2);
   assert.strictEqual(publishedExplicitT2.tariff_level_id, 'level-2');
   assert.strictEqual(publishedExplicitT2.source_tariff_price_ht, 10);
+  assert(
+    pricingQueries.some((call) => call.sql.includes('COALESCE(c.tariff_level_id, billed.tariff_level_id)')),
+    'le niveau tarifaire du client livre doit primer sur celui du client facture'
+  );
+  assert(
+    pricingQueries.some((call) => call.sql.includes('COALESCE(c.tariff_level, billed.tariff_level, 1)')),
+    'le Tarif 1/2/3 du client livre doit primer sur celui du client facture'
+  );
 
   const manualBeatsPublished = await resolve(
     { allow_manual_input: true, manual_price_override: true, manual_unit_price_ht: 22.9 },

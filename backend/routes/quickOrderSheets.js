@@ -1274,7 +1274,7 @@ function orderTargetForClient(client) {
       documentClientId: client.billed_client_id,
       documentClientName: client.billed_client_name,
       documentClientCode: client.billed_client_code,
-      tariffLevel: client.billed_tariff_level || client.tariff_level,
+      tariffLevel: client.tariff_level || 1,
       vatRate: client.billed_vat_rate ?? client.vat_rate,
       vatExempt: Boolean(client.billed_is_vat_exempt ?? client.is_vat_exempt),
       flow: 'royale_maree',

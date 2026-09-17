@@ -143,6 +143,33 @@
   gap: 6px;
 }
 
+.dispatch-supplier-selections {
+  display: grid;
+  gap: 7px;
+  min-width: 220px;
+}
+
+.dispatch-supplier-selection {
+  align-items: flex-start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 18px minmax(0, 1fr);
+}
+
+.dispatch-supplier-selection input {
+  margin-top: 2px;
+}
+
+.dispatch-supplier-selection span,
+.dispatch-supplier-selection small {
+  display: block;
+}
+
+.dispatch-supplier-selection small {
+  color: var(--text-muted, #65717e);
+  margin-top: 2px;
+}
+
 .dispatch-missing {
   color: #9a3412;
   font-size: 12px;

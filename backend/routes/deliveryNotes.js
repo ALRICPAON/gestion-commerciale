@@ -14,6 +14,7 @@ const {
   combineZpl,
 } = require('../services/healthLabelService');
 const salesPriceResolver = require('../services/salesPriceResolver');
+const { resolveDeliveryNoteDocumentDate } = require('../services/deliveryNoteDateService');
 const {
   computeDeliveryLogisticsTotals,
   enrichLines,
@@ -103,7 +104,7 @@ async function validateOrderWithoutStock(db, { orderId, storeId, userId }) {
   return { ...order, status: 'validated' };
 }
 
-async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, userId, notes, referenceNumber }) {
+async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, userId, notes, referenceNumber, documentDate }) {
   const existing = await db.query(
     `SELECT id FROM sales_documents WHERE store_id = $1 AND source_order_id = $2 AND document_type = 'DELIVERY_NOTE' LIMIT 1`,
     [storeId, orderId]
@@ -147,7 +148,7 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
       billed_client_name_snapshot, billed_client_code_snapshot, created_by, updated_by
     ) VALUES (
       gen_random_uuid(), $1, $2, $3, $4, $5,
-      CURRENT_DATE, 'draft', 'DELIVERY_NOTE', $6, $7, $8,
+      COALESCE($21::date, CURRENT_DATE), 'draft', 'DELIVERY_NOTE', $6, $7, $8,
       $9, $10, $11, $12, $13, $14,
       $15, $16, $17, $18, $19, $20, $20
     ) RETURNING id`,
@@ -158,6 +159,7 @@ async function createDeliveryNoteFromOrder(db, { orderId, storeId, clientKey, us
       order.vat_rate_snapshot || client.vat_rate || 5.5, order.is_vat_exempt_snapshot || client.is_vat_exempt || false,
       client.name, client.code, client.store_identifier, client.billed_client_name || client.name,
       client.billed_client_code || client.code, userId,
+      resolveDeliveryNoteDocumentDate(documentDate, order.document_date),
     ]
   );
 
@@ -408,7 +410,7 @@ router.post('/sales/:id/validate-delivery-note', authenticateToken, attachDbCont
   try {
     await db.query('BEGIN');
     await validateOrderWithoutStock(db, { orderId: req.params.id, storeId: req.user.store_id, userId: req.user.id });
-    const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number });
+    const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number, documentDate: req.body?.document_date });
     const validation = await validateDeliveryNoteStock(db, { deliveryNoteId: deliveryNote.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id });
     await db.query('COMMIT');
     res.json({ ok: true, delivery_note_id: deliveryNote.id, allocated: validation.allocated, existing: deliveryNote.existing });
@@ -477,7 +479,7 @@ router.post('/sales/:id/delivery-note', authenticateToken, attachDbContext, requ
   const db = await req.dbPool.connect();
   try {
     await db.query('BEGIN');
-    const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number });
+    const deliveryNote = await createDeliveryNoteFromOrder(db, { orderId: req.params.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number, documentDate: req.body?.document_date });
     await db.query('COMMIT');
     res.status(deliveryNote.existing ? 200 : 201).json({ ok: true, id: deliveryNote.id, existing: deliveryNote.existing });
   } catch (err) {

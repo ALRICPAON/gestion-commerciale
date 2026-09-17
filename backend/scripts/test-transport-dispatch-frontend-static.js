@@ -15,10 +15,12 @@ assert(frontend.includes('URL.createObjectURL(blob)'), 'authenticated PDF opener
 assert(frontend.includes('URL.revokeObjectURL(objectUrl)'), 'authenticated PDF opener must release blob URL');
 assert(frontend.includes('function openDeliveryNotePdf(id)'), 'delivery note PDF helper must be explicit');
 assert(frontend.includes('function openSaleOrderPdf(id)'), 'sale order PDF helper must be explicit');
+assert(frontend.includes('function openTransportPreparationPdf(id)'), 'transport preparation PDF helper must be explicit');
 assert(!frontend.includes(`${invalidPdfDocumentsPrefix}sales/`), 'frontend must not use the invalid pdf-documents prefix for sale orders');
 assert(!frontend.includes(`${invalidPdfDocumentsPrefix}delivery-notes/`), 'frontend must not use the invalid pdf-documents prefix for delivery notes');
 assert(frontend.includes('/api/delivery-notes/${encodeURIComponent(id)}/pdf'), 'delivery note helper must use the mounted delivery note route');
 assert(frontend.includes('/api/sales/${encodeURIComponent(id)}/pdf'), 'sale order helper must use the mounted sale order route');
+assert(frontend.includes('/api/transport/preparation-dispatch/documents/${encodeURIComponent(id)}/pdf'), 'transport preparation must use its filtered PDF route');
 assert(frontend.includes('Ouvrir BL'), 'client delivery UI must expose a clear delivery note button');
 assert(frontend.includes('Ouvrir bon de commande'), 'preparation UI must expose a clear order PDF button');
 assert(frontend.includes('data-action="open-delivery-note"'), 'delivery note button must use its dedicated JS action');
@@ -26,10 +28,13 @@ assert(frontend.includes('data-action="open-preparation-order"'), 'preparation o
 assert(deliveryColumnsIndex < deliveryButtonIndex && deliveryButtonIndex < preparationColumnsIndex, 'delivery note button must only be rendered in client deliveries');
 assert(preparationColumnsIndex < orderButtonIndex, 'sale order button must be rendered in preparations');
 assert(frontend.includes('data-source-order-id='), 'preparation order button must carry the resolved order id');
+assert(frontend.includes('data-action="toggle-preparation-supplier"'), 'preparation suppliers must expose selection checkboxes');
+assert(frontend.includes("'/api/transport/preparation-dispatch/supplier-selection'"), 'supplier selection must use its dedicated endpoint');
+assert(frontend.includes("}, 'PATCH')"), 'supplier selection must be persisted with PATCH');
 assert(frontend.includes("openDeliveryNotePdf(button.dataset.sourceId)"), 'delivery note action must pass the document id to the BL helper');
-assert(frontend.includes("openSaleOrderPdf(button.dataset.sourceOrderId)"), 'order action must pass only the resolved order id');
+assert(frontend.includes("openTransportPreparationPdf(button.dataset.sourceOrderId)"), 'preparation action must pass only the resolved order id to the filtered PDF');
 assert(!/openDeliveryNotePdf\(button\.dataset\.sourceOrderId\)/.test(frontend), 'delivery note buttons must never use an order id');
-assert(!/openSaleOrderPdf\(button\.dataset\.sourceId\)/.test(frontend), 'order buttons must never send an unresolved document id');
+assert(!/openTransportPreparationPdf\(button\.dataset\.sourceId\)/.test(frontend), 'preparation buttons must never send an unresolved document id');
 assert(!frontend.includes('document_url ? `<a href="${API_BASE_URL}'), 'preparation PDF must not be a direct API href');
 assert(!/window\.open\(\s*`?\$\{?API_BASE_URL\}?\/api\/pdf-documents/.test(frontend), 'protected PDF API route must not be opened directly');
 assert(!/token[^\n]*(delivery-notes|sales)|(?:delivery-notes|sales)[^\n]*token/.test(frontend), 'PDF routes must never include the token in the URL');

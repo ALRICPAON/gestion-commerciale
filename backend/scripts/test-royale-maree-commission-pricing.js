@@ -17,7 +17,7 @@ const royaleMareeAffiliate = {
   billed_client_name: 'ROYALE MAREE',
 };
 const legacyRoyaleMareeAffiliate = { code: 'RM-88', name: 'E.LECLERC SODIVARDIERE', is_royale_maree_member: false };
-const royaleMareeDirect = { id: 'royale-maree', code: 'ROYALE', name: 'ROYALE MAREE', is_royale_maree_member: false, billed_client_id: 'royale-maree' };
+const royaleMareeDirect = { id: 'royale-maree', code: 'ROYALE', name: 'ROYALE MAREE', tariff_level: 3, is_royale_maree_member: false, billed_client_id: 'royale-maree' };
 const standardClient = { name: 'CLIENT STANDARD', is_royale_maree_member: false };
 
 function displayed(price, pricingLevel, client, storeSettings = settings, context = {}) {
@@ -40,6 +40,7 @@ assert.equal(displayed(20, 1, standardClient, { royale_maree_commission_eur_per_
 assert.equal(displayed(21.2, 1, royaleMareeAffiliate), 21.7, 'Tarif 1 RM manuel ajoute la commission');
 assert.equal(displayed(22, 2, royaleMareeAffiliate), 22, 'Tarif 2 ne prend pas la commission');
 assert.equal(displayed(23, 3, royaleMareeAffiliate), 23, 'Tarif 3 ne prend pas la commission');
+assert.equal(displayed(23, royaleMareeDirect.tariff_level, royaleMareeDirect), 23, 'Royale Maree centrale directe reste au Tarif 3 sans commission');
 
 const decorated = decorateLineWithDisplayedPrices({
   price_ht: 20,

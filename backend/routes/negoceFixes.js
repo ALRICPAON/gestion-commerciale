@@ -9,6 +9,7 @@ const {
   availableLotCondition,
   errorBody: lotQualityErrorBody,
 } = require('../services/quality/lotBlocking');
+const { resolveDeliveryNoteDocumentDate } = require('../services/deliveryNoteDateService');
 
 const router = express.Router();
 const clean = (value) => (value === undefined || value === null ? null : String(value).trim() || null);
@@ -130,7 +131,7 @@ async function validateNegoceDeliveryNote(db, { deliveryNoteId, storeId, clientK
   return { allocated, alreadyValidated: false };
 }
 
-async function createNegoceDeliveryNote(db, { order, storeId, clientKey, userId, notes, referenceNumber }) {
+async function createNegoceDeliveryNote(db, { order, storeId, clientKey, userId, notes, referenceNumber, documentDate }) {
   const existing = await db.query(
     `SELECT id FROM sales_documents WHERE store_id = $1 AND source_order_id = $2 AND document_type = 'DELIVERY_NOTE' LIMIT 1`,
     [storeId, order.id]
@@ -153,8 +154,8 @@ async function createNegoceDeliveryNote(db, { order, storeId, clientKey, userId,
   const c = client.rows[0];
   const created = await db.query(
     `INSERT INTO sales_documents (id, store_id, client_key, client_id, billed_client_id, source_order_id, document_date, status, document_type, origin, reference_number, notes, total_amount_ex_vat, total_vat_amount, total_amount_inc_vat, tariff_level_snapshot, vat_rate_snapshot, is_vat_exempt_snapshot, delivered_client_name_snapshot, delivered_client_code_snapshot, delivered_client_store_identifier, billed_client_name_snapshot, billed_client_code_snapshot, created_by, updated_by)
-     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, CURRENT_DATE, 'draft', 'DELIVERY_NOTE', 'negoce', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $19) RETURNING id`,
-    [storeId, order.client_key || clientKey || null, order.client_id, c.billed_client_id || order.client_id, order.id, clean(referenceNumber) || `BL-${new Date().toISOString().slice(0, 10)}-${String(order.id).slice(0, 8)}`, clean(notes) || order.notes, order.total_amount_ex_vat, order.total_vat_amount, order.total_amount_inc_vat, order.tariff_level_snapshot || c.tariff_level || 1, order.vat_rate_snapshot || c.vat_rate || 5.5, order.is_vat_exempt_snapshot || c.is_vat_exempt || false, c.name, c.code, c.store_identifier, c.billed_client_name || c.name, c.billed_client_code || c.code, userId]
+     VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, COALESCE($20::date, CURRENT_DATE), 'draft', 'DELIVERY_NOTE', 'negoce', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $19) RETURNING id`,
+    [storeId, order.client_key || clientKey || null, order.client_id, c.billed_client_id || order.client_id, order.id, clean(referenceNumber) || `BL-${new Date().toISOString().slice(0, 10)}-${String(order.id).slice(0, 8)}`, clean(notes) || order.notes, order.total_amount_ex_vat, order.total_vat_amount, order.total_amount_inc_vat, order.tariff_level_snapshot || c.tariff_level || 1, order.vat_rate_snapshot || c.vat_rate || 5.5, order.is_vat_exempt_snapshot || c.is_vat_exempt || false, c.name, c.code, c.store_identifier, c.billed_client_name || c.name, c.billed_client_code || c.code, userId, resolveDeliveryNoteDocumentDate(documentDate, order.document_date)]
   );
   const deliveryNoteId = created.rows[0].id;
   const lines = await db.query(`SELECT * FROM sales_lines WHERE sales_document_id = $1 ORDER BY line_number`, [order.id]);
@@ -237,7 +238,7 @@ router.post('/sales/:id/validate-delivery-note', authenticateToken, attachDbCont
       await db.query(`UPDATE sales_lines SET line_status = 'ordered', updated_by = $1, updated_at = NOW() WHERE sales_document_id = $2`, [req.user.id, order.id]);
       await db.query(`UPDATE sales_documents SET status = 'validated', validated_at = NOW(), updated_by = $1, updated_at = NOW() WHERE id = $2`, [req.user.id, order.id]);
     }
-    const deliveryNote = await createNegoceDeliveryNote(db, { order, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number });
+    const deliveryNote = await createNegoceDeliveryNote(db, { order, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id, notes: req.body?.notes, referenceNumber: req.body?.reference_number, documentDate: req.body?.document_date });
     const validation = await validateNegoceDeliveryNote(db, { deliveryNoteId: deliveryNote.id, storeId: req.user.store_id, clientKey: req.user.client_key, userId: req.user.id });
     await db.query('COMMIT');
     res.json({ ok: true, delivery_note_id: deliveryNote.id, allocated: validation.allocated, existing: deliveryNote.existing });

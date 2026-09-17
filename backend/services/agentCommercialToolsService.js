@@ -1,6 +1,7 @@
 const base = require('./agentToolsService');
 const { recomputeArticleStock } = require('./stockService');
 const { assertArticleCategory } = require('./articleCategory');
+const { resolveDeliveryNoteDocumentDate } = require('./deliveryNoteDateService');
 
 const MAX_LIMIT = 100;
 const ORDER_ACTION_TYPES = new Set(['customer_order_draft', 'create_customer_order', 'create_customer_order_draft']);
@@ -894,7 +895,7 @@ async function createDeliveryNoteFromOrder(db, storeId, payload = {}, summary = 
     [
       storeId,
       order.client_id,
-      clean(payload.document_date),
+      resolveDeliveryNoteDocumentDate(payload.document_date, order.document_date),
       notes,
       num(order.tariff_level_snapshot, 1),
       num(order.vat_rate_snapshot, 5.5),
