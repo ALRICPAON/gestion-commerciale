@@ -7,6 +7,7 @@ const deliveryColumnsIndex = frontend.indexOf('const deliveryColumns = [');
 const preparationColumnsIndex = frontend.indexOf('const prepColumns = [');
 const deliveryButtonIndex = frontend.indexOf('data-action="open-delivery-note"');
 const orderButtonIndex = frontend.indexOf('data-action="open-preparation-order"');
+const invalidPdfDocumentsPrefix = '/api/' + 'pdf-documents/';
 
 assert(frontend.includes('async function openAuthenticatedPdf(url)'), 'transport dispatch must define authenticated PDF opener');
 assert(frontend.includes('Authorization: `Bearer ${token}`'), 'authenticated PDF opener must send bearer token');
@@ -14,8 +15,10 @@ assert(frontend.includes('URL.createObjectURL(blob)'), 'authenticated PDF opener
 assert(frontend.includes('URL.revokeObjectURL(objectUrl)'), 'authenticated PDF opener must release blob URL');
 assert(frontend.includes('function openDeliveryNotePdf(id)'), 'delivery note PDF helper must be explicit');
 assert(frontend.includes('function openSaleOrderPdf(id)'), 'sale order PDF helper must be explicit');
-assert(frontend.includes('/api/pdf-documents/delivery-notes/${encodeURIComponent(id)}/pdf'), 'delivery note helper must use the delivery note route');
-assert(frontend.includes('/api/pdf-documents/sales/${encodeURIComponent(id)}/pdf'), 'sale order helper must use the sale order route');
+assert(!frontend.includes(`${invalidPdfDocumentsPrefix}sales/`), 'frontend must not use the invalid pdf-documents prefix for sale orders');
+assert(!frontend.includes(`${invalidPdfDocumentsPrefix}delivery-notes/`), 'frontend must not use the invalid pdf-documents prefix for delivery notes');
+assert(frontend.includes('/api/delivery-notes/${encodeURIComponent(id)}/pdf'), 'delivery note helper must use the mounted delivery note route');
+assert(frontend.includes('/api/sales/${encodeURIComponent(id)}/pdf'), 'sale order helper must use the mounted sale order route');
 assert(frontend.includes('Ouvrir BL'), 'client delivery UI must expose a clear delivery note button');
 assert(frontend.includes('Ouvrir bon de commande'), 'preparation UI must expose a clear order PDF button');
 assert(frontend.includes('data-action="open-delivery-note"'), 'delivery note button must use its dedicated JS action');
