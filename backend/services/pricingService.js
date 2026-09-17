@@ -872,13 +872,13 @@ async function resolvePublishedPrice(db, storeId, input = {}) {
     : null;
   const saleLogisticsAmount = Number(saleLogistics?.total_per_kg_ht || 0);
   const priceBeforeCommission = Number((Number(row.source_tariff_price_ht || 0) + saleLogisticsAmount).toFixed(4));
-  const finalPrice = getCustomerDisplayedPrice({
+  const displayPrice = getCustomerDisplayedPrice({
     price: priceBeforeCommission,
     pricingLevel: level.legacy_level,
-    client: client.billing_client || client,
+    client,
     storeSettings: row,
   });
-  const commission = Number((Number(finalPrice || 0) - priceBeforeCommission).toFixed(4));
+  const commission = Number((Number(displayPrice || 0) - priceBeforeCommission).toFixed(4));
   return {
     found: true,
     client,
@@ -892,7 +892,9 @@ async function resolvePublishedPrice(db, storeId, input = {}) {
     sale_logistics_snapshot: saleLogistics,
     royale_maree_commission_ht: Math.max(0, commission || 0),
     royale_maree_commission_setting: royaleMareeCommissionAmount(row),
-    final_unit_price_ht: Number(finalPrice),
+    source_unit_price_ht: priceBeforeCommission,
+    display_unit_price_ht: Number(displayPrice),
+    final_unit_price_ht: priceBeforeCommission,
   };
 }
 

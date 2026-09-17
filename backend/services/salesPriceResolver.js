@@ -98,6 +98,7 @@ function inventoryPriceTrace(resolution) {
       royale_maree_commission_ht: resolution.royale_maree_commission_ht ?? null,
       previous_unit_price_ht: resolution.previous_unit_price_ht ?? null,
       previous_source: resolution.previous_source || null,
+      display_unit_price_ht: resolution.display_unit_price_ht ?? resolution.unit_price_ht,
       final_unit_price_ht: resolution.unit_price_ht,
     },
   };
@@ -163,7 +164,8 @@ async function resolveSalesLinePrice(db, storeId, input = {}, deps = {}) {
   const tariffLevel = legacyTariffLevel(published?.tariff_level || input.tariff_level || 1);
 
   if (published?.found) {
-    assertPositiveUnitPrice(published.final_unit_price_ht, {
+    const billingUnitPrice = num(published.source_unit_price_ht ?? published.final_unit_price_ht);
+    assertPositiveUnitPrice(billingUnitPrice, {
       source: 'published_pricing',
       article_id: articleId,
       client_id: clientId,
@@ -173,14 +175,15 @@ async function resolveSalesLinePrice(db, storeId, input = {}, deps = {}) {
     });
     return {
       source: 'published_pricing',
-      unit_price_ht: num(published.final_unit_price_ht),
+      unit_price_ht: billingUnitPrice,
       tariff_level: tariffLevel,
       pricing_session_id: published.pricing_session_id,
       pricing_line_id: published.pricing_line_id,
       tariff_level_id: published.tariff_level_id,
       source_tariff_price_ht: published.source_tariff_price_ht,
       royale_maree_commission_ht: published.royale_maree_commission_ht,
-      final_unit_price_ht: published.final_unit_price_ht,
+      display_unit_price_ht: published.display_unit_price_ht ?? billingUnitPrice,
+      final_unit_price_ht: billingUnitPrice,
     };
   }
 

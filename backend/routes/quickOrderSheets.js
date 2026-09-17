@@ -9,6 +9,7 @@ const {
   recipientsToEmailList,
 } = require('../services/documentRecipientService');
 const { renderHtmlToPdf, sendPdf } = require('../services/pdf/pdfRenderer');
+const { getCustomerDisplayedPrice } = require('../services/royaleMareeCommission');
 const salesPriceResolver = require('../services/salesPriceResolver');
 
 const router = express.Router();
@@ -93,6 +94,14 @@ function isRoyaleMareeClient(client = {}) {
   return code.startsWith('RM-')
     || ['ROYALE_MAREE', 'ROYALE-MAREE', 'ROYALE'].includes(code)
     || name.includes('ROYALE MAREE');
+}
+
+async function fetchCommissionSettings(db, storeId) {
+  const result = await db.query(
+    'SELECT royale_maree_commission_eur_per_kg FROM store_settings WHERE store_id = $1 LIMIT 1',
+    [storeId]
+  );
+  return result.rows[0] || {};
 }
 
 function safeDate(value) {
@@ -380,6 +389,7 @@ async function getDailySheet(db, storeId, sheetDate) {
     if (error.code === '42P01') return { rows: [] };
     throw error;
   });
+  const commissionSettings = await fetchCommissionSettings(db, storeId);
   const generatedOrderIds = Array.from(new Set(generations.rows.flatMap((generation) => (
     Array.isArray(generation.generated_order_ids) ? generation.generated_order_ids : []
   )).filter(Boolean)));
@@ -387,6 +397,7 @@ async function getDailySheet(db, storeId, sheetDate) {
   return {
     ...header.rows[0],
     products: products.rows,
+    royale_maree_commission_eur_per_kg: commissionSettings.royale_maree_commission_eur_per_kg ?? null,
     generated_order_ids: generatedOrderIds,
     generated_at: generation?.created_at || null,
     generation_batch_count: generations.rows.length,
@@ -972,7 +983,7 @@ function renderSupplierEmailHtml(sheet, totals) {
   `;
 }
 
-function renderSheetPdfHtml(sheet) {
+function renderSheetPdfHtml(sheet, storeSettings = {}) {
   const totals = productTotals(sheet);
   const products = sheet.products.filter((product) => product.article_id);
   const clientsPerPage = 10;
@@ -997,7 +1008,7 @@ function renderSheetPdfHtml(sheet) {
             <div><span>Colis</span><strong>${escapeHtml(entry.colis || '')}</strong></div>
             <div><span>Kg</span><strong>${escapeHtml(entry.kg || '')}</strong></div>
           </div>
-          <small>Prix: ${escapeHtml(formatNumber(salePriceForClient(product, client), 2))} EUR</small>
+          <small>Prix: ${escapeHtml(formatNumber(displayPriceForClient(product, client, storeSettings), 2))} EUR</small>
         </td>
       `;
     }).join('');
@@ -1173,7 +1184,8 @@ router.post('/quick-order-sheets/email-preview', authenticateToken, attachDbCont
 router.post('/quick-order-sheets/pdf', authenticateToken, attachDbContext, requireAdminOrManager, async (req, res) => {
   try {
     const sheet = normalizeSheetPayload(req.body);
-    const pdf = await renderHtmlToPdf(renderSheetPdfHtml(sheet), {
+    const commissionSettings = await fetchCommissionSettings(req.dbPool, req.user.store_id);
+    const pdf = await renderHtmlToPdf(renderSheetPdfHtml(sheet, commissionSettings), {
       format: 'A4',
       margin: { top: '7mm', right: '7mm', bottom: '7mm', left: '7mm' },
     });
@@ -1283,6 +1295,16 @@ function orderTargetForClient(client) {
 function salePriceForClient(product = {}, client = {}) {
   const level = [1, 2, 3].includes(Number(client.tariff_level)) ? Number(client.tariff_level) : 1;
   return pos(product[`sale_price_level_${level}_ht`] ?? product[`price_level_${level}_ht`] ?? product.price);
+}
+
+function displayPriceForClient(product = {}, client = {}, storeSettings = {}) {
+  const level = [1, 2, 3].includes(Number(client.tariff_level)) ? Number(client.tariff_level) : 1;
+  return getCustomerDisplayedPrice({
+    price: salePriceForClient(product, client),
+    pricingLevel: level,
+    client,
+    storeSettings,
+  });
 }
 
 function manualSheetPriceForClient(product = {}, client = {}) {
@@ -2111,6 +2133,7 @@ module.exports._getSheetForGenerationForTest = getSheetForGeneration;
 module.exports._sheetLinesForTest = sheetLines;
 module.exports._safeDateForTest = safeDate;
 module.exports._orderTargetForClientForTest = orderTargetForClient;
+module.exports._displayPriceForClientForTest = displayPriceForClient;
 module.exports._sheetCellKeyForTest = sheetCellKey;
 module.exports._quantitySignatureFromSheetLineForTest = quantitySignatureFromSheetLine;
 module.exports._quantitySignatureFromGeneratedLineForTest = quantitySignatureFromGeneratedLine;

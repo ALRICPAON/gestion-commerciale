@@ -46,6 +46,24 @@ async function resolve(input, published) {
   assert.strictEqual(publishedWins.source, 'published_pricing');
   assert.strictEqual(publishedWins.unit_price_ht, 12);
 
+  const royaleMareeDisplayedOnly = await resolve({}, {
+    found: true,
+    tariff_level: { legacy_level: 1 },
+    pricing_session_id: 'session-rm',
+    pricing_line_id: 'pline-rm',
+    tariff_level_id: 'level-1',
+    source_tariff_price_ht: 10,
+    royale_maree_commission_ht: 0.5,
+    source_unit_price_ht: 10,
+    display_unit_price_ht: 10.5,
+    final_unit_price_ht: 10,
+  });
+  assert.strictEqual(royaleMareeDisplayedOnly.unit_price_ht, 10);
+  assert.strictEqual(royaleMareeDisplayedOnly.final_unit_price_ht, 10);
+  assert.strictEqual(royaleMareeDisplayedOnly.display_unit_price_ht, 10.5);
+  assert.strictEqual(resolver.pricingTraceForResolution(royaleMareeDisplayedOnly).final_unit_price_ht, 10);
+  assert.strictEqual(resolver.inventoryPriceTrace(royaleMareeDisplayedOnly).price_resolution.display_unit_price_ht, 10.5);
+
   const frontendOldPriceIgnored = await resolve({ suggested_unit_sale_price_ht: 4 }, publishedLevel2);
   assert.strictEqual(frontendOldPriceIgnored.unit_price_ht, 12);
 
@@ -312,6 +330,8 @@ async function resolve(input, published) {
   assert(forced.includes('pricing_session_id, pricing_line_id, tariff_level_id'), 'commande -> BL force doit copier la provenance prix');
   assert(editable.includes('resolveSalesLinePrice'), 'BL direct doit utiliser le resolver');
   assert(quickOrder.includes('resolveSalesLinePrice'), 'generation fiche appel doit utiliser le resolver');
+  assert(quickOrder.includes('const unitPrice = priceResolution.unit_price_ht'), 'generation fiche appel doit facturer le prix source resolu');
+  assert(quickOrder.includes('displayPriceForClient'), 'PDF fiche appel doit afficher le prix commercial derive');
   assert(quickOrder.includes('sale_price_level_3_ht'), 'fiche appel doit charger les niveaux tarifaires article pour fallback');
   assert(sales.includes('allow_manual_input:allowsDirectManualPrice(line)'), 'commande modifiable doit autoriser explicitement le prix manuel');
   assert(sales.includes("line?.document_type==='ORDER'&&line?.status==='draft'"), 'autorisation prix manuel doit dependre du statut modifiable, pas de l origine');
@@ -320,6 +340,10 @@ async function resolve(input, published) {
   assert(sales.includes("Modification origine interdite"), 'PATCH document doit refuser un changement de provenance');
   assert(!sales.includes('origin=COALESCE'), 'PATCH document ne doit plus modifier sales_documents.origin');
   assert(!quickOrder.includes('allow_manual_input:true'), 'fiche appel ne doit pas autoriser le prix manuel arbitraire');
+  const deliveryNoteTemplate = fs.readFileSync(path.join(root, 'services', 'pdf', 'templates', 'deliveryNotePdfTemplate.js'), 'utf8');
+  assert(deliveryNoteTemplate.includes('Client facture'), 'PDF BL doit identifier le client facture');
+  assert(deliveryNoteTemplate.includes('Client livre'), 'PDF BL doit identifier le client livre');
+  assert(deliveryNoteTemplate.includes('renderGroupedRows'), 'PDF BL doit garder les destinations magasins par ligne');
   assert(editable.includes('allow_manual_input: true'), 'BL editable non facture doit autoriser le prix manuel explicite');
   assert(editable.includes('manual_price_override: req.body?.manual_price_override === true'), 'BL editable doit exiger un override manuel explicite');
   assert(saleDetail.includes("row.dataset.manualPriceOverride = 'false'"), 'selection article doit remettre override prix a false');

@@ -128,30 +128,54 @@ async function testAutoTariffCalculationHelpers() {
 
 async function testResolvePublishedPriceWithCommission() {
   const clients = {
-    'client-1': {
-      id: 'client-1',
-      code: 'RM-88',
-      name: 'E.LECLERC SODIVARDIERE',
+    'orvault': {
+      id: 'orvault',
+      code: '88',
+      name: 'E.LECLERC ORVAULT',
       tariff_level: 1,
       resolved_legacy_level: 1,
-      billed_client_id: 'client-1',
-      billed_client_code: 'RM-88',
-      billed_client_name: 'E.LECLERC SODIVARDIERE',
-      billed_is_royale_maree_member: true,
+      billed_client_id: 'royale-maree',
+      billed_client_code: 'ROYALE',
+      billed_client_name: 'ROYALE MAREE',
+      billed_is_royale_maree_member: false,
       is_royale_maree_member: true,
     },
-    'client-88': {
-      id: 'client-88',
+    'standard-t1': {
+      id: 'standard-t1',
+      code: 'STD',
+      name: 'CLIENT STANDARD',
+      tariff_level: 1,
+      resolved_legacy_level: 1,
+      billed_client_id: 'standard-t1',
+      billed_client_code: 'STD',
+      billed_client_name: 'CLIENT STANDARD',
+      billed_is_royale_maree_member: false,
+      is_royale_maree_member: false,
+    },
+    'standard-t2': {
+      id: 'standard-t2',
       code: '88',
       name: '88.E.LECLERC SODIVARDIERE',
       tariff_level: 2,
       resolved_legacy_level: 2,
-      billed_client_id: 'client-88',
+      billed_client_id: 'standard-t2',
       billed_client_code: '88',
       billed_client_name: '88.E.LECLERC SODIVARDIERE',
       billed_is_royale_maree_member: false,
       is_royale_maree_member: false,
-      parent_client_id: 'client-1',
+      parent_client_id: 'royale-maree',
+    },
+    'royale-maree': {
+      id: 'royale-maree',
+      code: 'ROYALE',
+      name: 'ROYALE MAREE',
+      tariff_level: 1,
+      resolved_legacy_level: 1,
+      billed_client_id: 'royale-maree',
+      billed_client_code: 'ROYALE',
+      billed_client_name: 'ROYALE MAREE',
+      billed_is_royale_maree_member: false,
+      is_royale_maree_member: false,
     },
   };
   const calls = [];
@@ -182,25 +206,47 @@ async function testResolvePublishedPriceWithCommission() {
     },
   };
   const resolved = await pricing.resolvePublishedPrice(db, 'store-1', {
-    client_id: 'client-1',
+    client_id: 'orvault',
     article_id: 'article-1',
     date: '2026-08-26',
   });
   assert.equal(resolved.found, true);
   assert.equal(resolved.source_tariff_price_ht, 8.5);
   assert.equal(resolved.royale_maree_commission_ht, 0.75);
-  assert.equal(resolved.final_unit_price_ht, 9.25);
+  assert.equal(resolved.display_unit_price_ht, 9.25);
+  assert.equal(resolved.final_unit_price_ht, 8.5);
 
-  const directLeclerc = await pricing.resolvePublishedPrice(db, 'store-1', {
-    client_id: 'client-88',
+  const tariff2 = await pricing.resolvePublishedPrice(db, 'store-1', {
+    client_id: 'standard-t2',
     article_id: 'article-1',
     date: '2026-08-26',
   });
-  assert.equal(directLeclerc.found, true);
-  assert.equal(directLeclerc.tariff_level.legacy_level, 2);
-  assert.equal(directLeclerc.source_tariff_price_ht, 10);
-  assert.equal(directLeclerc.royale_maree_commission_ht, 0);
-  assert.equal(directLeclerc.final_unit_price_ht, 10);
+  assert.equal(tariff2.found, true);
+  assert.equal(tariff2.tariff_level.legacy_level, 2);
+  assert.equal(tariff2.source_tariff_price_ht, 10);
+  assert.equal(tariff2.royale_maree_commission_ht, 0);
+  assert.equal(tariff2.display_unit_price_ht, 10);
+  assert.equal(tariff2.final_unit_price_ht, 10);
+
+  const standardTariff1 = await pricing.resolvePublishedPrice(db, 'store-1', {
+    client_id: 'standard-t1',
+    article_id: 'article-1',
+    date: '2026-08-26',
+  });
+  assert.equal(standardTariff1.source_tariff_price_ht, 8.5);
+  assert.equal(standardTariff1.royale_maree_commission_ht, 0);
+  assert.equal(standardTariff1.display_unit_price_ht, 8.5);
+  assert.equal(standardTariff1.final_unit_price_ht, 8.5);
+
+  const royaleDirect = await pricing.resolvePublishedPrice(db, 'store-1', {
+    client_id: 'royale-maree',
+    article_id: 'article-1',
+    date: '2026-08-26',
+  });
+  assert.equal(royaleDirect.source_tariff_price_ht, 8.5);
+  assert.equal(royaleDirect.royale_maree_commission_ht, 0);
+  assert.equal(royaleDirect.display_unit_price_ht, 8.5);
+  assert.equal(royaleDirect.final_unit_price_ht, 8.5);
   assert(calls.length >= 3, 'service uses database lookups rather than hardcoded price');
   assert(calls.some((call) => call.sql.includes('COALESCE(billed.tariff_level_id, c.tariff_level_id)')), 'tarif resolu doit venir du client facture, pas du parent commercial');
 }

@@ -184,6 +184,7 @@ function testBusinessDateNormalization() {
 
 function testRoyaleMareeOrderTargetRequiresBilledClient() {
   const orderTarget = quickOrderSheetsRoute._orderTargetForClientForTest;
+  const displayPrice = quickOrderSheetsRoute._displayPriceForClientForTest;
   const directLeclerc = orderTarget({
     id: 'client-88',
     code: '88',
@@ -220,6 +221,25 @@ function testRoyaleMareeOrderTargetRequiresBilledClient() {
   assert.strictEqual(billedRoyale.flow, 'royale_maree');
   assert.strictEqual(billedRoyale.documentClientId, 'rm-88');
   assert.strictEqual(billedRoyale.tariffLevel, 1);
+
+  const orvault = {
+    id: 'store-orvault',
+    code: '88',
+    name: 'E.Leclerc Orvault',
+    tariff_level: 1,
+    is_royale_maree_member: true,
+    billed_client_id: 'rm-88',
+    billed_client_code: 'ROYALE',
+    billed_client_name: 'ROYALE MAREE',
+  };
+  const product = {
+    sale_price_level_1_ht: 10,
+    sale_price_level_2_ht: 11,
+    sale_price_level_3_ht: 12,
+  };
+  assert.strictEqual(displayPrice(product, orvault, { royale_maree_commission_eur_per_kg: 0.5 }), 10.5);
+  assert.strictEqual(displayPrice(product, { ...orvault, tariff_level: 2 }, { royale_maree_commission_eur_per_kg: 0.5 }), 11);
+  assert.strictEqual(displayPrice(product, { id: 'standard', tariff_level: 1, is_royale_maree_member: false }, { royale_maree_commission_eur_per_kg: 0.5 }), 10);
 }
 
 function testIncrementalGenerationCellIdentity() {
@@ -417,7 +437,7 @@ function testEntryPatchDeletionSemantics() {
   assert(!Object.prototype.hasOwnProperty.call(nextPayload, 'order_entries'));
   assert(!Object.prototype.hasOwnProperty.call(nextPayload, 'entries'));
 
-  assert(html.includes('./js/quick-order-sheet.js?v=15'), 'cache-buster quick-order-sheet attendu en v15');
+  assert(html.includes('./js/quick-order-sheet.js?v=16'), 'cache-buster quick-order-sheet attendu en v16');
   assert(js.includes('function entryHasPositiveQuantity'), 'le front doit detecter une cellule vide/zero');
   assert(js.includes('delete state.entries[safeClient][safeProduct]'), 'le front doit supprimer localement une cellule vide avant autosave');
   assert(js.includes('flushPendingAutosave'), 'generateOrders doit flusher les autosaves');
@@ -449,6 +469,8 @@ function testEntryPatchDeletionSemantics() {
   assert(route.includes('positiveOrError'), 'blocage prix strictement positif conserve');
   assert(route.includes('SELECT DISTINCT ON (sd.client_id) sd.id, sd.client_id, sd.reference_number, sd.created_at'), 'requete draft orders doit etre valide avec ORDER BY');
   assert(route.includes('ORDER BY sd.client_id, sd.created_at ASC'), 'DISTINCT ON doit ordonner par client puis date creation');
+  assert(route.includes('royale_maree_commission_eur_per_kg'), 'fiche appel doit exposer le reglage commission au front/PDF');
+  assert(js.includes('shouldDisplayRoyaleMareeCommission'), 'le front doit afficher la commission RM uniquement au magasin affilie');
 
   testBusinessDateNormalization();
   testRoyaleMareeOrderTargetRequiresBilledClient();
