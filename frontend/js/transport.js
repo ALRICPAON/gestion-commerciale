@@ -266,6 +266,16 @@ async function openAuthenticatedPdf(url) {
   window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
 }
 
+function openDeliveryNotePdf(id) {
+  if (!id) return Promise.reject(new Error('Bon de livraison indisponible.'));
+  return openAuthenticatedPdf(`/api/pdf-documents/delivery-notes/${encodeURIComponent(id)}/pdf`);
+}
+
+function openSaleOrderPdf(id) {
+  if (!id) return Promise.reject(new Error('Bon de commande indisponible.'));
+  return openAuthenticatedPdf(`/api/pdf-documents/sales/${encodeURIComponent(id)}/pdf`);
+}
+
 function renderDispatchGroups() {
   const container = el('dispatch-groups');
   if (!container) return;
@@ -289,6 +299,7 @@ function renderDispatchGroups() {
     { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
     { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
     { label: 'Mode', key: 'delivery_mode' },
+    { label: 'Bon de livraison', render: (item) => item.document_type === 'DELIVERY_NOTE' && item.source_id ? `<button class="btn btn-primary btn-sm" data-action="open-delivery-note" data-document-type="${esc(item.document_type)}" data-source-id="${esc(item.source_id)}" data-source-order-id="${esc(item.source_order_id || '')}" type="button">Ouvrir BL</button>` : '-' },
   ];
   const prepColumns = [
     { label: 'Client', key: 'client_name' },
@@ -296,7 +307,7 @@ function renderDispatchGroups() {
     { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
     { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
     { label: 'Mode', key: 'delivery_mode' },
-    { label: 'Bon de commande', render: (item) => item.preparation_order_url ? `<div class="dispatch-document-actions"><button class="btn btn-primary btn-sm" data-action="open-preparation-order" data-pdf-url="${esc(item.preparation_order_url)}" type="button">Ouvrir bon de commande</button><button class="btn btn-secondary btn-sm" data-action="print-preparation-order" data-pdf-url="${esc(item.preparation_order_url)}" type="button">Imprimer</button></div><div class="transport-muted">${esc(item.order_reference || item.reference || '')}</div>` : '-' },
+    { label: 'Bon de commande', render: (item) => item.order_source_id ? `<div class="dispatch-document-actions"><button class="btn btn-primary btn-sm" data-action="open-preparation-order" data-document-type="${esc(item.document_type)}" data-source-id="${esc(item.source_id)}" data-source-order-id="${esc(item.order_source_id)}" type="button">Ouvrir bon de commande</button><button class="btn btn-secondary btn-sm" data-action="print-preparation-order" data-document-type="${esc(item.document_type)}" data-source-id="${esc(item.source_id)}" data-source-order-id="${esc(item.order_source_id)}" type="button">Imprimer</button></div><div class="transport-muted">${esc(item.order_reference || item.reference || '')}</div>` : '-' },
   ];
   const pickupColumns = [
     { label: 'Client', key: 'client_name' },
@@ -818,8 +829,16 @@ function bindEvents() {
     const button = event.target.closest('[data-action]');
     const group = event.target.closest('[data-carrier-id]');
     if (!button) return;
+    if (button.dataset.action === 'open-delivery-note') {
+      if (button.dataset.documentType !== 'DELIVERY_NOTE') {
+        showFeedback('Le document selectionne n\'est pas un bon de livraison.', 'error');
+        return;
+      }
+      openDeliveryNotePdf(button.dataset.sourceId).catch((error) => showFeedback(error.message, 'error'));
+      return;
+    }
     if (button.dataset.action === 'open-preparation-order' || button.dataset.action === 'print-preparation-order') {
-      openAuthenticatedPdf(button.dataset.pdfUrl).catch((error) => showFeedback(error.message, 'error'));
+      openSaleOrderPdf(button.dataset.sourceOrderId).catch((error) => showFeedback(error.message, 'error'));
       return;
     }
     if (!group) return;

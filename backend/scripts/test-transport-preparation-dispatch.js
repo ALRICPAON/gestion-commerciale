@@ -12,6 +12,7 @@ const CLIENT_ID = '44444444-4444-4444-8444-444444444444';
 const RM_ID = '55555555-5555-4555-8555-555555555555';
 const ORDER_ID = '66666666-6666-4666-8666-666666666666';
 const DELIVERY_NOTE_ID = '77777777-7777-4777-8777-777777777777';
+const INVOICED_DELIVERY_NOTE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const INVOICE_ID = '99999999-9999-4999-8999-999999999999';
 const CHAIN_ID = '88888888-8888-4888-8888-888888888888';
 
@@ -30,6 +31,7 @@ function makeDb(overrides = {}) {
     insertedShipments: 0,
     updatedShipments: 0,
     bltGenerated: 0,
+    saleOrderResolutionSql: '',
     ...overrides,
   };
 
@@ -93,8 +95,11 @@ function makeDb(overrides = {}) {
         return { rows: [row] };
       }
       if (sql.includes('requested.document_type AS requested_document_type')) {
+        state.saleOrderResolutionSql = sql;
         const requestedId = params[0];
-        const requestedType = requestedId === INVOICE_ID ? 'INVOICE' : requestedId === DELIVERY_NOTE_ID ? 'DELIVERY_NOTE' : 'ORDER';
+        const requestedType = requestedId === INVOICE_ID
+          ? 'INVOICE'
+          : [DELIVERY_NOTE_ID, INVOICED_DELIVERY_NOTE_ID].includes(requestedId) ? 'DELIVERY_NOTE' : 'ORDER';
         return { rows: [{
           id: ORDER_ID,
           requested_id: requestedId,
@@ -118,6 +123,9 @@ function deliveryRow(extra = {}) {
   return {
     source_id: ORDER_ID,
     source_type: 'client_order_delivery',
+    document_type: 'ORDER',
+    source_order_id: null,
+    source_delivery_note_id: null,
     reference: 'BC-2026-00142',
     date: '2026-09-18',
     client_id: CLIENT_ID,
@@ -139,6 +147,8 @@ function prepRow(extra = {}) {
   return {
     ...deliveryRow(extra),
     source_type: 'client_preparation',
+    order_source_id: extra.order_source_id || (extra.document_type === 'DELIVERY_NOTE' ? extra.source_order_id : extra.source_id || ORDER_ID),
+    order_reference: 'BC-2026-00142',
     logistics_service_id: 'prep-service',
     logistics_service_label: 'Preparation',
   };
@@ -182,6 +192,18 @@ function prepLine(extra = {}) {
   const withPrep = await dispatch.getPreparationDispatch(prepDb, STORE_ID, { date: '2026-09-18' });
   assert.strictEqual(withPrep.results[0].preparations.length, 1, 'Test B commande en preparation');
   assert.strictEqual(withPrep.results[0].carrier_id, DELANCHY_ID, 'Test B transporteur correct');
+  assert.strictEqual(withPrep.results[0].preparations[0].preparation_order_url, `/api/pdf-documents/sales/${ORDER_ID}/pdf`, 'Test B commande directe utilise la route sales');
+
+  const linkedDocumentDb = makeDb({
+    deliveries: [deliveryRow({ source_id: DELIVERY_NOTE_ID, document_type: 'DELIVERY_NOTE', source_order_id: ORDER_ID, source_type: 'client_delivery_note' })],
+    preparations: [prepRow({ source_id: DELIVERY_NOTE_ID, document_type: 'DELIVERY_NOTE', source_order_id: ORDER_ID })],
+    prepLines: [prepLine({ sales_document_id: DELIVERY_NOTE_ID, supplier_name: 'SOGELMER', package_count: 3, total_weight: 40 })],
+  });
+  const linkedDocuments = await dispatch.getPreparationDispatch(linkedDocumentDb, STORE_ID, { date: '2026-09-18' });
+  assert.strictEqual(linkedDocuments.results[0].client_deliveries[0].source_id, DELIVERY_NOTE_ID, 'Test A bouton BL conserve identifiant BL');
+  assert.strictEqual(linkedDocuments.results[0].client_deliveries[0].document_type, 'DELIVERY_NOTE', 'Test A livraison typee BL');
+  assert.strictEqual(linkedDocuments.results[0].preparations[0].order_source_id, ORDER_ID, 'Test C preparation BL expose commande source');
+  assert.strictEqual(linkedDocuments.results[0].preparations[0].preparation_order_url, `/api/pdf-documents/sales/${ORDER_ID}/pdf`, 'Test C aucun identifiant BL envoye a la route commande');
 
   const splitCarrierDb = makeDb({
     deliveries: [deliveryRow({ carrier_id: OTHER_ID })],
@@ -268,9 +290,17 @@ function prepLine(extra = {}) {
   assert.strictEqual(secondSync.synced_count, 1, 'Test H refresh idempotent');
   assert.strictEqual(syncDb.state.shipments.length, 1, 'Test H un seul shipment par source');
 
+  const orderPayload = await dispatch.getSaleOrderPayloadForPdf(makeDb({ prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 1, total_weight: 10 })] }), STORE_ID, ORDER_ID);
+  assert.strictEqual(orderPayload.sale.id, ORDER_ID, 'Test B commande directe conservee');
+
   const payload = await dispatch.getSaleOrderPayloadForPdf(makeDb({ prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 1, total_weight: 10 })] }), STORE_ID, DELIVERY_NOTE_ID);
   assert.strictEqual(payload.sale.id, ORDER_ID, 'Test I impression commande depuis BL remonte a la commande');
   assert.strictEqual(payload.lines.length, 1, 'Test I lignes commande disponibles');
+
+  const invoicedDeliveryDb = makeDb({ prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 1, total_weight: 10 })] });
+  const invoicedDeliveryPayload = await dispatch.getSaleOrderPayloadForPdf(invoicedDeliveryDb, STORE_ID, INVOICED_DELIVERY_NOTE_ID);
+  assert.strictEqual(invoicedDeliveryPayload.sale.id, ORDER_ID, 'Test D BL facture remonte toujours a la commande');
+  assert(!invoicedDeliveryDb.state.saleOrderResolutionSql.includes("status = 'invoiced'"), 'Test D resolution independante du statut facture');
 
   const invoicePayload = await dispatch.getSaleOrderPayloadForPdf(makeDb({ prepLines: [prepLine({ supplier_name: 'SOGELMER', package_count: 1, total_weight: 10 })] }), STORE_ID, INVOICE_ID);
   assert.strictEqual(invoicePayload.sale.id, ORDER_ID, 'Test J facture remonte a la commande source');
