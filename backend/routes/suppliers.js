@@ -56,6 +56,7 @@ function mapSupplierPayload(body) {
     phone: normalizeText(body.phone),
     mobile: normalizeText(body.mobile),
     email: normalizeText(body.email),
+    transport_operations_email: normalizeText(body.transport_operations_email),
 
     address_line1: normalizeText(body.address_line1),
     address_line2: normalizeText(body.address_line2),
@@ -92,6 +93,7 @@ async function getSupplierDetail(db, storeId, supplierId) {
       suppliers.phone,
       suppliers.mobile,
       suppliers.email,
+      suppliers.transport_operations_email,
       suppliers.address_line1,
       suppliers.address_line2,
       suppliers.postal_code,
@@ -138,6 +140,7 @@ router.get('/suppliers', authenticateToken, attachDbContext, async (req, res) =>
           OR legal_name ILIKE $${params.length}
           OR contact_name ILIKE $${params.length}
           OR email ILIKE $${params.length}
+          OR transport_operations_email ILIKE $${params.length}
           OR phone ILIKE $${params.length}
           OR city ILIKE $${params.length}
         )
@@ -172,6 +175,7 @@ router.get('/suppliers', authenticateToken, attachDbContext, async (req, res) =>
         suppliers.phone,
         suppliers.mobile,
         suppliers.email,
+        suppliers.transport_operations_email,
         suppliers.address_line1,
         suppliers.address_line2,
         suppliers.postal_code,
@@ -247,6 +251,7 @@ router.post(
           phone,
           mobile,
           email,
+          transport_operations_email,
           address_line1,
           address_line2,
           postal_code,
@@ -263,10 +268,10 @@ router.post(
         )
         VALUES (
           $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10,
-          $11, $12, $13, $14, $15,
-          $16, $17, $18, $19, $20,
-          $21, $22, $23
+          $7, $8, $9, $10, $11,
+          $12, $13, $14, $15, $16,
+          $17, $18, $19, $20, $21,
+          $22, $23, $24
         )
         RETURNING *
         `,
@@ -281,6 +286,7 @@ router.post(
           supplier.phone,
           supplier.mobile,
           supplier.email,
+          supplier.transport_operations_email,
           supplier.address_line1,
           supplier.address_line2,
           supplier.postal_code,
@@ -360,20 +366,21 @@ router.put(
           phone = $7,
           mobile = $8,
           email = $9,
-          address_line1 = $10,
-          address_line2 = $11,
-          postal_code = $12,
-          city = $13,
-          country = $14,
-          vat_number = $15,
-          siret = $16,
-          payment_terms = $17,
-          delivery_terms = $18,
-          notes = $19,
-          is_carrier = $20,
-          updated_by = $21
-        WHERE id = $22
-          AND store_id = $23
+          transport_operations_email = $10,
+          address_line1 = $11,
+          address_line2 = $12,
+          postal_code = $13,
+          city = $14,
+          country = $15,
+          vat_number = $16,
+          siret = $17,
+          payment_terms = $18,
+          delivery_terms = $19,
+          notes = $20,
+          is_carrier = $21,
+          updated_by = $22
+        WHERE id = $23
+          AND store_id = $24
         RETURNING *
         `,
         [
@@ -386,6 +393,7 @@ router.put(
           supplier.phone,
           supplier.mobile,
           supplier.email,
+          supplier.transport_operations_email,
           supplier.address_line1,
           supplier.address_line2,
           supplier.postal_code,

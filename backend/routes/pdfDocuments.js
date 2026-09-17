@@ -16,6 +16,9 @@ const {
   computeDeliveryLogisticsTotals,
   enrichLines,
 } = require('../services/salesLineMetrics');
+const {
+  getSaleOrderPayloadForPdf,
+} = require('../services/transportPreparationDispatchService');
 
 const router = express.Router();
 function isUuid(value) {
@@ -44,38 +47,14 @@ async function getStoreSettings(db, storeId) {
 }
 
 async function getSaleOrderPayload(db, { saleId, storeId }) {
+  const payload = await getSaleOrderPayloadForPdf(db, storeId, saleId);
+  if (payload) return payload;
   const saleResult = await db.query(
-    `
-    SELECT sd.*, c.name AS client_name, c.code AS client_code,
-      c.store_identifier AS client_store_identifier,
-      c.address_line1, c.address_line2, c.postal_code, c.city,
-      COALESCE(c.tariff_level, sd.tariff_level_snapshot, 1) AS client_tariff_level
-    FROM sales_documents sd
-    LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
-    WHERE sd.id = $1 AND sd.store_id = $2
-    LIMIT 1
-    `,
+    `SELECT * FROM sales_documents WHERE id = $1 AND store_id = $2 LIMIT 1`,
     [saleId, storeId]
   );
   if (!saleResult.rows.length) return null;
-
-  const sale = saleResult.rows[0];
-  if (sale.document_type !== 'ORDER') return { sale, unsupported: true };
-
-  const [linesResult, storeSettings] = await Promise.all([
-    db.query(
-      `
-      SELECT *
-      FROM sales_lines
-      WHERE sales_document_id = $1 AND store_id = $2
-      ORDER BY line_number ASC
-      `,
-      [saleId, storeId]
-    ),
-    getStoreSettings(db, storeId),
-  ]);
-
-  return { sale, lines: linesResult.rows, storeSettings };
+  return { sale: saleResult.rows[0], unsupported: true };
 }
 
 async function renderAndSend(res, html, filename) {
@@ -174,7 +153,7 @@ router.get('/sales/:id/print-data', authenticateToken, attachDbContext, async (r
     if (!isUuid(req.params.id)) return badId(res);
     const payload = await getSaleOrderPayload(req.dbPool, { saleId: req.params.id, storeId: req.user.store_id });
     if (!payload) return res.status(404).json({ error: 'Document de vente introuvable' });
-    if (payload.unsupported) return res.status(400).json({ error: 'Cette impression est limitee aux commandes client' });
+    if (payload.unsupported) return res.status(400).json({ error: 'Cette impression est limitee aux commandes client et BL issus de commande' });
     return res.json({ sale: payload.sale, lines: payload.lines, store_settings: payload.storeSettings });
   } catch (err) {
     console.error('Erreur print-data commande :', err);
@@ -192,7 +171,7 @@ router.get('/sales/:id/pdf', authenticateToken, attachDbContext, async (req, res
       return res.status(501).json({ error: 'PDF facture non disponible dans cette version' });
     }
     if (payload.unsupported) {
-      return res.status(400).json({ error: 'Cette route PDF est limitee aux commandes client' });
+      return res.status(400).json({ error: 'Cette route PDF est limitee aux commandes client et BL issus de commande' });
     }
 
     const html = renderSaleOrderPdf({ sale: payload.sale, lines: payload.lines, storeSettings: payload.storeSettings });

@@ -177,6 +177,22 @@
     <section class="transport-panel">
       <div class="page-actions">
         <div>
+          <h2>Preparer les envois</h2>
+          <p>Regroupement par transporteur des arrivages, livraisons, preparations et prises a quai.</p>
+        </div>
+      </div>
+      <section class="transport-form transport-form-dispatch">
+        <div class="transport-field"><label for="dispatch-date">Date</label><input id="dispatch-date" type="date" /></div>
+        <button id="refresh-dispatch-btn" class="btn btn-secondary" type="button">Actualiser</button>
+        <button id="sync-dispatch-shipments-btn" class="btn btn-primary" type="button">Alimenter journee transport</button>
+      </section>
+      <div id="dispatch-groups" class="dispatch-groups"><div class="transport-muted">Chargement...</div></div>
+      <section id="dispatch-email-preview" class="transport-detail-panel hidden"></section>
+    </section>
+
+    <section class="transport-panel">
+      <div class="page-actions">
+        <div>
           <h2>Journee transport</h2>
           <p>Regroupements explicites, calcul reel par poids total et generation BL transport.</p>
         </div>

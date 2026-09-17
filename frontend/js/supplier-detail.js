@@ -42,6 +42,7 @@ const fields = [
   "phone",
   "mobile",
   "email",
+  "transport_operations_email",
   "address_line1",
   "address_line2",
   "postal_code",

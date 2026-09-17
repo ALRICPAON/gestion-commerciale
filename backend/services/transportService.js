@@ -168,7 +168,7 @@ function estimateLegPerKg({ bracket, fuelPercent = 0 }) {
 
 async function listCarriers(db, storeId) {
   const result = await db.query(
-    `SELECT id, code, name, supplier_type, is_carrier
+    `SELECT id, code, name, email, transport_operations_email, supplier_type, is_carrier
      FROM suppliers
      WHERE store_id = $1
        AND COALESCE(status, 'active') <> 'inactive'
@@ -465,6 +465,9 @@ async function createShipment(db, storeId, input = {}, context = {}) {
   const chainId = clean(input.chain_id);
   const weightKg = positive(input.total_weight_kg ?? input.weight_kg, 0);
   const idempotencyKey = clean(input.idempotency_key || input.request_id);
+  const sourceType = clean(input.source_type);
+  const sourceId = clean(input.source_id);
+  const sourceReference = clean(input.source_reference);
   if (!chainId) throw expose(400, 'Circuit transport obligatoire');
   if (weightKg <= 0) throw expose(400, 'Poids transport obligatoire');
   if (idempotencyKey) {
@@ -473,6 +476,10 @@ async function createShipment(db, storeId, input = {}, context = {}) {
       [storeId, idempotencyKey]
     );
     if (existing.rows.length) return existing.rows[0];
+  }
+  if (sourceType && sourceId) {
+    const existing = await findActiveShipmentBySource(db, storeId, sourceType, sourceId);
+    if (existing) return existing;
   }
   const { chain, legs } = await getChainForCalculation(db, storeId, chainId, date);
   const carrierId = clean(input.carrier_id) || legs[0]?.carrier_id || null;
@@ -484,14 +491,16 @@ async function createShipment(db, storeId, input = {}, context = {}) {
     result = await db.query(
       `INSERT INTO transport_shipments (
         store_id, shipment_date, direction, carrier_id, chain_id, origin_label, destination_label,
-        total_weight_kg, expected_total_ht, calculation_snapshot, notes, idempotency_key, created_by, updated_by
-      ) VALUES ($1,$2::date,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$13)
+        total_weight_kg, expected_total_ht, calculation_snapshot, notes,
+        idempotency_key, source_type, source_id, source_reference, created_by, updated_by
+      ) VALUES ($1,$2::date,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14::uuid,$15,$16,$16)
       RETURNING *`,
       [
         storeId, date, direction, carrierId, chainId,
         clean(input.origin_label) || chain.origin_label,
         clean(input.destination_label) || chain.destination_label,
-        weightKg, snapshot.total_ht, JSON.stringify(snapshot), clean(input.notes), idempotencyKey, context.user_id || null,
+        weightKg, snapshot.total_ht, JSON.stringify(snapshot), clean(input.notes),
+        idempotencyKey, sourceType, sourceId, sourceReference, context.user_id || null,
       ]
     );
   } catch (error) {
@@ -501,6 +510,10 @@ async function createShipment(db, storeId, input = {}, context = {}) {
         [storeId, idempotencyKey]
       );
       if (existing.rows.length) return existing.rows[0];
+    }
+    if (sourceType && sourceId && error.code === '23505' && String(error.constraint || '').includes('ux_transport_shipments_source_active')) {
+      const existing = await findActiveShipmentBySource(db, storeId, sourceType, sourceId);
+      if (existing) return existing;
     }
     throw error;
   }
@@ -536,7 +549,11 @@ async function updateDraftShipment(db, storeId, shipmentId, input = {}, context 
      SET shipment_date = $3::date, direction = $4, carrier_id = $5, chain_id = $6,
          origin_label = $7, destination_label = $8, total_weight_kg = $9,
          expected_total_ht = $10, calculation_snapshot = $11::jsonb,
-         notes = $12, updated_by = $13, updated_at = now()
+         notes = $12,
+         source_type = CASE WHEN $13::text IS NULL THEN source_type ELSE $13::text END,
+         source_id = CASE WHEN $14::uuid IS NULL THEN source_id ELSE $14::uuid END,
+         source_reference = CASE WHEN $15::text IS NULL THEN source_reference ELSE $15::text END,
+         updated_by = $16, updated_at = now()
      WHERE id = $1 AND store_id = $2
      RETURNING *`,
     [
@@ -545,10 +562,39 @@ async function updateDraftShipment(db, storeId, shipmentId, input = {}, context 
       clean(input.destination_label) || chain.destination_label,
       weightKg, snapshot.total_ht, JSON.stringify(snapshot),
       hasOwn(input, 'notes') ? clean(input.notes) : clean(shipment.notes),
+      clean(input.source_type),
+      clean(input.source_id),
+      clean(input.source_reference),
       context.user_id || null,
     ]
   );
   return result.rows[0];
+}
+
+async function findActiveShipmentBySource(db, storeId, sourceType, sourceId) {
+  if (!clean(sourceType) || !clean(sourceId)) return null;
+  const result = await db.query(
+    `SELECT *
+     FROM transport_shipments
+     WHERE store_id = $1
+       AND source_type = $2
+       AND source_id = $3::uuid
+       AND COALESCE(status, 'draft') <> 'cancelled'
+     ORDER BY created_at DESC
+     LIMIT 1
+     FOR UPDATE`,
+    [storeId, clean(sourceType), clean(sourceId)]
+  );
+  return result.rows[0] || null;
+}
+
+async function upsertDraftShipmentFromSource(db, storeId, input = {}, context = {}) {
+  const existing = await findActiveShipmentBySource(db, storeId, input.source_type, input.source_id);
+  if (existing) {
+    if (existing.status !== 'draft') return { ...existing, skipped_update: true, reason: 'locked_after_blt' };
+    return updateDraftShipment(db, storeId, existing.id, input, context);
+  }
+  return createShipment(db, storeId, input, context);
 }
 
 async function deleteDraftShipment(db, storeId, shipmentId, context = {}) {
@@ -660,6 +706,8 @@ module.exports = {
   listDayShipments,
   createShipment,
   updateDraftShipment,
+  findActiveShipmentBySource,
+  upsertDraftShipmentFromSource,
   deleteDraftShipment,
   generateTransportDeliveryNote,
 };

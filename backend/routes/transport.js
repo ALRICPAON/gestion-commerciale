@@ -4,6 +4,7 @@ const { authenticateToken } = require('../middleware/auth');
 const { attachDbContext } = require('../middleware/dbContext');
 const { requireAdminOrManager } = require('../middleware/authorization');
 const transport = require('../services/transportService');
+const preparationDispatch = require('../services/transportPreparationDispatchService');
 
 const router = express.Router();
 
@@ -241,6 +242,7 @@ router.get('/carrier-settings', async (req, res) => {
   try {
     const result = await req.dbPool.query(
       `SELECT s.id AS carrier_id, s.code, s.name, s.supplier_type, s.is_carrier,
+              s.email, s.transport_operations_email,
               COALESCE(sts.purchase_transport_mode, 'manual') AS purchase_transport_mode,
               sts.purchase_transport_chain_id,
               COALESCE(sts.admin_fee_ht, 0) AS admin_fee_ht,
@@ -891,6 +893,56 @@ router.get('/day', async (req, res) => {
   }
 });
 
+router.get('/preparation-dispatch', async (req, res) => {
+  try {
+    res.json(await preparationDispatch.getPreparationDispatch(req.dbPool, req.user.store_id, req.query));
+  } catch (error) {
+    console.error('Erreur preparation dispatch transport :', error);
+    res.status(error.status || 500).json({ error: error.message || 'Erreur preparation des envois' });
+  }
+});
+
+router.post('/preparation-dispatch/sync-shipments', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const result = await preparationDispatch.syncDraftShipments(db, req.user.store_id, req.body || {}, context(req));
+    await db.query('COMMIT');
+    res.json(result);
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    console.error('Erreur sync brouillons transport :', error);
+    res.status(error.status || 500).json({ error: error.message || 'Erreur alimentation journee transport' });
+  } finally {
+    db.release();
+  }
+});
+
+router.post('/preparation-dispatch/email-preview', async (req, res) => {
+  try {
+    res.json(await preparationDispatch.previewCarrierEmail(req.dbPool, req.user.store_id, req.body || {}));
+  } catch (error) {
+    console.error('Erreur apercu email transporteur :', error);
+    res.status(error.status || 500).json({ error: error.message || 'Erreur apercu email transporteur' });
+  }
+});
+
+router.post('/preparation-dispatch/send-email', requireAdminOrManager, async (req, res) => {
+  const db = await req.dbPool.connect();
+  try {
+    await db.query('BEGIN');
+    const result = await preparationDispatch.sendCarrierEmail(db, req.user.store_id, req.body || {}, context(req));
+    await db.query('COMMIT');
+    res.json(result);
+  } catch (error) {
+    await db.query('ROLLBACK').catch(() => {});
+    console.error('Erreur envoi email transporteur :', error);
+    res.status(error.status || 500).json({ error: error.message || 'Erreur envoi email transporteur' });
+  } finally {
+    db.release();
+  }
+});
+
 router.post('/shipments', requireAdminOrManager, async (req, res) => {
   try {
     const shipment = await transport.createShipment(req.dbPool, req.user.store_id, req.body, context(req));
@@ -971,6 +1023,7 @@ router._private = {
   validateGridPayload,
   validateChainPayload,
   validateLogisticsServicePayload,
+  preparationDispatch,
 };
 
 module.exports = router;
