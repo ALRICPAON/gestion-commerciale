@@ -91,6 +91,7 @@ function clientSelectSql() {
       c.sale_transport_mode,
       c.sale_transport_chain_id,
       c.sale_transport_notes,
+      COALESCE(c.delanchy_dock_pickup, false) AS delanchy_dock_pickup,
       c.created_at,
       c.updated_at
     FROM clients c
@@ -139,6 +140,7 @@ function mapClientPayload(body) {
     sale_transport_mode: normalizeText(body.sale_transport_mode) || 'none',
     sale_transport_chain_id: normalizeUuid(body.sale_transport_chain_id),
     sale_transport_notes: normalizeText(body.sale_transport_notes),
+    delanchy_dock_pickup: normalizeBoolean(body.delanchy_dock_pickup, false),
   };
 }
 
@@ -309,6 +311,7 @@ router.post('/clients/:id/affiliates', authenticateToken, attachDbContext, requi
         address_line1, address_line2, postal_code, city, country,
         vat_number, siret, payment_terms, delivery_terms, notes,
         sale_transport_mode, sale_transport_chain_id, sale_transport_notes,
+        delanchy_dock_pickup,
         created_by, updated_by
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7,
@@ -317,7 +320,8 @@ router.post('/clients/:id/affiliates', authenticateToken, attachDbContext, requi
         $18, $19, $20, $21, $22,
         $23, $24, $25, $26, $27,
         $28, $29, $30,
-        $31, $31
+        COALESCE($31::boolean, false),
+        $32, $32
       )
       RETURNING id
       `,
@@ -329,6 +333,7 @@ router.post('/clients/:id/affiliates', authenticateToken, attachDbContext, requi
         client.address_line1, client.address_line2, client.postal_code, client.city, client.country,
         client.vat_number, client.siret, client.payment_terms, client.delivery_terms, client.notes,
         client.sale_transport_mode, client.sale_transport_chain_id, client.sale_transport_notes,
+        client.delanchy_dock_pickup,
         req.user.id,
       ]
     );
@@ -365,6 +370,7 @@ router.post(
           address_line1, address_line2, postal_code, city, country,
           vat_number, siret, payment_terms, delivery_terms, notes,
           sale_transport_mode, sale_transport_chain_id, sale_transport_notes,
+          delanchy_dock_pickup,
           created_by, updated_by
         ) VALUES (
           $1, $2, $3, $4, $5, $6, $7,
@@ -374,7 +380,8 @@ router.post(
           $18, $19, $20, $21, $22,
           $23, $24, $25, $26, $27,
           $28, $29, $30,
-          $31, $32
+          COALESCE($31::boolean, false),
+          $32, $33
         )
         RETURNING id
         `,
@@ -409,6 +416,7 @@ router.post(
           client.sale_transport_mode,
           client.sale_transport_chain_id,
           client.sale_transport_notes,
+          client.delanchy_dock_pickup,
           req.user.id,
           req.user.id,
         ]
@@ -480,9 +488,10 @@ router.put(
           sale_transport_mode = $27,
           sale_transport_chain_id = $28,
           sale_transport_notes = $29,
-          updated_by = $30
-        WHERE id = $31
-          AND store_id = $32
+          delanchy_dock_pickup = COALESCE($30::boolean, false),
+          updated_by = $31
+        WHERE id = $32
+          AND store_id = $33
         RETURNING id
         `,
         [
@@ -515,6 +524,7 @@ router.put(
           client.sale_transport_mode,
           client.sale_transport_chain_id,
           client.sale_transport_notes,
+          client.delanchy_dock_pickup,
           req.user.id,
           req.params.id,
           req.user.store_id,

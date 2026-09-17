@@ -22,7 +22,7 @@ const contactForm = $('contact-form');
 const affiliateForm = $('affiliate-form');
 const saveContactBtn = $('save-contact-btn');
 
-const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'parent_client_id', 'affiliate_label', 'affiliate_store_number', 'is_royale_maree_member', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'sale_transport_mode', 'sale_transport_chain_id', 'sale_transport_notes', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
+const fields = ['code', 'name', 'legal_name', 'client_type', 'status', 'tariff_level', 'billed_client_id', 'parent_client_id', 'affiliate_label', 'affiliate_store_number', 'is_royale_maree_member', 'store_identifier', 'contact_name', 'phone', 'mobile', 'email', 'address_line1', 'address_line2', 'postal_code', 'city', 'country', 'sale_transport_mode', 'sale_transport_chain_id', 'sale_transport_notes', 'delanchy_dock_pickup', 'vat_number', 'siret', 'payment_terms', 'delivery_terms', 'notes'];
 let currentClient = null;
 let clients = [];
 let contacts = [];

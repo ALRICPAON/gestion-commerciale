@@ -14,6 +14,7 @@ let chains = [];
 let logisticsServices = [];
 let fuelSurcharges = [];
 let shipments = [];
+let dispatchGroups = [];
 let editingGridId = null;
 let editingChainId = null;
 let editingServiceId = null;
@@ -201,6 +202,87 @@ function renderShipments() {
       <td>${shipment.blt_reference ? '<span class="transport-muted">Genere</span>' : '<button class="btn btn-secondary btn-sm" data-action="shipment-edit" type="button">Modifier</button> <button class="btn btn-secondary btn-sm" data-action="shipment-delete" type="button">Supprimer</button> <button class="btn btn-secondary btn-sm" data-action="generate" type="button">Generer BL transport</button>'}</td>
     </tr>
   `).join('') : '<tr><td colspan="10">Aucun envoi pour cette date.</td></tr>';
+}
+
+function formatQty(value, suffix) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 'A completer';
+  return `${parsed.toLocaleString('fr-FR', { maximumFractionDigits: 3 })} ${suffix}`;
+}
+
+function renderDispatchTable(items, columns, emptyText) {
+  if (!items.length) return `<div class="transport-muted">${esc(emptyText)}</div>`;
+  return `<div class="table-wrap"><table class="data-table dispatch-table">
+    <thead><tr><th></th>${columns.map((column) => `<th>${esc(column.label)}</th>`).join('')}<th>Statut</th></tr></thead>
+    <tbody>${items.map((item) => `<tr class="${item.delivery_mode === 'PRISE A QUAI DELANCHY' ? 'dispatch-pickup-row' : ''}">
+      <td><input type="checkbox" checked /></td>
+      ${columns.map((column) => `<td>${column.render ? column.render(item) : esc(item[column.key] || '')}</td>`).join('')}
+      <td>${esc(item.status || '')}${item.missing?.length ? `<div class="transport-muted">${esc(item.missing.join(', '))}</div>` : ''}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+function renderDispatchGroups() {
+  const container = el('dispatch-groups');
+  if (!container) return;
+  if (!dispatchGroups.length) {
+    container.innerHTML = '<div class="transport-muted">Aucun envoi a preparer pour cette date.</div>';
+    return;
+  }
+  const arrivalColumns = [
+    { label: 'Origine', key: 'origin_label' },
+    { label: 'Code site', key: 'site_code' },
+    { label: 'Fournisseur', key: 'supplier_name' },
+    { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
+    { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
+    { label: 'Date', render: (item) => esc(formatDate(item.date)) },
+    { label: 'Reference', key: 'reference' },
+    { label: 'Client final', key: 'client_name' },
+    { label: 'Mode', key: 'delivery_mode' },
+  ];
+  const deliveryColumns = [
+    { label: 'Client', key: 'client_name' },
+    { label: 'Client facture', render: (item) => esc(item.billed_client_display || item.billed_client_name || '') },
+    { label: 'Adresse', key: 'delivery_address' },
+    { label: 'Reference', key: 'reference' },
+    { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
+    { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
+    { label: 'Mode', key: 'delivery_mode' },
+  ];
+  const prepColumns = [
+    { label: 'Client', key: 'client_name' },
+    { label: 'Fournisseur(s)', key: 'supplier_name' },
+    { label: 'Reference', key: 'reference' },
+    { label: 'Poids', render: (item) => esc(formatQty(item.weight_kg, 'kg')) },
+    { label: 'Colis', render: (item) => esc(formatQty(item.package_count, 'colis')) },
+    { label: 'Mode', key: 'delivery_mode' },
+    { label: 'Document', render: (item) => item.document_url ? `<a href="${API_BASE_URL}${esc(item.document_url)}" target="_blank" rel="noreferrer">PDF</a>` : '-' },
+  ];
+  container.innerHTML = dispatchGroups.map((group) => {
+    const summary = group.summary?.total || {};
+    return `<article class="dispatch-carrier" data-carrier-id="${esc(group.carrier_id)}">
+      <div class="dispatch-carrier-header">
+        <div>
+          <h3>${esc(group.carrier_name || 'Transporteur')}</h3>
+          <p>${esc(group.email_to || 'Email transporteur manquant')}</p>
+        </div>
+        <div class="transport-actions-row">
+          <button class="btn btn-secondary btn-sm" data-action="dispatch-preview" type="button">Apercu</button>
+          <button class="btn btn-secondary btn-sm" data-action="dispatch-print" type="button">Imprimer</button>
+          <button class="btn btn-primary btn-sm" data-action="dispatch-send" type="button">Envoyer au transporteur</button>
+        </div>
+      </div>
+      <h4>Arrivages fournisseurs</h4>
+      ${renderDispatchTable(group.supplier_arrivals || [], arrivalColumns, 'Aucun arrivage fournisseur.')}
+      <h4>Livraisons clients</h4>
+      ${renderDispatchTable(group.client_deliveries || [], deliveryColumns, 'Aucune livraison client.')}
+      <h4>Commandes a preparer</h4>
+      ${renderDispatchTable(group.preparations || [], prepColumns, 'Aucune commande a preparer.')}
+      <h4>Prises a quai</h4>
+      ${renderDispatchTable(group.dock_pickups || [], deliveryColumns, 'Aucune prise a quai.')}
+      <div class="dispatch-summary">${Number(summary.count || 0)} lignes - ${Number(group.summary?.supplier_arrivals?.count || 0)} arrivages - ${Number(group.summary?.client_deliveries?.count || 0)} livraisons - ${Number(group.summary?.preparations?.count || 0)} preparations - ${Number(summary.pickup_count || 0)} prises a quai - ${formatQty(summary.package_count, 'colis')} - ${formatQty(summary.weight_kg, 'kg')}</div>
+    </article>`;
+  }).join('');
 }
 
 function gridOptions(carrierId, selected = '') {
@@ -477,6 +559,13 @@ async function loadShipments() {
   renderShipments();
 }
 
+async function loadDispatch() {
+  const date = el('dispatch-date').value || todayIso();
+  const data = await api(`/api/transport/preparation-dispatch?date=${encodeURIComponent(date)}`);
+  dispatchGroups = data?.results || [];
+  renderDispatchGroups();
+}
+
 async function saveCarrierSetting() {
   const carrierId = el('carrier-setting-carrier').value;
   requireValue(carrierId, 'Choisir un transporteur.');
@@ -605,6 +694,44 @@ async function generateBlt(shipmentId) {
   showFeedback(`BL transport ${result.delivery_note?.reference_number || ''} genere.`);
 }
 
+async function syncDispatchShipments() {
+  const date = el('dispatch-date').value || todayIso();
+  const result = await apiJson('/api/transport/preparation-dispatch/sync-shipments', { date });
+  await loadShipments();
+  showFeedback(`${result.synced_count || 0} brouillon(s) transport synchronise(s).`);
+}
+
+async function previewDispatchEmail(carrierId) {
+  const date = el('dispatch-date').value || todayIso();
+  const preview = await apiJson('/api/transport/preparation-dispatch/email-preview', { date, carrier_id: carrierId });
+  const panel = el('dispatch-email-preview');
+  panel.classList.remove('hidden');
+  panel.innerHTML = `<div class="page-actions"><div><h2>Apercu email</h2><p>${esc(preview.carrier_name)} - ${esc(preview.email_to || 'Email manquant')}</p></div></div>
+    <pre class="dispatch-email-body">${esc(preview.text || '')}</pre>
+    <div class="transport-muted">Pieces jointes: ${(preview.attachments || []).map((item) => esc(item.filename)).join(', ') || '-'}</div>`;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return preview;
+}
+
+async function sendDispatchEmail(carrierId) {
+  if (!window.confirm('Envoyer cet email au transporteur ?')) return;
+  const date = el('dispatch-date').value || todayIso();
+  const result = await apiJson('/api/transport/preparation-dispatch/send-email', { date, carrier_id: carrierId });
+  showFeedback(`Email envoye a ${result.preview?.email_to || 'transporteur'}.`);
+}
+
+function printDispatchGroup(carrierId) {
+  const article = Array.from(document.querySelectorAll('.dispatch-carrier'))
+    .find((item) => item.dataset.carrierId === carrierId);
+  if (!article) return;
+  const popup = window.open('', '_blank');
+  if (!popup) return;
+  popup.document.write(`<html><head><title>Preparation envois</title><link rel="stylesheet" href="./css/app.css" /><link rel="stylesheet" href="./css/pages/transport.css" /></head><body>${article.outerHTML}</body></html>`);
+  popup.document.close();
+  popup.focus();
+  popup.print();
+}
+
 async function deleteEntity(path, confirmMessage, reload, successMessage) {
   if (!window.confirm(confirmMessage)) return;
   const result = await api(path, { method: 'DELETE' });
@@ -637,7 +764,18 @@ function bindEvents() {
   el('create-fuel-btn').addEventListener('click', () => createFuelSurcharge().catch((error) => showFeedback(error.message, 'error')));
   el('create-shipment-btn').addEventListener('click', () => createShipment().catch((error) => showFeedback(error.message, 'error')));
   el('refresh-shipments-btn').addEventListener('click', () => loadShipments().catch((error) => showFeedback(error.message, 'error')));
+  el('refresh-dispatch-btn').addEventListener('click', () => loadDispatch().catch((error) => showFeedback(error.message, 'error')));
+  el('sync-dispatch-shipments-btn').addEventListener('click', () => syncDispatchShipments().catch((error) => showFeedback(error.message, 'error')));
   el('transport-date').addEventListener('change', () => loadShipments().catch((error) => showFeedback(error.message, 'error')));
+  el('dispatch-date').addEventListener('change', () => loadDispatch().catch((error) => showFeedback(error.message, 'error')));
+  el('dispatch-groups').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-action]');
+    const group = event.target.closest('[data-carrier-id]');
+    if (!button || !group) return;
+    if (button.dataset.action === 'dispatch-preview') previewDispatchEmail(group.dataset.carrierId).catch((error) => showFeedback(error.message, 'error'));
+    if (button.dataset.action === 'dispatch-send') sendDispatchEmail(group.dataset.carrierId).catch((error) => showFeedback(error.message, 'error'));
+    if (button.dataset.action === 'dispatch-print') printDispatchGroup(group.dataset.carrierId);
+  });
   el('grid-brackets-body').addEventListener('click', (event) => {
     const button = event.target.closest('[data-action="remove-row"]');
     if (button) button.closest('tr')?.remove();
@@ -724,13 +862,14 @@ function bindEvents() {
 }
 
 async function init() {
-  ['grid-from', 'service-from', 'fuel-from', 'transport-date'].forEach((id) => { el(id).value = todayIso(); });
+  ['grid-from', 'service-from', 'fuel-from', 'transport-date', 'dispatch-date'].forEach((id) => { el(id).value = todayIso(); });
   bindEvents();
   addBracketRow();
   addLegRow();
   await loadCarriers();
   await Promise.all([loadCarrierSettings(), loadGrids(), loadChains(), loadLogisticsServices(), loadFuelSurcharges()]);
   await loadShipments();
+  await loadDispatch();
 }
 
 init().catch((error) => showFeedback(error.message, 'error'));

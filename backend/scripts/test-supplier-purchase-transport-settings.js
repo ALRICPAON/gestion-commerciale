@@ -5,12 +5,14 @@ const { mapSupplierPayload, getSupplierDetail } = suppliersRoute._private;
 
 const atOurCharge = mapSupplierPayload({
   name: 'Copromer',
+  transport_operations_email: ' exploitation@copromer.test ',
   purchase_transport_mode: 'carrier_paid_by_us',
   purchase_transport_chain_id: 'chain-a',
   transport_admin_fee_ht: '5.92',
 });
 assert.strictEqual(atOurCharge.purchase_transport_mode, 'carrier_paid_by_us');
 assert.strictEqual(atOurCharge.purchase_transport_chain_id, 'chain-a');
+assert.strictEqual(atOurCharge.transport_operations_email, 'exploitation@copromer.test');
 
 const franco = mapSupplierPayload({
   name: 'Copromer',
@@ -47,6 +49,7 @@ const db = {
         purchase_transport_chain_id: 'chain-b',
         transport_admin_fee_ht: 5.92,
         transport_notes: 'ok',
+        transport_operations_email: 'exploitation@copromer.test',
       }],
     };
   },
@@ -56,6 +59,7 @@ const db = {
   const supplier = await getSupplierDetail(db, 'store-1', 'supplier-1');
   assert.strictEqual(supplier.purchase_transport_mode, 'carrier_paid_by_us');
   assert.strictEqual(supplier.purchase_transport_chain_id, 'chain-b');
+  assert.strictEqual(supplier.transport_operations_email, 'exploitation@copromer.test');
   assert.deepStrictEqual(lastQuery.params, ['supplier-1', 'store-1']);
   assert(lastQuery.sql.includes('supplier_transport_settings'), 'supplier detail must reload transport settings');
   console.log('supplier purchase transport settings tests ok');

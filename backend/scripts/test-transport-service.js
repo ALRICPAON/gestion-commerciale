@@ -255,9 +255,23 @@ function mockDbForDraftShipment({ withDeliveryNote = false } = {}) {
 function mockDbForCreateShipments() {
   let nextId = 1;
   const byIdempotencyKey = new Map();
+  const bySource = new Map();
+  const sourceKey = (sourceType, sourceId) => `${sourceType || ''}:${sourceId || ''}`;
   return {
     inserts: [],
+    seedShipment(row) {
+      const shipment = { status: 'draft', ...row };
+      if (shipment.idempotency_key) byIdempotencyKey.set(shipment.idempotency_key, shipment);
+      if (shipment.source_type && shipment.source_id && shipment.status !== 'cancelled') {
+        bySource.set(sourceKey(shipment.source_type, shipment.source_id), shipment);
+      }
+      return shipment;
+    },
     async query(sql, params) {
+      if (sql.includes('FROM transport_shipments') && sql.includes('source_type') && sql.includes('source_id')) {
+        const row = bySource.get(sourceKey(params[1], params[2]));
+        return { rows: row && row.status !== 'cancelled' ? [row] : [] };
+      }
       if (sql.includes('FROM transport_shipments') && sql.includes('idempotency_key')) {
         return { rows: byIdempotencyKey.has(params[1]) ? [byIdempotencyKey.get(params[1])] : [] };
       }
@@ -289,13 +303,44 @@ function mockDbForCreateShipments() {
           total_weight_kg: params[7],
           expected_total_ht: params[8],
           idempotency_key: params[11],
+          source_type: params[12],
+          source_id: params[13],
+          source_reference: params[14],
+          status: 'draft',
         };
         nextId += 1;
         this.inserts.push({ sql, params, row });
         if (row.idempotency_key) byIdempotencyKey.set(row.idempotency_key, row);
+        if (row.source_type && row.source_id) bySource.set(sourceKey(row.source_type, row.source_id), row);
         return { rows: [row] };
       }
       return { rows: [] };
+    },
+  };
+}
+
+function mockDbForConcurrentShipmentConflict({ constraint, existing }) {
+  const base = mockDbForCreateShipments();
+  let firstLookup = true;
+  base.seedShipment(existing);
+  const originalQuery = base.query.bind(base);
+  return {
+    ...base,
+    async query(sql, params) {
+      if (sql.includes('FROM transport_shipments') && (sql.includes('idempotency_key') || sql.includes('source_type'))) {
+        if (firstLookup) {
+          firstLookup = false;
+          return { rows: [] };
+        }
+        return originalQuery(sql, params);
+      }
+      if (sql.includes('INSERT INTO transport_shipments')) {
+        const error = new Error('duplicate key');
+        error.code = '23505';
+        error.constraint = constraint;
+        throw error;
+      }
+      return originalQuery(sql, params);
     },
   };
 }
@@ -376,7 +421,83 @@ function mockDbForCreateShipments() {
   assert.strictEqual(duplicateRouteDb.inserts[0].params[7], 80);
   assert.strictEqual(duplicateRouteDb.inserts[1].params[7], 120);
 
+  const sourceDb = mockDbForCreateShipments();
+  const sourceShipment = await transport.createShipment(sourceDb, 'store', {
+    shipment_date: '2026-09-16',
+    chain_id: 'chain-purchase',
+    direction: 'purchase',
+    total_weight_kg: 90,
+    source_type: 'purchase_arrival',
+    source_id: '11111111-1111-4111-8111-111111111111',
+    source_reference: 'ACH-1',
+  }, { user_id: 'user' });
+  const sourceRetry = await transport.createShipment(sourceDb, 'store', {
+    shipment_date: '2026-09-16',
+    chain_id: 'chain-purchase',
+    direction: 'purchase',
+    total_weight_kg: 120,
+    source_type: 'purchase_arrival',
+    source_id: '11111111-1111-4111-8111-111111111111',
+    source_reference: 'ACH-1',
+  }, { user_id: 'user' });
+  assert.strictEqual(sourceRetry.id, sourceShipment.id, 'same source_type/source_id must return existing active shipment');
+  assert.strictEqual(sourceDb.inserts.length, 1, 'same source must not create a duplicate active shipment');
+
+  const cancelledSourceDb = mockDbForCreateShipments();
+  cancelledSourceDb.seedShipment({
+    id: 'cancelled-shipment',
+    source_type: 'purchase_arrival',
+    source_id: '22222222-2222-4222-8222-222222222222',
+    status: 'cancelled',
+  });
+  const replacement = await transport.createShipment(cancelledSourceDb, 'store', {
+    shipment_date: '2026-09-16',
+    chain_id: 'chain-purchase',
+    direction: 'purchase',
+    total_weight_kg: 95,
+    source_type: 'purchase_arrival',
+    source_id: '22222222-2222-4222-8222-222222222222',
+    source_reference: 'ACH-2',
+  }, { user_id: 'user' });
+  assert.notStrictEqual(replacement.id, 'cancelled-shipment', 'same source can create a new shipment after cancellation');
+  assert.strictEqual(cancelledSourceDb.inserts.length, 1, 'cancelled source shipment must not block replacement');
+
+  const concurrentIdempotencyDb = mockDbForConcurrentShipmentConflict({
+    constraint: 'ux_transport_shipments_idempotency_key',
+    existing: {
+      id: 'existing-idempotent',
+      idempotency_key: 'same-request',
+    },
+  });
+  const recoveredIdempotent = await transport.createShipment(concurrentIdempotencyDb, 'store', {
+    shipment_date: '2026-09-17',
+    chain_id: 'chain-purchase',
+    direction: 'purchase',
+    total_weight_kg: 75,
+    idempotency_key: 'same-request',
+  }, { user_id: 'user' });
+  assert.strictEqual(recoveredIdempotent.id, 'existing-idempotent', '23505 on idempotency key must recover existing shipment');
+
+  const concurrentSourceDb = mockDbForConcurrentShipmentConflict({
+    constraint: 'ux_transport_shipments_source_active',
+    existing: {
+      id: 'existing-source',
+      source_type: 'client_order_delivery',
+      source_id: '33333333-3333-4333-8333-333333333333',
+    },
+  });
+  const recoveredSource = await transport.createShipment(concurrentSourceDb, 'store', {
+    shipment_date: '2026-09-17',
+    chain_id: 'chain-purchase',
+    direction: 'purchase',
+    total_weight_kg: 75,
+    source_type: 'client_order_delivery',
+    source_id: '33333333-3333-4333-8333-333333333333',
+  }, { user_id: 'user' });
+  assert.strictEqual(recoveredSource.id, 'existing-source', '23505 on business source key must recover existing shipment');
+
   const migration = fs.readFileSync(path.join(__dirname, '..', 'db', 'gestion-commerciale', '120_transport_shipments_allow_same_route_same_day.sql'), 'utf8');
+  const dispatchMigration = fs.readFileSync(path.join(__dirname, '..', 'db', 'gestion-commerciale', '121_transport_preparation_dispatch.sql'), 'utf8');
   assert(migration.includes('transport_shipments'), 'migration must target transport shipments');
   assert(migration.includes("con.contype = 'u'"), 'migration must remove unique business constraints only');
   assert(migration.includes('idx.indisprimary = false'), 'migration must preserve the primary key');
@@ -387,6 +508,10 @@ function mockDbForCreateShipments() {
   const frontend = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'js', 'transport.js'), 'utf8');
   assert(service.includes('idempotency_key = $2 LIMIT 1'), 'createShipment must lookup existing technical idempotency key');
   assert(service.includes("error.code === '23505'") && service.includes('ux_transport_shipments_idempotency_key'), 'createShipment must handle concurrent idempotent retries');
+  assert(dispatchMigration.includes('ux_transport_shipments_source_active'), 'dispatch migration must add business source uniqueness');
+  assert(service.includes('findActiveShipmentBySource'), 'createShipment must lookup existing business source shipment');
+  assert(service.includes('ux_transport_shipments_source_active'), 'createShipment must recover concurrent business source conflicts');
+  assert(service.includes('idempotency_key, source_type, source_id, source_reference'), 'createShipment must persist technical and business idempotence keys');
   assert(route.includes('transportErrorPayload'), 'transport routes must return structured API error payloads');
   assert(route.includes('code: error.code || null'), 'transport API errors must expose database/API code');
   assert(route.includes('details: error.details || error.constraint || null'), 'transport API errors must expose useful details');

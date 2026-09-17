@@ -35,6 +35,10 @@
   grid-template-columns: 160px minmax(220px, 1fr) 140px 140px auto auto;
 }
 
+.transport-form-dispatch {
+  grid-template-columns: 160px auto auto minmax(0, 1fr);
+}
+
 .transport-field {
   display: grid;
   gap: 6px;
@@ -100,6 +104,62 @@
   font-size: 13px;
 }
 
+.dispatch-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.dispatch-carrier {
+  border: 1px solid #d6dde6;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.dispatch-carrier-header {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.dispatch-carrier h3,
+.dispatch-carrier h4 {
+  margin: 0 0 8px;
+}
+
+.dispatch-carrier h4 {
+  color: #334155;
+  font-size: 15px;
+  margin-top: 14px;
+}
+
+.dispatch-table {
+  font-size: 13px;
+}
+
+.dispatch-pickup-row {
+  background: #fff7ed;
+  font-weight: 700;
+}
+
+.dispatch-summary {
+  background: #eef3f8;
+  border-radius: 6px;
+  color: #17212b;
+  font-weight: 700;
+  margin-top: 12px;
+  padding: 10px;
+}
+
+.dispatch-email-body {
+  background: #f8fafc;
+  border: 1px solid #dde3ea;
+  border-radius: 8px;
+  overflow: auto;
+  padding: 12px;
+  white-space: pre-wrap;
+}
+
 @media (max-width: 900px) {
   .transport-form,
   .transport-form-admin,
@@ -107,7 +167,8 @@
   .transport-form-chain,
   .transport-form-service,
   .transport-form-fuel,
-  .transport-form-day {
+  .transport-form-day,
+  .transport-form-dispatch {
     grid-template-columns: 1fr;
   }
 
