@@ -290,7 +290,7 @@ async function fetchClientDeliveryRows(db, storeId, date, dockPickup = false) {
     `SELECT sd.id AS source_id,
         CASE WHEN sd.document_type = 'DELIVERY_NOTE' THEN 'client_delivery_note' ELSE 'client_order_delivery' END AS source_type,
         COALESCE(sd.reference_number, sd.id::text) AS reference,
-        sd.document_date AS date, sd.document_type,
+        sd.document_date AS date, sd.document_type, sd.source_order_id, sd.source_delivery_note_id,
         c.id AS client_id, c.name AS client_name, c.code AS client_code, c.store_identifier AS site_code,
         c.address_line1, c.address_line2, c.postal_code, c.city,
         COALESCE(c.delanchy_dock_pickup, false) AS delanchy_dock_pickup,
@@ -333,7 +333,9 @@ async function fetchPreparationDocuments(db, storeId, date) {
   const result = await db.query(
     `SELECT sd.id AS source_id, 'client_preparation' AS source_type,
         COALESCE(sd.reference_number, sd.id::text) AS reference,
-        sd.document_date AS date, sd.document_type,
+        sd.document_date AS date, sd.document_type, sd.source_order_id, sd.source_delivery_note_id,
+        order_document.id AS order_source_id,
+        order_document.reference_number AS order_reference,
         c.id AS client_id, c.name AS client_name, c.code AS client_code, c.store_identifier AS site_code,
         c.address_line1, c.address_line2, c.postal_code, c.city,
         COALESCE(c.delanchy_dock_pickup, false) AS delanchy_dock_pickup,
@@ -350,6 +352,18 @@ async function fetchPreparationDocuments(db, storeId, date) {
      JOIN client_logistics_services cls ON cls.client_id = c.id AND cls.store_id = c.store_id AND cls.is_active = true
      JOIN logistics_services ls ON ls.id = cls.logistics_service_id AND ls.store_id = cls.store_id
      JOIN suppliers provider ON provider.id = cls.provider_supplier_id AND provider.store_id = cls.store_id
+     LEFT JOIN sales_documents invoice_delivery_note
+       ON invoice_delivery_note.id = sd.source_delivery_note_id
+      AND invoice_delivery_note.store_id = sd.store_id
+      AND invoice_delivery_note.document_type = 'DELIVERY_NOTE'
+     LEFT JOIN sales_documents order_document
+       ON order_document.id = CASE
+         WHEN sd.document_type = 'ORDER' THEN sd.id
+         WHEN sd.document_type = 'DELIVERY_NOTE' THEN sd.source_order_id
+         WHEN sd.document_type = 'INVOICE' THEN COALESCE(sd.source_order_id, invoice_delivery_note.source_order_id)
+       END
+      AND order_document.store_id = sd.store_id
+      AND order_document.document_type = 'ORDER'
      LEFT JOIN sales_lines sl ON sl.sales_document_id = sd.id AND sl.store_id = sd.store_id
      WHERE sd.store_id = $1
        AND sd.document_date = $2::date
@@ -375,7 +389,8 @@ async function fetchPreparationDocuments(db, storeId, date) {
              AND COALESCE(dn.status, 'draft') <> 'cancelled'
          )
        )
-     GROUP BY sd.id, c.id, billed.id, ls.id, cls.provider_supplier_id, provider.id`,
+     GROUP BY sd.id, c.id, billed.id, ls.id, cls.provider_supplier_id, provider.id,
+       order_document.id, order_document.reference_number`,
     [storeId, date]
   );
   return result.rows;
@@ -467,8 +482,11 @@ async function getPreparationDispatch(db, storeId, input = {}) {
       supplier_blocks: supplierBlocks,
       date,
       delivery_mode: row.delanchy_dock_pickup ? DOCK_PICKUP_MODE : DELIVERY_MODE,
-      order_reference: businessReference(row.reference, 'Commande'),
-      preparation_order_url: `/api/pdf-documents/sales/${row.source_id}/pdf`,
+      order_source_id: row.order_source_id || (row.document_type === 'ORDER' ? row.source_id : null),
+      order_reference: businessReference(row.order_reference || row.reference, 'Commande'),
+      preparation_order_url: (row.order_source_id || row.document_type === 'ORDER')
+        ? `/api/pdf-documents/sales/${row.order_source_id || row.source_id}/pdf`
+        : null,
     });
   }
 
@@ -530,20 +548,6 @@ async function getSaleOrderPayloadForPdf(db, storeId, documentId) {
   const docResult = await db.query(
     `WITH requested AS (
        SELECT * FROM sales_documents WHERE id = $1 AND store_id = $2 LIMIT 1
-     ),
-     target AS (
-       SELECT COALESCE(
-         CASE WHEN requested.document_type = 'ORDER' THEN requested.id END,
-         requested.source_order_id,
-         delivery_note.source_order_id,
-         CASE WHEN requested.document_type = 'DELIVERY_NOTE' THEN requested.id END,
-         requested.source_delivery_note_id,
-         requested.id
-       ) AS document_id
-       FROM requested
-       LEFT JOIN sales_documents delivery_note
-         ON delivery_note.id = requested.source_delivery_note_id
-        AND delivery_note.store_id = requested.store_id
      )
      SELECT sd.*, requested.id AS requested_id, requested.document_type AS requested_document_type,
         c.name AS client_name, c.code AS client_code,
@@ -552,11 +556,26 @@ async function getSaleOrderPayloadForPdf(db, storeId, documentId) {
         COALESCE(c.delanchy_dock_pickup, false) AS delanchy_dock_pickup,
         COALESCE(c.tariff_level, sd.tariff_level_snapshot, 1) AS client_tariff_level
      FROM requested
-     JOIN target ON true
-     JOIN sales_documents sd ON sd.id = target.document_id AND sd.store_id = requested.store_id
+     LEFT JOIN sales_documents delivery_note
+       ON delivery_note.id = requested.source_delivery_note_id
+      AND delivery_note.store_id = requested.store_id
+      AND delivery_note.document_type = 'DELIVERY_NOTE'
+     JOIN LATERAL (
+       SELECT candidate.*
+       FROM (VALUES
+         (1, CASE WHEN requested.document_type = 'ORDER' THEN requested.id END),
+         (2, requested.source_order_id),
+         (3, delivery_note.source_order_id)
+       ) AS source(priority, document_id)
+       JOIN sales_documents candidate
+         ON candidate.id = source.document_id
+        AND candidate.store_id = requested.store_id
+        AND candidate.document_type = 'ORDER'
+       ORDER BY source.priority
+       LIMIT 1
+     ) sd ON true
      LEFT JOIN clients c ON c.id = sd.client_id AND c.store_id = sd.store_id
      WHERE requested.document_type IN ('ORDER', 'DELIVERY_NOTE', 'INVOICE')
-       AND sd.document_type IN ('ORDER', 'DELIVERY_NOTE')
      LIMIT 1`,
     [documentId, storeId]
   );
