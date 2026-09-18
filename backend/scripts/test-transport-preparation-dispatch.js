@@ -15,6 +15,7 @@ const DELIVERY_NOTE_ID = '77777777-7777-4777-8777-777777777777';
 const INVOICED_DELIVERY_NOTE_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const INVOICE_ID = '99999999-9999-4999-8999-999999999999';
 const CHAIN_ID = '88888888-8888-4888-8888-888888888888';
+const SOGELMER_PURCHASE_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 
 function makeDb(overrides = {}) {
   const state = {
@@ -190,6 +191,55 @@ function prepLine(extra = {}) {
   };
 }
 
+function purchaseLine(extra = {}) {
+  return {
+    price_unit: 'kg',
+    ordered_colis: null,
+    received_colis: null,
+    ordered_quantity: null,
+    received_quantity: null,
+    meta_value: {},
+    ...extra,
+  };
+}
+
+function arrivalRow(extra = {}) {
+  return {
+    source_id: SOGELMER_PURCHASE_ID,
+    source_type: 'purchase_arrival',
+    reference: 'BL-SOGELMER-20260918',
+    date: '2026-09-18',
+    purchase_date: '2026-09-18',
+    receipt_date: null,
+    supplier_id: 'supplier-sogelmer',
+    supplier_name: 'SOGELMER',
+    supplier_code: 'SOG',
+    supplier_city: 'SOGELMER',
+    chain_id: CHAIN_ID,
+    chain_name: 'Fournisseur -> FT44',
+    carrier_id: DELANCHY_ID,
+    origin_label: 'SOGELMER',
+    site_code: 'FT44',
+    weight_kg: 0,
+    package_count: 0,
+    ...extra,
+  };
+}
+
+function purchasePackageCount(line = {}) {
+  const received = Number(line.received_colis || 0);
+  const ordered = Number(line.ordered_colis || 0);
+  return received > 0 ? received : ordered > 0 ? ordered : 0;
+}
+
+function supplierArrivalFromPurchaseLines(lines = [], extra = {}) {
+  return arrivalRow({
+    weight_kg: lines.reduce((sum, line) => sum + Number(dispatch.purchaseTransportLineWeight(line) || 0), 0),
+    package_count: lines.reduce((sum, line) => sum + purchasePackageCount(line), 0),
+    ...extra,
+  });
+}
+
 (async () => {
   assert.strictEqual(dispatch.resolveCarrierEmail({ transport_operations_email: 'ops@test', email: 'main@test' }), 'ops@test');
   assert.strictEqual(dispatch.resolveCarrierEmail({ email: 'main@test' }), 'main@test');
@@ -338,6 +388,38 @@ function prepLine(extra = {}) {
   assert(!supplierAnnouncement.includes('Client final'), 'Test F client final absent annonce fournisseur');
   assert(!supplierAnnouncement.includes(dispatch.DELIVERY_MODE), 'Test F mode absent annonce fournisseur');
 
+  const sogelmerLines = [
+    purchaseLine({ ordered_colis: 3, ordered_quantity: 3, meta_value: { total_weight_kg: 9 } }),
+    purchaseLine({ ordered_colis: 3, ordered_quantity: 3, meta_value: { total_weight_kg: 9 } }),
+    purchaseLine({ ordered_colis: 1, ordered_quantity: 3, meta_value: { total_weight_kg: 3 } }),
+    purchaseLine({ ordered_colis: 1, ordered_quantity: 3, meta_value: { total_weight_kg: 3 } }),
+    purchaseLine({ ordered_colis: 1, ordered_quantity: 3.6, meta_value: { total_weight_kg: 3.6 } }),
+    purchaseLine({ ordered_colis: 1, ordered_quantity: 3.4, meta_value: { total_weight_kg: 3.4 } }),
+    purchaseLine({ ordered_colis: 1, ordered_quantity: 10, meta_value: { total_weight_kg: 10 } }),
+  ];
+  const sogelmerArrival = supplierArrivalFromPurchaseLines(sogelmerLines);
+  assert.strictEqual(sogelmerArrival.package_count, 11, 'SOGELMER colis fournisseur = 11');
+  assert.strictEqual(sogelmerArrival.weight_kg, 41, 'SOGELMER poids transport fournisseur = 41');
+  assert.notStrictEqual(sogelmerArrival.weight_kg, 29, 'SOGELMER ne somme pas les poids unitaires');
+
+  assert.strictEqual(dispatch.purchaseTransportLineWeight(purchaseLine({ received_quantity: 12, ordered_quantity: 9, meta_value: { total_weight_kg: 9 } })), 12, 'received_quantity prime');
+  assert.strictEqual(dispatch.purchaseTransportLineWeight(purchaseLine({ received_quantity: 3, ordered_quantity: 3, meta_value: { total_weight_kg: 9 } })), 9, 'received_quantity copiee du poids unitaire ne masque pas le total explicite');
+  assert.strictEqual(dispatch.purchaseTransportLineWeight(purchaseLine({ ordered_quantity: 9 })), 9, 'ordered_quantity utilisee sans reception ni total explicite');
+  assert.strictEqual(dispatch.purchaseTransportLineWeight(purchaseLine({ price_unit: 'piece', ordered_quantity: 12 })), null, 'unite non kg sans total explicite non calculee');
+  assert.strictEqual(dispatch.purchaseTransportLineWeight(purchaseLine({ price_unit: 'piece', ordered_quantity: 12, meta_value: { total_weight_kg: 8.5 } })), 8.5, 'unite non kg utilise le poids explicite');
+  assert.strictEqual(supplierArrivalFromPurchaseLines([purchaseLine({ received_colis: 4, ordered_colis: 7, ordered_quantity: 10 })]).package_count, 4, 'colis recus priment');
+
+  const sogelmerDb = makeDb({ arrivals: [sogelmerArrival] });
+  const sogelmerDispatch = await dispatch.getPreparationDispatch(sogelmerDb, STORE_ID, { date: '2026-09-18' });
+  assert.strictEqual(sogelmerDispatch.results[0].supplier_arrivals[0].supplier_name, 'SOGELMER', 'SOGELMER visible dans arrivages');
+  assert.strictEqual(sogelmerDispatch.results[0].supplier_arrivals[0].package_count, 11, 'dispatch SOGELMER conserve 11 colis');
+  assert.strictEqual(sogelmerDispatch.results[0].supplier_arrivals[0].weight_kg, 41, 'dispatch SOGELMER affiche 41 kg');
+  const sogelmerEmail = dispatch.buildEmailPreviewForCarrier(sogelmerDispatch.results[0]);
+  assert(sogelmerEmail.text.includes('SOGELMER'), 'email transporteur mentionne SOGELMER');
+  assert(sogelmerEmail.text.includes('41 kg'), 'email transporteur affiche 41 kg');
+  const sogelmerSync = await dispatch.syncDraftShipments(makeDb({ arrivals: [sogelmerArrival] }), STORE_ID, { date: '2026-09-18' }, { user_id: 'user' });
+  assert.strictEqual(sogelmerSync.synced[0].total_weight_kg, 41, 'shipment fournisseur synchronise a 41 kg');
+
   assert(noPrep.results[0].client_deliveries[0].announcement_line.includes('E.Leclerc Orvault'), 'Test F client livre dans annonce');
   assert(!noPrep.results[0].client_deliveries[0].announcement_line.includes('Royale Maree'), 'Test F client facture absent du champ client a livrer');
 
@@ -383,6 +465,8 @@ function prepLine(extra = {}) {
   const service = fs.readFileSync(path.join(__dirname, '..', 'services', 'transportPreparationDispatchService.js'), 'utf8');
   assert(service.includes('cls.provider_supplier_id AS carrier_id'), 'dispatch must use client logistics provider');
   assert(service.includes('prepa'), 'dispatch SQL must recognize PREPA labels');
+  assert(service.includes("plm.meta_value ->> 'total_weight_kg'"), 'dispatch fournisseur doit lire total_weight_kg explicite');
+  assert(service.includes("LOWER(COALESCE(pl.price_unit, 'kg')) = 'kg'"), 'dispatch fournisseur doit proteger les unites non kg');
 
   const missing = dispatch.formatAnnouncementLine({ date: '2026-09-18', reference: 'BC-X', client_name: 'Client', delivery_mode: dispatch.DELIVERY_MODE });
   assert(missing.includes('A completer'), 'Test L donnees manquantes signalees');

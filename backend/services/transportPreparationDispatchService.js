@@ -40,6 +40,44 @@ function num(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function positiveNum(value) {
+  const parsed = num(value);
+  return parsed !== null && parsed > 0 ? parsed : null;
+}
+
+function normalizeUnit(value) {
+  return normalizeKey(value || 'kg');
+}
+
+function isKgUnit(value) {
+  return normalizeUnit(value) === 'kg';
+}
+
+function purchaseLineExplicitTotalWeight(line = {}) {
+  const meta = parseJson(line.meta_value || line.purchase_line_metadata || line.metadata, {});
+  return positiveNum(line.total_weight_kg)
+    ?? positiveNum(line.total_weight)
+    ?? positiveNum(meta.total_weight_kg)
+    ?? positiveNum(meta.total_weight)
+    ?? positiveNum(meta.poids_total_kg)
+    ?? null;
+}
+
+function purchaseTransportLineWeight(line = {}) {
+  const explicitTotalWeight = purchaseLineExplicitTotalWeight(line);
+  if (!isKgUnit(line.price_unit)) return explicitTotalWeight;
+  const receivedQuantity = positiveNum(line.received_quantity);
+  const orderedQuantity = positiveNum(line.ordered_quantity);
+  const hasReliableReceivedQuantity = receivedQuantity !== null
+    && (
+      explicitTotalWeight === null
+      || orderedQuantity === null
+      || receivedQuantity !== orderedQuantity
+      || receivedQuantity >= explicitTotalWeight
+    );
+  return hasReliableReceivedQuantity ? receivedQuantity : explicitTotalWeight ?? orderedQuantity ?? null;
+}
+
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
@@ -375,7 +413,20 @@ async function fetchSupplierArrivals(db, storeId, date) {
         tcl.carrier_id,
         COALESCE(tcl.origin_label, tc.origin_label, MAX(plm.origin_label), s.city, s.name) AS origin_label,
         COALESCE(tcl.destination_label, tc.destination_label, s.code) AS site_code,
-        COALESCE(SUM(NULLIF(COALESCE(pl.received_quantity, pl.ordered_quantity, 0), 0)), 0) AS weight_kg,
+        SUM(CASE
+          WHEN LOWER(COALESCE(pl.price_unit, 'kg')) = 'kg'
+            AND NULLIF(pl.received_quantity, 0) IS NOT NULL
+            AND (
+              plw.explicit_total_weight_kg IS NULL
+              OR NULLIF(pl.ordered_quantity, 0) IS NULL
+              OR pl.received_quantity IS DISTINCT FROM pl.ordered_quantity
+              OR pl.received_quantity >= plw.explicit_total_weight_kg
+            )
+            THEN pl.received_quantity
+          WHEN NULLIF(plw.explicit_total_weight_kg, 0) IS NOT NULL THEN plw.explicit_total_weight_kg
+          WHEN LOWER(COALESCE(pl.price_unit, 'kg')) = 'kg' AND NULLIF(pl.ordered_quantity, 0) IS NOT NULL THEN pl.ordered_quantity
+          ELSE NULL
+        END) AS weight_kg,
         COALESCE(SUM(NULLIF(COALESCE(pl.received_colis, pl.ordered_colis, 0), 0)), 0) AS package_count
      FROM purchases p
      JOIN suppliers s ON s.id = p.supplier_id AND s.store_id = p.store_id
@@ -384,6 +435,17 @@ async function fetchSupplierArrivals(db, storeId, date) {
      JOIN transport_chain_legs tcl ON tcl.chain_id = tc.id AND tcl.store_id = tc.store_id
      LEFT JOIN purchase_lines pl ON pl.purchase_id = p.id AND pl.store_id = p.store_id
      LEFT JOIN purchase_line_metadata plm ON plm.purchase_line_id = pl.id AND plm.meta_key = 'gc_line'
+     LEFT JOIN LATERAL (
+       SELECT REPLACE(candidate.value, ',', '.')::numeric AS explicit_total_weight_kg
+       FROM (VALUES
+         (1, plm.meta_value ->> 'total_weight_kg'),
+         (2, plm.meta_value ->> 'total_weight'),
+         (3, plm.meta_value ->> 'poids_total_kg')
+       ) AS candidate(priority, value)
+       WHERE candidate.value ~ '^[0-9]+([,.][0-9]+)?$'
+       ORDER BY candidate.priority
+       LIMIT 1
+     ) plw ON true
      WHERE p.store_id = $1
        AND COALESCE(p.receipt_date, p.purchase_date) = $2::date
        AND COALESCE(p.status, 'ordered') <> 'cancelled'
@@ -976,6 +1038,8 @@ module.exports = {
   formatPreparationEmailLines,
   attachmentSummary,
   supplierSelectionKey,
+  purchaseLineExplicitTotalWeight,
+  purchaseTransportLineWeight,
   supplierNameFromLine,
   buildPreparationSupplierBlocks,
   summarizeSupplierBlocks,
