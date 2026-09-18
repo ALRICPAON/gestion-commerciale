@@ -699,20 +699,21 @@
 
   function renderTree() {
     const query = els.search.value.trim().toLowerCase();
-    const visible = state.sections.filter((section) => {
+    const matches = (section) => {
       const text = `${section.code} ${section.title} ${section.content_text || ''} ${section.regulatory_references || ''}`.toLowerCase();
-      return !section.archived_at && (!query || text.includes(query));
-    });
-    const visibleIds = new Set(visible.map((section) => section.id));
-    const html = state.sections
-      .filter((section) => section.section_type === 'tome' && !section.archived_at && (!query || visibleIds.has(section.id) || childrenOf(section.id).some((child) => visibleIds.has(child.id))))
-      .map((tome) => {
-        const chapters = childrenOf(tome.id).filter((chapter) => !query || visibleIds.has(chapter.id));
-        return `<div class="quality-doc-tome">
-          <button class="${state.currentId === tome.id ? 'active' : ''}" data-section-id="${tome.id}" type="button"><strong>${tome.code}</strong> ${tome.title}</button>
-          ${chapters.map((chapter) => `<button class="chapter ${state.currentId === chapter.id ? 'active' : ''}" data-section-id="${chapter.id}" type="button"><span>${chapter.code}</span> ${chapter.title}</button>`).join('')}
-        </div>`;
-      }).join('');
+      return !query || text.includes(query);
+    };
+    const tree = window.QualityDocumentationTree.buildSectionTree(state.sections, matches);
+    const renderNode = (node, depth = 0) => {
+      const { section, children } = node;
+      return `<div class="quality-doc-section" data-depth="${depth}">
+        <button class="${state.currentId === section.id ? 'active' : ''}" data-section-id="${escapeHtml(section.id)}" type="button" style="--quality-doc-depth:${depth}">
+          ${depth === 0 ? `<strong>${escapeHtml(section.code)}</strong>` : `<span>${escapeHtml(section.code)}</span>`} ${escapeHtml(section.title)}
+        </button>
+        ${children.length ? `<div class="quality-doc-section-children">${children.map((child) => renderNode(child, depth + 1)).join('')}</div>` : ''}
+      </div>`;
+    };
+    const html = tree.map((node) => renderNode(node)).join('');
     els.tree.innerHTML = html || '<div class="quality-empty-state">Aucun chapitre trouve.</div>';
   }
 

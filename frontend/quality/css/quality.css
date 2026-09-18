@@ -334,26 +334,24 @@
   overflow: auto;
 }
 
-.quality-doc-tome {
+.quality-doc-section,
+.quality-doc-section-children {
   display: grid;
   gap: 5px;
 }
 
-.quality-doc-tome button {
+.quality-doc-section button {
   background: #f7fafc;
   border: 1px solid var(--alta-border);
   border-radius: 6px;
   color: var(--alta-navy);
   cursor: pointer;
-  padding: 9px 10px;
+  padding: 9px 10px 9px calc(10px + (var(--quality-doc-depth, 0) * 14px));
   text-align: left;
+  width: 100%;
 }
 
-.quality-doc-tome button.chapter {
-  margin-left: 14px;
-}
-
-.quality-doc-tome button.active,
+.quality-doc-section button.active,
 .quality-doc-mini.active {
   border-color: var(--alta-ocean);
   background: #e4f6f6;
