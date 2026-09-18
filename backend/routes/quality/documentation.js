@@ -59,7 +59,9 @@ const {
 } = require('../../services/quality/qualityDocumentationTableService');
 
 const router = express.Router();
-const UPLOAD_DIR = path.resolve(__dirname, '..', '..', 'uploads', 'quality-documentation-attachments');
+const UPLOAD_DIR = process.env.QUALITY_DOCUMENTATION_UPLOAD_DIR
+  ? path.resolve(process.env.QUALITY_DOCUMENTATION_UPLOAD_DIR)
+  : path.resolve(__dirname, '..', '..', 'uploads', 'quality-documentation-attachments');
 const MAX_FILE_SIZE = 25 * 1024 * 1024;
 const ALLOWED_MIME_PREFIXES = ['image/', 'application/pdf'];
 const ALLOWED_MIME_TYPES = new Set([
