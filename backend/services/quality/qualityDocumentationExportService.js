@@ -143,11 +143,44 @@ function paginationPreparationScript() {
 }
 
 function filteredSections(sections, options = {}) {
-  return sections
+  const activeSections = sections
     .filter((section) => !section.archived_at)
+    .filter((section) => section.status !== 'archived')
     .filter((section) => section.include_in_export !== false)
     .filter((section) => (options.only_validated ? section.status === 'validated' || section.section_type === 'tome' : true))
     .filter((section) => (options.tome_id ? section.id === options.tome_id || section.parent_id === options.tome_id : true));
+  if (!isDdppProfile(options)) return activeSections;
+  const hasDArchitecture = activeSections.some((section) => isDArchitectureCode(section.code));
+  if (!hasDArchitecture) return activeSections;
+  return activeSections.filter((section) => isDArchitectureCode(section.code));
+}
+
+function isDArchitectureCode(code) {
+  return /^D\d+(?:-\d+(?:\.\d+)*)?$/i.test(displayText(code));
+}
+
+function isLegacyTCode(code) {
+  return /^T[1-9](?:\b|-C\d+)/i.test(displayText(code));
+}
+
+function sectionIds(sections = []) {
+  return new Set(sections.map((section) => String(section.id)).filter(Boolean));
+}
+
+function itemsForSections(items = [], sections = [], sectionIdKey = 'section_id') {
+  const ids = sectionIds(sections);
+  if (!ids.size) return [];
+  return items.filter((item) => ids.has(String(item[sectionIdKey])));
+}
+
+function statusLabel(status) {
+  return {
+    validated: 'Complet',
+    ready_for_review: 'Complet pour revue',
+    to_complete: 'A completer',
+    draft: 'Brouillon',
+    archived: 'Archive',
+  }[status] || status || '-';
 }
 
 function renderSectionContent(section, includeMissing) {
@@ -710,8 +743,10 @@ function attachmentLabel(item) {
 
 function collectAttachmentAppendixItems(documentation, options = {}) {
   if (options.include_attachments === false) return [];
+  const allowedSectionIds = options.sections ? sectionIds(options.sections) : null;
   return (documentation.attachments || [])
     .filter((item) => !item.archived_at && item.include_in_export !== false)
+    .filter((item) => !allowedSectionIds || allowedSectionIds.has(String(item.section_id)))
     .map((item) => ({
       source: 'chapter_attachment',
       id: item.id,
@@ -742,6 +777,28 @@ function collectExternalAppendixItems(externalMasterAttachments = [], options = 
       checksum_sha256: document.checksum_sha256,
     };
   });
+}
+
+function dedupeDisplayItems(items = []) {
+  return dedupeAppendixItems(items).deduped;
+}
+
+function renderD1CorrespondenceTable(sections = []) {
+  const chapters = sections.filter((section) => section.section_type !== 'tome');
+  if (!chapters.length) return '';
+  const rows = chapters.map((section) => `
+    <tr>
+      <td>${ddppEscape(section.code)}</td>
+      <td>${ddppEscape(section.title)}</td>
+      <td>${ddppEscape(statusLabel(section.status))}</td>
+    </tr>
+  `).join('');
+  return `
+    <section class="pdf-page ddpp-d1-correspondence">
+      <h1>Tableau de correspondance D1</h1>
+      <table><thead><tr><th>Code D</th><th>Chapitre</th><th>Statut actuel</th></tr></thead><tbody>${rows}</tbody></table>
+    </section>
+  `;
 }
 
 function dedupeAppendixItems(items = []) {
@@ -855,16 +912,19 @@ async function mergeAppendices(mainPdf, appendixItems = [], logger = console) {
 function buildHtml(documentation, identity, options = {}) {
   const ddpp = isDdppProfile(options);
   const { collection, missing_items: missingItems, attachments } = documentation;
-  const renderOptions = {
-    ...options,
-    resolveImageSrc: options.resolveImageSrc || inlineImageDataUri,
-  };
   const masterAnnexes = documentation.master_annexes || [];
   const externalMasterAttachments = documentation.external_master_attachments || [];
   const sections = filteredSections(documentation.sections, options);
+  const scopedMissingItems = ddpp ? itemsForSections(missingItems || [], sections) : (missingItems || []);
+  const scopedAttachments = ddpp ? itemsForSections(attachments || [], sections) : (attachments || []);
+  const renderOptions = {
+    ...options,
+    sections,
+    resolveImageSrc: options.resolveImageSrc || inlineImageDataUri,
+  };
   const chapters = sections.filter((section) => section.section_type !== 'tome');
-  const attachmentAppendixItems = collectAttachmentAppendixItems(documentation, options);
-  const externalAppendixItems = options.include_external_master_documents ? collectExternalAppendixItems(externalMasterAttachments, options) : [];
+  const attachmentAppendixItems = collectAttachmentAppendixItems({ ...documentation, attachments: scopedAttachments }, renderOptions);
+  const externalAppendixItems = options.include_external_master_documents ? dedupeDisplayItems(collectExternalAppendixItems(externalMasterAttachments, renderOptions)) : [];
   const revisionRows = chapters.slice(0, ddpp ? 12 : 20).map((section) => `
     <tr>
       <td>${ddppEscape(section.version)}</td>
@@ -877,7 +937,7 @@ function buildHtml(documentation, identity, options = {}) {
     <tr>
       <td>${ddppEscape(section.code)}</td>
       <td>${section.section_type === 'tome' ? '<strong>' : ''}${ddppEscape(section.title)}${section.section_type === 'tome' ? '</strong>' : ''}</td>
-      ${ddpp ? `<td class="toc-page"><a href="#section-${escapeHtml(section.id)}">Page</a></td>` : `<td>${escapeHtml(section.status)}</td>`}
+      ${ddpp ? `<td class="toc-page"><a href="#section-${escapeHtml(section.id)}" aria-label="Page ${ddppEscape(section.code)}"></a></td>` : `<td>${escapeHtml(section.status)}</td>`}
     </tr>
   `).join('');
   const body = sections.map((section) => `
@@ -887,13 +947,13 @@ function buildHtml(documentation, identity, options = {}) {
       <div class="rich-content">${section.section_type === 'tome' ? (ddpp ? sanitizeDdppHtml(renderSectionContent(section, options.include_missing !== false)) : renderSectionContent(section, options.include_missing !== false)) : renderSectionBlocks(section, documentation, renderOptions)}</div>
     </section>
   `).join('');
-  const missingRows = missingItems
+  const missingRows = scopedMissingItems
     .filter((item) => item.status !== 'resolved')
     .map((item) => ddpp
       ? `<tr><td>${ddppEscape(ddppMissingCategory(item))}</td><td>${ddppEscape(item.section_code)}</td><td>${ddppEscape(item.section_title)}</td><td>${ddppEscape(item.description)}</td></tr>`
       : `<tr><td>${escapeHtml(item.section_code)}</td><td>${escapeHtml(item.section_title)}</td><td class="missing">${escapeHtml(item.description)}</td><td>${escapeHtml(missingTimelineLabel(item.severity))}</td><td>${escapeHtml(formatDate(item.due_at))}</td></tr>`)
     .join('');
-  const attachmentRows = attachments
+  const attachmentRows = scopedAttachments
     .filter((item) => !item.archived_at && item.include_in_export !== false)
     .map((item) => ddpp
       ? `<tr><td>${ddppEscape(item.section_title)}</td><td>${ddppEscape(humanAttachmentTitle(item))}</td><td>Pièce jointe en annexe</td></tr>`
@@ -940,6 +1000,7 @@ function buildHtml(documentation, identity, options = {}) {
           </tbody>
         </table>
       </section>
+      ${ddpp ? renderD1CorrespondenceTable(sections) : ''}
       ${options.include_missing === false ? '' : (ddpp
         ? `<section class="pdf-page ddpp-open-items"><h1>Éléments restant à compléter selon l'avancement du projet</h1><table><thead><tr><th>Temporalité</th><th>Code</th><th>Chapitre</th><th>Élément</th></tr></thead><tbody>${missingRows || '<tr><td colspan="4">Aucun élément ouvert.</td></tr>'}</tbody></table></section>`
         : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Temporalite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`)}
@@ -973,6 +1034,7 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-pdf--ddpp .section-meta { color: #4b5563; }
     .toc-table a { color: inherit; text-decoration: none; }
     .toc-page a::after { content: target-counter(attr(href), page); }
+    .toc-page a:empty::before { content: target-counter(attr(href), page); }
     .ddpp-notice { border: 1px solid #94a3b8; background: #f8fafc; color: #263746; font-weight: 700; padding: 8px 10px; }
     .pdf-page, .pdf-tome { page-break-before: always; }
     h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; color: #263746; orphans: 3; widows: 3; }
@@ -1068,12 +1130,17 @@ async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
     margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
     beforePdfScript: paginationPreparationScript(),
   });
+  const renderOptions = { ...options, sections };
   const appendixItems = [
-    ...collectAttachmentAppendixItems(documentation, options),
-    ...(options.include_external_master_documents ? collectExternalAppendixItems(documentation.external_master_attachments || [], options) : []),
+    ...collectAttachmentAppendixItems(documentation, renderOptions),
+    ...(options.include_external_master_documents ? collectExternalAppendixItems(documentation.external_master_attachments || [], renderOptions) : []),
   ];
+  const legacySectionsFiltered = isDdppProfile(options)
+    ? documentation.sections.filter((section) => isLegacyTCode(section.code) && !sections.some((active) => String(active.id) === String(section.id))).length
+    : 0;
   const exportSummary = {
     chapters: sections.filter((section) => section.section_type !== 'tome').length,
+    legacy_sections_filtered: legacySectionsFiltered,
     procedures: (documentation.master_annexes || []).filter(({ document }) => document.document_type === 'procedure').length,
     forms: (documentation.master_annexes || []).filter(({ document }) => document.document_type === 'record_form').length,
     requested_attachments: appendixItems.length,

@@ -37,7 +37,7 @@ function fixtureDocumentation() {
     id: UUID,
     section_id: 'chapter-diagram',
     block_id: 'block-diagram',
-    title: 'T3-C18 - Diagramme de fabrication',
+    title: 'D1-3.2.3 - Diagramme de fabrication',
     diagram_data: {
       schema_version: 1,
       version: 1,
@@ -50,19 +50,22 @@ function fixtureDocumentation() {
   return {
     collection: { title: "Manuel qualite et dossier d'agrement sanitaire", version: '1.0' },
     sections: [
-      { id: 'tome-1', section_type: 'tome', code: 'T3', title: 'Production', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>draft ready_for_review ' + UUID + '</p>' },
-      { id: 'chapter-diagram', section_type: 'chapter', code: 'T3-C18', title: 'Diagrammes de fabrication', version: '1.0', status: 'draft', include_in_export: true, content_html: '<p>Legacy</p>' },
-      { id: 'chapter-plan', section_type: 'chapter', code: 'T2-C03', title: 'Plans', version: '1.0', status: 'to_complete', include_in_export: true, content_html: '<p>Legacy plans</p>' },
+      { id: 'tome-1', section_type: 'tome', code: 'D1-3', title: 'Production', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>draft ready_for_review ' + UUID + '</p>' },
+      { id: 'chapter-diagram', section_type: 'chapter', code: 'D1-3.2.3', title: 'Diagrammes de fabrication', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Legacy</p>' },
+      { id: 'chapter-plan', section_type: 'chapter', code: 'D1-2.8', title: 'Plans', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Legacy plans</p>' },
+      { id: 'legacy-tome', section_type: 'tome', code: 'T3', title: 'Production historique', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Ancien tome T</p>' },
+      { id: 'legacy-chapter', section_type: 'chapter', code: 'T2-C03', title: 'Plans historiques', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Ancien chapitre T</p>' },
     ],
     missing_items: [
-      { id: 'm-resolved', status: 'resolved', section_code: 'T1-C01', section_title: 'Resolve', description: 'Ancien point resolu', severity: 'normal' },
-      { id: 'm-open-1', status: 'open', section_code: 'T2-C03', section_title: 'Plans', description: 'Plans de la case / contrat incendie', severity: 'external_pending' },
-      { id: 'm-open-2', status: 'open', section_code: 'T3-C18', section_title: 'Diagrammes', description: 'Verification terrain des diagrammes apres demarrage', severity: 'future' },
-      { id: 'm-open-3', status: 'open', section_code: 'ADMIN', section_title: 'Instruction', description: "Numero d'agrement apres instruction", severity: 'after_instruction' },
+      { id: 'm-resolved', section_id: 'chapter-plan', status: 'resolved', section_code: 'D1-2.8', section_title: 'Resolve', description: 'Ancien point resolu', severity: 'normal' },
+      { id: 'm-open-1', section_id: 'chapter-plan', status: 'open', section_code: 'D1-2.8', section_title: 'Plans', description: 'Plans de la case / contrat incendie', severity: 'external_pending' },
+      { id: 'm-open-2', section_id: 'chapter-diagram', status: 'open', section_code: 'D1-3.2.3', section_title: 'Diagrammes', description: 'Verification terrain des diagrammes apres demarrage', severity: 'future' },
+      { id: 'm-open-legacy', section_id: 'legacy-chapter', status: 'open', section_code: 'T2-C03', section_title: 'Plans historiques', description: 'Ancien point T a ignorer', severity: 'normal' },
     ],
     attachments: [
-      { id: 'att-1', section_title: 'Plans', filename: 'case 13 ÃƒÂ©tage.png', original_filename: 'case 13 ÃƒÂ©tage.png', mime_type: 'image/png', file_path: 'missing.png', include_in_export: true },
-      { id: 'att-2', section_title: 'Analyses', filename: '2026.05.12 analyse EDM traitÃƒÂ©e.pdf', original_filename: '2026.05.12 analyse EDM traitÃƒÂ©e.pdf', mime_type: 'application/pdf', file_path: 'missing.pdf', include_in_export: true },
+      { id: 'att-1', section_id: 'chapter-plan', section_title: 'Plans', filename: 'case 13 ÃƒÂ©tage.png', original_filename: 'case 13 ÃƒÂ©tage.png', mime_type: 'image/png', file_path: 'missing.png', include_in_export: true },
+      { id: 'att-2', section_id: 'chapter-diagram', section_title: 'Analyses', filename: '2026.05.12 analyse EDM traitÃƒÂ©e.pdf', original_filename: '2026.05.12 analyse EDM traitÃƒÂ©e.pdf', mime_type: 'application/pdf', file_path: 'missing.pdf', include_in_export: true },
+      { id: 'att-legacy', section_id: 'legacy-chapter', section_title: 'Plans historiques', filename: 'legacy-t.pdf', original_filename: 'legacy-t.pdf', mime_type: 'application/pdf', file_path: 'missing.pdf', include_in_export: true },
     ],
     blocks: [
       { id: 'block-text', chapter_id: 'chapter-diagram', block_type: 'rich_text', position: 10, is_visible: true, content: { html: '<p>Contenu metier utile. block_id: ' + UUID + ' draft</p>' } },
@@ -82,9 +85,9 @@ function fixtureDocumentation() {
           status: 'valid',
           valid_from: '2026-05-01',
           structured_content: { object: 'Decrire le nettoyage', method: 'Application selon plan de nettoyage.' },
-          references: [{ target_type: 'documentation_section', target_label: 'T2-C03 Plans', relation_type: 'applies_to' }],
+          references: [{ target_type: 'documentation_section', target_label: 'D1-2.8 Plans', relation_type: 'applies_to' }],
         },
-        references: [{ target_label: 'T2-C03 Plans' }],
+        references: [{ target_label: 'D1-2.8 Plans' }],
       },
       {
         document: {
@@ -122,7 +125,7 @@ function fixtureDocumentation() {
     ],
     external_master_attachments: [{
       document: { id: 'ext-1', title: 'Analyse eau', original_filename: '2026.05.12 analyse EDM traitÃƒÂ©e.pdf', storage_path: 'missing.pdf', mime_type: 'application/pdf' },
-      references: [{ relation_type_label: 'Analyse eau/glace', target_label: 'T2-C03 Plans' }],
+      references: [{ relation_type_label: 'Analyse eau/glace', target_label: 'D1-2.8 Plans' }],
     }],
   };
 }
@@ -152,8 +155,12 @@ async function main() {
   assert(!html.includes(UUID), 'les UUID doivent etre masques du HTML DDPP');
   assert(!html.includes('block_id'), 'les metadonnees techniques doivent etre masquees');
   assert(!html.includes('Ancien point resolu'), 'les missing_items resolus ne doivent pas apparaitre');
+  assert(!html.includes('T2-C03') && !html.includes('T3-C18') && !html.includes('T1-C01'), 'le profil DDPP D ne doit plus exposer les codes T historiques');
+  assert(!html.includes('Ancien chapitre T') && !html.includes('Ancien point T a ignorer') && !html.includes('legacy-t.pdf'), 'les contenus rattaches aux anciens T doivent etre ignores');
   assert(html.includes('Plans de la case / contrat incendie'), 'les points ouverts legitimes doivent rester visibles');
-  assert(html.includes('instruction'), 'les points ouverts doivent etre classes sobrement');
+  assert(html.includes('Tableau de correspondance D1'), 'le tableau D1 doit etre genere depuis les chapitres exportes');
+  assert(/D1-2\.8[\s\S]{0,300}Complet/.test(html), 'D1-2.8 doit refleter le statut courant valide');
+  assert(/D1-3\.2\.3[\s\S]{0,300}Complet/.test(html), 'D1-3.2.3 doit refleter le statut courant valide');
   assert(!html.includes('Pelage si necessaire'), 'le rendu DDPP ne doit pas reprendre un ancien SVG Mermaid');
   assert(!html.includes(OLD_DIAGRAM_ID), 'un diagramme historique sans bloc actif ne doit pas apparaitre');
   assert(html.includes('case 13') && !html.includes('case 13 Ãƒ'), 'les noms de fichiers mojibake doivent etre corriges a l affichage');
@@ -161,6 +168,7 @@ async function main() {
   assert(!html.includes('application/pdf</td>'), 'les MIME bruts ne doivent pas etre exposes en DDPP');
   assert(html.includes('ENR-005') && /EXEMPLE DE SUPPORT ALTA - PR\S-OUVERTURE/.test(html), 'les exemples ENR doivent etre clairement marques pre-ouverture');
   assert(html.includes('toc-page') && html.includes('target-counter'), 'le sommaire doit porter un mecanisme de pagination imprimee');
+  assert(!html.includes('>Page</a>'), 'les lignes du sommaire ne doivent pas imprimer le libelle Page comme valeur');
   assert(html.includes('quality-pdf-block--split-table'), 'les tableaux larges doivent conserver le mode split-table');
   assert(html.includes('Annexes fichiers'), 'les annexes doivent etre organisees');
   assert(html.includes('PROC-010') && !html.includes('Statut valid'), 'les procedures doivent masquer les statuts internes');
