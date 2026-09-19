@@ -644,7 +644,7 @@ function renderDocumentBlock(block, options = {}) {
     return `<aside class="quality-to-complete-block"><strong>A completer :</strong> ${escapeHtml(block.content?.text || block.title || 'Information a completer')}</aside>`;
   }
   if (block.block_type === 'separator') return '<hr class="quality-document-separator">';
-  if (block.block_type === 'document_table') return block.table ? renderTableBlock(block.table) : '';
+  if (block.block_type === 'document_table') return block.table ? renderTableBlock(block.table, options) : '';
   if (block.block_type === 'mermaid_diagram') return block.diagram ? renderDiagramBlock(block.diagram, options) : '';
   if (block.block_type === 'image' && block.attachment) {
     const caption = block.content?.caption || block.title || block.attachment.filename || '';
