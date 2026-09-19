@@ -645,7 +645,7 @@ function renderDocumentBlock(block, options = {}) {
   }
   if (block.block_type === 'separator') return '<hr class="quality-document-separator">';
   if (block.block_type === 'document_table') return block.table ? renderTableBlock(block.table) : '';
-  if (block.block_type === 'mermaid_diagram') return block.diagram ? renderDiagramBlock(block.diagram) : '';
+  if (block.block_type === 'mermaid_diagram') return block.diagram ? renderDiagramBlock(block.diagram, options) : '';
   if (block.block_type === 'image' && block.attachment) {
     const caption = block.content?.caption || block.title || block.attachment.filename || '';
     const source = typeof options.resolveImageSrc === 'function'

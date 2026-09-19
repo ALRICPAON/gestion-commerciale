@@ -1,11 +1,18 @@
 ﻿const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { PDFDocument, StandardFonts } = require('pdf-lib');
 
-const { buildHtml } = require('../services/quality/qualityDocumentationExportService');
+const {
+  buildHtml,
+  collectAttachmentAppendixItems,
+  collectExternalAppendixItems,
+  mergeAppendices,
+  renderDocumentationMainPdf,
+} = require('../services/quality/qualityDocumentationExportService');
 const { normalizeDiagramData } = require('../services/quality/qualityDocumentationDiagramService');
 const { normalizeTableData } = require('../services/quality/qualityDocumentationTableService');
-const { closeSharedBrowserForTest, renderHtmlToPdf } = require('../services/pdf/pdfRenderer');
+const { closeSharedBrowserForTest } = require('../services/pdf/pdfRenderer');
 
 const UUID = '8c84a701-a84d-47c9-877f-f6d2aa89b45c';
 const OLD_DIAGRAM_ID = '4ad1bd27-d39b-47b5-9edb-b3257ae3426b';
@@ -33,19 +40,20 @@ function fixtureDocumentation() {
     title: 'Matrice HACCP large',
     table_data: wideTable(),
   };
+  const diagramSource = 'flowchart TD\nA[Reception] --> B[Preparation immediate]\nB --> C[Conditionnement]\nC --> D[Expedition]';
   const diagram = {
     id: UUID,
     section_id: 'chapter-diagram',
     block_id: 'block-diagram',
-    title: 'D1-3.2.3 - Diagramme de fabrication',
-    diagram_data: {
+    title: 'Flux produits frais - case n 13',
+    diagram_data: normalizeDiagramData({
       schema_version: 1,
       version: 1,
       editor_mode: 'mermaid',
       title: 'Produits de la peche prepares',
-      source: 'flowchart TD\nA[Reception] --> B[Preparation]\nB --> C[Conditionnement]\nC --> D[Expedition]',
-      rendered_svg: '<svg><text>Pelage si necessaire</text></svg>',
-    },
+      source: diagramSource,
+      rendered_svg: '<svg viewBox="0 0 1200 800"><text>PPrreeppaarraattiioonn iimmmmeeddiiaattee</text></svg>',
+    }, { assumeRenderedSvgCurrent: true }),
   };
   return {
     collection: { title: "Manuel qualite et dossier d'agrement sanitaire", version: '1.0' },
@@ -53,6 +61,9 @@ function fixtureDocumentation() {
       { id: 'tome-1', section_type: 'tome', code: 'D1-3', title: 'Production', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>draft ready_for_review ' + UUID + '</p>' },
       { id: 'chapter-diagram', section_type: 'chapter', code: 'D1-3.2.3', title: 'Diagrammes de fabrication', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Legacy</p>' },
       { id: 'chapter-plan', section_type: 'chapter', code: 'D1-2.8', title: 'Plans', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Legacy plans</p>' },
+      { id: 'tome-identity', section_type: 'tome', code: 'D1-1', title: 'Identite de l etablissement', version: '1.0', status: 'draft', include_in_export: true, content_html: '<p>Statut : Brouillon.</p><p>Identite reglementaire utile.</p>' },
+      { id: 'chapter-identity', section_type: 'chapter', code: 'D1-1.2', title: 'Organisation', version: '1.0', status: 'to_complete', include_in_export: true, content_html: '<p>Organisation utile.</p>' },
+      { id: 'tome-pms', section_type: 'tome', code: 'D1-2', title: 'Plan de maitrise sanitaire', version: '1.0', status: 'ready_for_review', include_in_export: true, content_html: '<p>Statut : Complet pour le depot.</p><p>PMS utile.</p>' },
       { id: 'legacy-tome', section_type: 'tome', code: 'T3', title: 'Production historique', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Ancien tome T</p>' },
       { id: 'legacy-chapter', section_type: 'chapter', code: 'T2-C03', title: 'Plans historiques', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Ancien chapitre T</p>' },
     ],
@@ -72,6 +83,7 @@ function fixtureDocumentation() {
       { id: 'block-diagram', chapter_id: 'chapter-diagram', block_type: 'mermaid_diagram', position: 20, is_visible: true, content: { diagram_id: UUID }, diagram },
       { id: 'block-table', chapter_id: 'chapter-diagram', block_type: 'document_table', position: 30, is_visible: true, content: { table_id: table.id }, table },
       { id: 'block-plan', chapter_id: 'chapter-plan', block_type: 'image', position: 10, is_visible: true, content: { caption: 'Plan RDC et etage' }, attachment: { filename: 'plan.png', mime_type: 'image/png', file_path: '' } },
+      { id: 'block-open', chapter_id: 'chapter-plan', block_type: 'to_complete', position: 20, is_visible: true, content: { text: 'Element ouvert interne' } },
     ],
     diagrams: [diagram, { id: OLD_DIAGRAM_ID, section_id: 'chapter-diagram', archived_at: null, diagram_data: normalizeDiagramData({ editor_mode: 'mermaid', source: 'flowchart TD\nX[Pelage si necessaire] --> Y[Fin]' }) }],
     tables: [table],
@@ -130,15 +142,40 @@ function fixtureDocumentation() {
   };
 }
 
+async function createTestPdf(filePath, label) {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage();
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  page.drawText(label, { x: 50, y: 760, size: 14, font });
+  fs.writeFileSync(filePath, Buffer.from(await pdf.save()));
+}
+
+async function extractPdfText(pdfBuffer) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const document = await pdfjs.getDocument({ data: new Uint8Array(pdfBuffer), disableWorker: true }).promise;
+  try {
+    const pages = [];
+    for (let pageNumber = 1; pageNumber <= document.numPages; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      const content = await page.getTextContent();
+      pages.push(content.items.map((item) => item.str).join(' '));
+    }
+    return pages.join('\n');
+  } finally {
+    await document.destroy();
+  }
+}
+
 async function main() {
   const documentation = fixtureDocumentation();
-  const html = buildHtml(documentation, {
+  const identity = {
     company_name: 'ALTA MAREE',
     address_line1: 'Case n 13',
     postal_code: '85100',
     city: "Les Sables-d'Olonne",
     sanitary_approval_number: 'FR 85.999.001 CE',
-  }, {
+  };
+  const options = {
     profile: 'ddpp',
     export_type: 'ddpp',
     include_missing: true,
@@ -146,7 +183,22 @@ async function main() {
     include_master_annexes: true,
     include_external_master_documents: true,
     include_enr_examples: true,
-  });
+  };
+  const outputDir = path.resolve(__dirname, '..', 'uploads', 'quality-documentation-exports');
+  const assetDir = path.join(outputDir, 'ddpp-test-assets');
+  fs.mkdirSync(assetDir, { recursive: true });
+  const attachmentPaths = [path.join(assetDir, 'plan.pdf'), path.join(assetDir, 'analyse.pdf')];
+  const externalPath = path.join(assetDir, 'document-externe.pdf');
+  await createTestPdf(attachmentPaths[0], 'Plan case 13');
+  await createTestPdf(attachmentPaths[1], 'Analyse eau');
+  await createTestPdf(externalPath, 'Justificatif externe');
+  documentation.attachments[0].file_path = attachmentPaths[0];
+  documentation.attachments[0].mime_type = 'application/pdf';
+  documentation.attachments[1].file_path = attachmentPaths[1];
+  documentation.external_master_attachments[0].document.storage_path = externalPath;
+
+  const rendered = await renderDocumentationMainPdf(documentation, identity, options);
+  const html = rendered.html;
 
   assert(html.includes('demande en cours'), 'la couverture DDPP ne doit pas afficher de faux numero');
   assert(!html.includes('FR 85.999.001 CE'), 'le numero historique ne doit pas apparaitre');
@@ -157,18 +209,29 @@ async function main() {
   assert(!html.includes('Ancien point resolu'), 'les missing_items resolus ne doivent pas apparaitre');
   assert(!html.includes('T2-C03') && !html.includes('T3-C18') && !html.includes('T1-C01'), 'le profil DDPP D ne doit plus exposer les codes T historiques');
   assert(!html.includes('Ancien chapitre T') && !html.includes('Ancien point T a ignorer') && !html.includes('legacy-t.pdf'), 'les contenus rattaches aux anciens T doivent etre ignores');
-  assert(html.includes('Plans de la case / contrat incendie'), 'les points ouverts legitimes doivent rester visibles');
-  assert(html.includes('Tableau de correspondance D1'), 'le tableau D1 doit etre genere depuis les chapitres exportes');
-  assert(/D1-2\.8[\s\S]{0,300}Complet/.test(html), 'D1-2.8 doit refleter le statut courant valide');
-  assert(/D1-3\.2\.3[\s\S]{0,300}Complet/.test(html), 'D1-3.2.3 doit refleter le statut courant valide');
+  assert(!html.includes('Plans de la case / contrat incendie'), 'les points ouverts ne doivent pas etre exposes en DDPP');
+  assert(!/Tableau de correspondance D1|Statut actuel|Éléments restant à compléter/i.test(html), 'le suivi interne ne doit pas etre rendu');
+  assert(!/Statut\s*:\s*(?:Complet|Brouillon|À compléter|A completer)/i.test(html), 'les lignes de statut doivent etre retirees des chapitres');
+  assert(!html.includes('Element ouvert interne'), 'les blocs to_complete doivent etre masques en DDPP');
+  const orderedCodes = ['D1-1', 'D1-1.2', 'D1-2', 'D1-2.8', 'D1-3', 'D1-3.2.3'];
+  orderedCodes.reduce((previousIndex, code) => {
+    const index = html.indexOf(`<td>${code}</td>`, previousIndex + 1);
+    assert(index > previousIndex, `le sommaire doit placer ${code} dans l ordre reglementaire`);
+    return index;
+  }, -1);
+  const expectedSectionIds = documentation.sections.filter((section) => /^D/.test(section.code)).map((section) => section.id).sort();
+  assert.deepStrictEqual(Object.keys(rendered.toc_page_numbers).sort(), expectedSectionIds, 'chaque chapitre D doit avoir une page de sommaire');
+  for (const pageNumber of Object.values(rendered.toc_page_numbers)) {
+    assert(Number.isInteger(pageNumber) && pageNumber > 0, 'chaque ligne du sommaire doit avoir un numero de page');
+  }
   assert(!html.includes('Pelage si necessaire'), 'le rendu DDPP ne doit pas reprendre un ancien SVG Mermaid');
   assert(!html.includes(OLD_DIAGRAM_ID), 'un diagramme historique sans bloc actif ne doit pas apparaitre');
   assert(html.includes('case 13') && !html.includes('case 13 Ãƒ'), 'les noms de fichiers mojibake doivent etre corriges a l affichage');
   assert(html.toLowerCase().includes('analyse edm') && !html.includes('traitÃƒ'), 'les accents des annexes doivent etre lisibles');
   assert(!html.includes('application/pdf</td>'), 'les MIME bruts ne doivent pas etre exposes en DDPP');
   assert(html.includes('ENR-005') && /EXEMPLE DE SUPPORT ALTA - PR\S-OUVERTURE/.test(html), 'les exemples ENR doivent etre clairement marques pre-ouverture');
-  assert(html.includes('toc-page') && html.includes('target-counter'), 'le sommaire doit porter un mecanisme de pagination imprimee');
-  assert(!html.includes('>Page</a>'), 'les lignes du sommaire ne doivent pas imprimer le libelle Page comme valeur');
+  assert(html.includes('toc-page') && !html.includes('target-counter'), 'le sommaire doit contenir des numeros calcules explicitement');
+  assert(!/<td class="toc-page"><a[^>]*><\/a><\/td>/.test(html), 'aucune ligne du sommaire ne doit avoir une page vide');
   assert(html.includes('quality-pdf-block--split-table'), 'les tableaux larges doivent conserver le mode split-table');
   assert(html.includes('Annexes fichiers'), 'les annexes doivent etre organisees');
   assert(html.includes('PROC-010') && !html.includes('Statut valid'), 'les procedures doivent masquer les statuts internes');
@@ -185,6 +248,8 @@ async function main() {
   assert(html.includes('Vue ALTA - filiation lot'), 'ENR-017 doit etre rendu nativement');
   assert(html.includes('Support DDPP - surveillance nuisibles'), 'ENR generique doit rester disponible');
   assert(/EXEMPLE DE SUPPORT ALTA - PR\S-OUVERTURE/.test(html), 'les vues fixture doivent porter le bandeau pre-ouverture');
+  assert(!html.includes('PPrreeppaarraattiioonn'), 'le SVG stocke avec double couche texte doit etre ignore en DDPP');
+  assert((html.match(/Preparation immediate/g) || []).length === 1, 'le libelle du diagramme doit etre rendu une seule fois depuis la source');
 
   const internalHtml = buildHtml(documentation, {
     company_name: 'ALTA MAREE',
@@ -201,20 +266,32 @@ async function main() {
   });
   assert(internalHtml.includes('remplir'), 'l export interne doit conserver le formulaire ENR complet');
   assert(internalHtml.includes('UTILISATION DANS ALTA'), 'l export interne doit conserver les sections internes des ENR');
+  assert(internalHtml.includes('Statut : Brouillon') && internalHtml.includes('Element ouvert interne'), 'l export interne doit conserver les statuts et le suivi');
 
-  const pdf = await renderHtmlToPdf(html, {
-    margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
-  });
-  const outputDir = path.resolve(__dirname, '..', 'uploads', 'quality-documentation-exports');
-  fs.mkdirSync(outputDir, { recursive: true });
-  const outputPath = path.join(outputDir, 'ddpp-test-fixture.pdf');
-  fs.writeFileSync(outputPath, pdf);
+  const sections = documentation.sections.filter((section) => /^D/.test(section.code));
+  const renderOptions = { ...options, sections };
+  const appendixItems = [
+    ...collectAttachmentAppendixItems(documentation, renderOptions),
+    ...collectExternalAppendixItems(documentation.external_master_attachments, renderOptions),
+  ];
+  const merged = await mergeAppendices(rendered.pdf, appendixItems);
+  assert.strictEqual(merged.summary.embedded_attachments, 3, 'les pieces jointes et documents externes doivent rester fusionnes');
+  const pdfText = await extractPdfText(merged.pdf);
+  const normalizedPdfText = pdfText.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  assert(!/tableau de correspondance|elements? restant a completer|\bbrouillon\b|\bcomplet(?:e)?\b|\bmanquant\b|statut actuel|element ouvert|suivi (?:de migration|projet)/i.test(normalizedPdfText), 'le PDF final ne doit exposer aucun workflow interne');
+  assert(pdfText.includes('PROC-010') && pdfText.includes('ENR-005'), 'les PROC et ENR doivent rester presents dans le PDF final');
+  assert(pdfText.includes('Plan case 13') && pdfText.includes('Justificatif externe'), 'les annexes doivent etre presentes dans le PDF fusionne');
+
+  const outputPath = path.join(outputDir, 'ddpp-control-clean-workflow.pdf');
+  fs.writeFileSync(outputPath, merged.pdf);
 
   console.log(JSON.stringify({
     ok: true,
     ddpp_profile: true,
     generated_pdf: outputPath,
-    bytes: pdf.length,
+    pages_in_toc: rendered.toc_page_numbers,
+    embedded_attachments: merged.summary.embedded_attachments,
+    bytes: merged.pdf.length,
   }, null, 2));
 }
 
