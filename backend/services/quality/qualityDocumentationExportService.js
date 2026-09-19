@@ -70,7 +70,7 @@ function stripTechnicalText(value) {
 }
 
 function sanitizeDdppHtml(html = '') {
-  return String(html || '')
+  return removeDdppWorkflowHtml(html)
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, '')
     .replace(/\b(?:store_id|section_id|block_id|collection_id|source_record_id|quality_event_id|created_by|updated_by|missing_block|is_attached|payload|hash|mcp)\b\s*:?\s*/gi, '')
     .replace(/\b(?:draft|to_complete|ready_for_review|validated)\b/gi, '')
@@ -152,7 +152,9 @@ function filteredSections(sections, options = {}) {
   if (!isDdppProfile(options)) return activeSections;
   const hasDArchitecture = activeSections.some((section) => isDArchitectureCode(section.code));
   if (!hasDArchitecture) return activeSections;
-  return activeSections.filter((section) => isDArchitectureCode(section.code));
+  return activeSections
+    .filter((section) => isDArchitectureCode(section.code))
+    .sort(compareRegulatoryCodes);
 }
 
 function isDArchitectureCode(code) {
@@ -161,6 +163,13 @@ function isDArchitectureCode(code) {
 
 function isLegacyTCode(code) {
   return /^T[1-9](?:\b|-C\d+)/i.test(displayText(code));
+}
+
+function compareRegulatoryCodes(left, right) {
+  return displayText(left.code).localeCompare(displayText(right.code), 'fr', {
+    numeric: true,
+    sensitivity: 'base',
+  });
 }
 
 function sectionIds(sections = []) {
@@ -173,14 +182,33 @@ function itemsForSections(items = [], sections = [], sectionIdKey = 'section_id'
   return items.filter((item) => ids.has(String(item[sectionIdKey])));
 }
 
-function statusLabel(status) {
-  return {
-    validated: 'Complet',
-    ready_for_review: 'Complet pour revue',
-    to_complete: 'A completer',
-    draft: 'Brouillon',
-    archived: 'Archive',
-  }[status] || status || '-';
+function stripHtmlText(value = '') {
+  return displayText(String(value)
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&agrave;/gi, 'a')
+    .replace(/&eacute;/gi, 'e'));
+}
+
+function isDdppWorkflowLine(value = '') {
+  const text = stripHtmlText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return /^(?:statut(?: actuel)?\s*:?\s*)?(?:brouillon|complet(?: pour (?:le depot|revue))?|a completer|manquant|valide)(?:\.|$)/.test(text)
+    || /^statut(?: actuel)?\s*:?/.test(text)
+    || /^elements? restant a completer/.test(text)
+    || /^elements? ouverts?\s*:?/.test(text)
+    || /^suivi (?:de migration|projet)\b/.test(text);
+}
+
+function removeDdppWorkflowHtml(html = '') {
+  let cleaned = String(html || '');
+  for (const tag of ['p', 'li', 'aside']) {
+    const pattern = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi');
+    cleaned = cleaned.replace(pattern, (block) => (isDdppWorkflowLine(block) ? '' : block));
+  }
+  return cleaned.replace(/<(?:div|span)\b[^>]*class=["'][^"']*(?:status|workflow|missing-info|to-complete)[^"']*["'][^>]*>[\s\S]*?<\/(?:div|span)>/gi, '');
 }
 
 function renderSectionContent(section, includeMissing) {
@@ -220,7 +248,10 @@ function pdfBlockClasses(block) {
 }
 
 function renderPdfBlock(block, options = {}) {
-  const html = renderDocumentBlock(block, options);
+  const html = renderDocumentBlock(block, {
+    ...options,
+    forceMermaidRenderFromSource: isDdppProfile(options),
+  });
   if (!html) return '';
   return `<div class="${pdfBlockClasses(block)}" data-quality-block-type="${escapeHtml(block.block_type)}">${html}</div>`;
 }
@@ -783,24 +814,6 @@ function dedupeDisplayItems(items = []) {
   return dedupeAppendixItems(items).deduped;
 }
 
-function renderD1CorrespondenceTable(sections = []) {
-  const chapters = sections.filter((section) => section.section_type !== 'tome');
-  if (!chapters.length) return '';
-  const rows = chapters.map((section) => `
-    <tr>
-      <td>${ddppEscape(section.code)}</td>
-      <td>${ddppEscape(section.title)}</td>
-      <td>${ddppEscape(statusLabel(section.status))}</td>
-    </tr>
-  `).join('');
-  return `
-    <section class="pdf-page ddpp-d1-correspondence">
-      <h1>Tableau de correspondance D1</h1>
-      <table><thead><tr><th>Code D</th><th>Chapitre</th><th>Statut actuel</th></tr></thead><tbody>${rows}</tbody></table>
-    </section>
-  `;
-}
-
 function dedupeAppendixItems(items = []) {
   const seen = new Set();
   const deduped = [];
@@ -920,6 +933,7 @@ function buildHtml(documentation, identity, options = {}) {
   const renderOptions = {
     ...options,
     sections,
+    include_missing: ddpp ? false : options.include_missing,
     resolveImageSrc: options.resolveImageSrc || inlineImageDataUri,
   };
   const chapters = sections.filter((section) => section.section_type !== 'tome');
@@ -933,13 +947,16 @@ function buildHtml(documentation, identity, options = {}) {
       <td>${ddppEscape(section.title)}</td>
     </tr>
   `).join('');
-  const tocRows = sections.map((section) => `
-    <tr>
-      <td>${ddppEscape(section.code)}</td>
-      <td>${section.section_type === 'tome' ? '<strong>' : ''}${ddppEscape(section.title)}${section.section_type === 'tome' ? '</strong>' : ''}</td>
-      ${ddpp ? `<td class="toc-page"><a href="#section-${escapeHtml(section.id)}" aria-label="Page ${ddppEscape(section.code)}"></a></td>` : `<td>${escapeHtml(section.status)}</td>`}
-    </tr>
-  `).join('');
+  const tocRows = sections.map((section) => {
+    const pageNumber = Number(options.toc_page_numbers?.[String(section.id)]);
+    return `
+      <tr data-toc-section-id="${escapeHtml(section.id)}">
+        <td>${ddppEscape(section.code)}</td>
+        <td>${section.section_type === 'tome' ? '<strong>' : ''}${ddppEscape(section.title)}${section.section_type === 'tome' ? '</strong>' : ''}</td>
+        ${ddpp ? `<td class="toc-page"><a href="#section-${escapeHtml(section.id)}" aria-label="Page ${ddppEscape(section.code)}">${Number.isInteger(pageNumber) && pageNumber > 0 ? pageNumber : ''}</a></td>` : `<td>${escapeHtml(section.status)}</td>`}
+      </tr>
+    `;
+  }).join('');
   const body = sections.map((section) => `
     <section id="section-${escapeHtml(section.id)}" class="${section.section_type === 'tome' ? 'pdf-tome' : 'pdf-section'}">
       <h${section.section_type === 'tome' ? '1' : '2'}>${ddppEscape(section.code)} - ${ddppEscape(section.title)}</h${section.section_type === 'tome' ? '1' : '2'}>
@@ -1000,10 +1017,7 @@ function buildHtml(documentation, identity, options = {}) {
           </tbody>
         </table>
       </section>
-      ${ddpp ? renderD1CorrespondenceTable(sections) : ''}
-      ${options.include_missing === false ? '' : (ddpp
-        ? `<section class="pdf-page ddpp-open-items"><h1>Éléments restant à compléter selon l'avancement du projet</h1><table><thead><tr><th>Temporalité</th><th>Code</th><th>Chapitre</th><th>Élément</th></tr></thead><tbody>${missingRows || '<tr><td colspan="4">Aucun élément ouvert.</td></tr>'}</tbody></table></section>`
-        : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Temporalite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`)}
+      ${ddpp || options.include_missing === false ? '' : `<section class="pdf-page"><h1>Informations a completer</h1><table><thead><tr><th>Code</th><th>Chapitre</th><th>Point</th><th>Temporalite</th><th>Echeance</th></tr></thead><tbody>${missingRows || '<tr><td colspan="5">Aucune information manquante ouverte.</td></tr>'}</tbody></table></section>`}
       ${body}
       ${options.include_attachments === false ? '' : `<section class="pdf-page"><h1>Annexes</h1><table><thead><tr><th>Chapitre</th><th>Fichier</th><th>Type</th></tr></thead><tbody>${attachmentRows || '<tr><td colspan="3">Aucune annexe incluse.</td></tr>'}</tbody></table></section>`}
       ${options.include_external_master_documents ? `<section class="pdf-page"><h1>Documents externes associes</h1><table><thead><tr><th>Chapitres rattaches</th><th>Document</th><th>Type</th></tr></thead><tbody>${externalAttachmentRows || '<tr><td colspan="3">Aucun document externe a embarquer.</td></tr>'}</tbody></table></section>` : ''}
@@ -1033,8 +1047,7 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-pdf--ddpp .cover h1 { letter-spacing: 0; text-transform: uppercase; }
     .quality-pdf--ddpp .section-meta { color: #4b5563; }
     .toc-table a { color: inherit; text-decoration: none; }
-    .toc-page a::after { content: target-counter(attr(href), page); }
-    .toc-page a:empty::before { content: target-counter(attr(href), page); }
+    .toc-page { font-variant-numeric: tabular-nums; text-align: right; width: 14mm; }
     .ddpp-notice { border: 1px solid #94a3b8; background: #f8fafc; color: #263746; font-weight: 700; padding: 8px 10px; }
     .pdf-page, .pdf-tome { page-break-before: always; }
     h1, h2, h3 { break-after: avoid-page; page-break-after: avoid; color: #263746; orphans: 3; widows: 3; }
@@ -1060,6 +1073,8 @@ function buildHtml(documentation, identity, options = {}) {
     .quality-diagram-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; max-width: 100%; overflow: visible; width: 100%; }
     .quality-diagram-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
     .quality-diagram-svg { box-sizing: border-box; display: block; max-height: 235mm; max-width: 100%; height: auto; width: 100%; break-inside: avoid-page; page-break-inside: avoid; overflow: visible; }
+    .quality-pdf--ddpp .quality-diagram-block { width: 100%; }
+    .quality-pdf--ddpp .quality-diagram-svg { height: auto !important; max-height: 230mm; max-width: none; width: 100% !important; }
     .quality-table-block { break-inside: avoid-page; page-break-inside: avoid; margin: 14px 0; }
     .quality-table-block figcaption { color: #263746; font-weight: 700; margin: 0 0 6px; }
     .procedure-section { break-inside: avoid-page; page-break-inside: avoid; margin: 12px 0; }
@@ -1099,13 +1114,67 @@ function buildHtml(documentation, identity, options = {}) {
   return htmlDocument(collection.title, content, styles);
 }
 
+async function extractSectionPageNumbers(pdfBuffer, sections = []) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const pdfDocument = await pdfjs.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    disableWorker: true,
+  }).promise;
+  try {
+    const pageNumbers = {};
+    for (const section of sections) {
+      const destination = await pdfDocument.getDestination(`section-${section.id}`);
+      if (destination?.[0] == null) continue;
+      const pageIndex = Number.isInteger(destination[0])
+        ? destination[0]
+        : await pdfDocument.getPageIndex(destination[0]);
+      pageNumbers[String(section.id)] = pageIndex + 1;
+    }
+    return pageNumbers;
+  } finally {
+    await pdfDocument.destroy();
+  }
+}
+
+function samePageNumbers(left = {}, right = {}, sections = []) {
+  return sections.every((section) => left[String(section.id)] === right[String(section.id)]);
+}
+
+async function renderDocumentationMainPdf(documentation, identity, options = {}) {
+  const sections = filteredSections(documentation.sections, options);
+  const pdfOptions = {
+    margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
+    beforePdfScript: paginationPreparationScript(),
+  };
+  let html = buildHtml(documentation, identity, options);
+  let pdf = await renderHtmlToPdf(html, pdfOptions);
+  if (!isDdppProfile(options)) return { pdf, html, toc_page_numbers: {} };
+
+  let pageNumbers = await extractSectionPageNumbers(pdf, sections);
+  const missingDestinations = sections.filter((section) => !pageNumbers[String(section.id)]);
+  if (missingDestinations.length) {
+    throw new Error(`Sommaire DDPP incomplet : destination absente pour ${missingDestinations.map((section) => section.code).join(', ')}`);
+  }
+
+  for (let pass = 0; pass < 2; pass += 1) {
+    html = buildHtml(documentation, identity, { ...options, toc_page_numbers: pageNumbers });
+    pdf = await renderHtmlToPdf(html, pdfOptions);
+    const renderedPageNumbers = await extractSectionPageNumbers(pdf, sections);
+    if (samePageNumbers(pageNumbers, renderedPageNumbers, sections)) {
+      return { pdf, html, toc_page_numbers: renderedPageNumbers };
+    }
+    pageNumbers = renderedPageNumbers;
+  }
+  throw new Error('Sommaire DDPP instable apres trois passes de pagination');
+}
+
 async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
   if (isDdppProfile(options)) {
     options = {
       ...options,
       export_type: 'ddpp',
       profile: 'ddpp',
-      include_missing: options.include_missing !== false,
+      include_missing: false,
       include_attachments: options.include_attachments !== false,
       include_master_annexes: options.include_master_annexes !== false,
       include_external_master_documents: options.include_external_master_documents !== false,
@@ -1125,11 +1194,9 @@ async function renderDocumentationPdf(db, storeId, collectionId, options = {}) {
     documentation.supply_material_export_anomalies = await diagnoseSupplyMaterialExportCoverage(db, storeId, sections);
   }
   const identity = await getCompanyIdentity(db, storeId);
-  const html = buildHtml(documentation, identity, options);
-  let pdf = await renderHtmlToPdf(html, {
-    margin: { top: '18mm', right: '12mm', bottom: '18mm', left: '12mm' },
-    beforePdfScript: paginationPreparationScript(),
-  });
+  const mainPdf = await renderDocumentationMainPdf(documentation, identity, options);
+  const { html } = mainPdf;
+  let { pdf } = mainPdf;
   const renderOptions = { ...options, sections };
   const appendixItems = [
     ...collectAttachmentAppendixItems(documentation, renderOptions),
@@ -1195,5 +1262,6 @@ module.exports = {
   exportDocumentationPdf,
   mergeAppendices,
   paginationPreparationScript,
+  renderDocumentationMainPdf,
   renderDocumentationPdf,
 };

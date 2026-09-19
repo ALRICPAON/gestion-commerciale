@@ -506,9 +506,9 @@ function renderDiagramSvg(data, options = {}) {
   </svg>`;
 }
 
-function renderDiagramBlock(diagram) {
+function renderDiagramBlock(diagram, options = {}) {
   const data = diagram.diagram_data || diagram;
-  const svg = renderDiagramSvg(data);
+  const svg = renderDiagramSvg(data, options);
   const title = cleanText(diagram.title || data.title, MAX_TITLE_LENGTH, 'Diagramme qualite');
   return `<figure class="quality-diagram-block" data-diagram-id="${escapeHtml(diagram.id)}" data-block-id="${escapeHtml(diagram.block_id)}" contenteditable="false">
     <figcaption>${escapeHtml(title)}</figcaption>
