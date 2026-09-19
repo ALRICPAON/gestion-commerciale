@@ -69,8 +69,56 @@ function stripTechnicalText(value) {
     .trim();
 }
 
+function normalizeDdppFingerprint(value = '') {
+  return stripHtmlText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function isDdppCorrespondenceMarkup(value = '') {
+  const text = normalizeDdppFingerprint(value);
+  return text.includes('tableau de correspondance d1')
+    || (text.includes('exigence d1')
+      && text.includes('chapitre s alta source s')
+      && text.includes('elements restant a completer'));
+}
+
+function removeDdppCorrespondenceMarkup(html = '') {
+  let cleaned = String(html || '');
+  cleaned = cleaned.replace(/<figure\b[^>]*>[\s\S]*?<\/figure>/gi, (figure) => (
+    isDdppCorrespondenceMarkup(figure) ? '' : figure
+  ));
+  cleaned = cleaned.replace(/<table\b[^>]*>[\s\S]*?<\/table>/gi, (table) => (
+    isDdppCorrespondenceMarkup(table) ? '' : table
+  ));
+  for (const tag of ['h1', 'h2', 'h3', 'h4', 'p', 'figcaption']) {
+    const pattern = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}>`, 'gi');
+    cleaned = cleaned.replace(pattern, (element) => (
+      normalizeDdppFingerprint(element).includes('tableau de correspondance d1') ? '' : element
+    ));
+  }
+  return cleaned;
+}
+
+function assertNoDdppCorrespondence(html = '') {
+  const fingerprint = normalizeDdppFingerprint(html);
+  const forbidden = [
+    'tableau de correspondance d1',
+    'chapitre s alta source s',
+    'elements restant a completer',
+  ];
+  const found = forbidden.filter((text) => fingerprint.includes(text));
+  if (found.length) {
+    throw new Error(`Export DDPP refuse : suivi documentaire interne detecte (${found.join(', ')})`);
+  }
+}
+
 function sanitizeDdppHtml(html = '') {
-  return removeDdppWorkflowHtml(html)
+  return removeDdppWorkflowHtml(removeDdppCorrespondenceMarkup(html))
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi, '')
     .replace(/\b(?:store_id|section_id|block_id|collection_id|source_record_id|quality_event_id|created_by|updated_by|missing_block|is_attached|payload|hash|mcp)\b\s*:?\s*/gi, '')
     .replace(/\b(?:draft|to_complete|ready_for_review|validated)\b/gi, '')
@@ -1026,6 +1074,7 @@ function buildHtml(documentation, identity, options = {}) {
       ${annexCount ? `<section class="pdf-page"><h1>Annexes fichiers</h1><p>Les fichiers PDF et images inclus sont ajoutes apres cette page. Les autres formats font l'objet d'une page de signalement.</p></section>` : ''}
     </main>
   `;
+  if (ddpp) assertNoDdppCorrespondence(content);
 
   const styles = `
     @page {
