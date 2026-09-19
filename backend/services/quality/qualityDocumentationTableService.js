@@ -166,8 +166,88 @@ function updateTableDataCell(tableData, locator = {}) {
   };
 }
 
-function renderTableHtml(tableData) {
-  const data = normalizeTableData(tableData);
+function normalizedDdppLabel(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[’']/g, ' ')
+    .replace(/[^a-zA-Z0-9/]+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function isDdppProfile(options = {}) {
+  return options.profile === 'ddpp' || options.export_type === 'ddpp';
+}
+
+function columnValues(data, column) {
+  return data.rows.map((row) => String(row.cells[column.id] || '').trim()).filter(Boolean);
+}
+
+function isInternalStatusColumn(data, column) {
+  const label = normalizedDdppLabel(column.label);
+  if (['statut documentaire', 'etat documentaire'].includes(label)) return true;
+  if (label !== 'statut') return false;
+  const values = columnValues(data, column).map(normalizedDdppLabel);
+  if (!values.length) return false;
+  const operational = /\b(?:conforme|non conforme|actif|inactif|accepte|refuse|positif|negatif|favorable|defavorable)\b/;
+  const workflow = /^(?:a completer|complet|manquant|brouillon|valide|en attente(?: administrative)?|non renseigne|a renseigner)(?:\b|$)/;
+  return !values.some((value) => operational.test(value)) && values.every((value) => workflow.test(value));
+}
+
+function isRemainingWorkColumn(column) {
+  const label = normalizedDdppLabel(column.label);
+  return /^elements? restant(?:s)?(?: a (?:renseigner|completer))?$/.test(label);
+}
+
+function isExpectedEvidenceColumn(column) {
+  return normalizedDdppLabel(column.label) === 'preuve attendue';
+}
+
+function hasOperationalEvidence(data, column) {
+  const operationalEvidence = /\b(?:ENR|PROC|FT|FDS)[-\s]?\d*\b|\b(?:facture|rapport|analyse|plan|justificatif|attestation|certificat|registre|releve|fiche|photo|contrat|bon)\b/i;
+  return columnValues(data, column).some((value) => operationalEvidence.test(value));
+}
+
+function isInternalCorrespondenceTable(data) {
+  const title = normalizedDdppLabel(data.title);
+  if (/^tableau de correspondance d1\b/.test(title)) return true;
+  const labels = new Set(data.columns.map((column) => normalizedDdppLabel(column.label)));
+  return labels.has('exigence d1')
+    && [...labels].some((label) => /chapitres? alta/.test(label))
+    && [...labels].some((label) => label === 'statut' || label === 'statut documentaire')
+    && [...labels].some((label) => /^elements? restant/.test(label));
+}
+
+function rebalanceColumnWidths(columns) {
+  const total = columns.reduce((sum, column) => sum + Number(column.width || 0), 0);
+  if (!total) return columns;
+  return columns.map((column) => ({ ...column, width: (Number(column.width || 0) / total) * 100 }));
+}
+
+function projectDdppTable(data) {
+  if (isInternalCorrespondenceTable(data)) return null;
+  const evidenceColumns = new Set();
+  const columns = data.columns.filter((column) => {
+    if (isInternalStatusColumn(data, column) || isRemainingWorkColumn(column)) return false;
+    if (!isExpectedEvidenceColumn(column)) return true;
+    if (!hasOperationalEvidence(data, column)) return false;
+    evidenceColumns.add(column.id);
+    return true;
+  }).map((column) => (evidenceColumns.has(column.id)
+    ? { ...column, label: 'Preuve / enregistrement' }
+    : column));
+  if (!columns.length) return null;
+  return {
+    ...data,
+    columns: rebalanceColumnWidths(columns),
+  };
+}
+
+function renderTableHtml(tableData, options = {}) {
+  const normalized = normalizeTableData(tableData);
+  const data = isDdppProfile(options) ? projectDdppTable(normalized) : normalized;
+  if (!data) return '';
   const colgroup = data.columns.map((column) => {
     const width = column.width ? ` style="width:${Math.min(Math.max(column.width, 4), 80)}%"` : '';
     return `<col${width}>`;
@@ -178,12 +258,14 @@ function renderTableHtml(tableData) {
   return `<div class="quality-table-scroll"><table class="quality-data-table">${colgroup ? `<colgroup>${colgroup}</colgroup>` : ''}${head}<tbody>${bodyRows || empty}</tbody></table></div>`;
 }
 
-function renderTableBlock(table) {
+function renderTableBlock(table, options = {}) {
   const data = table.table_data || table;
   const title = cleanText(table.title || data.title, MAX_TITLE_LENGTH, 'Tableau qualite');
+  const tableHtml = renderTableHtml({ ...data, title }, options);
+  if (!tableHtml) return '';
   return `<figure class="quality-table-block" data-table-id="${escapeHtml(table.id)}" data-block-id="${escapeHtml(table.block_id)}" contenteditable="false">
     <figcaption>${escapeHtml(title)}</figcaption>
-    ${renderTableHtml(data)}
+    ${tableHtml}
   </figure>`;
 }
 
