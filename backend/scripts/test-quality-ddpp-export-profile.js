@@ -102,10 +102,17 @@ function fixtureDocumentation() {
     { cells: { supplier: 'Fournisseur B', status: 'Inactif', decision: 'Refusé' } },
   ]);
   const workflowTables = [correspondenceTable, cleaningTable, dimensionsTable, staffTable, controlsTable, supplierTable];
+  const persistedCorrespondenceHtml = `
+    <figure class="quality-table-block" data-table-id="persisted-correspondence">
+      <figcaption>Tableau de correspondance D1 → chapitre(s) ALTA → statut</figcaption>
+      <table><thead><tr><th>EXIGENCE D1</th><th>CHAPITRE(S) ALTA SOURCE(S)</th><th>STATUT</th><th>ÉLÉMENTS RESTANT À COMPLÉTER</th></tr></thead>
+      <tbody><tr><td>3.1.1</td><td>D1-3.1.1</td><td>À compléter</td><td>Attestation future</td></tr></tbody></table>
+    </figure>
+  `;
   return {
     collection: { title: "Manuel qualite et dossier d'agrement sanitaire", version: '1.0' },
     sections: [
-      { id: 'tome-1', section_type: 'tome', code: 'D1-3', title: 'Production', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>draft ready_for_review ' + UUID + '</p>' },
+      { id: 'tome-1', section_type: 'tome', code: 'D1-3', title: 'Production', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>draft ready_for_review ' + UUID + '</p>' + persistedCorrespondenceHtml },
       { id: 'chapter-diagram', section_type: 'chapter', code: 'D1-3.2.3', title: 'Diagrammes de fabrication', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Legacy</p>' },
       { id: 'chapter-plan', section_type: 'chapter', code: 'D1-2.8', title: 'Plans', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Legacy plans</p>' },
       { id: 'tome-identity', section_type: 'tome', code: 'D1-1', title: 'Identite de l etablissement', version: '1.0', status: 'draft', include_in_export: true, content_html: '<p>Statut : Brouillon.</p><p>Identite reglementaire utile.</p>' },
@@ -114,7 +121,9 @@ function fixtureDocumentation() {
       { id: 'chapter-d1-2-6', section_type: 'chapter', code: 'D1-2.6', title: 'Nettoyage et désinfection', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Nettoyage métier.</p>' },
       { id: 'chapter-d1-2-9', section_type: 'chapter', code: 'D1-2.9', title: 'Conception et dimensions', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Dimensions métier.</p>' },
       { id: 'chapter-d1-3-1-2', section_type: 'chapter', code: 'D1-3.1.2', title: 'Organisation du personnel', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Organisation métier.</p>' },
+      { id: 'chapter-d1-3-1-1', section_type: 'chapter', code: 'D1-3.1.1', title: 'Personnel', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Règles d hygiène et formation du personnel.</p>' },
       { id: 'chapter-d1-3-1-3', section_type: 'chapter', code: 'D1-3.1.3', title: 'Contrôles opérationnels', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Contrôles métier.</p>' },
+      { id: 'chapter-d1-3-2-4', section_type: 'chapter', code: 'D1-3.2.4', title: 'Vérification', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Programme de vérification et résultats analytiques.</p>' },
       { id: 'chapter-d1-3-3', section_type: 'chapter', code: 'D1-3.3', title: 'Fournisseurs', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Fournisseurs métier.</p>' },
       { id: 'legacy-tome', section_type: 'tome', code: 'T3', title: 'Production historique', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Ancien tome T</p>' },
       { id: 'legacy-chapter', section_type: 'chapter', code: 'T2-C03', title: 'Plans historiques', version: '1.0', status: 'validated', include_in_export: true, content_html: '<p>Ancien chapitre T</p>' },
@@ -266,7 +275,7 @@ async function main() {
   assert(!/Tableau de correspondance D1|Statut actuel|Éléments restant à compléter/i.test(html), 'le suivi interne ne doit pas etre rendu');
   assert(!/Statut\s*:\s*(?:Complet|Brouillon|À compléter|A completer)/i.test(html), 'les lignes de statut doivent etre retirees des chapitres');
   assert(!html.includes('Element ouvert interne'), 'les blocs to_complete doivent etre masques en DDPP');
-  const orderedCodes = ['D1-1', 'D1-1.2', 'D1-2', 'D1-2.6', 'D1-2.8', 'D1-2.9', 'D1-3', 'D1-3.1.2', 'D1-3.1.3', 'D1-3.2.3', 'D1-3.3'];
+  const orderedCodes = ['D1-1', 'D1-1.2', 'D1-2', 'D1-2.6', 'D1-2.8', 'D1-2.9', 'D1-3', 'D1-3.1.1', 'D1-3.1.2', 'D1-3.1.3', 'D1-3.2.3', 'D1-3.2.4', 'D1-3.3'];
   orderedCodes.reduce((previousIndex, code) => {
     const index = html.indexOf(`<td>${code}</td>`, previousIndex + 1);
     assert(index > previousIndex, `le sommaire doit placer ${code} dans l ordre reglementaire`);
@@ -304,6 +313,9 @@ async function main() {
   assert(!html.includes('PPrreeppaarraattiioonn'), 'le SVG stocke avec double couche texte doit etre ignore en DDPP');
   assert((html.match(/Preparation immediate/g) || []).length === 1, 'le libelle du diagramme doit etre rendu une seule fois depuis la source');
   assert(!html.includes('Tableau de correspondance D1') && !html.includes('Ancien suivi interne'), 'le tableau interne de correspondance doit etre entierement masque');
+  for (const forbiddenText of ['Tableau de correspondance D1', 'CHAPITRE(S) ALTA SOURCE(S)', 'ÉLÉMENTS RESTANT À COMPLÉTER']) {
+    assert(!html.includes(forbiddenText), `le rendu HTML DDPP final ne doit pas contenir ${forbiddenText}`);
+  }
   assert(!html.includes('Statut documentaire') && !html.includes('Élément restant') && !html.includes('Éléments restant à renseigner'), 'les colonnes documentaires internes doivent etre masquees');
   assert(!html.includes('Validation interne') && !html.includes('Pièce future à fournir'), 'les cellules de suivi interne ne doivent pas etre rendues');
   assert(html.includes('Case n 13') && html.includes('Nettoyage quotidien selon PROC-010'), 'les donnees metier D1-2.6 doivent rester presentes');
@@ -330,6 +342,7 @@ async function main() {
   assert(internalHtml.includes('UTILISATION DANS ALTA'), 'l export interne doit conserver les sections internes des ENR');
   assert(internalHtml.includes('Statut : Brouillon') && internalHtml.includes('Element ouvert interne'), 'l export interne doit conserver les statuts et le suivi');
   assert(internalHtml.includes('Statut documentaire') && internalHtml.includes('Élément restant') && internalHtml.includes('Tableau de correspondance D1'), 'l export interne doit conserver les tableaux et colonnes de suivi');
+  assert(internalHtml.includes('CHAPITRE(S) ALTA SOURCE(S)'), 'l export interne doit conserver la copie HTML persistante du tableau D1');
 
   const sections = documentation.sections.filter((section) => /^D/.test(section.code));
   const renderOptions = { ...options, sections };
@@ -341,6 +354,9 @@ async function main() {
   assert.strictEqual(merged.summary.embedded_attachments, 3, 'les pieces jointes et documents externes doivent rester fusionnes');
   const pdfText = await extractPdfText(merged.pdf);
   const normalizedPdfText = pdfText.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  for (const forbiddenText of ['Tableau de correspondance D1', 'CHAPITRE(S) ALTA SOURCE(S)', 'ELEMENTS RESTANT A COMPLETER']) {
+    assert(!normalizedPdfText.toUpperCase().includes(forbiddenText.toUpperCase()), `le PDF DDPP final ne doit pas contenir ${forbiddenText}`);
+  }
   assert(!/tableau de correspondance|statut documentaire|etat documentaire|elements? restant(?: a (?:completer|renseigner))?|\bbrouillon\b|\bcomplet(?:e)?\b|\bmanquant\b|statut actuel|element ouvert|suivi (?:de migration|projet)/i.test(normalizedPdfText), 'le PDF final ne doit exposer aucun workflow interne');
   assert(pdfText.includes('PROC-010') && pdfText.includes('ENR-005'), 'les PROC et ENR doivent rester presents dans le PDF final');
   assert(pdfText.includes('Plan case 13') && pdfText.includes('Justificatif externe'), 'les annexes doivent etre presentes dans le PDF fusionne');
